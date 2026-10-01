@@ -18,9 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Implement and operate a worker
 
-A **worker** is a process that receives a task from Weave, calls your business
-code, and reports a result. Use one when a workflow must perform work outside the
-pure expression language, such as recording a customer in another service.
+A **worker** is a process that asks Weave for a task, calls your business code,
+and reports a result. For example, a customer-onboarding workflow can ask your
+worker to create a customer in an internal billing system. The worker implements
+that operation; Weave remembers where the overall process is and what comes next.
 The echo workflow in the [standalone tutorial](standalone.md) needs no worker;
 finish that tutorial before adding this integration.
 
@@ -29,6 +30,59 @@ and its [manifest](../../examples/worker/manifest.json). Its external receiver,
 identity, image, and grants must be provisioned through the
 [deployment guide](../operations/deployment.md). Running `main.py` alone is not a
 complete deployment.
+
+## First, separate the people from the running processes
+
+**BPM** means business process management. In Weave, a workflow describes the
+business process and the engine coordinates its steps. A worker performs a
+particular job within that process. An operator is a person or application
+responsible for running and supporting the process.
+
+![People authorize and operate a process; the engine coordinates tasks and workers perform them](../diagrams/worker-and-operator-roles.svg)
+
+Read the people row first, then follow the numbered path from a run request to a
+completed task. The two execution choices explain where your business code runs.
+[Open the diagram at full size](../diagrams/worker-and-operator-roles.svg).
+
+| Name | What it does | Customer-onboarding example |
+| --- | --- | --- |
+| Workflow author | Defines and validates the business process | Write the order of registration and notification steps |
+| Deployer | Admits a worker release and activates a workflow in an environment | Approve the exact billing worker image for production |
+| Operator | Starts, signals, cancels, or safely retries runs within granted scope | Investigate a failed registration and resolve its incident |
+| Workflow engine | Records progress and decides which step is ready next | Wait for registration to finish before sending the notification |
+| Remote worker | Claims tasks over the API and runs your handler | Call the billing service from your own container or network |
+| Native executor | Executes configured connector code inside the platform runtime | Use an installed HTTP connector with an authorized connection |
+
+The names above describe responsibilities. Weave also has explicit authorization
+roles: `developer` for authoring, `deployer` for activation, `operator` for run
+operations, `viewer` for run/status reads, and `worker` for task execution. Grant
+the roles a principal actually needs; they do not inherit one another. For
+example, a support application often needs both `viewer` and `operator`. The
+worker role cannot publish workflows or approve its own release. Identity-provider
+roles do not automatically become Weave permissions. See
+[identity and grants](../operations/identity-and-secrets.md).
+
+Here, “operator” is an operational responsibility and an authorization role. It
+does not mean a Kubernetes Operator controller. The
+[Kubernetes guide](../operations/kubernetes.md) describes the available manifests.
+
+## Choose how a step will execute
+
+You do not need a custom worker for every workflow. Pure calculations and control
+flow run in the engine. An installed connector can execute an integration through
+a configured native executor. Write a remote worker when you want to own the
+handler, its dependencies, or its deployment boundary.
+
+A remote worker needs an API connection and a scoped worker identity. It does not
+need the Weave database credentials. A native executor is part of the trusted
+platform runtime and needs its configured database and connector authority. Both
+follow the task/lease rules below, but they have different deployment and secret
+access boundaries.
+
+For this tutorial, choose the remote-worker path. You will create one handler,
+package its exact capability, authorize a release, and start one process. The
+[deployment walkthrough](../operations/deployment.md) supplies the complete build,
+authorization, start, verification, and stop commands.
 
 ![Worker release admission, instance registration, and task lease lifecycle](../diagrams/authoring-worker-lifecycle.svg)
 
@@ -52,6 +106,56 @@ The published Action names this capability in its `implementation`. The workflow
 calls the Action by name/version. The admitted release declares the same schemas
 and policy. All three must agree; a similarly named handler does not satisfy a
 different version's contract.
+
+### See the workflow-to-handler connection
+
+A workflow references an Action, not a Python function or a container name. This
+is the workflow used by the [admission example](../../examples/admit_worker.py),
+shown in YAML so you can follow the link:
+
+```yaml
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: worker-first-run
+  version: 1.0.0
+spec:
+  # Validate the customer's identifier before any task can execute.
+  inputSchema:
+    type: object
+    properties:
+      customer: {type: string}
+    required: [customer]
+    additionalProperties: false
+  outputSchema:
+    type: object
+    properties:
+      receipt: {const: accepted}
+      customer: {type: string}
+    required: [receipt, customer]
+    additionalProperties: false
+  steps:
+    - id: record
+      kind: action
+      # Resolve this published Action version; do not name the handler here.
+      uses: record-customer@1.0.0
+      with: {ref: /input}
+  # Return the result only after the worker's completion is accepted.
+  output: {ref: /steps/record/output}
+```
+
+The published `record-customer@1.0.0` Action declares
+`implementation.kind: worker`, `taskType: example-record`, and
+`taskVersion: 1.0.0`. The manifest and SDK handler map declare
+`example-record@1.0.0`. Activation pins that task type to an admitted release.
+This is why publishing YAML alone cannot start a worker: publication defines
+behavior, activation selects its authorized implementation, and a running worker
+provides execution capacity.
+
+The deployment script publishes both complete definitions and creates the
+activation; this YAML is an explanation of that workflow, not a substitute for
+the remaining setup. Whether you submit definitions through the CLI, API, or
+[Python SDK](sdk-tutorial.md), the same Action and release bindings apply.
 
 ## 2. Implement one handler
 
@@ -105,7 +209,12 @@ The deployment guide walks through the commands in this order:
 | `WEAVE_EFFECT_URL` | The external receiver with durable idempotency support |
 
 Pass only worker configuration. The example explicitly refuses database and
-administrator environment variables. It obtains one access token per invocation
+administrator environment variables. The checked-in example uses a development client named `weave-worker` and an
+OAuth client-credentials exchange. For your deployment, configure token acquisition
+for your CIAM and the API
+[trusted provider profile](../operations/identity-and-secrets.md#configure-token-verification);
+the Worker SDK takes an authenticated transport rather than choosing a provider.
+It obtains one access token per invocation
 and stops claiming early enough to drain its declared 180-second tasks; a
 supervisor can restart it with fresh credentials. It is not an indefinitely
 refreshing token client.
@@ -113,7 +222,11 @@ refreshing token client.
 ## 4. Observe one task through completion
 
 Start a workflow that calls the published Action. Inspect its run history and
-worker status through the API. You should see a task claim, then a completion
+worker status through the API. Use the [API playground](api-playground.md) to
+authenticate and select your environment, then the [full API reference](../reference/api-explorer.md)
+for worker registration and run/history reads. A worker token is for execution;
+use a separately granted operator/viewer identity to inspect runs. You should see
+a task claim, then a completion
 receipt, followed by the workflow's next step. No claim may simply mean no
 compatible work exists; check the Action identity, activation release pins, and
 current grants before changing the handler.

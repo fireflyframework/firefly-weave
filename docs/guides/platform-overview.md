@@ -22,6 +22,9 @@ Installing `weave` gives you a command-line client. A running platform additiona
 needs a Weave API, PostgreSQL, and configured identity. Start here to choose what
 you need to run, then follow the linked tutorial for its exact commands.
 
+Before choosing processes, read [who does what](roles-and-lifecycle.md) for the
+business-process example and the difference between a worker and an operator.
+
 ## Choose your starting point
 
 | Your situation | What you install or run | First guide |

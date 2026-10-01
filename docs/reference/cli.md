@@ -289,7 +289,7 @@ login configuration below. Remote commands do not read server environment files
 or bootstrap missing identities.
 
 For a first remote compile, create `.local/tutorial/compiler-request.json` using
-the [API example](api.md#make-one-request-before-reading-the-inventory), then run:
+the [API example](api.md#compile-a-workflow-without-publishing-it), then run:
 
 ```sh
 weave remote compile --request .local/tutorial/compiler-request.json --output json

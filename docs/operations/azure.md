@@ -125,7 +125,7 @@ reader assignment. This chapter does not change IAM assignments. See
 | --- | --- | --- |
 | PostgreSQL | Azure Database for PostgreSQL Flexible Server or separately operated PostgreSQL | Exact migration/role ownership rehearsal is required; local PostgreSQL evidence does not certify Flexible Server |
 | Secret storage | Azure Key Vault with an operator-managed delivery mechanism | Delivery into configured processes is separate from a Weave secret-provider implementation; this guide installs no native Key Vault provider |
-| Token issuer | Operated HTTPS Keycloak, or separately qualified Microsoft Entra/OIDC integration | Verify the actual token contract and local identity links/grants; AKS access alone does not authorize Weave |
+| Token issuer | Your compatible HTTPS OIDC/CIAM provider ([configuration](identity-and-secrets.md#use-your-own-identity-provider)) | Verify the actual token contract and local identity links/grants; AKS access alone does not authorize Weave |
 
 Flexible Server's `azure_pg_admin` is restricted. Apply the
 [database qualification gate](kubernetes.md#2-prove-the-database-authority-model)

@@ -34,8 +34,8 @@ do the work.
 | Worker or native executor | Code that performs an external action | Call your warehouse or notification service |
 | PostgreSQL | The platform's durable memory | Keep order 123 waiting even when the API restarts |
 
-Keycloak supplies identities and access tokens. Weave's grants decide what each
-identity may do. The CLI and Python SDK are clients of the API. Installing a
+Your configured identity provider supplies access tokens; the local development
+setup uses Keycloak. Weave's grants decide what each identity may do. The CLI and Python SDK are clients of the API. Installing a
 client does not start the API, just as installing a database client does not
 start a database server.
 

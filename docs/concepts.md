@@ -125,7 +125,7 @@ The remote worker talks to the API and does not need a database login. The
 
 ## Identity and permission are different questions
 
-**Authentication** asks “Who is calling?” Keycloak issues a token; Weave checks
+**Authentication** asks “Who is calling?” Your configured identity provider issues a token; Weave checks
 its signature, issuer, audience, and allowed client. An **identity link** maps that
 verified identity to a local **principal**, the Weave user or application record.
 
@@ -134,7 +134,7 @@ assign roles at particular scopes. For example, a developer can work on project
 definitions; a deployer can activate them in an environment; an operator can
 control runs; a worker receives narrowly scoped task permissions.
 
-A Keycloak role does not automatically become a Weave role. The tutorial makes
+An identity-provider role does not automatically become a Weave role. The tutorial makes
 identity linking and grants explicit so the same model can be used with another
 supported OIDC provider. See [identity and secrets](operations/identity-and-secrets.md)
 for the concrete setup and scope model.

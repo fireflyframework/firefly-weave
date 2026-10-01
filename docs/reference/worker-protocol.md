@@ -49,7 +49,8 @@ Read down from admission and registration through claim, heartbeat, outcome, and
 
 The [worker example](../../examples/worker/main.py) imports only the worker SDK and
 HTTP client. It receives no database or administrator credentials. A separately
-provisioned Keycloak client obtains an access token for `weave-api`; the API uses
+provisioned identity-provider client obtains an access token for the configured
+API audience (`weave-api` in the local tutorial); the API uses
 its normal OIDC verifier and local identity link. The `worker` role grants no
 authoring rights. Provider roles alone grant nothing.
 

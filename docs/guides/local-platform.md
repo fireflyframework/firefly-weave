@@ -23,6 +23,9 @@ configuration, starts its own PostgreSQL and Keycloak containers, and prepares a
 isolated server environment. You do not need to copy database URLs, look up
 identity subjects, or grant permissions by hand.
 
+Keycloak is the identity provider for this local exercise. For a deployed platform,
+[configure your own compatible OIDC/CIAM provider](../operations/identity-and-secrets.md#use-your-own-identity-provider).
+
 For an offline first workflow, use the [quickstart](../quickstart.md).
 For an existing API, use [connect to an API](connect-to-api.md).
 

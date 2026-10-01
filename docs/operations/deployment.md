@@ -16,12 +16,16 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Package and deploy an exact local artifact
+# Deploy your first worker, step by step
 
 Start with the [standalone walkthrough](../guides/standalone.md). This page uses
 its `WEAVE_WORK_DIR`, `WEAVE_PYTHON`, `WEAVE_DOCKER_CONTEXT`, `WEAVE_LAUNCH_ID` and
-fresh `release` directory. PostgreSQL and Keycloak must already be ready, and the
-installed API must have completed a first public run. Use Docker Compose 2.30 or later and a local Docker context
+fresh `release` directory. The local tutorial’s PostgreSQL and Keycloak services must already be ready,
+and the installed API must have completed a first public run. Keycloak is the
+reproducible local identity fixture in these commands, not a production requirement.
+For your own CIAM, configure trusted token verification and identity links through
+[identity and secrets](identity-and-secrets.md); adapt the example token acquisition
+and client names to your provider. Use Docker Compose 2.30 or later and a local Docker context
 with a Unix endpoint; remote Docker endpoints and Docker sockets inside the API
 are unsupported by `weave worker deploy`.
 
@@ -30,6 +34,34 @@ are unsupported by `weave worker deploy`.
 Start with the operator card, then follow the labeled connections between processes. The remote worker reaches the API over HTTP; the native executor has database authority. The lower callout explains how to resume the same retained installation.
 
 [Open diagram at full size](../diagrams/operations-topology.svg)
+
+## Understand what “deploy a worker” means
+
+There are two separate installations: **the platform**, which stores workflows and
+coordinates runs, and **your worker**, which performs one or more business tasks.
+Starting a worker container does not start the platform. Publishing a workflow
+does not start a worker container either.
+
+The [worker guide](../guides/workers.md) explains the engine, remote worker, native
+executor, and operator responsibilities. In this chapter you act as the person
+preparing a deployment. The setup identity has several explicit grants; the
+`operator` authorization role alone cannot create principals, assign grants,
+admit a release, or publish definitions.
+
+Work through these checkpoints in order:
+
+1. **Prepare code:** package the handler and its manifest, then build the image.
+2. **Authorize the build:** link the worker identity, admit the image/capability
+   contract, and grant that identity access to the exact release and tasks.
+3. **Connect the workflow:** publish its Action and workflow, then activate them
+   with the selected release binding. The admission script does this for you.
+4. **Start capacity:** launch the worker process. It registers and polls for work.
+5. **Prove a business result:** start a run and confirm the accepted receipt.
+6. **Stop or restart:** use the saved deployment receipt to target that worker.
+
+Each section below explains its inputs, gives the command, and describes the
+expected result. Keep the generated receipts: they carry real IDs from one step
+to the next.
 
 ## Choose the deployment you need
 
@@ -61,7 +93,7 @@ section is a second exercise using a built-in HTTP connector.
 | Component | Job in this exercise | How it runs |
 | --- | --- | --- |
 | PostgreSQL | Stores definitions, runs, leases, grants, and recovery state | Existing standalone Compose service |
-| Keycloak | Issues separate host and worker access tokens | Existing standalone Compose service |
+| Local identity fixture (Keycloak) | Issues separate host and worker access tokens for this exercise | Existing standalone Compose service; production uses your configured CIAM |
 | Foreground API | Accepts authorized requests and schedules durable work | Terminal 2 from standalone |
 | Remote worker | Claims `example-record@1.0.0` tasks through HTTP and calls the receiver | New container in its own worker project |
 | Effect receiver | Records one result per operation key in `effects.sqlite` | New foreground process in terminal 3 |
@@ -180,7 +212,9 @@ These files pass real identifiers between steps:
 | `worker-deployment.json` | `worker deploy` later | Exact container, image, Docker context, and stop command |
 
 Do not replace IDs with a client name such as `weave-worker`: the client name
-identifies a Keycloak client, while these UUIDs identify Weave resources.
+identifies the local identity fixture’s OAuth client, while these UUIDs identify
+Weave resources. In another CIAM the client identifier can differ; the verified
+identity must still be linked to the intended Weave principal.
 
 In terminal 1, with runtime and identity configuration loaded, select the
 host-reachable API origin and run once for this fresh runtime database:
@@ -270,7 +304,7 @@ The example needs these environment values in a **new owner-only** file:
 | --- | --- |
 | `WEAVE_API_URL` | API origin reachable from the container |
 | `WEAVE_TOKEN_URL` | Trusted machine-token endpoint reachable from the container |
-| `WEAVE_WORKER_SECRET` | From the existing `identity.env`; credential for Keycloak client `weave-worker` |
+| `WEAVE_WORKER_SECRET` | From the existing `identity.env`; credential for this tutorial’s local `weave-worker` OAuth client |
 | `WEAVE_ENVIRONMENT_URL` | Environment API path assembled from actual scope IDs |
 | `WEAVE_WORKER_RELEASE_ID` | ID returned by release admission |
 | `WEAVE_EFFECT_URL` | Owned idempotent receiver endpoint |

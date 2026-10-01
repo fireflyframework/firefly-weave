@@ -23,10 +23,32 @@ users author workflows and start runs. Weave stores and executes the workflows;
 your host supplies the user experience and a verified identity for each request.
 
 For a first integration, [connect to your team's API](connect-to-api.md).
-If you need a server, complete the [standalone tutorial](standalone.md) and
-retain its scope receipt and host credentials. Then follow the
-[SDK echo example](../reference/sdk.md) to compile the same workflow from Python.
-It is deliberately smaller than the external-service example described below.
+If you need a development server, [start the local platform](local-platform.md)
+and run its demo. Then follow the [complete Python SDK tutorial](sdk-tutorial.md)
+to publish a workflow, activate it, and retrieve a real execution result. That
+tutorial includes separate instructions for a team-operated API and the local
+platform, so you can use the installation you already have.
+
+## What your first integration should accomplish
+
+Imagine a customer portal with a **Start onboarding** button and a page showing
+progress. Your first milestone is the small echo workflow from the SDK tutorial:
+one button starts it, and your product displays its returned output. Once that
+works, add business steps without changing who owns the workflow's durable state.
+
+| Responsibility | Owner | Example in the portal |
+| --- | --- | --- |
+| Screens and business context | Your host product | Collect the customer request and display its run ID |
+| Sign-in and token acquisition | Your configured identity provider and host | Obtain an access token intended for this Weave API |
+| Workflow versions and execution history | Weave | Keep the exact version used by each run and record its progress |
+| Custom business code | Your admitted worker | Perform the task named by an Action and return its result |
+| Reusable calls to another system | A connector in the native executor | Apply a connection's approved configuration to a request |
+| Deployment, permissions, and recovery | Your platform operator | Configure the CIAM, grant scope access, deploy workers, and investigate incidents |
+
+The **operator** is the person or automation responsible for the installation.
+It is not another Python SDK that your product must run. Your application usually
+needs only API access; worker and connector deployment are separate operational
+decisions.
 
 ## 1. Choose where your host calls Weave
 
@@ -38,6 +60,12 @@ language and contracts; they do not share implicit administrative authority.
 | Pure compiler and immutable builder | Authoring tools, validation and previews | Supply definitions/catalogs; preserve diagnostics; no server resources are started |
 | Typed SDK or native HTTP API | A separate host application or service | Obtain a verified access token, provision local identity/grants, choose scope and manage revision/idempotency contracts |
 | In-process native services | A trusted Python application composition | Preserve constructor injection, explicit actor/scope/audit/UoW and service authorization; do not retain request state in singletons |
+
+For the portal above, start with the typed client or HTTP API. It lets the product
+and Weave run in separate processes. Add local authoring if users need to generate
+or check definitions before publication. In-process composition is an advanced
+integration choice; use the [embedding reference](../reference/embedding.md) to
+understand its request and transaction responsibilities.
 
 ![Local library, remote host, and in-process integration boundaries](../diagrams/authoring-execution-boundaries.svg)
 
@@ -67,7 +95,8 @@ transaction is enlisted under the existing UoW contract, while local authorizati
 and transaction-local tenant context remain mandatory. Services must not capture
 a request's actor, database session or token in long-lived state.
 
-The standalone deployment uses Keycloak initially. An embedding host can implement
+Standalone deployments configure their own compatible OIDC/CIAM provider; only
+the local development recipe provisions Keycloak. An embedding host can implement
 the provider-neutral verifier/resolver ports, but must preserve verified-token and
 explicit local-principal semantics. [Identity and secrets](../operations/identity-and-secrets.md)
 explains what is implemented and what has not been verified with another CIAM.
@@ -86,6 +115,16 @@ for a concrete implementation. In a host UI, each action has a distinct purpose:
 | Show progress | `read_run`, `history` | Cursor if you fetch history in pages |
 | Respond to a waiting workflow | `signal` | Event ID, signal name, and payload |
 
+The first three rows are authoring and deployment activities. They normally
+happen when you release a workflow version. The final three are runtime
+activities: each customer request starts or follows a run of an already prepared
+activation. You do not need to republish the same definition for every customer.
+
+For an HTTP integration, use the [API playground](api-playground.md) to inspect
+one authenticated request, then use the [full endpoint reference](../reference/api-explorer.md)
+for request bodies and headers. The Python SDK wraps those same operations in
+typed methods; it does not create a different execution model.
+
 For an updated draft, send its last observed revision. If another editor changed
 it, reload and reconcile rather than overwriting. Publication recompiles against
 the server catalog; the host cannot use a local artifact to bypass that check.
@@ -98,6 +137,24 @@ revision expectations, inspect receipts/history and reconcile unknown outcomes.
 ![Host requests and returned draft, version, activation, and run identities](../diagrams/authoring-host-sequence.svg)
 
 Follow requests downward; dashed arrows return the identities needed by later calls. Each operation has its own authorization check. For the same lifecycle from a terminal, use the [CLI tutorial](cli-tutorial.md). [Open the diagram at full size](../diagrams/authoring-host-sequence.svg).
+
+## 4. Add one business integration at a time
+
+After the echo run succeeds, choose the next boundary by what the step does:
+
+| The step needs to… | Add | Complete guide |
+| --- | --- | --- |
+| Compute with workflow data | A built-in transform or control-flow step | [Workflow authoring](workflow-authoring.md) |
+| Run application-specific Python code | An Action contract and admitted worker handler | [Workers](workers.md) |
+| Call an external system through a reusable adapter | A Connector contract, implementation, and environment connection | [Custom connector tutorial](custom-connectors-tutorial.md) |
+| Start when an external event arrives | An authenticated ingress route targeting an activation | [Signed webhook walkthrough](custom-connectors-tutorial.md#7-bring-events-in-with-a-signed-webhook) |
+| Pause for a decision from your product | A signal wait and an authorized `signal` request | [Schedules, timers, and waits](../reference/schedules-and-timers.md) |
+
+Keep the returned run ID in your product's business record. Show progress from
+Weave's run state and history, and let an authorized operator investigate failed
+or suspended work. A worker retry may encounter an external effect that already
+happened; implement the operation-key deduplication described in the worker guide.
+The product should not infer success merely because a start request was accepted.
 
 ## Optional: read a larger integration fixture
 

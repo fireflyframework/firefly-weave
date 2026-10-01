@@ -1,0 +1,131 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1440" viewBox="0 0 960 1440" role="img" aria-labelledby="title desc">
+<title id="title">Who decides, who coordinates, and who does the work?</title>
+<desc id="desc">Authors define the process, deployers authorize releases, and operators manage runs. The workflow engine records progress. A remote worker claims tasks through the API; a native executor runs configured connectors within the platform runtime. Both return task outcomes so the engine can continue.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}.small{font-size:19px}.body{font-size:21px}.heading{font-size:25px;font-weight:700}</style>
+<rect width="960" height="1440" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="66" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="31" font-weight="700">Who coordinates, and who does the work?</text>
+<text x="58" y="99" class="body">One customer-onboarding process, with separate responsibilities.</text>
+<rect x="40" y="126" width="880" height="46" rx="12" fill="#EEF4F0"/>
+<text x="58" y="156" class="small" font-weight="700">START WITH PEOPLE • Their grants decide which operations they may perform</text>
+<rect x="40" y="202" width="280" height="258" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(60 220) scale(.65)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 7h28l12 12v33H8z M36 7v14h12 M17 31h20 M17 41h14"/></g>
+<text x="108" y="248" class="heading">Author</text>
+<text x="60" y="300" class="small">Writes the workflow</text>
+<text x="60" y="331" class="small">and Action contracts.</text>
+<text x="60" y="362" class="small">Example: register,</text>
+<text x="60" y="393" class="small">then notify.</text>
+<path class="edge" d="M180 464v57"/>
+<rect x="340" y="202" width="280" height="258" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(360 220) scale(.65)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M7 17 28 6l21 11v25L28 53 7 42z M7 17l21 12 21-12 M28 29v24"/></g>
+<text x="408" y="248" class="heading">Deployer</text>
+<text x="360" y="300" class="small">Approves the release</text>
+<text x="360" y="331" class="small">and activates a version.</text>
+<text x="360" y="362" class="small">Example: select the</text>
+<text x="360" y="393" class="small">billing worker build.</text>
+<path class="edge" d="M480 464v57"/>
+<rect x="640" y="202" width="280" height="258" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(660 220) scale(.65)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 15h40v30H8z M16 24l7 6-7 6 M29 36h11"/></g>
+<text x="708" y="248" class="heading">Operator</text>
+<text x="660" y="300" class="small">Starts and supports</text>
+<text x="660" y="331" class="small">the business process.</text>
+<text x="660" y="362" class="small">Example: investigate</text>
+<text x="660" y="393" class="small">a failed customer run.</text>
+<path class="edge" d="M780 464v57"/>
+<rect x="40" y="540" width="880" height="174" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(61 563)" stroke="#367D68" stroke-width="3" fill="none"><rect x="0" y="0" width="57" height="50" rx="8"/><path d="M12 15h33M12 25h20M12 35h26"/></g>
+<text x="140" y="579" class="heading">1. The engine coordinates the workflow</text>
+<text x="140" y="619" class="body">The API accepts an authorized run request. The runtime</text>
+<text x="140" y="650" class="body">records progress in PostgreSQL and prepares a task when ready.</text>
+<text x="140" y="684" class="small">Example: create the customer before sending a welcome message.</text>
+<path class="edge" d="M260 718v72"/><path class="edge" d="M700 718v72"/>
+<text x="330" y="760" class="small">TASK EXECUTION CHOICES</text>
+<rect x="40" y="810" width="420" height="295" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(60 831) scale(.7)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M5 12h49v33H5z M20 53h19 M29 45v8 M14 21l7 7-7 7 M29 35h12"/></g>
+<text x="110" y="861" class="heading">2a. Remote worker</text>
+<text x="60" y="916" class="small">Your container or process runs</text>
+<text x="60" y="950" class="small">your business handler.</text>
+<text x="60" y="984" class="small">Claims and reports over the API.</text>
+<text x="60" y="1018" class="small">No Weave database credentials.</text>
+<text x="60" y="1052" class="small">Example: call your billing service.</text>
+<rect x="500" y="810" width="420" height="295" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(520 831) scale(.7)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 14h39v15H8z M8 36h39v15H8z M15 21h2 M15 43h2 M28 21h12 M28 43h12"/></g>
+<text x="570" y="861" class="heading">2b. Native executor</text>
+<text x="520" y="916" class="small">The platform runtime runs an</text>
+<text x="520" y="950" class="small">installed connector adapter.</text>
+<text x="520" y="984" class="small">Uses its authorized database</text>
+<text x="520" y="1018" class="small">and connector configuration.</text>
+<text x="520" y="1052" class="small">Example: use the HTTP adapter.</text>
+<path d="M250 1109v51h460v-51" stroke="#367D68" stroke-width="3" fill="none"/><path class="edge" d="M480 1160v22"/>
+<rect x="40" y="1200" width="880" height="100" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<text x="60" y="1237" class="heading">3. An accepted result lets the engine continue</text>
+<text x="60" y="1273" class="small">A crash can repeat an attempt; use a stable operation key for external effects.</text>
+<g id="lumi-takeaway"><rect x="0" y="1346" width="960" height="90" rx="16" fill="#EAF4ED"/><g transform="translate(22 1357) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g>
+</g>
+<text x="110" y="1375" style="font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1406" class="body">The operator manages runs. The worker performs tasks.</text>
+</g></svg>

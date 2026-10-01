@@ -134,7 +134,7 @@ and [GKE node image-pull identity](https://docs.cloud.google.com/kubernetes-engi
 | --- | --- | --- |
 | PostgreSQL | Cloud SQL for PostgreSQL or separately operated PostgreSQL | Qualify exact migrations, role attributes and function ownership; local PostgreSQL tests do not certify Cloud SQL |
 | Secret storage | Secret Manager through an operator-managed delivery mechanism | Configuring a delivery controller does not implement a Weave secret-provider port; this guide adds no native Secret Manager provider |
-| Token issuer | Operated HTTPS Keycloak, or another separately qualified OIDC issuer | Verify issuer/audience/JWKS and create Weave local identity links/grants; Google Cloud IAM permissions are separate |
+| Token issuer | Your compatible HTTPS OIDC/CIAM provider ([configuration](identity-and-secrets.md#use-your-own-identity-provider)) | Verify issuer/audience/JWKS and create Weave local identity links/grants; Google Cloud IAM permissions are separate |
 
 Cloud SQL's administrative users do not have unrestricted PostgreSQL superuser
 powers. Rehearse the selected artifact against the intended service/version using

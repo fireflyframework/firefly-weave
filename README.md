@@ -22,11 +22,18 @@ SPDX-License-Identifier: Apache-2.0
 
 **Define a business process, connect its steps to other systems, and follow every execution.**
 
-[![License: Apache 2.0](assets/badges/license.svg)](LICENSE) [![Python: 3.12+](assets/badges/python.svg)](pyproject.toml) [![Maturity: alpha](assets/badges/alpha.svg)](docs/capabilities.md)
+[![Release](https://img.shields.io/github/v/release/fireflyframework/firefly-weave?include_prereleases&label=release&color=367D68)](https://github.com/fireflyframework/firefly-weave/releases)
+[![Checks](https://github.com/fireflyframework/firefly-weave/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fireflyframework/firefly-weave/actions/workflows/ci.yml)
+[![Documentation](https://github.com/fireflyframework/firefly-weave/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/fireflyframework/firefly-weave/actions/workflows/docs.yml)
+[![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-367D68?logo=python&logoColor=white)](pyproject.toml)
+[![Built with PyFly](https://img.shields.io/badge/Built_with-PyFly-173D34)](https://github.com/fireflyframework/fireflyframework-pyfly)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-173D34)](LICENSE)
+[![Maturity: alpha](https://img.shields.io/badge/Status-alpha-D6A646)](docs/capabilities.md)
 
 [Read the documentation](https://fireflyframework.github.io/firefly-weave/) ·
 [Start the platform](https://fireflyframework.github.io/firefly-weave/guides/platform-overview/) ·
-[CLI reference](https://fireflyframework.github.io/firefly-weave/reference/cli/)
+[CLI reference](https://fireflyframework.github.io/firefly-weave/reference/cli/) ·
+[Meet Lumi](#meet-lumi)
 
 Weave is an API-first workflow and integration platform built on
 [PyFly](https://github.com/fireflyframework/fireflyframework-pyfly). Use YAML, JSON,
@@ -58,7 +65,7 @@ Choose the row that matches what you want to do today:
 | --- | --- | --- |
 | **Try a workflow on my laptop** | [Install the CLI](docs/installation.md), then [run the quickstart](docs/quickstart.md) | A validated YAML workflow and a successful local simulation; no server or Docker required |
 | **Use an existing Weave API** | [Install the CLI](docs/installation.md), then [connect to an existing API](docs/guides/connect-to-api.md) | A verified connection; continue to the CLI tutorial to publish and run |
-| **Run the platform myself** | [Local platform in small steps](docs/guides/local-platform.md) | PostgreSQL, Keycloak, a running API, and a successful saved run |
+| **Run the platform myself** | [Local platform in small steps](docs/guides/local-platform.md) | PostgreSQL, local development identity, a running API, and a successful saved run |
 
 Installing the CLI gives you a terminal client. Running the platform adds the
 services that store and execute workflows. Deploying a worker adds a process that
@@ -175,16 +182,22 @@ be integrated through reviewed HTTP profiles or connector packages.
 
 ![Weave API, compiler, PostgreSQL, identity provider, and workers](docs/diagrams/system-context.svg)
 
-Your application sends requests to the **Weave API**. **Keycloak** identifies the
-caller; Weave's own grants decide what that caller may do. **PostgreSQL** keeps
+Your application sends requests to the **Weave API**. Your configured **identity
+provider** issues access tokens; Weave verifies them and uses its own grants to
+decide what each caller may do. **PostgreSQL** keeps
 workflow versions, runs, and task state. A **worker** asks Weave for a task,
 performs the work, and reports its result. Remote workers can run in separate processes
 or containers and do not need database credentials.
 
-The API is one modular application built with native PyFly controllers and
-services. You can deploy workers separately without splitting the platform into
-many microservices. See [architecture](docs/architecture.md) for a narrated
-execution path and the detailed diagrams.
+Use your organization's compatible OIDC/CIAM provider by configuring its issuer,
+signing keys, audience, and access-token claims. **Keycloak is included for local
+development; it is not a production requirement.** Follow
+[identity provider setup](docs/operations/identity-and-secrets.md#use-your-own-identity-provider)
+for configuration, identity linking, and scoped roles.
+
+Native PyFly controllers and services implement the API, and workers can be
+deployed independently. See [architecture](docs/architecture.md) for the current
+components, a narrated execution path, and the detailed diagrams.
 
 ## Current release and limits
 
@@ -202,6 +215,17 @@ idempotency support or an explicit reconciliation process. The
 Messaging integrations have local protocol and backend verification; live account
 setup and delivery still need validation in your environment. Generic OIDC and
 Entra claim profiles do not imply live certification for every identity provider.
+
+## Meet Lumi
+
+![Lumi, the Firefly Weave guide, with folded mint wings and a golden lantern](assets/lumi.svg)
+
+**Lumi is Weave's firefly guide.** The folded wings echo the woven Weave logo,
+and the warm lantern represents a clear next step through a complex process.
+
+You will find Lumi in the CLI help and throughout the documentation. In diagrams,
+**Lumi's takeaway** highlights the main idea to remember before moving on.
+Start with the [visual guide](docs/visual-guide.md) to explore the platform together.
 
 ## Contribute and learn more
 

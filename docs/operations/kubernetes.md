@@ -60,14 +60,14 @@ Retain this private directory and the selected names. You also need:
 | --- | --- |
 | Registry image | Exact published server image reference `registry/repository@sha256:…`, built from the prepared wheel and correct dependency closure; nodes can pull it |
 | PostgreSQL | Dedicated database, tested driver/TLS configuration, explicit migration owner and resulting nonowner runtime identities |
-| HTTPS Keycloak | Existing realm and clients; expected issuer, JWKS URI, audience, service-account subjects and access-token claims verified |
+| HTTPS OIDC/CIAM provider | Registered clients; expected issuer, JWKS URI, audience, subjects, and access-token claims verified using [identity setup](identity-and-secrets.md#use-your-own-identity-provider) |
 | Network | API/Job can reach the database; API can reach HTTPS JWKS; workers can reach API, token endpoint and intended effect receiver |
 | Operator environment | Exact installed `server`/`client`-capable Python named by `WEAVE_PYTHON`, with database reachability for deliberate bootstrap |
 | Recovery | Environment-specific restorable backup and independent external-effect receipts |
 
 Configure registry pull access using your cluster's identity integration or a
 namespace pull secret before applying manifests. The samples do not grant cloud
-IAM permissions. They also do not install Keycloak, a database, ingress, a secret
+IAM permissions. They also do not provision an identity provider, a database, ingress, a secret
 operator, network policies or a telemetry collector. Choose those deliberately;
 allow only the traffic in the prerequisite table.
 
@@ -223,7 +223,8 @@ provider administration or a verified host access token:
   --output "$WEAVE_CLOUD_DIR/bootstrap.json"
 ```
 
-The subject is the Keycloak service-account UUID, not its client ID or email.
+The subject is the verified access token's `sub` value, not a guessed client ID
+or email. In the local Keycloak example, this is a service-account UUID.
 This creates a local administrator link; it does not issue a token or grant
 business scope. Retain the private receipt and remove migration credentials from
 the operator environment when this stage is done. Existing installations reuse
@@ -240,17 +241,31 @@ Materialize a separate mode-0600 raw file `$WEAVE_CLOUD_DIR/api.env`:
 | `WEAVE_OIDC_PROVIDERS` | JSON array with your exact trusted HTTPS provider configuration |
 | `WEAVE_OPERATIONS_POLICY` | Same JSON policy used by the migration Job |
 
-For the OIDC array, use real values in this shape:
+For the OIDC array, replace these illustrative values with your provider
+registration. This example assumes an RS256 access token with `client_id` and
+`token_use=access` claims; use the actual verified claim contract of your provider:
 
 ```json
-[{"provider_id":"cloud-keycloak","issuer":"https://identity.example/realms/weave","jwks_uri":"https://identity.example/realms/weave/protocol/openid-connect/certs","audience":"weave-api","clients":{"weave-host":"application","weave-worker":"application","weave-cli":"human"},"local_development":false}]
+[{
+  "provider_id": "organization-ciam",
+  "issuer": "https://identity.example/",
+  "jwks_uri": "https://identity.example/.well-known/jwks.json",
+  "audience": "weave-api",
+  "clients": {"weave-host": "application", "weave-worker": "application", "weave-cli": "human"},
+  "algorithms": ["RS256"],
+  "client_claim": "client_id",
+  "token_class_claim": "token_use",
+  "token_class_value": "access",
+  "local_development": false
+}]
 ```
 
 `identity.example` is a placeholder, not an available provider. Match provider ID
-to bootstrap, and configure Keycloak's real audience/client/subject mappers.
-Default access-token policy requires signed payload `typ=Bearer` and RS256.
-Neither Kubernetes workload identity nor a cloud IAM login automatically becomes
-a Weave principal. No Keycloak administrator secret belongs in `api.env`.
+to bootstrap, and verify the configured audience, client, subject, and token-purpose
+claims. Follow [provider setup](identity-and-secrets.md#use-your-own-identity-provider)
+before starting the API. Neither Kubernetes workload identity nor a cloud IAM
+login automatically becomes a Weave principal. No identity-provider administrator
+secret belongs in `api.env`.
 
 ```sh
 # Start the API with runtime credentials and wait for Kubernetes to report a successful rollout.

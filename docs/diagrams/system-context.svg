@@ -49,7 +49,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="62" y="452" class="body">Manage versions, activations and connections</text>
 <text x="62" y="489" class="body">Advance runs, waits and signals</text>
 <text x="62" y="526" class="body">Keep worker receipts and redacted history</text>
-<text x="62" y="605" class="small muted">Native PyFly application · modular monolith</text>
+<text x="62" y="605" class="small muted">Native PyFly controllers and services</text>
 <g transform="translate(695,329) scale(1.5384615384615385)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6H19V20H5Z M9 1V6 M15 1V6 M9 20V25 M15 20V25 M0 10H5 M0 16H5 M19 10H24 M19 16H24 M9 10H15V16H9Z"/></g>
 <text x="686" y="395" class="head">Remote workers</text>
 <text x="686" y="430" class="small">Another process</text>

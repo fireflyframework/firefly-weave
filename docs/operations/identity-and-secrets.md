@@ -18,7 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Identity, authorization and secrets
 
-The standalone API initially uses Keycloak. A verified external identity resolves
+Weave uses your configured identity provider to authenticate callers. Keycloak
+is included for **local development**, not required for production. Configure a
+compatible OIDC/CIAM provider through `WEAVE_OIDC_PROVIDERS`; the API can trust
+multiple explicit provider profiles. A verified external identity resolves
 to an explicitly linked local principal; local role bindings grant capabilities
 within tenant/project/environment/resource scope. External roles are claims, not
 a replacement for these bindings. Workers cannot become workflow authors merely
@@ -33,7 +36,7 @@ because a provider token contains a role string.
 A successful request passes three checks in order: the token is valid for this
 API, its verified identity is linked to an active Weave principal, and that
 principal has a grant covering this operation and scope. These checks explain why
-a valid Keycloak token can still be denied by Weave.
+a valid provider token can still be denied by Weave.
 
 | Term | Where it comes from | What it means |
 | --- | --- | --- |
@@ -69,6 +72,140 @@ password/implicit grants. Existing realm import skips retained realms; changing
 a template does not reconcile existing clients or rotate secrets. Apply deliberate
 additive administration to an owned realm. See [local runtime setup](../reference/local-runtime.md)
 and [CLI login/storage](../reference/cli.md#login-and-secure-persistence).
+
+## Use your own identity provider
+
+You do not need to run Keycloak alongside your chosen CIAM. The local setup
+commands provision Keycloak to make a laptop exercise repeatable; a deployed API
+instead reads the provider profiles you supply. Your provider authenticates the
+user or application. Weave verifies the resulting access token and applies its
+own permissions.
+
+![Your identity provider issues tokens; Weave verifies identity and checks local grants](../diagrams/identity-provider-setup.svg)
+
+Read from left to right: obtain an API access token, send it with a request, then
+let Weave check identity and permission. The provider does not execute workflows
+or store Weave grants. [Open the diagram at full size](../diagrams/identity-provider-setup.svg).
+
+### 1. Register the API and its clients
+
+In your provider's administration console, register the Weave API audience and
+the applications that will call it. Use distinct client registrations for your
+host application, remote workers, and interactive CLI where appropriate. Record
+the exact issuer, trusted JWKS URL, audience, client identifiers, and signed
+access-token claim names. Use the provider's documented access-token contract;
+an ID token is not a substitute.
+
+The built-in verifier accepts signed JWT access tokens using **RS256 or ES256**.
+It requires `iss`, `sub`, `aud`, and `exp`, an allowed client claim, and a signed
+payload claim/value that identifies the intended token class. The JWKS signing
+key must declare an allowed `alg` and a matching `kid`. HTTPS endpoints are
+required outside explicitly enabled localhost development.
+
+### 2. Configure the API's trust profile
+
+The following is an illustrative profile, not a preset for a named provider.
+Replace every URL, audience, and client identifier. It assumes your provider
+issues `client_id` and `token_use=access`; choose the actual claim names and
+values from its verified access-token contract.
+
+```json
+[
+  {
+    "provider_id": "organization-ciam",
+    "issuer": "https://identity.example/",
+    "jwks_uri": "https://identity.example/.well-known/jwks.json",
+    "audience": "weave-api",
+    "clients": {
+      "weave-host": "application",
+      "weave-worker": "application",
+      "weave-cli": "human"
+    },
+    "algorithms": ["RS256"],
+    "client_claim": "client_id",
+    "token_class_claim": "token_use",
+    "token_class_value": "access",
+    "local_development": false
+  }
+]
+```
+
+Save your completed array as `oidc-providers.json` in your private deployment
+configuration directory. For a shell-launched API, load it before starting the
+server:
+
+```sh
+# Point to the reviewed configuration; this file contains trust metadata, not tokens.
+export WEAVE_OIDC_PROVIDERS="$(cat oidc-providers.json)"
+# Start the API using the remaining database and runtime settings from your deployment guide.
+```
+
+For containers or Kubernetes, pass the same JSON as the `WEAVE_OIDC_PROVIDERS`
+environment value through your deployment configuration. See the
+[Kubernetes API setup](kubernetes.md#5-start-the-api-with-runtime-credentials).
+The server loads profiles on startup; roll out a new configuration deliberately.
+An empty array trusts no external provider. Add another explicit entry when you
+need multiple issuers; do not derive endpoints from an incoming token.
+
+| Setting | Why it matters |
+| --- | --- |
+| `provider_id` | Local name used by identity links and bootstrap; retain it consistently |
+| `issuer`, `jwks_uri` | Whose tokens and signing keys the API trusts; use exact trusted values |
+| `audience` | Identifies tokens intended for this API |
+| `clients` and `client_claim` | Restrict callers and classify them as human or application |
+| `token_class_claim`, `token_class_value` | Enforce the provider's signed token-purpose policy |
+| `header_type` | Optional additional JOSE header check; it does not replace the payload policy |
+
+### 3. Link identities and grant roles
+
+Obtain a real access token through your provider's approved flow and verify it
+against the profile before provisioning. Link the exact provider ID, issuer, and
+verified subject to a local Weave principal. For a new installation, follow the
+[bootstrap procedure](kubernetes.md#4-supply-only-migration-authority-and-run-the-job) in the deployment guide;
+then provision tenant, project, environment, and scoped grants through the
+administrative API. Reuse existing links on an existing installation.
+
+Bootstrap links only the initial administrator. Each additional CLI user, host,
+or worker needs its own deliberately provisioned principal and verified identity
+link. The current public HTTP API manages scopes and grants; creating and linking
+principals uses the authorized `AccessService.create_principal` and
+`AccessService.link_identity` methods in a protected application composition.
+Follow the [worker administration recipe](deployment.md#provision-authority-and-private-worker-configuration)
+for that boundary. Its example creates a `worker` principal; an interactive human
+identity needs a `human` principal and a matching `human` client classification.
+Registering a client at your CIAM alone does not create a Weave identity link.
+
+Changing providers does not automatically transfer identity links. An email
+address shared by two providers is not proof that both subjects should inherit
+the same authority. Provision the intended links and test access before retiring
+the previous provider.
+
+### 4. Configure clients and verify one request
+
+Configure the CLI's issuer, registered public client, scopes, and API origin
+using [CLI login](../reference/cli.md#login-and-secure-persistence).
+Host applications and workers obtain access tokens through the provider's
+approved flow and pass them as bearer tokens. The server trust profile does not
+register clients or configure their login flows for them.
+
+Use the [API playground](../guides/api-playground.md) or
+[Python SDK tutorial](../guides/sdk-tutorial.md) to verify an allowed operation in
+your intended scope. Also check that an unlinked identity is rejected and a
+linked principal without the required grant cannot execute that operation.
+A valid token establishes identity; it does not grant access to every project.
+
+### If your provider uses a different token contract
+
+Microsoft Entra ID and other CIAM products need a profile matched to their actual
+tenant, access-token format, and application registration. Existing claim
+normalizers do not automatically configure or certify those deployments.
+Opaque tokens, introspection-only validation, or JWTs without a usable signed
+payload token-class discriminator need a verifier integration; changing the
+issuer URL alone is insufficient. The asynchronous `AccessTokenVerifier` port
+allows a custom verifier in the application composition, with the same
+verified-identity and local-grant boundaries. This is an integration task, not a
+built-in environment switch. See [embedding](../reference/embedding.md) and the
+[provider ports](../../src/firefly_weave/access/providers/base.py).
 
 ## Bootstrap and grant deliberately
 

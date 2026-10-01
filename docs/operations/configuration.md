@@ -65,7 +65,7 @@ current models are [Settings](../../src/firefly_weave/settings.py),
 | `WEAVE_MIGRATION_DATABASE_URL` | Explicit migration/bootstrap only | Migration owner URL; remove from runtime processes |
 | `WEAVE_SCHEDULER_ENABLED` | `true` | Boolean; runtime recovery/scheduling ownership |
 | `WEAVE_SCHEDULER_DATABASE_URL` | Required for startup compatibility inventory, including API-only processes | Separate execute-only catalog/scheduler URL; secret |
-| `WEAVE_OIDC_PROVIDERS` | `[]` | JSON array of explicit provider verification profiles; no automatic discovery |
+| `WEAVE_OIDC_PROVIDERS` | `[]` | JSON array of explicit [OIDC/CIAM verification profiles](identity-and-secrets.md#use-your-own-identity-provider); no automatic discovery or required vendor |
 | `WEAVE_CONNECTOR_PACKAGES` | `[]` | JSON array selecting installed trusted connector entry points |
 | `WEAVE_NATIVE_EXECUTORS` | `[]` | JSON executor admission configuration; an empty list grants no worker authority |
 | `WEAVE_NATIVE_IMAGE_DIGEST` | Absent | Admitted `sha256:` build identity for native execution |

@@ -127,7 +127,7 @@ this same-account derivation.
 | --- | --- | --- |
 | PostgreSQL | RDS for PostgreSQL or separately operated PostgreSQL | Rehearse exact migrations and role/function ownership on the chosen service; local PostgreSQL tests do not certify RDS |
 | Secret storage | AWS Secrets Manager through an operator-managed delivery mechanism | Supplying environment/configuration is distinct from implementing a Weave secret-provider port; no native AWS provider is installed by this guide |
-| Token issuer | Operated HTTPS Keycloak, or a separately qualified OIDC issuer | Configure and verify issuer/audience/JWKS and provision Weave identity links and grants; AWS IAM access is not a Weave grant |
+| Token issuer | Your compatible HTTPS OIDC/CIAM provider ([configuration](identity-and-secrets.md#use-your-own-identity-provider)) | Configure and verify issuer/audience/JWKS and provision Weave identity links and grants; AWS IAM access is not a Weave grant |
 
 RDS's administrative role is not unrestricted PostgreSQL superuser access.
 Before deployment, apply the [database qualification gate](kubernetes.md#2-prove-the-database-authority-model),

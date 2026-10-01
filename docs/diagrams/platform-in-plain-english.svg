@@ -33,7 +33,7 @@ SPDX-License-Identifier: Apache-2.0
 <g transform="translate(65 362)" fill="none" stroke="#A8D5BE" stroke-width="3"><rect width="56" height="55" rx="6"/><path d="M8 17h40M8 35h40"/><circle cx="12" cy="8" r="1"/></g>
 <text x="145" y="370" fill="white" style="fill:white" class="h">2. The Weave API coordinates the work</text>
 <text x="145" y="408" fill="white" style="fill:white" class="p">Check permission → validate input → choose the next step.</text>
-<text x="145" y="447" style="fill:#CEE4D8" class="note">Keycloak identifies the caller. Weave grants authorize its actions.</text>
+<text x="145" y="447" style="fill:#CEE4D8" class="note">Your identity provider identifies callers. Weave grants authorize actions.</text>
 <path class="arrow" d="M270 485v65"/><text class="note" x="65" y="525">Save progress</text>
 <path class="arrow" d="M690 485v65"/><text class="note" x="710" y="525">Queue a task</text>
 <rect x="40" y="555" width="425" height="190" rx="16" fill="#E2EEF6"/>

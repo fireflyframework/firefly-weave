@@ -41,7 +41,7 @@ still use valid identity links, scoped grants, and the admitted release.
 | Process manager | Compose and foreground Python | Kubernetes Deployments and explicit Jobs |
 | Image location | Exact local Docker image ID | Private registry, pinned by registry digest |
 | Durable state | Owned local PostgreSQL container | Qualified PostgreSQL installation with separate logins |
-| Identity | Local Keycloak fixture | Operator-managed HTTPS Keycloak or another verified OIDC profile |
+| Identity | Local Keycloak fixture | Your configured HTTPS OIDC/CIAM provider; Keycloak is optional |
 | Runtime secrets | Private local files | Process-specific Kubernetes Secrets supplied by your secret-management system |
 | Network | Selected local ports and host gateway | Private database access, cluster Service, controlled HTTPS ingress/egress |
 | Deployment command | `weave worker deploy --target compose` | Cloud CLI setup, then `kubectl` |

@@ -37,6 +37,9 @@ image, admission, process, and task lease are different resources.
 
 | Your question | Read and try | Picture to follow |
 | --- | --- | --- |
+| Who authors, executes, and operates a business process? | [Roles and lifecycle](guides/roles-and-lifecycle.md) | [The platform in plain English](diagrams/platform-in-plain-english.svg) |
+| What is the difference between a worker and an operator? | [Worker walkthrough](guides/workers.md) | [People and execution processes](diagrams/worker-and-operator-roles.svg) |
+| Can I use my own identity provider? | [OIDC/CIAM setup](operations/identity-and-secrets.md#use-your-own-identity-provider) | [Provider trust and local grants](diagrams/identity-provider-setup.svg) |
 | How do I get a working CLI? | [Install the CLI](installation.md) | [Isolated installation](diagrams/cli-installation.svg) |
 | How does my YAML become an execution? | [Core concepts](concepts.md), [CLI lab](guides/cli-tutorial.md) | [Definition, activation, and runs](diagrams/definition-lifecycle.svg) |
 | Why is a definition invalid? | [Authoring lab](guides/workflow-authoring.md), [compiler](reference/compiler.md) | [Diagnostics and repair](diagrams/authoring-diagnostic-loop.svg) |

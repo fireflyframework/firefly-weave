@@ -26,8 +26,8 @@ maps those responsibilities to source modules and database relationships.
 
 ## Follow one run through the system
 
-A **modular monolith** keeps the catalog, runtime, connections, and operations in
-one application codebase with explicit module boundaries. You may run API and
+The current implementation separates catalog, runtime, connection, and operational
+responsibilities into explicit components. You may run API and
 native execution in separate processes; PostgreSQL holds the durable state they
 share. A **pure** component computes from its inputs without opening a database,
 resolving a secret, or calling a provider. The compiler and runtime kernel have
@@ -74,7 +74,7 @@ for admission receipts and subsequent dispatch. To reproduce the lifecycle, use
 to source modules and durable relationships.
 
 
-Firefly Weave is a modular monolith built with native PyFly dependency injection,
+Firefly Weave uses native PyFly dependency injection,
 controllers and request filters. Its pure compiler can be used independently.
 Hosts can integrate through the typed SDK and authenticated API, or embed services
 with explicit actor, scope, audit and transaction context.
@@ -210,8 +210,8 @@ Do not treat this diagram as an authorization to purge those records.
 
 ## Verification and deployment boundary
 
-The application remains a modular monolith even when API, native execution and
-remote worker processes are deployed separately. The current Compose/Docker
+API, native execution, and remote workers can run in separate processes.
+The current Compose/Docker
 layout is described in [deployment](operations/deployment.md) and
 [configuration](operations/configuration.md). The worker image has its own
 installed dependency closure; API and native executor processes share the server

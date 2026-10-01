@@ -30,6 +30,17 @@ needs.
 **New to Weave? Read [Start here](guides/learning-path.md).** It explains the API,
 workers, database, and workflow lifecycle in plain language.
 
+## Understand the platform before choosing commands
+
+Read [people, workers, and the workflow lifecycle](guides/roles-and-lifecycle.md)
+for an order-approval example. It explains what BPM means here, what the runtime
+coordinates, what a worker executes, and what platform and run operators manage.
+
+The **API and SDKs** navigation tab contains the browser playground, the Python
+tutorial, every HTTP operation and schema, and the SDK reference. The public
+reference is browsable without an installation; Swagger on your running API lets
+you execute authorized requests against that instance.
+
 ## Choose your next task
 
 | Your goal | Start here | You will finish with… |
@@ -40,6 +51,8 @@ workers, database, and workflow lifecycle in plain language.
 | Try API requests in a browser | [API playground](guides/api-playground.md) | Swagger connected to your instance |
 | Add Weave to a Python product | [Python SDK tutorial](guides/sdk-tutorial.md) | A workflow published and run from Python |
 | Build your own integration | [Inbound and outbound connectors](guides/custom-connectors-tutorial.md) | A custom action or incoming webhook workflow |
+| Implement and run a task handler | [Worker walkthrough](guides/workers.md) → [worker deployment](operations/deployment.md) | An admitted handler that can claim and complete work |
+| Use your organization's identity provider | [OIDC/CIAM setup](operations/identity-and-secrets.md#use-your-own-identity-provider) | Verified tokens, explicit identity links, and scoped grants |
 | Draw a workflow | [Workflow graphs](guides/workflow-graphs.md) | Terminal, Mermaid, and SVG views |
 | Deploy on remote infrastructure | [Remote deployment](operations/remote-deployment.md) | An ordered path through AWS, Azure, or Google Cloud |
 
@@ -48,7 +61,7 @@ workers, database, and workflow lifecycle in plain language.
 1. **Installing the CLI gives you a client.** It can edit, validate, compile, and
    simulate files without any services. It can also call a running API.
 2. **Starting the platform gives you persistence.** The API uses PostgreSQL to
-   save workflows and runs, and verifies identities supplied by Keycloak/OIDC.
+   save workflows and runs, and verifies identities supplied by your configured OIDC provider.
 3. **Adding workers connects external systems.** A worker runs integration code
    and reports its result to the API. An internal transform needs no worker.
 

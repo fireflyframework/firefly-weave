@@ -18,7 +18,32 @@ SPDX-License-Identifier: Apache-2.0
 
 # Python SDK
 
-For a small, sequential example, start with [the Python SDK tutorial](../guides/sdk-tutorial.md).
+The Python tools cover three different jobs: **describe** a workflow, **control**
+a running platform, and **execute** custom business logic. Choose the job first;
+installing the package does not start a server or a worker.
+
+## Choose the right Python tool
+
+| Your job | Python entry point | Does it need a running API? | Start here |
+| --- | --- | --- | --- |
+| Build a workflow definition | `firefly_weave.sdk.builder.WorkflowBuilder` | No; it creates definition data locally | [Build the same workflow in YAML and Python](../guides/sdk-tutorial.md#4-build-the-equivalent-definition-in-python) |
+| Check the definition | `firefly_weave.compiler.api.compile_source` | No; supply an explicit dependency catalog | [Compile and simulate locally](../guides/sdk-tutorial.md) |
+| Publish, activate, start, or read runs | `firefly_weave.sdk.client.WeaveClient` | Yes; provide its API origin, token source, and scope | [Run the complete Python example](../guides/sdk-tutorial.md#6-connect-your-python-application-to-an-api) |
+| Run your business code for an Action | `firefly_weave.sdk.worker.Worker` with `WorkerTransport` | Yes; the operator must admit the release and authorize its worker | [Build and run a worker](../guides/workers.md) |
+| Add a reusable connector | Connector implementation and package registration | Authoring can be local; live calls need an installed executor and connection | [Build your first connector](../guides/custom-connectors-tutorial.md) |
+
+**New to Weave?** Follow the [Python SDK tutorial](../guides/sdk-tutorial.md) from
+step 1. It has complete scripts, expected output, and a local-platform option.
+Use this page afterward for client behavior, operation families, and credentials.
+For languages other than Python, use the [HTTP API](api.md); the
+[full API reference](api-explorer.md) describes the same wire contracts.
+
+`WorkflowBuilder` does not turn Python functions into workflow steps. It produces
+the same portable definition data you could write as YAML or JSON. A custom
+function runs in a worker handler, selected through an admitted Action contract.
+`WeaveClient` makes HTTP requests; it does not run that handler in your product.
+
+## Install in your application's environment
 
 Use the Python SDK when your application needs to call Weave or generate workflow
 definitions. Use the [CLI](../installation.md) for terminal commands. Installing
@@ -53,9 +78,11 @@ scope = Scope.model_validate({
 })
 
 def access_token():
+    # Supply a current access token from your installation's configured CIAM.
     return os.environ["WEAVE_ACCESS_TOKEN"]
 
 async def main():
+    # The context manager closes the HTTP client after this read-only request.
     async with WeaveClient(os.environ["WEAVE_BASE_URL"], access_token, scope) as client:
         catalog = await client.catalog()
         print("Catalog read succeeded")
@@ -76,6 +103,13 @@ remote installation. Publishing, activating, and starting additionally require
 the permissions listed in the lifecycle section.
 
 ## Compile the tutorial workflow through the API
+
+This section is for readers who already used the **manual standalone tutorial**
+and want to reuse its private receipt and token file. If you used
+`weave platform setup`, follow the shorter
+[SDK tutorial's local-platform option](../guides/sdk-tutorial.md#6-connect-your-python-application-to-an-api)
+instead; it includes the entire publish-to-result script. Existing API users can
+keep the scope and token callback from the preceding section.
 
 For this **local installation example**, complete the [standalone tutorial](../guides/standalone.md). Keep its
 `WEAVE_WORK_DIR` and `WEAVE_API_URL` variables and a current `host-token.json`.
@@ -152,15 +186,18 @@ from `firefly_weave.contracts.runtime` at the top of the script.
 ```python
 version = await client.publish("workflows", source, "yaml",
                                idempotency_key="tutorial-echo-publish-1")
+# Bind that exact immutable version to the selected environment.
 activation = await client.activate(
     ActivationRequest(version_id=version.id, artifact_digest=version.digest,
                       scope=scope),
     idempotency_key="tutorial-echo-activate-1",
 )
+# Each intentional execution gets its own run request and idempotency key.
 run = await client.start_run(
     StartRunRequest(activation_id=activation.id, input={"message": "Hello, Weave"}),
     idempotency_key="tutorial-echo-run-1",
 )
+# A start receipt is admission, so read the run to observe execution progress.
 current = await client.read_run(run.id)
 print(current.id, current.state.status, current.state.output)
 ```
@@ -225,4 +262,10 @@ Refresh holds that same per-record lock. Before any external refresh exchange it
 
 Logout saves a token-free logged-out generation and removes the local record under the lock. Deletion failure is an error. Optional revocation reports `confirmed`, `unconfirmed` or `not_requested` separately from local removal. Revocation cannot undo an already issued access token's lifetime or external effects. Status is local metadata and performs no network refresh. Tokens and grant verifiers never enter ordinary repr, CLI JSON, lock files or errors.
 
-The pinned Keycloak provider's stale-refresh comparison has whole-second token timestamps. The client fence prevents cooperating processes from reusing the old record regardless of this provider granularity; do not infer stronger server-side replay guarantees from a rotated string alone.
+The bundled local test environment uses Keycloak, whose stale-refresh comparison
+has whole-second token timestamps. This is a local-provider observation, not a
+requirement to deploy Keycloak. The client fence prevents cooperating processes
+from reusing the old record regardless of provider timestamp granularity; a
+rotated token string alone does not establish stronger server-side replay
+guarantees. See [identity provider configuration](../operations/identity-and-secrets.md)
+for compatible OIDC/CIAM settings and provider validation requirements.

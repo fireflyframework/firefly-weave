@@ -16,23 +16,85 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Public HTTP contracts
+# Use the HTTP API
 
-Project resources use `/api/v1/tenants/{tenant}/projects/{project}`. Environment resources add `/environments/{environment}`. The existing `/tenants/...` paths remain compatibility routes to the **same native endpoint, service graph, authorization and application lifespan**. They do not redirect requests. Canonical route names generate versioned URLs; compatibility names start with `legacy.`. Administrative `/admin/tenants` and `/admin/grants` retain their existing paths and authority. Health probes and signed `POST /webhooks/{identifier}` remain at the root.
+The API lets your application publish workflows, start executions, read their
+progress, and respond to waiting work. The CLI and Python client use this same
+HTTP interface. An application written in another language can call it directly.
 
-Every resource request uses a verified bearer access token and current, locally assigned Weave grants. A scope in a URL or SDK constructor grants no permission. Provider roles, user/application classification, caller-supplied catalog locks and compiled artifacts do not grant execution or publication authority. Signed webhooks authenticate the exact timestamp and raw request bytes against an immutable trigger revision; there is no broad unauthenticated prefix.
+## Choose how to learn the API
 
-## Make one request before reading the inventory
+| You want to… | Open | What you will get |
+| --- | --- | --- |
+| Inspect every request and response | [Full API reference](api-explorer.md) | Searchable operations and schemas, with a downloadable OpenAPI contract |
+| Send a request from your browser | [API playground](../guides/api-playground.md) | Steps to open your server's Swagger UI, authorize, and compile a workflow |
+| Call the API from a terminal | [First HTTP request below](#make-a-read-only-request-first) | A small `curl` request that checks project access |
+| Call it from Python | [Python SDK tutorial](../guides/sdk-tutorial.md) | A complete script that publishes, activates, starts, and reads a run |
+| Add workflows to your product | [Host integration](../guides/host-integration.md) | Which responsibilities belong to your application and which belong to Weave |
 
-Use the [standalone tutorial](../guides/standalone.md) to obtain a running API,
-a verified host token, and local grants. Keep its `WEAVE_API_URL`,
-`WEAVE_TENANT_ID`, and `WEAVE_PROJECT_ID` environment variables; obtain a current
-`WEAVE_ACCESS_TOKEN` using that tutorial's token steps. The offline
-[authoring guide](../guides/workflow-authoring.md) supplies
-`.local/tutorial/echo.workflow.yaml`. From the checkout root, create a JSON
-request that embeds that YAML as a string:
+The published website's API reference is **read-only documentation**. The
+interactive Swagger UI is at `/docs` on your own running API when its operator
+enables `WEAVE_DOCS_ENABLED`. Its **Try it out** buttons send real requests to
+that installation. Use [the playground instructions](../guides/api-playground.md)
+for token entry, scope IDs, expected results, and error recovery.
+
+## Understand the three IDs in a request
+
+A **tenant** selects an organization or workspace. A **project** groups its
+definitions. An **environment** selects where versions are activated and runs
+execute, such as development or production. All three are provisioned UUIDs;
+their display names cannot be used in the path.
+
+| Resource | Path after the API origin | Why it lives there |
+| --- | --- | --- |
+| Catalog and workflow definitions | `/api/v1/tenants/{tenant}/projects/{project}` | Definitions belong to a project and can be used in its environments |
+| Activations, connections, and runs | The project path plus `/environments/{environment}` | Execution uses an environment's prepared bindings and permissions |
+| Health | `/health/live` and `/health/ready` | Operators check whether the API is running and ready |
+
+For example, append `/catalog` to the project path to read its available
+definitions. Append `/runs/{run_id}` to the environment path to inspect one
+execution. The [full reference](api-explorer.md) supplies each operation's exact
+path, body, headers, and permission requirements.
+
+Every resource request needs a verified bearer **access token** and current local
+Weave grants. The token comes from your installation's configured compatible
+OIDC/CIAM provider; Keycloak is supplied for the local development recipe only.
+The IDs choose resources, while grants determine what you may do with them. A
+successful login alone does not grant access to a project.
+
+## Make a read-only request first
+
+Complete [Connect to an API](../guides/connect-to-api.md) using its **supplied-token
+option**. Keep `WEAVE_BASE_URL`, `WEAVE_TENANT_ID`, `WEAVE_PROJECT_ID`, and a current
+`WEAVE_ACCESS_TOKEN` in the same terminal. The API origin has no `/api/v1` suffix.
+Your identity needs `catalog.read` for this project.
 
 ```sh
+# Read available definitions before attempting to change or execute anything.
+# The token proves identity; the server checks your project's catalog.read grant.
+curl --fail-with-body --silent --show-error \
+  "$WEAVE_BASE_URL/api/v1/tenants/$WEAVE_TENANT_ID/projects/$WEAVE_PROJECT_ID/catalog" \
+  -H "Authorization: Bearer $WEAVE_ACCESS_TOKEN"
+```
+
+Expected: HTTP 200 and the project's catalog as JSON. A new project's catalog may
+be empty. This request does not publish a workflow or create a run. If it fails,
+resolve the identity, scope, or connectivity issue before adding write operations.
+The browser and SDK do not automatically read the CLI's saved credentials; each
+client needs its own configured token source.
+
+<a id="make-one-request-before-reading-the-inventory"></a>
+
+## Compile a workflow without publishing it
+
+Keep the same connection variables from the previous step. Create
+`.local/tutorial/echo.workflow.yaml` using the
+[quickstart's definition step](../quickstart.md#create-the-definition), then return
+to that same working directory. Your identity also needs the project `compile`
+capability. Create a JSON request that embeds the YAML file as a string:
+
+```sh
+# JSON-encode the YAML so quotes and newlines survive the HTTP request intact.
 python3 - <<'PYTHON'
 import json
 from pathlib import Path
@@ -44,8 +106,9 @@ request = {
 }
 Path(".local/tutorial/compiler-request.json").write_text(json.dumps(request))
 PYTHON
+# Compile checks the source against the project's authorized dependency catalog.
 curl --fail-with-body --silent --show-error \
-  "$WEAVE_API_URL/api/v1/tenants/$WEAVE_TENANT_ID/projects/$WEAVE_PROJECT_ID/compiler/compile" \
+  "$WEAVE_BASE_URL/api/v1/tenants/$WEAVE_TENANT_ID/projects/$WEAVE_PROJECT_ID/compiler/compile" \
   -H "Authorization: Bearer $WEAVE_ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   --data-binary @.local/tutorial/compiler-request.json
@@ -76,6 +139,20 @@ how its returned version ID and digest feed activation and run creation.
 Read down through the lifecycle. Solid arrows send requests and dashed arrows return identities; the API checks each operation separately. Expected revisions protect edits, while idempotency keys identify exact retries of keyed mutations. [Open the diagram at full size](../diagrams/authoring-host-sequence.svg).
 
 ## Requests, errors and revisions
+
+New integrations should use the versioned `/api/v1/tenants/...` paths. The older
+`/tenants/...` paths remain compatibility routes to the same native endpoints,
+service graph, authorization, and application lifespan; they do not redirect.
+Administrative `/admin/tenants` and `/admin/grants` keep their separately
+authorized paths. Health probes and signed `POST /webhooks/{identifier}` remain
+at the root. Signed webhooks verify the exact timestamp and raw request bytes
+against their immutable trigger revision; ordinary bearer authentication does
+not substitute for the webhook signature.
+
+Provider roles, caller-supplied catalog locks, and compiled artifacts do not grant
+execution or publication authority. Scope and identity are checked for each
+operation. See [identity and secrets](../operations/identity-and-secrets.md) to
+configure the installation's provider and local grants.
 
 Canonical responses include `X-Weave-Wire-Version: weave/api-v1` and `X-Weave-Request-ID`, including early authentication failures. Errors use `application/problem+json` with `status`, stable `code`, safe `message`, `request_id` and `diagnostics`. Where an existing operation has a safe compiler or unavailable result, `result` preserves it. No framework traceback, token or resolved connection credential appears in ordinary resource errors. Worker credential leasing is a separately authorized secret boundary with `Cache-Control: no-store` and `Pragma: no-cache`; its schema describes the actual deliberate `value` field.
 
