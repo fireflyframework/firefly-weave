@@ -27,12 +27,12 @@ Use Python 3.12+ and the locked dependencies. The [Makefile](Makefile) is the
 source of truth for current checks:
 
 ```sh
-uv sync --locked --no-editable --all-extras --group dev
+uv sync --locked --no-editable --all-extras --group dev --group docs
 make check
 ```
 
 This runs strict source inventory/header checks, documentation navigation/SVG
-checks, unit/contracts, Ruff lint and format, strict mypy and package build. For a focused change, first run its relevant
+checks, a strict MkDocs site build, unit/contracts, Ruff lint and format, strict mypy and package build. For a focused change, first run its relevant
 suite; the integrated delivery must still pass the full gate. Do not update lock
 or upstream framework provenance casually to resolve an unrelated failure.
 

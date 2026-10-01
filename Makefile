@@ -14,16 +14,16 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-.PHONY: check source test lint type build check-integration check-e2e check-release
+.PHONY: check source test lint type build docs docs-serve check-integration check-e2e check-release
 
 check:
-	uv run --locked --no-editable --all-extras python scripts/check.py
+	uv run --locked --no-editable --all-extras --group docs python scripts/check.py
 
 source:
 	python3 scripts/source_coverage.py --strict
 
 test:
-	uv run --locked --no-editable --all-extras pytest tests/unit tests/contracts
+	uv run --locked --no-editable --all-extras --group docs pytest tests/unit tests/contracts
 
 lint:
 	uv run --locked --no-editable --all-extras ruff check src tests examples scripts
@@ -35,6 +35,12 @@ type:
 build:
 	uv build
 
+docs:
+	uv run --locked --only-group docs mkdocs build --strict
+
+docs-serve:
+	uv run --locked --only-group docs mkdocs serve --dev-addr 127.0.0.1:8000
+
 check-integration:
 	uv run --locked --no-editable --all-extras python scripts/check.py --integration
 
@@ -42,4 +48,4 @@ check-e2e:
 	uv run pytest tests/e2e -q -m e2e --tb=short --show-capture=no
 
 check-release:
-	uv run --locked --no-editable --all-extras python scripts/check.py --release --docker-context "$(WEAVE_TEST_DOCKER_CONTEXT)"
+	uv run --locked --no-editable --all-extras --group docs python scripts/check.py --release --docker-context "$(WEAVE_TEST_DOCKER_CONTEXT)"

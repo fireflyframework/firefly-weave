@@ -254,7 +254,7 @@ def scaffold_import(target: Path, result: Any) -> None:
         f"src/{module}/__init__.py": template.joinpath("http_adapter.py.tmpl").read_text(),
         "pyproject.toml": template.joinpath("pyproject.toml.tmpl")
         .read_text()
-        .replace('"firefly-weave==0.1.0a2"', '"firefly-weave[server,client]==0.1.0a2"')
+        .replace('"firefly-weave==0.1.0a3"', '"firefly-weave[server,client]==0.1.0a3"')
         .replace('version = "1.0.0"', f'version = "{doc.version}"'),
         "README.md": "# Imported HTTP connector\n\nReview connector.json and examples before building. "
         "Installation and operator allowlisting are separate. Run connector test with --mode native; "

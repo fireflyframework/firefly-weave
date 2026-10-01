@@ -1,0 +1,74 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+
+:root {
+  --md-text-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --md-code-font: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --md-primary-fg-color: #173d34;
+  --md-primary-fg-color--light: #367d68;
+  --md-primary-fg-color--dark: #123229;
+  --md-accent-fg-color: #28644f;
+}
+
+[data-md-color-scheme="default"] {
+  --md-default-fg-color: #253e36;
+  --md-default-fg-color--light: #4d655d;
+  --md-default-bg-color: #ffffff;
+  --md-code-bg-color: #eef4f0;
+  --md-typeset-a-color: #28644f;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 157;
+  --md-default-bg-color: #162a24;
+  --md-default-fg-color: #eef4f0;
+  --md-default-fg-color--light: #b9cec4;
+  --md-code-bg-color: #20382f;
+  --md-typeset-a-color: #91d3b5;
+  --md-accent-fg-color: #a7e6c9;
+}
+
+.md-header, .md-tabs { background-color: #173d34; }
+.md-header__button.md-logo img { width: 1.9rem; height: 1.9rem; }
+.md-header__title { font-weight: 650; letter-spacing: -.025em; }
+.md-grid { max-width: 76rem; }
+.md-typeset { font-size: .82rem; line-height: 1.7; }
+.md-typeset h1 { color: var(--md-default-fg-color); font-weight: 700; letter-spacing: -.035em; }
+.md-typeset h2 { font-weight: 650; letter-spacing: -.02em; }
+.md-typeset h3 { font-weight: 650; }
+.md-typeset p, .md-typeset ul, .md-typeset ol { max-width: 78ch; }
+.md-typeset a { text-underline-offset: .16em; }
+.md-typeset p a, .md-typeset li a { text-decoration: underline; }
+.md-typeset a.headerlink { text-decoration: none; }
+.md-typeset pre { border: 1px solid #367d6833; border-radius: .2rem; }
+.md-typeset table:not([class]) { font-size: .74rem; }
+.md-typeset table:not([class]) th { background: var(--md-code-bg-color); }
+.md-typeset img[src*="diagrams/"] { background: #fff; border-radius: .2rem; }
+.md-typeset img[src$="banner.svg"] { width: 100%; height: auto; border-radius: .2rem; }
+.md-nav__link--active { font-weight: 650; }
+.md-footer { background: #173d34; }
+:focus-visible { outline: 3px solid var(--md-accent-fg-color); outline-offset: 3px; }
+
+@media (max-width: 44.984375em) {
+  .md-typeset { font-size: .8rem; }
+  .md-typeset h1 { font-size: 1.7em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}

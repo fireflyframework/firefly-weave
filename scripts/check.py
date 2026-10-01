@@ -98,6 +98,7 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
         else [
             ("source", [python, "scripts/source_coverage.py", "--strict"], 60),
             ("docs", [python, "scripts/check_docs.py"], 60),
+            ("docs-site", [python, "-m", "mkdocs", "build", "--strict"], 120),
             ("lint", [python, "-m", "ruff", "check", "src", "tests", "examples", "scripts"], 60),
             ("format", [python, "-m", "ruff", "format", "--check", "src", "tests", "examples", "scripts"], 60),
             ("types", [python, "-m", "mypy"], 120),

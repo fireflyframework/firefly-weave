@@ -20,7 +20,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "firefly-weave"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "API-first workflow orchestration and integration platform built on PyFly"
 readme = "README.md"
 license = "Apache-2.0"
@@ -47,6 +47,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/fireflyframework/firefly-weave"
+Documentation = "https://fireflyframework.github.io/firefly-weave/"
 Repository = "https://github.com/fireflyframework/firefly-weave"
 Issues = "https://github.com/fireflyframework/firefly-weave/issues"
 Organization = "https://github.com/fireflyframework"
@@ -90,6 +91,10 @@ dev = [
   "hatchling>=1.28.0",
   "types-regex>=2026.9.10.20260911",
 ]
+docs = [
+    "mkdocs==1.6.1",
+    "mkdocs-material==9.7.7",
+]
 
 [tool.firefly-weave.upstream]
 pyfly-version = "26.9.15"
@@ -112,14 +117,14 @@ exclude = [
 include = [
   "/pyproject.toml", "/uv.lock", "/README.md", "/LICENSE", "/NOTICE",
   "/CONTRIBUTING.md", "/SECURITY.md", "/CHANGELOG.md", "/Makefile", "/Dockerfile", "/install.sh",
-  "/.dockerignore", "/.gitignore", "/.github/workflows/ci.yml",
+  "/.dockerignore", "/.gitignore", "/.github/workflows/ci.yml", "/.github/workflows/docs.yml", "/mkdocs.yml",
   "/alembic.ini", "/pyfly.yaml", "/compose.yaml", "/compose.identity.yaml",
   "/compose.kafka.yaml", "/compose.runtime.yaml", "/compose.local-runtime.yaml",
   "/src", "/migrations", "/examples", "/infra", "/docker", "/scripts", "/tests", "/assets", "/deploy",
   "/docs/README.md", "/docs/architecture.md", "/docs/capabilities.md", "/docs/concepts.md",
   "/docs/contracts.md", "/docs/quickstart.md", "/docs/visual-assets.md", "/docs/visual-guide.md", "/docs/installation.md",
   "/docs/connectors", "/docs/contributing", "/docs/diagrams", "/docs/guides",
-  "/docs/operations", "/docs/reference",
+  "/docs/operations", "/docs/reference", "/docs/stylesheets",
 ]
 
 [tool.hatch.build.targets.wheel]

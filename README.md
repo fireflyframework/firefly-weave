@@ -24,6 +24,10 @@ SPDX-License-Identifier: Apache-2.0
 
 [![License: Apache 2.0](assets/badges/license.svg)](LICENSE) [![Python: 3.12+](assets/badges/python.svg)](pyproject.toml) [![Maturity: alpha](assets/badges/alpha.svg)](docs/capabilities.md)
 
+[Read the documentation](https://fireflyframework.github.io/firefly-weave/) ·
+[Start the platform](https://fireflyframework.github.io/firefly-weave/guides/platform-overview/) ·
+[CLI reference](https://fireflyframework.github.io/firefly-weave/reference/cli/)
+
 Weave is an API-first workflow and integration platform built on
 [PyFly](https://github.com/fireflyframework/fireflyframework-pyfly). Use YAML, JSON,
 or the Python SDK to describe a process. Weave checks its definition, stores each
@@ -54,7 +58,7 @@ Choose the row that matches what you want to do today:
 | --- | --- | --- |
 | **Try a workflow on my laptop** | [Install the CLI](docs/installation.md), then [run the quickstart](docs/quickstart.md) | A validated YAML workflow and a successful local simulation; no server or Docker required |
 | **Use an existing Weave API** | [Install the CLI](docs/installation.md), then [connect to an existing API](docs/guides/connect-to-api.md) | A verified connection; continue to the CLI tutorial to publish and run |
-| **Run the platform myself** | [Start a local installation](docs/guides/standalone.md) | PostgreSQL, Keycloak, a running API, and a successful saved run |
+| **Run the platform myself** | [Deploy, start, and use the platform](docs/guides/platform-overview.md) | PostgreSQL, Keycloak, a running API, and a successful saved run |
 
 Installing the CLI gives you a terminal client. Running the platform adds the
 services that store and execute workflows. Deploying a worker adds a process that
@@ -63,15 +67,15 @@ performs external work. Each has its own guide so you can stop at the result you
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a2 alpha** into
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a3 alpha** into
 your user account without `sudo`, Git, or Docker:
 
 ```sh
 (
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a2/install.sh \
-    | sh -s -- --version v0.1.0a2
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a3/install.sh \
+    | sh -s -- --version v0.1.0a3
 )
 ```
 
@@ -83,9 +87,10 @@ export PATH="$HOME/.local/bin:$PATH"
 weave --version
 weave
 weave help workflow
+weave docs platform
 ```
 
-Expected: version `0.1.0a2` and a command overview. The
+Expected: version `0.1.0a3` and a command overview. The
 [installation guide](docs/installation.md) explains Python selection, persistent
 PATH setup, upgrades, removal, and troubleshooting. Installation includes the API
 client and OpenAPI import dependencies; it does not start the platform.
@@ -93,6 +98,25 @@ client and OpenAPI import dependencies; it does not start the platform.
 `weave` displays the command overview. Help explains each command family and its
 next steps. The [quickstart](docs/quickstart.md) walks through a complete example;
 you do not need to learn every command first.
+
+### Create a working example
+
+Choose a new directory and run:
+
+```sh
+weave init hello-weave
+cd hello-weave
+weave workflow simulate simulation.json --output json
+```
+
+Expected: `status: "succeeded"` and output `{"message": "Hello from Firefly Weave!"}`.
+Open the generated `README.md` to learn what each file does and how to validate,
+compile, and refresh the simulation after editing. Initialization preserves existing
+files and refuses conflicting filenames. It starts no services.
+
+To make executions durable and callable by your product, continue with
+[platform startup](docs/guides/platform-overview.md). The longer
+[first-workflow tutorial](docs/quickstart.md) explains the definition line by line.
 
 ## Continue when you need more
 
@@ -140,7 +164,7 @@ execution path and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a2**, an **alpha** release. Download
+The recommended installation is **v0.1.0a3**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The checked-in documentation describes the source on its branch; a release tag

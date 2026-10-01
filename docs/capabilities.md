@@ -44,7 +44,7 @@ need a runnable environment rather than an implementation inventory.
 
 
 Firefly Weave is an alpha workflow and integration platform. This page describes
-version `0.1.0a2`. Published artifacts are listed in
+version `0.1.0a3`. Published artifacts are listed in
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The integration catalog includes Teams, WhatsApp, and Telegram with
 PyFly 26.9.15 and schema revision `0021_operations`.

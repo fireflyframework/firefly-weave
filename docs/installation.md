@@ -27,7 +27,7 @@ your application's packages stay independent.
 
 ## Choose the installation path
 
-**Recommended:** install the pinned **v0.1.0a2 alpha** below. You do not need Git,
+**Recommended:** install the pinned **v0.1.0a3 alpha** below. You do not need Git,
 a source checkout, Docker, or `sudo`. An alpha is a preview release; use it to
 evaluate the platform and check the [current limits](capabilities.md).
 
@@ -72,8 +72,8 @@ that same version explicitly:
 (
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a2/install.sh \
-    | sh -s -- --version v0.1.0a2
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a3/install.sh \
+    | sh -s -- --version v0.1.0a3
 )
 ```
 
@@ -89,14 +89,14 @@ route instead:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a2/install.sh \
+  https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a3/install.sh \
   -o weave-install.sh
 ```
 
 After the download succeeds, inspect `weave-install.sh` in your editor, then run:
 
 ```sh
-sh weave-install.sh --version v0.1.0a2
+sh weave-install.sh --version v0.1.0a3
 ```
 
 HTTPS and checksums protect the artifact path; checksums are not an independent
@@ -115,12 +115,18 @@ export PATH="$HOME/.local/bin:$PATH"
 weave --version
 weave --help
 weave version --output json
+weave docs platform
 ```
 
-Expected for the pinned installation: version `0.1.0a2`, branded help with command
+Expected for the pinned installation: version `0.1.0a3`, branded help with command
 groups and examples, and one JSON object with `version`, `apiVersion`, and `irVersion`. The banner appears only in
 root help; it never contaminates command results or JSON output. For help on one
 operation, run `weave help workflow compile` or `weave workflow compile --help`.
+
+For a ready-to-run example, use `weave init my-first-workflow`, enter that
+directory, and follow its generated `README.md`. Use `weave docs platform` when
+you are ready to start the API and its dependencies. `weave docs` prints links
+without opening a browser; add `--open` when you want to visit a guide.
 
 To keep PATH across terminal sessions, add that export to your own shell startup
 file. The installer deliberately leaves shell configuration under your control.
@@ -147,7 +153,7 @@ on it. Keep old environments until you no longer need them.
 
 ### Select a version or release channel
 
-The explicit `--version v0.1.0a2` in the recommended command makes installation
+The explicit `--version v0.1.0a3` in the recommended command makes installation
 repeatable. To upgrade, use the installer URL and `--version` value from the same
 new release shown on [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The tag includes a leading `v`; `weave --version` shows the package version without it.
@@ -156,7 +162,7 @@ If you retained `weave-install.sh`, these commands select a channel instead:
 
 | Command | What it selects |
 | --- | --- |
-| `sh weave-install.sh --version v0.1.0a2` | Exactly this documented alpha |
+| `sh weave-install.sh --version v0.1.0a3` | Exactly this documented alpha |
 | `sh weave-install.sh --prerelease` | The most recently published release, including alpha previews |
 | `sh weave-install.sh` | The latest stable release only |
 
@@ -180,7 +186,7 @@ removal option:
 (
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a2/install.sh \
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a3/install.sh \
     | sh -s -- --uninstall
 )
 ```
@@ -196,7 +202,7 @@ configuration before uninstalling if you also want to clear the CLI's saved logi
 | Symptom | What to do |
 | --- | --- |
 | Python version or `venv` error | Select Python 3.12+ with `WEAVE_INSTALL_PYTHON`; install your distribution's venv support |
-| No stable release | Run the pinned `v0.1.0a2` command above or explicitly choose `--prerelease` |
+| No stable release | Run the pinned `v0.1.0a3` command above or explicitly choose `--prerelease` |
 | Missing installer assets | The selected release is too old; do not mix assets from different releases |
 | Checksum mismatch | Stop and obtain the complete assets again from the same trusted release |
 | Existing unrelated `weave` | Choose a different `--bin-dir`; inspect the old command before replacing it yourself |

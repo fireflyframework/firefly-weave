@@ -238,6 +238,17 @@ def test_xml_and_sql_headers_and_blank_docstrings(tmp_path):
     assert [(x["path"], x["code"]) for x in report["issues"]] == [("empty.py", "missing-docstring")]
 
 
+def test_css_requires_attribution_in_a_leading_block_comment(tmp_path):
+    plain = "\n".join(line.removeprefix("# ") for line in HEADER.splitlines())
+    source = tmp_path / "theme.css"
+    source.write_text("/*\n" + plain + "\n*/\nbody { color: green; }\n")
+    assert run(tmp_path, "--strict")[0] == 0
+    source.write_text("body {}\n/*\n" + plain + "\n*/\n")
+    code, report = run(tmp_path, "--strict")
+    assert code == 1
+    assert report["issues"][0]["code"] == "missing-header"
+
+
 @pytest.mark.parametrize("blocked_child", [False, True])
 def test_traversal_permission_errors_cannot_become_strict_success(tmp_path, monkeypatch, capsys, blocked_child):
     module = runpy.run_path(str(SCRIPT))

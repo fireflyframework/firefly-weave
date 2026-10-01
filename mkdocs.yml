@@ -1,0 +1,157 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+site_name: Firefly Weave
+site_description: Learn, integrate, and operate the Firefly Weave workflow platform.
+site_author: Firefly Software Foundation
+site_url: https://fireflyframework.github.io/firefly-weave/
+repo_url: https://github.com/fireflyframework/firefly-weave
+repo_name: fireflyframework/firefly-weave
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Firefly Software Foundation · Apache-2.0
+strict: true
+docs_dir: docs
+site_dir: build/docs-site
+exclude_docs: |
+  implementation-status.md
+  superpowers/
+  .superpowers/
+hooks:
+  - scripts/docs_hook.py
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: warn
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: warn
+    unrecognized_links: warn
+theme:
+  name: material
+  language: en
+  font: false
+  logo: assets/weave-logo-reversed.svg
+  favicon: assets/weave-logo.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark appearance
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light appearance
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.details
+extra_css:
+  - stylesheets/weave.css
+nav:
+  - Start here:
+      - Documentation: README.md
+      - How the platform works: guides/platform-overview.md
+      - Installation: installation.md
+      - First workflow: quickstart.md
+      - Concepts: concepts.md
+      - Visual guide: visual-guide.md
+      - Capabilities and limits: capabilities.md
+  - Use the platform:
+      - Connect to an API: guides/connect-to-api.md
+      - Run a local platform: guides/standalone.md
+      - Publish and run with the CLI: guides/cli-tutorial.md
+      - Author workflows: guides/workflow-authoring.md
+      - Build workers: guides/workers.md
+      - Integrate your product: guides/host-integration.md
+  - Integrations:
+      - Author a connector: connectors/authoring.md
+      - Import OpenAPI metadata: connectors/metadata-import.md
+      - HTTP profiles: connectors/http-profiles.md
+      - PostgreSQL: connectors/postgresql.md
+      - Kafka: connectors/kafka.md
+      - Microsoft Teams: connectors/teams.md
+      - WhatsApp: connectors/whatsapp.md
+      - Telegram: connectors/telegram.md
+  - Operate and deploy:
+      - Deployment: operations/deployment.md
+      - Cloud deployment: operations/cloud-deployment.md
+      - AWS: operations/aws.md
+      - Azure: operations/azure.md
+      - Google Cloud: operations/gcp.md
+      - Kubernetes: operations/kubernetes.md
+      - Configuration: operations/configuration.md
+      - Identity and secrets: operations/identity-and-secrets.md
+      - Observability: operations/observability.md
+      - Troubleshooting: operations/troubleshooting.md
+      - Upgrades: operations/upgrades.md
+      - Retention: operations/retention.md
+      - Backup and restore: operations/backup-restore.md
+  - Reference:
+      - Definition contracts: contracts.md
+      - Schema and expressions: reference/schema-profile.md
+      - Compiler: reference/compiler.md
+      - Simulation: reference/simulation.md
+      - CLI: reference/cli.md
+      - API: reference/api.md
+      - Python SDK: reference/sdk.md
+      - Native OpenAPI: reference/native-openapi.md
+      - Embedding: reference/embedding.md
+      - Worker protocol: reference/worker-protocol.md
+      - HTTP and webhooks: reference/http-and-webhooks.md
+      - Provider sources: reference/provider-sources.md
+      - Integration events: reference/integration-events.md
+      - Schedules and timers: reference/schedules-and-timers.md
+      - History and replay: reference/history-and-replay.md
+      - Incident operations: reference/incident-operations.md
+      - Local runtime: reference/local-runtime.md
+  - Project:
+      - Project overview: project/overview.md
+      - Architecture: architecture.md
+      - Contributing: project/contributing.md
+      - Documentation website: contributing/documentation-site.md
+      - Source documentation: contributing/source-documentation.md
+      - Visual assets: visual-assets.md
+      - Security: project/security.md
+      - Changelog: project/changelog.md
+      - Kubernetes templates: project/kubernetes-templates.md
+      - WhatsApp fixtures: project/whatsapp-fixtures.md
+      - Provider test fixture: project/provider-fixture.md

@@ -35,14 +35,14 @@ jobs:
         with:
           version: '0.8.22'
           python-version: '3.12'
-      - run: uv run --locked --no-editable --all-extras python scripts/check.py
+      - run: uv run --locked --no-editable --all-extras --group docs python scripts/check.py
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release
     runs-on: [self-hosted, weave-owned-release]
     environment: weave-owned-release
     steps:
       - uses: actions/checkout@v4
-      - run: uv run --locked --no-editable --all-extras python scripts/check.py --release --docker-context colima-weave-tests
+      - run: uv run --locked --no-editable --all-extras --group docs python scripts/check.py --release --docker-context colima-weave-tests
 # The release runner supplies guarded PostgreSQL/Keycloak/Kafka, the retained
 # predecessor artifact/interpreter, and secret environment variables. This job builds
 # the current exact-wheel images and clean installed closures. Missing inputs

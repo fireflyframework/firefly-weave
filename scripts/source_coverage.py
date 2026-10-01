@@ -151,6 +151,13 @@ def load_exceptions(path: Path, *, required: bool = False) -> dict[str, dict[str
 def leading_comment(path: Path, text: str) -> str | None:
     """Only comments before executable content qualify as the attribution header."""
     suffix = path.with_suffix("").suffix if path.suffix == ".tmpl" else path.suffix
+    if suffix == ".css":
+        value = text.lstrip()
+        if value.startswith("/*") and "*/" in value:
+            return "\n".join(
+                line.strip().removeprefix("*").strip() for line in value[2 : value.index("*/")].splitlines()
+            )
+        return ""
     if suffix in XML_SUFFIXES:
         value = re.sub(r"^\s*<\?xml[^>]*\?>", "", text, count=1).lstrip()
         if value.startswith("<!--") and "-->" in value:

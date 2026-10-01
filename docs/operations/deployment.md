@@ -31,6 +31,26 @@ Read the three columns as process ownership, not steps to run in one shell. The 
 
 [Open diagram at full size](../diagrams/operations-topology.svg)
 
+## Choose the deployment you need
+
+This chapter extends an already running local platform. If you need to start the
+API and database for the first time, begin with [the platform overview](../guides/platform-overview.md)
+and [standalone setup](../guides/standalone.md). The CLI's worker deployment command
+does not install or start those services.
+
+| Stage in this chapter | Required for the remote-worker exercise? | Checkpoint |
+| --- | --- | --- |
+| [Build the server image](#build-the-server-from-the-prepared-wheel) | Only if continuing to the optional container/native exercise or cloud packaging | Exact server image ID and wheel hash |
+| [Package and build the worker](#prepare-a-worker-context) | Yes | Exact worker image ID and validated manifest |
+| [Provision worker identity and release](#provision-authority-and-private-worker-configuration) | Yes | Private principal and release receipts |
+| [Start receiver and configure routing](#start-the-receiver-and-expose-the-local-api-to-the-worker) | Yes | API and receiver are ready; private worker configuration exists |
+| [Deploy and run the worker workflow](#deploy-only-the-verified-worker-image) | Yes | Saved run succeeds with the accepted customer receipt |
+| [Run API/native containers](#configure-and-run-the-api-and-native-executor-containers) | Optional follow-up | Native workflow succeeds through the container API |
+
+`weave worker deploy --target compose` supports a selected local Docker engine.
+For AWS, Azure, GCP, or Kubernetes, use [cloud deployment](cloud-deployment.md)
+after learning this artifact and authorization lifecycle.
+
 ## What you will run
 
 The standalone walkthrough leaves a foreground API connected to PostgreSQL and
@@ -70,6 +90,10 @@ manifest digest, signature, live-provider certification, or automatic runtime
 attestation. Release admission and current scoped grants remain explicit.
 
 ## Build the server from the prepared wheel
+
+Skip this section if you only want the remote-worker exercise; continue with
+[Prepare a worker context](#prepare-a-worker-context). Return here before the
+optional API/native container exercise or cloud packaging.
 
 The build context already exists at `$WEAVE_WORK_DIR/release/images` because the
 standalone preparation step created it. `WEAVE_SERVER_IMAGE` will hold the exact

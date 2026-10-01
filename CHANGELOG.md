@@ -18,6 +18,24 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a3
+
+- Render the official woven-W logo as plain ASCII in CLI help, with a compact
+  layout for narrow terminals and clean machine-readable output.
+- Add `weave init DIRECTORY` for a validated offline starter with a runnable
+  simulation and instructions for editing, recompiling, and simulating again.
+- Add `weave docs [TOPIC]` and clearer help linking authoring, platform startup,
+  worker deployment, and configuration to their guides.
+- Publish branded, searchable MkDocs documentation on GitHub Pages with light
+  and dark appearances, copyable commands, and complete task-based navigation.
+- Explain the platform startup path, service responsibilities, readiness checks,
+  first use, shutdown, and restart; distinguish optional container stages.
+- Check the documentation site in CI and retain source attribution in stylesheets.
+
+No runtime engine, database migration, authentication, or worker retry policy
+changes are introduced. The intermittent queue timeout recorded in 0.1.0a2's
+release notes remains an unresolved observation; this release does not claim to fix it.
+
 ## 0.1.0a2
 
 - Add a user-local CLI installer with verified release assets, hash-locked client

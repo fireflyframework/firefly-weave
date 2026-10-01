@@ -24,7 +24,9 @@ of only the base `firefly-weave` wheel supports local authoring; remote commands
 need the `client` extra. Server and worker extras are unnecessary for either path.
 The offline commands listed below do not initialize PyFly, read application
 configuration/credentials, discover providers, or connect to a service. They read
-only explicitly supplied source/catalog paths and write only requested exports.
+only explicitly supplied source/catalog paths and write only requested exports or
+starter files. `docs` prints a link; only its explicit `--open` option requests
+a browser.
 
 For a guided command sequence from authoring to durable execution, follow the
 [CLI tutorial](../guides/cli-tutorial.md). This reference explains the individual
@@ -34,6 +36,7 @@ commands, their files, and their result contracts.
 
 | Goal | Commands | Prerequisite |
 | --- | --- | --- |
+| Create a local starter or find a guide | `init DIRECTORY`, `docs [TOPIC]` | Base package; no platform required |
 | Check or simulate a local definition | `workflow validate`, `compile`, `explain`, `simulate` | Base package and explicit files |
 | Export language schemas | `schema export` | Base package |
 | Call a running API | `remote`, `definitions`, `runs`, other remote families | `client` extra, token, scope, local grants |
@@ -50,6 +53,73 @@ so `weave version --output json` and remote JSON results remain machine-readable
 ![Offline CLI validation and compilation result branches](../diagrams/authoring-diagnostic-loop.svg)
 
 The CLI uses these same compiler branches. With no catalog, a successful validate exits 0, but compile and explain exit 1 because no artifact exists. An explicitly empty catalog selects complete compilation. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
+
+## Create an offline project
+
+`weave init DIRECTORY [--output text|json]` creates a starter workflow in the
+selected directory. It works from any working directory with the base package;
+you do not need the source checkout, Docker, a token, or an API. Choose a new
+project path, then enter it before running its relative-path commands:
+
+```sh
+weave init my-first-workflow
+cd my-first-workflow
+weave workflow validate workflow.yaml --catalog catalog.lock.json --strict
+weave workflow compile workflow.yaml --catalog catalog.lock.json --strict --directory build
+weave workflow simulate simulation.json --output json
+```
+
+Expected: validation and compilation succeed; simulation returns the sample
+message `Hello from Firefly Weave!`. These commands do not start services or save
+a durable run. For that, follow [platform setup](../guides/platform-overview.md).
+
+| Starter file | Purpose |
+| --- | --- |
+| `workflow.yaml` | `hello-weave@1.0.0`, which returns its message input |
+| `catalog.lock.json` | An explicitly empty catalog for complete compilation |
+| `input.json` | Sample message input |
+| `simulation.json` | Initial compiled artifact, sample input, empty mocks, and fixed virtual clock |
+| `README.md` | Commands to run the starter and refresh simulation after edits |
+
+Simulation reads `simulation.json`, not the current YAML or input file. After
+editing either, recompile and refresh the simulation request as shown in the
+generated README. Compilation into `build` alone does not rewrite that request.
+
+Initialization refuses conflicting starter filenames and unsafe symlink targets;
+it preserves unrelated files and offers no `--force` option. Use a different
+directory for another starter. JSON success contains `ok: true` and the created
+filenames. Local creation failures exit 2 with a `WV-CLI-INIT` diagnostic. The
+[export safety rules](#export-safety-and-contracts) describe file publication.
+
+## Find documentation from the CLI
+
+`weave docs [TOPIC] [--open] [--output text|json]` prints a URL under the
+[published documentation website](https://fireflyframework.github.io/firefly-weave/).
+Without a topic it selects the documentation home. Printing a URL requires no
+network connection; viewing the hosted page requires access to the website.
+
+```sh
+weave docs
+weave docs platform
+weave docs cli --output json
+weave docs quickstart --open
+```
+
+Only `--open` asks the default browser to open. JSON output contains a `url` field;
+a browser launch failure exits 2, so rerun without `--open` to obtain the link.
+
+| Topic | Destination |
+| --- | --- |
+| `quickstart` | [Offline quickstart](../quickstart.md) |
+| `platform` | [Deploy, start, and use the platform](../guides/platform-overview.md) |
+| `cli` | This reference |
+| `workers` | [Worker authoring](../guides/workers.md) |
+| `deploy` | [Local worker and container deployment](../operations/deployment.md) |
+| `configuration` | [Runtime configuration](../operations/configuration.md) |
+
+The links lead to the published documentation site, which may describe a newer
+release than your installed client. Check `weave --version` and the release
+selected by the installation guide when following server setup commands.
 
 ## Offline workflow commands
 

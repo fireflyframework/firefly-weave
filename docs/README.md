@@ -29,10 +29,15 @@ Use the [visual guide](visual-guide.md) to navigate the other illustrated topics
 
 [Open diagram at full size](diagrams/tutorial-route.svg)
 
+**Need to deploy and start the platform?** Read [the platform overview](guides/platform-overview.md)
+first. It explains which services must run and links each setup checkpoint to
+its commands. The [documentation website](https://fireflyframework.github.io/firefly-weave/)
+presents these same guides with navigation and search.
+
 ## Start with the current release
 
 The [installation guide](installation.md#install-a-release) installs the
-**v0.1.0a2 alpha** with one pinned curl command. Start there if you do not have
+**v0.1.0a3 alpha** with one pinned curl command. Start there if you do not have
 `weave` yet. You need Python 3.12 or newer; you do not need a source checkout,
 Docker, or administrator privileges for the client. Confirm `weave --version`
 before following a learning path.
@@ -49,11 +54,11 @@ use Weave. Reference pages explain details when you need them.
 | --- | --- | --- |
 | **Try the workflow language** | [Install the CLI](installation.md) → [quickstart](quickstart.md) | The simulator returns `Hello, Weave` |
 | **Use an API someone already runs** | [Install the CLI](installation.md) → [connect to an existing API](guides/connect-to-api.md) → publish, activate, and run | The API returns `Hello from the CLI` |
-| **Set up your own installation** | [Local platform tutorial](guides/standalone.md) → [CLI tutorial](guides/cli-tutorial.md) | A workflow runs and its state is saved in PostgreSQL |
+| **Set up your own installation** | [Platform overview](guides/platform-overview.md) → [Local platform tutorial](guides/standalone.md) → [CLI tutorial](guides/cli-tutorial.md) | A workflow runs and its state is saved in PostgreSQL |
 | **Add an external integration** | A working local installation → [worker deployment](operations/deployment.md) | Your worker completes an HTTP request and reports its result |
 | **Move the platform to cloud infrastructure** | Working local deployment → [cloud deployment](operations/cloud-deployment.md) → one provider guide → [Kubernetes](operations/kubernetes.md) | Your own environment passes the documented acceptance checks |
 
-For a first visit, take the **workflow language** path. It requires no database,
+To try the language before deploying, take the **workflow language** path. It requires no database,
 identity server, or cloud account. If your team already runs Weave, ask its
 administrator for an API URL, a supported login method, and the tenant, project,
 and environment IDs before taking the second path.
@@ -141,5 +146,7 @@ request path. [Capabilities](capabilities.md) distinguishes implemented behavior
 local verification, and live-provider verification. [Contributing](../CONTRIBUTING.md)
 explains development checks; [source attribution](contributing/source-documentation.md)
 and [visual assets](visual-assets.md) cover source and artwork conventions.
+[Documentation website maintenance](contributing/documentation-site.md) explains
+how to preview and publish this documentation.
 See [security reporting](../SECURITY.md) and the [changelog](../CHANGELOG.md) for
 project policy and release context.

@@ -87,7 +87,7 @@ and [run incidents](../reference/incident-operations.md).
 
 The optional `teams` extra implements public-cloud Bot Connector text messages for one explicitly configured personal installation per immutable connection/source. It supports reply and proactive text to a stored authenticated reference. It does not create conversations, provision accounts, send Graph messages, or implement channels/groups, SSO, skills, invoke, streaming, attachments or cards. Fixture and local PostgreSQL verification is separate from live Azure/Teams certification.
 
-Install the exact reviewed Weave wheel with `server,teams` extras. Operator configuration must select `firefly-weave:weave-teams:firefly_weave.connectors.teams:package` in `connector_packages`; installing the optional SDK alone does not enable it. Missing extras fail startup when selected. The installed distribution version is `0.1.0a2`; adapter/task behavior is separately pinned at `1.0.0`. Native services share the application's existing PyFly container.
+Install the exact reviewed Weave wheel with `server,teams` extras. Operator configuration must select `firefly-weave:weave-teams:firefly_weave.connectors.teams:package` in `connector_packages`; installing the optional SDK alone does not enable it. Missing extras fail startup when selected. The installed distribution version is `0.1.0a3`; adapter/task behavior is separately pinned at `1.0.0`. Native services share the application's existing PyFly container.
 
 ## Provision and configure
 

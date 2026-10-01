@@ -33,6 +33,7 @@ from firefly_weave.cli.connectors import connector
 from firefly_weave.cli.debug import simulate
 from firefly_weave.cli.definitions import definitions
 from firefly_weave.cli.deploy import worker
+from firefly_weave.cli.onboarding import DOCS_URL, docs, init
 from firefly_weave.cli.operations import incident, run
 from firefly_weave.cli.remote import family, machine_result, remote
 from firefly_weave.cli.runs import runs
@@ -42,40 +43,54 @@ from firefly_weave.cli.triggers import triggers
 from firefly_weave.cli.workers import workers
 from firefly_weave.cli.workflow import workflow
 
+# Sampled from assets/weave-logo.svg, including its diagonal underpass mask.
+# Regenerate with: python scripts/render_cli_logo.py
+_LOGO = """  ###    ###        ###    ###
+ #####   ####      ####   #####
+  #####  #####    #####  #####
+   #####  #####  #####  #####
+    #####  #### #####  #####
+     #####  ## #####  #####
+      #####   #####  #####
+       ##### #####  #####
+        ######### ######
+         ####### ######
+          #####  #####
+           ###    ###
+            #      #"""
+
 
 class OfflineGroup(click.Group):
     """Present human help while preserving value-free machine error contracts."""
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        formatter.write(
-            r"""  F I R E F L Y
- __        __
- \ \      / /__  __ ___   _____
-  \ \ /\ / / _ \/ _` \ \ / / _ \
-   \ V  V /  __/ (_| |\ V /  __/
-    \_/\_/ \___|\__,_| \_/ \___|
-
-"""
-        )
+        if formatter.width >= 60:
+            for index, line in enumerate(_LOGO.splitlines()):
+                title = "   Firefly Weave" if index == 5 else ""
+                formatter.write(f"{line:<32}{title}".rstrip() + "\n")
+        else:
+            formatter.write("Firefly Weave\n")
+        formatter.write("\n")
         super().format_help(ctx, formatter)
         with formatter.section("Quick start"):
             formatter.write_dl(
                 [
+                    (f"{ctx.command_path} init hello-weave", "Create an offline starter; see its README."),
                     (f"{ctx.command_path} workflow validate workflow.yaml", "Check a local definition."),
                     (f"{ctx.command_path} workflow compile --help", "Compile with a pinned catalog."),
+                    (f"{ctx.command_path} docs platform", "Start and understand the platform services."),
                     (f"{ctx.command_path} auth --help", "Configure API credentials."),
                     (f"{ctx.command_path} definitions --help", "Publish and activate definitions."),
-                    (f"{ctx.command_path} worker deploy --help", "Deploy an admitted worker with Compose."),
+                    (f"{ctx.command_path} worker deploy --help", "Deploy a worker to an existing platform."),
                     (f"{ctx.command_path} help COMMAND", "Explore any command without running it."),
                 ]
             )
         formatter.write_paragraph()
-        formatter.write(
-            "Documentation:\n  https://github.com/fireflyframework/firefly-weave/blob/main/docs/README.md\n"
-        )
+        formatter.write_text(f"Documentation: {DOCS_URL}")
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         sections = (
+            ("Start here", ("init", "docs")),
             ("Author locally", ("workflow", "schema", "connector")),
             (
                 "Connect to a platform",
@@ -99,6 +114,8 @@ class OfflineGroup(click.Group):
             ("Help and version", ("help", "version")),
         )
         summaries = {
+            "init": "Create a safe offline workflow starter.",
+            "docs": "Find docs for platform startup and next steps.",
             "workflow": "Validate, compile, and simulate local workflows.",
             "schema": "Inspect and export definition schemas.",
             "connector": "Build connectors or import an OpenAPI definition.",
@@ -119,7 +136,7 @@ class OfflineGroup(click.Group):
             "whatsapp-statuses": "Inspect WhatsApp message delivery status.",
             "provider-sources": "Configure incoming messaging platform events.",
             "provider-receipts": "Inspect and retry received platform events.",
-            "worker": "Package workers and deploy them with Compose.",
+            "worker": "Package and deploy workers to an existing platform.",
             "admin": "Run database migrations and local administration.",
             "retention": "Preview and apply data retention plans.",
             "compatibility": "Check stored definitions for compatibility.",
@@ -237,6 +254,8 @@ def version(output: str) -> None:
         click.echo(f"Firefly Weave {__version__} (weave/v1alpha1; weave/ir-v1alpha1)")
 
 
+cli.add_command(init)
+cli.add_command(docs)
 workflow.add_command(simulate)
 cli.add_command(workflow)
 cli.add_command(schema)

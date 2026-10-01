@@ -87,3 +87,26 @@ def test_root_help_explains_public_command_families_without_generated_boilerplat
         "Inspect and retry outgoing event deliveries.",
     ):
         assert summary in result.output
+
+
+@pytest.mark.parametrize("width", [32, 48, 80])
+def test_help_ascii_banner_and_entry_points_fit_terminal(width):
+    result = CliRunner().invoke(cli, ["--help"], prog_name="weave", terminal_width=width)
+    assert result.exit_code == 0, result.output
+    banner = result.output.split("Usage:")[0]
+    assert "Firefly Weave" in banner
+    assert banner.isascii()
+    assert all(len(line) <= width for line in banner.splitlines())
+    assert "weave init" in result.output
+    assert "weave docs platform" in result.output
+    assert "worker deploy" in result.output
+    assert "Start here" in result.output
+
+
+@pytest.mark.parametrize("path", [["init"], ["docs"], ["worker", "deploy"], ["workflow", "simulate"]])
+def test_new_help_navigation_matches_direct_help(path):
+    runner = CliRunner()
+    indirect = runner.invoke(cli, ["help", *path], prog_name="weave")
+    direct = runner.invoke(cli, [*path, "--help"], prog_name="weave")
+    assert indirect.exit_code == direct.exit_code == 0, indirect.output
+    assert indirect.output == direct.output

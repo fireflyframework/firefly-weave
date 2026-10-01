@@ -25,6 +25,10 @@ the local simulator. No API server, Docker, database, or credentials are needed.
 **Result:** a successful simulation with `{"message": "Hello, Weave"}` as its
 output. This is a local simulation; chapter 2 will create a durable run in PostgreSQL.
 
+**Prefer a generated starting point?** `weave init my-first-workflow` creates a
+working example with its own README. This chapter takes the hands-on route:
+you write and explain each file, then reuse those files in the API tutorial.
+
 ![Typed message through input validation, transform, and output validation](diagrams/echo-data-flow.svg)
 
 Follow the upper row to understand the YAML you will write. The lower row

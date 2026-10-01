@@ -39,6 +39,9 @@ and worker shown in the extended topology.
 
 [Open diagram at full size](../diagrams/operations-topology.svg)
 
+If you are deciding what to install, read [deploy, start, and use the platform](platform-overview.md)
+first. This chapter is the complete command sequence for its local deployment path.
+
 ## Follow the setup in order
 
 This chapter has two parts: set up the installation once, then use or resume it.
@@ -83,18 +86,18 @@ setup helpers, and examples. A user-local CLI installation does not contain that
 checkout. If you do not already have it, run:
 
 ```sh
-git clone --branch v0.1.0a2 --single-branch \
+git clone --branch v0.1.0a3 --single-branch \
   https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 uv sync --locked --python 3.12
 ```
 
-The clone selects the same **v0.1.0a2** release as the CLI installation guide.
+The clone selects the same **v0.1.0a3** release as the CLI installation guide.
 A detached-HEAD message is expected when Git opens a release tag; this tutorial
 does not require creating a branch or editing application source.
 
 If you already have a checkout, enter its root and run `git describe --tags --exact-match`.
-For this released walkthrough, the result must be `v0.1.0a2`. If the checkout has
+For this released walkthrough, the result must be `v0.1.0a3`. If the checkout has
 another version or local development work, preserve it and clone the release into
 a separate directory by adding a new directory name to the clone command above.
 Contributors intentionally using unreleased source should use that checkout's
@@ -401,6 +404,12 @@ env -u WEAVE_MIGRATION_DATABASE_URL \
   firefly_weave.main:create_application --factory --host 127.0.0.1 --port "${WEAVE_API_PORT:?Set the selected API port}"
 ```
 
+This is the command that starts the Weave server. Uvicorn loads the application
+factory from the selected installed package. `--host 127.0.0.1` keeps this first
+API reachable only from your laptop; `--port` uses the port reserved in step 2.
+The `env -u` removes the migration credential from this process. Its runtime
+settings supply the separate application and scheduler database logins.
+
 The API stays running and prints logs; it does not return a shell prompt.
 Leave terminal 2 running. In **terminal 1**, wait for readiness:
 
@@ -615,6 +624,8 @@ If you also deployed a worker, follow its
 
 | Symptom | Check | Recovery |
 | --- | --- | --- |
+| `weave --help` works but no API responds | Only the client is installed or the API terminal has stopped | Complete server setup and keep terminal 2 running; CLI installation does not launch the API |
+| `WEAVE_WORK_DIR` or `WEAVE_PYTHON` is unset in a new terminal | Session variables were not restored | Run the saved `cd` and `source .../session.env` commands before the step |
 | A tool or repository file is missing | Tool installation and `pwd` | Complete prerequisites and enter the checkout root |
 | Port check fails | Another process owns that port | Choose unused ports before generating configuration |
 | Setup output already exists | An earlier initialization created it | Inspect the installation; use the resume path when complete |
