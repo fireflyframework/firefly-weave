@@ -23,14 +23,38 @@ Export is disabled by default. Starting the compiler, using the SDK, or setting
 ambient `OTEL_EXPORTER_*` variables does not enable Weave exports. No provider is
 registered as a process global.
 
+## Choose the evidence you need
+
+| Question | Start here | What it can establish |
+| --- | --- | --- |
+| Can this replica accept work? | `/health/ready` and the scoped compatibility report | Runtime readiness and blocking requirements |
+| How is the service behaving over time? | Collector metrics and traces | Bounded operational observations, subject to export loss |
+| Did a run or effect complete? | Authorized run/history and receiver/provider receipts | Durable recorded outcome and external acceptance evidence |
+| Why was access allowed or denied? | Protected authorization logs and access audit | Authorization decision context, subject to configured log retention |
+
+Metrics and traces complement the stored execution history. They are useful for
+trends, queue age, and failure investigation, but an absent span does not prove an
+operation never occurred. See [local runtime](../reference/local-runtime.md) for
+authorization logging and [history/replay](../reference/history-and-replay.md) for
+run evidence.
+
 ## Enable a collector
+
+The repository's local Compose setup does not start an OpenTelemetry collector.
+Supply your own collector and confirm that its HTTP/protobuf receiver is enabled
+before changing Weave. The example below assumes it is already listening on the
+host's loopback port 4318.
 
 Prerequisites: a running Weave API, a collector accepting OTLP over HTTP/protobuf,
 and an endpoint reachable from the API process. Use HTTPS outside loopback
 local development. Configure exact signal URLs; Weave does not append paths or
 discover a collector. Endpoints cannot include URL credentials, queries, or fragments.
 
-Set `WEAVE_TELEMETRY` in the API's private environment file before starting it:
+For the standalone foreground API, stop it with Ctrl-C in terminal 2, then set
+`WEAVE_TELEMETRY` in that same shell before running its normal startup command.
+For a managed deployment, place the equivalent value in the API's protected
+environment configuration. A shell `export` in terminal 1 does not change an API
+already running in terminal 2 or inside a container:
 
 ```sh
 export WEAVE_TELEMETRY='{"enabled":true,"traces_endpoint":"http://127.0.0.1:4318/v1/traces","metrics_endpoint":"http://127.0.0.1:4318/v1/metrics","timeout_seconds":5,"metrics_interval_seconds":30}'
@@ -48,11 +72,24 @@ configuration. Ambient OTLP headers, proxy settings, resource detectors and
 credential-provider hooks are not used by the owned exporters.
 
 Restart the owned API with its normal startup command, check its readiness, then
-exercise an authorized request. Look for resource `service.name=firefly-weave`,
+exercise an authorized request, such as reading the first-run ID through the CLI.
+Wait at least the configured metrics interval (30 seconds in this example) before
+checking the collector's metric data. Look for resource `service.name=firefly-weave`,
 instrumentation scope `firefly.weave`, and fixed `weave.*` metric/span names in the
 collector. Export failure does not change workflow state or grant execution
 authority. Use collector health and Weave's readiness independently: a healthy
 API is not proof that an external collector received data.
+
+### Check that export actually arrived
+
+1. Confirm the collector sees traffic from the correct API process or container.
+   Check its OTLP receiver status separately from any downstream dashboard.
+2. Find the service resource and fixed instrumentation scope listed above. Filter
+   by a fixed operation/status attribute rather than expecting a run ID label.
+3. Compare the request you exercised with the corresponding operation observation.
+   For a workflow transition, confirm the run's durable state through the API too.
+4. If nothing arrives, use the table below before increasing logging. Export is
+   best effort and deliberately does not retry failed requests indefinitely.
 
 ## Data and bounds
 
@@ -99,6 +136,15 @@ Set `WEAVE_TELEMETRY='{"enabled":false}'` and restart the owned API to disable
 export. This does not disable authorization audit records or delete workflow
 history. Stop only the API/collector services you own; no volume deletion is
 needed.
+
+| Symptom | First check | Next step |
+| --- | --- | --- |
+| No export traffic | `WEAVE_TELEMETRY.enabled` on the actual API process | Restart/redeploy with explicit configuration; ambient OTLP variables are insufficient |
+| Connection refused | Collector process and endpoint namespace | Host loopback works only for a host API; use a reachable trusted URL for a container API |
+| Collector rejects requests | HTTP/protobuf receiver, exact `/v1/traces` or `/v1/metrics` path, TLS, authorization | Correct the receiver/configuration; do not put credentials in the URL |
+| Metrics seem doubled | Multiple replicas report the same inventory | Use max for duplicate global inventory observations and inspect freshness |
+| Drop counter increases | Collector latency or queue pressure | Repair the export path; durable workflow state is not dropped with telemetry |
+| A run ID cannot be found in labels | Bounded attribute policy | Inspect the run through authorized history instead |
 
 If exports are absent, verify the exact endpoint, TLS trust, collector
 HTTP/protobuf support, private authorization value and network reachability from

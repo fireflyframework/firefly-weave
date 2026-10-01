@@ -25,12 +25,29 @@ automatic deletion of workflow history, deduplication receipts, provider sources
 Teams references, WhatsApp status facts, catalog versions, or outbox history.
 Returned plans explicitly list those omitted resource classes and their reasons.
 
+## Choose the maintenance target
+
+Use this procedure when you intend to remove eligible old debug sessions from
+one project. It will not solve a quota exhausted by retained runs, provider
+receipts, or other omitted data. First identify the constrained resource using
+capabilities/usage and [operational policy](configuration.md#operational-policy).
+
+The sequence is **plan → inspect → apply → inspect the result**. Planning writes
+an immutable proposal; applying deletes only eligible candidates from that
+proposal. Do not put the apply command in an unattended copy-and-paste block with
+plan creation.
+
 ## Inspect a project and create a plan
 
 Prerequisites: a running API, a linked active identity, project-scoped
 `retention.plan` authority, and the `client` extra. Configure `WEAVE_BASE_URL`,
 `WEAVE_TENANT_ID`, `WEAVE_PROJECT_ID`, and your protected authentication settings
-as described in [identity and secrets](identity-and-secrets.md). Retention uses
+as described in [CLI remote operations](../reference/cli.md#remote-authoring-and-operations).
+Use a current `WEAVE_ACCESS_TOKEN` from the trusted provider or the CLI's configured
+login/credential store. In a standalone installation, the tenant and project IDs
+come from `first-run.json`; `WEAVE_BASE_URL` is the API origin selected there.
+`WEAVE_PYTHON` below is the absolute path to your installed client-capable Python
+environment, as set by the standalone guide. Retention uses
 project scope, so omit the environment identifier. Creating a plan stores its
 immutable metadata and an audit record; it does not delete debug sessions.
 
@@ -40,15 +57,20 @@ Write a request to a new file in your private working directory:
 {"target":"expired_debug","limit":100}
 ```
 
-Save it as `retention-request.json`, then run:
+Save it as a new `retention-request.json` in your private working directory and
+run the following from that directory. The path passed to `--request` names the
+JSON file you just created; it is not the server's eventual plan ID:
 
 ```sh
-env -u WEAVE_ENVIRONMENT_ID uv run weave retention plan \
+env -u WEAVE_ENVIRONMENT_ID "$WEAVE_PYTHON" -I -m firefly_weave.cli.main retention plan \
   --request retention-request.json --output json
 ```
 
 Inspect the returned `id`, `scope`, `principal_id`, `created_at`, `cutoff`,
 `expires_at`, `candidates`, `omissions`, `complete`, and `next_cursor`.
+An empty `candidates` list is a valid result, especially on a new installation;
+there is nothing to delete. Confirm `scope` and `principal_id` identify the project
+and operator you intended before proceeding.
 Only sessions whose expiration predates the server's cutoff are selected.
 The cutoff is 24 hours before plan creation; live sessions and recently expired
 sessions are excluded. A selected session with a retained reference appears as
@@ -74,8 +96,16 @@ still be active and have current `retention.plan` authority to read the plan and
 `retention.apply` authority to apply it. Use the exact plan ID returned by the server:
 
 ```sh
-env -u WEAVE_ENVIRONMENT_ID uv run weave retention read PLAN_UUID --output json
-env -u WEAVE_ENVIRONMENT_ID uv run weave retention apply --plan-id PLAN_UUID --output json
+env -u WEAVE_ENVIRONMENT_ID "$WEAVE_PYTHON" -I -m firefly_weave.cli.main \
+  retention read PLAN_UUID --output json
+```
+
+After reviewing the stored plan and deciding to delete its eligible sessions,
+run apply separately:
+
+```sh
+env -u WEAVE_ENVIRONMENT_ID "$WEAVE_PYTHON" -I -m firefly_weave.cli.main \
+  retention apply --plan-id PLAN_UUID --output json
 ```
 
 Replace `PLAN_UUID` with the real UUID. The apply command reads and displays the
@@ -98,6 +128,19 @@ Do not delete protected records directly with SQL to resolve a quota error.
 The maintenance API's omissions are intentional: removing a receipt or fence
 can make an old delivery appear new. Retained workflow and provider data require
 a separately defined lifecycle; this release provides no general purge command.
+
+## Read the result and handle interruptions
+
+| Result or failure | Meaning | Operator action |
+| --- | --- | --- |
+| IDs in `deleted` | Those eligible sessions were deleted in the committed application | Retain the manifest as maintenance evidence |
+| IDs in `blocked` | A candidate changed, is referenced, or is no longer eligible | Inspect the reason/state; do not remove the guard with SQL |
+| Plan unavailable | Wrong scope/creator, expired plan, or unavailable ID | Check the original receipt and current identity; create a new reviewed plan if needed |
+| Lost response after apply | The client cannot establish whether the transaction committed | Retry the same plan as the same authorized creator to recover the committed manifest |
+| Capacity denial while planning | The project has reached a plan or operational bound | Inspect retained usage; repeated planning will not free capacity |
+
+Keep the same project scope throughout. A pagination cursor selects the next
+candidate page; it is not an authorization token or an apply plan ID.
 
 ## Capacity and storage
 

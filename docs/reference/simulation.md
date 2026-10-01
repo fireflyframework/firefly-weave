@@ -24,21 +24,52 @@ network. It verifies the current imported artifact and shared classified-value
 policy before accepting inputs or mocks. It does not establish live readiness or
 prove external behavior.
 
-## Offline API and CLI
+## Run the echo artifact
+
+First complete [workflow authoring](../guides/workflow-authoring.md), which creates
+`.local/tutorial/compiled/compiled-artifact.json`. You need only the base Python
+installation. For durable execution with a database and history, use the
+[standalone tutorial](../guides/standalone.md).
+
+A **mock** is a fixed output supplied in place of an external Action. Echo needs
+none. A **breakpoint** pauses before a named execution node so you can inspect
+its input and the current variables. Run this from the checkout root:
 
 ```python
 from datetime import UTC, datetime
+from pathlib import Path
+from firefly_weave.compiler.api import import_artifact
 from firefly_weave.operations.debug.simulator import Simulator
 
-sim = Simulator(artifact, mocks={"action:echo-action@2.0.0": 8},
-                input=3, now=datetime(2026, 1, 1, tzinfo=UTC))
-sim.set_breakpoints({"work"})
+artifact = import_artifact(
+    Path(".local/tutorial/compiled/compiled-artifact.json").read_bytes()
+)
+sim = Simulator(artifact, mocks={}, input={"message": "Hello, Weave"},
+                now=datetime(2026, 1, 1, tzinfo=UTC))
+sim.set_breakpoints({"echo"})
 paused = sim.continue_until_breakpoint()
+assert paused.status == "paused" and paused.selected_node == "echo"
 stepped = sim.next()
 saved = sim.serialize()
 sim = Simulator.restore(saved)
 finished = sim.continue_until_breakpoint()
+assert finished.status == "succeeded"
+print(finished.variables["output"])
 ```
+
+Expect `{'message': 'Hello, Weave'}`. `next()` executes one boundary, which can be
+an internal start/end node or an admitted event as well as an author step.
+Restoring the serialized session preserves that progress and virtual time; it
+starts no worker and changes no production run.
+
+## Mock Actions and control time
+
+For the onboarding compiler fixture in the authoring guide, use
+`{"action:onboarding.check-customer@1.0.0": {"eligible": true}}` as the JSON
+`mocks` value. Supply `{"customerId": "demo"}` as input. Continuing stops at the
+signal wait; send `customer-approved` with `{"approved": true}`, then continue
+to get `{"accepted": true}`. This explores the declared contract without
+installing the external implementation.
 
 Mock keys are `action:<exact-reference>` or `node:<full-IR-node-id>` for Action
 nodes. Node values override action values. Unknown keys and values violating any
@@ -46,26 +77,53 @@ pinned Action/implementation output schema are rejected. A JSON list is one
 ordinary mocked result. There is no retry-outcome scripting or live fallback.
 Missing mocks yield `WV-DEBUG-MISSING_MOCK` and a failed debugger view.
 
-`weave workflow simulate request.json --output json` accepts a JSON object with
+`weave workflow simulate REQUEST --output json` accepts a JSON object with
 `artifact` (the exact compiled envelope), `mocks`, `input`, and timezone-aware
-`now`. It continues until a breakpoint, quiescent wait, suspension or termination.
-`--commands commands.json` applies a bounded JSON array of commands instead:
+`now`. The authoring guide creates `.local/tutorial/simulation-request.json`
+with those fields. By default the CLI continues until a breakpoint, quiescent
+wait, suspension, or termination.
+
+To control the echo session, save this as `.local/tutorial/commands.json`:
 
 ```json
 [
-  {"kind": "breakpoints", "node_ids": ["work"]},
+  {"kind": "breakpoints", "node_ids": ["echo"]},
   {"kind": "continue"},
   {"kind": "next"},
-  {"kind": "signal", "name": "approved", "payload": true},
-  {"kind": "advance_time", "seconds": 30},
   {"kind": "continue"}
 ]
 ```
+
+```sh
+weave workflow simulate .local/tutorial/simulation-request.json \
+  --commands .local/tutorial/commands.json --output json
+```
+
+Expect the final view to be `succeeded`; the command array pauses, steps, and then
+continues within one CLI invocation. For a signal-waiting onboarding session,
+`{"kind": "signal", "name": "customer-approved", "payload": {"approved": true}}`
+queues the approval. For a timer, `{"kind": "advance_time", "seconds": 30}` moves
+virtual time forward. Follow either operation with `{"kind": "continue"}` to
+process the queued fact or newly due timer.
 
 The library exposes `next`, `continue_until_breakpoint`, `signal`, `advance_time`,
 `inspect`, and `set_breakpoints`. Constructor and inspection execute no nodes.
 Only `advance_time` moves time; signals and time movement return inspection
 without reducing the graph. Signal schema checks happen before queuing a receipt.
+
+## Reading the debugger view
+
+| Field | How to use it |
+| --- | --- |
+| `status` | Distinguish a breakpoint pause, a wait, success, and failure |
+| `selected_node` | The next ready node, or null when no node is ready |
+| `active_nodes` | Outstanding waits and tasks |
+| `variables` | Current run data, including input, step values, and final output |
+| `diagnostics` | Debugger errors such as a missing mock |
+| `now` | Virtual time; sleeping in your shell does not change it |
+
+A wait is not a failure. Send the expected signal or advance virtual time, then
+continue. An unknown breakpoint ID is an error; use IDs from `workflow explain`.
 
 ## Boundaries and state
 
@@ -97,20 +155,20 @@ debugger failure and do not fabricate a production worker incident.
 
 ## Server sessions
 
-Routes are project-scoped beneath `/tenants/{tenant}/projects/{project}`:
+Routes are project-scoped beneath `/api/v1/tenants/{tenant}/projects/{project}`:
 
 - `POST /debug/sessions`: the same `{artifact,mocks,input,now}` request; returns
   `{id,revision,created_at,expires_at,view}`, initially revision 1.
 - `GET /debug/sessions/{id}`: authorized inspection.
 - `POST /debug/sessions/{id}/commands`: one command from the array above;
-  requires numeric `If-Match` with the current revision.
+  requires `If-Match` with the current revision, for example `"1"`.
 
 Every operation requires the creator and a current project `simulate` capability.
 No environment, activation, connection grant or worker release is required.
 Tenant RLS and project predicates are independent of creator checks. Each mutation
 locks the session row, reloads current grants, checks database-time expiry and
-revision, then atomically commits one new revision. A stale revision returns409;
-expired sessions return410. The fixed one-hour expiry never moves with virtual
+revision, then atomically commits one new revision. A stale revision returns HTTP 409;
+expired sessions return HTTP 410. The fixed one-hour expiry never moves with virtual
 time or inspection, and the application role cannot update its columns.
 
 Native services keep no mutable simulator singleton. A fresh process restores the

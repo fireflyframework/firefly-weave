@@ -16,21 +16,50 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Offline CLI
+# CLI reference
 
 Install the base `firefly-weave` wheel to obtain `weave`. Server and worker extras
 are unnecessary. The offline commands listed below do not initialize PyFly, read application
 configuration/credentials, discover providers, or connect to a service. They read
 only explicitly supplied source/catalog paths and write only requested exports.
 
+## Pick the command family
+
+| Goal | Commands | Prerequisite |
+| --- | --- | --- |
+| Check or simulate a local definition | `workflow validate`, `compile`, `explain`, `simulate` | Base package and explicit files |
+| Export language schemas | `schema export` | Base package |
+| Call a running API | `remote`, `definitions`, `runs`, other remote families | `client` extra, token, scope, local grants |
+| Run durable workflows for the first time | Follow the [standalone tutorial](../guides/standalone.md) | Local API, database, identity setup |
+
+From a locked source checkout, prefix commands with
+`uv run --locked --no-editable` (and `--extra client` for remote commands).
+Use `weave --help`, then the selected command's `--help`, to inspect arguments.
+
+## Offline workflow commands
+
+The [authoring guide](../guides/workflow-authoring.md) creates these files under
+`.local/tutorial`. Run the following from the checkout root after that guide's
+YAML and empty catalog steps:
+
 ```sh
 weave version --output json
-weave workflow validate source.yaml --output json
-weave workflow compile source.yaml --catalog catalog.lock.json --strict --output json
-weave workflow explain source.yaml --catalog catalog.lock.json
-weave workflow compile source.yaml --catalog catalog.lock.json --directory ./compiled
-weave schema export --directory ./schemas
+weave workflow validate .local/tutorial/echo.workflow.yaml --output json
+weave workflow compile .local/tutorial/echo.workflow.yaml \
+  --catalog .local/tutorial/empty-catalog.json --strict --output json
+weave workflow explain .local/tutorial/echo.workflow.yaml \
+  --catalog .local/tutorial/empty-catalog.json
+weave workflow compile .local/tutorial/echo.workflow.yaml \
+  --catalog .local/tutorial/empty-catalog.json --directory .local/tutorial/compiled
+weave schema export --directory .local/tutorial/schemas
 ```
+
+`validate` reports partial success; `compile` returns an artifact because an
+explicit catalog was supplied. `explain` shows the plan without executing it.
+The last two commands create files and refuse existing targets by default. Choose
+a new output directory when repeating an export. To execute the echo plan without
+services, build the request described in [simulation](simulation.md) and run
+`weave workflow simulate .local/tutorial/simulation-request.json --output json`.
 
 `workflow validate`, `compile`, and `explain` accept `SOURCE`, optional
 `--catalog LOCK`, `--output text|json` (default `text`), and `--strict`. A `.json`
@@ -123,7 +152,53 @@ Install the `client` extra for authenticated remote operations. The public comma
 
 All public remote commands take `--base-url`, `--tenant`, applicable `--project`/`--environment`, and `--output json`. Their matching environment variables are `WEAVE_BASE_URL`, `WEAVE_TENANT_ID`, `WEAVE_PROJECT_ID` and `WEAVE_ENVIRONMENT_ID`. A request body is an exact JSON DTO supplied with `--request FILE`; resource IDs are positional, revisions use `--revision`, and keyed mutations require `--idempotency-key`. Discovery uses `--limit` and `--cursor`. Use each command's `--help` for its exact required arguments. The [API inventory](api.md) defines the corresponding operation IDs and request/response schemas.
 
-Examples after setting the scope and API origin:
+### Construct a remote request file
+
+Complete the [standalone tutorial](../guides/standalone.md) and retain its
+`WEAVE_BASE_URL`, `WEAVE_TENANT_ID`, `WEAVE_PROJECT_ID`, and
+`WEAVE_ENVIRONMENT_ID` values. Supply a current `WEAVE_ACCESS_TOKEN`, or use the
+login configuration below. Remote commands do not read server environment files
+or bootstrap missing identities.
+
+For a first remote compile, create `.local/tutorial/compiler-request.json` using
+the [API example](api.md#make-one-request-before-reading-the-inventory), then run:
+
+```sh
+weave remote compile --request .local/tutorial/compiler-request.json --output json
+```
+
+Expect `ok: true` and an artifact. The CLI sends the exact JSON request; it does
+not infer source from a YAML path in a JSON field. To publish instead, create a
+separate request containing only `source` and `format` (no compiler-only fields):
+
+```sh
+python3 - <<'PYTHON'
+import json
+from pathlib import Path
+request = {"source": Path(".local/tutorial/echo.workflow.yaml").read_text(),
+           "format": "yaml"}
+Path(".local/tutorial/publication.json").write_text(json.dumps(request))
+PYTHON
+weave definitions publish --collection workflows \
+  --request .local/tutorial/publication.json \
+  --idempotency-key tutorial-echo-publish-1 --output json
+```
+
+This mutates the server and requires `definition.publish`. Expect a version ID,
+name, version, and digest. Reuse that key only for an exact retry of this request;
+use a new workflow version and key when changing its source. The
+[SDK example](sdk.md#extend-the-host-to-publish-activate-and-run) explains how that
+version becomes an activation and run. Python methods build typed request objects;
+the CLI expects you to supply those exact wire objects in files.
+
+### Other operation shapes
+
+The following are lookup examples, **not a script to run in order**. Each request
+file must contain the corresponding operation's JSON body, each variable must be
+an actual resource ID from your scope, and each principal needs that operation's
+grant. Use the [API inventory](api.md) and [native OpenAPI export](native-openapi.md)
+to find those body schemas:
+
 
 ```sh
 weave remote catalog --output json
@@ -138,7 +213,7 @@ weave runs replay "$RUN_ID" --output json
 weave runs debug command "$SESSION_ID" --revision 1 --request debug-command.json --output json
 ```
 
-Remote JSON stdout contains one result/problem and no banners; diagnostics go to stderr. Exit0 means the requested operation/check succeeded, exit1 means invalid source, denied/domain operation or incomplete/inconsistent replay, exit2 means local configuration/invocation error, and exit3 means remote service/transport/contract failure. Unsafe requests are not retried. Compiler responses retain exact canonical source locations; `filename` is a caller-supplied label, not a server path to open.
+Remote JSON stdout contains one result/problem and no banners; diagnostics go to stderr. Exit 0 means the requested operation/check succeeded, exit 1 means invalid source, denied/domain operation or incomplete/inconsistent replay, exit 2 means local configuration/invocation error, and exit 3 means remote service/transport/contract failure. Unsafe requests are not retried. Compiler responses retain exact canonical source locations; `filename` is a caller-supplied label, not a server path to open.
 
 ## Login and secure persistence
 
@@ -152,7 +227,7 @@ weave auth status --auth-config login.json --output json
 weave auth logout --auth-config login.json --revoke --output json
 ```
 
-The native credential store is the default and fails closed if unavailable. To select the explicit POSIX fallback, first create an absolute caller-owned0700 directory, then pass `--credential-store file --credential-file /absolute/private/session.json` on every invocation. An existing record must be a caller-owned0600 regular file; insecure modes and symlink/hardlink paths are rejected. The fallback is unsupported on Windows. Neither path prints persisted tokens. Device instructions (verification URI/user code) go to stderr; token, refresh token and PKCE verifier do not.
+The native credential store is the default and fails closed if unavailable. To select the explicit POSIX fallback, first create an absolute caller-owned 0700 directory, then pass `--credential-store file --credential-file /absolute/private/session.json` on every invocation. An existing record must be a caller-owned 0600 regular file; insecure modes and symlink/hardlink paths are rejected. The fallback is unsupported on Windows. Neither path prints persisted tokens. Device instructions (verification URI/user code) go to stderr; token, refresh token and PKCE verifier do not.
 
 `--flow auto` selects advertised device authorization; `--flow pkce` launches the browser with an already bound ephemeral loopback callback. Cancellation/expiry stores no active credentials. Fresh lifecycle UUIDs and the shared cross-process lock fence refresh, logout and late login completion as described in [SDK credential lifecycle](sdk.md#device-login-pkce-and-stores).
 
@@ -177,7 +252,9 @@ above, `weave compatibility read --output json` reads the current scoped report
 under `status.read`. `weave compatibility check --output json` requests a fresh
 check and requires `compatibility.check`.
 
-Create a retention request file containing `{"target":"expired_debug","limit":100}`,
+Retention application removes eligible retained data. Use this operational
+command only when you intend to apply the plan in the selected project; it is
+not part of the echo tutorial. Create a retention request file containing `{"target":"expired_debug","limit":100}`,
 then capture the returned immutable plan ID:
 
 ```sh

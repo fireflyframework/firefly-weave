@@ -18,6 +18,49 @@ SPDX-License-Identifier: Apache-2.0
 
 # Offline OpenAPI connector import
 
+## Choose the integration approach
+
+Import is useful for a commercial service that supplies a local OpenAPI 3.1 JSON
+contract whose selected operations fit this page's supported subset. It generates
+HTTP operation definitions, not vendor onboarding, account permissions, webhook
+verification, or a certified vendor SDK. Obtain the service's document through its
+approved distribution channel and review it locally. A Salesforce, SAP, or other
+product label does not make unsupported OAuth, OData, GraphQL, or schema features
+work automatically. Use [custom package authoring](authoring.md) when an operation
+needs a protocol-specific implementation.
+
+## Try the local inventory example
+
+From the repository root, with the project Python environment active:
+
+```sh
+python examples/openapi/import_connector.py ./inventory-http
+weave connector validate ./inventory-http/connector.json --output json
+```
+
+The target must not already contain files. The example includes its source and
+policy, so no download or account is needed. Expect the message `Review the
+generated package at inventory-http. No request was sent.` and a successful
+validation result. Inspect `connector.json`, `examples/get-item.action.json`,
+`import-provenance.json`, and `src/inventory_http/__init__.py` before building
+anything. The provenance file contains the generated-to-source pointer map.
+The example selects `getItem`, renames it `get-item`, and fixes the service origin
+and `/v1/items/{id}` path. Invocation input is `{"path":{"id":"item-123"}}`.
+Its hypothetical response is `{"status":200,"body":{"name":"Widget"}}`.
+
+For your own service, save its document as `api.json` and write `policy.json`
+using the policy below, replacing the operation ID, server, effect and statuses
+with reviewed values from that document. Run the import without `--directory`
+first to inspect diagnostics. A diagnostic's source pointer tells you which
+operation/schema needs attention; an unsupported feature requires an explicit
+contract/profile decision, not deleting constraints until import passes.
+
+Only after local review and build should you follow [standalone setup](../guides/standalone.md)
+and [package publication and activation](authoring.md#from-package-to-an-executable-workflow).
+Keep Connector version IDs, connection revision IDs, worker release IDs, and the
+resulting activation ID from those API responses; the importer cannot allocate them.
+
+
 The SDK and CLI import selected operations from one local, self-contained OpenAPI JSON document. Import produces reviewable Connector/Action definitions, package metadata, provenance and a generated-to-source pointer map. It never fetches schemas, imports package code, builds, installs, publishes, activates, creates credentials or grants destinations.
 
 ```python

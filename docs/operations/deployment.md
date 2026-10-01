@@ -25,11 +25,50 @@ installed API must have completed a first public run. Use Docker Compose 2.30 or
 with a Unix endpoint; remote Docker endpoints and Docker sockets inside the API
 are unsupported by `weave worker deploy`.
 
+## What you will run
+
+The standalone walkthrough leaves a foreground API connected to PostgreSQL and
+Keycloak. This guide adds a containerized **remote worker** and proves it can
+complete a task against a small local HTTP receiver. The later native-executor
+section is a second exercise using a built-in HTTP connector.
+
+| Component | Job in this exercise | How it runs |
+| --- | --- | --- |
+| PostgreSQL | Stores definitions, runs, leases, grants, and recovery state | Existing standalone Compose service |
+| Keycloak | Issues separate host and worker access tokens | Existing standalone Compose service |
+| Foreground API | Accepts authorized requests and schedules durable work | Terminal 2 from standalone |
+| Remote worker | Claims `example-record@1.0.0` tasks through HTTP and calls the receiver | New container in its own worker project |
+| Effect receiver | Records one result per operation key in `effects.sqlite` | New foreground process in terminal 3 |
+| Container API and native executor | Optional second API replica and built-in connector execution | Later Compose exercise |
+
+Run build, provisioning, deployment, and verification commands in **terminal 1**,
+from the repository root. Keep terminal 2 for API output and terminal 3 for the
+receiver. For each new terminal, run the `cd` and `source .../session.env` commands printed
+by standalone setup. They restore the same repository, `WEAVE_WORK_DIR`,
+`WEAVE_PYTHON`, and selected ports; shell variables do not otherwise carry over
+between terminals. The first terminal must still have the standalone runtime and
+identity environment loaded. `session.env` contains paths and ports, not runtime
+or identity credentials.
+
+The two runs prove different paths: the remote worker returns
+`{"receipt":"accepted","customer":"demo"}`; the native connector later returns
+`{"status":200,"body":{"ready":true}}`. Neither requires a real provider account.
+
+The commands create retained images, containers, and private receipts. Use this
+sequence once for a fresh installation. For an existing deployment, use the
+[stop and restart instructions](#stop-the-intended-scope) instead of rerunning
+identity provisioning or overwriting receipts.
+
 A local `sha256:` image ID identifies local image bytes. It is not a registry
 manifest digest, signature, live-provider certification, or automatic runtime
 attestation. Release admission and current scoped grants remain explicit.
 
 ## Build the server from the prepared wheel
+
+The build context already exists at `$WEAVE_WORK_DIR/release/images` because the
+standalone preparation step created it. `WEAVE_SERVER_IMAGE` will hold the exact
+image ID returned by Docker; it is not a tag to invent. This image is used in the
+optional native exercise, while the remote worker gets its own image below.
 
 The preparation command builds one wheel and sdist and exports separate base,
 worker, server, Teams and Kafka closures from `uv.lock`. The Python and uv images
@@ -56,6 +95,11 @@ Dockerfile independently installs the worker closure; it does not inherit the
 server environment.
 
 ## Prepare a worker context
+
+A worker **manifest** describes the task names, versions, input/output schemas,
+and side-effect rules the worker promises to implement. The Python entrypoint
+implements those tasks. A **release** admitted later binds that declaration to
+an exact image. Building an image by itself does not authorize it to claim work.
 
 The example manifest declares `example-record@1.0.0`. Its entrypoint requires an
 owned HTTP effect endpoint that accepts `Idempotency-Key`, retains receipts, and
@@ -94,10 +138,23 @@ authorization. There is no raw SQL, fabricated identity, new route or automatic
 image authority. Principal creation/linking currently has this explicit Python
 administration boundary; public HTTP exposes tenant creation and grants.
 
-In the first standalone terminal, with runtime and identity configuration loaded,
-run once for this fresh runtime database:
+These files pass real identifiers between steps:
+
+| File under `WEAVE_WORK_DIR` | Producer | What the next step reads |
+| --- | --- | --- |
+| `first-run.json` | Standalone first run | Existing tenant, project, and environment IDs |
+| `worker-principal.json` | `provision_worker.py` below | Verified local worker principal ID |
+| `worker-release.json` | `admit_worker.py` below | Release ID, activation ID, and environment API path |
+| `worker-deployment.json` | `worker deploy` later | Exact container, image, Docker context, and stop command |
+
+Do not replace IDs with a client name such as `weave-worker`: the client name
+identifies a Keycloak client, while these UUIDs identify Weave resources.
+
+In terminal 1, with runtime and identity configuration loaded, select the
+host-reachable API origin and run once for this fresh runtime database:
 
 ```sh
+export WEAVE_API_URL="http://127.0.0.1:$WEAVE_API_PORT"
 "$WEAVE_PYTHON" examples/provision_worker.py --provider local-keycloak \
   --output "$WEAVE_WORK_DIR/worker-principal.json"
 "$WEAVE_PYTHON" examples/admit_worker.py \
@@ -114,8 +171,10 @@ matching action/workflow and activates it. All IDs come from actual responses.
 The worker gets no authoring grant. Do not rerun identity linking against an
 already-linked worker; failed attempts retain their partial state for inspection.
 
-Start the example effect receiver in a third terminal using the same
-`WEAVE_WORK_DIR` path:
+### Start the receiver and expose the local API to the worker
+
+In terminal 3, run the printed `cd` and `source .../session.env` commands from
+standalone setup, then start the example effect receiver:
 
 ```sh
 python3 examples/idempotent_receiver.py --database "$WEAVE_WORK_DIR/effects.sqlite" \
@@ -126,9 +185,25 @@ Expected: `Local idempotent receiver ready`. Its independently durable SQLite
 receipts survive receiver, API and worker restarts; a repeated operation key with
 the same body returns its original receipt and a conflicting body is rejected.
 This is a local demonstration target, not production receiver certification.
-Restart the API terminal with `--host 0.0.0.0` when a container must reach it on
-your owned development network; normal bearer authorization remains required.
-Check readiness before proceeding:
+Binding to `0.0.0.0` makes the receiver reachable through the host's network
+interfaces. Use an isolated development network: this example receiver has no
+authentication and must not be exposed as a public service.
+
+In terminal 2, stop the foreground API with Ctrl-C. That terminal already has the
+session and runtime settings from standalone. If you opened a replacement
+terminal, first run the printed `cd` and `source .../session.env` commands, then
+load `runtime.env` with `set -a; source "$WEAVE_WORK_DIR/runtime.env"; set +a`.
+Restart the API so the worker container can reach the host:
+
+```sh
+env -u WEAVE_MIGRATION_DATABASE_URL \
+  "$WEAVE_WORK_DIR/runtime/bin/python" -I -m uvicorn \
+  firefly_weave.main:create_application --factory --host 0.0.0.0 \
+  --port "${WEAVE_API_PORT:?Set the selected API port}"
+```
+
+The API still requires normal bearer authorization. Return to terminal 1 and
+check both endpoints before proceeding:
 
 ```sh
 "$WEAVE_PYTHON" - <<'PY'
@@ -144,8 +219,12 @@ export WEAVE_ENVIRONMENT_URL="$(python3 -c 'import json,os; print(json.load(open
 export WEAVE_WORKER_RELEASE_ID="$(python3 -c 'import json,os; print(json.load(open(os.environ["WEAVE_WORK_DIR"]+"/worker-release.json"))["release_id"])')"
 ```
 
-`host.docker.internal` must resolve from your selected Docker runtime. Use its
-host-gateway mapping or an explicit reachable owned host address on Linux. The
+These URLs are used **inside the worker container**, whereas the readiness
+checks above run on the host. `host.docker.internal` must already resolve from
+your selected Docker runtime. The generated worker deployment does not install a
+host-gateway mapping. On a Linux runtime without that name, replace the host in
+`WEAVE_API_URL`, `WEAVE_TOKEN_URL`, and `WEAVE_EFFECT_URL` with an explicit reachable
+owned host address before creating `worker.env`. The
 configured Keycloak issuer stays unchanged when its token endpoint is reached
 through a host gateway. Outside localhost development, use trusted HTTPS origins.
 
@@ -155,7 +234,7 @@ The example needs these environment values in a **new owner-only** file:
 | --- | --- |
 | `WEAVE_API_URL` | API origin reachable from the container |
 | `WEAVE_TOKEN_URL` | Trusted machine-token endpoint reachable from the container |
-| `WEAVE_WORKER_SECRET` | Provisioned worker client credential |
+| `WEAVE_WORKER_SECRET` | From the existing `identity.env`; credential for Keycloak client `weave-worker` |
 | `WEAVE_ENVIRONMENT_URL` | Environment API path assembled from actual scope IDs |
 | `WEAVE_WORKER_RELEASE_ID` | ID returned by release admission |
 | `WEAVE_EFFECT_URL` | Owned idempotent receiver endpoint |
@@ -177,7 +256,13 @@ with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") 
     stream.write("".join(key + "=" + value + "\n" for key, value in values.items()))
 print("Owner-only worker configuration created")
 PY
+export WEAVE_API_URL="http://127.0.0.1:$WEAVE_API_PORT"
 ```
+
+The final export restores terminal 1's API origin for host-side commands and the
+next tutorial chapter. It does not change the container-reachable API URL already
+saved in `worker.env`; the worker reads that private file when its container is
+created.
 
 `localhost` inside a container is that container. Configure reachable, trusted
 origins explicitly. The example's localhost Keycloak trust settings and a remote
@@ -185,6 +270,10 @@ worker's container routing must describe the same issuer; do not change the issu
 claim to work around connectivity. Production identity uses HTTPS.
 
 ## Deploy only the verified worker image
+
+Deploy uses the image already built and the private six-value configuration
+already written. Keep `umask 077` in terminal 1 so the redirected deployment
+receipt is private. Leave the API and receiver running throughout this step.
 
 ```sh
 "$WEAVE_PYTHON" -I -m firefly_weave.cli.main worker deploy --target compose \
@@ -263,6 +352,13 @@ not transparent token refresh. Its configured task budget is 180 seconds with a
 30-second credential margin. See the worker protocol before adapting that budget.
 
 ## Configure and run the API and native executor containers
+
+This optional exercise follows the remote-worker exercise above. It reuses the
+verified worker principal but admits a **separate native release**. A native
+executor runs built-in connector code beside Weave's database services; unlike
+the remote SDK worker, it needs application and catalog database authority.
+The container uses the server image entrypoint, with native executor settings and
+background scheduling disabled. The API replica keeps scheduling enabled.
 
 Keep the independent receiver on port 8090 running. The next recipe admits a
 native read-only HTTP capability, grants the already verified worker principal
@@ -386,6 +482,11 @@ share exact package bytes but have separate runtime configurations and authority
 
 ## Stop the intended scope
 
+Stop task producers and worker processes before the API, then stop PostgreSQL
+and Keycloak last. Keep the receiver and its SQLite receipt file through any
+recovery check: they are the evidence that an external effect already happened.
+Stop a foreground process with Ctrl-C in its own terminal.
+
 To stop **only the deployed worker**, execute the exact argv from its receipt:
 
 ```sh
@@ -415,3 +516,39 @@ Stop PostgreSQL/Keycloak separately using the standalone guide only after every
 writer is fenced. Keep volumes and secret files. Use the
 [backup/restore procedure](backup-restore.md) before maintenance that requires a
 restorable copy.
+
+### Restart a stopped local deployment
+
+For unchanged configuration, start the existing PostgreSQL/Keycloak services with
+the standalone startup command and repeat its readiness checks. Start the
+receiver with the same `effects.sqlite` path, then restart the foreground API
+with the command above. For the optional container API/native executor, reuse the
+same complete Compose invocation and environment files from their startup step.
+An `up --no-recreate` does not apply edited environment files to existing containers.
+
+The remote example deliberately exits before its access token expires, and its
+deployment has no automatic restart policy. To start another invocation of the
+same stopped container, first check that its recorded image and project still
+match. In terminal 1:
+
+```sh
+python3 - <<'PY'
+import json, os, subprocess
+from pathlib import Path
+receipt = json.loads((Path(os.environ["WEAVE_WORK_DIR"]) / "worker-deployment.json").read_text())
+docker = ["docker", "--context", receipt["context"]]
+container = json.loads(subprocess.check_output(docker + ["inspect", receipt["container_id"]]))[0]
+assert container["Id"] == receipt["container_id"]
+assert container["Image"] == receipt["image"]
+assert container["Config"]["Labels"]["com.docker.compose.project"] == receipt["project"]
+assert container["State"]["Status"] == "exited", "Inspect the current container state before starting it"
+subprocess.run(docker + ["start", receipt["container_id"]], check=True)
+PY
+```
+
+A new invocation obtains a fresh token and registers a new worker instance; it
+uses the existing release and grants. Repeat the workflow verification to confirm
+it can claim and complete tasks. Rerunning `worker deploy` against the occupied
+project is intentionally refused. Changed image bytes, credentials, or release
+requirements need a deliberate new deployment, not another invocation of an old
+container. See [upgrades](upgrades.md) for schema or artifact changes.

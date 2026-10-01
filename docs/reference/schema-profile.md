@@ -18,6 +18,47 @@ SPDX-License-Identifier: Apache-2.0
 
 # Weave v1alpha1 schema profile
 
+A schema is the contract for a JSON value: which properties it has, which are
+required, and which types or bounds they must satisfy. Workflow `inputSchema`
+checks values supplied by callers; `outputSchema` checks the result. Action and
+signal schemas apply at their corresponding boundaries. This page lists the
+supported rules and limits. Start with [workflow authoring](../guides/workflow-authoring.md)
+for a complete YAML example, or the [standalone tutorial](../guides/standalone.md)
+for a server run.
+
+## Check a small contract
+
+The echo tutorial accepts exactly one string property. This independent Python
+example checks the schema itself, then checks a good and bad input:
+
+```python
+from firefly_weave.compiler.schemas import validate_payload, validate_schema
+
+schema = {
+    "type": "object",
+    "properties": {"message": {"type": "string"}},
+    "required": ["message"],
+    "additionalProperties": False,
+}
+assert validate_schema(schema, {}) == ()
+assert validate_payload(schema, {"message": "Hello, Weave"}, {}) == ()
+issues = validate_payload(schema, {"message": 42}, {})
+print([(issue.code, issue.path) for issue in issues])
+```
+
+Expect `[("WV-SCHEMA-INVALID_INSTANCE", "/message")]` (Python may display single
+quotes). The second argument to `validate_schema` and third to `validate_payload`
+is a **bundle**, a mapping of local schema names to schema documents; `{}` means
+this example has no referenced schemas.
+
+`properties` defines allowed values when a property is present. `required` makes
+it mandatory. `additionalProperties: false` rejects undeclared properties.
+Omitting `required` does not make a property required; declaring `default` does
+not insert a missing value. A workflow value expression uses `ref`; a schema uses
+`$ref`. These are separate reference systems.
+
+## Profile scope
+
 User input/output, signal, connector configuration and authentication schemas use
 a bounded subset of JSON Schema Draft 2020-12. This is not a claim of complete
 Draft support. Validation imports no application, database, provider, or secret
@@ -26,7 +67,7 @@ is a base dependency so supported format checkers are installed explicitly.
 
 ## Public interfaces
 
-```python
+```text
 export_schemas(*, extra_models=None) -> dict[str, JsonObject]
 schema_snapshot(*, extra_models=None) -> bytes
 validate_schema(schema, bundle, *, limits=SchemaLimits()) -> tuple[Diagnostic, ...]

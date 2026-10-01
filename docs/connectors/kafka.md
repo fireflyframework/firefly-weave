@@ -18,6 +18,50 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kafka broker connector and durable triggers
 
+## Choose publish, consume, or both
+
+A **publish Action** sends a Workflow's JSON object to one configured topic.
+A **broker trigger** consumes topic records and starts a pinned Workflow or signals
+one existing run. These directions share a connection policy but use different
+execution authority. Follow [standalone setup](../guides/standalone.md),
+[worker admission](../guides/workers.md), and the
+[publication sequence](authoring.md#from-package-to-an-executable-workflow) first.
+Have the broker operator supply the cluster identity, topics, advertised endpoints,
+TLS CA, and permitted numeric addresses; creating a Weave connection does not
+provision a Kafka cluster or grant broker ACLs.
+
+After the provisioning steps below, this complete run-trigger request belongs at
+`POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/broker-triggers`:
+
+```json
+{
+  "name": "order-events", "driver": "kafka",
+  "connection_revision_id": "00000000-0000-4000-8000-000000000001",
+  "cluster_id": "orders-cluster", "topic": "orders", "kind": "run",
+  "activation_id": "00000000-0000-4000-8000-000000000002",
+  "payload_schema": {
+    "type": "object", "properties": {"order_id": {"type": "string"}},
+    "required": ["order_id"], "additionalProperties": false
+  },
+  "dead_letter_policy": "halt"
+}
+```
+
+Replace the UUIDs with the connection creation and Workflow activation response
+IDs. The target Workflow input schema must accept this payload. Save the returned
+trigger `id` and `binding_id`. The record value is `{"order_id":"123"}`, with
+exactly one `weave-event-id` UUID header as specified below; arbitrary existing
+Kafka records are not automatically valid Weave events.
+
+A successful publish returns `topic`, `partition`, `offset`, and `event_id`.
+Consumer acceptance records a receipt containing `run_id` (and `signal_id` for a
+signal target). If nothing starts, check the consumer enable flag, scheduler
+identity, operator route pins, and broker ACLs before inspecting trigger incidents.
+A blocked `halt` route requires fixing the rejected source record/policy and an
+explicit authorized retry; retry does not skip the record. A lost publish
+acknowledgment requires [incident reconciliation](../reference/incident-operations.md).
+
+
 The broker family currently supports Kafka only. Install `firefly-weave[server,kafka]` (or build Docker target `kafka-server`) and enable `WEAVE_BROKER_POLICY`. The locked driver is aiokafka 0.14.0 on CPython 3.12/3.13, Linux or macOS with an owned standard selector loop. Core startup without the Kafka extra does not import the driver. An enabled missing or incompatible driver fails startup.
 
 ## Provisioning and authority
@@ -46,6 +90,31 @@ Production connections require verified TLS and `SASL_SSL` with `PLAIN`, `SCRAM-
 6. Consumer replicas set `WEAVE_KAFKA_CONSUMER_ENABLED=true` and supply the existing execute-only scheduler database URL. API/publish-only replicas leave it false and can still create durable routes for consumer replicas. `max_clients=1` is publish-only; background consumption with that value fails startup.
 
 A source binding retains the exact configuring principal, scope, source, connection and configuration fingerprint. Revocation is available through environment `connection-source-bindings` API routes, typed SDK methods, and `weave source-bindings`. Routes expose read/list/disable/retry and metadata-only incident discovery on the same native API, SDK, CLI and OpenAPI surface. Connection `test` deliberately reports failure for Kafka: a metadata-only connection test has no standing or worker authority to create a credential-bearing client. Use an authorized publish or trigger for a live test.
+
+## Connection request shape
+
+Use the published Connector version `id` in this request, then use the returned
+connection revision `id` in operator route pins and triggers. These names are
+synthetic; obtain actual endpoints and topic ACLs from your broker operator.
+
+```json
+{
+  "name": "orders-kafka",
+  "connector_version_id": "00000000-0000-4000-8000-000000000003",
+  "config": {
+    "driver": "kafka", "cluster_id": "orders-cluster",
+    "bootstrap": ["kafka://broker.example:9093"], "topics": ["orders"],
+    "security_protocol": "SASL_SSL", "sasl_mechanism": "PLAIN", "username": "weave-orders"
+  },
+  "secretRef": {"password": "orders-kafka-password"},
+  "allowed_destinations": ["kafka://broker.example:9093"]
+}
+```
+
+The one-broker allowlist is complete only for an installation whose bootstrap,
+advertised broker and coordinator all use that endpoint. Add every actual
+advertised destination and a corresponding operator route pin; a bootstrap
+address alone does not authorize newly discovered brokers.
 
 ## Delivery and failure semantics
 

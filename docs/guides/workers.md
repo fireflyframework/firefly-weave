@@ -18,21 +18,101 @@ SPDX-License-Identifier: Apache-2.0
 
 # Implement and operate a worker
 
-A worker executes admitted task intent. It is not a host administrator and does
-not obtain database or secret authority simply by knowing a tenant/project path.
-Start with [the worker example](../../examples/worker/main.py), its
-[manifest](../../examples/worker/manifest.json), and the [worker SDK](../../src/firefly_weave/sdk/worker.py).
+A **worker** is a process that receives a task from Weave, calls your business
+code, and reports a result. Use one when a workflow must perform work outside the
+pure expression language, such as recording a customer in another service.
+The echo workflow in the [standalone tutorial](standalone.md) needs no worker;
+finish that tutorial before adding this integration.
 
-1. Implement the declared Action contract and validate inputs/outputs using its
-   schemas. Keep credentials outside business payloads, logs and completion data.
-2. Package the implementation and record its immutable build/release identity.
-   An operator must admit that release and grant the worker its intended scope.
-3. Configure only the API/token endpoints, scoped principal and exact release
-   identity that worker needs. Do not pass the API's database or migration env file.
-4. Claim tasks and maintain lease heartbeats through the SDK. Execute only while
-   the current lease/admission permits it; preserve cancellation and deadline behavior.
-5. Complete with the exact lease generation and bounded result. A stale completion
-   is rejected even if the external provider already accepted its request.
+This guide explains the checked-in [worker example](../../examples/worker/main.py)
+and its [manifest](../../examples/worker/manifest.json). Its external receiver,
+identity, image, and grants must be provisioned through the
+[deployment guide](../operations/deployment.md). Running `main.py` alone is not a
+complete deployment.
+
+## 1. Define the work before implementing it
+
+An **Action** is the reusable workflow-facing contract. A **task capability** is
+the worker-facing contract that implements it. This example uses the exact
+capability `example-record@1.0.0`:
+
+| Contract field | Example value | Meaning |
+| --- | --- | --- |
+| `taskType` / `taskVersion` | `example-record` / `1.0.0` | Exact handler identity |
+| Input | `{"customer": "demo"}` | Required string, no extra properties |
+| Output | `{"receipt": "accepted", "customer": "demo"}` | Required receipt constant and customer string |
+| `timeoutSeconds` | `180` | Absolute task execution budget |
+| `sideEffect` | `idempotency_key` | The external target must support deduplication by operation key |
+
+The published Action names this capability in its `implementation`. The workflow
+calls the Action by name/version. The admitted release declares the same schemas
+and policy. All three must agree; a similarly named handler does not satisfy a
+different version's contract.
+
+## 2. Implement one handler
+
+The [example handler](../../examples/worker/main.py) receives a `TaskLease`.
+Its `input` is the validated task input. It posts that input to `WEAVE_EFFECT_URL`
+and sends `lease.operation_key` as the target's `Idempotency-Key`. It returns the
+target's JSON response, which must satisfy the output contract above.
+
+The essential wiring inside an already authenticated process is:
+
+```python
+from firefly_weave.sdk.worker import Worker
+
+# transport is the authenticated WorkerTransport created after registration.
+# record is an async function accepting one TaskLease and returning JSON.
+worker = Worker(transport, {"example-record@1.0.0": record}, concurrency=1)
+await worker.run()
+```
+
+This is a wiring excerpt; use the complete example for authentication,
+registration, and shutdown. `Worker` handles claims, heartbeats, and completion
+delivery around the handler. A **lease** is temporary permission to execute one
+task attempt. Its generation changes when recovery issues a new attempt; an old
+generation cannot complete the new one. Never print the lease's secret proof.
+
+Keep credentials outside business inputs, logs, and returned results. The API
+validates results against the pinned schemas; it rejects present secret-classified
+values rather than storing a masked successful output.
+
+## 3. Admit the release, then register an instance
+
+A **release** identifies an immutable build and its allowed capabilities. An
+**instance** is one running process of that release. A deployer admits the release
+before a worker can register; a worker cannot grant itself new capabilities.
+The deployment guide walks through the commands in this order:
+
+1. Build the image and record its actual immutable image digest.
+2. Provision the worker's verified identity and scoped grants, admit the manifest,
+   and retain the returned release ID.
+3. Activate the workflow with the matching worker release binding.
+4. Start the process with the environment below. It registers its instance and
+   claims only compatible, authorized tasks.
+
+| Variable used by the example | Source |
+| --- | --- |
+| `WEAVE_API_URL` | The deployed API origin |
+| `WEAVE_ENVIRONMENT_URL` | The scoped API path for the selected environment |
+| `WEAVE_TOKEN_URL` | The configured identity provider's token endpoint |
+| `WEAVE_WORKER_SECRET` | The separately provisioned `weave-worker` client credential |
+| `WEAVE_WORKER_RELEASE_ID` | The admitted release ID |
+| `WEAVE_EFFECT_URL` | The external receiver with durable idempotency support |
+
+Pass only worker configuration. The example explicitly refuses database and
+administrator environment variables. It obtains one access token per invocation
+and stops claiming early enough to drain its declared 180-second tasks; a
+supervisor can restart it with fresh credentials. It is not an indefinitely
+refreshing token client.
+
+## 4. Observe one task through completion
+
+Start a workflow that calls the published Action. Inspect its run history and
+worker status through the API. You should see a task claim, then a completion
+receipt, followed by the workflow's next step. No claim may simply mean no
+compatible work exists; check the Action identity, activation release pins, and
+current grants before changing the handler.
 
 ![Worker claim, external effect and fenced completion](../diagrams/worker-recovery.svg)
 

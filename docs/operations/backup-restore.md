@@ -32,6 +32,34 @@ schema/table/column/function grants, owners and policies. This is not a general
 production backup manager, live failover, point-in-time recovery, identity-provider
 backup, secret-provider backup or an RPO/RTO guarantee.
 
+## Before you begin
+
+This is a maintenance exercise with downtime. **Quiesced** means all application
+writers are stopped before capture. **Fenced** means the helper then prevents
+ordinary logins from reconnecting to the source database. A successful exercise
+leaves the source fenced and starts only the restored target; it does not switch
+traffic automatically or reopen the source afterward.
+
+Keep the standalone operator shell as terminal 1. It needs the existing private
+work directory, Docker context/project, installed interpreter, identity settings,
+and selected `WEAVE_API_PORT`. Use a separate terminal for the restored API in
+step 4, using standalone's printed `cd` and `source .../session.env` commands to
+restore paths and selected ports. PostgreSQL and Keycloak stay running throughout
+this exercise.
+
+| Item | Where it comes from | Why it is needed |
+| --- | --- | --- |
+| `runtime.env` | Standalone runtime provisioning | Identifies the source database and its three authorities |
+| `postgres.env` | Standalone PostgreSQL setup | Lets the helper reach the guarded control database |
+| `first-run.json` | First successful public workflow | Supplies scope, run ID, and expected output for comparison |
+| `effects.sqlite` | Optional deployment receiver | Preserves independent external-effect receipts |
+| `WEAVE_BACKUP_DIR` | New unique directory selected in step 2 | Holds the archive, manifests, restored credentials, and completion receipt |
+
+If you used a different PostgreSQL port from the supported local ports, this
+helper will refuse the installation. Do not change its guard or relabel an
+existing database to make the exercise run. Production needs a backup procedure
+appropriate to its own storage, identities, encryption, and recovery objectives.
+
 ## 1. Stop and fence all source writers
 
 Stop foreground API and receiver-independent worker processes with Ctrl-C in
@@ -108,7 +136,9 @@ including retained proof hashes and payloads. Protect it like the source databas
   --context "$WEAVE_DOCKER_CONTEXT" --postgres-container "$WEAVE_POSTGRES_CONTAINER"
 ```
 
-Expected: `{"complete": true, "catalog_data_equal": true}`. The helper:
+Expected: `{"complete": true, "catalog_data_equal": true}`. Keep the generated
+`restore.json` as the completion evidence; a dump file alone is not evidence that
+a restore succeeded. The helper:
 
 1. Checks the explicit local Docker endpoint, exact container/loopback port,
    PostgreSQL guard, server major version and complete administrator authority.
@@ -133,11 +163,26 @@ retains incomplete evidence and any created database; it never reopens the sourc
 or marks that target complete. Investigate locally and use a new output directory
 for a deliberate retry.
 
+### If the helper stops before completion
+
+| Symptom | Meaning | Next step |
+| --- | --- | --- |
+| Source still has sessions | An API, worker, dispatcher, or administrative session is still connected | Stop the identified owned writer and investigate before retrying |
+| Output directory exists | The helper will not overwrite earlier evidence | Inspect that attempt and choose a new directory for a deliberate retry |
+| Guard, port, authority, or ACL rejection | The source is outside this helper's supported local contract | Use the appropriate procedure; do not relax the guard |
+| Dump/restore or manifest comparison fails | Capture or recovery is incomplete | Retain archive/logs and both databases; do not start the target as verified |
+
+The source may already be fenced after a failure. Retrying application startup
+against it is not a recovery action. Inspect the retained `trial.json` and any
+completion receipt before selecting the active database.
+
 ## 4. Verify schema and start only the restored target
 
-Keep all source writers stopped. In a dedicated target terminal, set the existing
-`WEAVE_WORK_DIR` and `WEAVE_BACKUP_DIR` paths, then load **only** the new target
-runtime configuration and run the exact installed migration command:
+Keep all source writers stopped. In a dedicated target terminal, run standalone's
+printed `cd` and `source .../session.env` commands. Set `WEAVE_BACKUP_DIR` to the
+exact path selected in step 2 (print that nonsecret path in terminal 1 if needed),
+then load **only** the new target runtime configuration and run the exact installed
+migration command:
 
 ```sh
 set -a
@@ -146,7 +191,7 @@ set +a
 "$WEAVE_WORK_DIR/runtime/bin/python" -I -m firefly_weave.cli.main admin migrate
 env -u WEAVE_MIGRATION_DATABASE_URL \
   "$WEAVE_WORK_DIR/runtime/bin/python" -I -m uvicorn \
-  firefly_weave.main:create_application --factory --host 127.0.0.1 --port 8080
+  firefly_weave.main:create_application --factory --host 127.0.0.1 --port "${WEAVE_API_PORT:?Set the selected API port}"
 ```
 
 Expected: `Weave schema is current`, followed by API startup. For a same-version
@@ -165,15 +210,16 @@ from pathlib import Path
 import httpx
 async def main():
     receipt = json.loads((Path(os.environ["WEAVE_WORK_DIR"]) / "first-run.json").read_text())
+    base = "http://127.0.0.1:" + os.environ["WEAVE_API_PORT"]
     async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
-        ready = await client.get("http://127.0.0.1:8080/health/ready")
+        ready = await client.get(base + "/health/ready")
         ready.raise_for_status()
         token = await client.post(os.environ["WEAVE_KEYCLOAK_TEST_URL"] + "/realms/weave/protocol/openid-connect/token",
             data={"grant_type": "client_credentials"}, auth=("weave-host", os.environ["WEAVE_HOST_SECRET"]))
         token.raise_for_status()
         scope = receipt["scope"]
         path = f"/api/v1/tenants/{scope['tenant_id']}/projects/{scope['project_id']}/environments/{scope['environment_id']}/runs/{receipt['run_id']}"
-        response = await client.get("http://127.0.0.1:8080" + path,
+        response = await client.get(base + path,
             headers={"Authorization": "Bearer " + token.json()["access_token"]})
         response.raise_for_status()
         run = response.json()
@@ -183,6 +229,10 @@ async def main():
 asyncio.run(main())
 PY
 ```
+
+Expected: `Restored public run and output match the original receipt`. This
+checks that an authenticated public read can retrieve the preserved successful
+run, beyond the catalog/data equality already checked by the helper.
 
 Readiness alone does not prove continuation. For an installation containing active
 work, also resume signal/time waits, verify safe retries use their original

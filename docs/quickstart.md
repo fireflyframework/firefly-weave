@@ -16,54 +16,196 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Quickstart
+# 1. Write and simulate your first workflow
 
-To launch the API and run your first workflow, use the [standalone quickstart](guides/standalone.md).
-To begin with definitions and validation without starting services, follow the
-compiler walkthrough below.
+In this chapter, you will create a workflow that receives a message and returns
+that same message. You will see how Weave checks a definition and how to run it in
+the local simulator. No API server, Docker, database, or credentials are needed.
 
-## Compile a workflow locally
+**Result:** a successful simulation with `{"message": "Hello, Weave"}` as its
+output. This is a local simulation; chapter 2 will create a durable run in PostgreSQL.
 
-Use Python 3.12+ and `uv` from a source checkout. Installation may access the
-network; the compiler commands below need only local files and no credentials,
-database, identity provider, server startup or external provider.
+## Before you start
+
+Use a Bash or Zsh terminal, Git, Python 3.12 or later, and `uv`. Check that the
+commands are available:
 
 ```sh
-uv sync --locked
+git --version
+python3 --version
+uv --version
+```
+
+If a command is missing, follow the official [Git installation](https://git-scm.com/downloads/)
+or [uv installation](https://docs.astral.sh/uv/getting-started/installation/) instructions.
+`uv sync --python 3.12` can select or download Python 3.12 for the project.
+On Windows, use a
+Linux shell such as WSL for the shell examples in this tutorial.
+
+Clone the project and install its locked dependencies:
+
+```sh
+git clone https://github.com/fireflyframework/firefly-weave.git
+cd firefly-weave
+uv sync --locked --python 3.12
 uv run weave version --output json
-uv run weave workflow validate examples/definitions/customer-onboarding.workflow.yaml --output json
-uv run weave workflow compile examples/definitions/customer-onboarding.workflow.yaml \
-  --catalog tests/fixtures/catalog/onboarding.lock.json --strict --output json
 ```
 
-Validation without a catalog returns `validationOk: true`, `partial: true`,
-`ok: false`, and no artifact for this example. Complete compilation returns
-`partial: false` and `ok: true`. The included catalog is a compiler teaching
-fixture; it does not provision runnable connections, external systems or workers.
+If you already cloned the repository, enter that directory and run only the
+`uv` commands. Every command below runs from this repository's root.
+`uv sync` creates the local Python environment; `uv run` runs a command in it.
+You do not need to activate a virtual environment or install the sibling PyFly
+repository. The final command prints the Weave, language, and intermediate
+representation versions as JSON.
 
-To export the model-derived schemas into a new directory:
+## Create the definition
+
+A **workflow definition** describes input, ordered steps, and output. Save the
+following file by copying the entire command into your terminal:
 
 ```sh
-uv run weave schema export --directory ./weave-schemas --output json
+mkdir -p .local/tutorial
+cat > .local/tutorial/echo.workflow.yaml <<'YAML'
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: echo
+  version: 1.0.0
+spec:
+  inputSchema:
+    type: object
+    properties:
+      message: {type: string}
+    required: [message]
+    additionalProperties: false
+  outputSchema:
+    type: object
+    properties:
+      message: {type: string}
+    required: [message]
+    additionalProperties: false
+  steps:
+    - id: echo
+      kind: transform
+      value: {ref: /input}
+  output: {ref: /steps/echo/output}
+YAML
 ```
 
-Exports refuse accidental replacement by default. Keep temporary exports and
-private configuration outside source publication. See [CLI exit/output behavior](reference/cli.md).
+`.local/` is an ignored directory for your own tutorial files. Repeating the
+command above replaces only this tutorial definition, so save personal edits
+before repeating it.
 
-## Choose the next path
+Read the definition from top to bottom:
 
-- **Workflow author:** follow [schemas, expressions and compilation](guides/workflow-authoring.md).
-- **Host-product integrator:** choose [pure, remote or in-process embedding](guides/host-integration.md).
-- **Worker developer:** follow [worker implementation and admission](guides/workers.md).
-- **Standalone operator:** follow [configure, launch, and run](guides/standalone.md),
-  then [deploy the API and workers](operations/deployment.md).
+| Field | What it means in this example |
+| --- | --- |
+| `apiVersion` | The workflow language being used, not the installed package version |
+| `kind` | This document defines a workflow |
+| `metadata.name` and `version` | A name and immutable published version for the definition |
+| `inputSchema` | The input must be an object with one string field named `message` |
+| `outputSchema` | The final output must have that same shape |
+| `steps` | One step, with the local ID `echo` |
+| `kind: transform` | Compute a value inside Weave; no external worker is needed |
+| `value: {ref: /input}` | Read the entire workflow input |
+| `output: {ref: /steps/echo/output}` | Return the value produced by the `echo` step |
 
-Durable execution needs the `server` extra, explicit migrations, a nonowner app
-login, separate scheduler authority, verified and linked identities, local grants,
-and admitted connections/releases. There is no implicit administrative shortcut
-in the quickstart. Review the [capability matrix](capabilities.md) and
-[backup and restore](operations/backup-restore.md) prerequisites before deployment.
+`ref` is a reference to workflow data, not Python code or a filesystem path.
+`/input` means the input object; `/input/message` would mean just its message.
+The latter is a string and would not satisfy the object output schema above.
 
-The [contribution guide](../CONTRIBUTING.md) explains offline checks and the
-separate owned-backend acceptance suites. Running an end-to-end test harness is
-not required to learn the compiler.
+## Validate the file
+
+```sh
+uv run weave workflow validate .local/tutorial/echo.workflow.yaml --output json
+```
+
+The command succeeds and reports `validationOk: true`. It also reports
+`partial: true` and `ok: false`. That combination is expected: **validation checks
+what it can without a dependency catalog; it does not yet produce executable code**.
+This applies even to this small workflow with no external dependencies.
+
+A **catalog** is the set of versioned actions, connectors, schemas, and worker task
+contracts available to the compiler. This workflow uses only a built-in transform,
+so its complete catalog is empty. Make that explicit:
+
+```sh
+cat > .local/tutorial/empty-catalog.json <<'JSON'
+{"definitions": [], "tasks": [], "adapters": [], "schemas": {}}
+JSON
+```
+
+## Compile it into an artifact
+
+Compilation checks the complete definition and its dependencies, then produces an
+**artifact**: the validated representation that the runtime or simulator consumes.
+
+```sh
+uv run weave workflow compile .local/tutorial/echo.workflow.yaml \
+  --catalog .local/tutorial/empty-catalog.json --strict \
+  --directory .local/tutorial/compiled --output json
+```
+
+Expected: `ok: true`, `partial: false`, and three files:
+
+| File | Purpose |
+| --- | --- |
+| `.local/tutorial/compiled/compiled-artifact.json` | The compiled workflow with its identity and source information |
+| `.local/tutorial/compiled/executable.json` | The executable part of the artifact |
+| `.local/tutorial/compiled/catalog.lock.json` | The exact dependencies used for this compilation |
+
+The digest identifies executable content; do not edit the generated artifact to
+change behavior. Edit the YAML and compile again. The exporter refuses to replace
+existing files by default. On an intentional repeat of this tutorial, add
+`--force` to the compile command to replace these three local generated files.
+
+## Simulate one execution
+
+The simulator needs the compiled artifact, an input value, and a starting time.
+The example has no integration tasks, so there are no external responses to mock.
+Create its request:
+
+```sh
+uv run python - <<'PYCODE'
+import json
+from pathlib import Path
+
+root = Path('.local/tutorial')
+request = {
+    'artifact': json.loads((root / 'compiled/compiled-artifact.json').read_text()),
+    'input': {'message': 'Hello, Weave'},
+    'mocks': {},
+    'now': '2026-01-01T00:00:00Z',
+}
+(root / 'simulation.json').write_text(json.dumps(request, indent=2) + '\n')
+PYCODE
+uv run weave workflow simulate .local/tutorial/simulation.json --output json
+```
+
+Expected: `status: "succeeded"`. The JSON includes the accepted events and
+variables for the run; `variables.output` is `{"message": "Hello, Weave"}`.
+The fixed timestamp makes local simulations reproducible. It does not change your
+computer's clock or schedule a live workflow.
+
+Change `Hello, Weave` in the request-generation command and rerun it, then run
+`weave workflow simulate` again. The output changes without changing the definition:
+you are executing the same workflow with different input.
+
+## Check what you learned
+
+You now have a definition, a compiled artifact, and a successful simulated
+execution. They are different things: the YAML describes behavior, the artifact
+records the compiled behavior, and an execution applies it to one input.
+
+| If you see… | What to check |
+| --- | --- |
+| `weave: command not found` | Use `uv run weave` from the checkout root |
+| `WV-CLI-READ` | Check the filename and your current directory |
+| `partial: true` during validation | Expected without a catalog; use the compile command with the empty catalog |
+| An export error on your second compilation | Use a new output directory, or `--force` for these tutorial-generated files |
+| A schema/type diagnostic | Check the expected object/string shape and the diagnostic's file, line, and path |
+
+**Next:** [chapter 2 — run a workflow through the API](guides/standalone.md).
+It starts real services and stores execution state. To practice a deliberate
+validation failure, fix it, and step through a simulation first, follow
+[the workflow authoring lab](guides/workflow-authoring.md).

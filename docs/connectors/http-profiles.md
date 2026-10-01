@@ -18,6 +18,58 @@ SPDX-License-Identifier: Apache-2.0
 
 # HTTP profiles v2
 
+## Build a bounded HTTP operation
+
+Use this profile when a Workflow Action should call one fixed HTTP operation,
+such as reading an inventory item. The **Connection** supplies the origin and
+authentication; the **Action** supplies method/path/status rules; each invocation
+supplies only declared parameter values and body. See [standalone setup](../guides/standalone.md)
+and the [publication and worker sequence](authoring.md#from-package-to-an-executable-workflow)
+before trying a real call.
+
+For a first offline example, run [the OpenAPI importer](metadata-import.md#try-the-local-inventory-example).
+It generates a GET Action for `/v1/items/{id}`. Its invocation input is
+`{"path":{"id":"item-123"}}`; a successful illustrative output is
+`{"status":200,"body":{"name":"Widget"}}`. The generated response schema requires
+`name`; an arbitrary successful JSON response is not enough.
+
+These are the complete connection and operation objects for the same anonymous
+profile (the operation object belongs under Action `spec.implementation.config`):
+
+```json
+{
+  "name": "inventory",
+  "connector_version_id": "00000000-0000-4000-8000-000000000001",
+  "config": {"baseUrl": "https://inventory.example.test", "auth": {"kind": "none"}},
+  "secretRef": {},
+  "allowed_destinations": ["https://inventory.example.test"]
+}
+```
+
+```json
+{
+  "profileVersion": "2.0.0",
+  "method": "GET",
+  "path": "/v1/items/{id}",
+  "sideEffect": "read_only",
+  "parameters": [{"name": "id", "location": "path", "type": "string", "required": true}],
+  "statuses": [200],
+  "emptyStatuses": []
+}
+```
+
+Replace the UUID with the published Connector version ID. The `.test` origin is
+an offline example, not a deployed service. For an imported package, copy its
+exact generated connection config and Action rather than changing these objects
+independently of their immutable schemas.
+
+If admission fails, compare auth kind/secret slot names and allowed origins first.
+If a run is queued, check native worker release admission and capacity. If a call
+fails after dispatch, inspect the run incident's outcome: an `unknown` write may
+already have happened. [Incident operations](../reference/incident-operations.md)
+explains reconciliation and permitted retry.
+
+
 `weave-http@2.0.0` uses adapter identity `weave-http-v2` and task/implementation version `2.0.0`. The original `weave-http@1.0.0` descriptor, adapter and active pins retain their behavior. The v2 identity is additive because the registry binds one descriptor to one adapter identity. Generated custom packages use the same native v2 executor with exact operation-specific schemas and capabilities.
 
 The native `HttpProfileConnector` injects the bounded HTTP port, operator `HttpPolicy` and shared `MachineTokenService`. `register_http_profile_services(context)` registers code-owned native classes only and preserves an existing machine-token singleton. Hosts supply the existing bounded port and policy; no manually constructed adapter graph is needed. Core composition and explicitly invoked installed authoring conformance use this seam. Offline import does not import these runtime dependencies.

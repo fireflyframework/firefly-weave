@@ -18,6 +18,62 @@ SPDX-License-Identifier: Apache-2.0
 
 # HTTP connectors and signed webhooks
 
+## Pick the direction you need
+
+An **HTTP connector Action** calls another system while a Workflow runs. A
+**signed webhook trigger** accepts an external event that starts a Workflow or
+signals an existing run. You can use either independently. Teams, WhatsApp and
+Telegram use their own [provider-source ingress](provider-sources.md), not this
+Weave HMAC envelope. Generated HTTP APIs use [HTTP profiles v2](../connectors/http-profiles.md);
+the installed contract below describes the original v1 adapter.
+
+Before configuring either direction, complete [standalone setup](../guides/standalone.md).
+For outbound execution also follow [worker admission](../guides/workers.md) and
+[Connector publication/activation](../connectors/authoring.md#from-package-to-an-executable-workflow).
+That sequence yields the activation `id` required below.
+
+## Create a signed run trigger
+
+1. Activate a Workflow whose input accepts `{"customerId":"123"}`. Retain the
+   activation response's `id` and the full scoped environment URL.
+2. Have the operator grant a signing-secret handle, here `customer-events-key`,
+   to this scope. Give the sender access to the same signing material through
+   its own secure configuration. The handle string is not the signing key.
+3. Submit this complete body to `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers`
+   with the scoped bearer credential:
+
+```json
+{
+  "name": "customer-events", "kind": "run",
+  "activation_id": "00000000-0000-4000-8000-000000000001",
+  "secret_ref": "customer-events-key",
+  "payload_schema": {
+    "type": "object", "properties": {"customerId": {"type": "string"}},
+    "required": ["customerId"], "additionalProperties": false
+  },
+  "max_body_bytes": 1048576, "tolerance_seconds": 300
+}
+```
+
+Replace the activation UUID. Creation returns HTTP 201 with the request fields
+plus server-assigned `id`, `principal_id`, and `disabled: false`. Save `id` as the
+trigger ID. For a signal route, use `kind: signal`, omit `activation_id`, and
+supply the existing `run_id` and declared `signal` name.
+
+4. The sender serializes the envelope below once, computes the signature over
+   those exact bytes and its timestamp, and posts them to `/webhooks/TRIGGER_ID`
+   with the required headers. This ingress URL is outside `/api/v1`.
+5. Expect HTTP 202 and a receipt with `id`, `trigger_id`, `event_id`, `run_id`, and
+   optional `signal_id`. Read the linked run's state/history to learn whether
+   execution completed; the ingress receipt alone does not establish completion.
+
+For authentication failure, check the granted key, timestamp window, and exact
+body bytes before changing the Workflow. A 409 on a repeated event ID means the
+bytes conflict with its original delivery; preserve the original body on retry.
+A queued downstream Action needs an admitted native worker; a suspended run needs
+[incident inspection](incident-operations.md), not another webhook with a new ID.
+
+
 The installed HTTP adapter uses the existing durable worker lease and recovery engine.
 External I/O occurs after a claim transaction commits. Delivery remains at least once;
 a timeout after a write is ambiguous. There are no HTTP-library retries.
@@ -137,7 +193,7 @@ scheduler-enabled replica for lease recovery, waits, timers, and schedules.
 ## Signed ingress
 
 Create an immutable trigger through authenticated
-`POST /tenants/{tenant}/projects/{project}/environments/{environment}/triggers`.
+`POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/triggers`.
 The caller needs `trigger.manage` (deployer) plus `run.start` or `run.signal` for the
 chosen target. The server pins the creator as execution principal; there is no
 principal selector or delegation endpoint. A run trigger pins `activation_id`; a

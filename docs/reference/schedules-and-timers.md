@@ -18,6 +18,40 @@ SPDX-License-Identifier: Apache-2.0
 
 # UTC schedules and duration waits
 
+## Start periodically or pause an existing run
+
+A **schedule** creates a new run at future UTC calendar times. A Workflow **wait**
+pauses the same run until a persisted duration deadline. Both need a running
+scheduler/recovery replica; neither requires an in-memory timer in your worker.
+
+For a first schedule, complete [standalone setup](../guides/standalone.md) and
+activate a Workflow through the authoring/deployment flow. If it contains Actions,
+complete [worker admission](../guides/workers.md) too. Obtain `activation_id` from
+the activation response; it is not the Workflow definition version UUID.
+
+1. Save the complete create body below as `schedule.json`, replacing the activation
+   UUID and `input` with input accepted by that Workflow's schema. `*/5 * * * *`
+   means every five minutes on the UTC clock.
+2. Run `weave triggers schedules save --request schedule.json` with the scoped CLI
+   configuration described below. Save the returned `id` and `revision`. A
+   `ScheduleView` also exposes `status`, `next_due_at`, `principal_id`, and
+   `blocked_reason`; inspect these before expecting a firing.
+3. After the next due time, inspect `history`. A `started` occurrence includes
+   `run_id`; read that run separately to see completion. A `skipped` range means
+   missed work was recorded without creating catch-up runs.
+4. Before editing/disabling, read the current revision and send it as `If-Match`
+   (or CLI `--revision`). After a conflict, reread and reassess the change; do not
+   guess the next revision.
+
+If a schedule is `blocked`, inspect `blocked_reason`, its pinned activation's
+readiness and the current owner's grants. An authorized save/enable creates a
+fresh future cursor; it does not replay the missed interval. If a run remains
+waiting after its duration, check the scheduler and any run-wide incident barrier.
+A cron schedule is not a promise of exactly-once external effects or catch-up.
+
+## Calendar and request contract
+
+
 Schedules use the current database UTC clock. `skip` starts at most the occurrence
 in the current minute, in the half-open interval `[instant, instant + 60 seconds)`.
 A final database-time admission check prevents stale starts after readiness waits.
@@ -39,7 +73,7 @@ and its 50-year search bound. Date-range exhaustion blocks a schedule safely.
 Create/update with `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/schedules`:
 
 ```json
-{"cron":"*/5 * * * *","timezone":"UTC","missed_policy":"skip","activation_id":"<UUID>","input":{}}
+{"cron":"*/5 * * * *","timezone":"UTC","missed_policy":"skip","activation_id":"00000000-0000-4000-8000-000000000001","input":{}}
 ```
 
 An optional `id` selects an existing schedule; updates require its positive

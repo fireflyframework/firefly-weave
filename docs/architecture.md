@@ -18,6 +18,56 @@ SPDX-License-Identifier: Apache-2.0
 
 # Architecture
 
+## Follow one run through the system
+
+A **modular monolith** keeps the catalog, runtime, connections, and operations in
+one application codebase with explicit module boundaries. You may run API and
+native execution in separate processes; PostgreSQL holds the durable state they
+share. A **pure** component computes from its inputs without opening a database,
+resolving a secret, or calling a provider. The compiler and runtime kernel have
+that property; services around them supply authorization and persistence.
+
+Consider a published customer-check Workflow containing one HTTP Action. Before
+the request below, [standalone setup](guides/standalone.md) has created the scope
+and identity, and [worker setup](guides/workers.md) has admitted its release. The
+Workflow activation has pinned its compiled artifact, connection revision and
+release. Keep the activation response's `id`; a definition version is not a run.
+
+The client submits `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs`
+with a bearer token, stable `Idempotency-Key`, and body shaped as follows:
+
+```json
+{"activation_id":"00000000-0000-4000-8000-000000000001","input":{"customerId":"123"}}
+```
+
+The UUID and business input are illustrative: use your activation and its input
+schema. Follow the corresponding arrows in the diagrams below:
+
+| Step | Component and responsibility | Durable result or boundary |
+| --- | --- | --- |
+| 1. Authenticate | The request filter validates the token and resolves its local principal; the URL supplies requested scope | A valid token alone grants no project execution rights |
+| 2. Admit | The run controller parses `StartRunRequest`; the runtime/definition services check current `run.start`, activation readiness, pins and input | Rejection here creates no successful run |
+| 3. Decide | The pure kernel evaluates the pinned workflow from the accepted start fact and returns state plus commands | It describes task intent; it does not call the HTTP destination |
+| 4. Commit | The scoped unit of work persists the run, accepted event, task intent and associated evidence | HTTP 201 returns the run `id`; the external Action may still be queued |
+| 5. Execute | An admitted native dispatcher claims a fenced lease, resolves authorized connection metadata/secrets, and calls the provider outside the claim transaction | A provider may accept the request before Weave records completion |
+| 6. Settle | The worker reports its result with the lease generation; the runtime accepts a current result and advances the kernel state transactionally | The run's state/history establishes accepted completion |
+
+A **lease fence** rejects results from a worker whose attempt is no longer
+current. It cannot undo step 5. If the process dies between provider acceptance
+and step 6, recovery needs an idempotent operation or an explicit reconciliation
+decision. This is why the architecture separates external effects from accepted
+runtime facts instead of treating one HTTP request as a cross-system transaction.
+
+To investigate a run, start with its returned ID and
+[history](reference/history-and-replay.md). A queued Action points toward worker
+admission/capacity; a suspended run points toward
+[incidents](reference/incident-operations.md). An incoming webhook/provider ACK
+has a different boundary: consult [provider sources](reference/provider-sources.md)
+for admission receipts and subsequent dispatch. To reproduce the lifecycle, use
+[standalone setup](guides/standalone.md); the rest of this page maps responsibilities
+to source modules and durable relationships.
+
+
 Firefly Weave is a modular monolith built with native PyFly dependency injection,
 controllers and request filters. Its pure compiler can be used independently.
 Hosts can integrate through the typed SDK and authenticated API, or embed services

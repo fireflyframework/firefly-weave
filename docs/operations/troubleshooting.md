@@ -23,6 +23,56 @@ provider bodies, tokens, connection strings or private environment files into
 logs or reports. Use [history/replay](../reference/history-and-replay.md) and
 [incident operations](../reference/incident-operations.md) for durable evidence.
 
+## Locate the failing stage first
+
+Work through this sequence without rerunning provisioning:
+
+1. **Dependencies:** in the standalone operator terminal, confirm the selected
+   PostgreSQL and Keycloak services are running under the expected context/project.
+   Then repeat the standalone PostgreSQL health and Keycloak discovery checks.
+2. **API startup:** inspect terminal 2 for the safe startup error. Schema rejection
+   requires explicit migration diagnosis; database authority rejection requires
+   the correct nonowner runtime configuration.
+3. **Readiness:** check `/health/ready` on the port of the API you actually started.
+   The foreground API uses `WEAVE_API_PORT`; the optional container API uses
+   `WEAVE_CONTAINER_API_PORT`. A reserved port is not evidence of a running API.
+4. **Identity and scope:** distinguish a token-acquisition failure from a Weave
+   denial. Verify the local identity link and grants for the exact scope IDs.
+5. **Execution:** when admission succeeds but a run does not complete, inspect the
+   run and its pinned release/connection, worker state, and incident history.
+6. **External result:** inspect independent receiver/provider receipts before
+   deciding whether a timed-out effect is safe to retry.
+
+From the repository root, this read-only command lists only the selected local
+supporting services. It needs the original standalone environment; it does not
+create a replacement project:
+
+```sh
+docker --context "$WEAVE_DOCKER_CONTEXT" compose --project-name "$WEAVE_LAUNCH_ID" \
+  --env-file "$WEAVE_WORK_DIR/postgres.env" --env-file "$WEAVE_WORK_DIR/identity.env" \
+  -f compose.yaml -f compose.identity.yaml ps
+```
+
+For a host-side readiness check, run this from the operator terminal:
+
+```sh
+"$WEAVE_PYTHON" - <<'PY'
+import os, httpx
+url = "http://127.0.0.1:" + os.environ["WEAVE_API_PORT"] + "/health/ready"
+try:
+    response = httpx.get(url, timeout=5, trust_env=False)
+except httpx.HTTPError:
+    raise SystemExit("API readiness endpoint is unreachable; check the selected port and API process") from None
+print("Readiness HTTP status:", response.status_code)
+PY
+```
+
+Expected: HTTP 200. An unreachable endpoint points first to startup/routing;
+a non-200 response from the intended API calls for its startup/compatibility
+diagnostics. Do not publish a full environment dump to explain either case.
+
+## Match the symptom to its boundary
+
 | Symptom | Check | Interpretation |
 | --- | --- | --- |
 | Validation succeeds but no artifact exists | `partial`, catalog input and compiler diagnostics | Partial validation without a catalog is expected |
@@ -38,6 +88,12 @@ logs or reports. Use [history/replay](../reference/history-and-replay.md) and
 | Provider receipt ignored/conflicting | Source identity, recognized update class and receipt facts | Deduplication is source-local; conflicting facts are not a new event |
 | Provider send timeout | Whether dispatch occurred and connector outcome contract | Effect may be unknown; automatic retry can duplicate it |
 | Replay reports incomplete | Redaction/omitted historical payloads and retained event prefix | Incomplete evidence must not be converted into successful replay |
+| Setup says output already exists | Private work directory and earlier receipt completeness | Scripts refuse replacement; reuse complete existing configuration or investigate the retained attempt |
+| Worker container exits after a short successful run | Token lifetime, drain budget, and container exit state | The example has a finite invocation and no automatic restart policy; follow [restart](deployment.md#restart-a-stopped-local-deployment) |
+| Worker cannot reach API/receiver | API bind address, receiver terminal, container-visible host address | Host loopback is not container loopback; the generated worker deployment does not add a Linux host-gateway mapping |
+| Container runs but no task completes | Admitted release, current scoped worker grant, activation pin, and actual run state | Container liveness is not worker readiness |
+| Restart ignores changed env file | Existing container configuration | Docker restart and `up --no-recreate` do not load changed env files |
+| Restored installation rejects old source connections | `trial.json`/`restore.json` and selected runtime file | The restore helper deliberately leaves the source fenced; select only the intended restored target |
 | Local test backend missing | Fixture prerequisites, explicit context/ports/owned resources | Requested backend gates fail; they must not silently skip |
 
 Consult [Teams](../connectors/teams.md), [WhatsApp](../connectors/whatsapp.md),
@@ -46,3 +102,17 @@ Consult [Teams](../connectors/teams.md), [WhatsApp](../connectors/whatsapp.md),
 for their specific admission and outcome boundaries. Use [backup and restore](backup-restore.md)
 for fenced recovery into a separate database; keep the original database and
 private recovery evidence until the restored service has been verified.
+
+## Collect a useful incident report
+
+Record the installed artifact version/hash, safe diagnostic code, server-issued
+request ID, operation, affected scope/run IDs, approximate time, and which stage
+failed. State whether the request was accepted, whether an external effect may
+have happened, and which durable evidence you inspected. Keep detailed receipts
+and logs in protected storage and share only the authorized scope's information.
+
+Avoid turning uncertainty into a destructive reset. Recreating a realm, deleting
+a volume, editing schema markers, or fabricating a successful completion removes
+evidence without establishing the cause. Use the linked procedure for the failed
+boundary, preserve partial state, and repeat the smallest relevant verification
+after the correction.

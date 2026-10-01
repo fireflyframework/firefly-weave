@@ -20,120 +20,114 @@ SPDX-License-Identifier: Apache-2.0
 
 # Firefly Weave
 
-**Typed workflow orchestration and integration for Python, built on the Firefly Framework.**
+**Define a business process, connect its steps to other systems, and follow every execution.**
 
 [![License: Apache 2.0](assets/badges/license.svg)](LICENSE) [![Python: 3.12+](assets/badges/python.svg)](pyproject.toml) [![Maturity: alpha](assets/badges/alpha.svg)](docs/capabilities.md)
 
-[Firefly Framework](https://github.com/fireflyframework)
+Weave is an API-first workflow and integration platform built on
+[PyFly](https://github.com/fireflyframework/fireflyframework-pyfly). Use YAML, JSON,
+or the Python SDK to describe a process. Weave checks its definition, stores each
+execution in PostgreSQL, and assigns integration work to workers.
 
-Weave lets product teams define, compile, version, and run workflows with explicit
-schemas and durable execution state. Embed its pure compiler in an authoring tool,
-connect a host product through the typed SDK, or operate the standalone API with
-native and remote workers.
+For example, your product could accept an order, ask another system to check the
+customer, wait for an approval, and send a notification. Your product starts the
+workflow and reads its status through an API. A worker performs the external
+calls. The workflow definition determines what happens next.
 
-[Documentation](docs/README.md) · [Architecture](docs/architecture.md) · [Offline quickstart](#offline-quickstart) · [Run the platform](docs/guides/standalone.md) · [Deploy](docs/operations/deployment.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+You can run Weave as a standalone service or integrate it into another product.
+The current interface is the **API, CLI, and Python SDK**. There is no graphical
+workflow editor in this alpha.
 
-## Current scope
+## Start here
 
-This alpha includes the compiler, typed API/SDK/CLI, durable PostgreSQL runtime,
-workers, simulation/replay, HTTP/webhooks, PostgreSQL, Kafka, integration outbox,
-connector authoring/provider inbox, OpenAPI connector generation, and
-Teams/WhatsApp/Telegram integrations.
-These capabilities have local contract/backend verification. Messaging-provider
-fixtures do not establish live account provisioning or delivery certification.
+Follow these chapters in order. Each chapter explains its prerequisites, commands,
+expected results, and the state carried into the next chapter.
 
-The [capability matrix](docs/capabilities.md) lists supported integration scopes
-and verification boundaries. [OpenAPI import](docs/connectors/metadata-import.md)
-produces reviewable definitions for the supported HTTP profile; arbitrary
-OpenAPI features and additional named vendor adapters are outside this scope.
+| Chapter | What you will do | What you need |
+| --- | --- | --- |
+| **1. [Write and simulate your first workflow](docs/quickstart.md)** | Create a small YAML definition, validate it, compile it, and inspect its output | Git, Python 3.12+, `uv` |
+| **2. [Run a workflow through the API](docs/guides/standalone.md)** | Start PostgreSQL and Keycloak, create an identity, launch Weave, and inspect a real saved run | Chapter 1 checkout; Docker with Compose |
+| **3. [Run an integration worker](docs/operations/deployment.md)** | Package a worker, connect it to the API, and execute an HTTP integration | The running installation from chapter 2 |
+| **4. [Connect your own product](docs/guides/host-integration.md)** | Publish definitions, start workflows, and read their state from your application | The API and scoped identity from chapter 2 |
 
-- [Learn the concepts](docs/concepts.md) and [author workflows](docs/guides/workflow-authoring.md).
-- [Embed in a host product](docs/guides/host-integration.md) or [implement a worker](docs/guides/workers.md).
-- [Run your first workflow through the API](docs/guides/standalone.md), then
-  [configure identity and secrets](docs/operations/identity-and-secrets.md).
-- [Deploy the API and workers](docs/operations/deployment.md) and
-  [prepare backup and recovery](docs/operations/backup-restore.md).
+Start with chapter 1 even if your eventual goal is deployment. It explains the
+language without requiring a database or identity server. Read
+[the core concepts](docs/concepts.md) alongside the tutorial when a term is new.
+The [documentation home](docs/README.md) organizes the remaining guides and references.
 
-Execution is at least once. A worker can perform an external effect before its
-completion is accepted; use supported provider idempotency or reconciliation.
-Compilation does not grant execution authority, and replay can report incomplete
-evidence. This source tree does not promise production readiness.
+## What can I build with it?
+
+- **Business processes:** versioned workflows with typed inputs and outputs,
+  branches, parallel work, waits, signals, and schedules.
+- **Integrations:** HTTP/webhooks, PostgreSQL, Kafka, and packaged connectors.
+  The [OpenAPI importer](docs/connectors/metadata-import.md) generates supported
+  HTTP connector definitions that you can review and publish.
+- **Messaging workflows:** Teams personal-bot text, WhatsApp Cloud API
+  text/templates/statuses, and Telegram webhook text.
+- **Product features:** expose workflow authoring through your own product and
+  call Weave's API or SDK to manage definitions and executions.
+- **Operations:** inspect run history, simulate with mocks, investigate incidents,
+  and manage workers, identity, retention, backup, and restore.
+
+See the [capability matrix](docs/capabilities.md) for precise scope. Salesforce,
+SAP, and Oracle do not have bundled named adapters; supported HTTP interfaces can
+be integrated through reviewed HTTP profiles or connector packages.
 
 ## Offline quickstart
 
-From a source checkout, use Python 3.12+ and `uv`. Dependency installation may
-access the network; the following compiler commands themselves use local files
-and need no PostgreSQL, PyFly server, identity provider, or credentials.
+This installs the source checkout and confirms that the CLI is available:
 
 ```sh
-uv sync --locked
+git clone https://github.com/fireflyframework/firefly-weave.git
+cd firefly-weave
+uv sync --locked --python 3.12
 uv run weave version --output json
-uv run weave workflow validate examples/definitions/customer-onboarding.workflow.yaml \
-  --output json
-uv run weave workflow compile examples/definitions/customer-onboarding.workflow.yaml \
-  --catalog tests/fixtures/catalog/onboarding.lock.json --strict --output json
 ```
 
-Validation without a catalog returns `partial: true`, `validationOk: true`,
-`ok: false`, and no artifact for this example. Complete compilation with the
-included fixture catalog returns `partial: false` and `ok: true`. The fixture
-catalog supports learning the compiler contract; it does not provision runnable
-connections or workers. See [compiler behavior](docs/reference/compiler.md) and
-[CLI commands and exit codes](docs/reference/cli.md).
+Already have this checkout? Run the last two commands from its root instead.
+You do not need to install or run the PyFly repository separately.
+Continue with [chapter 1](docs/quickstart.md) to create and execute the local
+simulation. Installing dependencies uses the network; the compiler and simulator
+then work with local files.
 
-To use the compiler from Python:
+## How the pieces fit together
 
-```python
-from pathlib import Path
-from firefly_weave.compiler.api import validate_source
+![Weave API, compiler, PostgreSQL, identity provider, and workers](docs/diagrams/system-context.svg)
 
-result = validate_source(
-    Path("examples/definitions/customer-onboarding.workflow.yaml").read_bytes(),
-    format="yaml",
-)
-assert result.validation_ok
-assert result.partial and result.artifact is None
-```
+Your application sends requests to the **Weave API**. **Keycloak** identifies the
+caller; Weave's own grants decide what that caller may do. **PostgreSQL** keeps
+workflow versions, runs, and task state. A **worker** asks Weave for a task,
+performs the work, and reports its result. Remote workers can run in separate processes
+or containers and do not need database credentials.
 
-## Running the service
+The API is one modular application built with native PyFly controllers and
+services. You can deploy workers separately without splitting the platform into
+many microservices. See [architecture](docs/architecture.md) for a narrated
+execution path and the detailed diagrams.
 
-Durable execution requires the `server` extra, PostgreSQL, explicitly applied
-migrations, configured identity verification, linked principals, scoped grants,
-and provisioned connections/worker releases. The `client` extra supplies remote
-SDK/CLI dependencies; `worker` supplies remote worker dependencies. Kafka has a
-separate optional extra and broker configuration. See the actual
-[dependency declarations](pyproject.toml) for the pinned PyFly artifact.
+## Current release and limits
 
-Follow the [standalone quickstart](docs/guides/standalone.md) to configure local
-services, provision identities, launch the API, and run a workflow. Then use
-[host integration](docs/reference/embedding.md) or the [worker protocol](docs/reference/worker-protocol.md).
-The [quickstart](docs/quickstart.md) starts offline and points to explicit runtime
-prerequisites. [Configuration](docs/operations/configuration.md) separates API,
-native executor and remote worker authority. The [deployment guide](docs/operations/deployment.md)
-covers packaging and launching services; the [recovery guide](docs/operations/backup-restore.md)
-covers retained state and restore prerequisites.
+Weave is an **alpha**. Download packages and checksums from
+[GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
+The checked-in documentation describes the source on its branch; a release tag
+preserves the documentation and code for that release.
 
-## Architecture
+External work is delivered at least once. If a worker crashes after another
+system accepts a request, that effect may already have happened. Use that system's
+idempotency support or an explicit reconciliation process. The
+[worker guide](docs/guides/workers.md) explains this with an example.
 
-![Firefly Weave modular monolith, pure compiler, PostgreSQL and external boundaries](docs/diagrams/system-context.svg)
+Messaging integrations have local protocol and backend verification; live account
+setup and delivery still need validation in your environment. Generic OIDC and
+Entra claim profiles do not imply live certification for every identity provider.
 
-[Open diagram at full size](docs/diagrams/system-context.svg)
+## Contribute and learn more
 
-Native PyFly controllers and application services share one modular monolith.
-The pure compiler is independent of runtime resources. PostgreSQL persists scoped
-state; native connectors and remote workers share the task/lease contract.
-[Read the architecture](docs/architecture.md) for source links and execution semantics.
+- [Documentation](docs/README.md) and [architecture](docs/architecture.md).
+- [Contributing](CONTRIBUTING.md), [source attribution](docs/contributing/source-documentation.md),
+  and [visual assets](docs/visual-assets.md).
+- [Security reporting](SECURITY.md) and [changelog](CHANGELOG.md).
 
-## Development and license
-
-The repository's [Makefile](Makefile) defines unit/contract tests, Ruff, strict
-mypy and build checks. Backend suites require explicitly owned test services.
-Read the [source documentation and attribution policy](docs/contributing/source-documentation.md)
-before contributing; it includes strict coverage and exact commentless-file
-licensing policy. The [visual asset guide](docs/visual-assets.md)
-explains editing and reproducing the SVG renders.
-
-Firefly Weave is licensed under [Apache License 2.0](LICENSE).
-See [NOTICE](NOTICE) for first-party attribution and dependency boundaries.
-The sibling [PyFly framework](https://github.com/fireflyframework/fireflyframework-pyfly)
-provides the native application platform.
+Firefly Weave is part of the [Firefly Framework](https://github.com/fireflyframework)
+ecosystem and is licensed under [Apache License 2.0](LICENSE).
+See [NOTICE](NOTICE) for attribution and dependency boundaries.

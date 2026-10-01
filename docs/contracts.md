@@ -18,6 +18,79 @@ SPDX-License-Identifier: Apache-2.0
 
 # Definition contracts
 
+## What a definition promises
+
+A **definition** describes a Workflow, an Action, or a Connector in versioned
+JSON/YAML. A **contract** describes the allowed shape and meaning of that data.
+It is useful to distinguish four questions before reading the field reference:
+
+| Question | Check | Example of a failure |
+| --- | --- | --- |
+| Is this a well-shaped definition? | `load_definition` checks required fields, tags and strict model types | `durationSeconds: "10"` is a string where an integer is required |
+| Is the authoring source valid so far? | `validate_source` parses and performs checks available without a catalog | Unsupported schema keyword or expression shape |
+| Can this exact dependency set become executable? | `compile_source` resolves an explicit catalog and checks expression/schema compatibility | Missing Action version or a reference to an unavailable step output |
+| May it execute here, now? | Publication, activation and runtime services enforce scoped authority, resource readiness and runtime input validation | Revoked grant, unavailable connection, or invalid run input |
+
+Successful model loading does not imply successful compilation. Successful
+compilation does not establish a worker, connection, credential, or permission.
+Partial validation deliberately returns no artifact, even when its available
+checks pass. A **catalog** is the explicit immutable set of available definitions,
+capabilities and adapters against which complete compilation resolves references.
+An empty catalog is enough for a Workflow with no external dependencies.
+
+## Compare the checks locally
+
+With the project Python environment installed, run this complete example. It has
+no provider or server prerequisites and produces an executable that returns its
+string input unchanged:
+
+```python
+from firefly_weave.compiler.api import compile_source, validate_source
+from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.contracts.definitions import load_definition
+
+document = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Workflow",
+    "metadata": {"name": "echo", "version": "1.0.0"},
+    "spec": {
+        "inputSchema": {"type": "string"},
+        "outputSchema": {"type": "string"},
+        "steps": [],
+        "output": {"ref": "/input"},
+    },
+}
+model = load_definition(document)
+partial = validate_source(document, format="object")
+compiled = compile_source(
+    document, format="object", catalog=CatalogSnapshot.from_definitions([])
+)
+print(model.kind)
+print(partial.validation_ok, partial.partial, partial.artifact is None)
+print(compiled.ok, compiled.artifact is not None)
+```
+
+Expected output:
+
+```text
+Workflow
+True True True
+True True
+```
+
+`{"ref":"/input"}` is an expression that reads run input, not the literal string
+`/input`; `{"literal":"/input"}` would return that string. The Workflow's
+`spec.output` field is required even though `steps` is empty. The schema describes
+permitted business input; it is not itself the business input. A run of this
+Workflow accepts `"hello"`, while an object such as `{"text":"hello"}` fails
+runtime input validation.
+
+Next read [workflow authoring](guides/workflow-authoring.md) to add steps or
+[standalone setup](guides/standalone.md) to publish and run it. Use
+[compiler diagnostics](reference/compiler.md) when compilation fails. The
+remaining sections are the precise lookup for wire fields, expressions and limits.
+
+
 Definitions use `apiVersion: weave/v1alpha1`, `kind: Workflow | Action | Connector`,
 `metadata: {name, version}`, and `spec`. Names permit letters, digits, dots,
 underscores, and hyphens. Versions follow SemVer 2.0, including prerelease and
@@ -134,8 +207,8 @@ generator with the existing Weave constraint policy; base compiler and definitio
 schema exports remain PyFly-free. See [native OpenAPI](reference/native-openapi.md).
 Provider specifics remain outside contracts.
 
-`make check` runs strict source coverage, unit/contract tests, Ruff lint/format checks, strict mypy, and package
-builds. Pytest has no implicit integration deselection: explicitly named real
+`make check` runs strict source coverage, documentation navigation/SVG checks,
+unit/contract tests, Ruff lint/format checks, strict mypy, and package builds. Pytest has no implicit integration deselection: explicitly named real
 backend tests must run and fail clearly if a required backend is absent. The
 `integration` and `e2e` markers are registered. The current CLI and delivery
 boundaries are described in the [documentation index](README.md).

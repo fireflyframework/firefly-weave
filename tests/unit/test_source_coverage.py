@@ -207,6 +207,28 @@ def test_private_trees_are_pruned_and_external_symlinks_not_followed(tmp_path):
     assert run(tmp_path)[1] == report
 
 
+def test_local_tutorial_outputs_are_excluded_while_source_stays_checked(tmp_path):
+    tutorial = tmp_path / ".local/tutorial/compiled"
+    tutorial.mkdir(parents=True)
+    (tutorial / "compiled-artifact.json").write_text("{}")
+    (tutorial.parent / "echo.workflow.yaml").write_text("kind: Workflow\n")
+    (tmp_path / ".local/runtime.env").write_text("WEAVE_DATABASE_URL=private\n")
+    source = tmp_path / "src/module.py"
+    source.parent.mkdir()
+    source.write_text("value = 1\n")
+
+    code, report = run(tmp_path, "--strict")
+    assert code == 1
+    assert {item["path"] for item in report["files"]} == {"src/module.py"}
+    assert {item["path"] for item in report["excluded"]} == {".local"}
+    assert {(item["path"], item["code"]) for item in report["issues"]} == {
+        ("src/module.py", "missing-header"),
+        ("src/module.py", "missing-docstring"),
+    }
+    source.write_text(HEADER + '"""Own the example configuration."""\nvalue = 1\n')
+    assert run(tmp_path, "--strict")[0] == 0
+
+
 def test_xml_and_sql_headers_and_blank_docstrings(tmp_path):
     plain = "\n".join("    " + line.removeprefix("# ") for line in HEADER.splitlines())
     (tmp_path / "diagram.svg").write_text('<?xml version="1.0"?>\n<!--\n' + plain + "\n-->\n<svg/>")

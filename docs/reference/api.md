@@ -22,11 +22,60 @@ Project resources use `/api/v1/tenants/{tenant}/projects/{project}`. Environment
 
 Every resource request uses a verified bearer access token and current, locally assigned Weave grants. A scope in a URL or SDK constructor grants no permission. Provider roles, user/application classification, caller-supplied catalog locks and compiled artifacts do not grant execution or publication authority. Signed webhooks authenticate the exact timestamp and raw request bytes against an immutable trigger revision; there is no broad unauthenticated prefix.
 
+## Make one request before reading the inventory
+
+Use the [standalone tutorial](../guides/standalone.md) to obtain a running API,
+a verified host token, and local grants. Keep its `WEAVE_API_URL`,
+`WEAVE_TENANT_ID`, and `WEAVE_PROJECT_ID` environment variables; obtain a current
+`WEAVE_ACCESS_TOKEN` using that tutorial's token steps. The offline
+[authoring guide](../guides/workflow-authoring.md) supplies
+`.local/tutorial/echo.workflow.yaml`. From the checkout root, create a JSON
+request that embeds that YAML as a string:
+
+```sh
+python3 - <<'PYTHON'
+import json
+from pathlib import Path
+request = {
+    "source": Path(".local/tutorial/echo.workflow.yaml").read_text(),
+    "format": "yaml",
+    "filename": "echo.workflow.yaml",
+    "strict": True,
+}
+Path(".local/tutorial/compiler-request.json").write_text(json.dumps(request))
+PYTHON
+curl --fail-with-body --silent --show-error \
+  "$WEAVE_API_URL/api/v1/tenants/$WEAVE_TENANT_ID/projects/$WEAVE_PROJECT_ID/compiler/compile" \
+  -H "Authorization: Bearer $WEAVE_ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data-binary @.local/tutorial/compiler-request.json
+```
+
+This requires the project `compile` capability. The server uses its authorized
+catalog because the body omits `catalog`. Expect a compiler result with `ok: true`,
+`partial: false`, and an `artifact`. `filename` is only a diagnostic label: the
+server does not open a file with that name. No publication or run is created.
+
+An HTTP success and a successful compilation are separate checks: read the
+compiler result's diagnostics and `ok` field as well as the HTTP status. For
+publication, send `{"source": "<the YAML text>", "format": "yaml"}` to the
+project's `/workflows` collection with an `Idempotency-Key`. The
+[SDK lifecycle example](sdk.md#extend-the-host-to-publish-activate-and-run) shows
+how its returned version ID and digest feed activation and run creation.
+
+| Request fails with | Check first |
+| --- | --- |
+| Authentication error | Token expiry, issuer, audience, and the configured API origin |
+| Authorization error | Local identity link and current grant for this operation and scope |
+| Revision conflict | Read the current revision; reconcile edits before submitting again |
+| Invalid request or compiler diagnostic | Exact field spelling, schema, and diagnostic path |
+| Timeout or lost response during a mutation | Outcome is unknown; retain the original body and idempotency key |
+
 ## Requests, errors and revisions
 
 Canonical responses include `X-Weave-Wire-Version: weave/api-v1` and `X-Weave-Request-ID`, including early authentication failures. Errors use `application/problem+json` with `status`, stable `code`, safe `message`, `request_id` and `diagnostics`. Where an existing operation has a safe compiler or unavailable result, `result` preserves it. No framework traceback, token or resolved connection credential appears in ordinary resource errors. Worker credential leasing is a separately authorized secret boundary with `Cache-Control: no-store` and `Pragma: no-cache`; its schema describes the actual deliberate `value` field.
 
-Revision responses on canonical paths use quoted positive ETags such as `"2"`. `If-Match` accepts that syntax and the existing bare positive integer syntax. Weak, wildcard, multiple, zero, signed and padded revisions are invalid. Draft stale writes use HTTP412; debug and incident conflict codes retain their existing operation semantics. The SDK preserves the actual status and code rather than converting every revision conflict to a fabricated status.
+Revision responses on canonical paths use quoted positive ETags such as `"2"`. `If-Match` accepts that syntax and the existing bare positive integer syntax. Weak, wildcard, multiple, zero, signed and padded revisions are invalid. Draft stale writes use HTTP 412; debug and incident conflict codes retain their existing operation semantics. The SDK preserves the actual status and code rather than converting every revision conflict to a fabricated status.
 
 Publish, activation and run-start/retry operations require `Idempotency-Key`. A matching key, principal scope and exact request recover the committed result; changed content conflicts. Clients do not automatically retry unsafe requests, including timeouts with an unknown outcome. Caller-chosen retries must preserve the exact body and applicable key. Connection revision creation and debug commands have no fabricated idempotency guarantee.
 
@@ -34,13 +83,13 @@ Publish, activation and run-start/retry operations require `Idempotency-Key`. A 
 
 `compiler/compile` and `compiler/validate` accept `source`, `format`, optional `filename`, optional canonical `catalog`, and `strict`. An explicit lock gives the same diagnostics, source locations, source map and artifact digest as offline compilation. Omitted compile catalog uses the currently authorized server catalog. Omitted validate catalog performs partial validation: `partial`, `validationOk`, `ok`, `artifact` and canonical diagnostics retain their distinct meanings. Without a catalog, `strict=true` is inapplicable and returns the same partial validation result as offline `workflow validate --strict`; it does not promote partial warnings, reject the request or substitute an empty catalog. Partial validation does not establish deployability. Publication always applies current server authority/catalog checks.
 
-Saving a draft creates an append-only document revision. `DELETE drafts/{identifier}` logically retires the draft under `definition.write`, current project grants, a scoped lock and the required latest revision. Its acknowledgment has a new lifecycle revision and the retained document revision. Missing drafts return404; stale retirement returns412; a matching repeated retirement conflicts instead of claiming new idempotent work. Read/export retain every document revision with retirement metadata, default lists omit retired drafts, and later saves cannot resurrect the ID. Published versions are immutable: changes publish a new version; retirement preserves historical evidence. Connection updates create new immutable IDs/revisions.
+Saving a draft creates an append-only document revision. `DELETE drafts/{identifier}` logically retires the draft under `definition.write`, current project grants, a scoped lock and the required latest revision. Its acknowledgment has a new lifecycle revision and the retained document revision. Missing drafts return HTTP 404; stale retirement returns HTTP 412; a matching repeated retirement conflicts instead of claiming new idempotent work. Read/export retain every document revision with retirement metadata, default lists omit retired drafts, and later saves cannot resurrect the ID. Published versions are immutable: changes publish a new version; retirement preserves historical evidence. Connection updates create new immutable IDs/revisions.
 
 Each trigger ID is an immutable configuration revision and has its own signed webhook URL/receipts. Replacement creates a new ID and explicitly disables the previous route. Cutover can have overlap or a gap; no atomic family retargeting is promised. The same event sent to two trigger revisions can start two runs. Coordinate cutover or deduplicate upstream when necessary.
 
 ## Discovery, debugging and history
 
-Canonical lists return `{ "items": [...], "next_cursor": null | "opaque" }`, with limits1–100 and stable ID ordering. Cursors bind tenant/project/environment, resource collection and any run/schedule filter. A cursor from another scope/filter fails validation. Initial pagination includes a valid zero UUID. Compatibility array endpoints retain their prior wire shape. Cursors describe traversal, not a database snapshot; concurrent creation/retirement can change subsequent pages.
+Canonical lists return `{ "items": [...], "next_cursor": null | "opaque" }`, with limits 1–100 and stable ID ordering. Cursors bind tenant/project/environment, resource collection and any run/schedule filter. A cursor from another scope/filter fails validation. Initial pagination includes a valid zero UUID. Compatibility array endpoints retain their prior wire shape. Cursors describe traversal, not a database snapshot; concurrent creation/retirement can change subsequent pages.
 
 Aggregate discovery requires the existing scope-wide capability: connections `connection.manage`, runs `run.read`, workers `status.read`, releases/catalog `catalog.read`, triggers `trigger.manage`, incidents `incident.read`, schedules `run.read`. Current grants are reloaded in the operation transaction. Classification-unavailable resources stay explicit safe placeholders; discovery never expands access by returning unfiltered internal rows.
 
@@ -163,9 +212,9 @@ The following operation inventory is generated from the same explicit product me
 | `debug.command` | `POST /api/v1/tenants/{tenant}/projects/{project}/debug/sessions/{identifier}/commands` | simulate |
 
 
-Readiness failure keeps HTTP503 at the exact root `/health/ready`, and now uses
+Readiness failure keeps HTTP 503 at the exact root `/health/ready`, and now uses
 the same safe Problem envelope as other API errors. Clients should inspect
-HTTP503 or `Problem.status` for unavailability.
+HTTP 503 or `Problem.status` for unavailability.
 Healthy readiness remains `{"status":"ready"}` and liveness remains
 `{"status":"up"}`. Failure details, database URLs and credentials are omitted;
 request IDs are server-generated UUIDs. No health prefix exemption is added.

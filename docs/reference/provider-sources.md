@@ -17,6 +17,89 @@ limitations under the License.
 -->
 # Authenticated provider sources
 
+## Create one inbound route
+
+A **provider source** is an immutable route from one authenticated provider
+installation to one Workflow activation or waiting signal. A **receipt** records
+what happened to one provider event. The provider's HTTP acknowledgment means the
+receipt is durable; the background dispatcher may still need to start the run.
+
+Begin with [standalone setup](../guides/standalone.md), then the relevant
+[Teams](../connectors/teams.md), [WhatsApp](../connectors/whatsapp.md), or
+[Telegram](../connectors/telegram.md) installation guide. For a Workflow that sends
+a reply, also complete [native worker admission](../guides/workers.md) and
+[Connector publication/activation](../connectors/authoring.md#from-package-to-an-executable-workflow).
+
+Collect these values before creating the source:
+
+| Value | Where it comes from |
+| --- | --- |
+| Scoped environment and bearer credential | Standalone bootstrap/login, with the capabilities listed below |
+| `connection_revision_id` | The environment connection creation response's `id` |
+| `activation_id` | The compatible Workflow activation response's `id` |
+| Package/version/schema pins | The exact installed provider declaration, not a version guessed from an example |
+| `policy` | The immutable connection's complete provider config |
+
+For example, create `connection.json` using the complete Telegram request in its
+connector guide. After publication and activation, run this local generator with
+those two returned UUIDs. It reads the declaration but sends no request:
+
+```sh
+export CONNECTION_REVISION_ID='replace-with-returned-connection-uuid'
+export ACTIVATION_ID='replace-with-returned-activation-uuid'
+python - <<'PY_SOURCE' > source.json
+import json
+import os
+from pathlib import Path
+from uuid import UUID
+from firefly_weave.connectors.telegram import package
+from firefly_weave.contracts.providers import ProviderSourceRequest, provider_schema_digest
+
+metadata = package.metadata.model
+request = ProviderSourceRequest(
+    name="telegram-text", provider="telegram", package=metadata.distribution,
+    package_version=metadata.distribution_version or metadata.version,
+    adapter_version=metadata.version,
+    schema_digest=provider_schema_digest(metadata.event_schemas, metadata.dispatch_event_kinds),
+    connection_revision_id=UUID(os.environ["CONNECTION_REVISION_ID"]),
+    policy=json.loads(Path("connection.json").read_text())["config"],
+    kind="run", activation_id=UUID(os.environ["ACTIVATION_ID"]),
+    mapping={"ref": "/payload"},
+)
+print(request.model_dump_json(exclude_none=True, indent=2))
+PY_SOURCE
+weave provider-sources create --request source.json
+```
+
+For another provider, change the imported declaration, `name`, and `provider`, and
+use that provider's connection file and compatible target input schema. This is a
+complete `ProviderSourceRequest`; the server supplies `id`, `scope`, `binding_id`,
+`principal_id`, and `disabled`. Save its `id`, then configure the provider's callback
+to `https://YOUR_PUBLIC_WEAVE_HOST/provider-ingress/SOURCE_ID`. The callback is
+outside `/api/v1`. It uses provider authentication, not your CLI bearer token.
+For a signal target, use `kind: signal`, omit `activation_id`, and supply the exact
+existing `run_id` and declared `signal` name instead.
+
+## Inspect admission separately from execution
+
+After an authorized test delivery, list receipts and read the one whose
+`source_id` and `event_id` match. Use its resulting `run_id` to read run state/history.
+
+| Observation | Next check |
+| --- | --- |
+| No receipt, HTTP 401 | Provider signature/secret and installation policy; the route UUID is not a credential |
+| No receipt, HTTP 422 or 413 | Payload/schema or size/batch rejection; do not assume part of the batch committed |
+| `pending` | Scheduler-enabled dispatcher, database readiness, and cooldown |
+| `ignored` | Safe reason; lifecycle/unsupported events may intentionally start no Workflow |
+| `blocked` | Current source owner, grants, standing binding, and package availability |
+| `failed` | Target run/activation and schema; inspect the reason before explicit retry |
+| `dispatched` | Read the linked run; it may still be waiting, suspended, or failed |
+
+`weave provider-receipts retry RECEIPT_UUID` preserves event identity and rechecks
+authority. It cannot enable an irreversibly disabled source or make a terminal
+signal target writable. A replacement source has a different deduplication scope.
+
+
 Provider sources use installed, operator-allowlisted native verifier services.
 [Teams](../connectors/teams.md), [WhatsApp](../connectors/whatsapp.md), and
 [Telegram](../connectors/telegram.md) implement their own authentication and

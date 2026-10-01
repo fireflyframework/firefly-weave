@@ -18,6 +18,63 @@ limitations under the License.
 
 # Teams personal bot
 
+## Build an inbound message and reply flow
+
+The inbound **provider source** authenticates a Bot Framework activity and stores
+a conversation reference. The outbound **reply Action** uses that stored reference
+to address a message. A reference is a server-issued UUID plus a generation; it
+is not the provider's conversation ID, and callers cannot invent one to send.
+
+Complete [standalone setup](../guides/standalone.md), then
+[native worker admission](../guides/workers.md). The
+[publication sequence](authoring.md#from-package-to-an-executable-workflow) explains
+Connector version, connection revision, release and activation IDs. Teams also
+requires provider assets and an existing personal installation, described below.
+
+Use these checkpoints in order:
+
+1. Gather the bot client/registration tenant UUIDs from the operator's app
+   registration and the customer tenant UUID from the intended installation.
+   Obtain conversation, bot, user and service URL facts from a separately
+   authenticated installation record. This profile cannot discover an installation
+   from an email address or bootstrap unknown conversation IDs.
+2. Enable the package, publish its Connector, and create the connection using the
+   exact policy fields below and a scoped `client_secret` handle. Save the returned
+   connection revision `id`; confirm operator-approved service/token origins.
+3. Publish a `teams-reply@1.0.0` Action as described below, then
+   [`reply.workflow.yaml`](../../examples/teams/reply.workflow.yaml). Admit the
+   native worker release and credential grants, bind the connection slot `teams`,
+   and save the activation `id`.
+4. Create a Teams provider source with that connection revision and activation;
+   [the source recipe](../reference/provider-sources.md#create-one-inbound-route)
+   shows all request fields. Use the Teams declaration, provider `teams`, and
+   copy every connection config field into `policy`.
+5. Set the bot messaging endpoint to the returned source's public
+   `/provider-ingress/SOURCE_ID` URL. After an authorized real message, inspect the
+   provider receipt and its linked run. A 202 response confirms inbound commit,
+   not that the reply Action succeeded.
+
+A reply Action's complete input shape is:
+
+```json
+{
+  "reference_id": "00000000-0000-4000-8000-000000000001",
+  "generation": 1,
+  "activity_id": "ORIGINAL_ACTIVITY_ID",
+  "text": "Message received."
+}
+```
+
+Use `reference_id`, `generation`, and `activity_id` from the authenticated
+normalized event; the UUID above is only a shape example. For `send`, omit
+`activity_id` and use a still-authorized stored reference. Success returns
+`{"id":"PROVIDER_ACTIVITY_ID","status":"accepted"}`. If the reference is revoked
+or its generation is stale, use the explicit reference lifecycle below; resending
+the same input cannot recreate authority. For other failures, inspect
+[provider receipts](../reference/provider-sources.md#inspect-admission-separately-from-execution)
+and [run incidents](../reference/incident-operations.md).
+
+
 The optional `teams` extra implements public-cloud Bot Connector text messages for one explicitly configured personal installation per immutable connection/source. It supports reply and proactive text to a stored authenticated reference. It does not create conversations, provision accounts, send Graph messages, or implement channels/groups, SSO, skills, invoke, streaming, attachments or cards. Fixture and local PostgreSQL verification is separate from live Azure/Teams certification.
 
 Install the exact reviewed Weave wheel with `server,teams` extras. Operator configuration must select `firefly-weave:weave-teams:firefly_weave.connectors.teams:package` in `connector_packages`; installing the optional SDK alone does not enable it. Missing extras fail startup when selected. The installed distribution version is `0.1.0a1`; adapter/task behavior is separately pinned at `1.0.0`. Native services share the application's existing PyFly container.
@@ -37,6 +94,35 @@ Publish the installed `package.descriptor.manifest`, then create a connection wi
 | `conversation_id` | One installed personal conversation ID |
 | `bot_id`, `user_id` | Exact bot and personal-user channel account IDs |
 | `installation_generation` | Positive integer, initially 1 |
+
+A complete connection creation request has this shape. All UUIDs and channel IDs
+below are illustrative. Replace them with the published Connector version ID and
+authenticated installation facts before submission; replace the service origin
+with the one approved for that installation.
+
+```json
+{
+  "name": "teams-personal",
+  "connector_version_id": "00000000-0000-4000-8000-000000000001",
+  "config": {
+    "cloud": "public",
+    "account_id": "00000000-0000-4000-8000-000000000002",
+    "registration_tenant": "00000000-0000-4000-8000-000000000003",
+    "tenant_id": "00000000-0000-4000-8000-000000000004",
+    "allowed_tenants": ["00000000-0000-4000-8000-000000000004"],
+    "conversation_id": "INSTALLATION_CONVERSATION_ID",
+    "bot_id": "INSTALLATION_BOT_CHANNEL_ID",
+    "user_id": "INSTALLATION_USER_CHANNEL_ID",
+    "installation_generation": 1
+  },
+  "secretRef": {"client_secret": "teams-client-secret"},
+  "allowed_destinations": ["https://login.microsoftonline.com", "https://connector.example.test"]
+}
+```
+
+`connector.example.test` is a non-routable documentation placeholder, not a
+Microsoft service recommendation. The complete authenticated service URL is later
+stored in the reference; this connection allowlist contains its origin only.
 
 Connection `secretRef.client_secret` names an operator-granted secret handle. `allowed_destinations` contains literal HTTPS origins for `login.microsoftonline.com` and the selected Bot Connector service. Do not place secrets in config, source policy, action input or workflow output. `test_connection` validates configuration only; success does not certify credentials, installation, or delivery.
 

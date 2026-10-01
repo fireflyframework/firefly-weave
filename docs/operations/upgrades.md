@@ -23,6 +23,19 @@ admitting effect-producing work. Starting an API never migrates its database.
 The current expected schema revision is `0021_operations`; both Alembic's revision
 and Weave's schema sentinel must match the installed artifact.
 
+## Understand the upgrade boundary
+
+An upgrade has three independent checks: the new artifact can read the database
+schema, its installed capabilities satisfy retained execution requirements, and
+real work can run successfully after restart. A completed migration proves only
+the first of these. Workflows may still reference an older admitted worker release
+or connector version that the new deployment must continue to support.
+
+Use a maintenance window for this procedure. The local walkthrough can rehearse
+these steps, but its guarded restore helper is not a production backup system.
+For production, use a verified environment-specific backup/restore procedure and
+account for external effects that happened after the backup.
+
 ## Prepare the upgrade
 
 1. Record the running wheel hash, dependency lock, image identities, schema
@@ -30,8 +43,10 @@ and Weave's schema sentinel must match the installed artifact.
 2. Inventory every writer: APIs with schedulers, native executors, remote workers,
    provider dispatchers, broker consumers, and outbox dispatchers. Stop admission
    and fence those writers before database maintenance.
-3. Follow [backup and restore](backup-restore.md) to create and verify a recoverable
-   copy. Preserve the source database and external effect receipts.
+3. For the owned local installation, follow [backup and restore](backup-restore.md)
+   to create and verify a recoverable copy. For other deployments, use the
+   environment-specific verified recovery procedure. Preserve the source database
+   and external effect receipts.
 4. Install the selected exact artifact in a separate environment and rehearse the
    migration against a restored copy. Use the same connector packages and
    operational policy intended for the target deployment.
@@ -44,6 +59,12 @@ Do not run mixed schema versions against the same mutable database during this
 procedure. The server performs exact schema checks, not rolling schema negotiation.
 
 ## Apply packaged migrations
+
+Run this stage in the operator terminal while writers are stopped. Select the
+new installed interpreter, not whichever `python` or source checkout happens to
+be on `PATH`. On a restored local rehearsal, the target URLs are in that attempt's
+`target.env`; the original `runtime.env` still refers to the fenced source.
+Confirm which database you selected before invoking the migration.
 
 Load the migration URL from protected deployment configuration. Do not print it or
 pass it to runtime containers. Invoke the selected installed environment:
@@ -98,7 +119,12 @@ env -u WEAVE_ENVIRONMENT_ID "$WEAVE_PYTHON" -I -m firefly_weave.cli.main \
   compatibility check --output json
 ```
 
-Configure the usual base URL, tenant, project, and authentication first. `read`
+Before these commands, configure `WEAVE_BASE_URL` to the restarted API origin,
+`WEAVE_TENANT_ID` and `WEAVE_PROJECT_ID` to the project being checked, and a current
+`WEAVE_ACCESS_TOKEN` or the [CLI login configuration](../reference/cli.md#login-and-secure-persistence).
+For a local rehearsal, obtain scope IDs from `first-run.json`; do not invent new
+IDs or reuse an expired token receipt. The `env -u WEAVE_ENVIRONMENT_ID` prefix
+removes environment scope because compatibility is a project-level operation. `read`
 returns the current report; `check` requests a fresh scan. Findings are filtered
 to the authorized project, with safe global inventory conditions retained. The
 report includes `mode`, `complete`, `checked_at`, and `findings_truncated`; a
@@ -133,6 +159,20 @@ rewriting retained definitions to silence findings. See
 
 ## Verify before admitting traffic
 
+Perform these checks in order for each project and intended execution path:
+
+1. Check `/health/ready` for the replica receiving traffic. If it fails, leave
+   effect-producing admission stopped and inspect the compatibility findings.
+2. Read a complete compatibility report with `mode=ready`, and confirm its policy
+   matches the intended deployment. A report truncated for response size cannot
+   establish that all requirements were inspected by your review.
+3. Read a known historical run and its durable output to check retained access.
+4. Start the required admitted executor/worker and run a small authorized workflow.
+   The [deployment exercises](deployment.md) show concrete remote and native checks
+   for the local installation.
+5. Verify external receiver/provider receipts and telemetry through their own
+   interfaces, then deliberately reenable the remaining writers.
+
 Confirm `/health/ready` succeeds, compatibility is complete and ready, and the
 reported policy matches the intended deployment. Run an authorized workflow
 through the installed API and an admitted worker, verify its durable outcome, and
@@ -141,3 +181,17 @@ recovery; do not infer provider delivery from API readiness alone.
 
 Keep the prior artifact, source database, backup, and protected migration evidence
 until the upgraded deployment and its recovery procedure have been verified.
+
+## If the upgrade fails
+
+Keep the failed deployment's evidence and stop its writers before selecting a
+recovery path. A schema failure belongs to migration diagnosis; a compatibility
+finding belongs to the missing authority, policy, or pinned capability listed in
+the report. Neither is repaired by editing version rows or weakening grants.
+
+Starting the old wheel against a newly migrated database is not a supported
+rollback. Recover the old artifact with a separately restored compatible database,
+choose one active deployment, and reconcile effects that occurred after that
+backup before resuming work. See [incident operations](../reference/incident-operations.md)
+for ambiguous effects and [backup/restore](backup-restore.md) for the local source
+fencing behavior.

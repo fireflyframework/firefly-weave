@@ -31,10 +31,32 @@ uv sync --locked --no-editable --all-extras --group dev
 make check
 ```
 
-This runs strict source inventory/header checks, unit/contracts, Ruff lint and
-format, strict mypy and package build. For a focused change, first run its relevant
+This runs strict source inventory/header checks, documentation navigation/SVG
+checks, unit/contracts, Ruff lint and format, strict mypy and package build. For a focused change, first run its relevant
 suite; the integrated delivery must still pass the full gate. Do not update lock
 or upstream framework provenance casually to resolve an unrelated failure.
+
+## A first documentation change
+
+Choose the guide for the user's task and read its linked source/example before
+editing. Explain the prerequisite IDs, ordered steps, expected result, and where
+to inspect a failure. Keep lookup tables in reference pages and link to a runnable
+guide rather than repeat its entire deployment procedure.
+
+From the repository root, run:
+
+```sh
+python scripts/check_docs.py
+python scripts/source_coverage.py --strict
+```
+
+The first command reports missing links/anchors, unreachable public pages and
+invalid SVG structure; the second checks attribution and source inventory. A
+successful check does not execute a documented command. Run new offline examples
+with the matching project environment and inspect rendered Markdown separately.
+Provider setup examples must distinguish locally checked contracts from live
+account or delivery verification. Preserve historical changelog facts and existing
+Apache/Foundation headers.
 
 ## Backend and end-to-end checks
 

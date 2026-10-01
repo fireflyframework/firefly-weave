@@ -35,6 +35,7 @@ from typing import Any
 
 PRUNED = {
     ".git",
+    ".local",
     ".superpowers",
     ".venv",
     "venv",

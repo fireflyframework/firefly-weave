@@ -18,6 +18,43 @@ SPDX-License-Identifier: Apache-2.0
 
 # Telegram webhook text connector
 
+## Follow the two directions
+
+You will connect an inbound text message to a Workflow that replies `Received.`:
+
+```text
+Telegram update → provider source → durable receipt → Workflow → reply-text Action → Telegram
+```
+
+Inbound authentication uses `webhookSecret`; outbound authentication uses
+`botToken`. Creating the connection does not register the webhook, and registering
+the webhook does not admit a worker that can send replies.
+Start with [standalone setup](../guides/standalone.md), then
+[native worker admission](../guides/workers.md). The
+[package-to-activation sequence](authoring.md#from-package-to-an-executable-workflow)
+explains each Weave resource and where its ID comes from.
+
+For the offline part, run:
+
+```sh
+python examples/telegram_text_reply.py > telegram-bundle.json
+```
+
+Successful exit produces four keys: `connector`, `action`, `workflow`, and `source`.
+The script compiles the Action and Workflow before printing them and sends nothing.
+Publish those definitions in dependency order, create the connection below,
+admit the exact native release/grants, activate, then replace the source template's
+two `REPLACE_WITH_...` UUIDs. The synthetic bot/chat IDs also need replacement.
+[Provider sources](../reference/provider-sources.md#create-one-inbound-route)
+shows how to build a source request from installed metadata and inspect receipts.
+
+Obtain the bot ID and token from your operator-managed bot registration, and the
+numeric chat ID from a verified update for the intended chat. Chat IDs are not
+usernames. Store token/secret values in the operator secret provider and use only
+handles in `connection.json`. Publish the installed Connector first and replace
+this connection request's version UUID with its returned `id`.
+
+
 Enable `firefly-weave:weave-telegram:firefly_weave.connectors.telegram:package` in `Settings.connector_packages` (`WEAVE_CONNECTOR_PACKAGES`) on server/native-worker installations. The package adds no Telegram SDK. Base/compiler installs do not load it; the native container loads only operator-selected provider services. Distribution version, adapter version and schema digest are separate immutable source pins.
 
 The profile supports original human text messages in explicitly allowed private/group/supergroup chats, `send-text`, and same-chat `reply-text`. It deliberately ignores edits, bot messages, media/service events, channel/business/guest/topic/ephemeral/anonymous messages and unknown update classes. Their durable receipts explain the ignored disposition. Unknown event content is represented by a digest, not stored raw. A malformed or wrong-chat supported event is rejected without acknowledgement.
@@ -30,6 +67,8 @@ Use a connection with these exact nonsecret values and two distinct scoped secre
 
 ```json
 {
+  "name": "telegram",
+  "connector_version_id": "00000000-0000-4000-8000-000000000001",
   "config": {"account_id": "123456", "mode": "webhook", "allowed_chat_ids": ["-987"]},
   "secretRef": {"botToken": "telegram-bot-token", "webhookSecret": "telegram-webhook-secret"},
   "allowed_destinations": ["https://api.telegram.org"]

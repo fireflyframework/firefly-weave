@@ -18,51 +18,189 @@ SPDX-License-Identifier: Apache-2.0
 
 # Author and deploy a workflow
 
-Start with [core concepts](../concepts.md). Definitions use the `weave/v1alpha1`
-language and explicit schemas. Reuse the [onboarding workflow](../../examples/definitions/customer-onboarding.workflow.yaml)
-and its [Action](../../examples/definitions/check-customer.action.yaml) to inspect
-real wire spelling, step references and typed input/output.
+A workflow definition describes input, ordered steps, and output. This guide builds
+an **echo** workflow: given `{"message": "Hello, Weave"}`, it returns that same
+object. You will validate the file, compile it into an executable artifact, and
+simulate it locally before deciding to deploy it.
 
-```sh
-weave workflow validate examples/definitions/customer-onboarding.workflow.yaml --output json
-weave workflow compile examples/definitions/customer-onboarding.workflow.yaml \
-  --catalog tests/fixtures/catalog/onboarding.lock.json --strict --output json
-weave workflow explain examples/definitions/customer-onboarding.workflow.yaml \
-  --catalog tests/fixtures/catalog/onboarding.lock.json
+You need Python 3.12 or later and an installed `weave` command. From a source
+checkout, run `uv sync --locked --no-editable`, then prefix the commands below
+with `uv run --locked --no-editable`. Run from the repository root and create the
+ignored working directory with `mkdir -p .local/tutorial`. All generated tutorial
+files stay there. No API, database, token, or worker is needed for these offline
+steps. For your first durable server run, follow the [standalone tutorial](standalone.md).
+
+## 1. Write the input and output contract
+
+Save this as `.local/tutorial/echo.workflow.yaml`:
+
+```yaml
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: echo
+  version: "1.0.0"
+spec:
+  inputSchema:
+    type: object
+    required: [message]
+    additionalProperties: false
+    properties:
+      message: {type: string}
+  outputSchema:
+    type: object
+    required: [message]
+    additionalProperties: false
+    properties:
+      message: {type: string}
+  steps:
+    - id: echo
+      kind: transform
+      value: {ref: /input}
+  output: {ref: /steps/echo/output}
 ```
 
-The first command performs partial validation. The next commands resolve the
-immutable catalog and explain the compiled dependency/control structure. A useful
-editor preserves each diagnostic code, source span and structured path rather
-than flattening errors into an unstructured string. See [compiler diagnostics](../reference/compiler.md)
-and the [schema/expression profile](../reference/schema-profile.md) for limits and
-supported operators. Present secret-classified workflow values are rejected;
-credentials belong in authorized connection secret references.
+Read this from the outside in:
 
-For Python authoring, the immutable `WorkflowBuilder` uses the same canonical
-models as YAML/JSON. Each change returns a new builder. The executable example
-in [embedding](../reference/embedding.md) compiles against an empty catalog because
-its transform does not call an external Action.
+- `apiVersion` selects the workflow language; `metadata.version` identifies your
+  workflow version. Changing one does not change the other.
+- `inputSchema` accepts an object with a required string `message` and rejects
+  extra properties. `outputSchema` promises the same shape to callers.
+- `steps` runs in order. A `transform` evaluates a data expression without an
+  external call. The step ID `echo` gives later expressions a stable name to read.
+- `{ref: /input}` reads the complete run input. The final `output` reads the
+  transform's result at `/steps/echo/output`.
 
-## Move from compilation to durable execution
+A `ref` is a JSON Pointer into workflow data, not a Python expression or a URL.
+For example, `/input/message` reads only the string. `{literal: "Hello"}` would
+produce a fixed string. Neither expression reads environment variables or files.
+See [compiler expression forms](../reference/compiler.md#cli-and-published-catalog-contract)
+and [schema rules](../reference/schema-profile.md) before adding more complex values.
 
-1. An operator provisions the host's verified identity link and local scoped grants.
-2. The host reads the catalog and saves a draft using the [typed SDK](../reference/sdk.md)
-   or [native API](../reference/api.md), supplying the expected revision for updates.
-3. Register/admit the required worker releases and create immutable connection
-   revisions with scoped secret references. Compilation alone does not do this.
-4. Publish an immutable version and activate it with the required bindings.
-5. Start a run through the scoped host API. Inspect its pinned activation/artifact,
-   then supply authorized signals or worker completions as the workflow requires.
-6. Use [history/replay](../reference/history-and-replay.md) and [incidents](../reference/incident-operations.md)
-   to inspect evidence and operator controls. Use [simulation](../reference/simulation.md)
-   with explicit mocks before connecting external effects.
+## 2. Validate the document
 
-The [host example](../../examples/host_product/client.py) demonstrates the existing
-`prepare`, `trigger`, `approve`, and `inspect` flow after its documented fixture
-prerequisites are supplied. It is not a credential/bootstrap bypass. The workflow
-compiler fixture above and the authenticated host example have different purposes.
+```sh
+weave workflow validate .local/tutorial/echo.workflow.yaml --output json
+```
 
-Publish a new immutable version to change behavior. Activate that version for
-new work; existing runs retain their pins. Retiring authoring state preserves
-historical revisions and is separate from deleting runtime evidence.
+Expect exit code `0`, `validationOk: true`, `partial: true`, `ok: false`, and
+`artifact: null`. This is a successful **partial validation**: it checks the
+language shape and schemas without resolving dependencies. `ok: false` here does
+not mean your YAML failed; it means no executable artifact was produced.
+
+## 3. Compile with an explicit catalog
+
+A catalog is a snapshot of dependency contracts available to the compiler.
+Echo calls no Actions, so save an explicitly empty catalog as `.local/tutorial/empty-catalog.json`:
+
+```json
+{"definitions": [], "tasks": [], "adapters": [], "schemas": {}}
+```
+
+```sh
+weave workflow compile .local/tutorial/echo.workflow.yaml --catalog .local/tutorial/empty-catalog.json \
+  --strict --directory .local/tutorial/compiled --output json
+weave workflow explain .local/tutorial/echo.workflow.yaml --catalog .local/tutorial/empty-catalog.json
+```
+
+Expect `ok: true`, `partial: false`, and an artifact. The `.local/tutorial/compiled` directory
+contains `compiled-artifact.json`, `executable.json`, and `catalog.lock.json`.
+The first file includes the executable plus diagnostics and source locations;
+use it for simulation. `explain` shows the start, `echo`, and end nodes and how
+they connect. Compilation checks references and data types; it executes no steps.
+
+Export refuses existing target files. For another attempt, choose a fresh
+`--directory`, or deliberately use `--force` to replace those exports.
+If compilation fails, inspect each diagnostic's `code`, `path`, and source span
+before proceeding. [Compiler results](../reference/compiler.md) explains these
+fields. A successful compile does not provision runtime dependencies.
+
+### Make a type error, then repair it
+
+Change the transform's `value` from `{ref: /input}` to
+`{ref: /input/message}` and compile again without exporting:
+
+```sh
+weave workflow compile .local/tutorial/echo.workflow.yaml \
+  --catalog .local/tutorial/empty-catalog.json --strict --output json
+```
+
+Expect exit code `1`, `ok: false`, and `WV-COMP-TYPE_MISMATCH` at `/spec/output`.
+The transform now returns a string, but `outputSchema` promises an object. The
+YAML is structurally valid, so partial validation alone does not catch this
+relationship. Restore `{ref: /input}` and recompile; expect success again. Your
+previously exported artifact remains the original valid workflow because this
+exercise did not export a replacement.
+
+## 4. Simulate one input
+
+Build a simulation request from the exported artifact. Save the following as
+`.local/tutorial/make-simulation.py` and run it with the same Python environment as Weave:
+
+```python
+import json
+from pathlib import Path
+
+request = {
+    "artifact": json.loads(Path(".local/tutorial/compiled/compiled-artifact.json").read_text()),
+    "mocks": {},
+    "input": {"message": "Hello, Weave"},
+    "now": "2026-01-01T00:00:00Z",
+}
+Path(".local/tutorial/simulation-request.json").write_text(json.dumps(request))
+```
+
+```sh
+python .local/tutorial/make-simulation.py
+weave workflow simulate .local/tutorial/simulation-request.json --output json
+```
+
+Expect `status: "succeeded"` and `variables.output` equal to
+`{"message": "Hello, Weave"}`. `mocks` is empty because a transform needs no
+external result. `now` initializes the simulator's virtual clock; simulation
+never calls a live worker or provider. To explore breakpoints, signals, and
+mocked Actions, continue with [simulation](../reference/simulation.md).
+
+Try changing the request's `message` to a number. Simulation rejects it because
+it violates `inputSchema`. Restore the string before continuing. This check
+protects the workflow's contract independently of whether the source compiled.
+
+## 5. Publish and activate for durable execution
+
+The [standalone tutorial](standalone.md) supplies the API, identity, grants, and
+commands for a first real run. The lifecycle is:
+
+| Stage | What you create | Why it is separate |
+| --- | --- | --- |
+| Draft, optionally | An editable, revisioned source document | An editor can save work before it compiles |
+| Publish | An immutable workflow version | The server recompiles against its authorized catalog |
+| Activate | An environment-specific version and dependency binding | Future runs pin this selected artifact and its dependencies |
+| Start | A durable run with schema-valid input | History records execution of the pinned activation |
+
+The echo workflow needs no connection or worker release. When you add an Action
+that calls external code, its worker release must be admitted, its instance
+running, and any required connection revisions bound before execution can work.
+Follow [workers](workers.md) or [host integration](host-integration.md) for that
+next layer.
+
+Publish a new version to change behavior and activate it for new runs. Existing
+runs retain their original pins. Retiring authoring state preserves historical
+revisions; it does not delete runtime evidence.
+
+## Read an external Action example next
+
+The [customer onboarding definition](../../examples/definitions/customer-onboarding.workflow.yaml)
+calls `onboarding.check-customer@1.0.0`, waits for a `customer-approved` signal,
+and combines their Boolean results. Its [Action](../../examples/definitions/check-customer.action.yaml)
+and catalog lock are teaching fixtures for dependency resolution:
+
+```sh
+weave workflow compile examples/definitions/customer-onboarding.workflow.yaml \
+  --catalog tests/fixtures/catalog/onboarding.lock.json --strict --output json
+```
+
+Run this command from the repository root. A successful result proves the
+fixture contracts compile. It does not install the external implementation,
+create an activation, or make this a runnable deployment. Use explicit mocks to
+explore it offline. Credentials belong in authorized connection secret references,
+never ordinary workflow input, literals, or output.

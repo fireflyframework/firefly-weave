@@ -18,6 +18,35 @@ SPDX-License-Identifier: Apache-2.0
 
 # Configuration
 
+Use this page to decide **which process needs which settings**. Start with the
+[standalone walkthrough](../guides/standalone.md) for a working local installation;
+it creates the private files referred to here. Set configuration before starting
+a process, then use readiness and an authorized request to verify the result.
+
+## Choose the right configuration file
+
+| File from the local walkthrough | Purpose | Who should receive it |
+| --- | --- | --- |
+| `session.env` | Restores nonsecret paths, context/project, and selected ports in another terminal | Every terminal in this local walkthrough |
+| `postgres.env` | Starts the owned PostgreSQL service and identifies its provisioning database | Operator shell and PostgreSQL Compose setup |
+| `identity.env` | Starts local Keycloak and contains its generated client credentials | Operator shell and identity Compose setup |
+| `runtime.env` | Names the new runtime database and its application, scheduler, and migration logins | Operator shell; remove migration authority when launching the API |
+| `api-container.env` | Container-reachable database and identity settings | API container only |
+| `native-container.env` | Database settings, exact native release, and connector egress policy | Native executor container only |
+| `worker.env` | Six API, token, release, and effect settings | Remote worker container only |
+
+The first four files come from standalone setup; the last three are created in
+[deployment](deployment.md). The shell-sourceable setup files and Compose's raw
+container env files have different quoting rules. Follow their generation recipes
+rather than copying one file wholesale into another process.
+
+`postgres.env` includes a provisioning `WEAVE_DATABASE_URL`. In the operator
+shell, load `runtime.env` **after** `postgres.env` so runtime commands use the
+nonowner application login. Never pass the entire operator environment to a
+remote worker.
+
+## Server environment reference
+
 Settings are loaded explicitly by the server entry point. Importing the compiler
 never loads a database, identity provider or secret resolver. The authoritative
 current models are [Settings](../../src/firefly_weave/settings.py),
@@ -60,8 +89,10 @@ catalog/scheduler authority for startup compatibility checks. Native executors a
 release/build configuration and granted secret handles. A remote worker needs
 only its API/identity/effect settings, not orchestration database credentials.
 
-The development defaults bind PostgreSQL to localhost 55432 and Keycloak to
-localhost 18080. The standalone foreground API uses port 8080; see
+Bare `compose.yaml` defaults PostgreSQL to localhost 55432; the standalone
+walkthrough explicitly selects 55434 so its guarded backup/restore recipe can
+use the same installation. Keycloak defaults to localhost 18080, and the
+standalone foreground API defaults to port 8080; see
 [deployment](deployment.md) for container ports and network configuration. Select an explicit Docker
 context/project and nonconflicting ports for your owned deployment. Container
 reachable JWKS/database hosts and exact token issuer are different configuration
@@ -107,7 +138,9 @@ checked against database policy metadata; a mismatch prevents readiness. A
 smaller policy is an explicit configuration change, not a way to erase existing
 usage. Follow [upgrades](upgrades.md) before applying it to an existing database.
 
-For example, this JSON lowers active runs while retaining all other defaults:
+For a **new database being provisioned with this policy**, this JSON lowers
+active runs while retaining all other defaults. This is not a live tuning command
+for the database already created by the standalone setup helper:
 
 ```sh
 export WEAVE_OPERATIONS_POLICY='{"runs_active":500}'
@@ -117,3 +150,26 @@ Configuration is read when creating the application. Restart the owned process
 after changing its private environment. Inspect capabilities and compatibility
 through the authorized API to confirm the policy and readiness observed by that
 replica.
+
+## Apply a configuration change
+
+1. Identify the process that consumes the setting from the table above. For
+   example, changing `worker.env` cannot change API authorization policy.
+2. Check the value against the referenced model. Lists and objects are JSON;
+   booleans exposed by `from_env()` accept `true` or `false`.
+3. Update the protected deployment configuration through its normal lifecycle.
+   Generated local setup files are creation receipts; do not rerun setup scripts
+   as a way to rotate or replace them.
+4. Restart the intended foreground process, or deliberately replace its owned
+   container with the new configuration. Restarting an existing container does
+   not reread its Compose env file. Preserve the previous configuration for
+   diagnosis and follow [deployment](deployment.md#stop-the-intended-scope).
+5. Check `/health/ready`, then inspect the authorized compatibility/capabilities
+   response and run the operation affected by the setting. Readiness alone does
+   not test a remote connector credential or collector endpoint.
+
+If startup reports a missing database URL, check the chosen env file and export
+behavior first. If it starts but remains restricted, inspect catalog authority and
+policy consistency using [upgrades](upgrades.md#start-and-inspect-compatibility).
+Do not replace application credentials with the migration owner to bypass either
+failure.

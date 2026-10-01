@@ -18,6 +18,54 @@ SPDX-License-Identifier: Apache-2.0
 
 # Pure compiler and artifact boundary
 
+This reference is for editor and runtime integrators. A **compiler** checks a
+workflow and turns it into a fixed execution plan, called an **artifact**. It
+does not run the workflow. Start with [workflow authoring](../guides/workflow-authoring.md)
+for the echo file used below; use the [standalone tutorial](../guides/standalone.md)
+when you want a durable run.
+
+## Compile the tutorial file in Python
+
+Run this from the checkout root in the installed Weave environment:
+
+```python
+from pathlib import Path
+from firefly_weave.compiler.api import compile_source, validate_source
+from firefly_weave.compiler.catalog import CatalogSnapshot
+
+path = Path(".local/tutorial/echo.workflow.yaml")
+source = path.read_text()
+partial = validate_source(source, format="yaml", filename=str(path))
+print(partial.validation_ok, partial.partial, partial.ok)
+
+result = compile_source(source, format="yaml", filename=str(path),
+                        catalog=CatalogSnapshot.empty(), strict=True)
+for diagnostic in result.diagnostics:
+    print(diagnostic.code, diagnostic.path, diagnostic.source)
+assert result.ok and result.artifact is not None
+print(result.artifact.digest)
+```
+
+The first line prints `True True False`: source checks succeeded, but they did
+not produce an executable. Complete compilation prints a 64-character digest
+identifying the executable. An empty catalog works because echo uses only a
+transform. An Action reference needs its exact declared contracts in the catalog.
+
+| Result | What an authoring tool should do |
+| --- | --- |
+| `validation_ok=True`, `partial=True` | Show source checks passed; compilation is still required |
+| `ok=True`, artifact present | Allow local simulation or submission for server publication |
+| Error diagnostics | Show `code`, semantic `path`, and `source` location; keep the user's source editable |
+| `truncated=True` | Tell the user additional diagnostics were omitted; do not claim an exhaustive error list |
+
+A diagnostic path points into the parsed definition, such as `/spec/output`.
+A source span points to the corresponding file line/column. Preserve both:
+editors need source spans, while JSON-based authoring tools need paths. Strict
+mode turns complete-analysis warnings into errors; it does not expand the work
+performed by partial validation.
+
+## Entry points and result contract
+
 `compile_source(source, *, format, catalog, filename=None, strict=False)` compiles
 `str | bytes | JsonObject` in `yaml`, `json`, or `object` format. The explicit
 immutable `CatalogSnapshot` supplies exact dependencies. Workflow, Action, and

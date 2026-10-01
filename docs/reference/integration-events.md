@@ -18,6 +18,44 @@ SPDX-License-Identifier: Apache-2.0
 
 # Outbound integration events
 
+## Send lifecycle notifications to your application
+
+A **subscription** selects future Weave lifecycle events and a fixed HTTP
+destination. A **delivery** is the durable attempt record for one event and one
+subscription revision. This is outbound notification; to receive business events
+into Weave, use [signed webhooks](http-and-webhooks.md) or
+[provider sources](provider-sources.md).
+
+After [standalone setup](../guides/standalone.md), configure your receiving
+application to authenticate and durably deduplicate the envelope described below.
+[`examples/idempotent_receiver.py`](../../examples/idempotent_receiver.py) demonstrates
+a durable effect ledger for a different request shape. It does not implement
+this integration-event envelope or HMAC authentication; it is not a drop-in
+subscription receiver.
+Then perform these steps:
+
+1. Publish the installed HTTP v1 Connector and create an environment connection
+   to your receiver with `auth: bearer` and `secretRef.token` pointing to the
+   operator-granted signing handle. Retain the connection response's revision `id`.
+2. Create the subscription with the complete body below, replacing its connection
+   UUID. Save the returned subscription `id`, `revision`, and `binding_id`.
+3. Keep a scheduler-enabled replica running the outbox dispatcher. A native Action
+   worker is not the sender for these notifications; the outbox owns delivery.
+4. Perform one authorized operation matching `event_types` after subscription
+   creation. Existing historical events do not backfill.
+5. List deliveries, identify the returned `subscription_id`, and read its attempts.
+   `delivered` means the receiver returned a configured success status. Confirm
+   the business effect in the receiver's durable store as a separate check.
+
+If no delivery exists, compare the event filter, subscription revision, and source
+read authority. If it remains pending, inspect scheduler/database readiness. If
+it reaches `incident`, inspect the fixed `code` and attempt history, correct the
+receiver or authority problem, then request an explicit retry. Retry preserves
+IDs, so the receiver must continue deduplicating. It cannot restore a revoked
+standing connection binding. See [host integration](../guides/host-integration.md)
+for using these events in a product and the exact authority rules below.
+
+
 Weave sends **at least once** notifications for accepted run transitions,
 definition publication, and environment activation or retirement. The notification
 contains controlled identity, status, sequence, revision, and emission metadata.

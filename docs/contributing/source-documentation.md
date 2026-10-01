@@ -18,6 +18,27 @@ SPDX-License-Identifier: Apache-2.0
 
 # Source documentation and attribution
 
+## Choose the right documentation path
+
+When adding or changing a file, work through this sequence before running the
+checker:
+
+1. Identify ownership and format. For first-party comment-capable source, use the
+   native header below. Preserve third-party notices and exact protocol bytes.
+2. For a Python module, explain its responsibility in a module docstring. For
+   public behavior, update the owning guide/reference and its executable example
+   where applicable. A license header does not explain how a feature works.
+3. For strict JSON or an immutable fixture, add the exact path to the inventory
+   using the appropriate kind below. Do not invent a comment field in a wire DTO.
+4. Run `python scripts/source_coverage.py --strict` from the repository root.
+   Use each reported path to fix a missing header, docstring, inventory entry, or
+   unexpected file. For document edits, also run `python scripts/check_docs.py`
+   to check local links and the documentation surface.
+5. Read the rendered page/example as a user. Automated coverage establishes
+   presence and structure; it cannot establish clear explanations, correct
+   prerequisites, or a working end-to-end procedure.
+
+
 First-party source uses Apache License 2.0 and identifies the Firefly Software
 Foundation explicitly. Preserve earlier applicable copyright years, original
 third-party ownership and notices. A dependency's presence does not transfer its
@@ -116,7 +137,8 @@ changed immutable fixtures and unknown formats fail strict mode. Symlinks are
 reported and never followed, even for internal aliases; review aliases
 explicitly at final publication.
 
-The checker prunes version control, private working files, virtual environments, dependency trees,
+The checker prunes version control, private working files (including `.local/`
+tutorial output and credentials), virtual environments, dependency trees,
 build/distribution outputs, interpreter/tool caches, `.env`/`.env.*`, private
 `.pem`/`.key` files and operating-system metadata before reading contents. It
 reports those paths and reasons. This protects local evidence and conventional
@@ -129,7 +151,8 @@ normal validation targets. Every contribution must pass the same check. Do not h
 ## Validate a contribution
 
 Use the [Makefile](../../Makefile) as the authority for project checks. `make check`
-runs strict source coverage, unit/contract tests, Ruff, strict mypy and a build. Integration and end-to-end
+runs strict source coverage, documentation navigation/SVG checks, unit/contract
+tests, Ruff, strict mypy and a build. Integration and end-to-end
 suites require explicitly configured, owned test services. To check only the
 standalone inventory tool's fixtures:
 

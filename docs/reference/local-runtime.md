@@ -29,6 +29,38 @@ private configuration, identity bootstrap, grants, and the first workflow. Use
 [deployment](../operations/deployment.md) to launch API and worker containers.
 This page explains runtime authority and lifecycle behavior.
 
+## Components and startup order
+
+Start with PostgreSQL, Keycloak, and the API application process.
+PostgreSQL stores Weave's durable state. Keycloak authenticates callers and uses
+its own PostgreSQL service (`keycloak-db`) to retain identities. The Weave API
+verifies tokens, resolves local grants, and schedules work against its runtime
+database. Remote workers and native executors are added only when the workflow
+needs their execution capabilities.
+
+The standalone sequence is deliberate:
+
+1. Reserve one Docker context/project, private work directory, and set of ports.
+2. Generate local PostgreSQL and identity secrets, start those services, and
+   verify PostgreSQL health and Keycloak discovery.
+3. Provision a fresh runtime database with separate application/scheduler logins
+   and apply its packaged schema.
+4. Verify and bootstrap the host identity, then launch the API in a second terminal.
+5. Check readiness, grant business scope, and publish/activate/run a workflow.
+6. Add an admitted worker through the [deployment guide](../operations/deployment.md)
+   if the workflow performs a task outside the API's built-in runtime behavior.
+
+A missing earlier stage often explains a later failure: token acquisition needs
+a ready realm, authorization needs an identity link plus grants, and API readiness
+needs both current schema and catalog compatibility authority.
+
+## Private configuration and database authorities
+
+The walkthrough also saves `session.env`, which contains nonsecret paths,
+context/project, and selected ports. Its printed `cd` and `source` commands let a
+new terminal return to the same installation. This file does not load runtime or
+identity secrets; load only the additional configuration needed by that terminal.
+
 The setup scripts refuse to replace existing secret files. Reuse the intended
 configuration when a file already exists. Generated environment files and
 bootstrap receipts belong in protected local storage, outside source control.
@@ -44,6 +76,21 @@ scheduler and migration URLs. Runtime
 startup rejects superuser, BYPASSRLS and public-table owner identities. Production
 must provide external secrets and HTTPS issuer/JWKS endpoints; development
 HTTP is accepted only for explicitly configured localhost endpoints.
+
+| Authority | Intended use | Local source |
+| --- | --- | --- |
+| Provisioning administrator | Creates the owned runtime database/logins | `postgres.env` control URL |
+| Migration owner | Applies schema and performs explicit bootstrap | `WEAVE_MIGRATION_DATABASE_URL` in `runtime.env` |
+| Application login | Executes authorized API/business operations under RLS | `WEAVE_DATABASE_URL` in `runtime.env` |
+| Catalog/scheduler login | Executes bounded scheduler/compatibility functions | `WEAVE_SCHEDULER_DATABASE_URL` in `runtime.env` |
+| Worker principal | Claims only granted task/release work through the API | Verified identity link and scoped grants; no database login |
+
+Source the runtime file after any provisioning file in an operator shell; both
+may define a database URL, but only the runtime application URL belongs in an API
+process. The standalone startup command removes migration credentials from that
+process explicitly.
+
+## Explicit migrations
 
 Use the selected installed interpreter and private configuration from the
 standalone guide for an explicit migration:
@@ -64,6 +111,8 @@ revision together. Startup never migrates. The migration command requires
 Migration assets are included in installed wheels. The expected schema head is
 `0021_operations`. See [upgrades](../operations/upgrades.md) for compatibility
 checks and the forward-migration procedure.
+
+## Identity bootstrap and scope grants
 
 Follow [verified identity bootstrap](../guides/standalone.md#3-verify-and-bootstrap-one-local-identity)
 to link an existing provider identity with explicit migration credentials.
@@ -103,6 +152,8 @@ as setup. The generated temporary bootstrap admin service account remains local
 and retained; remove or replace it only through an explicitly authorized lifecycle
 operation. Its secret is not passed to the Weave runtime or request verifier.
 
+## Token verification and key rotation
+
 JWKS fetches use only configured URLs, no redirects, ambient proxies or token-
 selected discovery. Defaults: 5-second timeout, 300-second freshness, 5-second
 refresh cooldown, at most 64 accepted keys, 256-KiB response and 32-KiB token.
@@ -119,6 +170,12 @@ expiry. Offline verification does not detect external provider revocation before
 expiry; configure a future explicit introspection/revocation integration if that
 is required. Principals supplied to a direct service are immutable request-time
 snapshots; resolve again for a new operation instead of retaining them indefinitely.
+
+## Tenant isolation and compatibility inventory
+
+RLS means row-level security: PostgreSQL evaluates policies that restrict which
+rows a transaction may access. Weave also checks scope in its services and uses
+scoped foreign keys to keep related records in the same boundary.
 
 PostgreSQL tenant tables use FORCE RLS and composite scoped foreign keys. UoW
 binds `weave.tenant_id` transaction-locally with parameterized `set_config`;
@@ -148,7 +205,14 @@ fresh guarded databases and separate application/migration identities. They are
 separate from the public startup journey and do not certify external provider
 accounts or production infrastructure.
 
-All databases/roles/volumes remain retained. Safe stop:
+## Stop and restart the same installation
+
+Stop foreground workers and the API with Ctrl-C in their respective terminals.
+If you added runtime containers, stop the exact worker and API/native services
+using [deployment](../operations/deployment.md#stop-the-intended-scope) first.
+Only then stop the supporting services below from the original operator terminal,
+with the same context/project and selected volume/port variables still loaded.
+All databases, roles, and volumes remain retained:
 
 ```sh
 docker --context "$WEAVE_DOCKER_CONTEXT" compose --project-name "$WEAVE_LAUNCH_ID" \
@@ -158,8 +222,22 @@ docker --context "$WEAVE_DOCKER_CONTEXT" compose --project-name "$WEAVE_LAUNCH_I
 
 Stop only the services belonging to your deployment. Stopping services preserves
 stored workflow state; deleting databases or volumes is a separate destructive
-operation. Owned telemetry and database cleanup are independently attempted after
-failed startup or shutdown.
+operation. Application-owned telemetry shutdown and database pool cleanup are
+independently attempted after failed startup or shutdown; this cleanup does not delete stored
+databases or workflow data.
+
+To resume unchanged local services, reuse the standalone
+`up --detach --no-recreate --wait` command with the same project and files, check PostgreSQL
+and Keycloak readiness again, then relaunch the API from its existing runtime
+configuration. Do not rerun `setup-runtime.py`: that creates a different fresh
+runtime database rather than reopening the one you were using. Do not rerun
+bootstrap or first-run provisioning merely to restart a process.
+
+After [backup/restore](../operations/backup-restore.md), the original source may
+be fenced. In that case follow the restore procedure's selected target
+configuration instead of restarting the original `runtime.env` blindly.
+
+## Telemetry and authorization audit
 
 Weave supplies native PyFly beans for its OpenTelemetry providers. Export is
 disabled by default and is enabled only through explicit `WEAVE_TELEMETRY`
@@ -178,8 +256,13 @@ unavailable), capability, correlation and relevant binding/identity details in
 `access_audit.event`. Old rows remain null; no historical identity is invented.
 Decision-log shipping and retention must be configured by the deployment owner.
 
-
 ## Runtime version and lifecycle
+
+The checked-in Compose services use local development identity/network settings.
+They demonstrate the public startup journey; production requires explicit HTTPS
+identity, managed secrets, network exposure, backups, and process supervision
+appropriate to that environment. The local setup scripts do not provision those
+production facilities.
 
 The locked framework is published PyFly 26.9.15. Read the exact wheel hash and
 upstream commit from [project metadata](../../pyproject.toml). The API source

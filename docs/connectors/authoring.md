@@ -18,6 +18,55 @@ SPDX-License-Identifier: Apache-2.0
 
 # Authoring trusted connector packages
 
+## What you will build
+
+This guide creates a trusted Python package that adds an executable connector to
+Weave. Use [OpenAPI import](metadata-import.md) when a reviewed HTTP API description
+can generate the package; write an adapter when the protocol needs custom code.
+A commercial product name alone does not imply a supported connector.
+
+There are three separate layers:
+
+| Layer | What it supplies | Who creates it |
+| --- | --- | --- |
+| Installed package | Python services and a Connector manifest describing operations | Package author and deployment operator |
+| Published Connector and Action | Immutable contracts; an Action selects one operation and its fixed configuration | Project author |
+| Connection and activation | Environment credentials/destinations and exact versions/releases used by a workflow | Scoped deployer and operator |
+
+The first two commands below run locally without a server. Before enabling the
+result in a running environment, complete [standalone setup](../guides/standalone.md),
+then [worker admission](../guides/workers.md). An installed package is not yet a
+published Connector, and a published Connector is not yet an executable activation.
+
+## From package to an executable workflow
+
+After the local build/test steps below, deploy in this order:
+
+1. Allowlist the installed package's exact identity on the server/native executor.
+2. Publish `package.descriptor.manifest` through the project's Connector publication
+   API. Save the returned version `id`; it is `connector_version_id` in a connection.
+3. Register a native worker release using the descriptor's exact capabilities and
+   connector bindings. Save its `id`. Grant the worker its scoped release/task
+   authority and the release's credential capability for the connection revision.
+4. Create the environment connection with `name`, `connector_version_id`, `config`,
+   `secretRef` (handles, never values), and `allowed_destinations`. Save its returned
+   `id`, which is the **connection revision ID**, not the Connector version ID.
+5. Publish an Action selecting the Connector's `name@version`, action name, schemas,
+   effect and fixed config. Publish a Workflow using that Action and a connection slot.
+6. Activate the Workflow with `connection_revision_ids` mapping slot names to
+   connection revision IDs and `connector_release_ids` mapping Connector version
+   UUIDs to release UUIDs. Save the activation `id` for run/trigger requests.
+7. Start a run, inspect its state and history, and inspect any incidents before
+   retrying an external effect.
+
+[`examples/admit_native.py`](../../examples/admit_native.py) demonstrates the full
+publication/release/grant/connection/activation sequence for HTTP. Its `read`
+capability and local receiver are example-specific; use your descriptor's actual
+capability and approved destination. [HTTP execution](../reference/http-and-webhooks.md)
+explains native executor configuration; [host integration](../guides/host-integration.md)
+explains embedding the API in a product.
+
+
 A connector package is an operator-installed Python distribution. It exports a
 `ConnectorPackage` declaration through `firefly_weave.connectors`; the declaration
 names native PyFly `@service` classes. Tenant definitions cannot install packages,

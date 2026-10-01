@@ -18,7 +18,45 @@ SPDX-License-Identifier: Apache-2.0
 
 # Recorded history and offline replay
 
-`GET /tenants/{tenant}/projects/{project}/environments/{environment}/runs/{id}/history`
+## Inspect what happened without repeating it
+
+**History** is the ordered record of accepted run facts. **Replay** feeds those
+facts through the pure runtime kernel to check consistency. It sends no messages,
+executes no Actions, and does not resume a run. To create a new execution, use
+[run retry](incident-operations.md) instead.
+
+After [standalone setup](../guides/standalone.md), obtain the run `id` from its
+start response or trigger/provider receipt and a credential with scoped `run.read`.
+Keep the exact compiled artifact retained for that run's activation. A current
+source file with the same name is not a substitute: compare its digest with the
+run/export `artifact_digest` before offline replay. Publication/deployment tooling
+should retain this artifact alongside the release evidence.
+
+1. Set `WEAVE_ENVIRONMENT_URL` to the complete scoped environment URL and use the
+   protected `WEAVE_ACCESS_TOKEN` configuration described in [CLI login](cli.md#login-and-secure-persistence).
+2. Read history using the commands below. Save `next_cursor` unchanged for the next
+   page; do not compute sequence offsets yourself.
+3. Export the safe evidence, then replay locally with the matching artifact.
+   Export does not automatically include that artifact. If you do not have it,
+   `GET .../runs/RUN_UUID/replay` provides the server's report under the same read authority.
+4. Inspect `status`, `diagnostics`, `last_verified_sequence`, and `omissions`.
+   The CLI exits 0 for `consistent`, 1 for `incomplete` or `inconsistent`; a
+   nonzero replay exit is not itself evidence that a live run failed.
+
+| Report | What to do next |
+| --- | --- |
+| `consistent` | The evidenced terminal transitions agree; external delivery and historical authorization are not independently proven |
+| `incomplete` | Check whether the run is open, export is bounded, or evidence was omitted/unavailable; retain the verified prefix |
+| `inconsistent` | Confirm the exact artifact and event stream, then inspect the first diagnostic; do not edit history to force agreement |
+
+See [worker lifecycle](../guides/workers.md) for leases and completions, and
+[incident operations](incident-operations.md) when inspection requires an operator
+decision. Replay itself changes no durable state.
+
+## Routes, pagination, and evidence
+
+
+`GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{id}/history`
 returns an `EventPage`. `limit` is 1–100 (default 100). Pass `next_cursor` unchanged
 for the next page. The cursor binds the full scope, run, last sequence and the
 initial high-water sequence, so later appends do not enter that traversal. Every

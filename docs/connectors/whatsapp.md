@@ -18,6 +18,63 @@ SPDX-License-Identifier: Apache-2.0
 
 # WhatsApp Cloud API
 
+## What the integration builds
+
+There are two independent paths: authenticated webhook events start/signal a
+Workflow; `send-text` or `send-template` Actions send to an explicitly allowed
+recipient. Delivery-status webhooks report later provider facts. An outbound
+`accepted` result is not a delivery-status result.
+
+Complete [standalone setup](../guides/standalone.md) and
+[native worker admission](../guides/workers.md). Use the
+[publication and activation sequence](authoring.md#from-package-to-an-executable-workflow)
+for Weave IDs. The operator setup below covers the separate provider assets.
+
+| Connection field | Required source of the value |
+| --- | --- |
+| `connector_version_id` | Published `weave-whatsapp` Connector response `id` |
+| `app_id` | Operator's Meta application |
+| `account_id` | WhatsApp Business Account (WABA) identity |
+| `phone_number_id` | Registered business phone asset ID, distinct from its phone number |
+| `business_phone_number` | That asset's canonical digit-only phone number |
+| `graph_version` | Version independently reviewed for this deployment; fixture value is provisional |
+| `recipient_allowlist` | Explicitly authorized digit-only recipient numbers |
+| `approved_templates` | Account owner's reviewed name, locale and body-parameter count |
+
+[`connection.json`](../../examples/connectors/whatsapp/connection.json) is the
+complete creation-request shape, including all three distinct secret handles.
+Copy it into an operator-reviewed working file, replace its synthetic IDs and
+allowlist, and create the connection through the environment API. Save the
+returned revision `id`. No script here provisions provider assets.
+
+For inbound processing, publish/activate a Workflow accepting the complete
+[`event-target.schema.json`](../../examples/connectors/whatsapp/event-target.schema.json).
+Branch on `event_type` before treating `text` as a message: status events have null
+text. Create the source using [the source request recipe](../reference/provider-sources.md#create-one-inbound-route),
+selecting the WhatsApp declaration/provider and copying this exact connection config.
+Save its `id` before configuring the provider callback.
+
+For outbound processing, publish Actions selecting `send-text` or `send-template`
+with `config: {}`, the installed descriptor schemas, `sideEffect: non_idempotent`,
+and the descriptor timeout. Bind the connection and admitted release at activation.
+These are complete **Action inputs**, not API requests to start a run:
+
+```json
+{"recipient":"15550000001","text":"Appointment reminder"}
+```
+
+```json
+{"recipient":"15550000001","name":"appointment","locale":"en_US","parameters":["Tuesday"]}
+```
+
+Expected successful output has the shape
+`{"message_id":"PROVIDER_MESSAGE_ID","acceptance":"accepted"}`. Save that message
+ID for status inspection below. If a webhook is acknowledged but no reply occurs,
+inspect its provider receipt and linked run separately. If sending ends in an
+unknown outcome, use [incident reconciliation](../reference/incident-operations.md)
+before another send. A missing status fact alone does not prove no send occurred.
+
+
 This connector admits authenticated incoming text and delivery-status facts and
 sends text or configured approved templates. It uses native provider sources,
 receipts, current connection authority and the existing operation ledger.

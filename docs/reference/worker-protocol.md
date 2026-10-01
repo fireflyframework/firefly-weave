@@ -18,14 +18,39 @@ SPDX-License-Identifier: Apache-2.0
 
 # Remote worker protocol
 
-The runnable [worker](../../examples/worker/main.py) imports only the worker SDK and
+Use this reference when implementing a task transport or diagnosing lease and
+completion behavior. The [worker guide](../guides/workers.md) explains the example
+handler and deployment order; the [standalone tutorial](../guides/standalone.md)
+is the first-run prerequisite before adding workers.
+
+## The task lifecycle
+
+| Term | Meaning |
+| --- | --- |
+| Release | Immutable build identity and declared capabilities admitted by a deployer |
+| Instance | A registered running process owned by the authenticated worker principal |
+| Task | One external operation prepared by a workflow Action |
+| Lease | Time-limited permission for an instance to attempt that task |
+| Generation | Attempt number used to reject stale authority after recovery |
+| Operation key | Stable external idempotency key across attempts of the same task |
+| Completion ID | Identifier for one submitted outcome and its replayable receipt |
+| Receipt | The server's durable acknowledgment of that outcome delivery |
+
+The normal order is **admit release → register instance → claim → heartbeat while
+working → complete or fail**. Registration does not create a task. A claim can
+return an empty list while no eligible workflow work exists. Credentials, when
+needed, use a separate authorized lease request.
+
+## Authentication and endpoints
+
+The [worker example](../../examples/worker/main.py) imports only the worker SDK and
 HTTP client. It receives no database or administrator credentials. A separately
 provisioned Keycloak client obtains an access token for `weave-api`; the API uses
 its normal OIDC verifier and local identity link. The `worker` role grants no
 authoring rights. Provider roles alone grant nothing.
 
 Every endpoint below is relative to
-`/tenants/{tenant}/projects/{project}/environments/{environment}` and requires a
+`/api/v1/tenants/{tenant}/projects/{project}/environments/{environment}` and requires a
 Bearer access token plus a current local scoped grant.
 
 | Operation | POST path | Body / result |
@@ -38,11 +63,28 @@ Bearer access token plus a current local scoped grant.
 | Fail | `/tasks/fail` | `lease`, `error` with completion ID, bounded code and outcome |
 | Credentials | `/tasks/credentials` | Live `lease`, bound `connection_revision_id`, `slot`; returns short lease with `Cache-Control: no-store` |
 
+For example, after a deployer admits the example release, registration sends:
+
+```json
+{
+  "release_id": "<the admitted release UUID>",
+  "task_types": ["example-record@1.0.0"],
+  "capacity": 1
+}
+```
+
+Replace the UUID placeholder with the actual returned release ID. Save the
+registration result's `id` as `worker_id`; a claim body is then
+`{"worker_id": "<that instance UUID>", "limit": 1}`. Never fabricate a lease proof:
+use the exact proof returned in the claim response for renewals and outcomes.
+
 `LeaseProof` contains task ID, generation, owner instance ID and secret token.
 Never log or persist it in ordinary telemetry. `TaskLease` also carries immutable
 input, stable `operation_key`, capability, admitted release ID, expiry and absolute
 deadline. Native connectors share these semantics; their invocation metadata is
 private and unavailable to remote workers.
+
+## SDK runner and token lifetime
 
 Use `WorkerTransport` with an authenticated `httpx.AsyncClient` and `Worker` with
 handlers keyed by exact `taskType@taskVersion`. The runner bounds concurrency,
@@ -55,24 +97,32 @@ fail before claims. A supervisor can start a new invocation with fresh credentia
 after the previous invocation exits. `WorkerTransport` does not refresh tokens.
 This policy applies to the example's declared task timeout, not arbitrary handlers.
 
+## Retries and lost responses
+
 Delivery is **at least once**. Pass `operation_key` to an external target that
 stores its own durable idempotency receipt. The key stays stable when recovery
 creates a new generation. A stale generation/proof cannot complete a newer
 attempt. An identical accepted completion ID/body replays its receipt; changing
 the output conflicts. A lost completion response is ambiguous: do not rerun the
-handler to compensate. Only HTTP429 with exact `WV-REQUEST-CAPACITY` or
+handler to compensate. Only HTTP 429 with exact `WV-REQUEST-CAPACITY` or
 `WV-OPERATION-CAPACITY` is explicit rejected admission: claim returns no leases,
-letting the stop-aware worker poll again without cancelling active handlers.
+letting the stop-aware worker poll again without canceling active handlers.
 Heartbeat retries only those codes, with at most three total attempts, 50/100ms
 backoff and a one-second window after the first rejection. Completion and failure
 delivery allow at most 48 total attempts within ten seconds after the first
 rejection, with 50/100/200ms backoff followed by a 250ms cap. The existing
 lease/deadline watchdog can stop retries sooner. Each
 attempt uses identical serialized proof, completion ID and payload bytes; handlers
-are never rerun. Unknown429, authorization errors, server errors, disconnects,
+are never rerun. Unknown 429, authorization errors, server errors, disconnects,
 timeouts and malformed successful responses remain fatal without automatic retry.
 Credential requests are unchanged. These bounded retries do not resolve an
 ambiguous outcome or renew expired authority.
+
+For example, suppose the target records a customer and the worker crashes before
+Weave accepts completion. Recovery can issue generation 2 for the same task.
+That handler must send the same `operation_key`, letting the target return its
+original receipt. Lease fencing prevents generation 1 from advancing generation
+2's graph; only target-side deduplication prevents a duplicate external record.
 
 Only safe declared effects retry inside the pinned attempt/deadline policy.
 Ambiguous non-idempotent effects raise incidents. Weave does not promise exactly-once
@@ -90,6 +140,8 @@ into its owned test container before startup. Production source and images have
 no fault environment switch. The test launcher records a private lease proof after
 the receiver accepts the effect, then exits before completion; ordinary SDK
 handlers use no such hook.
+
+## Cancellation and suspended branches
 
 Structured branch failure cancels pending work and cooperatively revokes issued
 sibling leases in the same run transaction. A valid proof for the exact still-live

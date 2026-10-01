@@ -18,6 +18,55 @@ SPDX-License-Identifier: Apache-2.0
 
 # SQL connectors: PostgreSQL
 
+## First lookup: from connection to rows
+
+This guide's first useful operation is a bounded lookup in an **external**
+PostgreSQL database. Complete [standalone setup](../guides/standalone.md) and
+[native worker admission](../guides/workers.md), then follow the
+[Connector publication sequence](authoring.md#from-package-to-an-executable-workflow).
+The business database and its credentials are separate from Weave's own database.
+
+1. Ask the database owner for a reviewed `business.customers` table, a dedicated
+   read login, its canonical server IP/port, database name, and trusted TLS CA.
+   Check the table restrictions below before granting access.
+2. Put the password behind an operator-scoped handle, here `customer-db-password`.
+   Publish the installed PostgreSQL descriptor and use its returned version ID in
+   this complete connection request:
+
+```json
+{
+  "name": "customer-db",
+  "connector_version_id": "00000000-0000-4000-8000-000000000001",
+  "config": {
+    "dialect": "postgresql", "host": "10.20.0.15", "port": 5432,
+    "database": "customers", "user": "weave_reader", "role": "read", "tls": "verify-full"
+  },
+  "secretRef": {"password": "customer-db-password"},
+  "allowed_destinations": ["postgresql://10.20.0.15:5432"]
+}
+```
+
+The UUID and address are placeholders. A private address additionally needs the
+operator network policy below; the certificate must cover the actual IP.
+`role: read` selects the connector's access profile, not a PostgreSQL role name.
+
+3. Publish [`postgresql.action.yaml`](../../examples/definitions/postgresql.action.yaml),
+   bind the returned connection revision to the Workflow slot, and activate with
+   the admitted PostgreSQL release. That Action takes this exact input:
+
+```json
+{"parameters":{"customerId":"customer-123","rowLimit":10}}
+```
+
+A matching row can produce `{"rowCount":1,"rows":[{"customer_id":"customer-123","status":"active"}]}`;
+no matches produce `{"rowCount":0,"rows":[]}`. Actual row values come from your table.
+A successful connection test does not prove this query's privileges or supported
+table shape. On failure, inspect the fixed SQL code and run incident, compare the
+Action's parameter names/types, and have the owner check grants/table metadata.
+For `SQL_COMMIT_UNKNOWN`, reconcile the external operation before retrying; the
+lookup example is read-only, but commands have different recovery rules below.
+
+
 SQL is the connector family. The installed adapter is **`weave-postgresql`**, dialect
 **`postgresql`**, version **`1.0.0`**. PostgreSQL is the only implemented driver.
 There is no portable-SQL claim or Oracle/MySQL/SQL Server adapter. Publish the

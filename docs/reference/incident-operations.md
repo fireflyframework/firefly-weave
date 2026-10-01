@@ -18,6 +18,49 @@ SPDX-License-Identifier: Apache-2.0
 
 # Incident operations
 
+## Resolve an uncertain run deliberately
+
+An **incident** records a condition that needs a decision, often because Weave
+cannot determine whether an external Action completed. **Suspended** means normal
+continuation is blocked while that decision is outstanding. A retry of the whole
+run is different: it creates a new execution with new operation keys.
+
+Start with [standalone setup](../guides/standalone.md) and the scoped operator
+credential. Obtain `RUN_UUID` from the run-start response or trigger/provider
+receipt. Use [history](history-and-replay.md) and [worker recovery](../guides/workers.md)
+to understand which Action and attempt are involved.
+
+1. Run `weave incident list RUN_UUID` with the environment URL configured below.
+   Record the active incident `id`, `revision`, `node_id`, `generation`, and `code`.
+2. Consult the external system using its own authorized reconciliation procedure.
+   Weave does not look up a payment, message, or database change for you.
+3. Choose `retry_safe` only for an eligible declared effect, or
+   `accept_reconciled_result` when independent evidence establishes the result.
+   Use `terminate` when the execution should stop. The exact requirements follow.
+4. Save the complete resolution body below as `resolution.json`; replace its
+   receipt UUID with a newly generated UUID, evidence reference, and output with
+   your verified result. The sample `42` is valid only for a pinned schema that
+   accepts that number. Submit with the revision you just read.
+5. Read the incident and run again. The resolution is audited, but another active
+   incident or deadline may still prevent continuation. On a lost response, retry
+   the same receipt/body/revision; on a competing revision conflict, reread first.
+
+For a terminal run that needs a new business execution, `new-run.json` has this
+complete shape (replace the activation UUID and use valid Workflow input):
+
+```json
+{"activation_id":"00000000-0000-4000-8000-000000000001","input":{}}
+```
+
+Send it with `weave run retry RUN_UUID --idempotency-key retry-123 --request new-run.json`.
+The response is a new run whose `parent_run_id` points to the original. Reuse the
+same idempotency key only for retrying that same start request. Inspect
+`external_effects_may_continue` on cancellation: stopping Weave cannot retract
+already-issued external work.
+
+## Endpoint and decision contract
+
+
 All paths below are under
 `/api/v1/tenants/{tenant}/projects/{project}/environments/{environment}`. Authorization
 uses current scoped capabilities, including on duplicate receipts. Scoped

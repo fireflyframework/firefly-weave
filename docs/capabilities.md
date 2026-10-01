@@ -18,6 +18,24 @@ SPDX-License-Identifier: Apache-2.0
 
 # Capabilities and verification
 
+## How to use this matrix
+
+Read each row from left to right. **Implemented** means code exists for the stated
+scope. **Local verification** names the kind of evidence exercised against fixtures
+or owned infrastructure. **Live-provider verification** concerns a real external
+account/service and is a separate claim. **Deferred** means the capability is not
+part of this delivery. "Not applicable" does not mean every possible destination
+or customer deployment has been tested.
+
+For example, the Telegram row supports planning a text integration using its
+listed local evidence, but bot registration, chat permissions and actual delivery
+still need verification in your deployment. The OpenAPI row supports selected
+operations in the documented subset; it does not certify an arbitrary commercial
+API. Follow the linked guide for prerequisites and supported shapes before
+choosing a capability. Start with [standalone setup](guides/standalone.md) when you
+need a runnable environment rather than an implementation inventory.
+
+
 Firefly Weave is an alpha workflow and integration platform. This page describes
 version `0.1.0a1`. Published artifacts are listed in
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
