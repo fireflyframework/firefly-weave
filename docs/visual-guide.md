@@ -37,6 +37,7 @@ image, admission, process, and task lease are different resources.
 
 | Your question | Read and try | Picture to follow |
 | --- | --- | --- |
+| How do I get a working CLI? | [Install the CLI](installation.md) | [Isolated installation](diagrams/cli-installation.svg) |
 | How does my YAML become an execution? | [Core concepts](concepts.md), [CLI lab](guides/cli-tutorial.md) | [Definition, activation, and runs](diagrams/definition-lifecycle.svg) |
 | Why is a definition invalid? | [Authoring lab](guides/workflow-authoring.md), [compiler](reference/compiler.md) | [Diagnostics and repair](diagrams/authoring-diagnostic-loop.svg) |
 | What do schemas check? | [Definition contracts](contracts.md), [schema profile](reference/schema-profile.md) | [Definition and value boundaries](diagrams/authoring-schema-boundaries.svg) |
@@ -80,6 +81,7 @@ needed to view or edit them.
 | Step execution and move time separately | [authoring simulation controls](diagrams/authoring-simulation-controls.svg) |
 | Admission and registration precede task authority | [authoring worker lifecycle](diagrams/authoring-worker-lifecycle.svg) |
 | Read evidence without overclaiming | [capability evidence](diagrams/capability-evidence.svg) |
+| Install once, use Weave anywhere | [CLI installation](diagrams/cli-installation.svg) |
 | Move the same application into a cloud environment | [cloud deployment](diagrams/cloud-deployment.svg) |
 | Firefly Weave compiler and execution lifecycle | [compiler execution](diagrams/compiler-execution.svg) |
 | Definition and connection relationships | [data model definitions](diagrams/data-model-definitions.svg) |

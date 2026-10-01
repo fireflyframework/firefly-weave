@@ -22,6 +22,8 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import sys
 import tarfile
 import tomllib
 from pathlib import Path, PurePosixPath
@@ -43,6 +45,8 @@ assert (importlib.util.find_spec('microsoft_agents') is not None) == (mode == 't
 assert (importlib.util.find_spec('aiokafka') is not None) == (mode == 'kafka')
 if mode != 'base':
     assert importlib.metadata.version('pyfly') == '26.9.15'
+if mode == 'cli':
+    import httpx, keyring
 if mode == 'worker':
     from firefly_weave.sdk.transport import WorkerTransport
     from firefly_weave.sdk.worker import Worker
@@ -114,6 +118,89 @@ def extract_sdist(archive: Path, target: Path) -> Path:
         target.mkdir(mode=0o700)
         stream.extractall(target, filter="data")
         return target / roots.pop()
+
+
+def verify_cli_installer(release: Path, output: Path, metadata: dict) -> dict:
+    """Exercise the shipped bootstrap, without a checkout-based Python import path."""
+    artifacts = release / "artifacts"
+    checksums = {}
+    for line in read_file(artifacts / "SHA256SUMS", 1024 * 1024).decode().splitlines():
+        match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9_.+-]+)", line)
+        if not match or match[2] in checksums:
+            raise ValueError("Invalid CLI installer checksum inventory")
+        checksums[match[2]] = match[1]
+    installer = read_file(artifacts / "install.sh", 1024 * 1024)
+    installer_hash = hashlib.sha256(installer).hexdigest()
+    if checksums.get("install.sh") != installer_hash:
+        raise ValueError("CLI installer checksum mismatch")
+    manifest_bytes = read_file(artifacts / "cli-install.json", 1024 * 1024)
+    if checksums.get("cli-install.json") != hashlib.sha256(manifest_bytes).hexdigest():
+        raise ValueError("CLI installation manifest checksum mismatch")
+    manifest = json.loads(manifest_bytes)
+    if manifest.get("wheel_sha256") != metadata["wheel_sha256"]:
+        raise ValueError("CLI installation wheel differs from the verified release")
+    # Execute a byte-identical snapshot so a changed source cannot race the hash check.
+    bootstrap = output / "verified-install.sh"
+    with bootstrap.open("xb") as stream:
+        stream.write(installer)
+    root, bindir = output / "cli-runtime", output / "cli-bin"
+    run_command(
+        [
+            "env",
+            f"WEAVE_INSTALL_PYTHON={sys.executable}",
+            "sh",
+            str(bootstrap),
+            "--from-release",
+            str(artifacts),
+            "--install-dir",
+            str(root),
+            "--bin-dir",
+            str(bindir),
+        ],
+        timeout=900,
+        limit=4 * 1024 * 1024,
+        log_path=output / "cli-installer.log",
+    )
+    command = bindir / "weave"
+    if not command.is_symlink():
+        raise ValueError("CLI installer did not create a managed command")
+    target = command.resolve(strict=True)
+    environment = target.parent.parent
+    if environment.parent != root / "versions" or target.name != "weave" or target.parent.name != "bin":
+        raise ValueError("CLI installer command escaped the managed environment")
+    python = environment / "bin/python"
+    version = json.loads(
+        run_command(
+            [str(python), "-I", str(command), "version", "--output", "json"],
+            timeout=30,
+            log_path=output / "cli-version.log",
+        )
+    )
+    if version.get("version") != manifest["version"]:
+        raise ValueError("CLI installer smoke version differs from the release")
+    help_output = run_command(
+        [str(python), "-I", str(command), "--help"],
+        timeout=30,
+        log_path=output / "cli-help.log",
+    )
+    if b"Usage:" not in help_output or b"workflow" not in help_output:
+        raise ValueError("Installed CLI help is incomplete")
+    proof = json.loads(
+        run_command(
+            [str(python), "-I", "-c", PROBE, "cli"],
+            timeout=30,
+            log_path=output / "cli-probe.log",
+        )
+    )
+    return {
+        "complete": True,
+        "installer_sha256": installer_hash,
+        "requirements_sha256": manifest["requirements_sha256"],
+        "version": version["version"],
+        "command": str(command),
+        "environment": str(environment),
+        "closure": proof,
+    }
 
 
 def verify(release: Path, output: Path) -> dict:
@@ -223,8 +310,10 @@ def verify(release: Path, output: Path) -> dict:
         actual_members = {name: actual.read(name) for name in actual.namelist() if ".dist-info/" not in name}
         if actual_members != expected_members:
             raise ValueError("Sdist-derived package members differ")
+    cli_installer = verify_cli_installer(release, output, metadata)
     value = {
         "complete": True,
+        "cli_installer": cli_installer,
         "wheel_sha256": metadata["wheel_sha256"],
         "sdist_sha256": metadata["sdist_sha256"],
         "closures": results,

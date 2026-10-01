@@ -22,9 +22,21 @@ This tutorial turns the offline `echo` workflow into a real saved execution usin
 CLI commands. You will capture each returned ID, use it in the next request, and
 inspect the result. Nothing in this path requires writing a Python host application.
 
-Complete [chapter 1](../quickstart.md) and [chapter 2](standalone.md) first.
-Chapter 1 creates the YAML; chapter 2 supplies the API, identity, scope, and grants.
-Keep the API running. A token alone cannot create workflows in an arbitrary scope.
+**Result:** a saved workflow run with `{"message": "Hello from the CLI"}` as its
+output. You will publish a version, activate it in an environment, and start one
+run. Those are three separate API operations.
+
+First complete the [offline quickstart](../quickstart.md) to create the two local
+files used below. Then choose the setup that matches your situation:
+
+| Your API | Begin here |
+| --- | --- |
+| A local installation from [the platform tutorial](standalone.md) | Read section 1, then restore the client in section 2 |
+| An API operated by your team | [Connect your client](connect-to-api.md) → [reuse that connection](#use-these-commands-with-an-existing-api) → sections 3–6 |
+| An installation from our Kubernetes guide | [Use the cloud installation's saved configuration](#use-these-commands-with-a-cloud-installation), then continue with sections 3–6 |
+
+An API URL and login do not automatically grant workflow access. Your administrator
+must also grant permission in the tenant, project, and environment you select.
 
 ![Definition, publication, environment activation, and separate runs](../diagrams/definition-lifecycle.svg)
 
@@ -32,9 +44,9 @@ Read the arrows as the resource IDs carried between commands. Publication create
 a version; activation selects its environment; starting creates a run. The next
 sections perform those operations individually.
 
-## 1. Understand the four command boundaries
+## 1. Know what each command does
 
-| Boundary | Command examples | What it changes |
+| Task | Command examples | What it changes |
 | --- | --- | --- |
 | Local authoring | `workflow validate`, `compile`, `explain`, `simulate` | Local files and computed results only |
 | Authenticated API client | `definitions publish`, `definitions activations create`, `runs start` | Scoped server resources |
@@ -71,9 +83,13 @@ weave definitions --help
 weave definitions activations create --help
 ```
 
-Help is hierarchical. Start at a command family, then inspect the particular
-operation. In a source checkout without this function, use `uv run weave` for
-local commands and install the `client` extra for remote operations.
+The shell function above selects the same installed package as your local API.
+It temporarily takes precedence over a user-local `weave` executable in this
+terminal. This keeps the tutorial client and server versions aligned. It does
+not reinstall the CLI or change other terminals.
+
+Help is hierarchical: inspect a command family, then the operation you want.
+`weave help definitions` is another way to open the same family help.
 
 Configure the client from the saved first-run receipt:
 
@@ -100,17 +116,28 @@ replaces these tutorial files; retain a copy before changing a completed exercis
 
 ## 3. Validate locally, then publish
 
+Confirm that the quickstart files are present in your current directory:
+
+```sh
+test -f .local/tutorial/echo.workflow.yaml && test -f .local/tutorial/empty-catalog.json
+```
+
+Expected: no output and exit status 0. If you ran the quickstart elsewhere, return
+to that directory for sections 3–6, or copy its two files into these paths. Server
+configuration remains selected by environment variables, not your working directory.
+
 Inspect the original source with the CLI:
 
 ```sh
-weave workflow validate .local/tutorial/echo.workflow.yaml --output json
+weave workflow validate .local/tutorial/echo.workflow.yaml \
+  --catalog .local/tutorial/empty-catalog.json --strict --output json
 weave workflow explain .local/tutorial/echo.workflow.yaml \
   --catalog .local/tutorial/empty-catalog.json
 ```
 
-Validation without a catalog is partial. `explain` uses the supplied empty catalog
-to resolve this workflow and display its executable plan; neither command calls
-the API. Now create a publication request. Give this exercise the distinct name
+Expected: complete validation succeeds, and `explain` displays the executable
+plan. Both commands use the quickstart's empty catalog; neither calls the API.
+Now create a publication request. Give this exercise the distinct name
 `cli-echo` so it does not share publication identity with the SDK exercise:
 
 ```sh
@@ -208,6 +235,17 @@ in-memory session. Save the run ID for later investigation.
 
 ## 6. Understand retries and authentication failures
 
+You now have three different IDs:
+
+| File | ID inside | What it identifies |
+| --- | --- | --- |
+| `version.json` | `id` | The immutable `cli-echo@1.0.0` definition |
+| `activation.json` | `id` | That version made available in your selected environment |
+| `run.json` | `id` | One execution with `Hello from the CLI` as input |
+
+Keep these files to inspect or troubleshoot this exercise later. To read the
+result again, repeat `runs read`; do not publish or activate again.
+
 An **idempotency key** identifies one intended mutation. Keep these keys when
 retrying the exact same request in the same scope after a connection interruption.
 Use a new run key when you intentionally want another execution. Changing the
@@ -217,7 +255,7 @@ requires a new definition version and publication/activation keys.
 | Symptom | Meaning and next action |
 | --- | --- |
 | Exit 2 / local configuration error | Inspect command help, scope variables, and exact JSON request shape |
-| `401` after a pause | Refresh `host-token.json`, then reload `WEAVE_ACCESS_TOKEN` from it |
+| `401` after a pause | Local/cloud tutorial: refresh `host-token.json` and reload the token. Existing API: renew the supplied token or repeat login with `"${WEAVE_AUTH_OPTIONS[@]}"` |
 | `403` | Check the identity link and the capability grant in the requested scope |
 | Conflict | Check whether this key or immutable definition version belongs to an earlier request |
 | Transport failure | The outcome may be unknown; keep the key and inspect before retrying |
@@ -230,8 +268,10 @@ unset WEAVE_ACCESS_TOKEN
 ```
 
 For interactive human authentication, see [CLI login and secure persistence](../reference/cli.md#login-and-secure-persistence).
-The tutorial uses the existing application identity so every command shares one
-known local scope.
+The local path reuses the tutorial application identity. The existing-API path
+uses the identity and scope provided by your team. If you defined the saved-login
+wrapper, `unset -f weave` removes that shell function after the exercise. It does
+not remove stored credentials; use the connection guide's logout procedure for that.
 
 ## 7. Move from a workflow to a deployed worker
 
@@ -254,6 +294,56 @@ For a remote installation, continue with [AWS, Azure, and GCP deployment](../ope
 The same API/CLI workflow lifecycle applies there, but cloud CLIs and Kubernetes
 manage infrastructure and processes. There is no `weave deploy --target aws`
 command in this release.
+
+## Use these commands with an existing API
+
+Use this section instead of section 2 when another team operates Weave. First
+complete [connect to an existing API](connect-to-api.md), including its successful
+catalog request. Keep that terminal open: it contains your actual `WEAVE_BASE_URL`,
+tenant, project, environment, and authentication configuration. Do not load the
+local tutorial's `session.env` or `runtime.env` files.
+
+Ask your operator to confirm project `developer` and environment `deployer`,
+`operator`, and `viewer` permissions before this exercise. It creates
+`cli-echo@1.0.0` in the selected project. Use a project intended for this exercise
+if that immutable name/version already belongs to someone else's work.
+
+Stay in the directory where you completed the [quickstart](../quickstart.md).
+The two `.local/tutorial` files are its only required local artifacts; you do not
+need a source checkout or server configuration. Save new requests and responses
+under a private working directory:
+
+```sh
+umask 077
+export WEAVE_CLI_DIR="$PWD/.local/cli-tutorial"
+mkdir -p "$WEAVE_CLI_DIR"
+```
+
+**If you used a supplied access token (option B),** leave `WEAVE_ACCESS_TOKEN`
+set and continue to section 3. The commands below will read it. Obtain a new token
+through your team's approved flow when it expires.
+
+**If you used saved login (option A),** every remote call must pass the same
+login configuration and credential-store options. Keep the `WEAVE_AUTH_OPTIONS`
+shell array from the connection guide. This tutorial-only function adds those
+options to the three remote command families used below and keeps local workflow
+commands unchanged:
+
+```sh
+weave() {
+  case "$1" in
+    definitions|runs|remote) command weave "$@" "${WEAVE_AUTH_OPTIONS[@]}" ;;
+    *) command weave "$@" ;;
+  esac
+}
+weave remote catalog --output json
+```
+
+This function uses the installed CLI from your PATH. It lasts only for this
+terminal and is limited to this tutorial's command families. For other remote
+commands, pass `"${WEAVE_AUTH_OPTIONS[@]}"` explicitly as described in the connection
+guide. The array preserves your approved native or private-file credential store.
+Expected: the same successful catalog read. Continue with sections 3–6.
 
 ## Use these commands with a cloud installation
 

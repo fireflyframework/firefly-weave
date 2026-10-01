@@ -45,36 +45,65 @@ external Actions or the host-client branch to integrate your product.
 
 [Open diagram at full size](docs/diagrams/tutorial-route.svg)
 
-## Start here
+## Choose your starting point
 
-Follow these chapters in order. Each chapter explains its prerequisites, commands,
-expected results, and the state carried into the next chapter.
+You do not need to deploy the platform to try the workflow language.
+Choose the row that matches what you want to do today:
 
-| Chapter | What you will do | What you need |
+| I want to… | Start here | What I will have at the end |
 | --- | --- | --- |
-| **1. [Write and simulate your first workflow](docs/quickstart.md)** | Create a small YAML definition, validate it, compile it, and inspect its output | Git, Python 3.12+, `uv` |
-| **2. [Run a workflow through the API](docs/guides/standalone.md)** | Start PostgreSQL and Keycloak, create an identity, launch Weave, and inspect a real saved run | Chapter 1 checkout; Docker with Compose |
-| **3. [Run an integration worker](docs/operations/deployment.md)** | Package a worker, connect it to the API, and execute an HTTP integration | The running installation from chapter 2 |
-| **4. [Connect your own product](docs/guides/host-integration.md)** | Publish definitions, start workflows, and read their state from your application | The API and scoped identity from chapter 2 |
+| **Try a workflow on my laptop** | [Install the CLI](docs/installation.md), then [run the quickstart](docs/quickstart.md) | A validated YAML workflow and a successful local simulation; no server or Docker required |
+| **Use an existing Weave API** | [Install the CLI](docs/installation.md), then [connect to an existing API](docs/guides/connect-to-api.md) | A verified connection; continue to the CLI tutorial to publish and run |
+| **Run the platform myself** | [Start a local installation](docs/guides/standalone.md) | PostgreSQL, Keycloak, a running API, and a successful saved run |
 
-Start with chapter 1 even if your eventual goal is deployment. It explains the
-language without requiring a database or identity server. Read
-[the core concepts](docs/concepts.md) alongside the tutorial when a term is new.
-The [documentation home](docs/README.md) organizes the remaining guides and references.
+Installing the CLI gives you a terminal client. Running the platform adds the
+services that store and execute workflows. Deploying a worker adds a process that
+performs external work. Each has its own guide so you can stop at the result you need.
 
-## Continue through the CLI and cloud deployment
+## Install and discover the CLI
 
-The [hands-on CLI tutorial](docs/guides/cli-tutorial.md) completes the authoring
-loop against the running API: publish a definition, activate its exact version,
-start a run, and inspect history using returned IDs. It explains command help,
-request files, scope, token renewal, and idempotent retries.
+On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a2 alpha** into
+your user account without `sudo`, Git, or Docker:
 
-Then follow [cloud deployment](docs/operations/cloud-deployment.md), with
-provider setup for [AWS](docs/operations/aws.md), [Azure](docs/operations/azure.md),
-and [Google Cloud](docs/operations/gcp.md), plus the common
-[Kubernetes walkthrough](docs/operations/kubernetes.md). It separates image
-packaging, infrastructure deployment, migrations, identity, and worker admission.
-Use the [visual guide](docs/visual-guide.md) to find the diagram for each topic.
+```sh
+(
+  set -o pipefail
+  curl --proto '=https' --tlsv1.2 -fsSL \
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a2/install.sh \
+    | sh -s -- --version v0.1.0a2
+)
+```
+
+After the installer finishes, make the default command directory available in
+this terminal and check the result:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+weave --version
+weave
+weave help workflow
+```
+
+Expected: version `0.1.0a2` and a command overview. The
+[installation guide](docs/installation.md) explains Python selection, persistent
+PATH setup, upgrades, removal, and troubleshooting. Installation includes the API
+client and OpenAPI import dependencies; it does not start the platform.
+
+`weave` displays the command overview. Help explains each command family and its
+next steps. The [quickstart](docs/quickstart.md) walks through a complete example;
+you do not need to learn every command first.
+
+## Continue when you need more
+
+- **Call another system:** [run an integration worker](docs/operations/deployment.md)
+  after your local API works.
+- **Add workflows to your product:** follow the [host integration guide](docs/guides/host-integration.md).
+- **Deploy beyond your laptop:** follow [cloud deployment](docs/operations/cloud-deployment.md),
+  then the setup for [AWS](docs/operations/aws.md), [Azure](docs/operations/azure.md),
+  or [Google Cloud](docs/operations/gcp.md), and the shared [Kubernetes walkthrough](docs/operations/kubernetes.md).
+- **Find a specific task or diagram:** open the [documentation home](docs/README.md)
+  or [visual guide](docs/visual-guide.md).
 
 ## What can I build with it?
 
@@ -94,23 +123,6 @@ See the [capability matrix](docs/capabilities.md) for precise scope. Salesforce,
 SAP, and Oracle do not have bundled named adapters; supported HTTP interfaces can
 be integrated through reviewed HTTP profiles or connector packages.
 
-## Offline quickstart
-
-This installs the source checkout and confirms that the CLI is available:
-
-```sh
-git clone https://github.com/fireflyframework/firefly-weave.git
-cd firefly-weave
-uv sync --locked --python 3.12
-uv run weave version --output json
-```
-
-Already have this checkout? Run the last two commands from its root instead.
-You do not need to install or run the PyFly repository separately.
-Continue with [chapter 1](docs/quickstart.md) to create and execute the local
-simulation. Installing dependencies uses the network; the compiler and simulator
-then work with local files.
-
 ## How the pieces fit together
 
 ![Weave API, compiler, PostgreSQL, identity provider, and workers](docs/diagrams/system-context.svg)
@@ -128,7 +140,8 @@ execution path and the detailed diagrams.
 
 ## Current release and limits
 
-Weave is an **alpha**. Download packages and checksums from
+The recommended installation is **v0.1.0a2**, an **alpha** release. Download
+packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The checked-in documentation describes the source on its branch; a release tag
 preserves the documentation and code for that release.

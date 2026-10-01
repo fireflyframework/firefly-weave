@@ -34,54 +34,52 @@ distinguishes this local simulation from the durable execution in chapter 2.
 
 ## Before you start
 
-Use a Bash or Zsh terminal, Git, Python 3.12 or later, and `uv`. Check that the
-commands are available:
+[Install the CLI](installation.md), then open a Bash or Zsh terminal in a directory
+where you keep your work. The commands below create files beneath
+`.local/tutorial/` in that directory. Stay in the same directory for this chapter.
+You also need `python3` for a short script that assembles a JSON request.
+On Windows, use WSL for these shell examples.
+
+Check your tools:
 
 ```sh
-git --version
+weave --version
 python3 --version
-uv --version
 ```
 
-If a command is missing, follow the official [Git installation](https://git-scm.com/downloads/)
-or [uv installation](https://docs.astral.sh/uv/getting-started/installation/) instructions.
-`uv sync --python 3.12` can select or download Python 3.12 for the project.
-On Windows, use a
-Linux shell such as WSL for the shell examples in this tutorial.
+Expected: a Weave version and Python 3.12 or later. If `weave` is not found, follow
+the installation guide's PATH instructions before continuing.
 
-Clone the project and install its locked dependencies:
+**Using a source checkout instead?** From its root, run `uv sync --locked --python 3.12`
+and define this function once in the same terminal:
 
 ```sh
-git clone https://github.com/fireflyframework/firefly-weave.git
-cd firefly-weave
-uv sync --locked --python 3.12
-uv run weave version --output json
+weave() { uv run --locked weave "$@"; }
 ```
 
-If you already cloned the repository, enter that directory and run only the
-`uv` commands. Every command below runs from this repository's root.
-`uv sync` creates the local Python environment; `uv run` runs a command in it.
-You do not need to activate a virtual environment or install the sibling PyFly
-repository. The final command prints the Weave, language, and intermediate
-representation versions as JSON.
+Then use the same `weave` commands below. This function selects the checkout's
+CLI; it lasts only for this shell. Installed-CLI users can skip it.
 
-## What the CLI does in this chapter
+## See the steps before running them
 
-`weave` is the command-line entry point. `uv run` selects the project environment;
-`workflow` selects the command family; `validate`, `compile`, and `simulate` select
-the operation. File paths are local to your current directory.
+| Step | What you create | How you recognize success |
+| --- | --- | --- |
+| Write | A YAML workflow | The file describes one input, one transform, and one output |
+| Validate | A check result | `validationOk: true`, `ok: true`, and no errors |
+| Compile | Three local artifact files | `ok: true` and `partial: false` |
+| Simulate | One in-memory execution | `status: "succeeded"` with `Hello, Weave` in its output |
+
+`workflow` is a command family. `validate`, `compile`, and `simulate` are operations
+within it. Ask for help at either level:
 
 ```sh
-uv run weave --help
-uv run weave workflow --help
-uv run weave workflow compile --help
+weave help workflow
+weave workflow compile --help
 ```
 
-This chapter uses local authoring commands. After [chapter 2](guides/standalone.md),
-follow the [complete CLI tutorial](guides/cli-tutorial.md) to publish, activate,
-start, and inspect a real workflow. [Local worker deployment](operations/deployment.md)
-and [AWS/Azure/GCP deployment](operations/cloud-deployment.md) explain the separate
-process and infrastructure steps. A successful compilation alone deploys nothing.
+None of these steps publishes a workflow or starts a server. After this chapter,
+you can [connect to an existing API](guides/connect-to-api.md)
+or [start your own local installation](guides/standalone.md).
 
 ## Create the definition
 
@@ -117,7 +115,7 @@ spec:
 YAML
 ```
 
-`.local/` is an ignored directory for your own tutorial files. Repeating the
+`.local/` holds your tutorial files. It is ignored by Git in the Weave checkout. Repeating the
 command above replaces only this tutorial definition, so save personal edits
 before repeating it.
 
@@ -141,24 +139,26 @@ The latter is a string and would not satisfy the object output schema above.
 
 ## Validate the file
 
-```sh
-uv run weave workflow validate .local/tutorial/echo.workflow.yaml --output json
-```
-
-The command succeeds and reports `validationOk: true`. It also reports
-`partial: true` and `ok: false`. That combination is expected: **validation checks
-what it can without a dependency catalog; it does not yet produce executable code**.
-This applies even to this small workflow with no external dependencies.
-
-A **catalog** is the set of versioned actions, connectors, schemas, and worker task
-contracts available to the compiler. This workflow uses only a built-in transform,
-so its complete catalog is empty. Make that explicit:
+The compiler needs a **catalog**: the actions, connectors, schemas, and worker
+contracts a workflow can use. Echo has no external dependencies, so create an
+empty catalog once:
 
 ```sh
 cat > .local/tutorial/empty-catalog.json <<'JSON'
 {"definitions": [], "tasks": [], "adapters": [], "schemas": {}}
 JSON
+weave workflow validate .local/tutorial/echo.workflow.yaml \
+  --catalog .local/tutorial/empty-catalog.json --strict --output json
 ```
+
+Expected: `validationOk: true`, `ok: true`, and `partial: false`. The definition
+and its complete set of dependencies have passed the checks. If a diagnostic
+reports a file, line, or path, correct that part of the YAML and repeat validation.
+
+You may encounter examples that omit `--catalog`. Those perform a partial check
+while a definition is being edited; `validationOk: true` together with
+`partial: true` and `ok: false` is expected for that mode. In this tutorial, supply
+the catalog so the result is complete.
 
 ## Compile it into an artifact
 
@@ -166,7 +166,7 @@ Compilation checks the complete definition and its dependencies, then produces a
 **artifact**: the validated representation that the runtime or simulator consumes.
 
 ```sh
-uv run weave workflow compile .local/tutorial/echo.workflow.yaml \
+weave workflow compile .local/tutorial/echo.workflow.yaml \
   --catalog .local/tutorial/empty-catalog.json --strict \
   --directory .local/tutorial/compiled --output json
 ```
@@ -191,7 +191,7 @@ The example has no integration tasks, so there are no external responses to mock
 Create its request:
 
 ```sh
-uv run python - <<'PYCODE'
+python3 - <<'PYCODE'
 import json
 from pathlib import Path
 
@@ -204,7 +204,7 @@ request = {
 }
 (root / 'simulation.json').write_text(json.dumps(request, indent=2) + '\n')
 PYCODE
-uv run weave workflow simulate .local/tutorial/simulation.json --output json
+weave workflow simulate .local/tutorial/simulation.json --output json
 ```
 
 Expected: `status: "succeeded"`. The JSON includes the accepted events and
@@ -224,13 +224,18 @@ records the compiled behavior, and an execution applies it to one input.
 
 | If you see… | What to check |
 | --- | --- |
-| `weave: command not found` | Use `uv run weave` from the checkout root |
+| `weave: command not found` | Reopen your terminal after installing, or follow the installation PATH steps; source users need the function above |
 | `WV-CLI-READ` | Check the filename and your current directory |
 | `partial: true` during validation | Expected without a catalog; use the compile command with the empty catalog |
 | An export error on your second compilation | Use a new output directory, or `--force` for these tutorial-generated files |
 | A schema/type diagnostic | Check the expected object/string shape and the diagnostic's file, line, and path |
 
-**Next:** [chapter 2 — run a workflow through the API](guides/standalone.md).
-It starts real services and stores execution state. To practice a deliberate
-validation failure, fix it, and step through a simulation first, follow
-[the workflow authoring lab](guides/workflow-authoring.md).
+**Choose your next step:**
+
+- **Your team already runs Weave:** [connect the CLI to that API](guides/connect-to-api.md).
+- **You need your own API:** [start the local platform](guides/standalone.md).
+- **You want to practice authoring first:** use [the authoring lab](guides/workflow-authoring.md)
+  to introduce a mistake, read its diagnostic, and repair it.
+
+Keep this working directory. The CLI tutorial reuses `echo.workflow.yaml` and
+`empty-catalog.json`; an existing-API client does not need a source checkout.

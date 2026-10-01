@@ -16,6 +16,7 @@
 
 """Release context inputs stay independent and source-free."""
 
+import hashlib
 import importlib.util
 import json
 import tarfile
@@ -35,8 +36,9 @@ def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch)
         if "build" in argv:
             artifacts = Path(argv[argv.index("--out-dir") + 1])
             artifacts.mkdir()
-            (artifacts / "firefly_weave-0.1.0a1-py3-none-any.whl").write_bytes(b"exact wheel bytes")
-            with tarfile.open(artifacts / "firefly_weave-0.1.0a1.tar.gz", "w:gz"):
+            (artifacts / ".gitignore").write_text("*\n")
+            (artifacts / "firefly_weave-0.1.0a2-py3-none-any.whl").write_bytes(b"exact wheel bytes")
+            with tarfile.open(artifacts / "firefly_weave-0.1.0a2.tar.gz", "w:gz"):
                 pass
             return b"built"
         return b"click==8.5.0 --hash=sha256:" + b"1" * 64 + b"\n"
@@ -48,7 +50,7 @@ def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch)
     context = destination / "images"
     assert not (context / "src").exists()
     assert not (context / "tests").exists()
-    assert (context / "firefly_weave-0.1.0a1-py3-none-any.whl").read_bytes() == b"exact wheel bytes"
+    assert (context / "firefly_weave-0.1.0a2-py3-none-any.whl").read_bytes() == b"exact wheel bytes"
     assert {p.name for p in context.glob("*-requirements.txt")} == {
         "base-requirements.txt",
         "worker-requirements.txt",
@@ -58,8 +60,25 @@ def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch)
     }
     exports = [args for args in calls if "export" in args]
     assert all("--quiet" in args for args in exports)
-    assert len(exports) == 5 and all("--locked" in args and "--no-emit-project" in args for args in exports)
+    assert len(exports) == 6 and all("--locked" in args and "--no-emit-project" in args for args in exports)
     assert not any("docker" in args for args in calls)
+    cli_export = exports[-1]
+    assert cli_export[-4:] == ["--extra", "client", "--extra", "openapi"]
+    assets = destination / "artifacts"
+    installer = json.loads((assets / "cli-install.json").read_text())
+    assert installer == {
+        "schema_version": 1,
+        "version": "0.1.0a2",
+        "wheel": value["wheel"],
+        "wheel_sha256": value["wheel_sha256"],
+        "requirements": "cli-requirements.txt",
+        "requirements_sha256": hashlib.sha256((assets / "cli-requirements.txt").read_bytes()).hexdigest(),
+    }
+    checksums = dict(line.split("  ")[::-1] for line in (assets / "SHA256SUMS").read_text().splitlines())
+    assert set(checksums) == {value["wheel"], value["sdist"], "cli-install.json", "cli-requirements.txt", "install.sh"}
+    for name, digest in checksums.items():
+        assert hashlib.sha256((assets / name).read_bytes()).hexdigest() == digest
+    assert (assets / "install.sh").read_bytes() == (ROOT / "install.sh").read_bytes()
     assert json.loads((destination / "release.json").read_text())["wheel_sha256"] == value["wheel_sha256"]
 
 

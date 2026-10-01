@@ -121,7 +121,7 @@ SERVICE_PACKAGES = (
 )
 
 
-@pyfly_application(name="firefly-weave", version="0.1.0a1", scan_packages=["firefly_weave.api", *SERVICE_PACKAGES])
+@pyfly_application(name="firefly-weave", version="0.1.0a2", scan_packages=["firefly_weave.api", *SERVICE_PACKAGES])
 class WeaveApplication:
     pass
 

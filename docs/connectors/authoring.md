@@ -18,6 +18,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # Authoring trusted connector packages
 
+Use this guide to add custom integration code as a Python connector package.
+Start with local scaffolding and validation; build and install it only in a trusted
+development/operator environment. For a supported HTTP API, [OpenAPI import](metadata-import.md)
+can generate the initial package instead. The local steps need no Weave server;
+the publication steps need a running API and an operator who can enable packages.
+
 ![Installed packages, published definitions, and environment execution pins](../diagrams/integrations-admission.svg)
 
 **How to read this diagram:** Read the three columns as separate responsibilities, then follow their pins into activation. Use the returned connection revision and release IDs; an installed package alone cannot execute a tenant Workflow.
@@ -38,8 +44,9 @@ There are three separate layers:
 | Connection and activation | Environment credentials/destinations and exact versions/releases used by a workflow | Scoped deployer and operator |
 
 The first two commands below run locally without a server. Before enabling the
-result in a running environment, complete [standalone setup](../guides/standalone.md),
-then [worker admission](../guides/workers.md). An installed package is not yet a
+result in a running environment, [connect to an existing API](../guides/connect-to-api.md)
+or create one with [standalone setup](../guides/standalone.md), then arrange
+[worker admission](../guides/workers.md) with its operator. An installed package is not yet a
 published Connector, and a published Connector is not yet an executable activation.
 
 ## From package to an executable workflow

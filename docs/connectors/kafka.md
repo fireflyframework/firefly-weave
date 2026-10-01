@@ -18,6 +18,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kafka broker connector and durable triggers
 
+Use this guide to publish workflow data to Kafka or start workflows from Kafka
+records. You need an existing broker and an operator-approved topic before the
+live steps. Choose your direction below, then collect the connection values and
+Weave resource IDs before submitting requests. Local protocol tests do not verify
+your broker's access or network configuration.
+
 ![Kafka record receipt and runtime commit precede manual offset commit](../diagrams/integrations-kafka-receipts.svg)
 
 **How to read this diagram:** Read downward in time. The gap between the database commit and offset commit explains why redelivery must reuse a durable receipt. The two crash cases apply to consumption; publish acknowledgment has its own unknown-outcome rules below.
@@ -27,7 +33,8 @@ SPDX-License-Identifier: Apache-2.0
 A **publish Action** sends a Workflow's JSON object to one configured topic.
 A **broker trigger** consumes topic records and starts a pinned Workflow or signals
 one existing run. These directions share a connection policy but use different
-execution authority. Follow [standalone setup](../guides/standalone.md),
+execution authority. Use an [existing API](../guides/connect-to-api.md) or create
+one with [standalone setup](../guides/standalone.md), then arrange
 [worker admission](../guides/workers.md), and the
 [publication sequence](authoring.md#from-package-to-an-executable-workflow) first.
 Have the broker operator supply the cluster identity, topics, advertised endpoints,

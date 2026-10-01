@@ -18,10 +18,14 @@ SPDX-License-Identifier: Apache-2.0
 
 # 2. Run your first workflow through the API
 
-In [chapter 1](../quickstart.md), you compiled and simulated a workflow locally.
-Here you will run Weave as a service and save a real execution in PostgreSQL.
-The API, SDK, and CLI will all read the same run with output
+Use this guide when you want to operate Weave on your own laptop. You will start
+the API and its dependencies, create permission to use them, and save one real
+workflow execution. The API, SDK, and CLI will read the same run with output
 `{"message": "Hello, Weave"}`.
+
+**Only want to try a workflow?** Start with the [offline quickstart](../quickstart.md).
+**Already have an API?** Use [the CLI client tutorial](connect-to-api.md)
+instead. Installing the CLI alone does not require any of the services below.
 
 This is a **local development** installation. It creates fresh resources and
 retains their data when stopped. Production needs its own TLS, identity,
@@ -34,6 +38,25 @@ to terminal 1; the API remains running in terminal 2. Chapter 3 adds the receive
 and worker shown in the extended topology.
 
 [Open diagram at full size](../diagrams/operations-topology.svg)
+
+## Follow the setup in order
+
+This chapter has two parts: set up the installation once, then use or resume it.
+Keep each terminal open as directed, and run one block at a time. Continue only
+when its expected result appears.
+
+| Stage | Terminal | Successful checkpoint |
+| --- | --- | --- |
+| [1. Prepare the server package](#1-reserve-the-installation-and-install-exact-artifacts) | 1 | The selected Python environment reports its Weave version |
+| [2. Start PostgreSQL and Keycloak](#2-create-fresh-database-and-identity-services) | 1 | Identity discovery works and the database schema is current |
+| [3. Link the initial identity](#3-verify-and-bootstrap-one-local-identity) | 1 | A private bootstrap receipt records the linked identity |
+| [4. Start the API](#4-launch-and-check-the-api) | 2 for the API; 1 to check it | `API is ready` |
+| [5. Run a workflow](#5-grant-scope-publish-activate-and-run) | 1 | The saved run succeeds with `Hello, Weave` |
+
+After the first run, choose between [using the CLI](#continue-with-the-cli),
+[adding a worker](#6-add-workers-and-package-the-runtime), or
+[stopping while keeping your data](#7-stop-safely-and-retain-data).
+On a later visit, go directly to [resume this installation](#resume-this-installation-later).
 
 ## What you will run
 
@@ -50,10 +73,35 @@ worker and an HTTP integration using this installation.
 
 ## Before you start
 
-Use the checkout from chapter 1, Python 3.12+, `uv`, and a running local Docker
-engine with Compose 2.30 or later. If needed, follow the
+You need Git, Python 3.12+, `uv`, and a running local Docker engine with Compose
+2.30 or later. If needed, follow the
 [official Docker installation guide](https://docs.docker.com/get-started/get-docker/).
 These examples use Bash or Zsh and a local Unix-socket Docker context.
+
+This operator guide uses files from the source repository: Compose definitions,
+setup helpers, and examples. A user-local CLI installation does not contain that
+checkout. If you do not already have it, run:
+
+```sh
+git clone --branch v0.1.0a2 --single-branch \
+  https://github.com/fireflyframework/firefly-weave.git
+cd firefly-weave
+uv sync --locked --python 3.12
+```
+
+The clone selects the same **v0.1.0a2** release as the CLI installation guide.
+A detached-HEAD message is expected when Git opens a release tag; this tutorial
+does not require creating a branch or editing application source.
+
+If you already have a checkout, enter its root and run `git describe --tags --exact-match`.
+For this released walkthrough, the result must be `v0.1.0a2`. If the checkout has
+another version or local development work, preserve it and clone the release into
+a separate directory by adding a new directory name to the clone command above.
+Contributors intentionally using unreleased source should use that checkout's
+matching CLI and documentation; do not mix it with a pinned released client.
+
+This chapter creates its own echo workflow through the API; it does not require
+copying the offline quickstart's files into the checkout.
 
 Open **terminal 1** at the checkout root and check the prerequisites:
 
@@ -69,9 +117,8 @@ docker context ls
 directory. Keep terminal 1 open for setup and client commands. Terminal 2 will
 hold the API process; chapter 3 adds terminal 3 for the integration receiver.
 
-The sequence is: install the package, start dependencies, link an identity,
-launch the API, grant access, publish and activate a workflow, then run it.
-You do not need to run an acceptance test suite to follow this tutorial.
+You do not need to run the project's acceptance tests to follow this tutorial.
+The setup scripts prepare a local development installation for you.
 
 ## 1. Reserve the installation and install exact artifacts
 
@@ -102,6 +149,12 @@ export WEAVE_PYTHON="$WEAVE_WORK_DIR/runtime/bin/python"
 "$WEAVE_PYTHON" -I -m firefly_weave.cli.main version --output json
 ```
 
+**Why a separate server environment?** The CLI installer creates a small client
+installation. The API additionally needs its server and database dependencies.
+This step builds one package and installs those dependencies in an isolated runtime,
+so the later API, migration, and operator commands all use the same version.
+It does not replace your installed `weave` command.
+
 What those commands do:
 
 - `umask 077` limits newly created private files to your user.
@@ -121,6 +174,18 @@ have the same package version. Protect the whole work directory: later steps
 write credentials inside it.
 
 ## 2. Create fresh database and identity services
+
+The commands in this step create these files inside `WEAVE_WORK_DIR`:
+
+| File | Purpose | Use it again when… |
+| --- | --- | --- |
+| `session.env` | Paths, ports, and this installation's unique name | Opening a new terminal or resuming the tutorial |
+| `postgres.env` | Local PostgreSQL configuration and credentials | Starting the database container |
+| `identity.env` | Local Keycloak configuration and credentials | Starting Keycloak or refreshing a tutorial token |
+| `runtime.env` | Database logins and trusted identity settings for Weave | Starting the API or running an operator helper |
+
+The last three files contain credentials. Keep them in the private work directory;
+do not copy their contents into terminal output, Git, or a support request.
 
 The defaults below use PostgreSQL 55434, Keycloak 18080, API 8080, and the later
 container API 8081. Preconfigure the port variables to select unused ports; the
@@ -252,10 +317,11 @@ changing a secret file does not update a retained realm.
 
 ## 3. Verify and bootstrap one local identity
 
-For this local walkthrough, the `weave-host` service account is the explicit
-bootstrap administrator and receives scoped author/operator grants in step 5.
-In a shared deployment, separate bootstrap administration from application
-identities. Provider role names never grant Weave domain authority.
+This step tells Weave which verified identity may perform the initial setup.
+For the local exercise, that identity is Keycloak's `weave-host` service account.
+Step 5 will give it permission to work in one new tenant, project, and environment.
+In a shared deployment, use a separate identity for initial administration and
+for application requests. A Keycloak role alone does not grant a Weave permission.
 
 A **token** proves the caller's identity. A **principal** is Weave's local record
 for it. An **identity link** maps the verified token subject to that principal.
@@ -363,11 +429,15 @@ letting a runtime process migrate its own database.
 
 ## 5. Grant scope, publish, activate and run
 
-The checked-in example uses public HTTP exclusively. It creates a uniquely named
-tenant, grants `tenant_admin` to the bootstrap principal for that tenant, creates
-its project/environment, and grants project `developer` plus environment
-`deployer`, `operator` and `viewer`. It captures all IDs from actual JSON responses.
-It then publishes and activates a pure transform workflow and starts its first run.
+Now that the API is running, an example script creates a place for your workflow
+and runs it using the public HTTP API. It handles the initial resource-creation
+requests so you can confirm the installation works before making those requests
+individually from the CLI. It records the server's returned IDs in a file for later
+steps.
+
+The script grants this identity `tenant_admin` in the new tenant, `developer` in
+the new project, and `deployer`, `operator`, and `viewer` in its environment. These
+allow the publication, activation, execution, and read operations in the exercise.
 
 Before running the helper, understand the resources it creates:
 
@@ -473,12 +543,10 @@ That chapter reuses `first-run.json`, provisions a worker identity, builds a wor
 image, starts an HTTP receiver, and runs a workflow through the worker.
 
 
-A remote worker needs its own verified identity link, a release admitted by a
-scoped deployer, and a current `worker` grant restricted to that release and task
-references. It receives HTTP credentials and handler configuration, never database
-credentials. A native executor additionally needs explicit server-side executor
-configuration and trusted connector credentials. Neither obtains authority merely
-by starting an image.
+The worker guide introduces its additional setup when it is needed: a worker
+identity, permission to claim particular tasks, and an approved release containing
+your handler. A worker calls the API over HTTP and does not need database
+credentials. Starting its container alone does not give it permission to claim work.
 
 Continue with the ordered [packaging and Compose commands](../operations/deployment.md)
 using this installation's `release` directory. They distinguish local image IDs,

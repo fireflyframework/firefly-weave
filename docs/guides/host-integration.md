@@ -22,7 +22,8 @@ A **host product** is your application: for example, a customer portal that lets
 users author workflows and start runs. Weave stores and executes the workflows;
 your host supplies the user experience and a verified identity for each request.
 
-For a first integration, complete the [standalone tutorial](standalone.md) and
+For a first integration, [connect to your team's API](connect-to-api.md).
+If you need a server, complete the [standalone tutorial](standalone.md) and
 retain its scope receipt and host credentials. Then follow the
 [SDK echo example](../reference/sdk.md) to compile the same workflow from Python.
 It is deliberately smaller than the external-service example described below.

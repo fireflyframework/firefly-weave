@@ -18,11 +18,64 @@ SPDX-License-Identifier: Apache-2.0
 
 # Python SDK
 
-The base wheel includes the pure compiler, canonical models and `WorkflowBuilder`. Remote host clients and CLI login use the optional `client` extra. In this source workspace use `uv sync --locked --no-editable --extra client`; the lock uses the verified published PyFly 26.9.15 wheel URL and SHA256. Server/database packages are not client dependencies.
+Use the Python SDK when your application needs to call Weave or generate workflow
+definitions. Use the [CLI](../installation.md) for terminal commands. Installing
+the CLI in its own environment does not add Python imports to your application's
+environment.
+
+The base `firefly-weave` wheel includes the compiler, models, and `WorkflowBuilder`.
+Remote clients also need its `client` extra. From this source checkout, use
+`uv sync --locked --no-editable --extra client` and run SDK scripts with
+`uv run --locked --no-editable --extra client python path/to/script.py`.
+For an application outside the checkout, install the matching release wheel with
+its `client` extra in that application's environment. Server/database dependencies
+are not required for the remote client.
+
+## Start with an existing API
+
+If your team operates Weave, follow [connect to an existing API](../guides/connect-to-api.md)
+first. With its **supplied-token option**, keep the API URL, three scope IDs, and
+`WEAVE_ACCESS_TOKEN` in the same shell. Run this script in your application's SDK
+environment to make a read-only request:
+
+```python
+import asyncio
+import os
+from firefly_weave.contracts.access import Scope
+from firefly_weave.sdk.client import WeaveClient
+
+scope = Scope.model_validate({
+    "tenant_id": os.environ["WEAVE_TENANT_ID"],
+    "project_id": os.environ["WEAVE_PROJECT_ID"],
+    "environment_id": os.environ["WEAVE_ENVIRONMENT_ID"],
+})
+
+def access_token():
+    return os.environ["WEAVE_ACCESS_TOKEN"]
+
+async def main():
+    async with WeaveClient(os.environ["WEAVE_BASE_URL"], access_token, scope) as client:
+        catalog = await client.catalog()
+        print("Catalog read succeeded")
+
+asyncio.run(main())
+```
+
+Expected: `Catalog read succeeded`. The token callback reads the current
+process environment but does not renew the token; production hosts should supply
+their approved acquisition/refresh logic, described under [client lifecycle](#client-lifecycle-and-errors).
+For saved browser/device credentials, use [the OAuth session integration](#device-login-pkce-and-stores);
+the SDK does not automatically find the CLI's saved login.
+
+The rest of the walkthrough uses the local tutorial's token file and scope receipt
+as one concrete example. An existing-API client can keep the `scope`,
+`access_token`, and API URL above instead. Do not copy local tutorial IDs to a
+remote installation. Publishing, activating, and starting additionally require
+the permissions listed in the lifecycle section.
 
 ## Compile the tutorial workflow through the API
 
-Complete the [standalone tutorial](../guides/standalone.md) first. Keep its
+For this **local installation example**, complete the [standalone tutorial](../guides/standalone.md). Keep its
 `WEAVE_WORK_DIR` and `WEAVE_API_URL` variables and a current `host-token.json`.
 The example reads the tenant/project/environment IDs from its `first-run.json`
 receipt, and the echo source from the [offline tutorial](../quickstart.md).
@@ -44,7 +97,9 @@ token and changes no grants. This host-facing URL is deliberately separate from
 the container-reachable address used in `worker.env` during chapter 3.
 
 Save this as `.local/tutorial/host-client.py` and run it with
-`uv run --locked --no-editable --extra client python .local/tutorial/host-client.py`:
+`"$WEAVE_PYTHON" .local/tutorial/host-client.py`. That selects the same installed
+package as the local API. If the offline quickstart was completed in another
+directory, copy its `echo.workflow.yaml` into `.local/tutorial/` here first:
 
 ```python
 import asyncio

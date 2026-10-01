@@ -18,6 +18,20 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a2
+
+- Add a user-local CLI installer with verified release assets, hash-locked client
+  dependencies, isolated environments, safe upgrades, and managed uninstall.
+- Add ASCII branding, grouped plain-language help, nested command help, and
+  `weave --version`, while preserving machine-readable command output.
+- Reorganize onboarding around local authoring, an existing API, and running the
+  platform; explain authentication, scope, expected results, and recovery steps.
+- Add illustrated CLI, Kubernetes, AWS, Azure, and Google Cloud deployment guides.
+- Include installer assets, deployment templates, and the complete public
+  documentation in the source distribution; verify installation during checks.
+
+No database migrations or workflow-language changes are introduced in this release.
+
 ## 0.1.0a1
 
 - Typed workflow schemas, expressions, bounded compilation and canonical artifacts.

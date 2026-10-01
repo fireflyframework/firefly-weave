@@ -18,6 +18,11 @@ limitations under the License.
 
 # Teams personal bot
 
+Use this guide to receive text from a Teams personal bot and send a reply from a
+workflow. Your operator must register the bot and configure its identity, HTTPS
+endpoint, and personal installation. Follow the checkpoints below before testing
+with an actual account; a local fixture is not evidence of Teams delivery.
+
 ![Provider comparison highlighting the Teams reference-generation lifecycle](../diagrams/integrations-messaging.svg)
 
 **How to read this diagram:** Follow the Teams column from authenticated installation to reference lifecycle to outbound target. Its reference ID and generation are server-owned authority facts; the other columns show why WhatsApp or Telegram identifiers cannot substitute for them.
@@ -29,7 +34,8 @@ a conversation reference. The outbound **reply Action** uses that stored referen
 to address a message. A reference is a server-issued UUID plus a generation; it
 is not the provider's conversation ID, and callers cannot invent one to send.
 
-Complete [standalone setup](../guides/standalone.md), then
+Use an [existing API](../guides/connect-to-api.md) or create one with
+[standalone setup](../guides/standalone.md), then arrange
 [native worker admission](../guides/workers.md). The
 [publication sequence](authoring.md#from-package-to-an-executable-workflow) explains
 Connector version, connection revision, release and activation IDs. Teams also
@@ -81,7 +87,7 @@ and [run incidents](../reference/incident-operations.md).
 
 The optional `teams` extra implements public-cloud Bot Connector text messages for one explicitly configured personal installation per immutable connection/source. It supports reply and proactive text to a stored authenticated reference. It does not create conversations, provision accounts, send Graph messages, or implement channels/groups, SSO, skills, invoke, streaming, attachments or cards. Fixture and local PostgreSQL verification is separate from live Azure/Teams certification.
 
-Install the exact reviewed Weave wheel with `server,teams` extras. Operator configuration must select `firefly-weave:weave-teams:firefly_weave.connectors.teams:package` in `connector_packages`; installing the optional SDK alone does not enable it. Missing extras fail startup when selected. The installed distribution version is `0.1.0a1`; adapter/task behavior is separately pinned at `1.0.0`. Native services share the application's existing PyFly container.
+Install the exact reviewed Weave wheel with `server,teams` extras. Operator configuration must select `firefly-weave:weave-teams:firefly_weave.connectors.teams:package` in `connector_packages`; installing the optional SDK alone does not enable it. Missing extras fail startup when selected. The installed distribution version is `0.1.0a2`; adapter/task behavior is separately pinned at `1.0.0`. Native services share the application's existing PyFly container.
 
 ## Provision and configure
 

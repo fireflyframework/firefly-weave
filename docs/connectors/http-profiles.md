@@ -18,6 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # HTTP profiles v2
 
+Use this reference when a workflow must call an HTTP operation such as reading
+an inventory item. For a guided first result, [import the inventory example](metadata-import.md#try-the-local-inventory-example),
+then return here to configure its connection and Action. This page explains the
+supported request/response policy; it does not create an API account or start a worker.
+
 ![Fixed HTTP connection and Action policy with bounded invocation values](../diagrams/integrations-http-profile.svg)
 
 **How to read this diagram:** Read from the three inputs into the native execution gate. Invocation values fill declared fields; the connection and published Action retain authority over origin, authentication, effect, and response policy.
@@ -27,8 +32,8 @@ SPDX-License-Identifier: Apache-2.0
 Use this profile when a Workflow Action should call one fixed HTTP operation,
 such as reading an inventory item. The **Connection** supplies the origin and
 authentication; the **Action** supplies method/path/status rules; each invocation
-supplies only declared parameter values and body. See [standalone setup](../guides/standalone.md)
-and the [publication and worker sequence](authoring.md#from-package-to-an-executable-workflow)
+supplies only declared parameter values and body. Use an [existing API](../guides/connect-to-api.md) or [standalone setup](../guides/standalone.md),
+then the [publication and worker sequence](authoring.md#from-package-to-an-executable-workflow)
 before trying a real call.
 
 For a first offline example, run [the OpenAPI importer](metadata-import.md#try-the-local-inventory-example).

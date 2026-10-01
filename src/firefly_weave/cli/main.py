@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Click entry point for offline authoring commands."""
+"""Click entry point for authoring, remote operations, and deployment."""
 
 from __future__ import annotations
 
@@ -44,6 +44,100 @@ from firefly_weave.cli.workflow import workflow
 
 
 class OfflineGroup(click.Group):
+    """Present human help while preserving value-free machine error contracts."""
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        formatter.write(
+            r"""  F I R E F L Y
+ __        __
+ \ \      / /__  __ ___   _____
+  \ \ /\ / / _ \/ _` \ \ / / _ \
+   \ V  V /  __/ (_| |\ V /  __/
+    \_/\_/ \___|\__,_| \_/ \___|
+
+"""
+        )
+        super().format_help(ctx, formatter)
+        with formatter.section("Quick start"):
+            formatter.write_dl(
+                [
+                    (f"{ctx.command_path} workflow validate workflow.yaml", "Check a local definition."),
+                    (f"{ctx.command_path} workflow compile --help", "Compile with a pinned catalog."),
+                    (f"{ctx.command_path} auth --help", "Configure API credentials."),
+                    (f"{ctx.command_path} definitions --help", "Publish and activate definitions."),
+                    (f"{ctx.command_path} worker deploy --help", "Deploy an admitted worker with Compose."),
+                    (f"{ctx.command_path} help COMMAND", "Explore any command without running it."),
+                ]
+            )
+        formatter.write_paragraph()
+        formatter.write(
+            "Documentation:\n  https://github.com/fireflyframework/firefly-weave/blob/main/docs/README.md\n"
+        )
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        sections = (
+            ("Author locally", ("workflow", "schema", "connector")),
+            (
+                "Connect to a platform",
+                ("auth", "definitions", "connections", "run", "runs", "incident", "schedule", "workers"),
+            ),
+            (
+                "Integrations and delivery",
+                (
+                    "triggers",
+                    "broker-triggers",
+                    "source-bindings",
+                    "subscriptions",
+                    "deliveries",
+                    "teams-references",
+                    "whatsapp-statuses",
+                    "provider-sources",
+                    "provider-receipts",
+                ),
+            ),
+            ("Deploy and administer", ("worker", "admin", "retention", "compatibility", "remote")),
+            ("Help and version", ("help", "version")),
+        )
+        summaries = {
+            "workflow": "Validate, compile, and simulate local workflows.",
+            "schema": "Inspect and export definition schemas.",
+            "connector": "Build connectors or import an OpenAPI definition.",
+            "auth": "Sign in and manage saved API credentials.",
+            "definitions": "Publish and activate workflows and actions.",
+            "connections": "Configure and test integration connections.",
+            "run": "Cancel or retry runs; replay exported history.",
+            "runs": "Start and inspect workflow runs.",
+            "incident": "Inspect and resolve workflow incidents.",
+            "schedule": "Manage scheduled runs and view occurrences.",
+            "workers": "Register workers and manage their releases.",
+            "triggers": "Configure webhook triggers and schedules.",
+            "broker-triggers": "Start workflows from broker messages.",
+            "source-bindings": "Inspect or revoke connection source bindings.",
+            "subscriptions": "Subscribe external systems to workflow events.",
+            "deliveries": "Inspect and retry outgoing event deliveries.",
+            "teams-references": "Manage saved Teams conversation references.",
+            "whatsapp-statuses": "Inspect WhatsApp message delivery status.",
+            "provider-sources": "Configure incoming messaging platform events.",
+            "provider-receipts": "Inspect and retry received platform events.",
+            "worker": "Package workers and deploy them with Compose.",
+            "admin": "Run database migrations and local administration.",
+            "retention": "Preview and apply data retention plans.",
+            "compatibility": "Check stored definitions for compatibility.",
+            "remote": "Compile through the API and inspect its catalog.",
+            "help": "Read help for any command or subcommand.",
+            "version": "Show installed and workflow language versions.",
+        }
+        commands = {name: self.get_command(ctx, name) for name in self.list_commands(ctx)}
+        for heading, names in (*sections, ("Other commands", tuple(commands))):
+            rows = []
+            for name in names:
+                command = commands.pop(name, None)
+                if command is not None and not command.hidden:
+                    rows.append((name, summaries.get(name, command.get_short_help_str())))
+            if rows:
+                with formatter.section(heading):
+                    formatter.write_dl(rows)
+
     def main(
         self,
         args: Sequence[str] | None = None,
@@ -98,9 +192,33 @@ class OfflineGroup(click.Group):
         return result
 
 
-@click.group(cls=OfflineGroup)
-def cli() -> None:
-    """Firefly Weave offline authoring tools."""
+@click.group(cls=OfflineGroup, invoke_without_command=True)
+@click.version_option(__version__, prog_name="Firefly Weave", message="%(prog)s %(version)s")
+@click.pass_context
+def cli(ctx: click.Context) -> None:
+    """Firefly Weave: workflow orchestration and integration tools.
+
+    Author and validate locally; connect to a running platform for execution.
+    """
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@cli.command("help")
+@click.argument("command_path", nargs=-1)
+@click.pass_context
+def help_command(ctx: click.Context, command_path: tuple[str, ...]) -> None:
+    """Show help for a command, such as help workflow compile."""
+    target = ctx.find_root()
+    for name in command_path:
+        if not isinstance(target.command, click.Group):
+            raise click.UsageError("Invalid help command path.")
+        command = target.command.get_command(target, name)
+        if command is None or command.hidden:
+            raise click.UsageError("Invalid help command path.")
+        # Construct help contexts directly: never invoke commands or parse credentials.
+        target = click.Context(command, info_name=name, parent=target)
+    click.echo(target.get_help())
 
 
 @cli.command()

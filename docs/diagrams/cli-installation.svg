@@ -1,0 +1,44 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
+<title id="title">Install once, use Weave anywhere</title>
+<desc id="desc">A release or prepared local build provides a verified wheel and locked dependencies. The installer builds an isolated environment, tests it, and only then activates the weave command. An unsuccessful upgrade leaves the existing command selected.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="960" height="420" rx="18" fill="#F7FAF7"/>
+<text class="title" x="36" y="48">Install once, use Weave anywhere</text>
+<text class="body muted" x="36" y="80">Your CLI is separate from your applications and server installation.</text>
+<rect x="36" y="120" width="270" height="168" rx="12" fill="#FFF" stroke="#B3CCBE"/>
+<text class="head" x="54" y="155">1. Verify the release</text>
+<text class="body" x="54" y="190">Package + checksums</text>
+<text class="body" x="54" y="218">Exact dependency versions</text>
+<text class="body" x="54" y="246">GitHub or prepared build</text>
+<rect x="345" y="120" width="270" height="168" rx="12" fill="#FFF" stroke="#B3CCBE"/>
+<text class="head" x="363" y="155">2. Install and check</text>
+<text class="body" x="363" y="190">New Python environment</text>
+<text class="body" x="363" y="218">Dependency checks</text>
+<text class="body" x="363" y="246">CLI version smoke test</text>
+<rect x="654" y="120" width="270" height="168" rx="12" fill="#FFF" stroke="#B3CCBE"/>
+<text class="head" x="672" y="155">3. Activate the CLI</text>
+<text class="body" x="672" y="190">Switch managed command</text>
+<text class="body" x="672" y="218">Add bin directory to PATH</text>
+<text class="body" x="672" y="246">Start with weave --help</text>
+<path class="edge" d="M306 204 H345"/><path class="edge" d="M615 204 H654"/>
+<rect x="36" y="324" width="888" height="60" rx="12" fill="#EEF4F0"/>
+<text class="body" x="54" y="360">If verification or installation fails, your previously installed command stays selected.</text>
+</svg>

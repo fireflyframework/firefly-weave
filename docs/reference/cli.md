@@ -18,8 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # CLI reference
 
-Install the base `firefly-weave` wheel to obtain `weave`. Server and worker extras
-are unnecessary. The offline commands listed below do not initialize PyFly, read application
+Start with [CLI installation](../installation.md). The installer includes local
+authoring, API access, authentication, and OpenAPI import. An advanced installation
+of only the base `firefly-weave` wheel supports local authoring; remote commands
+need the `client` extra. Server and worker extras are unnecessary for either path.
+The offline commands listed below do not initialize PyFly, read application
 configuration/credentials, discover providers, or connect to a service. They read
 only explicitly supplied source/catalog paths and write only requested exports.
 
@@ -39,6 +42,10 @@ commands, their files, and their result contracts.
 From a locked source checkout, prefix commands with
 `uv run --locked --no-editable` (and `--extra client` for remote commands).
 Use `weave --help`, then the selected command's `--help`, to inspect arguments.
+Bare `weave` shows the same grouped help and ASCII banner and exits successfully.
+`weave help workflow compile` opens nested help without executing the operation;
+`weave --version` prints the installed version. Banners appear only in root help,
+so `weave version --output json` and remote JSON results remain machine-readable.
 
 ![Offline CLI validation and compilation result branches](../diagrams/authoring-diagnostic-loop.svg)
 
@@ -166,7 +173,8 @@ Follow the same sequence with remote CLI commands: exact JSON request files go o
 
 ### Construct a remote request file
 
-Complete the [standalone tutorial](../guides/standalone.md) and retain its
+Use [an existing API](../guides/connect-to-api.md) or complete the
+[standalone tutorial](../guides/standalone.md) and retain its
 `WEAVE_BASE_URL`, `WEAVE_TENANT_ID`, `WEAVE_PROJECT_ID`, and
 `WEAVE_ENVIRONMENT_ID` values. Supply a current `WEAVE_ACCESS_TOKEN`, or use the
 login configuration below. Remote commands do not read server environment files

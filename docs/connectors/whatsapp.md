@@ -18,6 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # WhatsApp Cloud API
 
+Use this guide to start a workflow from a WhatsApp webhook, send text/templates,
+or track later delivery status. It requires an operator-managed WhatsApp Cloud API
+account and webhook configuration. Begin with the offline fixture to understand
+the data, then collect the provider assets listed below before live setup.
+
 ![Provider comparison highlighting WhatsApp message and status event branches](../diagrams/integrations-messaging.svg)
 
 **How to read this diagram:** Follow the WhatsApp column. Both event kinds can dispatch, but a status updates delivery evidence rather than supplying message text. Progress and independent failure/deletion flags preserve out-of-order facts.
@@ -32,7 +37,8 @@ Workflow; `send-text` or `send-template` Actions send to an explicitly allowed
 recipient. Delivery-status webhooks report later provider facts. An outbound
 `accepted` result is not a delivery-status result.
 
-Complete [standalone setup](../guides/standalone.md) and
+Use an [existing API](../guides/connect-to-api.md) or create one with
+[standalone setup](../guides/standalone.md), and arrange
 [native worker admission](../guides/workers.md). Use the
 [publication and activation sequence](authoring.md#from-package-to-an-executable-workflow)
 for Weave IDs. The operator setup below covers the separate provider assets.

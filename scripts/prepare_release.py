@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import tomllib
 from pathlib import Path
 
 from firefly_weave.sdk.deployment import read_file, real_path, requirements_bytes, run_command
@@ -82,6 +83,51 @@ def prepare(root: Path, destination: Path) -> dict:
             run_command(command, timeout=60, limit=4 * 1024 * 1024, log_path=destination / (name + "-export.log"))
         )
     wheel_hash = hashlib.sha256(inputs[wheels[0].name]).hexdigest()
+    # The CLI is a client tool: keep its closure independent of server and worker images.
+    cli_requirements = requirements_bytes(
+        run_command(
+            [
+                "uv",
+                "export",
+                "--quiet",
+                "--project",
+                str(root),
+                "--locked",
+                "--no-dev",
+                "--no-emit-project",
+                "--no-header",
+                "--no-annotate",
+                "--extra",
+                "client",
+                "--extra",
+                "openapi",
+            ],
+            timeout=60,
+            limit=4 * 1024 * 1024,
+            log_path=destination / "cli-export.log",
+        )
+    )
+    installer = {
+        "schema_version": 1,
+        "version": tomllib.loads(read_file(root / "pyproject.toml", 1024 * 1024).decode())["project"]["version"],
+        "wheel": wheels[0].name,
+        "wheel_sha256": wheel_hash,
+        "requirements": "cli-requirements.txt",
+        "requirements_sha256": hashlib.sha256(cli_requirements).hexdigest(),
+    }
+    for name, data in {
+        "cli-requirements.txt": cli_requirements,
+        "cli-install.json": (json.dumps(installer, sort_keys=True, indent=2) + "\n").encode(),
+        "install.sh": read_file(root / "install.sh", 1024 * 1024),
+    }.items():
+        with (artifacts / name).open("xb") as stream:
+            stream.write(data)
+    with (artifacts / "SHA256SUMS").open("x") as stream:
+        # uv adds a private .gitignore to its output; publish only named release assets.
+        names = (wheels[0].name, sdists[0].name, "cli-install.json", "cli-requirements.txt", "install.sh")
+        for name in sorted(names):
+            digest = hashlib.sha256(read_file(artifacts / name, 64 * 1024 * 1024)).hexdigest()
+            stream.write(f"{digest}  {name}\n")
     value = {
         "complete": True,
         "wheel": wheels[0].name,

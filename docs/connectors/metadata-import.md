@@ -18,6 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # Offline OpenAPI connector import
 
+Use this guide to turn selected operations in an OpenAPI document into a
+connector package you can review. Your first result is local files, with no API
+account or Weave server required. [Install the CLI](../installation.md) for your
+own document, or use the source example below to learn with a complete fixture.
+
 ![OpenAPI supported-subset decision followed by artifact review and separate deployment](../diagrams/integrations-openapi-review.svg)
 
 **How to read this diagram:** Follow the decision before the deployment lane. Successful import produces files to review; the later operator steps allocate live IDs and admit the installed package.
@@ -35,11 +40,14 @@ needs a protocol-specific implementation.
 
 ## Try the local inventory example
 
-From the repository root, with the project Python environment active:
+This example is a Python script included in the source repository. From its
+root, use `uv run` to select the locked dependencies explicitly. The standalone
+CLI installer does not expose its Python packages to your system's `python3`:
+
 
 ```sh
-python examples/openapi/import_connector.py ./inventory-http
-weave connector validate ./inventory-http/connector.json --output json
+uv run --locked --no-editable --extra openapi python examples/openapi/import_connector.py ./inventory-http
+uv run --locked --no-editable --extra openapi weave connector validate ./inventory-http/connector.json --output json
 ```
 
 The target must not already contain files. The example includes its source and
@@ -59,8 +67,9 @@ first to inspect diagnostics. A diagnostic's source pointer tells you which
 operation/schema needs attention; an unsupported feature requires an explicit
 contract/profile decision, not deleting constraints until import passes.
 
-Only after local review and build should you follow [standalone setup](../guides/standalone.md)
-and [package publication and activation](authoring.md#from-package-to-an-executable-workflow).
+After local review and build, use an [existing API](../guides/connect-to-api.md)
+or create one with [standalone setup](../guides/standalone.md), then follow
+[package publication and activation](authoring.md#from-package-to-an-executable-workflow).
 Keep Connector version IDs, connection revision IDs, worker release IDs, and the
 resulting activation ID from those API responses; the importer cannot allocate them.
 

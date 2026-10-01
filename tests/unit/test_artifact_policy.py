@@ -174,3 +174,24 @@ def test_unchanged_exports_are_snapshotted_and_recorded_before_installer(tmp_pat
     with pytest.raises(ReachedInstaller):
         module.verify(release, output)
     assert len(calls) == 2
+
+
+def test_cli_installer_checksum_is_verified_before_execution(tmp_path, monkeypatch):
+    import hashlib
+
+    module = verifier()
+    release = tmp_path / "release"
+    artifacts = release / "artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "install.sh").write_bytes(b"changed installer")
+    (artifacts / "SHA256SUMS").write_text(hashlib.sha256(b"original installer").hexdigest() + "  install.sh\n")
+    calls = []
+
+    def forbidden(argv, **kwargs):
+        calls.append(argv)
+        raise AssertionError("Unverified installer reached an external command")
+
+    monkeypatch.setattr(module, "run_command", forbidden)
+    with pytest.raises(ValueError, match="CLI installer checksum"):
+        module.verify_cli_installer(release, tmp_path, {"wheel_sha256": "unused"})
+    assert calls == []

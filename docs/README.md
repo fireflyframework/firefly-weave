@@ -29,44 +29,66 @@ Use the [visual guide](visual-guide.md) to navigate the other illustrated topics
 
 [Open diagram at full size](diagrams/tutorial-route.svg)
 
-## Follow the tutorial
+## Start with the current release
 
-If this is your first visit, follow these chapters in order. They form one path
-from an empty checkout to an integration worker. Keep the checkout and local
-installation created in earlier chapters; later chapters explain which files and
-terminal variables they reuse.
+The [installation guide](installation.md#install-a-release) installs the
+**v0.1.0a2 alpha** with one pinned curl command. Start there if you do not have
+`weave` yet. You need Python 3.12 or newer; you do not need a source checkout,
+Docker, or administrator privileges for the client. Confirm `weave --version`
+before following a learning path.
 
-| Chapter | You will learn | Successful checkpoint |
+An alpha is a preview release. The guides distinguish features you can verify
+locally from provider or cloud setup that you must validate in your environment.
+
+## Choose a learning path
+
+Start with your goal. The guides are not a reading list to complete before you can
+use Weave. Reference pages explain details when you need them.
+
+| Your goal | Follow this path | Stop when… |
 | --- | --- | --- |
-| **1. [Write and simulate a workflow](quickstart.md)** | YAML, schemas, validation, compilation, and simulation | A local simulation returns `Hello, Weave` |
-| **2. [Run a workflow through the API](guides/standalone.md)** | PostgreSQL, Keycloak, identity links, roles, API startup, publication, and activation | The API, SDK, and CLI read the same saved successful run |
-| **3. [Add an integration worker](operations/deployment.md)** | Worker identity, release admission, container packaging, and an HTTP effect | A separate worker completes a workflow and returns the receiver's result |
-| **4. [Integrate your own product](guides/host-integration.md)** | Choose an integration model and use a scoped client | Your application can publish, start, and inspect a workflow |
+| **Try the workflow language** | [Install the CLI](installation.md) → [quickstart](quickstart.md) | The simulator returns `Hello, Weave` |
+| **Use an API someone already runs** | [Install the CLI](installation.md) → [connect to an existing API](guides/connect-to-api.md) → publish, activate, and run | The API returns `Hello from the CLI` |
+| **Set up your own installation** | [Local platform tutorial](guides/standalone.md) → [CLI tutorial](guides/cli-tutorial.md) | A workflow runs and its state is saved in PostgreSQL |
+| **Add an external integration** | A working local installation → [worker deployment](operations/deployment.md) | Your worker completes an HTTP request and reports its result |
+| **Move the platform to cloud infrastructure** | Working local deployment → [cloud deployment](operations/cloud-deployment.md) → one provider guide → [Kubernetes](operations/kubernetes.md) | Your own environment passes the documented acceptance checks |
 
-The [concepts guide](concepts.md) explains unfamiliar names using a customer-onboarding
-example. The [workflow authoring lab](guides/workflow-authoring.md) extends chapter 1
-with a deliberate mistake, diagnostics, repair, and debugging.
+For a first visit, take the **workflow language** path. It requires no database,
+identity server, or cloud account. If your team already runs Weave, ask its
+administrator for an API URL, a supported login method, and the tenant, project,
+and environment IDs before taking the second path.
 
-The tutorial uses local development services. It does not provision a production
-identity tenant or a live messaging account. Before deploying beyond your machine,
-read [configuration](operations/configuration.md), [identity and secrets](operations/identity-and-secrets.md),
-and the [capability matrix](capabilities.md).
+## Know which tool you are using
 
-## Continue through the CLI and cloud deployment
+| Name in a guide | What it means | When you need it |
+| --- | --- | --- |
+| `weave` | The installed command-line client | Local workflow files, remote API requests, and command help |
+| `uv run weave` | The CLI from a developer's source checkout | Contributing or trying unreleased code |
+| `WEAVE_PYTHON` | The exact Python executable selected for an installation | Operator examples that must use the same package and dependencies as the API |
+| API | The running Weave service | Saved workflows, runs, permissions, and task coordination |
+| Worker | A separate process that performs integration tasks | Workflows that call external handlers |
 
-The [hands-on CLI tutorial](guides/cli-tutorial.md) completes the authoring
-loop against the running API: publish a definition, activate its exact version,
-start a run, and inspect history using returned IDs. It explains command help,
-request files, scope, token renewal, and idempotent retries.
+Use the command form shown in the guide you are following. The local platform
+tutorial explains how it selects an isolated server environment; a client-only
+installation does not start that server.
 
-Then follow [cloud deployment](operations/cloud-deployment.md), with
-provider setup for [AWS](operations/aws.md), [Azure](operations/azure.md),
-and [Google Cloud](operations/gcp.md), plus the common
-[Kubernetes walkthrough](operations/kubernetes.md). It separates image
-packaging, infrastructure deployment, migrations, identity, and worker admission.
-Use the [visual guide](visual-guide.md) to find the diagram for each topic.
+## Read a tutorial, then extend it
 
-## Choose a task after the tutorial
+Every main tutorial states what it creates, how to recognize success, and where to
+continue. Run one command block at a time and check its expected result before
+moving on. When a guide creates a private work directory, keep it: later steps
+reuse its configuration and returned resource IDs.
+
+The [concepts guide](concepts.md) explains names with a customer-onboarding example.
+The [workflow authoring lab](guides/workflow-authoring.md) adds a deliberate mistake,
+a compiler diagnostic, and a repair. The [visual guide](visual-guide.md) maps
+questions to diagrams.
+
+The local tutorials use development services. Cloud and messaging guides describe
+additional infrastructure or provider-account setup. Their verification limits are
+listed in the [capability matrix](capabilities.md).
+
+## Find the guide for your next task
 
 | I want to… | Guide |
 | --- | --- |

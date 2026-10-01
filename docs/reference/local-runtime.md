@@ -272,7 +272,7 @@ production facilities.
 
 The locked framework is published PyFly 26.9.15. Read the exact wheel hash and
 upstream commit from [project metadata](../../pyproject.toml). The API source
-version is `0.1.0a1`. Validate readiness, an authorized workflow, and your
+version is `0.1.0a2`. Validate readiness, an authorized workflow, and your
 [backup and restore procedure](../operations/backup-restore.md) in the environment
 you intend to operate.
 

@@ -18,6 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # SQL connectors: PostgreSQL
 
+Use this guide when a workflow needs to read or write a business PostgreSQL
+database. Start with the read-only customer lookup below. Its success criterion
+is an expected row result from the approved database; compiling its Action alone
+does not query that database. Weave's own runtime database is a separate service.
+
 ![External PostgreSQL transaction and operation-ledger boundary](../diagrams/integrations-sql-transaction.svg)
 
 **How to read this diagram:** Read the outer transaction first. The inner ledger applies only to idempotent-command; ordinary commands do not gain that protection. A lost COMMIT acknowledgment remains unknown even after cleanup.
@@ -25,7 +30,8 @@ SPDX-License-Identifier: Apache-2.0
 ## First lookup: from connection to rows
 
 This guide's first useful operation is a bounded lookup in an **external**
-PostgreSQL database. Complete [standalone setup](../guides/standalone.md) and
+PostgreSQL database. Use an [existing API](../guides/connect-to-api.md) or create
+one with [standalone setup](../guides/standalone.md), and arrange
 [native worker admission](../guides/workers.md), then follow the
 [Connector publication sequence](authoring.md#from-package-to-an-executable-workflow).
 The business database and its credentials are separate from Weave's own database.

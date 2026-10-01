@@ -18,6 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 
 # Telegram webhook text connector
 
+Use this guide to trigger a workflow from a Telegram text message and reply in
+the same chat. The offline example first produces definitions without sending a
+message. Live setup additionally needs a registered bot, its token, an allowed
+chat, an HTTPS webhook, and a running Weave native executor.
+
 ![Provider comparison highlighting source-local Telegram update receipts](../diagrams/integrations-messaging.svg)
 
 **How to read this diagram:** Follow the Telegram column: bot and update identity determine the source-local receipt, while the configured chat determines the outbound target. The Teams reference and WhatsApp status mechanisms are separate provider contracts.
@@ -33,15 +38,19 @@ Telegram update → provider source → durable receipt → Workflow → reply-t
 Inbound authentication uses `webhookSecret`; outbound authentication uses
 `botToken`. Creating the connection does not register the webhook, and registering
 the webhook does not admit a worker that can send replies.
-Start with [standalone setup](../guides/standalone.md), then
+Use an [existing API](../guides/connect-to-api.md) or create one with
+[standalone setup](../guides/standalone.md), then arrange
 [native worker admission](../guides/workers.md). The
 [package-to-activation sequence](authoring.md#from-package-to-an-executable-workflow)
 explains each Weave resource and where its ID comes from.
 
-For the offline part, run:
+For the offline part, use the source checkout. This fixture imports the native
+connector, so select its server dependencies explicitly; a client-only CLI install
+is not the Python environment for this script:
+
 
 ```sh
-python examples/telegram_text_reply.py > telegram-bundle.json
+uv run --locked --no-editable --extra server python examples/telegram_text_reply.py > telegram-bundle.json
 ```
 
 Successful exit produces four keys: `connector`, `action`, `workflow`, and `source`.
@@ -87,7 +96,7 @@ Configure Telegram's webhook externally to the existing `/provider-ingress/{sour
 
 ## Trigger and reply example
 
-Run `python examples/telegram_text_reply.py` with server dependencies installed. It compiles and emits a Connector, Action, Workflow and source request template without making network calls. Publish the definitions, register/authorize the matching native worker capabilities and connection, activate the workflow, then substitute the returned connection-revision and activation UUIDs in the source template. Its package and schema pins are derived from the installed declaration. The example's numeric bot/chat values are synthetic and must be replaced with explicitly authorized values before deployment.
+Run the source-checkout command above with server dependencies installed. It compiles and emits a Connector, Action, Workflow and source request template without making network calls. Publish the definitions, register/authorize the matching native worker capabilities and connection, activate the workflow, then substitute the returned connection-revision and activation UUIDs in the source template. Its package and schema pins are derived from the installed declaration. The example's numeric bot/chat values are synthetic and must be replaced with explicitly authorized values before deployment.
 
 The example maps `/payload` into the workflow, then invokes `reply-text` with the original normalized `chat_id` and `message_id` and the fixed text `Received.`. IDs stay strings across the workflow; the connector converts them to bounded integers on the outgoing wire. The example uses the existing `coalesce` expression for nullable fields in the common event schema. Only original human text events dispatch from this verifier. There is no undocumented expression cast or source-specific runtime path.
 

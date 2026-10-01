@@ -23,12 +23,17 @@ an **echo** workflow: given `{"message": "Hello, Weave"}`, it returns that same
 object. You will validate the file, compile it into an executable artifact, and
 simulate it locally before deciding to deploy it.
 
-You need Python 3.12 or later and an installed `weave` command. From a source
-checkout, run `uv sync --locked --no-editable`, then prefix the commands below
-with `uv run --locked --no-editable`. Run from the repository root and create the
-ignored working directory with `mkdir -p .local/tutorial`. All generated tutorial
-files stay there. No API, database, token, or worker is needed for these offline
-steps. For your first durable server run, follow the [standalone tutorial](standalone.md).
+**First workflow?** Follow the [quickstart](../quickstart.md) first. This lab adds
+partial validation, a deliberate type error, and repair to the same echo example.
+Its offline steps need only the [installed CLI](../installation.md) and Python
+3.12 or later. Use the working directory from the quickstart, or create
+`.local/tutorial/` in your chosen directory. No API, database, token, or worker is
+needed until the publication step.
+
+If you use a source checkout, select its CLI using the quickstart's shell function.
+Only the optional external Action fixture at the end requires repository files.
+The Python request-building snippet below uses the standard library, so it does
+not need to import packages from the CLI's isolated environment.
 
 ![Authoring feedback loop showing partial validation, full compilation, diagnostics, and simulation](../diagrams/authoring-diagnostic-loop.svg)
 
@@ -139,7 +144,7 @@ exercise did not export a replacement.
 ## 4. Simulate one input
 
 Build a simulation request from the exported artifact. Save the following as
-`.local/tutorial/make-simulation.py` and run it with the same Python environment as Weave:
+`.local/tutorial/make-simulation.py` and run it with Python 3.12 or later:
 
 ```python
 import json
@@ -155,7 +160,7 @@ Path(".local/tutorial/simulation-request.json").write_text(json.dumps(request))
 ```
 
 ```sh
-python .local/tutorial/make-simulation.py
+python3 .local/tutorial/make-simulation.py
 weave workflow simulate .local/tutorial/simulation-request.json --output json
 ```
 
@@ -171,8 +176,10 @@ protects the workflow's contract independently of whether the source compiled.
 
 ## 5. Publish and activate for durable execution
 
-The [standalone tutorial](standalone.md) supplies the API, identity, grants, and
-commands for a first real run. The lifecycle is:
+Use [the CLI lifecycle tutorial](cli-tutorial.md) to perform these operations
+one at a time. It supports an [existing API](connect-to-api.md) or the local API
+created by the [standalone tutorial](standalone.md). You need permission to publish
+in your project and activate/run in your environment. The lifecycle is:
 
 | Stage | What you create | Why it is separate |
 | --- | --- | --- |

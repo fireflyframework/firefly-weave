@@ -236,12 +236,14 @@ async def test_machine_token_is_scoped_uncached_and_opaque(monkeypatch, caplog):
 
 
 def test_optional_builtin_declares_true_versions_and_native_types():
+    from importlib.metadata import version
+
     from firefly_weave.connections.registry import ConnectorRegistry
     from firefly_weave.connectors.packages import PackageMetadata
     from firefly_weave.connectors.teams import TeamsConnector, package
     from firefly_weave.providers.teams.bridge import TeamsVerifier
 
-    assert package.metadata.model.distribution_version == "0.1.0a1"
+    assert package.metadata.model.distribution_version == version("firefly-weave")
     assert package.metadata.model.version == "1.0.0"
     assert package.metadata.model.dispatch_event_kinds == ["message"]
     assert package.service_type is TeamsConnector and package.verifier_service_type is TeamsVerifier
