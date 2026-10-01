@@ -1,0 +1,60 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+services:
+  api:
+    pull_policy: never
+    image: ${WEAVE_SERVER_IMAGE:?Set an exact prepared local server image ID}
+    read_only: true
+    user: "65532:65532"
+    tmpfs: [/tmp]
+    stop_grace_period: 30s
+    env_file:
+      - path: ${WEAVE_API_ENV_FILE:-.env.api-container}
+        format: raw
+    ports:
+      - "127.0.0.1:${WEAVE_API_PORT:-8080}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # This replica owns recovery; its env file must include the separate scheduler URL.
+    environment:
+      WEAVE_SCHEDULER_ENABLED: "true"
+  native-executor:
+    pull_policy: never
+    image: ${WEAVE_SERVER_IMAGE:?Set an exact prepared local server image ID}
+    read_only: true
+    user: "65532:65532"
+    tmpfs: [/tmp]
+    stop_grace_period: 30s
+    env_file:
+      - path: ${WEAVE_NATIVE_ENV_FILE:-.env.native-container}
+        format: raw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      WEAVE_SCHEDULER_ENABLED: "false"
+  worker:
+    pull_policy: never
+    image: ${WEAVE_WORKER_IMAGE:?Set an exact prepared local worker image ID}
+    read_only: true
+    user: "65532:65532"
+    tmpfs: [/tmp]
+    stop_grace_period: 30s
+    env_file:
+      - path: ${WEAVE_WORKER_ENV_FILE:-.env.worker-container}
+        format: raw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -1,0 +1,37 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="880" viewBox="0 0 1120 880" role="img" aria-labelledby="title desc">
+<title id="title">Firefly Weave compiler and execution lifecycle</title>
+<desc id="desc">Bounded parsing and catalog-based analysis produce canonical intermediate representation. Authorized publication and activation precede durable runs. Workers report fenced completions; PostgreSQL records state. External effects are not exactly once.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
+<rect width="1120" height="880" rx="20" fill="#f7faf5"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:21px;font-weight:700}.small{font-size:18px}.eyebrow{font-size:15px;font-weight:700;letter-spacing:1.5px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.box{fill:#fff;stroke:#adc5b5;stroke-width:1.5}</style><text class="title" x="40" y="52">From definition to durable execution</text><text class="small" x="40" y="82">Compilation checks meaning. Activation checks authority and readiness.</text>
+<rect x="25" y="110" width="1070" height="270" rx="16" fill="#edf4e8" stroke="#adc5b5"/>
+<text class="eyebrow" x="45" y="143">PURE COMPILER · NO SERVICES OR SECRETS</text><rect class="box" x="45" y="205" width="225" height="118" rx="12"/><text class="label" x="63" y="236">Parse + validate</text><text class="small" x="63" y="263">Bounded YAML / JSON</text><text class="small" x="63" y="288">Schema / expressions</text><rect class="box" x="310" y="205" width="240" height="118" rx="12"/><text class="label" x="328" y="236">Analyze + resolve</text><text class="small" x="328" y="263">Immutable catalog lock</text><text class="small" x="328" y="288">Types / dependencies</text><rect class="box" x="590" y="205" width="215" height="118" rx="12"/><text class="label" x="608" y="236">Lower to IR</text><text class="small" x="608" y="263">Graph + guards</text><text class="small" x="608" y="288">Pinned dependencies</text><rect class="box" x="845" y="205" width="230" height="118" rx="12"/><text class="label" x="863" y="236">Canonical artifact</text><text class="small" x="863" y="263">Digest + source map</text><text class="small" x="863" y="288">Versioned envelope</text><path class="edge" d="M270 257 H310"/><path class="edge" d="M550 257 H590"/><path class="edge" d="M805 257 H845"/>
+<text class="small" x="45" y="354">Without a catalog: partial authoring validation only; no executable artifact.</text>
+
+<rect x="25" y="430" width="1070" height="298" rx="16" fill="#f0f4f2" stroke="#adc5b5"/>
+<path class="edge" d="M960 323 V404 H155 V430"/>
+<text class="eyebrow" x="45" y="460">AUTHORIZED APPLICATION SERVICES · PERSISTENT RUNTIME</text><rect class="box" x="45" y="488" width="225" height="120" rx="12"/><text class="label" x="63" y="519">Publish</text><text class="small" x="63" y="546">Recompile source</text><text class="small" x="63" y="571">Immutable revision</text><rect class="box" x="310" y="488" width="240" height="120" rx="12"/><text class="label" x="328" y="519">Activate</text><text class="small" x="328" y="546">Pin artifact + bindings</text><text class="small" x="328" y="571">Check local authority</text><rect class="box" x="590" y="488" width="215" height="120" rx="12"/><text class="label" x="608" y="519">Start + transition</text><text class="small" x="608" y="546">Deterministic kernel</text><text class="small" x="608" y="571">Tasks / waits / signals</text><rect class="box" x="845" y="488" width="230" height="120" rx="12"/><text class="label" x="863" y="519">Execute tasks</text><text class="small" x="863" y="546">Native / remote worker</text><text class="small" x="863" y="571">Fenced lease + receipt</text><path class="edge" d="M270 540 H310"/><path class="edge" d="M550 540 H590"/><path class="edge" d="M805 540 H845"/>
+<path class="edge" d="M155 608 V650"/><path class="edge" d="M430 608 V650"/><path class="edge" d="M697 608 V650"/><path class="edge" d="M960 608 V650"/>
+<rect x="45" y="658" width="1030" height="48" rx="12" fill="#16372a"/>
+<text x="560" y="689" text-anchor="middle" style="fill:#f1fae9;font-size:20px">PostgreSQL transactions · pinned state · task receipts · deadlines · recovery</text>
+<text class="label" x="45" y="778">External effects remain an at-least-once boundary.</text>
+<text class="small" x="45" y="811">A worker may perform an external effect before its completion is accepted. Use provider idempotency</text>
+<text class="small" x="45" y="838">where supported; simulation and recorded replay do not invoke live executors.</text>
+</svg>

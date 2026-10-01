@@ -1,0 +1,53 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 745" role="img" aria-labelledby="title desc">
+<title id="title">Ingress and outbound integration delivery</title><desc id="desc">Separate inbound durable admission and outbound integration event/delivery paths, with Teams reference, WhatsApp status and Telegram receipt boundaries.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.small{font-size:16px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="1120" height="745" fill="#FFFFFF"/>
+<text x="40" y="50" class="title">Ingress and outbound integration delivery</text>
+<text x="40" y="84" class="body">Durable admission and external acknowledgment are separate commit boundaries.</text>
+<rect x="40" y="125" width="490" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="159" class="head">Inbound provider / broker event</text>
+<text x="60" y="190" class="body">Verify source protocol and current authority.</text>
+<text x="60" y="216" class="body">Persist recognized, ignored or conflicting facts.</text>
+<text x="60" y="242" class="body">Provider receipt / intent or broker receipt</text>
+<rect x="590" y="125" width="490" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="610" y="159" class="head">Workflow admission</text>
+<text x="610" y="190" class="body">Dispatch the durable accepted intent.</text>
+<text x="610" y="216" class="body">Pin activation or signal the scoped run.</text>
+<text x="610" y="242" class="body">Record outcome under receipt identity.</text>
+<path class="edge" d="M532 200L585 200"/>
+<rect x="40" y="330" width="490" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="364" class="head">Outbound integration event</text>
+<text x="60" y="395" class="body">Business transition + integration event commit</text>
+<text x="60" y="421" class="body">Subscription selects scoped delivery intent.</text>
+<text x="60" y="447" class="body">Delivery attempts retain generation and outcome.</text>
+<rect x="590" y="330" width="490" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="610" y="364" class="head">Bounded external delivery</text>
+<text x="610" y="395" class="body">Current binding / grants / destination checked</text>
+<text x="610" y="421" class="body">Fenced attempt; provider acceptance recorded</text>
+<text x="610" y="447" class="body">Unknown outcomes require reconciliation.</text>
+<path class="edge" d="M532 405L585 405"/>
+<rect x="40" y="535" width="1040" height="120" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="569" class="head">Provider-specific durable facts</text>
+<text x="60" y="600" class="body">Teams: reference lifecycle and revocation fence. WhatsApp: status facts and observations.</text>
+<text x="60" y="626" class="body">Telegram: source-local update receipts. None of these facts certify actual live delivery.</text>
+<text x="40" y="705" class="small">At-least-once delivery; deduplication is scoped. Broker offsets are not global effect transactions.</text>
+
+</svg>

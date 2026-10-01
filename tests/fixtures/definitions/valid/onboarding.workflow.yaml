@@ -1,0 +1,47 @@
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: customer-onboarding
+  version: "1.0.0"
+spec:
+  timeoutSeconds: 172800
+  inputSchema:
+    type: object
+    additionalProperties: false
+    required: [customerId]
+    properties:
+      customerId: {type: string, minLength: 1}
+  outputSchema:
+    type: object
+    additionalProperties: false
+    required: [accepted]
+    properties:
+      accepted: {type: boolean}
+  steps:
+    - id: check
+      kind: action
+      uses: onboarding.check-customer@1.0.0
+      with:
+        object:
+          customerId: {ref: /input/customerId}
+    - id: approval
+      kind: signal
+      name: customer-approved
+      timeoutSeconds: 86400
+      payloadSchema:
+        type: object
+        additionalProperties: false
+        required: [approved]
+        properties:
+          approved: {type: boolean}
+    - id: decision
+      kind: transform
+      value:
+        object:
+          accepted:
+            op:
+              name: and
+              args:
+                - {ref: /steps/check/output/eligible}
+                - {ref: /steps/approval/output/approved}
+  output: {ref: /steps/decision/output}

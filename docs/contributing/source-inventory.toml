@@ -1,0 +1,195 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+
+[[exceptions]]
+path = "tests/fixtures/definitions/invalid/duplicate-key.yaml"
+kind = "immutable-fixture"
+reason = "Parser regression asserts the duplicate key at original line 2; a header would change the source map."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+sha256 = "f42e80fc99d0f2d7a2155bd900f11f58840c0255cf9fc9f94f63b9fdf28b891e"
+
+[[exceptions]]
+path = "tests/fixtures/definitions/valid/onboarding.workflow.yaml"
+kind = "immutable-fixture"
+reason = "CLI explanation regression asserts source position 21:7; preserve authored line mapping and fixture bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+sha256 = "ab48894a3c54b1492a4b0cd19bef1744cdba3f7b1339b84433b42bab8fc5a34e"
+
+[[exceptions]]
+path = "examples/host_product/http-manifest.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "examples/worker/manifest.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "infra/keycloak/weave-realm.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "src/firefly_weave/py.typed"
+kind = "commentless"
+reason = "PEP 561 marker; preserve its marker bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/canonical/empty-workflow.executable.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/catalog/onboarding.lock.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/compatibility/pre-b8-connector-action.artifact.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/compatibility/pre-b8-onboarding.artifact.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/compiler/corpus.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/public/c6-wire.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/schemas/contracts.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "uv.lock"
+kind = "commentless"
+reason = "Generated dependency lock; preserve managed bytes and resolution integrity."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/e2-provider/connector.json"
+kind = "commentless"
+reason = "Test-only installed provider declaration and strict action fixture."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/e2-provider/src/e2_inbox_fixture/connector.json"
+kind = "commentless"
+reason = "Test-only installed provider declaration and strict action fixture."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/e2-provider/examples/action.json"
+kind = "commentless"
+reason = "Test-only installed provider declaration and strict action fixture."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "examples/connectors/whatsapp/connection.json"
+kind = "commentless"
+reason = "Strict WhatsApp JSON wire/configuration fixture; no comment fields in the protocol."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "examples/connectors/whatsapp/event-target.schema.json"
+kind = "commentless"
+reason = "Strict WhatsApp JSON wire/configuration fixture; no comment fields in the protocol."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "examples/connectors/whatsapp/status.webhook.json"
+kind = "commentless"
+reason = "Strict WhatsApp JSON wire/configuration fixture; no comment fields in the protocol."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "examples/connectors/whatsapp/template.input.json"
+kind = "commentless"
+reason = "Strict WhatsApp JSON wire/configuration fixture; no comment fields in the protocol."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "examples/connectors/whatsapp/text.input.json"
+kind = "commentless"
+reason = "Strict WhatsApp JSON wire/configuration fixture; no comment fields in the protocol."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"

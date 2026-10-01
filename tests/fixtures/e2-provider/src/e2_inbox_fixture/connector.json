@@ -1,0 +1,156 @@
+{
+  "bindings": [
+    {
+      "action": "echo",
+      "adapter": "e2-inbox-fixture",
+      "connector_digest": "28b2947ef46fed20c8d65a6c6cb5161e998f3ca934e2824a0f9ec9a77535c14d",
+      "implementation_version": "1.0.0",
+      "task_reference": "weave-connector-e2-inbox-fixture-echo@1.0.0"
+    }
+  ],
+  "capabilities": [
+    {
+      "inputSchema": {
+        "type": "object"
+      },
+      "outputSchema": {
+        "type": "object"
+      },
+      "sideEffect": "read_only",
+      "taskType": "weave-connector-e2-inbox-fixture-echo",
+      "taskVersion": "1.0.0",
+      "timeoutSeconds": 1
+    }
+  ],
+  "distribution": "e2-inbox-fixture",
+  "event_schemas": {
+    "message": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "lifecycle": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "secret": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "x-secret": true
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "lifecycle_string": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "evidence": [],
+  "family": "custom",
+  "format": "weave/connector-package-v1",
+  "manifest": {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Connector",
+    "metadata": {
+      "name": "e2-inbox-fixture",
+      "version": "1.0.0"
+    },
+    "spec": {
+      "actions": {
+        "echo": {
+          "configSchema": {
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "inputSchema": {
+            "type": "object"
+          },
+          "outputSchema": {
+            "type": "object"
+          },
+          "retry": {
+            "initialDelaySeconds": 1,
+            "maxAttempts": 1,
+            "maxDelaySeconds": 30
+          },
+          "sideEffect": "read_only",
+          "timeoutSeconds": 1
+        }
+      },
+      "adapter": "e2-inbox-fixture",
+      "authSchema": {
+        "type": "object",
+        "properties": {
+          "signature": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "signature"
+        ],
+        "additionalProperties": false
+      },
+      "compatibility": {
+        "apiVersion": "weave/v1alpha1"
+      },
+      "configSchema": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id"
+        ],
+        "additionalProperties": false
+      },
+      "limits": {
+        "maxRequestBytes": 1048576,
+        "maxResponseBytes": 1048576,
+        "maxTimeoutSeconds": 1
+      }
+    }
+  },
+  "protocol_versions": [
+    "1.0.0"
+  ],
+  "provider": "fixture",
+  "service": "e2_inbox_fixture:Echo",
+  "verification": "implemented",
+  "verifier_service": "e2_inbox_fixture:FixtureVerifier",
+  "version": "1.0.0",
+  "dispatch_event_kinds": [
+    "message",
+    "secret"
+  ]
+}

@@ -1,0 +1,53 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 745" role="img" aria-labelledby="title desc">
+<title id="title">Worker execution and the crash window</title><desc id="desc">Four steps show claim, execution, remote effect and fenced completion, followed by possible recovery and duplicate external effects.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.small{font-size:16px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="1120" height="745" fill="#FFFFFF"/>
+<text x="40" y="50" class="title">Worker execution and the crash window</text>
+<text x="40" y="84" class="body">A lease fences accepted state. It cannot undo an external effect.</text>
+<rect x="40" y="125" width="490" height="130" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="159" class="head">1 · Claim admitted work</text>
+<text x="60" y="190" class="body">Worker authenticates; release and scope match.</text>
+<text x="60" y="216" class="body">Task lease carries generation and deadline.</text>
+<rect x="590" y="125" width="490" height="130" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="610" y="159" class="head">2 · Execute under the lease</text>
+<text x="610" y="190" class="body">Heartbeat maintains ownership while allowed.</text>
+<text x="610" y="216" class="body">Bounded call uses granted credentials.</text>
+<path class="edge" d="M532 190L585 190"/>
+<rect x="590" y="305" width="490" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="610" y="339" class="head">3 · External system accepts</text>
+<text x="610" y="370" class="body">The remote effect may already exist.</text>
+<text x="610" y="396" class="body">A crash here leaves completion uncertain.</text>
+<path class="edge" d="M835 256L835 300"/>
+<rect x="40" y="305" width="490" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="339" class="head">4 · Submit completion</text>
+<text x="60" y="370" class="body">Current generation + owner + deadline checked.</text>
+<text x="60" y="396" class="body">Accepted result and receipt become durable.</text>
+<path class="edge" d="M585 375L535 375"/>
+<rect x="40" y="505" width="1040" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="539" class="head">Recovery after a missing completion</text>
+<text x="60" y="570" class="body">Eligible safe retries can receive a new lease; stale completions remain fenced.</text>
+<text x="60" y="596" class="body">Ambiguous non-idempotent effects require reconciliation before retry.</text>
+<text x="60" y="622" class="body">Cancellation does not prove that an external operation never happened.</text>
+<path class="edge" stroke-dasharray="7 5" d="M835 446L835 500"/>
+<text x="590" y="478" class="small">If no accepted completion</text>
+<text x="40" y="705" class="small">Source: workers/leases.py · sdk/worker.py · runtime/recovery.py · worker protocol</text>
+
+</svg>

@@ -1,0 +1,29 @@
+{
+  "name": "whatsapp",
+  "connector_version_id": "00000000-0000-4000-8000-000000000001",
+  "config": {
+    "app_id": "100",
+    "account_id": "200",
+    "phone_number_id": "300",
+    "business_phone_number": "15550000000",
+    "graph_version": "v26.0",
+    "recipient_allowlist": [
+      "15550000001"
+    ],
+    "approved_templates": [
+      {
+        "name": "appointment",
+        "locale": "en_US",
+        "body_parameters": 1
+      }
+    ]
+  },
+  "secretRef": {
+    "accessToken": "wa-access",
+    "appSecret": "wa-app",
+    "verifyToken": "wa-verify"
+  },
+  "allowed_destinations": [
+    "https://graph.facebook.com"
+  ]
+}

@@ -1,0 +1,78 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 989" role="img" aria-labelledby="title desc">
+<title id="title">Integration, provider and status relationships</title><desc id="desc">A selected relational model with scoped composite keys and parent-to-child cardinalities. See the architecture guide for migration sources and omitted logical references.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.small{font-size:16px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="1120" height="989" fill="#FFFFFF"/>
+<text x="40" y="50" class="title">Integration, provider and status relationships</text>
+<text x="40" y="85" class="body">Selected actual foreign keys. Arrows point from parent to child; every child has one shown parent.</text>
+<text x="40" y="114" class="small">P = tenant_id + project_id. E = P + environment_id. ID columns are shown explicitly.</text>
+<rect x="40" y="150" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="184" class="head">integration_events</text>
+<text x="60" y="215" class="body">Parent key: P, id</text>
+<rect x="610" y="150" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="630" y="184" class="head">event_deliveries</text>
+<text x="630" y="215" class="body">Child FK: P, event_id</text>
+<path class="edge" d="M513 199L606 199"/>
+<text x="531" y="178" class="small">0..*</text>
+<rect x="40" y="270" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="304" class="head">event_deliveries</text>
+<text x="60" y="335" class="body">Parent key: E, id</text>
+<rect x="610" y="270" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="630" y="304" class="head">delivery_attempts</text>
+<text x="630" y="335" class="body">Child FK: E, delivery_id</text>
+<path class="edge" d="M513 319L606 319"/>
+<text x="531" y="298" class="small">0..*</text>
+<rect x="40" y="390" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="424" class="head">provider_sources</text>
+<text x="60" y="455" class="body">Parent key: E, id</text>
+<rect x="610" y="390" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="630" y="424" class="head">provider_receipts</text>
+<text x="630" y="455" class="body">Child FK: E, source_id</text>
+<path class="edge" d="M513 439L606 439"/>
+<text x="531" y="418" class="small">0..*</text>
+<rect x="40" y="510" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="544" class="head">provider_receipts</text>
+<text x="60" y="575" class="body">Parent key: E, source_id, id</text>
+<rect x="610" y="510" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="630" y="544" class="head">provider_intents</text>
+<text x="630" y="575" class="body">Child FK: E, source_id, receipt_id</text>
+<path class="edge" d="M513 559L606 559"/>
+<text x="531" y="538" class="small">0..1</text>
+<rect x="40" y="630" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="664" class="head">provider_sources</text>
+<text x="60" y="695" class="body">Parent key: E, id</text>
+<rect x="610" y="630" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="630" y="664" class="head">teams_references</text>
+<text x="630" y="695" class="body">Child FK: E, source_id</text>
+<path class="edge" d="M513 679L606 679"/>
+<text x="531" y="658" class="small">0..*</text>
+<rect x="40" y="750" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="60" y="784" class="head">whatsapp_message_states</text>
+<text x="60" y="815" class="body">Parent key: E, id</text>
+<rect x="610" y="750" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
+<text x="630" y="784" class="head">whatsapp_status_facts</text>
+<text x="630" y="815" class="body">Child FK: E, state_id</text>
+<path class="edge" d="M513 799L606 799"/>
+<text x="531" y="778" class="small">0..*</text>
+<text x="40" y="884" class="small">Sources: migrations 0017–0020. Outbox delivery also references a subscription and its source binding.</text>
+<text x="40" y="912" class="small">WhatsApp observations link source, fact and connection revision; Teams lifecycle events reference a reference.</text>
+<text x="40" y="940" class="small">Broker routes/events/receipts use their own scoped FKs (0016). These maps are not retention eligibility rules.</text>
+
+</svg>

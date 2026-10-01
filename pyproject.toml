@@ -1,0 +1,150 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling>=1.28.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "firefly-weave"
+version = "0.1.0a1"
+description = "API-first workflow orchestration and integration platform built on PyFly"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.12"
+authors = [{ name = "Firefly Software Foundation", email = "dev@getfirefly.io" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: AsyncIO",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+dependencies = [
+  "pydantic>=2.13.3,<3",
+  "PyYAML>=6.0.3,<7",
+  "jsonschema[format-nongpl]>=4.26.0,<5",
+  "regex>=2026.1.15",
+  "rfc8785>=0.1.4,<1",
+  "click>=8.3.3,<9",
+]
+
+[project.urls]
+Homepage = "https://github.com/fireflyframework/firefly-weave"
+Repository = "https://github.com/fireflyframework/firefly-weave"
+Issues = "https://github.com/fireflyframework/firefly-weave/issues"
+Organization = "https://github.com/fireflyframework"
+
+[project.scripts]
+weave = "firefly_weave.cli.main:cli"
+
+[project.entry-points."firefly_weave.connectors"]
+weave-telegram = "firefly_weave.connectors.telegram:package"
+weave-teams = "firefly_weave.connectors.teams:package"
+weave-whatsapp = "firefly_weave.connectors.whatsapp:package"
+
+[project.optional-dependencies]
+client = ["httpx>=0.28.1,<1", "keyring>=25.6,<26", "pyfly[oauth2-client] @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"]
+openapi = ["pyfly @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"]
+server = [
+  "alembic>=1.20.0,<2",
+  "croniter==6.2.4",
+  "PyJWT[crypto]>=2.15.1,<3",
+  "pyfly[web,security,data-relational,postgresql,client,observability,idp-keycloak,scheduling] @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b",
+  "asyncpg>=0.31.0,<1",
+  "httpx>=0.28.1,<1",
+  "httpcore>=1.0.9,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.41.1,<2",
+]
+worker = ["pyfly[client,observability] @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b", "httpx>=0.28.1,<1"]
+teams = ["microsoft-agents-hosting-core==1.7.0", "microsoft-agents-activity==1.7.0", "pyfly[oauth2-client,security,web] @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"]
+kafka = ["aiokafka==0.14.0"]
+integration = ["asyncpg>=0.31.0,<1", "httpx>=0.28.1,<1", "aiokafka==0.14.0"]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0.3,<10",
+  "pytest-asyncio>=1.3.0,<2",
+  "hypothesis>=6.151.9,<7",
+  "ruff>=0.15.12,<1",
+  "mypy>=1.20.2,<2",
+  "build>=1.4.0,<2",
+  "types-PyYAML>=6.0.12",
+  "types-jsonschema>=4.26.0",
+  "hatchling>=1.28.0",
+  "types-regex>=2026.9.10.20260911",
+]
+
+[tool.firefly-weave.upstream]
+pyfly-version = "26.9.15"
+pyfly-sha = "0af893351f158b865c8d1dcf491b6733879f0a85"
+pyfly-wheel-sha256 = "c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"
+pyfly-tree = "1857c6e22d715b26faf8b33181c12f0adebf5e29"
+pyfly-provenance = "published-github-release"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build]
+exclude = [
+  "**/.superpowers/**", "**/.codex/**", "**/.agents/**", "**/.secrets/**", "**/.local/**",
+  "**/AGENTS.md", "**/CLAUDE.md", "/docs/superpowers/**", "/docs/implementation-status.md",
+  "**/.env*", "**/__pycache__/**", "**/*.pyc", "/build/**", "/dist/**",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/pyproject.toml", "/uv.lock", "/README.md", "/LICENSE", "/NOTICE",
+  "/CONTRIBUTING.md", "/SECURITY.md", "/CHANGELOG.md", "/Makefile", "/Dockerfile",
+  "/.dockerignore", "/.gitignore", "/.github/workflows/ci.yml",
+  "/alembic.ini", "/pyfly.yaml", "/compose.yaml", "/compose.identity.yaml",
+  "/compose.kafka.yaml", "/compose.runtime.yaml", "/compose.local-runtime.yaml",
+  "/src", "/migrations", "/examples", "/infra", "/docker", "/scripts", "/tests", "/assets",
+  "/docs/README.md", "/docs/architecture.md", "/docs/capabilities.md", "/docs/concepts.md",
+  "/docs/contracts.md", "/docs/quickstart.md", "/docs/visual-assets.md",
+  "/docs/connectors", "/docs/contributing", "/docs/diagrams", "/docs/guides",
+  "/docs/operations", "/docs/reference",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/firefly_weave"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "firefly_weave/persistence/alembic"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+asyncio_mode = "auto"
+markers = [
+  "integration: requires explicitly configured real backends; dependency failures must fail",
+  "e2e: full product acceptance against real services",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]

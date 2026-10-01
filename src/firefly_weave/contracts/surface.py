@@ -1,0 +1,871 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""Product operation identities and exact wire DTOs; native PyFly owns OpenAPI."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, Any, Literal
+from uuid import UUID
+
+from pydantic import Field
+
+from firefly_weave.compiler.catalog import CatalogLock
+from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
+from firefly_weave.contracts.catalog import (
+    Activation,
+    ActivationRequest,
+    Draft,
+    DraftRequest,
+    PublicationRequest,
+    PublishedVersion,
+    RetirementRequest,
+)
+from firefly_weave.contracts.compatibility import CompatibilityReport
+from firefly_weave.contracts.connectors import ConnectionRequest, ConnectionRevision, ConnectionTestResult
+from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
+from firefly_weave.contracts.maintenance import RetentionApplication, RetentionPlan, RetentionRequest
+from firefly_weave.contracts.operations import (
+    CancelRunRequest,
+    EventPage,
+    HistoryExport,
+    IncidentResolution,
+    IncidentView,
+    ReplayReport,
+)
+from firefly_weave.contracts.providers import (
+    ProviderIngressResponse,
+    ProviderReceipt,
+    ProviderSource,
+    ProviderSourceRequest,
+)
+from firefly_weave.contracts.public import (
+    ActivationExport,
+    Capabilities,
+    CompileResponse,
+    CompilerRequest,
+    Disabled,
+    DraftExport,
+    DraftRetirement,
+    DraftView,
+    Granted,
+    GrantRequest,
+    Health,
+    Identifier,
+    NamedResource,
+    NameRequest,
+    Page,
+    Problem,
+    RetiredVersion,
+    Revoked,
+    UnavailableResource,
+    VersionExport,
+    VersionView,
+    WebhookEnvelope,
+)
+from firefly_weave.contracts.runtime import (
+    CapacityRunAcknowledgment,
+    RunView,
+    SignalReceipt,
+    SignalRequest,
+    StartRunRequest,
+    UnavailableRunAcknowledgment,
+)
+from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
+from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
+from firefly_weave.contracts.values import JsonObjectData
+from firefly_weave.contracts.whatsapp import MessageId, WhatsAppDeliveryState, WhatsAppStatusFact
+from firefly_weave.contracts.workers import (
+    ClaimRequest,
+    CompleteRequest,
+    CompletionAcknowledgment,
+    CredentialGrantRequest,
+    CredentialLease,
+    CredentialRequest,
+    FailRequest,
+    InstanceRequest,
+    LeaseProof,
+    ReleaseRequest,
+    TaskLease,
+    WorkerInstance,
+    WorkerRelease,
+)
+from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugSession
+from firefly_weave.triggers.models import Trigger, TriggerReceipt, TriggerRequest
+
+if TYPE_CHECKING:
+    from pyfly.web import OpenAPIOperation
+
+PROJECT = "/tenants/{tenant}/projects/{project}"
+ENVIRONMENT = PROJECT + "/environments/{environment}"
+type RevisionTag = Annotated[str, Field(pattern=r'^(?:"[1-9][0-9]{0,9}"|[1-9][0-9]{0,9})$')]
+type CanonicalRevisionTag = Annotated[str, Field(pattern=r'^"[1-9][0-9]{0,9}"$')]
+type PageLimit = Annotated[int, Field(ge=1, le=100)]
+
+
+class CredentialResponse(CredentialLease):
+    # This one authorized lease-scoped endpoint deliberately serializes the value.
+    value: str = Field(repr=False)
+
+
+@dataclass(frozen=True)
+class Operation:
+    id: str
+    path: str
+    method: str
+    response: Any
+    capability: str
+    request: Any = None
+    statuses: tuple[int, ...] = (200,)
+    page: bool = False
+    revision: Literal["none", "optional", "required"] = "none"
+    idempotency: bool = False
+    etag: bool = False
+    request_required: bool = True
+
+    @property
+    def canonical_path(self) -> str:
+        return "/api/v1" + self.path if self.path.startswith("/tenants/") else self.path
+
+    def native(self) -> OpenAPIOperation:
+        from pyfly.web import OpenAPIHeader, OpenAPIOperation, OpenAPIParameter, OpenAPIRequestBody, OpenAPIResponse
+
+        params = [
+            OpenAPIParameter(
+                name,
+                "path",
+                Literal["workflows", "actions", "connectors", "drafts"]
+                if name == "collection" and self.method == "GET"
+                else Literal["workflows", "actions", "connectors"]
+                if name == "collection"
+                else UUID,
+            )
+            for name in re.findall(r"{([^}]+)}", self.path)
+        ]
+        if self.id == "whatsapp_statuses.read":
+            params.append(OpenAPIParameter("message_id", "query", MessageId))
+        if self.page:
+            params += [
+                OpenAPIParameter("limit", "query", PageLimit, required=False, default=50),
+                OpenAPIParameter("cursor", "query", str, required=False),
+            ]
+        if self.id in {"runs.history", "runs.export", "runs.replay"}:
+            params += [
+                OpenAPIParameter(
+                    "limit",
+                    "query",
+                    Annotated[int, Field(ge=1, le=100 if self.id == "runs.history" else 1000)],
+                    required=False,
+                    default=100 if self.id == "runs.history" else 1000,
+                )
+            ]
+            if self.id == "runs.history":
+                params.append(OpenAPIParameter("cursor", "query", str, required=False))
+        if self.revision != "none":
+            params.append(OpenAPIParameter("If-Match", "header", RevisionTag, required=self.revision == "required"))
+        if self.idempotency:
+            params.append(
+                OpenAPIParameter("Idempotency-Key", "header", Annotated[str, Field(min_length=1, max_length=200)])
+            )
+        headers = {
+            "X-Weave-Request-ID": OpenAPIHeader(str, required=True),
+            "X-Weave-Wire-Version": OpenAPIHeader(Literal["weave/api-v1"], required=True),
+        }
+        response_headers = {**headers, **({"ETag": OpenAPIHeader(CanonicalRevisionTag)} if self.etag else {})}
+        if self.id == "tasks.credentials":
+            response_headers.update(
+                {
+                    "Cache-Control": OpenAPIHeader(Literal["no-store"], required=True),
+                    "Pragma": OpenAPIHeader(Literal["no-cache"], required=True),
+                }
+            )
+        responses: dict[int | str, OpenAPIResponse] = {
+            status: OpenAPIResponse("Success", {"application/json": self.response}, response_headers)
+            for status in self.statuses
+        }
+        if self.id.startswith("provider_ingress."):
+            responses = {
+                status: OpenAPIResponse(
+                    "Authenticated provider ACK after durable admission; provider-specific body",
+                    {"application/json": Any, "text/plain": str},
+                    response_headers,
+                )
+                for status in (200, 201, 202, 204, "2XX")
+            }
+        if self.id == "health.ready":
+            responses[503] = OpenAPIResponse("Unavailable", {"application/problem+json": Problem}, headers)
+        if self.capability:
+            responses.update(
+                {
+                    status: OpenAPIResponse(
+                        "Problem",
+                        {"application/problem+json": Problem},
+                        {
+                            **headers,
+                            **(
+                                {"WWW-Authenticate": OpenAPIHeader(Literal["Bearer"])}
+                                if status == 401 and not self.id.startswith("provider_ingress.")
+                                else {}
+                            ),
+                        },
+                    )
+                    for status in (401, 403, 404, 409, 412, 413, 422, 500)
+                }
+            )
+        if self.id.startswith("debug."):
+            responses[410] = OpenAPIResponse("Expired session", {"application/problem+json": Problem}, headers)
+        security: list[dict[str, list[str]]] = (
+            []
+            if self.id.startswith(("health.", "provider_ingress."))
+            else [{"webhookSignature": []}]
+            if self.id == "webhooks.receive"
+            else [{"bearer": []}]
+        )
+        if self.id == "webhooks.receive":
+            params += [
+                OpenAPIParameter(name, "header", str, required=name != "X-Weave-Event-ID")
+                for name in ("X-Weave-Signature", "X-Weave-Timestamp", "X-Weave-Event-ID")
+            ]
+        return OpenAPIOperation(
+            operation_id=self.id,
+            summary=self.id.replace(".", " "),
+            description=(
+                "Required capability: "
+                + self.capability
+                + ". Current local scoped grants are authoritative."
+                + (
+                    " Teams must be explicitly enabled; otherwise these routes return unavailable (409)."
+                    if self.id.startswith("teams_references.")
+                    else ""
+                )
+                if self.capability
+                else "Public health probe."
+            ),
+            tags=[self.id.split(".")[0]],
+            parameters=params,
+            request_body=(
+                OpenAPIRequestBody({"application/octet-stream": bytes, "application/json": bytes})
+                if self.id == "provider_ingress.receive"
+                else OpenAPIRequestBody({"application/json": self.request}, required=self.request_required)
+                if self.request is not None
+                else None
+            ),
+            responses=responses,
+            replace_responses=True,
+            security=security,
+        )
+
+
+OPERATIONS = {
+    item.id: item
+    for item in (
+        Operation(
+            "compatibility.read",
+            PROJECT + "/operations/compatibility",
+            "GET",
+            CompatibilityReport,
+            "status.read",
+        ),
+        Operation(
+            "compatibility.check",
+            PROJECT + "/operations/compatibility/check",
+            "POST",
+            CompatibilityReport,
+            "compatibility.check",
+        ),
+        Operation(
+            "retention.plan",
+            PROJECT + "/operations/retention/plans",
+            "POST",
+            RetentionPlan,
+            "retention.plan",
+            RetentionRequest,
+            statuses=(201,),
+        ),
+        Operation(
+            "retention.read",
+            PROJECT + "/operations/retention/plans/{identifier}",
+            "GET",
+            RetentionPlan,
+            "retention.plan",
+        ),
+        Operation(
+            "retention.apply",
+            PROJECT + "/operations/retention/plans/{identifier}/apply",
+            "POST",
+            RetentionApplication,
+            "retention.apply",
+        ),
+        Operation(
+            "teams_references.read",
+            ENVIRONMENT + "/teams-references/{identifier}",
+            "GET",
+            TeamsReference,
+            "trigger.manage",
+        ),
+        Operation(
+            "teams_references.list",
+            ENVIRONMENT + "/teams-references",
+            "GET",
+            Page[TeamsReference],
+            "trigger.manage",
+            page=True,
+        ),
+        Operation(
+            "teams_references.revoke",
+            ENVIRONMENT + "/teams-references/{identifier}/revoke",
+            "POST",
+            TeamsReference,
+            "trigger.manage + connection.manage + connection.bind",
+            TeamsRevokeRequest,
+        ),
+        Operation(
+            "teams_references.reactivate",
+            ENVIRONMENT + "/teams-references/{identifier}/reactivate",
+            "POST",
+            TeamsReference,
+            "trigger.manage + connection.manage + connection.bind",
+            TeamsReactivateRequest,
+        ),
+        Operation(
+            "whatsapp_statuses.read",
+            ENVIRONMENT + "/provider-sources/{identifier}/whatsapp-statuses",
+            "GET",
+            WhatsAppDeliveryState,
+            "run.read",
+        ),
+        Operation(
+            "whatsapp_statuses.facts",
+            ENVIRONMENT + "/provider-sources/{identifier}/whatsapp-statuses/{state_id}/facts",
+            "GET",
+            Page[WhatsAppStatusFact],
+            "run.read",
+            page=True,
+        ),
+        Operation(
+            "provider_sources.create",
+            ENVIRONMENT + "/provider-sources",
+            "POST",
+            ProviderSource,
+            "trigger.manage + connection.manage + connection.bind + target authority",
+            ProviderSourceRequest,
+            (201,),
+        ),
+        Operation(
+            "provider_sources.read", ENVIRONMENT + "/provider-sources/{identifier}", "GET", ProviderSource, "run.read"
+        ),
+        Operation(
+            "provider_sources.list",
+            ENVIRONMENT + "/provider-sources",
+            "GET",
+            Page[ProviderSource],
+            "run.read",
+            page=True,
+        ),
+        Operation(
+            "provider_sources.disable",
+            ENVIRONMENT + "/provider-sources/{identifier}/disable",
+            "POST",
+            ProviderSource,
+            "trigger.manage + connection.bind + target authority",
+        ),
+        Operation(
+            "provider_receipts.read",
+            ENVIRONMENT + "/provider-receipts/{identifier}",
+            "GET",
+            ProviderReceipt,
+            "run.read",
+        ),
+        Operation(
+            "provider_receipts.list",
+            ENVIRONMENT + "/provider-receipts",
+            "GET",
+            Page[ProviderReceipt],
+            "run.read",
+            page=True,
+        ),
+        Operation(
+            "provider_receipts.retry",
+            ENVIRONMENT + "/provider-receipts/{identifier}/retry",
+            "POST",
+            ProviderReceipt,
+            "run.retry + current source/target authority",
+        ),
+        Operation(
+            "provider_ingress.receive",
+            "/provider-ingress/{identifier}",
+            "POST",
+            ProviderIngressResponse,
+            "provider verification",
+        ),
+        Operation(
+            "provider_ingress.challenge",
+            "/provider-ingress/{identifier}",
+            "GET",
+            ProviderIngressResponse,
+            "provider challenge verification",
+        ),
+        Operation("health.live", "/health/live", "GET", Health, ""),
+        Operation("health.ready", "/health/ready", "GET", Health, ""),
+        Operation("admin.tenant", "/admin/tenants", "POST", Identifier, "tenant.create", NameRequest),
+        Operation("admin.grant", "/admin/grants", "POST", Identifier, "grant.admin or grant.manage", GrantRequest),
+        Operation("projects.create", "/tenants/{tenant}/projects", "POST", Identifier, "project.manage", NameRequest),
+        Operation(
+            "environments.create", PROJECT + "/environments", "POST", Identifier, "environment.manage", NameRequest
+        ),
+        Operation("environments.read", ENVIRONMENT, "GET", NamedResource, "status.read"),
+        Operation(
+            "compiler.compile", PROJECT + "/compiler/compile", "POST", CompileResponse, "compile", CompilerRequest
+        ),
+        Operation(
+            "compiler.validate", PROJECT + "/compiler/validate", "POST", CompileResponse, "compile", CompilerRequest
+        ),
+        Operation("catalog.read", PROJECT + "/catalog", "GET", CatalogLock, "catalog.read"),
+        Operation("capabilities.read", PROJECT + "/capabilities", "GET", Capabilities, "catalog.read"),
+        Operation("schemas.read", PROJECT + "/schemas", "GET", dict[str, JsonObjectData], "catalog.read"),
+        Operation(
+            "definitions.publish",
+            PROJECT + "/{collection}",
+            "POST",
+            PublishedVersion,
+            "definition.publish",
+            PublicationRequest,
+            (201,),
+            idempotency=True,
+        ),
+        Operation(
+            "definitions.list",
+            PROJECT + "/{collection}",
+            "GET",
+            Page[PublishedVersion | Draft | UnavailableResource],
+            "catalog.read",
+            page=True,
+        ),
+        Operation(
+            "definitions.read",
+            PROJECT + "/{collection}/{identifier}",
+            "GET",
+            VersionView | DraftView,
+            "catalog.read",
+            etag=True,
+        ),
+        Operation(
+            "definitions.export",
+            PROJECT + "/{collection}/{identifier}/export",
+            "GET",
+            VersionExport | DraftExport,
+            "catalog.read",
+        ),
+        Operation(
+            "definitions.retire",
+            PROJECT + "/{collection}/{identifier}/retire",
+            "POST",
+            RetiredVersion,
+            "release.retire",
+            RetirementRequest,
+            idempotency=True,
+            request_required=False,
+        ),
+        Operation(
+            "drafts.save",
+            PROJECT + "/drafts/{identifier}",
+            "PUT",
+            Draft,
+            "definition.write",
+            DraftRequest,
+            (200, 201),
+            revision="optional",
+            etag=True,
+        ),
+        Operation(
+            "drafts.retire",
+            PROJECT + "/drafts/{identifier}",
+            "DELETE",
+            DraftRetirement,
+            "definition.write",
+            revision="required",
+            etag=True,
+        ),
+        Operation(
+            "activations.create",
+            ENVIRONMENT + "/activations",
+            "POST",
+            Activation,
+            "release.activate",
+            ActivationRequest,
+            (201,),
+            revision="optional",
+            idempotency=True,
+            etag=True,
+        ),
+        Operation("activations.list", ENVIRONMENT + "/activations", "GET", Page[Activation], "catalog.read", page=True),
+        Operation(
+            "activations.read", ENVIRONMENT + "/activations/{identifier}", "GET", Activation, "catalog.read", etag=True
+        ),
+        Operation(
+            "activations.export",
+            ENVIRONMENT + "/activations/{identifier}/export",
+            "GET",
+            ActivationExport,
+            "catalog.read",
+        ),
+        Operation(
+            "activations.retire",
+            ENVIRONMENT + "/activations/{identifier}/retire",
+            "POST",
+            Activation,
+            "release.retire",
+            RetirementRequest,
+            revision="required",
+            idempotency=True,
+            etag=True,
+            request_required=False,
+        ),
+        Operation(
+            "connections.create",
+            ENVIRONMENT + "/connections",
+            "POST",
+            ConnectionRevision,
+            "connection.manage",
+            ConnectionRequest,
+            (201,),
+        ),
+        Operation(
+            "connections.list",
+            ENVIRONMENT + "/connections",
+            "GET",
+            Page[ConnectionRevision | UnavailableResource],
+            "connection.manage",
+            page=True,
+        ),
+        Operation(
+            "connections.read",
+            ENVIRONMENT + "/connections/{identifier}",
+            "GET",
+            ConnectionRevision,
+            "connection.manage",
+        ),
+        Operation(
+            "connections.test",
+            ENVIRONMENT + "/connections/{identifier}/test",
+            "POST",
+            ConnectionTestResult,
+            "connection.manage",
+            RetirementRequest,
+            request_required=False,
+        ),
+        Operation(
+            "runs.start", ENVIRONMENT + "/runs", "POST", RunView, "run.start", StartRunRequest, (201,), idempotency=True
+        ),
+        Operation(
+            "runs.list", ENVIRONMENT + "/runs", "GET", Page[RunView | UnavailableResource], "run.read", page=True
+        ),
+        Operation("runs.read", ENVIRONMENT + "/runs/{identifier}", "GET", RunView, "run.read"),
+        Operation(
+            "runs.signal",
+            ENVIRONMENT + "/runs/{identifier}/signals",
+            "POST",
+            SignalReceipt,
+            "run.signal",
+            SignalRequest,
+            (202,),
+        ),
+        Operation(
+            "runs.cancel",
+            ENVIRONMENT + "/runs/{identifier}/cancel",
+            "POST",
+            RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment,
+            "run.cancel",
+            CancelRunRequest,
+        ),
+        Operation(
+            "runs.retry",
+            ENVIRONMENT + "/runs/{identifier}/retry",
+            "POST",
+            RunView,
+            "run.retry",
+            StartRunRequest,
+            (201,),
+            idempotency=True,
+        ),
+        Operation("runs.history", ENVIRONMENT + "/runs/{identifier}/history", "GET", EventPage, "run.read"),
+        Operation("runs.export", ENVIRONMENT + "/runs/{identifier}/export", "GET", HistoryExport, "run.read"),
+        Operation("runs.replay", ENVIRONMENT + "/runs/{identifier}/replay", "GET", ReplayReport, "run.read"),
+        Operation(
+            "incidents.run_list",
+            ENVIRONMENT + "/runs/{identifier}/incidents",
+            "GET",
+            Page[IncidentView | UnavailableResource],
+            "incident.read",
+            page=True,
+        ),
+        Operation(
+            "incidents.list",
+            ENVIRONMENT + "/incidents",
+            "GET",
+            Page[IncidentView | UnavailableResource],
+            "incident.read",
+            page=True,
+        ),
+        Operation(
+            "incidents.resolve",
+            ENVIRONMENT + "/incidents/{identifier}/resolve",
+            "POST",
+            IncidentView,
+            "incident.resolve",
+            IncidentResolution,
+            revision="required",
+            etag=True,
+        ),
+        Operation(
+            "releases.create",
+            ENVIRONMENT + "/worker-releases",
+            "POST",
+            WorkerRelease,
+            "release.activate",
+            ReleaseRequest,
+            (201,),
+        ),
+        Operation(
+            "releases.list", ENVIRONMENT + "/worker-releases", "GET", Page[WorkerRelease], "catalog.read", page=True
+        ),
+        Operation("releases.read", ENVIRONMENT + "/worker-releases/{identifier}", "GET", WorkerRelease, "catalog.read"),
+        Operation(
+            "workers.create",
+            ENVIRONMENT + "/workers",
+            "POST",
+            WorkerInstance,
+            "worker.register",
+            InstanceRequest,
+            (201,),
+        ),
+        Operation("workers.list", ENVIRONMENT + "/workers", "GET", Page[WorkerInstance], "status.read", page=True),
+        Operation("workers.read", ENVIRONMENT + "/workers/{identifier}", "GET", WorkerInstance, "status.read"),
+        Operation("workers.revoke", ENVIRONMENT + "/workers/{identifier}/revoke", "POST", Revoked, "release.retire"),
+        Operation(
+            "workers.grant",
+            ENVIRONMENT + "/worker-connection-grants",
+            "POST",
+            Granted,
+            "connection.manage",
+            CredentialGrantRequest,
+            (201,),
+        ),
+        Operation("tasks.claim", ENVIRONMENT + "/tasks/claim", "POST", list[TaskLease], "task.claim", ClaimRequest),
+        Operation("tasks.heartbeat", ENVIRONMENT + "/tasks/heartbeat", "POST", TaskLease, "task.heartbeat", LeaseProof),
+        Operation(
+            "tasks.complete",
+            ENVIRONMENT + "/tasks/complete",
+            "POST",
+            CompletionAcknowledgment,
+            "task.complete",
+            CompleteRequest,
+        ),
+        Operation(
+            "tasks.fail", ENVIRONMENT + "/tasks/fail", "POST", CompletionAcknowledgment, "task.complete", FailRequest
+        ),
+        Operation(
+            "tasks.credentials",
+            ENVIRONMENT + "/tasks/credentials",
+            "POST",
+            CredentialResponse,
+            "credential.lease",
+            CredentialRequest,
+        ),
+        Operation(
+            "subscriptions.save",
+            ENVIRONMENT + "/subscriptions",
+            "POST",
+            Subscription,
+            "subscription.manage and connection.manage and connection.bind and source authority",
+            SubscriptionRequest,
+            (201,),
+        ),
+        Operation(
+            "subscriptions.list", ENVIRONMENT + "/subscriptions", "GET", Page[Subscription], "delivery.read", page=True
+        ),
+        Operation(
+            "subscriptions.read", ENVIRONMENT + "/subscriptions/{identifier}", "GET", Subscription, "delivery.read"
+        ),
+        Operation(
+            "subscriptions.disable",
+            ENVIRONMENT + "/subscriptions/{identifier}/disable",
+            "POST",
+            Subscription,
+            "subscription.manage and source authority",
+        ),
+        Operation(
+            "deliveries.list", ENVIRONMENT + "/deliveries", "GET", Page[DeliveryView], "delivery.read", page=True
+        ),
+        Operation("deliveries.read", ENVIRONMENT + "/deliveries/{identifier}", "GET", DeliveryView, "delivery.read"),
+        Operation(
+            "deliveries.retry",
+            ENVIRONMENT + "/deliveries/{identifier}/retry",
+            "POST",
+            DeliveryView,
+            "delivery.retry and current source authority",
+        ),
+        Operation(
+            "deliveries.history",
+            ENVIRONMENT + "/deliveries/{identifier}/attempts",
+            "GET",
+            Page[DeliveryAttempt],
+            "delivery.read",
+            page=True,
+        ),
+        Operation(
+            "source_bindings.list",
+            ENVIRONMENT + "/connection-source-bindings",
+            "GET",
+            Page[SourceBinding],
+            "connection.manage",
+            page=True,
+        ),
+        Operation(
+            "source_bindings.read",
+            ENVIRONMENT + "/connection-source-bindings/{identifier}",
+            "GET",
+            SourceBinding,
+            "connection.manage",
+        ),
+        Operation(
+            "source_bindings.revoke",
+            ENVIRONMENT + "/connection-source-bindings/{identifier}/revoke",
+            "POST",
+            Revoked,
+            "connection.manage",
+        ),
+        Operation(
+            "broker_triggers.create",
+            ENVIRONMENT + "/broker-triggers",
+            "POST",
+            BrokerTrigger,
+            "trigger.manage and connection.manage and connection.bind and target authority",
+            BrokerTriggerRequest,
+            (201,),
+        ),
+        Operation(
+            "broker_triggers.list",
+            ENVIRONMENT + "/broker-triggers",
+            "GET",
+            Page[BrokerTrigger],
+            "trigger.manage",
+            page=True,
+        ),
+        Operation(
+            "broker_triggers.read",
+            ENVIRONMENT + "/broker-triggers/{identifier}",
+            "GET",
+            BrokerTrigger,
+            "trigger.manage",
+        ),
+        Operation(
+            "broker_triggers.disable",
+            ENVIRONMENT + "/broker-triggers/{identifier}/disable",
+            "POST",
+            BrokerTrigger,
+            "trigger.manage",
+        ),
+        Operation(
+            "broker_triggers.retry",
+            ENVIRONMENT + "/broker-triggers/{identifier}/retry",
+            "POST",
+            BrokerTrigger,
+            "trigger.manage and current source authority",
+        ),
+        Operation(
+            "broker_triggers.incidents",
+            ENVIRONMENT + "/broker-incidents",
+            "GET",
+            Page[BrokerIncident],
+            "trigger.manage",
+            page=True,
+        ),
+        Operation(
+            "triggers.create", ENVIRONMENT + "/triggers", "POST", Trigger, "trigger.manage", TriggerRequest, (201,)
+        ),
+        Operation("triggers.list", ENVIRONMENT + "/triggers", "GET", Page[Trigger], "trigger.manage", page=True),
+        Operation("triggers.read", ENVIRONMENT + "/triggers/{identifier}", "GET", Trigger, "trigger.manage"),
+        Operation(
+            "triggers.disable", ENVIRONMENT + "/triggers/{identifier}/disable", "POST", Disabled, "trigger.manage"
+        ),
+        Operation(
+            "webhooks.receive",
+            "/webhooks/{identifier}",
+            "POST",
+            TriggerReceipt,
+            "signed webhook and pinned principal authority",
+            WebhookEnvelope,
+            (202,),
+        ),
+        Operation(
+            "schedules.save",
+            ENVIRONMENT + "/schedules",
+            "POST",
+            ScheduleView,
+            "trigger.manage and run.start",
+            ScheduleRequest,
+            (201,),
+            revision="optional",
+            etag=True,
+        ),
+        Operation("schedules.list", ENVIRONMENT + "/schedules", "GET", Page[ScheduleView], "run.read", page=True),
+        Operation("schedules.read", ENVIRONMENT + "/schedules/{identifier}", "GET", ScheduleView, "run.read"),
+        Operation(
+            "schedules.history",
+            ENVIRONMENT + "/schedules/{identifier}/occurrences",
+            "GET",
+            Page[ScheduleOccurrence],
+            "run.read",
+            page=True,
+        ),
+        *(
+            Operation(
+                "schedules." + action,
+                ENVIRONMENT + "/schedules/{identifier}/" + action,
+                "POST",
+                ScheduleView,
+                "trigger.manage",
+                revision="required",
+                etag=True,
+            )
+            for action in ("enable", "disable", "delete")
+        ),
+        Operation(
+            "debug.create",
+            PROJECT + "/debug/sessions",
+            "POST",
+            DebugSession,
+            "simulate",
+            DebugCreate,
+            (201,),
+            etag=True,
+        ),
+        Operation("debug.read", PROJECT + "/debug/sessions/{identifier}", "GET", DebugSession, "simulate", etag=True),
+        Operation(
+            "debug.command",
+            PROJECT + "/debug/sessions/{identifier}/commands",
+            "POST",
+            DebugSession,
+            "simulate",
+            DebugCommand,
+            revision="required",
+            etag=True,
+        ),
+    )
+}

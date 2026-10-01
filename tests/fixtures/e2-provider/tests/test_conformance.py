@@ -1,0 +1,83 @@
+# Copyright 2026 Firefly Software Foundation.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Fixture contract checks; no credentials, network access, or provider claims."""
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
+import pytest
+from e2_inbox_fixture import Echo, package
+from pyfly.context import ApplicationContext
+from pyfly.core.config import Config
+
+from firefly_weave.contracts.connectors import ActionContext, ConnectionRevision, ConnectorFailure, ConnectorInvocation
+
+
+def context(*, expired=False, bound=1048576, authorize=None):
+    revision = ConnectionRevision(
+        name="fixture",
+        connector_version_id=UUID(int=1),
+        id=UUID(int=2),
+        revision=1,
+        connector="e2-inbox-fixture@1.0.0",
+        connector_digest=package.descriptor.manifest.digest,
+        adapter="e2-inbox-fixture",
+        config={},
+    )
+
+    async def credentials(name):
+        raise AssertionError("Echo must not request credentials")
+
+    return ActionContext(
+        "fixture",
+        datetime.now(UTC) + timedelta(seconds=-1 if expired else 10),
+        credentials,
+        ConnectorInvocation(revision, {}, "echo", {"type": "object"}, {"type": "object"}, bound, bound),
+        authorize,
+    )
+
+
+def test_native_contract_and_effect():
+    native = ApplicationContext(Config({}))
+    native.register_bean(Echo)
+    adapter = native.get_bean(Echo)
+    assert adapter is native.get_bean(Echo)
+    assert package.descriptor.capabilities[0].side_effect == "read_only"
+    assert asyncio.run(adapter.execute({"message": "hello"}, context())) == {"message": "hello"}
+
+
+@pytest.mark.parametrize("options", [{"expired": True}, {"bound": 2}])
+def test_deadline_and_bounds(options):
+    with pytest.raises(ConnectorFailure) as failure:
+        asyncio.run(Echo().execute({"message": "hello"}, context(**options)))
+    assert failure.value.outcome == "not_started"
+
+
+def test_cancellation_is_not_swallowed():
+    async def revoke():
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(Echo().execute({}, context(authorize=revoke)))
+
+
+def test_installed_fixture_suite():
+    from e2_inbox_fixture.conformance import check
+
+    native = ApplicationContext(Config({}))
+    native.register_bean(Echo)
+    asyncio.run(check(native.get_bean(Echo)))

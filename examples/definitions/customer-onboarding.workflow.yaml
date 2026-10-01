@@ -1,0 +1,63 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: customer-onboarding
+  version: "1.0.0"
+spec:
+  timeoutSeconds: 172800
+  inputSchema:
+    type: object
+    additionalProperties: false
+    required: [customerId]
+    properties:
+      customerId: {type: string, minLength: 1}
+  outputSchema:
+    type: object
+    additionalProperties: false
+    required: [accepted]
+    properties:
+      accepted: {type: boolean}
+  steps:
+    - id: check
+      kind: action
+      uses: onboarding.check-customer@1.0.0
+      with:
+        object:
+          customerId: {ref: /input/customerId}
+    - id: approval
+      kind: signal
+      name: customer-approved
+      timeoutSeconds: 86400
+      payloadSchema:
+        type: object
+        additionalProperties: false
+        required: [approved]
+        properties:
+          approved: {type: boolean}
+    - id: decision
+      kind: transform
+      value:
+        object:
+          accepted:
+            op:
+              name: and
+              args:
+                - {ref: /steps/check/output/eligible}
+                - {ref: /steps/approval/output/approved}
+  output: {ref: /steps/decision/output}

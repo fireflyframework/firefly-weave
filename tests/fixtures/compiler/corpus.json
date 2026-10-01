@@ -1,0 +1,320 @@
+[
+  {
+    "name": "empty",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "empty",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "null"
+        },
+        "steps": [],
+        "output": {
+          "literal": null
+        }
+      }
+    },
+    "ok": true,
+    "codes": []
+  },
+  {
+    "name": "missing-action",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "missing",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "call",
+            "kind": "action",
+            "uses": "unknown@1.0.0",
+            "with": {
+              "literal": null
+            }
+          }
+        ],
+        "output": {
+          "literal": null
+        }
+      }
+    },
+    "ok": false,
+    "codes": [
+      "WV-COMP-UNKNOWN_ACTION"
+    ]
+  },
+  {
+    "name": "forward-ref",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "forward",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "first",
+            "kind": "transform",
+            "value": {
+              "ref": "/steps/later/output"
+            }
+          },
+          {
+            "id": "later",
+            "kind": "transform",
+            "value": {
+              "literal": true
+            }
+          }
+        ],
+        "output": {
+          "literal": null
+        }
+      }
+    },
+    "ok": false,
+    "codes": [
+      "WV-COMP-UNAVAILABLE_REFERENCE"
+    ]
+  },
+  {
+    "name": "wrong-output",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "wrong",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "string"
+        },
+        "steps": [],
+        "output": {
+          "literal": true
+        }
+      }
+    },
+    "ok": false,
+    "codes": [
+      "WV-COMP-TYPE_MISMATCH"
+    ]
+  },
+  {
+    "name": "unsupported-schema",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "unsupported",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {
+          "unevaluatedProperties": false
+        },
+        "outputSchema": {},
+        "steps": [],
+        "output": {
+          "literal": null
+        }
+      }
+    },
+    "ok": false,
+    "codes": [
+      "WV-SCHEMA-UNSUPPORTED_KEYWORD"
+    ]
+  },
+  {
+    "name": "warning",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "warning",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {
+          "type": "string"
+        },
+        "outputSchema": {
+          "type": "string",
+          "pattern": "^a"
+        },
+        "steps": [],
+        "output": {
+          "ref": "/input"
+        }
+      }
+    },
+    "ok": true,
+    "codes": [
+      "WV-COMP-UNKNOWN_COMPATIBILITY"
+    ]
+  },
+  {
+    "name": "worker-action",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Action",
+      "metadata": {
+        "name": "echo",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "implementation": {
+          "kind": "worker",
+          "taskType": "echo",
+          "taskVersion": "1.0.0"
+        },
+        "inputSchema": {},
+        "outputSchema": {},
+        "sideEffect": "read_only",
+        "timeoutSeconds": 30
+      }
+    },
+    "catalog": {
+      "definitions": [],
+      "tasks": [
+        {
+          "taskType": "echo",
+          "taskVersion": "1.0.0",
+          "inputSchema": {},
+          "outputSchema": {},
+          "sideEffect": "read_only",
+          "timeoutSeconds": 30
+        }
+      ],
+      "adapters": [],
+      "schemas": {}
+    },
+    "ok": true,
+    "codes": []
+  },
+  {
+    "name": "connector",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Connector",
+      "metadata": {
+        "name": "service",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "adapter": "http",
+        "configSchema": {},
+        "authSchema": {},
+        "compatibility": {
+          "apiVersion": "weave/v1alpha1"
+        },
+        "limits": {
+          "maxRequestBytes": 1000,
+          "maxResponseBytes": 1000,
+          "maxTimeoutSeconds": 60
+        },
+        "actions": {
+          "get": {
+            "inputSchema": {
+              "type": "string"
+            },
+            "outputSchema": {
+              "type": "boolean"
+            },
+            "sideEffect": "read_only",
+            "timeoutSeconds": 30
+          }
+        }
+      }
+    },
+    "catalog": {
+      "definitions": [],
+      "tasks": [],
+      "adapters": [
+        "http"
+      ],
+      "schemas": {}
+    },
+    "ok": true,
+    "codes": []
+  },
+  {
+    "name": "branch-join",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "branches",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "fork",
+            "kind": "parallel",
+            "concurrency": 2,
+            "branches": {
+              "a": {
+                "steps": [],
+                "output": {
+                  "literal": 1
+                }
+              },
+              "b": {
+                "steps": [],
+                "output": {
+                  "literal": 2
+                }
+              }
+            }
+          },
+          {
+            "id": "pick",
+            "kind": "switch",
+            "cases": [
+              {
+                "when": {
+                  "literal": true
+                },
+                "steps": [],
+                "output": {
+                  "ref": "/steps/fork/output"
+                }
+              }
+            ],
+            "default": {
+              "steps": [],
+              "output": {
+                "literal": null
+              }
+            }
+          }
+        ],
+        "output": {
+          "ref": "/steps/pick/output"
+        }
+      }
+    },
+    "ok": true,
+    "codes": []
+  }
+]

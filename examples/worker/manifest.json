@@ -1,0 +1,10 @@
+{
+  "capabilities": [{
+    "taskType": "example-record",
+    "taskVersion": "1.0.0",
+    "inputSchema": {"type": "object", "properties": {"customer": {"type": "string"}}, "required": ["customer"], "additionalProperties": false},
+    "outputSchema": {"type": "object", "properties": {"receipt": {"const": "accepted"}, "customer": {"type": "string"}}, "required": ["receipt", "customer"], "additionalProperties": false},
+    "sideEffect": "idempotency_key",
+    "timeoutSeconds": 180
+  }]
+}

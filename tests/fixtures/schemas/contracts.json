@@ -1,0 +1,443 @@
+[
+  {
+    "name": "workflow-recursive-expression",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "t",
+            "kind": "transform",
+            "value": {
+              "object": {
+                "a": {
+                  "array": [
+                    {
+                      "literal": 1
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "output": {
+          "ref": "/steps/t/output"
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "action-defaults",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Action",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "implementation": {
+          "kind": "worker",
+          "taskType": "task",
+          "taskVersion": "1.0.0"
+        },
+        "sideEffect": "read_only",
+        "timeoutSeconds": 5,
+        "inputSchema": {},
+        "outputSchema": {}
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "connector",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Connector",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "adapter": "http",
+        "configSchema": {},
+        "authSchema": {},
+        "actions": {
+          "get": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "sideEffect": "read_only",
+            "timeoutSeconds": 5
+          }
+        },
+        "compatibility": {
+          "apiVersion": "weave/v1alpha1"
+        },
+        "limits": {
+          "maxRequestBytes": 100,
+          "maxResponseBytes": 100,
+          "maxTimeoutSeconds": 5
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "unknown-field",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "t",
+            "kind": "transform",
+            "value": {
+              "object": {
+                "a": {
+                  "array": [
+                    {
+                      "literal": 1
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "output": {
+          "ref": "/steps/t/output"
+        }
+      },
+      "extra": 1
+    },
+    "valid": false
+  },
+  {
+    "name": "snake-case",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "t",
+            "kind": "transform",
+            "value": {
+              "object": {
+                "a": {
+                  "array": [
+                    {
+                      "literal": 1
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "output": {
+          "ref": "/steps/t/output"
+        }
+      },
+      "api_version": "weave/v1alpha1"
+    },
+    "valid": false
+  },
+  {
+    "name": "null-timeout",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "t",
+            "kind": "transform",
+            "value": {
+              "object": {
+                "a": {
+                  "array": [
+                    {
+                      "literal": 1
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "output": {
+          "ref": "/steps/t/output"
+        },
+        "timeoutSeconds": null
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "wrong-expression",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "t",
+            "kind": "transform",
+            "value": {
+              "object": {
+                "a": {
+                  "array": [
+                    {
+                      "literal": 1
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "output": {
+          "ref": "invalid"
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "unsafe-integer",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Action",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "implementation": {
+          "kind": "worker",
+          "taskType": "task",
+          "taskVersion": "1.0.0"
+        },
+        "sideEffect": "read_only",
+        "timeoutSeconds": 9007199254740992,
+        "inputSchema": {},
+        "outputSchema": {}
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "strict-integer",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Action",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "implementation": {
+          "kind": "worker",
+          "taskType": "task",
+          "taskVersion": "1.0.0"
+        },
+        "sideEffect": "read_only",
+        "timeoutSeconds": 5.0,
+        "inputSchema": {},
+        "outputSchema": {}
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "retry-cross-field",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Action",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "implementation": {
+          "kind": "worker",
+          "taskType": "task",
+          "taskVersion": "1.0.0"
+        },
+        "sideEffect": "read_only",
+        "timeoutSeconds": 5,
+        "inputSchema": {},
+        "outputSchema": {},
+        "retry": {
+          "initialDelaySeconds": 5,
+          "maxDelaySeconds": 1
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "null-routing",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Action",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "implementation": {
+          "kind": "worker",
+          "taskType": "task",
+          "taskVersion": "1.0.0"
+        },
+        "sideEffect": "read_only",
+        "timeoutSeconds": 5,
+        "inputSchema": {},
+        "outputSchema": {},
+        "routing": null
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "bad-version",
+    "contract": "definition",
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "01.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "t",
+            "kind": "transform",
+            "value": {
+              "object": {
+                "a": {
+                  "array": [
+                    {
+                      "literal": 1
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "output": {
+          "ref": "/steps/t/output"
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "diagnostic",
+    "contract": "diagnostic",
+    "value": {
+      "code": "WV-SCHEMA-INVALID_INSTANCE",
+      "severity": "error",
+      "stage": "schema",
+      "message": "Invalid.",
+      "path": "/a"
+    },
+    "valid": true
+  },
+  {
+    "name": "diagnostic-unordered-source",
+    "contract": "diagnostic",
+    "value": {
+      "code": "WV-SCHEMA-INVALID_INSTANCE",
+      "severity": "error",
+      "stage": "schema",
+      "message": "Invalid.",
+      "path": "/a",
+      "source": {
+        "line": 2,
+        "column": 1,
+        "endLine": 1,
+        "endColumn": 1
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "worker-binding",
+    "contract": "worker-implementation",
+    "value": {
+      "kind": "worker",
+      "taskType": "task",
+      "taskVersion": "1.0.0"
+    },
+    "valid": true
+  },
+  {
+    "name": "worker-routing",
+    "contract": "worker-routing",
+    "value": {
+      "queue": "queue"
+    },
+    "valid": true
+  },
+  {
+    "name": "worker-routing-unknown",
+    "contract": "worker-routing",
+    "value": {
+      "queue": "queue",
+      "extra": 1
+    },
+    "valid": false
+  }
+]

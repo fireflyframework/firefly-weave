@@ -1,0 +1,194 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Offline CLI
+
+Install the base `firefly-weave` wheel to obtain `weave`. Server and worker extras
+are unnecessary. The offline commands listed below do not initialize PyFly, read application
+configuration/credentials, discover providers, or connect to a service. They read
+only explicitly supplied source/catalog paths and write only requested exports.
+
+```sh
+weave version --output json
+weave workflow validate source.yaml --output json
+weave workflow compile source.yaml --catalog catalog.lock.json --strict --output json
+weave workflow explain source.yaml --catalog catalog.lock.json
+weave workflow compile source.yaml --catalog catalog.lock.json --directory ./compiled
+weave schema export --directory ./schemas
+```
+
+`workflow validate`, `compile`, and `explain` accept `SOURCE`, optional
+`--catalog LOCK`, `--output text|json` (default `text`), and `--strict`. A `.json`
+source uses strict JSON; other extensions use the restricted YAML reader.
+Catalog locks always use strict JSON. Source and catalog reads are bounded at
+1,048,576 bytes plus one overflow sentinel; the parser enforces depth/document
+bounds. An oversized source is invalid; an oversized or malformed catalog is a
+local configuration error.
+
+| Status | Exit | Meaning |
+| --- | ---: | --- |
+| Successful complete compilation, or successful partial `validate` | 0 | The requested checks passed |
+| Invalid definition, strict warning, or partial `compile`/`explain` | 1 | No requested executable result |
+| Invocation, file, malformed catalog, or export failure | 2 | Fix local arguments/configuration |
+| Remote service or transport failure | 3 | Authenticated remote commands |
+
+Without a catalog, every workflow command runs `validate_source`; it returns
+`partial: true`, `validationOk` describing those checks, `ok: false`, and
+`artifact: null`. Successful partial validation exits 0 only for `validate`.
+`compile` and `explain` exit 1 because they require an executable. Text explicitly
+labels partial results. An explicitly supplied empty catalog requests complete
+compilation; it is not equivalent to an absent catalog. Partial validation does
+not perform dependency/type/dominance analysis, and `--strict` cannot add those
+checks. With a catalog, `--strict` promotes complete-analysis warnings to errors.
+
+JSON workflow output is exactly `CompileResult.to_bytes()` plus a newline for
+all three commands. It contains retained diagnostics, complete truncation
+metadata, status and the optional artifact envelope; there is no progress text.
+Handled invocation, file, catalog, and export errors use the same envelope with
+one `WV-CLI-*` diagnostic and exit 2. Raw input values and exception strings are
+not included in these errors. `schema export --output json` reports the explicit
+directory and filenames; `version --output json` reports package/API/IR versions.
+
+Artifacts necessarily contain author literals and dependency declarations.
+Do not embed credentials in source or catalogs; runtime connections and secret
+providers belong to later application stages. Offline compilation never resolves
+secret references or copies environment credentials into output. Human explain
+shows resolved dependency names/digests, node and edge flow, source positions,
+expression reads, and runtime guard purposes/schema references. It does not
+print literal payloads. JSON explain retains the identical compiler envelope.
+
+## Export safety and contracts
+
+`compile --directory DIR` writes `compiled-artifact.json`, `executable.json`, and
+`catalog.lock.json` only after complete successful compilation. The artifact
+contains source maps and diagnostics; the executable alone contains semantic IR.
+The lock is the supplied validated JSON catalog, in canonical form, including
+unused resources so that it can be reused for other local definitions.
+
+`schema export --directory DIR` writes one `<name>.schema.json` file per published
+contract, including definitions, artifacts, catalogs, worker releases and leases,
+completion acknowledgments, provider sources, and operational responses.
+The [schema profile](schema-profile.md) describes validation boundaries.
+Catalog-lock describes definitions plus normalized-document SHA-256 digests,
+task capabilities, adapter names, and bundled schemas. `CatalogLock` and
+`CatalogSnapshot.from_lock` enforce catalog identity/digest invariants; a generic
+JSON Schema validator cannot establish content hashes.
+
+Every export preflights the full set of target paths before writing. Existing
+files are refused unless `--force` is explicit; unrelated files are preserved.
+Destination symlinks, target symlinks, and directory/file collisions are refused,
+even with `--force`. Each file is published from a temporary sibling without
+following the target symlink. The set is not a filesystem transaction: disk or
+permission failures during publication can leave a subset of complete files.
+No files are emitted for partial or invalid compilation.
+
+## Language boundaries
+
+The [schema profile](schema-profile.md) lists the exact accepted and rejected
+Draft vocabulary, local-only references, four enforced formats, regex subset,
+and resource budgets. [Compiler contracts](compiler.md) specify expressions,
+branching and source/semantic identity. No raw code, remote schemas, environment
+or filesystem expressions are supported. Numbers are finite IEEE-754 values;
+integers must be in `[-9007199254740991, 9007199254740991]`. NaN, infinities,
+invalid Unicode scalars, duplicate mapping keys and YAML aliases are rejected.
+Money/exact decimals should use validated strings. Typed integer fields reject
+floating representations, while embedded JSON Schema retains Draft integer
+semantics (`1.0` is an integer). Successful offline compilation proves neither
+provider availability nor deployment authorization; publication must recompile
+against the server's authorized catalog.
+
+Recorded history is available through `weave run history` and `weave run export`.
+`weave run replay --artifact pinned-artifact.json --events history.json` verifies
+recorded facts locally without executors. See [history and replay](history-and-replay.md)
+for typed contracts, authorization, exact source references and completeness limits.
+
+## Remote authoring and operations
+
+Install the `client` extra for authenticated remote operations. The public command families are `remote`, `definitions` (including `drafts` and `activations`), `connections`, `runs` (including `incidents` and `debug`), `workers` (including `releases`), and `triggers` (including `schedules`). Each operation is a thin adapter over the shared typed SDK and uses canonical `/api/v1/tenants/...` paths. Existing singular operator commands remain compatibility commands.
+
+All public remote commands take `--base-url`, `--tenant`, applicable `--project`/`--environment`, and `--output json`. Their matching environment variables are `WEAVE_BASE_URL`, `WEAVE_TENANT_ID`, `WEAVE_PROJECT_ID` and `WEAVE_ENVIRONMENT_ID`. A request body is an exact JSON DTO supplied with `--request FILE`; resource IDs are positional, revisions use `--revision`, and keyed mutations require `--idempotency-key`. Discovery uses `--limit` and `--cursor`. Use each command's `--help` for its exact required arguments. The [API inventory](api.md) defines the corresponding operation IDs and request/response schemas.
+
+Examples after setting the scope and API origin:
+
+```sh
+weave remote catalog --output json
+weave remote compile --request compiler-request.json --output json
+weave definitions drafts save "$DRAFT_ID" --request draft-request.json --output json
+weave definitions drafts save "$DRAFT_ID" --revision 1 --request changed-draft.json --output json
+weave definitions publish --collection actions --request publication.json \
+  --idempotency-key action-publication-1 --output json
+weave connections create --request connection.json --output json
+weave runs history "$RUN_ID" --limit 50 --output json
+weave runs replay "$RUN_ID" --output json
+weave runs debug command "$SESSION_ID" --revision 1 --request debug-command.json --output json
+```
+
+Remote JSON stdout contains one result/problem and no banners; diagnostics go to stderr. Exit0 means the requested operation/check succeeded, exit1 means invalid source, denied/domain operation or incomplete/inconsistent replay, exit2 means local configuration/invocation error, and exit3 means remote service/transport/contract failure. Unsafe requests are not retried. Compiler responses retain exact canonical source locations; `filename` is a caller-supplied label, not a server path to open.
+
+## Login and secure persistence
+
+`WEAVE_ACCESS_TOKEN` supports host-managed access tokens. Alternatively every public remote command accepts `--auth-config FILE` plus the same store options as `auth`. Credentials are acquired independently of server configuration.
+
+A login configuration identifies `provider_id`, exact `issuer`, public `client_id`, exact API-origin `target`, local `account`, requested `scopes`, and optional explicitly trusted endpoint origins. HTTPS is required except with the explicit `allow_loopback_http: true` development setting. The default scopes may need adjustment for a provider's registered client; the retained minimal Weave Keycloak client uses `["openid"]`.
+
+```sh
+weave auth login --auth-config login.json --flow auto --output json
+weave auth status --auth-config login.json --output json
+weave auth logout --auth-config login.json --revoke --output json
+```
+
+The native credential store is the default and fails closed if unavailable. To select the explicit POSIX fallback, first create an absolute caller-owned0700 directory, then pass `--credential-store file --credential-file /absolute/private/session.json` on every invocation. An existing record must be a caller-owned0600 regular file; insecure modes and symlink/hardlink paths are rejected. The fallback is unsupported on Windows. Neither path prints persisted tokens. Device instructions (verification URI/user code) go to stderr; token, refresh token and PKCE verifier do not.
+
+`--flow auto` selects advertised device authorization; `--flow pkce` launches the browser with an already bound ephemeral loopback callback. Cancellation/expiry stores no active credentials. Fresh lifecycle UUIDs and the shared cross-process lock fence refresh, logout and late login completion as described in [SDK credential lifecycle](sdk.md#device-login-pkce-and-stores).
+
+For pinned Keycloak 26.7.4, registering exact loopback callback entries with explicit default port 80 (`http://127.0.0.1:80/callback`, `http://[::1]:80/callback`) enables its special arbitrary-port matching while keeping the path exact. The template retains the older fixed callback too, enables S256/device authorization, disables password grants and sets refresh revocation with max reuse 0. Realm import skips existing realms: apply these settings additively through trusted administration rather than resetting a retained realm. The test harness's localhost-cookie adjustment models a browser only; product token clients never relax cookie/TLS policy.
+
+## Trusted connector authoring
+
+`weave connector init TARGET --name NAME` and `weave connector validate METADATA`
+work in the base installation without executing package code.
+`weave connector test IDENTITY [--mode fixtures|native]` executes an explicitly
+selected installed native package and its optional fixture suite.
+`weave connector package PROJECT --directory OUTPUT` builds an explicit trusted
+local project. All accept `--output text|json`; rejected operations exit 1 and
+invalid CLI syntax exits 2. These deployment tools add no tenant HTTP API.
+See [connector authoring](../connectors/authoring.md) for trust boundaries, exact
+identities, dependency requirements, schema checks, and executable examples.
+
+## Compatibility and retention
+
+After configuring the API origin, tenant, project, and authenticated identity as
+above, `weave compatibility read --output json` reads the current scoped report
+under `status.read`. `weave compatibility check --output json` requests a fresh
+check and requires `compatibility.check`.
+
+Create a retention request file containing `{"target":"expired_debug","limit":100}`,
+then capture the returned immutable plan ID:
+
+```sh
+weave retention plan --request retention-request.json --output json > retention-plan.json
+PLAN_ID="$(python -c 'import json; print(json.load(open("retention-plan.json"))["id"])')"
+weave retention apply --plan-id "$PLAN_ID" --output json
+```
+
+The apply command first reads and displays that exact stored plan as JSON on
+stderr, then applies it without another confirmation. Stdout contains only the
+final result or problem. A failed plan read prevents apply. The existing
+positional plan ID remains supported; conflicting positional and `--plan-id`
+values are rejected before contacting the API. Only the plan creator with current
+project maintenance grants can read or apply it.

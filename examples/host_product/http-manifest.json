@@ -1,0 +1,286 @@
+{
+  "connector": {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Connector",
+    "metadata": {
+      "name": "weave-http",
+      "version": "1.0.0"
+    },
+    "spec": {
+      "actions": {
+        "read": {
+          "configSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "maxRedirects": {
+                "maximum": 5,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "method": {
+                "enum": [
+                  "GET",
+                  "HEAD"
+                ],
+                "type": "string"
+              },
+              "path": {
+                "minLength": 1,
+                "pattern": "^/([A-Za-z0-9_-]+/)*[A-Za-z0-9_-]*$",
+                "type": "string"
+              },
+              "statuses": {
+                "items": {
+                  "maximum": 299,
+                  "minimum": 200,
+                  "type": "integer"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "statuses"
+            ],
+            "type": "object"
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {},
+              "query": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {},
+              "status": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "status",
+              "body"
+            ],
+            "type": "object"
+          },
+          "retry": {
+            "initialDelaySeconds": 1,
+            "maxAttempts": 1,
+            "maxDelaySeconds": 30
+          },
+          "sideEffect": "read_only",
+          "timeoutSeconds": 30
+        },
+        "write": {
+          "configSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "maxRedirects": {
+                "maximum": 5,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "method": {
+                "enum": [
+                  "POST",
+                  "PUT",
+                  "PATCH",
+                  "DELETE"
+                ],
+                "type": "string"
+              },
+              "path": {
+                "minLength": 1,
+                "pattern": "^/([A-Za-z0-9_-]+/)*[A-Za-z0-9_-]*$",
+                "type": "string"
+              },
+              "statuses": {
+                "items": {
+                  "maximum": 299,
+                  "minimum": 200,
+                  "type": "integer"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "statuses"
+            ],
+            "type": "object"
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {},
+              "query": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {},
+              "status": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "status",
+              "body"
+            ],
+            "type": "object"
+          },
+          "retry": {
+            "initialDelaySeconds": 1,
+            "maxAttempts": 1,
+            "maxDelaySeconds": 30
+          },
+          "sideEffect": "non_idempotent",
+          "timeoutSeconds": 30
+        }
+      },
+      "adapter": "weave-http",
+      "authSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "compatibility": {
+        "apiVersion": "weave/v1alpha1"
+      },
+      "configSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "enum": [
+              "none",
+              "bearer"
+            ],
+            "type": "string"
+          },
+          "baseUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "baseUrl",
+          "auth"
+        ],
+        "type": "object"
+      },
+      "limits": {
+        "maxRequestBytes": 1048576,
+        "maxResponseBytes": 1048576,
+        "maxTimeoutSeconds": 30
+      }
+    }
+  },
+  "capabilities": [
+    {
+      "taskType": "weave-connector-http-read",
+      "taskVersion": "1.0.0",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "body": {}
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer"
+          },
+          "body": {}
+        },
+        "required": [
+          "status",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "sideEffect": "read_only",
+      "timeoutSeconds": 30
+    },
+    {
+      "taskType": "weave-connector-http-write",
+      "taskVersion": "1.0.0",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "body": {}
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer"
+          },
+          "body": {}
+        },
+        "required": [
+          "status",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "sideEffect": "non_idempotent",
+      "timeoutSeconds": 30
+    }
+  ],
+  "connector_bindings": [
+    {
+      "connector_digest": "078341948bc2bacbd7805eb793ccc1bd80ad5ff2632a3807cc3257d4e3d96b35",
+      "action": "read",
+      "adapter": "weave-http",
+      "implementation_version": "1.0.0",
+      "task_reference": "weave-connector-http-read@1.0.0"
+    },
+    {
+      "connector_digest": "078341948bc2bacbd7805eb793ccc1bd80ad5ff2632a3807cc3257d4e3d96b35",
+      "action": "write",
+      "adapter": "weave-http",
+      "implementation_version": "1.0.0",
+      "task_reference": "weave-connector-http-write@1.0.0"
+    }
+  ]
+}

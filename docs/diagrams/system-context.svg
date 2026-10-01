@@ -1,0 +1,33 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="840" viewBox="0 0 1120 840" role="img" aria-labelledby="title desc">
+<title id="title">Firefly Weave system context and components</title>
+<desc id="desc">Host clients reach a native PyFly modular monolith. A pure offline compiler is separate from PostgreSQL-backed execution. External identity providers, remote workers, and external systems have explicit authority boundaries.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
+<rect width="1120" height="840" rx="20" fill="#f7faf5"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:21px;font-weight:700}.small{font-size:18px}.eyebrow{font-size:15px;font-weight:700;letter-spacing:1.5px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.box{fill:#fff;stroke:#adc5b5;stroke-width:1.5}</style><text class="title" x="40" y="52">One application, explicit boundaries</text>
+<text class="small" x="40" y="82">Firefly Weave · current core architecture</text><rect class="box" x="40" y="115" width="320" height="105" rx="12"/><text class="label" x="58" y="146">Host product / SDK / CLI</text><text class="small" x="58" y="173">Remote authoring and operations</text><text class="small" x="58" y="198">Explicit actor and scope</text><rect class="box" x="395" y="115" width="315" height="105" rx="12"/><text class="label" x="413" y="146">Offline compiler</text><text class="small" x="413" y="173">YAML / JSON → canonical IR</text><text class="small" x="413" y="198">No database or network</text><rect class="box" x="765" y="115" width="315" height="105" rx="12"/><text class="label" x="783" y="146">External identity provider</text><text class="small" x="783" y="173">Keycloak initial profile</text><text class="small" x="783" y="198">Verified tokens → local links</text><rect x="40" y="280" width="690" height="400" rx="16" fill="#edf4e8" stroke="#507767" stroke-width="2"/>
+<text class="eyebrow" x="60" y="310">MODULAR MONOLITH · NATIVE PYFLY</text>
+<path class="edge" d="M195 220 V280"/><text class="small" x="208" y="259">authenticated API</text>
+<path class="edge" d="M550 220 V263 H450 V280"/>
+<path class="edge" d="M920 220 V257 H660 V280"/><rect class="box" x="60" y="335" width="650" height="72" rx="12"/><text class="label" x="78" y="366">Controllers + authentication filter</text><text class="small" x="78" y="393">Authorization also enforced by application services</text><rect class="box" x="60" y="440" width="202" height="105" rx="12"/><text class="label" x="78" y="471">Definitions</text><text class="small" x="78" y="498">Versions / activations</text><text class="small" x="78" y="523">Connection revisions</text><rect class="box" x="278" y="440" width="212" height="105" rx="12"/><text class="label" x="296" y="471">Persistent runtime</text><text class="small" x="296" y="498">Runs / waits / signals</text><text class="small" x="296" y="523">Recovery / incidents</text><rect class="box" x="506" y="440" width="204" height="105" rx="12"/><text class="label" x="524" y="471">Workers + history</text><text class="small" x="524" y="498">Leases / receipts</text><text class="small" x="524" y="523">Redacted evidence</text><path class="edge" d="M385 407 V424 H160 V440"/><path class="edge" d="M385 424 V440"/><path class="edge" d="M385 424 H608 V440"/><rect class="box" x="60" y="578" width="650" height="78" rx="12"/><text class="label" x="78" y="609">Native connector dispatcher</text><text class="small" x="78" y="636">Uses the worker protocol with provisioned releases and grants</text><rect class="box" x="780" y="440" width="300" height="105" rx="12"/><text class="label" x="798" y="471">Remote workers</text><text class="small" x="798" y="498">SDK in another process</text><text class="small" x="798" y="523">Claim / heartbeat / complete</text><rect class="box" x="780" y="600" width="300" height="105" rx="12"/><text class="label" x="798" y="631">External systems</text><text class="small" x="798" y="658">Bounded connector calls</text><text class="small" x="798" y="683">Scoped secret resolution</text><path class="edge" d="M730 485 H780" marker-start="url(#arrow)"/>
+<path class="edge" d="M710 620 H780"/>
+<path class="edge" d="M930 545 V600"/>
+<path class="edge" d="M380 680 V730"/>
+<text class="small" x="397" y="711">scoped transactions</text><rect class="box" x="60" y="738" width="650" height="75" rx="12"/><text class="label" x="78" y="769">PostgreSQL · durable state + tenant RLS</text><text class="small" x="78" y="796">Explicit migrations · separate application and scheduler roles</text><text class="small" x="780" y="754">Connector availability depends</text><text class="small" x="780" y="780">on installed, authorized releases.</text><text class="small" x="780" y="806">No live-provider claim is implied.</text>
+</svg>

@@ -1,0 +1,95 @@
+# Copyright 2026 Firefly Software Foundation.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Installed offline fixture suite for the echo contract, invoked only explicitly."""
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
+from firefly_weave.contracts.connectors import (
+    ActionContext,
+    ConnectionRevision,
+    ConnectorAdapter,
+    ConnectorFailure,
+    ConnectorInvocation,
+    ResolvedSecret,
+)
+
+
+def context(*, expired: bool = False, bound: int = 1048576) -> ActionContext:
+    """A synthetic invocation with no credential capability or network destination."""
+    revision = ConnectionRevision(
+        name="fixture",
+        connector_version_id=UUID(int=1),
+        id=UUID(int=2),
+        revision=1,
+        connector="e2-inbox-fixture@1.0.0",
+        connector_digest="0" * 64,
+        adapter="e2-inbox-fixture",
+        config={},
+    )
+
+    async def credentials(name: str) -> ResolvedSecret:
+        raise AssertionError("Echo must not request credentials")
+
+    return ActionContext(
+        "fixture",
+        datetime.now(UTC) + timedelta(seconds=-1 if expired else 10),
+        credentials,
+        ConnectorInvocation(revision, {}, "echo", {"type": "object"}, {"type": "object"}, bound, bound),
+    )
+
+
+async def check(adapter: ConnectorAdapter) -> None:
+    """Verify successful echo, deadline/bounds rejection, and cancellation propagation."""
+    from dataclasses import replace
+
+    from firefly_weave.contracts.values import JsonObject
+
+    value: JsonObject = {"message": "hello"}
+    result = await adapter.execute(value, context())
+    if result != value or result is value:
+        raise AssertionError("Echo must return an independent JSON value")
+    for invocation in (context(expired=True), context(bound=2)):
+        try:
+            await adapter.execute(value, invocation)
+        except ConnectorFailure as failure:
+            if failure.outcome != "not_started":
+                raise AssertionError("Preflight failure must not imply an external effect") from failure
+        else:
+            raise AssertionError("Expected bounded preflight rejection")
+
+    async def cancel() -> None:
+        raise asyncio.CancelledError
+
+    try:
+        await adapter.execute({}, replace(context(), authorize=cancel))
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError("Adapter swallowed cancellation")
+    invocation = context()
+    classified = replace(
+        invocation.invocation,
+        input_schema={"type": "object", "properties": {"token": {"type": "string", "x-secret": True}}},
+    )
+    try:
+        await adapter.execute({"token": "fixture-secret-canary"}, replace(invocation, invocation=classified))
+    except ConnectorFailure as failure:
+        if "fixture-secret-canary" in str(failure):
+            raise AssertionError("Credential content leaked through diagnostics") from failure
+    else:
+        raise AssertionError("Classified input was accepted as ordinary workflow data")

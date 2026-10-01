@@ -1,0 +1,34 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+# e2-inbox-fixture
+
+This local read-only echo example demonstrates a trusted native connector.
+It does not implement or certify an external provider.
+
+- Edit `connector.json`, then copy the reviewed declaration into `src/e2_inbox_fixture/connector.json`.
+- Validate data with `weave connector validate connector.json` (no package code runs).
+- Build with `weave connector package . --directory dist` in an author-controlled environment containing `build`.
+- Install the wheel and the matching Weave/PyFly artifacts into an isolated environment.
+- Run `pytest tests/test_conformance.py`, then `weave connector test 'e2-inbox-fixture:e2-inbox-fixture:e2_inbox_fixture:package'`.
+- Configure that exact identity in the operator's `WEAVE_CONNECTOR_PACKAGES` JSON array to enable it.
+
+`connector test` executes installed trusted declaration, lifecycle, and fixture code, records
+`installed-fixture-contract`, and does not call a real provider. Add explicit
+fixture tests for protected headers, credential redaction, cancellation, response
+bounds and unknown outcomes when replacing echo with an external operation.
+Never change an uncertain external outcome into a safe automatic retry.

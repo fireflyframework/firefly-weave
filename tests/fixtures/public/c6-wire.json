@@ -1,0 +1,9 @@
+[
+  {"schema":"problem","valid":true,"value":{"status":412,"code":"WV-ETAG","message":"Revision precondition failed","request_id":"request-1","diagnostics":[]}},
+  {"schema":"problem","valid":false,"value":{"status":200,"code":"WV-ETAG","message":"bad","diagnostics":[]}},
+  {"schema":"draft-retirement","valid":true,"value":{"id":"00000000-0000-0000-0000-000000000000","revision":2,"document_revision":1,"retired":true}},
+  {"schema":"draft-retirement","valid":false,"value":{"id":"00000000-0000-0000-0000-000000000000","revision":1,"document_revision":1,"retired":false}},
+  {"schema":"compile-response","valid":true,"value":{"diagnostics":[],"artifact":null,"partial":true,"ok":false,"validationOk":true,"errorCount":0,"omittedCount":0,"schemaTruncated":false,"truncated":false}},
+  {"schema":"completion-acknowledgment","valid":true,"value":{"task_id":"00000000-0000-0000-0000-000000000001","generation":1,"completion_id":"00000000-0000-0000-0000-000000000002","accepted_at":"2026-01-01T00:00:00Z","status":"completed","unavailable":true,"payload_match":"unavailable","omissions":[{"path":"","reason":"classification_unavailable"}]}},
+  {"schema":"completion-acknowledgment","valid":false,"value":{"task_id":"00000000-0000-0000-0000-000000000001","generation":1,"completion_id":"00000000-0000-0000-0000-000000000002","accepted_at":"2026-01-01T00:00:00Z","status":"completed","unavailable":true,"payload_match":"verified","omissions":[]}}
+]

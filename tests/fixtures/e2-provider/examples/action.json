@@ -1,0 +1,1 @@
+{"apiVersion":"weave/v1alpha1","kind":"Action","metadata":{"name":"e2-inbox-fixture-echo","version":"1.0.0"},"spec":{"connection":{"connector":"e2-inbox-fixture@1.0.0"},"implementation":{"action":"echo","config":{},"kind":"connector","uses":"e2-inbox-fixture@1.0.0"},"inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"sideEffect":"read_only","timeoutSeconds":1}}

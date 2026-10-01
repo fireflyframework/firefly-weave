@@ -1,0 +1,83 @@
+{
+  "type": "object",
+  "properties": {
+    "installation_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "status"
+      ]
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "phone_number_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "peer_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 15
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,11})$"
+    },
+    "text": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "status": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "sent",
+        "delivered",
+        "read",
+        "failed",
+        "deleted",
+        null
+      ]
+    },
+    "error_codes": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 2147483647
+      }
+    },
+    "facts_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "required": [
+    "installation_id",
+    "event_type",
+    "message_id",
+    "phone_number_id",
+    "peer_id",
+    "timestamp",
+    "text",
+    "status",
+    "error_codes",
+    "facts_digest"
+  ],
+  "additionalProperties": false
+}

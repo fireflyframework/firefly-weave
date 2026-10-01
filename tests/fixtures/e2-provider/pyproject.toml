@@ -1,0 +1,36 @@
+# Copyright 2026 Firefly Software Foundation.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+[build-system]
+requires = ["hatchling>=1.28.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "e2-inbox-fixture"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = ["firefly-weave==0.1.0a1", "pyfly @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"]
+
+[project.optional-dependencies]
+test = ["pytest>=9,<10"]
+
+[project.entry-points."firefly_weave.connectors"]
+e2-inbox-fixture = "e2_inbox_fixture:package"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/e2_inbox_fixture"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

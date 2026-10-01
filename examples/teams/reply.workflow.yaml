@@ -1,0 +1,48 @@
+# Copyright 2026 Firefly Software Foundation.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: teams-reply-flow
+  version: 1.0.0
+spec:
+  connections:
+    teams:
+      connector: weave-teams@1.0.0
+  inputSchema:
+    type: object
+    properties:
+      reference_id: {type: string}
+      generation: {type: integer, minimum: 1}
+      activity_id: {type: string, minLength: 1, maxLength: 256}
+      text: {type: string, maxLength: 16384}
+      service_url: {type: string, maxLength: 2048}
+      effect: {type: string, enum: [message, add, remove]}
+    required: [reference_id, generation, activity_id, text, service_url, effect]
+    additionalProperties: false
+  outputSchema: {}
+  steps:
+    - id: reply
+      kind: action
+      uses: teams-reply@1.0.0
+      connection: teams
+      with:
+        object:
+          reference_id: {ref: /input/reference_id}
+          generation: {ref: /input/generation}
+          activity_id: {ref: /input/activity_id}
+          text: {literal: 'Message received.'}
+  output: {ref: /steps/reply/output}
