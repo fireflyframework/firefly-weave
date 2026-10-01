@@ -80,6 +80,10 @@ it does not save, publish, or execute it. The callback rereads the token file pe
 request, but does not refresh an expired token. Obtain a fresh token as described
 in the standalone tutorial when needed.
 
+![Typed SDK lifecycle requests and returned identities](../diagrams/authoring-host-sequence.svg)
+
+Read downward and carry each returned identity into the next request. Draft saving is optional. The example below starts at publication and uses a separate idempotency key for each mutation. [Open the diagram at full size](../diagrams/authoring-host-sequence.svg).
+
 ## Extend the host to publish, activate, and run
 
 The following block belongs inside the `async with` above after successful

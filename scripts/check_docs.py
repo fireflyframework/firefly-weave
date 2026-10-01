@@ -47,7 +47,8 @@ def check(root: Path) -> dict:
         *[path for path in root.glob("*.md") if path.name not in {"AGENTS.md", "CLAUDE.md"}],
         *[
             p
-            for p in (root / "docs").rglob("*.md")
+            for directory in ("docs", "examples", "tests", "deploy")
+            for p in (root / directory).rglob("*.md")
             if "superpowers" not in p.relative_to(root).parts and p.name != "implementation-status.md"
         ],
     ]

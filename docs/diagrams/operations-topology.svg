@@ -1,0 +1,84 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 990" role="img" aria-labelledby="title desc">
+<title id="title">One installation, separate processes</title><desc id="desc">Local terminals and containers connect to the same owned services. Remote workers use HTTP while native executors use application and catalog database authority. Resume reuses retained configuration.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.line{fill:none;stroke:#C9DBD2;stroke-width:2}</style>
+<rect width="1120" height="990" fill="#FFFFFF"/>
+<text x="40" y="52" class="title">One installation, separate processes</text>
+<text x="40" y="88" class="body">Terminal numbers belong to the standalone and deployment walkthroughs.</text>
+<rect x="40" y="120" width="320" height="625" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<rect x="385" y="120" width="330" height="625" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<rect x="740" y="120" width="340" height="625" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="157" class="head">TERMINAL 1 · OPERATOR</text>
+<text x="405" y="157" class="head">FOREGROUND PROCESSES</text>
+<text x="760" y="157" class="head">OWNED CONTAINERS</text>
+<rect x="60" y="180" width="280" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="80" y="213" class="head">Private configuration</text>
+<text x="80" y="245" class="body">session.env: paths / ports</text>
+<text x="80" y="272" class="body">runtime.env: authorities</text>
+<text x="80" y="299" class="body">Receipts retain real IDs</text>
+<path d="M60 403C60 379 340 379 340 403V504C340 528 60 528 60 504Z" fill="#EEF4F0" stroke="#367D68" stroke-width="2"/>
+<path d="M60 403C60 427 340 427 340 403" class="line"/>
+<text x="80" y="451" class="head">PostgreSQL</text>
+<text x="80" y="481" class="body">Runs, grants and leases</text>
+<text x="80" y="508" class="body">App + catalog logins</text>
+<rect x="60" y="584" width="280" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="80" y="617" class="head">Keycloak</text>
+<text x="80" y="649" class="body">Issues access tokens</text>
+<text x="80" y="676" class="body">Verifies expected client</text>
+<text x="80" y="703" class="body">Retains its own database</text>
+<rect x="405" y="180" width="290" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="425" y="213" class="head">Terminal 2 · API</text>
+<text x="425" y="245" class="body">Bearer + local grants</text>
+<text x="425" y="272" class="body">Readiness + scheduling</text>
+<text x="425" y="299" class="body">Migration URL removed</text>
+<rect x="405" y="584" width="290" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="425" y="617" class="head">Terminal 3 · receiver</text>
+<text x="425" y="649" class="body">effects.sqlite receipts</text>
+<text x="425" y="676" class="body">Same operation key</text>
+<text x="425" y="703" class="body">survives process restart</text>
+<rect x="760" y="180" width="300" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="780" y="213" class="head">Remote SDK worker</text>
+<text x="780" y="245" class="body">Token → claim → complete</text>
+<text x="780" y="272" class="body">Admitted release + grant</text>
+<text x="780" y="299" class="body">No database credentials</text>
+<rect x="760" y="385" width="300" height="137" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="780" y="418" class="head">Optional native executor</text>
+<text x="780" y="450" class="body">Application + catalog DB</text>
+<text x="780" y="477" class="body">Exact release + grants</text>
+<text x="780" y="504" class="body">Connector egress policy</text>
+<path d="M550 306V350H200V385" class="edge"/>
+<text x="423" y="338" class="body">DB authority</text>
+<path d="M760 241H695" class="edge"/>
+<text x="705" y="222" class="body">HTTP</text>
+<path d="M760 457H340" class="edge"/>
+<text x="423" y="443" class="body">DB authority for native execution</text>
+<path d="M910 306V328H1070V552H570V584" class="edge"/>
+<text x="769" y="575" class="body">Remote effect</text>
+<path d="M910 522V654H695" class="edge"/>
+<text x="760" y="638" class="body">Native read</text>
+<path d="M200 584V555H370V280H405" class="edge" stroke-dasharray="7 5"/>
+<text x="60" y="779" class="body">Dashed: token verification trust. Remote worker also obtains its token from Keycloak.</text>
+<rect x="40" y="805" width="1040" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="840" class="head">Resume the retained installation</text>
+<text x="60" y="875" class="body">1  Same context, project and files → start dependencies → verify readiness.</text>
+<text x="60" y="902" class="body">2  Same receiver receipts → API → required admitted executors → verify an actual run.</text>
+<text x="60" y="929" class="body">Changed configuration needs deliberate process replacement; startup never migrates.</text>
+</svg>

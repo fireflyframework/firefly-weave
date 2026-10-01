@@ -1,0 +1,73 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="860" viewBox="0 0 960 860" role="img" aria-labelledby="title desc">
+<title id="title">Move the same application into a cloud environment</title><desc id="desc">Prepared wheel and worker context are built for the cluster architecture and pushed to a private registry. Kubernetes starts the API and worker from registry digests after an explicit migration. PostgreSQL, HTTPS identity, network and secrets must be provisioned and verified separately.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="960" height="860" rx="18" fill="#F7FAF7"/>
+<text class="title" x="36" y="48">Move the same application into a cloud environment</text><text class="body muted" x="36" y="80">AWS EKS + ECR   |   Azure AKS + ACR   |   Google GKE + Artifact Registry</text>
+<rect x="36" y="120" width="268" height="151" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="154">Build</text>
+<text class="body" x="56" y="186">Prepared wheel + context</text>
+<text class="body" x="56" y="213">Target node architecture</text>
+<text class="body" x="56" y="240">Retain the build identity</text>
+<rect x="346" y="120" width="268" height="151" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="366" y="154">Publish images</text>
+<text class="body" x="366" y="186">Private registry</text>
+<text class="body" x="366" y="213">Record repository@digest</text>
+<text class="body" x="366" y="240">Grant node pull access</text>
+<rect x="656" y="120" width="268" height="151" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="676" y="154">Select environment</text>
+<text class="body" x="676" y="186">Owned cluster + namespace</text>
+<text class="body" x="676" y="213">Qualified PostgreSQL</text>
+<text class="body" x="676" y="240">HTTPS identity + network</text>
+<path class="edge" d="M304 195 H346"/>
+<path class="edge" d="M614 195 H656"/>
+<text class="head" x="36" y="322">KUBERNETES APPLICATION RESOURCES</text>
+<rect x="36" y="354" width="268" height="180" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="388">Migration Job</text>
+<text class="body" x="56" y="420">Run before API startup</text>
+<text class="body" x="56" y="447">Owner credential only</text>
+<text class="body" x="56" y="474">Wait for successful schema</text>
+<text class="body" x="56" y="501">Keep the attempt receipt</text>
+<rect x="346" y="354" width="268" height="180" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="366" y="388">API + internal Service</text>
+<text class="body" x="366" y="420">Application + catalog logins</text>
+<text class="body" x="366" y="447">OIDC verification profile</text>
+<text class="body" x="366" y="474">Scheduler enabled here</text>
+<text class="body" x="366" y="501">Readiness before traffic</text>
+<rect x="656" y="354" width="268" height="180" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="676" y="388">Optional worker</text>
+<text class="body" x="676" y="420">Own image and identity</text>
+<text class="body" x="676" y="447">Release and task grants</text>
+<text class="body" x="676" y="474">No orchestration DB login</text>
+<text class="body" x="676" y="501">Scale up after admission</text>
+<path class="edge" d="M304 445 H346"/>
+<text class="body muted" x="657" y="571">Claims and results use the API.</text>
+<rect x="36" y="615" width="421" height="160" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="649">Operator-supplied dependencies</text>
+<text class="body" x="56" y="681">PostgreSQL with tested role ownership</text>
+<text class="body" x="56" y="708">HTTPS Keycloak / verified OIDC profile</text>
+<text class="body" x="56" y="735">Secret delivery, DNS, TLS, and egress</text>
+<rect x="503" y="615" width="421" height="160" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="523" y="649">Acceptance before production</text>
+<text class="body" x="523" y="681">Execute a scoped API / CLI workflow</text>
+<text class="body" x="523" y="708">Check a worker effect and its receipt</text>
+<text class="body" x="523" y="735">Rehearse recovery and compatibility</text>
+<text class="body muted" x="36" y="826">Container deployment, Weave release admission, and database migration are separate operations.</text>
+</svg>

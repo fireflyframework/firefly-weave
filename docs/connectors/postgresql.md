@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # SQL connectors: PostgreSQL
 
+![External PostgreSQL transaction and operation-ledger boundary](../diagrams/integrations-sql-transaction.svg)
+
+**How to read this diagram:** Read the outer transaction first. The inner ledger applies only to idempotent-command; ordinary commands do not gain that protection. A lost COMMIT acknowledgment remains unknown even after cleanup.
+
 ## First lookup: from connection to rows
 
 This guide's first useful operation is a bounded lookup in an **external**

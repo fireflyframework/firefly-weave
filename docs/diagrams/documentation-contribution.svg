@@ -1,0 +1,48 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="542" viewBox="0 0 960 542" role="img" aria-labelledby="title desc">
+<title id="title">Document a behavior that readers can verify</title><desc id="desc">A contributor checks actual behavior and prerequisites, writes a complete example and useful diagram, validates structure and commands, and visually inspects the rendered result. A passing link checker does not prove semantic accuracy.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="960" height="542" rx="18" fill="#F7FAF7"/>
+<text class="title" x="36" y="48">Document a behavior that readers can verify</text><text class="body muted" x="36" y="80">Keep explanations, examples, diagrams, and implementation aligned.</text>
+<rect x="36" y="121" width="410" height="145" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="155">1  Establish the behavior</text>
+<text class="body" x="56" y="187">Read the public contract and its source.</text>
+<text class="body" x="56" y="214">Identify required services, IDs, and authority.</text>
+<text class="body" x="56" y="241">State what the example actually verifies.</text>
+<rect x="514" y="121" width="410" height="145" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="534" y="155">2  Explain and illustrate</text>
+<text class="body" x="534" y="187">Show ordered steps and expected output.</text>
+<text class="body" x="534" y="214">Choose a sequence, decision, or data flow.</text>
+<text class="body" x="534" y="241">Keep names consistent with the commands.</text>
+<path class="edge" d="M446 194 H514"/>
+<rect x="36" y="340" width="410" height="145" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="374">4  Inspect as a reader</text>
+<text class="body" x="56" y="406">Render SVGs at their reading width.</text>
+<text class="body" x="56" y="433">Check arrows, text, and explanatory captions.</text>
+<text class="body" x="56" y="460">Follow the chapter with its prerequisites.</text>
+<rect x="514" y="340" width="410" height="145" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="534" y="374">3  Execute the checks</text>
+<text class="body" x="534" y="406">Check links, headers, syntax, and examples.</text>
+<text class="body" x="534" y="433">Run the relevant project validation.</text>
+<text class="body" x="534" y="460">Keep private evidence out of publication.</text>
+<path class="edge" d="M719 266 V340"/>
+<path class="edge" d="M514 413 H446"/>
+<text class="body muted" x="36" y="523">A diagram explains a contract; it must not invent a guarantee.</text>
+</svg>

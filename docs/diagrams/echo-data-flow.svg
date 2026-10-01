@@ -1,0 +1,52 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="590" viewBox="0 0 960 590" role="img" aria-labelledby="title desc">
+<title id="title">Follow the message through echo</title><desc id="desc">A message object passes its input schema, is copied by a transform reference, and passes the output schema. Simulation computes locally; a durable run adds identity, grants, publication, activation and PostgreSQL.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="960" height="590" rx="18" fill="#F7FAF7"/>
+<text class="title" x="36" y="48">Follow the message through echo</text><text class="body muted" x="36" y="80">One typed input, one transform, one declared output.</text>
+<rect x="36" y="126" width="270" height="180" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="160">Input guard</text>
+<text class="body" x="56" y="192">Object with message: string</text>
+<text class="body" x="56" y="219">Extra fields are rejected</text>
+<text class="body" x="56" y="246">{&quot;message&quot;: &quot;Hello, Weave&quot;}</text>
+<rect x="345" y="126" width="270" height="180" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="365" y="160">Transform: echo</text>
+<text class="body" x="365" y="192">value: {ref: /input}</text>
+<text class="body" x="365" y="219">Copy the accepted object</text>
+<text class="body" x="365" y="246">No integration task</text>
+<rect x="654" y="126" width="270" height="180" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="674" y="160">Output guard</text>
+<text class="body" x="674" y="192">Read /steps/echo/output</text>
+<text class="body" x="674" y="219">Check the output schema</text>
+<text class="body" x="674" y="246">{&quot;message&quot;: &quot;Hello, Weave&quot;}</text>
+<path class="edge" d="M306 216 H345"/>
+<path class="edge" d="M615 216 H654"/>
+<rect x="36" y="366" width="421" height="156" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="400">Chapter 1: simulation</text>
+<text class="body" x="56" y="432">Compiled artifact + fixed starting time</text>
+<text class="body" x="56" y="459">Compute locally without a database</text>
+<text class="body" x="56" y="486">Result: variables.output</text>
+<rect x="503" y="366" width="421" height="156" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="523" y="400">Chapter 2: durable run</text>
+<text class="body" x="523" y="432">Identity + grants + activation</text>
+<text class="body" x="523" y="459">Persist state in PostgreSQL</text>
+<text class="body" x="523" y="486">Result: state.output</text>
+<text class="body muted" x="36" y="562">Both return the same business value; only the durable run creates server-side history.</text>
+</svg>

@@ -22,6 +22,13 @@ Weave coordinates business processes and their integrations. A workflow describe
 what happens; the API stores and starts it; workers perform external work. You can
 call it from your own product or operate it as a standalone API/CLI service.
 
+![Four tutorial stages and their dependencies](diagrams/tutorial-route.svg)
+
+The arrows identify which running installation the next chapter reuses.
+Use the [visual guide](visual-guide.md) to navigate the other illustrated topics.
+
+[Open diagram at full size](diagrams/tutorial-route.svg)
+
 ## Follow the tutorial
 
 If this is your first visit, follow these chapters in order. They form one path
@@ -44,6 +51,20 @@ The tutorial uses local development services. It does not provision a production
 identity tenant or a live messaging account. Before deploying beyond your machine,
 read [configuration](operations/configuration.md), [identity and secrets](operations/identity-and-secrets.md),
 and the [capability matrix](capabilities.md).
+
+## Continue through the CLI and cloud deployment
+
+The [hands-on CLI tutorial](guides/cli-tutorial.md) completes the authoring
+loop against the running API: publish a definition, activate its exact version,
+start a run, and inspect history using returned IDs. It explains command help,
+request files, scope, token renewal, and idempotent retries.
+
+Then follow [cloud deployment](operations/cloud-deployment.md), with
+provider setup for [AWS](operations/aws.md), [Azure](operations/azure.md),
+and [Google Cloud](operations/gcp.md), plus the common
+[Kubernetes walkthrough](operations/kubernetes.md). It separates image
+packaging, infrastructure deployment, migrations, identity, and worker admission.
+Use the [visual guide](visual-guide.md) to find the diagram for each topic.
 
 ## Choose a task after the tutorial
 

@@ -1,0 +1,76 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 920" role="img" aria-labelledby="title desc">
+<title id="title">Three acceptance gates for an upgrade</title><desc id="desc">A vertical decision flow tests schema, persisted compatibility and real execution. Failed schema validation stops startup. Other failed acceptance gates keep admission stopped while evidence is investigated.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.line{fill:none;stroke:#C9DBD2;stroke-width:2}</style>
+<rect width="1120" height="920" fill="#FFFFFF"/>
+<text x="40" y="52" class="title">Three acceptance gates for an upgrade</text>
+<text x="40" y="88" class="body">Begin with fenced writers, a verified recovery copy and the exact selected artifact.</text>
+<rect x="40" y="125" width="645" height="680" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<rect x="730" y="125" width="350" height="680" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="162" class="head">VERIFY IN ORDER</text>
+<text x="750" y="162" class="head">IF THE GATE FAILS</text>
+<circle cx="80" cy="261" r="21" fill="#D8EEE4" stroke="#367D68"/>
+<text x="80" y="267" class="head" text-anchor="middle">1</text>
+<rect x="120" y="215" width="450" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="140" y="248" class="head">Schema matches?</text>
+<text x="140" y="280" class="body">Explicit migration owner command</text>
+<text x="140" y="307" class="body">Alembic + sentinel match artifact</text>
+<path d="M630 242.0L666.0 278L630 314.0L594.0 278Z" fill="#D8EEE4" stroke="#367D68" stroke-width="2"/>
+<path d="M570 278H592" class="edge"/>
+<path d="M666 278H735" class="edge"/>
+<text x="676" y="264" class="body">No</text>
+<text x="750" y="256" class="body">Stop startup; inspect migration.</text>
+<text x="750" y="283" class="body">Never edit version markers.</text>
+<path d="M630 314V371H345V413" class="edge"/>
+<text x="642" y="352" class="body">Yes</text>
+<circle cx="80" cy="461" r="21" fill="#D8EEE4" stroke="#367D68"/>
+<text x="80" y="467" class="head" text-anchor="middle">2</text>
+<rect x="120" y="415" width="450" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="140" y="448" class="head">Requirements satisfied?</text>
+<text x="140" y="480" class="body">Complete catalog inventory</text>
+<text x="140" y="507" class="body">Pinned versions + policy match</text>
+<path d="M630 442.0L666.0 478L630 514.0L594.0 478Z" fill="#D8EEE4" stroke="#367D68" stroke-width="2"/>
+<path d="M570 478H592" class="edge"/>
+<path d="M666 478H735" class="edge"/>
+<text x="676" y="464" class="body">No</text>
+<text x="750" y="456" class="body">Keep effect admission restricted.</text>
+<text x="750" y="483" class="body">Repair reported authority,</text>
+<text x="750" y="510" class="body">policy or missing capability.</text>
+<path d="M630 514V571H345V613" class="edge"/>
+<text x="642" y="552" class="body">Yes</text>
+<circle cx="80" cy="661" r="21" fill="#D8EEE4" stroke="#367D68"/>
+<text x="80" y="667" class="head" text-anchor="middle">3</text>
+<rect x="120" y="615" width="450" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="140" y="648" class="head">Real execution verified?</text>
+<text x="140" y="680" class="body">Historical run readable</text>
+<text x="140" y="707" class="body">Authorized workflow + receipt</text>
+<path d="M630 642.0L666.0 678L630 714.0L594.0 678Z" fill="#D8EEE4" stroke="#367D68" stroke-width="2"/>
+<path d="M570 678H592" class="edge"/>
+<path d="M666 678H735" class="edge"/>
+<text x="676" y="664" class="body">No</text>
+<text x="750" y="656" class="body">Keep admission stopped.</text>
+<text x="750" y="683" class="body">Inspect run and external receipts.</text>
+<text x="750" y="710" class="body">Reconcile ambiguous effects.</text>
+<path d="M630 714V845H560" class="edge"/>
+<text x="642" y="752" class="body">Yes</text>
+<rect x="40" y="815" width="520" height="66" rx="12" fill="#D8EEE4" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="855" class="head">Deliberately reenable writers and monitor</text>
+</svg>

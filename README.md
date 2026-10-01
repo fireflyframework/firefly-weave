@@ -38,6 +38,13 @@ You can run Weave as a standalone service or integrate it into another product.
 The current interface is the **API, CLI, and Python SDK**. There is no graphical
 workflow editor in this alpha.
 
+![From offline authoring to an API, worker, and host product](docs/diagrams/tutorial-route.svg)
+
+Start with the top row. After the API is running, follow the worker branch for
+external Actions or the host-client branch to integrate your product.
+
+[Open diagram at full size](docs/diagrams/tutorial-route.svg)
+
 ## Start here
 
 Follow these chapters in order. Each chapter explains its prerequisites, commands,
@@ -54,6 +61,20 @@ Start with chapter 1 even if your eventual goal is deployment. It explains the
 language without requiring a database or identity server. Read
 [the core concepts](docs/concepts.md) alongside the tutorial when a term is new.
 The [documentation home](docs/README.md) organizes the remaining guides and references.
+
+## Continue through the CLI and cloud deployment
+
+The [hands-on CLI tutorial](docs/guides/cli-tutorial.md) completes the authoring
+loop against the running API: publish a definition, activate its exact version,
+start a run, and inspect history using returned IDs. It explains command help,
+request files, scope, token renewal, and idempotent retries.
+
+Then follow [cloud deployment](docs/operations/cloud-deployment.md), with
+provider setup for [AWS](docs/operations/aws.md), [Azure](docs/operations/azure.md),
+and [Google Cloud](docs/operations/gcp.md), plus the common
+[Kubernetes walkthrough](docs/operations/kubernetes.md). It separates image
+packaging, infrastructure deployment, migrations, identity, and worker admission.
+Use the [visual guide](docs/visual-guide.md) to find the diagram for each topic.
 
 ## What can I build with it?
 

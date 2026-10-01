@@ -18,6 +18,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Capabilities and verification
 
+![Implementation, local checks, and live-provider evidence](diagrams/capability-evidence.svg)
+
+Read these as independent evidence categories. The matrix below states which
+category is supported for each capability.
+
+[Open diagram at full size](diagrams/capability-evidence.svg)
+
 ## How to use this matrix
 
 Read each row from left to right. **Implemented** means code exists for the stated
@@ -67,6 +74,7 @@ production availability, provider account provisioning, or actual message delive
 | [OpenAPI import](connectors/metadata-import.md) and [HTTP profiles](connectors/http-profiles.md) | Implemented | Offline importer, generated package, and owned TLS integration scenarios | Not run | Do not infer arbitrary OpenAPI execution |
 | [Operational limits](operations/configuration.md), [telemetry](operations/observability.md), [retention](operations/retention.md) and [compatibility](operations/upgrades.md) | Implemented | Policy, accounting, contention, telemetry, retention and upgrade suites | Not applicable | Logical accounting is separate from physical storage; compatibility checks gate readiness |
 | [Deployment](operations/deployment.md), [backup/restore](operations/backup-restore.md) and distribution | Implemented | Installed-package, container, process recovery, restore and queue suites | Not applicable | Restore ownership, grants, schema compatibility and external systems must be verified in each environment |
+| [AWS/Azure/GCP deployment recipes](operations/cloud-deployment.md) | Reference guides and Kubernetes manifests | Source review and offline Kubernetes object-shape validation | Not run | Operator-provisioned infrastructure; target database migrations, identity, networking, and recovery require acceptance |
 | Slack and Salesforce | Deferred | Not run | Not run | Not included in this delivery |
 
 SAP and Oracle are not advertised as executable named adapters. Integrating an

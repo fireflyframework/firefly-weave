@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Authoring trusted connector packages
 
+![Installed packages, published definitions, and environment execution pins](../diagrams/integrations-admission.svg)
+
+**How to read this diagram:** Read the three columns as separate responsibilities, then follow their pins into activation. Use the returned connection revision and release IDs; an installed package alone cannot execute a tenant Workflow.
+
 ## What you will build
 
 This guide creates a trusted Python package that adds an executable connector to
@@ -120,6 +124,10 @@ pins PyFly 26.9.15 to its exact published wheel and SHA-256, matching this relea
 Install the generated wheel and its declared dependencies into a separate
 operator-controlled environment. Installing a wheel does not enable it. Keep
 wheel hashes and the metadata/manifest digests with the deployment record.
+
+The [provider-inbox test package](../../tests/fixtures/e2-provider/README.md)
+shows a bounded echo adapter and a separate test-only ingress verifier. Use it to
+understand fixture responsibilities, not as a production provider implementation.
 
 ## Test the installed package
 

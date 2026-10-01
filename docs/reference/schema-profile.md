@@ -26,6 +26,10 @@ supported rules and limits. Start with [workflow authoring](../guides/workflow-a
 for a complete YAML example, or the [standalone tutorial](../guides/standalone.md)
 for a server run.
 
+![Separate schema checks around echo input, transform, and output](../diagrams/authoring-schema-boundaries.svg)
+
+Trace the value from left to right, then compare the two reference systems below. Selecting a string from a valid input object changes the result type; the output contract still expects an object. [Open the diagram at full size](../diagrams/authoring-schema-boundaries.svg).
+
 ## Check a small contract
 
 The echo tutorial accepts exactly one string property. This independent Python

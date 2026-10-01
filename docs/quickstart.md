@@ -25,6 +25,13 @@ the local simulator. No API server, Docker, database, or credentials are needed.
 **Result:** a successful simulation with `{"message": "Hello, Weave"}` as its
 output. This is a local simulation; chapter 2 will create a durable run in PostgreSQL.
 
+![Typed message through input validation, transform, and output validation](diagrams/echo-data-flow.svg)
+
+Follow the upper row to understand the YAML you will write. The lower row
+distinguishes this local simulation from the durable execution in chapter 2.
+
+[Open diagram at full size](diagrams/echo-data-flow.svg)
+
 ## Before you start
 
 Use a Bash or Zsh terminal, Git, Python 3.12 or later, and `uv`. Check that the
@@ -57,6 +64,24 @@ If you already cloned the repository, enter that directory and run only the
 You do not need to activate a virtual environment or install the sibling PyFly
 repository. The final command prints the Weave, language, and intermediate
 representation versions as JSON.
+
+## What the CLI does in this chapter
+
+`weave` is the command-line entry point. `uv run` selects the project environment;
+`workflow` selects the command family; `validate`, `compile`, and `simulate` select
+the operation. File paths are local to your current directory.
+
+```sh
+uv run weave --help
+uv run weave workflow --help
+uv run weave workflow compile --help
+```
+
+This chapter uses local authoring commands. After [chapter 2](guides/standalone.md),
+follow the [complete CLI tutorial](guides/cli-tutorial.md) to publish, activate,
+start, and inspect a real workflow. [Local worker deployment](operations/deployment.md)
+and [AWS/Azure/GCP deployment](operations/cloud-deployment.md) explain the separate
+process and infrastructure steps. A successful compilation alone deploys nothing.
 
 ## Create the definition
 

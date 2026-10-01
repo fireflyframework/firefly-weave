@@ -27,6 +27,13 @@ You do not need every concept on this page for your first workflow. The
 [quickstart](quickstart.md) begins with a single transform and no external systems.
 Use this page as a companion when the later tutorials introduce more pieces.
 
+![Immutable version and activation used by independent runs](diagrams/definition-lifecycle.svg)
+
+Read downward from source to deployed selection, then outward to separate
+executions. An activation is reusable; a run carries one invocation’s state.
+
+[Open diagram at full size](diagrams/definition-lifecycle.svg)
+
 ## Definition, artifact, and run
 
 A **definition** is the YAML or JSON document describing what should happen.

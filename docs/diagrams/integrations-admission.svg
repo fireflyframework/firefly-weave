@@ -1,0 +1,61 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="760" viewBox="0 0 1120 760" role="img" aria-labelledby="title desc">
+<title id="title">From installed code to an admitted execution</title><desc id="desc">Three ownership layers converge at activation: installed package services, published immutable definitions, and environment connection plus worker release.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34;font-size:18px}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.bold{font-weight:700}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.dash{stroke:#91B4A3;stroke-width:2;stroke-dasharray:7 6}</style>
+<rect width="1120" height="760" fill="#FAFCFA"/>
+<text x="40" y="49" class="title">From installed code to an admitted execution</text>
+<text x="40" y="84" class="">Each layer answers a different question; its identity is not interchangeable with the next.</text>
+<rect x="40" y="125" width="320" height="230" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="159" class="head">1  Installed package</text>
+<text x="60" y="191" class="">Operator chooses trusted code.</text>
+<text x="60" y="218" class="">Exact distribution / entry point</text>
+<text x="60" y="245" class="">Manifest + native service types</text>
+<text x="60" y="272" class="">Optional verifier + fixture hook</text>
+<text x="60" y="299" class="">Installation does not enable it.</text>
+<rect x="400" y="125" width="320" height="230" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="420" y="159" class="head">2  Published definitions</text>
+<text x="420" y="191" class="">Connector defines operations.</text>
+<text x="420" y="218" class="">Action fixes one operation.</text>
+<text x="420" y="245" class="">Workflow uses that Action.</text>
+<text x="420" y="272" class="">Schemas and effects are pinned.</text>
+<text x="420" y="299" class="">Publish returns version IDs.</text>
+<rect x="760" y="125" width="320" height="230" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="780" y="159" class="head">3  Environment authority</text>
+<text x="780" y="191" class="">Connection revision fixes config,</text>
+<text x="780" y="218" class="">secret handles and destinations.</text>
+<text x="780" y="245" class="">Worker release binds capabilities.</text>
+<text x="780" y="272" class="">Scoped grants permit execution.</text>
+<text x="780" y="299" class="">Credentials remain outside input.</text>
+<path class="edge" d="M360 240H390"/>
+<path class="edge" d="M720 240H750"/>
+<rect x="240" y="430" width="640" height="150" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="260" y="464" class="head">Activation joins exact pins</text>
+<text x="260" y="496" class="">Workflow version + connection slot → connection revision ID</text>
+<text x="260" y="523" class="">Connector version ID → admitted worker release ID</text>
+<text x="260" y="550" class="">A ready activation can start a run; the worker still needs authority.</text>
+<path class="edge" d="M560 355V420"/>
+<path class="edge" d="M920 355V402H790V420"/>
+<path class="edge" d="M200 355V402H330V420"/>
+<rect x="40" y="635" width="1040" height="80" rx="12" fill="#E0EEE4" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="669" class="head"></text>
+<text x="60" y="668" class="">Package validation checks contracts. Native testing checks composition.</text>
+<text x="60" y="695" class="">Neither result proves provider access, a live installation, or delivery.</text>
+</svg>

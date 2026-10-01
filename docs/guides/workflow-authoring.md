@@ -30,6 +30,10 @@ ignored working directory with `mkdir -p .local/tutorial`. All generated tutoria
 files stay there. No API, database, token, or worker is needed for these offline
 steps. For your first durable server run, follow the [standalone tutorial](standalone.md).
 
+![Authoring feedback loop showing partial validation, full compilation, diagnostics, and simulation](../diagrams/authoring-diagnostic-loop.svg)
+
+Read the two result columns before following the numbered steps. Partial validation can pass without an artifact; the right column requires an explicit catalog. The return arrow shows how diagnostics guide an edit. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
+
 ## 1. Write the input and output contract
 
 Save this as `.local/tutorial/echo.workflow.yaml`:

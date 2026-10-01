@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Offline OpenAPI connector import
 
+![OpenAPI supported-subset decision followed by artifact review and separate deployment](../diagrams/integrations-openapi-review.svg)
+
+**How to read this diagram:** Follow the decision before the deployment lane. Successful import produces files to review; the later operator steps allocate live IDs and admit the installed package.
+
 ## Choose the integration approach
 
 Import is useful for a commercial service that supplies a local OpenAPI 3.1 JSON

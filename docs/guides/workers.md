@@ -30,6 +30,10 @@ identity, image, and grants must be provisioned through the
 [deployment guide](../operations/deployment.md). Running `main.py` alone is not a
 complete deployment.
 
+![Worker release admission, instance registration, and task lease lifecycle](../diagrams/authoring-worker-lifecycle.svg)
+
+Read preparation across the top, then the task attempt below. A release, instance, and lease answer different questions: which build is allowed, which process is running, and which attempt it may execute. [Open the diagram at full size](../diagrams/authoring-worker-lifecycle.svg).
+
 ## 1. Define the work before implementing it
 
 An **Action** is the reusable workflow-facing contract. A **task capability** is
@@ -116,6 +120,8 @@ current grants before changing the handler.
 
 ![Worker claim, external effect and fenced completion](../diagrams/worker-recovery.svg)
 
+Follow the external effect separately from the completion receipt. A crash between
+them explains why the target needs the same operation key after recovery.
 [Open diagram at full size](../diagrams/worker-recovery.svg)
 
 See [worker protocol](../reference/worker-protocol.md) for release admission,

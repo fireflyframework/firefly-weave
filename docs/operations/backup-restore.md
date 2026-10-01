@@ -32,6 +32,12 @@ schema/table/column/function grants, owners and policies. This is not a general
 production backup manager, live failover, point-in-time recovery, identity-provider
 backup, secret-provider backup or an RPO/RTO guarantee.
 
+![Fenced source, retained archive and a separately verified restore target](../diagrams/operations-restore.svg)
+
+Read across the lanes to follow ownership of the source, evidence and target. The completion receipt is written after catalog/data equality; public-run verification is a later operator check. The source stays fenced throughout target verification.
+
+[Open diagram at full size](../diagrams/operations-restore.svg)
+
 ## Before you begin
 
 This is a maintenance exercise with downtime. **Quiesced** means all application

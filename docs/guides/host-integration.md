@@ -38,6 +38,10 @@ language and contracts; they do not share implicit administrative authority.
 | Typed SDK or native HTTP API | A separate host application or service | Obtain a verified access token, provision local identity/grants, choose scope and manage revision/idempotency contracts |
 | In-process native services | A trusted Python application composition | Preserve constructor injection, explicit actor/scope/audit/UoW and service authorization; do not retain request state in singletons |
 
+![Local library, remote host, and in-process integration boundaries](../diagrams/authoring-execution-boundaries.svg)
+
+Read each column vertically to compare what your host supplies and what Weave checks. Choose a boundary before configuring identity or adding lifecycle operations. [Open the diagram at full size](../diagrams/authoring-execution-boundaries.svg).
+
 ## 2. Connect identity and scope
 
 The [embedding reference](../reference/embedding.md) includes a runnable pure
@@ -89,6 +93,10 @@ Existing runs keep their original activation even after a new version is release
 Handle uncertain transport results separately from domain rejection. An SDK retry
 cannot prove an external request had no effect. Preserve idempotency keys and
 revision expectations, inspect receipts/history and reconcile unknown outcomes.
+
+![Host requests and returned draft, version, activation, and run identities](../diagrams/authoring-host-sequence.svg)
+
+Follow requests downward; dashed arrows return the identities needed by later calls. Each operation has its own authorization check. For the same lifecycle from a terminal, use the [CLI tutorial](cli-tutorial.md). [Open the diagram at full size](../diagrams/authoring-host-sequence.svg).
 
 ## Optional: read a larger integration fixture
 

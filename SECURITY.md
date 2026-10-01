@@ -34,6 +34,13 @@ configuration and trust boundary, reproduction steps against an owned fixture,
 expected/observed behavior and impact. Use synthetic values and redact tokens,
 connection strings, provider payloads, user data and local secret paths.
 
+![Verified identity, local grants, and scoped secret resolution](docs/diagrams/security-boundaries.svg)
+
+Use these boundaries to identify the affected component in a private report.
+A verified token, a local permission, and a connector secret serve different roles.
+
+[Open diagram at full size](docs/diagrams/security-boundaries.svg)
+
 ## Deployment boundaries
 
 Use verified identity links and local scoped grants, separate migration/app/worker

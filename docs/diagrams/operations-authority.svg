@@ -1,0 +1,75 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 930" role="img" aria-labelledby="title desc">
+<title id="title">Give each process only its own authority</title><desc id="desc">Matrix separates operator, API, native executor and remote worker configuration. A second panel shows the successive token, identity, grant and connector secret checks.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.line{fill:none;stroke:#C9DBD2;stroke-width:2}</style>
+<rect width="1120" height="930" fill="#FFFFFF"/>
+<text x="40" y="52" class="title">Give each process only its own authority</text>
+<text x="40" y="88" class="body">An env file selects credentials; authorization still checks each operation and scope.</text>
+<rect x="40" y="120" width="1040" height="365" rx="0" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<rect x="40" y="120" width="1040" height="48" rx="0" fill="#D8EEE4" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="152" class="head">Consumer</text>
+<text x="335" y="152" class="head">Private configuration</text>
+<text x="650" y="152" class="head">Authority / purpose</text>
+<text x="60" y="200" class="head">Operator maintenance</text>
+<text x="335" y="200" class="body">runtime.env + migration URL</text>
+<text x="650" y="200" class="body">Explicit schema / bootstrap maintenance</text>
+<path d="M40 242H1080" class="line"/>
+<text x="60" y="275" class="head">API</text>
+<text x="335" y="275" class="body">api-container.env or runtime.env</text>
+<text x="650" y="275" class="body">Nonowner application + catalog logins</text>
+<text x="650" y="300" class="body">Runtime excludes migration URL</text>
+<path d="M40 317H1080" class="line"/>
+<text x="60" y="350" class="head">Native executor</text>
+<text x="335" y="350" class="body">native-container.env</text>
+<text x="650" y="350" class="body">App + catalog DB, release + secret grants</text>
+<text x="650" y="375" class="body">Built-in connector execution</text>
+<path d="M40 392H1080" class="line"/>
+<text x="60" y="425" class="head">Remote SDK worker</text>
+<text x="335" y="425" class="body">worker.env</text>
+<text x="650" y="425" class="body">API token + release + effect settings</text>
+<text x="650" y="450" class="body">No orchestration database authority</text>
+<text x="40" y="530" class="head">Authorization gates for an API request</text>
+<rect x="40" y="555" width="310" height="125" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="588" class="head">Verify token</text>
+<text x="60" y="620" class="body">Trusted issuer / keys</text>
+<text x="60" y="647" class="body">Audience + client</text>
+<circle cx="320" cy="555" r="21" fill="#D8EEE4" stroke="#367D68"/>
+<text x="320" y="561" class="head" text-anchor="middle">1</text>
+<rect x="405" y="555" width="310" height="125" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="425" y="588" class="head">Resolve identity</text>
+<text x="425" y="620" class="body">Linked local principal</text>
+<text x="425" y="647" class="body">Currently active</text>
+<circle cx="685" cy="555" r="21" fill="#D8EEE4" stroke="#367D68"/>
+<text x="685" y="561" class="head" text-anchor="middle">2</text>
+<rect x="770" y="555" width="310" height="125" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="790" y="588" class="head">Check local grant</text>
+<text x="790" y="620" class="body">Operation + scope</text>
+<text x="790" y="647" class="body">Exact resource / release</text>
+<circle cx="1050" cy="555" r="21" fill="#D8EEE4" stroke="#367D68"/>
+<text x="1050" y="561" class="head" text-anchor="middle">3</text>
+<path d="M350 617H400" class="edge"/>
+<path d="M715 617H765" class="edge"/>
+<rect x="40" y="720" width="1040" height="160" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="754" class="head">A connector credential follows a separate path</text>
+<text x="60" y="789" class="body">Connection secretRef → current execution authority → scoped handle grant → secret provider.</text>
+<text x="60" y="816" class="body">Only the executing process resolves the value; destination and egress policy still apply.</text>
+<text x="60" y="843" class="body">A platform administrator link does not itself grant business-data access.</text>
+</svg>

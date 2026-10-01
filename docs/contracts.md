@@ -18,6 +18,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Definition contracts
 
+![Definition contract, expression, and runtime value boundaries](diagrams/authoring-schema-boundaries.svg)
+
+Keep the definition’s shape separate from the values its schemas accept.
+The examples below exercise these checks independently.
+
+[Open diagram at full size](diagrams/authoring-schema-boundaries.svg)
+
 ## What a definition promises
 
 A **definition** describes a Workflow, an Action, or a Connector in versioned

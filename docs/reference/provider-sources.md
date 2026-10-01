@@ -17,6 +17,10 @@ limitations under the License.
 -->
 # Authenticated provider sources
 
+![Provider inbox commit followed by background runtime dispatch](../diagrams/integrations-directions.svg)
+
+**How to read this diagram:** Follow the middle lane. The provider ACK follows the inbox commit, while a later transaction starts or signals the pinned target. Read the linked run after a dispatched receipt to inspect actual execution.
+
 ## Create one inbound route
 
 A **provider source** is an immutable route from one authenticated provider

@@ -23,6 +23,12 @@ Use this page to decide **which process needs which settings**. Start with the
 it creates the private files referred to here. Set configuration before starting
 a process, then use readiness and an authorized request to verify the result.
 
+![Configuration ownership and successive authorization gates](../diagrams/operations-authority.svg)
+
+Read the upper matrix before selecting an env file. The lower gates explain why a correctly configured process can still lack authority for a particular request; a connector secret has its own resolution path.
+
+[Open diagram at full size](../diagrams/operations-authority.svg)
+
 ## Choose the right configuration file
 
 | File from the local walkthrough | Purpose | Who should receive it |

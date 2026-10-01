@@ -36,6 +36,13 @@ checks, unit/contracts, Ruff lint and format, strict mypy and package build. For
 suite; the integrated delivery must still pass the full gate. Do not update lock
 or upstream framework provenance casually to resolve an unrelated failure.
 
+![Verify behavior, explain it, execute checks, and inspect rendered documentation](docs/diagrams/documentation-contribution.svg)
+
+Follow the numbered loop for documentation changes. A green link check is one
+checkpoint; command correctness and visual legibility require separate inspection.
+
+[Open diagram at full size](docs/diagrams/documentation-contribution.svg)
+
 ## A first documentation change
 
 Choose the guide for the user's task and read its linked source/example before

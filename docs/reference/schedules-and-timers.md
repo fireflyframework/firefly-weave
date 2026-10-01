@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # UTC schedules and duration waits
 
+![UTC schedule starts compared with duration and signal waits on an existing run](../diagrams/integrations-time-and-signals.svg)
+
+**How to read this diagram:** Read each timeline left to right. Calendar instants create separate runs; duration and signal waits continue the same run. A signal receipt must be accepted strictly before its deadline to win that timeout.
+
 ## Start periodically or pause an existing run
 
 A **schedule** creates a new run at future UTC calendar times. A Workflow **wait**

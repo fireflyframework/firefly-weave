@@ -25,6 +25,12 @@ installed API must have completed a first public run. Use Docker Compose 2.30 or
 with a Unix endpoint; remote Docker endpoints and Docker sockets inside the API
 are unsupported by `weave worker deploy`.
 
+![Terminals, owned services, remote worker and native executor](../diagrams/operations-topology.svg)
+
+Read the three columns as process ownership, not steps to run in one shell. The remote worker crosses the HTTP boundary; the optional native executor crosses the database boundary. The bottom strip is the restart path for the same retained installation.
+
+[Open diagram at full size](../diagrams/operations-topology.svg)
+
 ## What you will run
 
 The standalone walkthrough leaves a foreground API connected to PostgreSQL and

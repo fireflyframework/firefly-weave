@@ -27,6 +27,14 @@ This is a **local development** installation. It creates fresh resources and
 retains their data when stopped. Production needs its own TLS, identity,
 secret management, capacity, and backup configuration.
 
+![Terminal ownership and runtime dependencies](../diagrams/operations-topology.svg)
+
+Use this process map while opening terminals. Setup and client commands belong
+to terminal 1; the API remains running in terminal 2. Chapter 3 adds the receiver
+and worker shown in the extended topology.
+
+[Open diagram at full size](../diagrams/operations-topology.svg)
+
 ## What you will run
 
 | Component | Its job | Location |
@@ -443,6 +451,17 @@ unset WEAVE_ACCESS_TOKEN
 Expected: the same run ID, `state.status: "succeeded"`, and declared output. The
 [native contract reference](../reference/native-openapi.md) explains the generated
 schema and shared API/SDK/CLI surface.
+
+## Continue with the CLI
+
+The saved first run proves that setup works. Next, follow
+[operate a workflow from the CLI](cli-tutorial.md) to submit your own YAML, capture
+the publication and activation IDs, start a run, and inspect its history. Every
+request body and command is shown; this path does not require a Python SDK script.
+
+When moving beyond local Compose, use the
+[cloud deployment guide](../operations/cloud-deployment.md) for AWS, Azure, or GCP
+and the shared Kubernetes manifests. Local setup helpers are not cloud provisioners.
 
 ## 6. Add workers and package the runtime
 

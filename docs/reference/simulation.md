@@ -24,6 +24,10 @@ network. It verifies the current imported artifact and shared classified-value
 policy before accepting inputs or mocks. It does not establish live readiness or
 prove external behavior.
 
+![Simulator commands distinguished by execution, signal queuing, and virtual time movement](../diagrams/authoring-simulation-controls.svg)
+
+Read each command beside its state change. The lower two rows prepare facts or time; use next or continue afterward to advance execution. Virtual time and server expiration are independent. [Open the diagram at full size](../diagrams/authoring-simulation-controls.svg).
+
 ## Run the echo artifact
 
 First complete [workflow authoring](../guides/workflow-authoring.md), which creates

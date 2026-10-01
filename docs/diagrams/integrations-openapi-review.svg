@@ -1,0 +1,59 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="835" viewBox="0 0 1120 835" role="img" aria-labelledby="title desc">
+<title id="title">OpenAPI import: review before deployment</title><desc id="desc">A local OpenAPI document and explicit policy enter a supported-subset decision. Rejection yields diagnostics; success yields reviewable artifacts before separate deployment.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34;font-size:18px}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.bold{font-weight:700}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.dash{stroke:#91B4A3;stroke-width:2;stroke-dasharray:7 6}</style>
+<rect width="1120" height="835" fill="#FAFCFA"/>
+<text x="40" y="49" class="title">OpenAPI import: review before deployment</text>
+<text x="40" y="84" class="">Local contract transformation ends before build, publication, credentials, and runtime admission.</text>
+<rect x="40" y="125" width="470" height="110" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="159" class="head">Local OpenAPI 3.1 JSON</text>
+<text x="60" y="191" class="">Self-contained structural references</text>
+<text x="60" y="218" class="">Selected operation IDs; bounded schemas</text>
+<rect x="610" y="125" width="470" height="110" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="630" y="159" class="head">Explicit import policy</text>
+<text x="630" y="191" class="">Fixed origin, auth, effect and success statuses</text>
+<text x="630" y="218" class="">Reviewed request, response and time limits</text>
+<path class="edge" d="M275 235V250H560V268"/>
+<path d="M845 235V250H560" fill="none" stroke="#367D68" stroke-width="2.5"/>
+<path d="M560 270L700 345L560 420L420 345Z" fill="#E0EEE4" stroke="#91B4A3" stroke-width="2"/>
+<text x="482" y="341" class="bold">Supported subset?</text>
+<text x="484" y="367" class="">All selected operations</text>
+<rect x="40" y="450" width="430" height="140" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="484" class="head">Rejected import</text>
+<text x="60" y="516" class="">Value-free code + source pointer</text>
+<text x="60" y="543" class="">Revise the contract or use a custom adapter.</text>
+<text x="60" y="570" class="">No partial deployable result.</text>
+<path class="edge" d="M420 345H250V440"/>
+<text x="267" y="375" class="">No</text>
+<rect x="550" y="450" width="530" height="140" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="570" y="484" class="head">Review generated artifacts</text>
+<text x="570" y="516" class="">Connector + Actions + package metadata</text>
+<text x="570" y="543" class="">Provenance and generated-to-source pointer map</text>
+<text x="570" y="570" class="">Compare fixed config, schemas, auth and effects.</text>
+<path class="edge" d="M700 345H810V440"/>
+<text x="822" y="375" class="">Yes</text>
+<rect x="550" y="640" width="530" height="110" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="570" y="674" class="head">Separate operator deployment</text>
+<text x="570" y="706" class="">Build → install → allowlist → publish → activate</text>
+<text x="570" y="733" class="">Release, grants and connection pins still required.</text>
+<path class="edge" d="M815 590V630"/>
+<text x="40" y="783" class="">Import makes no request and allocates no live resource IDs. Provider onboarding remains separate.</text>
+</svg>

@@ -1,0 +1,59 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="770" viewBox="0 0 1120 770" role="img" aria-labelledby="title desc">
+<title id="title">A schema governs values at each boundary</title>
+<desc id="desc">The echo workflow input and output are separately checked against an object schema with a required message string and no extra properties. Workflow expressions select values; schema references select local schema resources. Secret-classified ordinary values are rejected.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:22px;font-weight:700}.body{font-size:19px}.small{font-size:18px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.return{fill:none;stroke:#507767;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}</style>
+<rect width="1120" height="770" rx="20" fill="#f7faf5"/>
+<text class="title" x="40" y="54">A schema governs values at each boundary</text>
+<text class="body" x="40" y="86">For echo, the input and output share a shape; they are still separate checks.</text>
+<rect x="40" y="115" width="1040" height="126" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="60" y="149">Contract: object with one required message string</text>
+<text class="body" x="60" y="180">properties.message.type: string  ·  required: [message]  ·  additionalProperties: false</text>
+<text class="body" x="60" y="208">The schema is checked as a document before it governs an input or output.</text>
+<rect x="40" y="290" width="310" height="162" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="60" y="324">Input boundary</text>
+<text class="body" x="60" y="355">{&quot;message&quot;: &quot;Hello&quot;} passes.</text>
+<text class="body" x="60" y="383">{&quot;message&quot;: 42} is rejected.</text>
+<text class="body" x="60" y="411">An absent message is rejected.</text>
+<rect x="405" y="290" width="310" height="162" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="425" y="324">Transform value</text>
+<text class="body" x="425" y="355">ref: /input copies the object.</text>
+<text class="body" x="425" y="383">ref: /input/message selects</text>
+<text class="body" x="425" y="411">only the string inside it.</text>
+<rect x="770" y="290" width="310" height="162" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="790" y="324">Output boundary</text>
+<text class="body" x="790" y="355">An object can fulfill the schema.</text>
+<text class="body" x="790" y="383">A bare string cannot.</text>
+<text class="body" x="790" y="411">Compilation checks this relation.</text>
+<path class="edge" d="M350 365 H405"/>
+<path class="edge" d="M715 365 H770"/>
+<rect x="40" y="490" width="505" height="126" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="60" y="524">ref selects workflow data</text>
+<text class="body" x="60" y="555">/input/message is a JSON Pointer.</text>
+<text class="body" x="60" y="583">It does not read a file or run Python.</text>
+<rect x="575" y="490" width="505" height="126" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="595" y="524">$ref selects a schema</text>
+<text class="body" x="595" y="555">Local pointer or supplied bundle resource.</text>
+<text class="body" x="595" y="583">No HTTP or filesystem schema retrieval.</text>
+<rect x="40" y="651" width="1040" height="85" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="60" y="683">Present ordinary values marked x-secret or writeOnly are rejected, even null or empty values.</text>
+<text class="body" x="60" y="711">An optional marked field may be absent. Defaults do not insert values.</text>
+</svg>

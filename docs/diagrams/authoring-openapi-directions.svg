@@ -1,0 +1,59 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="760" viewBox="0 0 1120 760" role="img" aria-labelledby="title desc">
+<title id="title">Two OpenAPI directions, two different products</title>
+<desc id="desc">Native export converts Weave operation metadata to a description of Weave HTTP endpoints. External import converts selected operations in a bounded OpenAPI 3.1 document and explicit policy to reviewable connector, Action, and HTTP profile package metadata. Neither operation deploys or calls providers.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:22px;font-weight:700}.body{font-size:19px}.small{font-size:18px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.return{fill:none;stroke:#507767;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}</style>
+<rect width="1120" height="760" rx="20" fill="#f7faf5"/>
+<text class="title" x="40" y="54">Two OpenAPI directions, two different products</text>
+<text class="body" x="40" y="86">Choose the direction by whose API you are describing.</text>
+<rect x="40" y="115" width="505" height="530" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<rect x="575" y="115" width="505" height="530" rx="14" fill="#f0f4f2" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="60" y="151">EXPORT · Describe Weave itself</text>
+<text class="label" x="595" y="151">IMPORT · Describe an external API</text>
+<rect x="60" y="180" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="80" y="214">Weave operation inventory</text>
+<text class="body" x="80" y="245">Methods, paths, DTOs, headers, authority</text>
+<path class="edge" d="M292 280 V317"/>
+<rect x="60" y="317" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="80" y="351">PyFly OpenAPI generator</text>
+<text class="body" x="80" y="382">export_openapi()  ·  optional openapi extra</text>
+<path class="edge" d="M292 417 V454"/>
+<rect x="60" y="454" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="80" y="488">Native OpenAPI document</text>
+<text class="body" x="80" y="519">Weave paths + components.schemas</text>
+<text class="body" x="60" y="592">Use for HTTP documentation and clients.</text>
+<text class="body" x="60" y="620">Runtime authorization is still mandatory.</text>
+<rect x="595" y="180" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="615" y="214">OpenAPI 3.1 + explicit policy</text>
+<text class="body" x="615" y="245">Selected operation IDs; bounded subset</text>
+<path class="edge" d="M827 280 V317"/>
+<rect x="595" y="317" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="615" y="351">Offline metadata importer</text>
+<text class="body" x="615" y="382">import_openapi()  ·  no package execution</text>
+<path class="edge" d="M827 417 V454"/>
+<rect x="595" y="454" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="615" y="488">Reviewable connector metadata</text>
+<text class="body" x="615" y="519">Connector + Actions + HTTP profile package</text>
+<text class="body" x="595" y="592">Review, test, and deploy through normal gates.</text>
+<text class="body" x="595" y="620">Import does not install an implementation.</text>
+<rect x="40" y="677" width="1040" height="51" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="60" y="709">Both operations are offline. Neither starts a service, resolves secrets, or calls a provider.</text>
+</svg>

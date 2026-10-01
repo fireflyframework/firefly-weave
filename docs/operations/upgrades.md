@@ -23,6 +23,12 @@ admitting effect-producing work. Starting an API never migrates its database.
 The current expected schema revision is `0021_operations`; both Alembic's revision
 and Weave's schema sentinel must match the installed artifact.
 
+![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
+
+Follow each yes branch in order. A completed migration reaches only the first gate; retained requirements and an actual authorized run still need evidence before writers are deliberately reenabled.
+
+[Open diagram at full size](../diagrams/operations-upgrade.svg)
+
 ## Understand the upgrade boundary
 
 An upgrade has three independent checks: the new artifact can read the database

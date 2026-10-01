@@ -1,0 +1,61 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="820" viewBox="0 0 1120 820" role="img" aria-labelledby="title desc">
+<title id="title">Kafka consumption: receipt first, offset second</title><desc id="desc">Sequence diagram showing Kafka delivery, database receipt and run commit, and only then offset commit. Crash cases explain scoped deduplication and rejection policies.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34;font-size:18px}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.bold{font-weight:700}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.dash{stroke:#91B4A3;stroke-width:2;stroke-dasharray:7 6}</style>
+<rect width="1120" height="820" fill="#FAFCFA"/>
+<text x="40" y="49" class="title">Kafka consumption: receipt first, offset second</text>
+<text x="40" y="84" class="">Manual offset commits follow the durable database result; the two systems do not share a transaction.</text>
+<rect x="40" y="120" width="210" height="64" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="154" class="head">Kafka broker</text>
+<line x1="145" y1="184" x2="145" y2="565" class="dash"/>
+<rect x="315" y="120" width="210" height="64" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="335" y="154" class="head">Consumer turn</text>
+<line x1="420" y1="184" x2="420" y2="565" class="dash"/>
+<rect x="615" y="120" width="210" height="64" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="635" y="154" class="head">Weave database</text>
+<line x1="720" y1="184" x2="720" y2="565" class="dash"/>
+<rect x="875" y="120" width="210" height="64" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="895" y="154" class="head">Run / signal</text>
+<line x1="980" y1="184" x2="980" y2="565" class="dash"/>
+<path class="edge" d="M145 225H410"/>
+<text x="170" y="212" class="">Record + event UUID</text>
+<path class="edge" d="M420 295H710"/>
+<text x="436" y="277" class="">Current authority + identity</text>
+<path class="edge" d="M720 352H970"/>
+<text x="742" y="337" class="">Admit or reuse</text>
+<path class="edge" d="M980 413H730"/>
+<text x="735" y="440" class="">Receipt + runtime commit</text>
+<path class="edge" d="M720 480H430"/>
+<text x="458" y="466" class="">Durable accepted result</text>
+<path class="edge" d="M420 545H155"/>
+<text x="170" y="531" class="">Commit accepted offset prefix</text>
+<rect x="40" y="600" width="505" height="115" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="634" class="head">Crash before database commit</text>
+<text x="60" y="666" class="">No partial run is retained.</text>
+<text x="60" y="693" class="">Broker redelivery retries admission.</text>
+<rect x="575" y="600" width="505" height="115" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="595" y="634" class="head">Crash after DB, before offset commit</text>
+<text x="595" y="666" class="">Broker redelivery reuses the same receipt / run.</text>
+<text x="595" y="693" class="">A changed payload under the same ID conflicts.</text>
+<rect x="40" y="745" width="1040" height="53" rx="12" fill="#E0EEE4" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="779" class="head"></text>
+<text x="60" y="778" class="">Rejected record: receipt policy may advance after persistence; halt policy leaves its offset uncommitted.</text>
+</svg>

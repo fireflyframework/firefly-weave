@@ -1,0 +1,61 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="850" viewBox="0 0 1120 850" role="img" aria-labelledby="title desc">
+<title id="title">Read the result before moving forward</title>
+<desc id="desc">An author edits workflow source, uses partial validation without a catalog or complete compilation with an explicit catalog, reads diagnostic codes and locations, then repairs the source. Only complete success produces an artifact for simulation.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:22px;font-weight:700}.body{font-size:19px}.small{font-size:18px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.return{fill:none;stroke:#507767;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}</style>
+<rect width="1120" height="850" rx="20" fill="#f7faf5"/>
+<text class="title" x="40" y="54">Read the result before moving forward</text>
+<text class="body" x="40" y="86">The echo exercise separates source validity, executable validity, and runtime behavior.</text>
+<rect x="270" y="115" width="580" height="106" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="290" y="149">Editable workflow source</text>
+<text class="body" x="290" y="180">echo.workflow.yaml  ·  YAML, JSON, or builder document</text>
+<path class="edge" d="M410 221 V255 H290 V284"/>
+<path class="edge" d="M710 221 V255 H810 V284"/>
+<rect x="70" y="284" width="440" height="193" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="90" y="318">validate_source · no catalog</text>
+<text class="body" x="90" y="349">Parse + outer shape + embedded schemas</text>
+<text class="body" x="90" y="377">When partial checks pass:</text>
+<text class="body" x="90" y="405">validationOk: true  ·  partial: true</text>
+<text class="body" x="90" y="433">ok: false  ·  artifact: null</text>
+<rect x="610" y="284" width="440" height="193" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="630" y="318">compile_source · explicit catalog</text>
+<text class="body" x="630" y="349">Also resolve exact dependencies and types</text>
+<text class="body" x="630" y="377">When full compilation passes:</text>
+<text class="body" x="630" y="405">validationOk: true  ·  partial: false</text>
+<text class="body" x="630" y="433">ok: true  ·  artifact present</text>
+<path class="edge" d="M290 477 V520"/>
+<path class="edge" d="M810 477 V520"/>
+<rect x="70" y="520" width="440" height="145" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="90" y="554">Partial success stops here</text>
+<text class="body" x="90" y="585">Do not offer an executable yet.</text>
+<text class="body" x="90" y="613">Supply a catalog for full analysis.</text>
+<text class="body" x="90" y="641">An empty catalog is still explicit.</text>
+<rect x="610" y="520" width="440" height="145" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="630" y="554">Artifact can be simulated</text>
+<text class="body" x="630" y="585">Use fixed input and explicit Action mocks.</text>
+<text class="body" x="630" y="613">A successful simulation does not prove</text>
+<text class="body" x="630" y="641">that a worker or provider is available.</text>
+<rect x="70" y="707" width="980" height="100" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="90" y="739">On diagnostics: keep the source editable and repair the reported location.</text>
+<text class="body" x="90" y="772">Example: WV-COMP-TYPE_MISMATCH at /spec/output; a string cannot fulfill an object schema.</text>
+<path class="return" d="M70 756 H30 V168 H270"/>
+<text class="small" x="82" y="694">Correction loop</text>
+</svg>

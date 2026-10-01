@@ -18,6 +18,10 @@ limitations under the License.
 
 # Teams personal bot
 
+![Provider comparison highlighting the Teams reference-generation lifecycle](../diagrams/integrations-messaging.svg)
+
+**How to read this diagram:** Follow the Teams column from authenticated installation to reference lifecycle to outbound target. Its reference ID and generation are server-owned authority facts; the other columns show why WhatsApp or Telegram identifiers cannot substitute for them.
+
 ## Build an inbound message and reply flow
 
 The inbound **provider source** authenticates a Bot Framework activity and stores

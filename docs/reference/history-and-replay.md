@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Recorded history and offline replay
 
+![Offline consistency verification separated from operations that change execution](../diagrams/integrations-incidents-replay.svg)
+
+**How to read this diagram:** Take the left branch to replay. A consistent report describes the retained terminal evidence; it does not independently prove delivery or historical authorization. The right branch requires a separate authorized operations decision.
+
 ## Inspect what happened without repeating it
 
 **History** is the ordered record of accepted run facts. **Replay** feeds those

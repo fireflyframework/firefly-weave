@@ -1,0 +1,53 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="500" viewBox="0 0 960 500" role="img" aria-labelledby="title desc">
+<title id="title">Read evidence without overclaiming</title><desc id="desc">Implemented behavior, local verification and live provider verification are separate evidence categories. Source code or a successful local fixture does not establish a customer deployment or real message delivery.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="960" height="500" rx="18" fill="#F7FAF7"/>
+<text class="title" x="36" y="48">Read evidence without overclaiming</text><text class="body muted" x="36" y="80">These are separate questions, not interchangeable success labels.</text>
+<rect x="36" y="127" width="276" height="249" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="161">Implemented</text>
+<text class="body" x="56" y="193">What behavior exists?</text>
+<text class="body" x="56" y="220"></text>
+<text class="body" x="56" y="247">Code and public contracts</text>
+<text class="body" x="56" y="274">describe supported scope.</text>
+<text class="body" x="56" y="301"></text>
+<text class="body" x="56" y="328">Deferred features remain</text>
+<text class="body" x="56" y="355">outside this release.</text>
+<rect x="342" y="127" width="276" height="249" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="362" y="161">Locally verified</text>
+<text class="body" x="362" y="193">What was exercised here?</text>
+<text class="body" x="362" y="220"></text>
+<text class="body" x="362" y="247">Offline tests, owned services,</text>
+<text class="body" x="362" y="274">and protocol fixtures provide</text>
+<text class="body" x="362" y="301">bounded evidence.</text>
+<text class="body" x="362" y="328"></text>
+<text class="body" x="362" y="355">Read the stated scenario.</text>
+<rect x="648" y="127" width="276" height="249" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="668" y="161">Live-provider verified</text>
+<text class="body" x="668" y="193">Did this account work?</text>
+<text class="body" x="668" y="220"></text>
+<text class="body" x="668" y="247">Provider assets, permission,</text>
+<text class="body" x="668" y="274">networking, and delivery</text>
+<text class="body" x="668" y="301">need their own evidence.</text>
+<text class="body" x="668" y="328"></text>
+<text class="body" x="668" y="355">“Not run” stays “Not run”.</text>
+<text class="body" x="36" y="429">A local message ACK does not prove delivery to a real recipient.</text>
+<text class="body" x="36" y="458">Use the capability matrix and the connector guide together.</text>
+</svg>

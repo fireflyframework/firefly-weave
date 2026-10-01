@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Telegram webhook text connector
 
+![Provider comparison highlighting source-local Telegram update receipts](../diagrams/integrations-messaging.svg)
+
+**How to read this diagram:** Follow the Telegram column: bot and update identity determine the source-local receipt, while the configured chat determines the outbound target. The Teams reference and WhatsApp status mechanisms are separate provider contracts.
+
 ## Follow the two directions
 
 You will connect an inbound text message to a Workflow that replies `Received.`:

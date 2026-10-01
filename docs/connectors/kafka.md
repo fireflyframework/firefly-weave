@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kafka broker connector and durable triggers
 
+![Kafka record receipt and runtime commit precede manual offset commit](../diagrams/integrations-kafka-receipts.svg)
+
+**How to read this diagram:** Read downward in time. The gap between the database commit and offset commit explains why redelivery must reuse a durable receipt. The two crash cases apply to consumption; publish acknowledgment has its own unknown-outcome rules below.
+
 ## Choose publish, consume, or both
 
 A **publish Action** sends a Workflow's JSON object to one configured topic.

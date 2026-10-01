@@ -1,0 +1,67 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 1020" role="img" aria-labelledby="title desc">
+<title id="title">Retention is a reviewed, bounded transaction</title><desc id="desc">Operator and server swimlanes show immutable plan creation, explicit review and apply. Current authority and candidate checks precede atomic deletion and a manifest. Workflow history and provider receipts are omitted.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.line{fill:none;stroke:#C9DBD2;stroke-width:2}</style>
+<rect width="1120" height="1020" fill="#FFFFFF"/>
+<text x="40" y="52" class="title">Retention is a reviewed, bounded transaction</text>
+<text x="40" y="88" class="body">Current deletion target: expired debug sessions in one project.</text>
+<rect x="40" y="120" width="435" height="720" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<rect x="510" y="120" width="570" height="720" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="158" class="head">OPERATOR · SAME CREATOR</text>
+<text x="530" y="158" class="head">SERVER · CURRENT AUTHORITY</text>
+<rect x="60" y="190" width="395" height="108" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="80" y="223" class="head">1 · Request a plan</text>
+<text x="80" y="255" class="body">Project scope + retention.plan</text>
+<text x="80" y="282" class="body">No environment scope</text>
+<rect x="530" y="190" width="530" height="134" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="550" y="223" class="head">Store immutable proposal</text>
+<text x="550" y="255" class="body">At most 100 candidates; expires in 15 minutes</text>
+<text x="550" y="282" class="body">Session expiration before the 24-hour cutoff</text>
+<text x="550" y="309" class="body">Plan + audit are retained; no session deletion</text>
+<path d="M455 244H525" class="edge"/>
+<rect x="60" y="370" width="395" height="134" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="80" y="403" class="head">2 · Read and review</text>
+<text x="80" y="435" class="body">Scope, creator, expiry, omissions</text>
+<text x="80" y="462" class="body">Candidate revisions and references</text>
+<text x="80" y="489" class="body">Review before choosing apply</text>
+<path d="M790 324V343H258V368" class="edge"/>
+<rect x="530" y="546" width="530" height="134" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="550" y="579" class="head">Recheck in the deletion transaction</text>
+<text x="550" y="611" class="body">Scope + creator + current retention.apply</text>
+<text x="550" y="638" class="body">Plan expiry, revision, cutoff and references</text>
+<text x="550" y="665" class="body">Changed / missing / referenced → blocked</text>
+<rect x="60" y="560" width="395" height="106" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="80" y="593" class="head">3 · Apply exact plan ID</text>
+<text x="80" y="625" class="body">Only the original creator</text>
+<text x="80" y="652" class="body">Separate deliberate command</text>
+<path d="M258 504V558" class="edge"/>
+<path d="M455 614H525" class="edge"/>
+<rect x="530" y="723" width="530" height="90" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="550" y="756" class="head">Commit manifest + accounting + audit</text>
+<text x="550" y="788" class="body">Eligible candidates → deleted; failures roll back</text>
+<path d="M795 680V720" class="edge"/>
+<text x="60" y="744" class="body">Lost response? Retry the same plan.</text>
+<text x="60" y="771" class="body">A committed application returns</text>
+<text x="60" y="798" class="body">its original manifest.</text>
+<rect x="40" y="881" width="1040" height="98" rx="12" fill="#D8EEE4" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="915" class="head">Omitted records retain their protection</text>
+<text x="60" y="946" class="body">No general purge of workflow history, provider receipts, source fences, catalogs or outbox history.</text>
+</svg>

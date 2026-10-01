@@ -18,6 +18,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Source documentation and attribution
 
+![Documentation and attribution validation workflow](../diagrams/documentation-contribution.svg)
+
+The source inventory covers attribution; the diagram shows where it fits within
+behavioral checks and the reader’s complete workflow.
+
+[Open diagram at full size](../diagrams/documentation-contribution.svg)
+
 ## Choose the right documentation path
 
 When adding or changing a file, work through this sequence before running the

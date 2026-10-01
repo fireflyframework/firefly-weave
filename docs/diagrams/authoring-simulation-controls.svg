@@ -1,0 +1,58 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="840" viewBox="0 0 1120 840" role="img" aria-labelledby="title desc">
+<title id="title">Step execution and move time separately</title>
+<desc id="desc">Simulation commands act on a pinned artifact with mocks. Next advances one node or admitted event; continue advances to a breakpoint, wait or stop. Signal queues a receipt and advance_time moves only virtual time; both require next or continue to process. Server lifetime remains real time.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:22px;font-weight:700}.body{font-size:19px}.small{font-size:18px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.return{fill:none;stroke:#507767;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}</style>
+<rect width="1120" height="840" rx="20" fill="#f7faf5"/>
+<text class="title" x="40" y="54">Step execution and move time separately</text>
+<text class="body" x="40" y="86">All execution stays inside the pure reducer. Action results come from explicit mocks.</text>
+<rect x="40" y="115" width="1040" height="90" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="60" y="148">Pinned artifact + input + mocks + timezone-aware now</text>
+<text class="body" x="60" y="178">inspect() reads the view; set_breakpoints() marks where execution should pause.</text>
+<text class="small" x="40" y="250">COMMAND</text>
+<text class="small" x="460" y="250">WHAT CHANGES</text>
+<rect x="40" y="275" width="360" height="90" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="60" y="326">next()</text>
+<path class="edge" d="M400 320 H440"/>
+<rect x="460" y="275" width="620" height="90" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="480" y="309">One admitted event OR one IR node.</text>
+<text class="body" x="480" y="337">Internal start, end, branch-output, and join nodes count.</text>
+<rect x="40" y="395" width="360" height="90" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="60" y="446">continue_until_breakpoint()</text>
+<path class="edge" d="M400 440 H440"/>
+<rect x="460" y="395" width="620" height="90" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="480" y="429">Runs boundaries until a breakpoint, quiescent wait,</text>
+<text class="body" x="480" y="457">suspension, termination, or command work ceiling.</text>
+<rect x="40" y="515" width="360" height="90" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="60" y="566">signal(name, payload)</text>
+<path class="edge" d="M400 560 H440"/>
+<rect x="460" y="515" width="620" height="90" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="480" y="549">Validates and queues a signal receipt at virtual now.</text>
+<text class="body" x="480" y="577">Graph progress waits for next() or continue.</text>
+<rect x="40" y="635" width="360" height="90" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="60" y="686">advance_time(seconds)</text>
+<path class="edge" d="M400 680 H440"/>
+<rect x="460" y="635" width="620" height="90" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="body" x="480" y="669">Moves virtual now forward; it does not reduce the graph.</text>
+<text class="body" x="480" y="697">Process newly due timers with next() or continue.</text>
+<text class="label" x="40" y="777">Two clocks: virtual time controls timers; server sessions expire after one real hour.</text>
+<text class="body" x="40" y="809">Serialization preserves progress and virtual time. It does not extend the server session lifetime.</text>
+</svg>

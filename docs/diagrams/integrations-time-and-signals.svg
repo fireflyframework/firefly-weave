@@ -1,0 +1,67 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="810" viewBox="0 0 1120 810" role="img" aria-labelledby="title desc">
+<title id="title">Calendar starts, duration waits, and signals</title><desc id="desc">Three timelines compare future UTC cron starts, persisted duration wait deadlines, and signal acceptance strictly before its deadline. Recorded facts support offline replay.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34;font-size:18px}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.bold{font-weight:700}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.dash{stroke:#91B4A3;stroke-width:2;stroke-dasharray:7 6}</style>
+<rect width="1120" height="810" fill="#FAFCFA"/>
+<text x="40" y="49" class="title">Calendar starts, duration waits, and signals</text>
+<text x="40" y="84" class="">A schedule creates a run. A wait or signal belongs to an existing run.</text>
+<rect x="40" y="130" width="240" height="150" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="164" class="head">UTC schedule</text>
+<text x="60" y="196" class="">Future calendar instants</text>
+<text x="60" y="223" class="">Pinned activation</text>
+<text x="60" y="250" class="">missed_policy: skip</text>
+<path class="edge" d="M330 205H1050"/>
+<circle cx="420" cy="205" r="8" fill="#367D68"/>
+<text x="393" y="178" class="">12:00</text>
+<text x="368" y="242" class="">New run</text>
+<circle cx="690" cy="205" r="8" fill="#367D68"/>
+<text x="663" y="178" class="">12:05</text>
+<text x="638" y="242" class="">New run</text>
+<circle cx="960" cy="205" r="8" fill="#367D68"/>
+<text x="933" y="178" class="">12:10</text>
+<text x="908" y="242" class="">New run</text>
+<text x="330" y="290" class="">Missed minutes become skipped ranges; there is no catch-up backlog.</text>
+<rect x="40" y="340" width="240" height="140" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="374" class="head">Duration wait</text>
+<text x="60" y="406" class="">Same run pauses</text>
+<text x="60" y="433" class="">Persisted deadline</text>
+<text x="60" y="460" class="">Scheduler observes due</text>
+<path class="edge" d="M330 405H1050"/>
+<text x="330" y="380" class="">Wait issued</text>
+<text x="730" y="380" class="">Deadline</text>
+<line x1="760" y1="387" x2="760" y2="449" class="dash"/>
+<text x="800" y="441" class="">wait_elapsed → null output</text>
+<text x="330" y="492" class="">Elapsed facts behind an incident barrier defer normal continuation.</text>
+<rect x="40" y="540" width="240" height="140" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="574" class="head">Signal wait</text>
+<text x="60" y="606" class="">Same run awaits input</text>
+<text x="60" y="633" class="">Named signal + schema</text>
+<text x="60" y="660" class="">Persisted deadline</text>
+<path class="edge" d="M330 605H1050"/>
+<text x="330" y="580" class="">Signal receipt</text>
+<text x="780" y="580" class="">Deadline</text>
+<line x1="815" y1="588" x2="815" y2="655" class="dash"/>
+<text x="360" y="642" class="">Accepted strictly before deadline wins</text>
+<text x="846" y="642" class="">Equal is too late</text>
+<rect x="40" y="730" width="1040" height="53" rx="12" fill="#E0EEE4" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="764" class="head"></text>
+<text x="60" y="763" class="">Database time governs live admission. Offline replay uses recorded receipts and deadline facts.</text>
+</svg>

@@ -36,6 +36,10 @@ coverage/collisions; canonical aliases share actual handlers and lifespan with
 legacy routes. Administrative roots, health probes and provider/signed ingress
 retain their explicit authentication boundaries.
 
+![Native Weave OpenAPI export compared with external OpenAPI metadata import](../diagrams/authoring-openapi-directions.svg)
+
+Read down the left column for this page. The right column belongs to external connector authoring: it produces metadata for review and deployment, not a running integration. [Open the diagram at full size](../diagrams/authoring-openapi-directions.svg).
+
 ## Export locally
 
 Install the optional `openapi` extra from the locked checkout. Export generation

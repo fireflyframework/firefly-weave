@@ -1,0 +1,63 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="880" viewBox="0 0 1120 880" role="img" aria-labelledby="title desc">
+<title id="title">Inspect evidence, then choose an authorized action</title><desc id="desc">Two distinct branches from run history: pure replay yields consistency reports without I/O, while operator reconciliation leads to revision-fenced resolution or a new linked run.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34;font-size:18px}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.bold{font-weight:700}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.dash{stroke:#91B4A3;stroke-width:2;stroke-dasharray:7 6}</style>
+<rect width="1120" height="880" fill="#FAFCFA"/>
+<text x="40" y="49" class="title">Inspect evidence, then choose an authorized action</text>
+<text x="40" y="84" class="">Offline replay checks recorded transitions; incident resolution and run retry can change execution.</text>
+<rect x="300" y="125" width="520" height="110" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="320" y="159" class="head">Run identity + retained evidence</text>
+<text x="320" y="191" class="">Exact pinned artifact, accepted history, omissions</text>
+<text x="320" y="218" class="">Inspect the active incident and task generation.</text>
+<path class="edge" d="M425 235V272H285V305"/>
+<path class="edge" d="M695 235V272H835V305"/>
+<rect x="40" y="315" width="490" height="200" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="349" class="head">Read-only replay</text>
+<text x="60" y="381" class="">Pure kernel consumes artifact + recorded events.</text>
+<text x="60" y="408" class="">No Action, network call, secret access or resume.</text>
+<text x="60" y="435" class="">consistent: fully evidenced terminal stream</text>
+<text x="60" y="462" class="">incomplete: retain verified prefix / omissions</text>
+<text x="60" y="489" class="">inconsistent: inspect first contradiction</text>
+<rect x="590" y="315" width="490" height="175" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="610" y="349" class="head">Operator reconciliation</text>
+<text x="610" y="381" class="">Inspect the external system independently.</text>
+<text x="610" y="408" class="">Read current incident revision and authority.</text>
+<text x="610" y="435" class="">Choose a permitted resolution using evidence.</text>
+<text x="610" y="462" class="">Submit a stable receipt ID + If-Match revision.</text>
+<rect x="40" y="550" width="490" height="170" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="584" class="head">What replay establishes</text>
+<text x="60" y="616" class="">Internal consistency of retained facts</text>
+<text x="60" y="643" class="">No independent proof of external delivery</text>
+<text x="60" y="670" class="">authorization_verified = false</text>
+<text x="60" y="697" class="">Missing evidence stays missing.</text>
+<path class="edge" d="M285 515V540"/>
+<rect x="590" y="535" width="490" height="210" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="610" y="569" class="head">Resolution choices</text>
+<text x="610" y="601" class="">retry_safe: eligible effect + original deadline</text>
+<text x="610" y="628" class="">  Keeps original operation key.</text>
+<text x="610" y="655" class="">accept_reconciled_result: evidence + valid output</text>
+<text x="610" y="682" class="">terminate: cancel execution</text>
+<text x="610" y="709" class="">Last blocking incident must clear to continue.</text>
+<path class="edge" d="M835 490V525"/>
+<rect x="40" y="795" width="1040" height="53" rx="12" fill="#E0EEE4" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="829" class="head"></text>
+<text x="60" y="828" class="">Whole-run retry requires a terminal parent and creates a new run with new operation keys and possible effects.</text>
+</svg>

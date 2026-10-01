@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Outbound integration events
 
+![Outbound lifecycle transaction, outbox dispatcher, and durable receiver acknowledgment](../diagrams/integrations-directions.svg)
+
+**How to read this diagram:** Follow the bottom lane from the source transaction through the outbox and back to the receiver. The receiver commits its effect before acknowledging; the upper lanes are inbound contracts with different receipt semantics.
+
 ## Send lifecycle notifications to your application
 
 A **subscription** selects future Weave lifecycle events and a fixed HTTP

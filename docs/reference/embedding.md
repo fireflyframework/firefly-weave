@@ -20,6 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 
 The compiler and immutable builder work without PyFly, a server, network access, database connections or secret providers. The builder reuses the canonical definition models; it does not interpret Python callables as workflows.
 
+![Three embedding choices and their authority and persistence boundaries](../diagrams/authoring-execution-boundaries.svg)
+
+Start in the left column for the builder example. Move to a remote or in-process boundary only when you need durable services, and preserve the explicit identity and transaction requirements shown there. [Open the diagram at full size](../diagrams/authoring-execution-boundaries.svg).
+
 ## Build the same workflow without YAML
 
 Use this when your application generates definitions, such as a form-based

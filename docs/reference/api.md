@@ -71,6 +71,10 @@ how its returned version ID and digest feed activation and run creation.
 | Invalid request or compiler diagnostic | Exact field spelling, schema, and diagnostic path |
 | Timeout or lost response during a mutation | Outcome is unknown; retain the original body and idempotency key |
 
+![HTTP lifecycle requests, response identities, and authorization checks](../diagrams/authoring-host-sequence.svg)
+
+Solid arrows are requests; dashed arrows are responses. The SDK method labels map to the HTTP operation inventory below. Expected revisions protect edits, while idempotency keys identify exact retries of keyed mutations. [Open the diagram at full size](../diagrams/authoring-host-sequence.svg).
+
 ## Requests, errors and revisions
 
 Canonical responses include `X-Weave-Wire-Version: weave/api-v1` and `X-Weave-Request-ID`, including early authentication failures. Errors use `application/problem+json` with `status`, stable `code`, safe `message`, `request_id` and `diagnostics`. Where an existing operation has a safe compiler or unavailable result, `result` preserves it. No framework traceback, token or resolved connection credential appears in ordinary resource errors. Worker credential leasing is a separately authorized secret boundary with `Cache-Control: no-store` and `Pragma: no-cache`; its schema describes the actual deliberate `value` field.

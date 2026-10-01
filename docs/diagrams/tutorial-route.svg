@@ -1,0 +1,49 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="660" viewBox="0 0 960 660" role="img" aria-labelledby="title desc">
+<title id="title">Your path from YAML to a working integration</title><desc id="desc">Four tutorial chapters: offline authoring, durable API setup, integration worker, and host product. The host SDK requires chapter two; the worker is needed only for external actions.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="960" height="660" rx="18" fill="#F7FAF7"/>
+<text class="title" x="36" y="48">Your path from YAML to a working integration</text><text class="body muted" x="36" y="80">Each chapter keeps the resources created by the previous one.</text>
+<rect x="36" y="118" width="402" height="174" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="152">1  Write with the CLI</text>
+<text class="body" x="56" y="184">YAML + explicit catalog</text>
+<text class="body" x="56" y="211">Compile, then run with mock inputs</text>
+<text class="body" x="56" y="238">Checkpoint: Hello, Weave</text>
+<rect x="522" y="118" width="402" height="174" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="542" y="152">2  Run the API</text>
+<text class="body" x="542" y="184">PostgreSQL + Keycloak + Weave</text>
+<text class="body" x="542" y="211">Publish, activate, start, and read</text>
+<text class="body" x="542" y="238">Keep: session.env + first-run.json</text>
+<path class="edge" d="M438 202 H522"/>
+<rect x="36" y="374" width="402" height="174" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="408">3  Add an integration worker</text>
+<text class="body" x="56" y="440">Package and admit its release</text>
+<text class="body" x="56" y="467">Claim a task and call the receiver</text>
+<text class="body" x="56" y="494">Checkpoint: external effect recorded</text>
+<rect x="522" y="374" width="402" height="174" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="542" y="408">4  Connect your product</text>
+<text class="body" x="542" y="440">Use the scoped Python client</text>
+<text class="body" x="542" y="467">Publish, activate, start, and inspect</text>
+<text class="body" x="542" y="494">Echo needs no external worker</text>
+<path class="edge" d="M723 292 V374"/>
+<path class="edge" d="M620 292 V333 H237 V374"/>
+<text class="body muted" x="36" y="591">Chapter 2 is the shared prerequisite for chapters 3 and 4.</text>
+<text class="body muted" x="36" y="630">Continue: the CLI lab, then AWS / Azure / GCP deployment.</text>
+</svg>

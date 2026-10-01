@@ -96,6 +96,19 @@ distinguishable from a corrected one. Keep previews outside the publication tree
 
 ## Technical diagram catalog
 
+The [visual guide](visual-guide.md) indexes every technical figure and connects it
+to a reader question and the corresponding walkthrough. Diagrams also appear
+inline throughout authoring, CLI, connectors, messaging, identity, operations,
+and cloud deployment.
+
+![Source, explanation, checks, and rendered-reader review](diagrams/documentation-contribution.svg)
+
+Follow the numbered cycle when changing a diagram. After a source/contract check,
+render it at the actual reading width and inspect the resulting pixels. Check
+label wrapping, connector crossings, and the caption’s meaning; XML validation
+alone cannot prove visual clarity.
+
+
 The [architecture guide](architecture.md) embeds source-grounded system context,
 compiler lifecycle, worker recovery, identity/secret boundary, integration delivery,
 and three selected ER views. The selected ER views show real scoped foreign keys;

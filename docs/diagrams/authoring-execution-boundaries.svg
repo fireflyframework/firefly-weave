@@ -1,0 +1,68 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="780" viewBox="0 0 1120 780" role="img" aria-labelledby="title desc">
+<title id="title">Choose where your host meets Weave</title>
+<desc id="desc">Three integration boundaries share canonical contracts. Pure libraries create and check documents locally. A remote host uses the typed SDK and native HTTP API with verified identity and grants. A trusted in-process host preserves explicit actor, scope, audit, authorization and unit-of-work boundaries.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:22px;font-weight:700}.body{font-size:19px}.small{font-size:18px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.return{fill:none;stroke:#507767;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}</style>
+<rect width="1120" height="780" rx="20" fill="#f7faf5"/>
+<text class="title" x="40" y="54">Choose where your host meets Weave</text>
+<text class="body" x="40" y="86">The same workflow language crosses three different application boundaries.</text>
+<rect x="40" y="120" width="310" height="565" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="58" y="161">Local authoring library</text>
+<text class="small" x="58" y="192">Base package</text>
+<rect x="54" y="225" width="282" height="178" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="small" x="68" y="258">WorkflowBuilder produces</text>
+<text class="small" x="68" y="290">a fresh definition document.</text>
+<text class="small" x="68" y="322">compile_source checks it</text>
+<text class="small" x="68" y="354">against an explicit catalog.</text>
+<path class="edge" d="M195 403 V445"/>
+<rect x="54" y="445" width="282" height="160" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="small" x="68" y="483">Simulator uses mocks.</text>
+<text class="small" x="68" y="515">No server resources start.</text>
+<text class="small" x="68" y="547">No durable run is created.</text>
+<rect x="405" y="120" width="310" height="565" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="423" y="161">Remote host</text>
+<text class="small" x="423" y="192">client extra</text>
+<rect x="419" y="225" width="282" height="178" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="small" x="433" y="258">WeaveClient sends typed</text>
+<text class="small" x="433" y="290">requests to the native API.</text>
+<text class="small" x="433" y="322">Supply access token, scope,</text>
+<text class="small" x="433" y="354">keys, and expected revisions.</text>
+<path class="edge" d="M560 403 V445"/>
+<rect x="419" y="445" width="282" height="160" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="small" x="433" y="483">API checks current local grants.</text>
+<text class="small" x="433" y="515">Publish, activate, then run.</text>
+<text class="small" x="433" y="547">Read returned IDs and receipts.</text>
+<rect x="770" y="120" width="310" height="565" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="788" y="161">In-process host</text>
+<text class="small" x="788" y="192">Trusted server composition</text>
+<rect x="784" y="225" width="282" height="178" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="small" x="798" y="258">Use native injected services.</text>
+<text class="small" x="798" y="290">Pass actor, scope, audit context,</text>
+<text class="small" x="798" y="322">and transaction explicitly.</text>
+<text class="small" x="798" y="354">Never retain request identity.</text>
+<path class="edge" d="M925 403 V445"/>
+<rect x="784" y="445" width="282" height="160" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="small" x="798" y="483">A supplied UoW is enlisted.</text>
+<text class="small" x="798" y="515">Authorization and tenant RLS</text>
+<text class="small" x="798" y="547">still apply to every operation.</text>
+<rect x="40" y="711" width="1040" height="40" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="small" x="60" y="738">Compilation establishes an executable contract; runtime authority comes from separate service checks.</text>
+</svg>

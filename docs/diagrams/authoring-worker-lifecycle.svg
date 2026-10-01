@@ -1,0 +1,77 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="900" viewBox="0 0 1120 900" role="img" aria-labelledby="title desc">
+<title id="title">Admission and registration precede task authority</title>
+<desc id="desc">A deployer admits an immutable release. A worker principal registers an instance from that release. A workflow Action creates a compatible task; a claim grants a temporary lease. Heartbeats are capped by the absolute deadline. Completion returns a receipt. Recovery changes the generation but keeps the operation key.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:22px;font-weight:700}.body{font-size:19px}.small{font-size:18px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.return{fill:none;stroke:#507767;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}</style>
+<rect width="1120" height="900" rx="20" fill="#f7faf5"/>
+<text class="title" x="40" y="54">Admission and registration precede task authority</text>
+<text class="body" x="40" y="86">A release declares what may run; a lease authorizes one instance to attempt one task.</text>
+<rect x="40" y="120" width="315" height="151" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="60" y="154">Deployer admits release</text>
+<text class="body" x="60" y="185">Immutable image digest</text>
+<text class="body" x="60" y="213">Exact taskType@taskVersion</text>
+<text class="body" x="60" y="241">Declared schemas + effect policy</text>
+<rect x="402" y="120" width="315" height="151" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="422" y="154">Worker registers instance</text>
+<text class="body" x="422" y="185">Authenticated worker principal</text>
+<text class="body" x="422" y="213">Admitted release ID</text>
+<text class="body" x="422" y="241">Declared task types + capacity</text>
+<rect x="764" y="120" width="315" height="151" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="784" y="154">Workflow prepares task</text>
+<text class="body" x="784" y="185">Activated release binding</text>
+<text class="body" x="784" y="213">Validated immutable input</text>
+<text class="body" x="784" y="241">Stable operation_key</text>
+<path class="edge" d="M355 195 H402"/>
+<text class="small" x="40" y="313">TASK ATTEMPT · CURRENT GRANTS REQUIRED</text>
+<rect x="40" y="380" width="315" height="173" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="60" y="414">Claim compatible task</text>
+<text class="body" x="60" y="445">Returns zero or more leases.</text>
+<text class="body" x="60" y="473">Proof: task ID + generation,</text>
+<text class="body" x="60" y="501">owner instance + secret token.</text>
+<text class="body" x="60" y="529">The proof must stay private.</text>
+<rect x="402" y="380" width="315" height="173" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="422" y="414">Run handler + heartbeat</text>
+<text class="body" x="422" y="445">Pass operation_key to target.</text>
+<text class="body" x="422" y="473">Renew only while authorized.</text>
+<text class="body" x="422" y="501">Expiry cannot extend beyond</text>
+<text class="body" x="422" y="529">the absolute task deadline.</text>
+<rect x="764" y="380" width="315" height="173" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="784" y="414">Deliver outcome</text>
+<text class="body" x="784" y="445">Send proof + completion ID.</text>
+<text class="body" x="784" y="473">Complete or fail returns</text>
+<text class="body" x="784" y="501">a committed acknowledgment.</text>
+<text class="body" x="784" y="529">Read its concrete receipt type.</text>
+<path class="return" d="M560 271 V344 H197 V380"/>
+<path class="return" d="M921 271 V361 H315 V380"/>
+<path class="edge" d="M355 460 H402"/>
+<path class="edge" d="M717 460 H764"/>
+<text class="small" x="40" y="595">IF RECOVERY ISSUES A NEW ATTEMPT</text>
+<rect x="40" y="619" width="495" height="144" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="60" y="654">Changes: generation and lease proof</text>
+<text class="body" x="60" y="687">The old attempt cannot complete the new one.</text>
+<text class="body" x="60" y="715">Heartbeats and fencing do not undo effects.</text>
+<rect x="565" y="619" width="515" height="144" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
+<text class="label" x="585" y="654">Stable: operation_key</text>
+<text class="body" x="585" y="687">The target must durably deduplicate the effect.</text>
+<text class="body" x="585" y="715">An accepted API receipt is separate evidence.</text>
+<text class="label" x="40" y="809">Delivery is at least once. A response lost after an effect may leave an unknown outcome.</text>
+<text class="body" x="40" y="845">The SDK renews authority and delivers outcomes; an admitted release alone cannot execute a task.</text>
+</svg>

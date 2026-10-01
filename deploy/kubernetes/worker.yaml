@@ -1,0 +1,95 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weave-worker
+spec:
+  replicas: 0
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: weave-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: weave-worker
+    spec:
+      terminationGracePeriodSeconds: 240
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: __WEAVE_WORKER_IMAGE__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: WEAVE_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: weave-worker-runtime
+                  key: WEAVE_API_URL
+            - name: WEAVE_TOKEN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: weave-worker-runtime
+                  key: WEAVE_TOKEN_URL
+            - name: WEAVE_WORKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: weave-worker-runtime
+                  key: WEAVE_WORKER_SECRET
+            - name: WEAVE_ENVIRONMENT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: weave-worker-runtime
+                  key: WEAVE_ENVIRONMENT_URL
+            - name: WEAVE_WORKER_RELEASE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: weave-worker-runtime
+                  key: WEAVE_WORKER_RELEASE_ID
+            - name: WEAVE_EFFECT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: weave-worker-runtime
+                  key: WEAVE_EFFECT_URL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

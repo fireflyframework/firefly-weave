@@ -23,6 +23,12 @@ Export is disabled by default. Starting the compiler, using the SDK, or setting
 ambient `OTEL_EXPORTER_*` variables does not enable Weave exports. No provider is
 registered as a process global.
 
+![Diagnostic stages and the evidence appropriate to each boundary](../diagrams/operations-evidence.svg)
+
+Follow a question to its evidence source. Metrics and traces are a parallel observation channel: use the stored run and independent external receipts to establish an outcome, including when export is incomplete.
+
+[Open diagram at full size](../diagrams/operations-evidence.svg)
+
 ## Choose the evidence you need
 
 | Question | Start here | What it can establish |

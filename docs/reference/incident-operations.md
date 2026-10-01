@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Incident operations
 
+![Read-only replay separated from reconciliation, incident resolution, and whole-run retry](../diagrams/integrations-incidents-replay.svg)
+
+**How to read this diagram:** Take the right branch when changing execution. Reconciliation supplies external evidence; the revision and receipt fence the decision. The left branch is useful inspection but cannot retry an Action or clear an incident.
+
 ## Resolve an uncertain run deliberately
 
 An **incident** records a condition that needs a decision, often because Weave

@@ -23,6 +23,12 @@ provider bodies, tokens, connection strings or private environment files into
 logs or reports. Use [history/replay](../reference/history-and-replay.md) and
 [incident operations](../reference/incident-operations.md) for durable evidence.
 
+![Troubleshooting from dependencies through external-effect evidence](../diagrams/operations-evidence.svg)
+
+Begin at the first boundary that has not been verified, then follow the corresponding checks below. A successful earlier stage does not prove the later one: readiness does not establish authorization, task completion, or provider delivery.
+
+[Open diagram at full size](../diagrams/operations-evidence.svg)
+
 ## Locate the failing stage first
 
 Work through this sequence without rerunning provisioning:

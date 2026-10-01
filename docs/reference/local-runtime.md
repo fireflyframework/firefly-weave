@@ -29,6 +29,12 @@ private configuration, identity bootstrap, grants, and the first workflow. Use
 [deployment](../operations/deployment.md) to launch API and worker containers.
 This page explains runtime authority and lifecycle behavior.
 
+![Local process topology and the retained restart path](../diagrams/operations-topology.svg)
+
+Start with the dependency column, then launch the API and the execution path your workflow requires. On a restart, reuse the existing files and receipts: provisioning a new database is a different operation. The numbered standalone procedure below covers first-time creation.
+
+[Open diagram at full size](../diagrams/operations-topology.svg)
+
 ## Components and startup order
 
 Start with PostgreSQL, Keycloak, and the API application process.

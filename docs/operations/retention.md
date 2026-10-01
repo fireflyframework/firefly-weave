@@ -25,6 +25,12 @@ automatic deletion of workflow history, deduplication receipts, provider sources
 Teams references, WhatsApp status facts, catalog versions, or outbox history.
 Returned plans explicitly list those omitted resource classes and their reasons.
 
+![Reviewed retention plan and atomic application](../diagrams/operations-retention.svg)
+
+The left lane is the operator decision; the right lane is the server transaction boundary. Review and apply are separate steps. The result can contain both deleted and blocked candidates, and omitted resource classes remain retained.
+
+[Open diagram at full size](../diagrams/operations-retention.svg)
+
 ## Choose the maintenance target
 
 Use this procedure when you intend to remove eligible old debug sessions from

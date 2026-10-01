@@ -1,0 +1,71 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 940" role="img" aria-labelledby="title desc">
+<title id="title">Restore into a new target; keep the source fenced</title><desc id="desc">Three lanes show a stopped and fenced source, retained backup evidence, and a new empty target. Catalog and data equality precede a completion receipt. Only the selected target is started.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.line{fill:none;stroke:#C9DBD2;stroke-width:2}</style>
+<rect width="1120" height="940" fill="#FFFFFF"/>
+<text x="40" y="52" class="title">Restore into a new target; keep the source fenced</text>
+<text x="40" y="88" class="body">Guarded local PostgreSQL 17 exercise · all writers stopped before capture</text>
+<rect x="40" y="120" width="300" height="630" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="158" class="head">SOURCE</text>
+<rect x="375" y="120" width="350" height="630" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="395" y="158" class="head">PROTECTED EVIDENCE</text>
+<rect x="760" y="120" width="320" height="630" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="780" y="158" class="head">NEW TARGET</text>
+<rect x="60" y="188" width="260" height="100" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="80" y="221" class="head">1 · Quiesce</text>
+<text x="80" y="253" class="body">Stop every source writer</text>
+<rect x="60" y="334" width="260" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="80" y="367" class="head">2 · Fence logins</text>
+<text x="80" y="399" class="body">No remaining sessions</text>
+<text x="80" y="426" class="body">Connection limit = 0</text>
+<text x="80" y="453" class="body">Source stays fenced</text>
+<path d="M190 288V332" class="edge"/>
+<rect x="395" y="334" width="310" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="415" y="367" class="head">3 · Capture</text>
+<text x="415" y="399" class="body">Catalog + data manifest</text>
+<text x="415" y="426" class="body">Custom dump + SHA</text>
+<text x="415" y="453" class="body">Owners, ACLs and RLS</text>
+<path d="M320 410H390" class="edge"/>
+<path d="M780 350C780 326 1060 326 1060 350V468C1060 492 780 492 780 468Z" fill="#EEF4F0" stroke="#367D68" stroke-width="2"/>
+<path d="M780 350C780 374 1060 374 1060 350" class="line"/>
+<text x="800" y="398" class="head">4 · Restore</text>
+<text x="800" y="428" class="body">Unique empty database</text>
+<text x="800" y="455" class="body">One restore transaction</text>
+<path d="M705 410H775" class="edge"/>
+<rect x="395" y="544" width="310" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="415" y="577" class="head">5 · Compare</text>
+<text x="415" y="609" class="body">Source still unchanged</text>
+<text x="415" y="636" class="body">Target catalog/data equal</text>
+<text x="415" y="663" class="body">Then: restore.json</text>
+<path d="M920 486V515H550V542" class="edge"/>
+<rect x="780" y="544" width="280" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="800" y="577" class="head">6 · Verify target</text>
+<text x="800" y="609" class="body">Load target.env only</text>
+<text x="800" y="636" class="body">Explicit schema check</text>
+<text x="800" y="663" class="body">Read original public run</text>
+<path d="M705 612H775" class="edge"/>
+<path d="M190 484V700" class="line"/>
+<text x="81" y="728" class="body">Never automatically reopened</text>
+<rect x="40" y="790" width="1040" height="108" rx="12" fill="#D8EEE4" stroke="#C9DBD2" stroke-width="1.5"/>
+<text x="60" y="825" class="head">Preserve independent effect receipts</text>
+<text x="60" y="857" class="body">A restored lease has its original proofs and deadlines; it is not a new fencing epoch.</text>
+<text x="60" y="884" class="body">Reconcile ambiguous external effects and deliberately select one active deployment.</text>
+</svg>

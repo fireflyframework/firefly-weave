@@ -1,0 +1,84 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="890" viewBox="0 0 1120 890" role="img" aria-labelledby="title desc">
+<title id="title">Messaging providers retain different durable facts</title><desc id="desc">Comparison of Teams reference lifecycle, WhatsApp message and status branches, and Telegram source-local update receipts. Outbound acceptance never proves delivery.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,sans-serif;fill:#173D34;font-size:18px}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.bold{font-weight:700}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.dash{stroke:#91B4A3;stroke-width:2;stroke-dasharray:7 6}</style>
+<rect width="1120" height="890" fill="#FAFCFA"/>
+<text x="40" y="49" class="title">Messaging providers retain different durable facts</text>
+<text x="40" y="84" class="">A shared inbox does not make provider identity, lifecycle, or delivery evidence interchangeable.</text>
+<rect x="40" y="125" width="320" height="190" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="159" class="head">Teams: stored reference</text>
+<text x="60" y="191" class="">Authenticated personal installation</text>
+<text x="60" y="218" class="">Message stores an address.</text>
+<text x="60" y="245" class="">Workflow receives reference_id,</text>
+<text x="60" y="272" class="">generation and activity_id.</text>
+<rect x="400" y="125" width="320" height="190" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="420" y="159" class="head">WhatsApp: two event kinds</text>
+<text x="420" y="191" class="">Authenticated batch</text>
+<text x="420" y="218" class="">whatsapp-message → text</text>
+<text x="420" y="245" class="">whatsapp-status → status</text>
+<text x="420" y="272" class="">Both kinds are dispatchable.</text>
+<rect x="760" y="125" width="320" height="190" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="780" y="159" class="head">Telegram: source + update</text>
+<text x="780" y="191" class="">Configured bot and allowed chats</text>
+<text x="780" y="218" class="">Secret authenticates webhook.</text>
+<text x="780" y="245" class="">Identity: bot ID + update ID</text>
+<text x="780" y="272" class="">Human text can dispatch.</text>
+<path class="edge" d="M200 315V370"/>
+<path class="edge" d="M560 315V370"/>
+<path class="edge" d="M920 315V370"/>
+<rect x="40" y="380" width="320" height="185" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="414" class="head">Reference lifecycle</text>
+<text x="60" y="446" class="">Removal revokes the generation.</text>
+<text x="60" y="473" class="">Late messages cannot restore it.</text>
+<text x="60" y="500" class="">Explicit reactivation requires</text>
+<text x="60" y="527" class="">a new matching source / revision.</text>
+<rect x="400" y="380" width="320" height="185" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="420" y="414" class="head">Status projection</text>
+<text x="420" y="446" class="">sent → delivered → read</text>
+<text x="420" y="473" class="">Progress never moves backward.</text>
+<text x="420" y="500" class="">failed_seen and deleted_seen</text>
+<text x="420" y="527" class="">remain independent flags.</text>
+<rect x="760" y="380" width="320" height="185" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="780" y="414" class="head">Receipt lifecycle</text>
+<text x="780" y="446" class="">Same facts + ID reuse receipt.</text>
+<text x="780" y="473" class="">Conflicting facts reject admission.</text>
+<text x="780" y="500" class="">Unsupported classes are ignored.</text>
+<text x="780" y="527" class="">Deduplication is source-local.</text>
+<rect x="40" y="620" width="320" height="115" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="654" class="head">Outbound target</text>
+<text x="60" y="686" class="">Stored authorized reference only</text>
+<text x="60" y="713" class="">No conversation bootstrap</text>
+<rect x="400" y="620" width="320" height="115" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="420" y="654" class="head">Outbound target</text>
+<text x="420" y="686" class="">Allowed recipient + text/template</text>
+<text x="420" y="713" class="">Statuses need no Weave send.</text>
+<rect x="760" y="620" width="320" height="115" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="780" y="654" class="head">Outbound target</text>
+<text x="780" y="686" class="">Configured chat + text</text>
+<text x="780" y="713" class="">A reply also pins its message ID.</text>
+<path class="edge" d="M200 565V610"/>
+<path class="edge" d="M560 565V610"/>
+<path class="edge" d="M920 565V610"/>
+<rect x="40" y="785" width="1040" height="80" rx="12" fill="#E0EEE4" stroke="#BFD6C9" stroke-width="1.5"/>
+<text x="60" y="819" class="head"></text>
+<text x="60" y="818" class="">An accepted send is provider acceptance, not delivery. An unknown send requires reconciliation.</text>
+<text x="60" y="845" class="">These profiles and local fixtures do not certify a live provider account or installation.</text>
+</svg>

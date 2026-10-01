@@ -18,6 +18,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # WhatsApp Cloud API
 
+![Provider comparison highlighting WhatsApp message and status event branches](../diagrams/integrations-messaging.svg)
+
+**How to read this diagram:** Follow the WhatsApp column. Both event kinds can dispatch, but a status updates delivery evidence rather than supplying message text. Progress and independent failure/deletion flags preserve out-of-order facts.
+
+The [offline fixture walkthrough](../../examples/connectors/whatsapp/README.md) explains
+the sample files and the out-of-order status example before live setup.
+
 ## What the integration builds
 
 There are two independent paths: authenticated webhook events start/signal a

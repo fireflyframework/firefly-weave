@@ -1,0 +1,52 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="680" viewBox="0 0 960 680" role="img" aria-labelledby="title desc">
+<title id="title">One definition, many executions</title><desc id="desc">Authoring source is compiled and published as an immutable version in a project. An environment activation pins its artifact and bindings. Separate inputs start separate runs pinned to that activation.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="960" height="680" rx="18" fill="#F7FAF7"/>
+<text class="title" x="36" y="48">One definition, many executions</text><text class="body muted" x="36" y="80">Editing source does not rewrite an existing run.</text>
+<rect x="36" y="123" width="275" height="165" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="157">Authoring source</text>
+<text class="body" x="56" y="189">YAML / JSON / SDK builder</text>
+<text class="body" x="56" y="216">Edits change the source</text>
+<text class="body" x="56" y="243">Optional drafts have revisions</text>
+<rect x="365" y="123" width="559" height="165" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="385" y="157">Published version — project scope</text>
+<text class="body" x="385" y="189">The server recompiles the submitted source.</text>
+<text class="body" x="385" y="216">Version ID + digest identify immutable published behavior.</text>
+<text class="body" x="385" y="243">New behavior requires a new published version.</text>
+<path class="edge" d="M311 205 H365"/>
+<rect x="365" y="342" width="559" height="125" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="385" y="376">Activation — environment scope</text>
+<text class="body" x="385" y="408">Pin the version, connection revisions, and worker releases.</text>
+<text class="body" x="385" y="435">Check authority and resource readiness.</text>
+<path class="edge" d="M645 288 V342"/>
+<rect x="36" y="524" width="421" height="110" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="56" y="558">Run A</text>
+<text class="body" x="56" y="590">Input for customer A; accepted state and history</text>
+<rect x="503" y="524" width="421" height="110" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
+<text class="head" x="523" y="558">Run B</text>
+<text class="body" x="523" y="590">Input for customer B; its own state and history</text>
+<path class="edge" d="M555 467 V495 H247 V524"/>
+<path class="edge" d="M713 467 V524"/>
+<text class="body" x="36" y="360">Compilation is a check.</text>
+<text class="body" x="36" y="392">Publication stores a version.</text>
+<text class="body" x="36" y="424">Activation selects a deployment.</text>
+<text class="body" x="36" y="456">Starting creates an execution.</text>
+</svg>

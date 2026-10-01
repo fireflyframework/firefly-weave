@@ -23,6 +23,10 @@ are unnecessary. The offline commands listed below do not initialize PyFly, read
 configuration/credentials, discover providers, or connect to a service. They read
 only explicitly supplied source/catalog paths and write only requested exports.
 
+For a guided command sequence from authoring to durable execution, follow the
+[CLI tutorial](../guides/cli-tutorial.md). This reference explains the individual
+commands, their files, and their result contracts.
+
 ## Pick the command family
 
 | Goal | Commands | Prerequisite |
@@ -35,6 +39,10 @@ only explicitly supplied source/catalog paths and write only requested exports.
 From a locked source checkout, prefix commands with
 `uv run --locked --no-editable` (and `--extra client` for remote commands).
 Use `weave --help`, then the selected command's `--help`, to inspect arguments.
+
+![Offline CLI validation and compilation result branches](../diagrams/authoring-diagnostic-loop.svg)
+
+The CLI uses these same compiler branches. With no catalog, a successful validate exits 0, but compile and explain exit 1 because no artifact exists. An explicitly empty catalog selects complete compilation. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
 
 ## Offline workflow commands
 
@@ -151,6 +159,10 @@ for typed contracts, authorization, exact source references and completeness lim
 Install the `client` extra for authenticated remote operations. The public command families are `remote`, `definitions` (including `drafts` and `activations`), `connections`, `runs` (including `incidents` and `debug`), `workers` (including `releases`), and `triggers` (including `schedules`). Each operation is a thin adapter over the shared typed SDK and uses canonical `/api/v1/tenants/...` paths. Existing singular operator commands remain compatibility commands.
 
 All public remote commands take `--base-url`, `--tenant`, applicable `--project`/`--environment`, and `--output json`. Their matching environment variables are `WEAVE_BASE_URL`, `WEAVE_TENANT_ID`, `WEAVE_PROJECT_ID` and `WEAVE_ENVIRONMENT_ID`. A request body is an exact JSON DTO supplied with `--request FILE`; resource IDs are positional, revisions use `--revision`, and keyed mutations require `--idempotency-key`. Discovery uses `--limit` and `--cursor`. Use each command's `--help` for its exact required arguments. The [API inventory](api.md) defines the corresponding operation IDs and request/response schemas.
+
+![Remote lifecycle request and response sequence](../diagrams/authoring-host-sequence.svg)
+
+Follow the same sequence with remote CLI commands: exact JSON request files go out, resource identities come back. Preserve the relevant revision or idempotency key rather than treating every command as a fresh request. [Open the diagram at full size](../diagrams/authoring-host-sequence.svg).
 
 ### Construct a remote request file
 

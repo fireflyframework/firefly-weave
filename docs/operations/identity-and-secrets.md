@@ -119,6 +119,15 @@ roles should grant local administration. See [host integration](../guides/host-i
 
 ## Credentials and side effects
 
+![Process authority, request authorization gates and separate connector-secret resolution](../diagrams/operations-authority.svg)
+
+Read the matrix to distinguish migration, API, native-executor and remote-worker
+credentials. Then follow the request gates: verified identity and current local
+grants are separate checks. The connector path below them resolves a scoped handle
+only for the executing process; a bearer token is not a connector credential.
+
+[Open diagram at full size](../diagrams/operations-authority.svg)
+
 There are three different credential paths. The operator's migration credential
 permits schema/bootstrap maintenance. A host or worker's identity-provider
 credential obtains an API access token. A connector credential authenticates to

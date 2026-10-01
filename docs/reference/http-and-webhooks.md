@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # HTTP connectors and signed webhooks
 
+![Signed webhook ingress, provider inbox ingress, and outbound integration notifications](../diagrams/integrations-directions.svg)
+
+**How to read this diagram:** Read one horizontal lane at a time. The signed-webhook lane commits its receipt with runtime admission; provider ingress commits an inbox intent for later dispatch. The bottom lane sends lifecycle notifications outward.
+
 ## Pick the direction you need
 
 An **HTTP connector Action** calls another system while a Workflow runs. A
