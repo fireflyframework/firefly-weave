@@ -25,7 +25,7 @@ chat, an HTTPS webhook, and a running Weave native executor.
 
 ![Provider comparison highlighting source-local Telegram update receipts](../diagrams/integrations-messaging.svg)
 
-**How to read this diagram:** Follow the Telegram column: bot and update identity determine the source-local receipt, while the configured chat determines the outbound target. The Teams reference and WhatsApp status mechanisms are separate provider contracts.
+**How to read this diagram:** Follow the bottom Telegram row from authenticated update to source-local receipt and reply. Bot and update identity determine the receipt; the configured chat determines the outbound target. The Teams reference and WhatsApp status rows describe separate provider contracts.
 
 ## Follow the two directions
 

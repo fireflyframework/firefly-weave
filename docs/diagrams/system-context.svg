@@ -15,19 +15,111 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="840" viewBox="0 0 1120 840" role="img" aria-labelledby="title desc">
-<title id="title">Firefly Weave system context and components</title>
-<desc id="desc">Host clients reach a native PyFly modular monolith. A pure offline compiler is separate from PostgreSQL-backed execution. External identity providers, remote workers, and external systems have explicit authority boundaries.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
-<rect width="1120" height="840" rx="20" fill="#f7faf5"/>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:21px;font-weight:700}.small{font-size:18px}.eyebrow{font-size:15px;font-weight:700;letter-spacing:1.5px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.box{fill:#fff;stroke:#adc5b5;stroke-width:1.5}</style><text class="title" x="40" y="52">One application, explicit boundaries</text>
-<text class="small" x="40" y="82">Firefly Weave · current core architecture</text><rect class="box" x="40" y="115" width="320" height="105" rx="12"/><text class="label" x="58" y="146">Host product / SDK / CLI</text><text class="small" x="58" y="173">Remote authoring and operations</text><text class="small" x="58" y="198">Explicit actor and scope</text><rect class="box" x="395" y="115" width="315" height="105" rx="12"/><text class="label" x="413" y="146">Offline compiler</text><text class="small" x="413" y="173">YAML / JSON → canonical IR</text><text class="small" x="413" y="198">No database or network</text><rect class="box" x="765" y="115" width="315" height="105" rx="12"/><text class="label" x="783" y="146">External identity provider</text><text class="small" x="783" y="173">Keycloak initial profile</text><text class="small" x="783" y="198">Verified tokens → local links</text><rect x="40" y="280" width="690" height="400" rx="16" fill="#edf4e8" stroke="#507767" stroke-width="2"/>
-<text class="eyebrow" x="60" y="310">MODULAR MONOLITH · NATIVE PYFLY</text>
-<path class="edge" d="M195 220 V280"/><text class="small" x="208" y="259">authenticated API</text>
-<path class="edge" d="M550 220 V263 H450 V280"/>
-<path class="edge" d="M920 220 V257 H660 V280"/><rect class="box" x="60" y="335" width="650" height="72" rx="12"/><text class="label" x="78" y="366">Controllers + authentication filter</text><text class="small" x="78" y="393">Authorization also enforced by application services</text><rect class="box" x="60" y="440" width="202" height="105" rx="12"/><text class="label" x="78" y="471">Definitions</text><text class="small" x="78" y="498">Versions / activations</text><text class="small" x="78" y="523">Connection revisions</text><rect class="box" x="278" y="440" width="212" height="105" rx="12"/><text class="label" x="296" y="471">Persistent runtime</text><text class="small" x="296" y="498">Runs / waits / signals</text><text class="small" x="296" y="523">Recovery / incidents</text><rect class="box" x="506" y="440" width="204" height="105" rx="12"/><text class="label" x="524" y="471">Workers + history</text><text class="small" x="524" y="498">Leases / receipts</text><text class="small" x="524" y="523">Redacted evidence</text><path class="edge" d="M385 407 V424 H160 V440"/><path class="edge" d="M385 424 V440"/><path class="edge" d="M385 424 H608 V440"/><rect class="box" x="60" y="578" width="650" height="78" rx="12"/><text class="label" x="78" y="609">Native connector dispatcher</text><text class="small" x="78" y="636">Uses the worker protocol with provisioned releases and grants</text><rect class="box" x="780" y="440" width="300" height="105" rx="12"/><text class="label" x="798" y="471">Remote workers</text><text class="small" x="798" y="498">SDK in another process</text><text class="small" x="798" y="523">Claim / heartbeat / complete</text><rect class="box" x="780" y="600" width="300" height="105" rx="12"/><text class="label" x="798" y="631">External systems</text><text class="small" x="798" y="658">Bounded connector calls</text><text class="small" x="798" y="683">Scoped secret resolution</text><path class="edge" d="M730 485 H780" marker-start="url(#arrow)"/>
-<path class="edge" d="M710 620 H780"/>
-<path class="edge" d="M930 545 V600"/>
-<path class="edge" d="M380 680 V730"/>
-<text class="small" x="397" y="711">scoped transactions</text><rect class="box" x="60" y="738" width="650" height="75" rx="12"/><text class="label" x="78" y="769">PostgreSQL · durable state + tenant RLS</text><text class="small" x="78" y="796">Explicit migrations · separate application and scheduler roles</text><text class="small" x="780" y="754">Connector availability depends</text><text class="small" x="780" y="780">on installed, authorized releases.</text><text class="small" x="780" y="806">No live-provider claim is implied.</text>
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="940" viewBox="0 0 960 940" role="img" aria-labelledby="title desc">
+<title id="title">How your product connects to Weave</title><desc id="desc">One API coordinates work; PostgreSQL remembers what happened.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
+<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="840" rx="16" fill="#f7faf8"/>
+<path d="M36 99H924" stroke="#c9dacf"/>
+<text x="36" y="46" class="title">How your product connects to Weave</text>
+<text x="36" y="79" class="body muted">One API coordinates work; PostgreSQL remembers what happened.</text>
+<g transform="translate(42,127) scale(1.4615384615384615)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
+<text x="42" y="189" class="head">Your product</text>
+<text x="42" y="221" class="small">SDK, CLI or HTTP requests</text>
+<text x="42" y="247" class="small">Choose an identity and scope</text>
+<g transform="translate(365,127) scale(1.4615384615384615)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1H15L21 7V23H5Z M15 1V7H21 M9 12H17 M9 17H17"/></g>
+<text x="365" y="189" class="head">Check a workflow</text>
+<text x="365" y="221" class="small">Offline compiler</text>
+<text x="365" y="247" class="small">No database or network</text>
+<g transform="translate(682,127) scale(1.4615384615384615)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6A6 6 0 1 1 6 6A6 6 0 1 1 18 6 M1 24V22A11 10 0 0 1 23 22V24"/></g>
+<text x="682" y="189" class="head">Identity provider</text>
+<text x="682" y="221" class="small">Verify the access token</text>
+<text x="682" y="247" class="small">Link it to a local principal</text>
+<path class="edge" d="M160 263V314"/>
+<text x="174" y="293" class="small muted">API requests</text>
+<path class="edge" d="M465 263V314"/>
+<text x="478" y="293" class="small muted">checked definition</text>
+<path class="edge" d="M810 263V292H608V314"/>
+<rect x="36" y="321" width="582" height="316" rx="12" fill="#eaf4ed" stroke="#a8bdb1"/>
+<g transform="translate(56,344) scale(1.3846153846153846)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
+<text x="110" y="373" class="head">Weave API + application services</text>
+<text x="62" y="415" class="body">Check grants inside every service</text>
+<text x="62" y="452" class="body">Manage versions, activations and connections</text>
+<text x="62" y="489" class="body">Advance runs, waits and signals</text>
+<text x="62" y="526" class="body">Keep worker receipts and redacted history</text>
+<text x="62" y="605" class="small muted">Native PyFly application · modular monolith</text>
+<g transform="translate(695,329) scale(1.5384615384615385)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6H19V20H5Z M9 1V6 M15 1V6 M9 20V25 M15 20V25 M0 10H5 M0 16H5 M19 10H24 M19 16H24 M9 10H15V16H9Z"/></g>
+<text x="686" y="395" class="head">Remote workers</text>
+<text x="686" y="430" class="small">Another process</text>
+<text x="686" y="459" class="small">Claim → heartbeat → complete</text>
+<path class="edge" d="M618 455H674" marker-start="url(#arrow)"/>
+<g transform="translate(695,532) scale(1.6153846153846154)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
+<text x="686" y="595" class="head">External systems</text>
+<text x="686" y="627" class="small">Only admitted destinations</text>
+<text x="686" y="656" class="small">Only granted credentials</text>
+<path class="edge" d="M810 474V526"/>
+<path class="edge" d="M618 577H675"/>
+<text x="62" y="565" class="small muted">Native dispatch uses the same worker protocol.</text>
+<path class="edge" d="M310 637V689"/>
+<text x="331" y="672" class="small muted">scoped transactions</text>
+<rect x="36" y="702" width="582" height="96" rx="12" fill="white" stroke="#a8bdb1"/>
+<g transform="translate(58,727) scale(1.6153846153846154)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="119" y="740" class="head">PostgreSQL stores durable state</text>
+<text x="119" y="775" class="small">Tenant RLS · explicit migrations · separate roles</text>
+<text x="686" y="729" class="small muted">A connector also needs an</text>
+<text x="686" y="757" class="small muted">installed, admitted release.</text>
+<text x="686" y="785" class="small muted">A diagram is not live proof.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="846" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 857) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="875" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="906" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Keep workflow checks, durable coordination and external effects distinct.</text>
+</g>
 </svg>

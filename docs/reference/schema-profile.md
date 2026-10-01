@@ -28,7 +28,7 @@ for a server run.
 
 ![Separate schema checks around echo input, transform, and output](../diagrams/authoring-schema-boundaries.svg)
 
-Trace the value from left to right, then compare the two reference systems below. Selecting a string from a valid input object changes the result type; the output contract still expects an object. [Open the diagram at full size](../diagrams/authoring-schema-boundaries.svg).
+Compare each pair of cards from top to bottom: valid input, selected value, and reference system. Selecting a string from a valid input object changes the result type; the output contract still expects an object. [Open the diagram at full size](../diagrams/authoring-schema-boundaries.svg).
 
 ## Check a small contract
 

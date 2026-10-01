@@ -45,6 +45,7 @@ your operator. This example uses the standard AWS commercial partition and an
 ECR registry in the same account as the authenticated operator.
 
 ```sh
+# Select the AWS account and region, then inspect the existing cluster before changing local configuration.
 export AWS_PROFILE='your-approved-profile'
 export AWS_REGION='your-cluster-and-registry-region'
 export WEAVE_EKS_CLUSTER='your-existing-cluster'
@@ -66,6 +67,7 @@ and selects its new context; subsequent commands below still name the inspected
 context explicitly. See [update-kubeconfig](https://docs.aws.amazon.com/cli/latest/reference/eks/update-kubeconfig.html).
 
 ```sh
+# Keep this cluster connection in its own private kubeconfig so your other contexts are preserved.
 umask 077
 export WEAVE_PROVIDER_DIR="$HOME/weave-aws-$(python3 -c 'from uuid import uuid4; print(uuid4().hex)')"
 mkdir -m 700 "$WEAVE_PROVIDER_DIR"
@@ -79,6 +81,7 @@ Expect an added context for the selected EKS ARN. Inspect the list, then copy it
 exact name into the following variable; do not copy an unrelated current context.
 
 ```sh
+# Confirm Kubernetes access and the CPU architecture that your image must support.
 export WEAVE_KUBE_CONTEXT='your-exact-context-name-from-the-list'
 kubectl --context "$WEAVE_KUBE_CONTEXT" get namespaces
 kubectl --context "$WEAVE_KUBE_CONTEXT" get nodes -L kubernetes.io/arch
@@ -98,6 +101,7 @@ push/pull policies. Authenticate using a token passed directly to Docker, as in
 [AWS's ECR push procedure](https://docs.aws.amazon.com/AmazonECR/latest/userguide/docker-push-ecr-image.html).
 
 ```sh
+# Authenticate Docker to the existing ECR repositories; this uploads no images yet.
 export WEAVE_AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 export WEAVE_ECR_HOST="$WEAVE_AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 aws ecr describe-repositories --region "$AWS_REGION" \

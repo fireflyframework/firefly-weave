@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ![Read-only replay separated from reconciliation, incident resolution, and whole-run retry](../diagrams/integrations-incidents-replay.svg)
 
-**How to read this diagram:** Take the right branch when changing execution. Reconciliation supplies external evidence; the revision and receipt fence the decision. The left branch is useful inspection but cannot retry an Action or clear an incident.
+**How to read this diagram:** Follow the lower row left to right when changing execution. Reconciliation supplies external evidence; the current revision and receipt protect the decision. The upper replay row is useful inspection but cannot retry an Action or clear an incident.
 
 ## Resolve an uncertain run deliberately
 

@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # Authoring trusted connector packages
 
+For a step-by-step first package, YAML/Python calls, and inbound events, start with [the custom integration tutorial](../guides/custom-connectors-tutorial.md).
+
 Use this guide to add custom integration code as a Python connector package.
 Start with local scaffolding and validation; build and install it only in a trusted
 development/operator environment. For a supported HTTP API, [OpenAPI import](metadata-import.md)
@@ -26,7 +28,7 @@ the publication steps need a running API and an operator who can enable packages
 
 ![Installed packages, published definitions, and environment execution pins](../diagrams/integrations-admission.svg)
 
-**How to read this diagram:** Read the three columns as separate responsibilities, then follow their pins into activation. Use the returned connection revision and release IDs; an installed package alone cannot execute a tenant Workflow.
+**How to read this diagram:** Read the first row from installed Python to published contracts, then the second row from environment authority to activation. Use the returned connection revision and release IDs; an installed package alone cannot execute a tenant Workflow.
 
 ## What you will build
 

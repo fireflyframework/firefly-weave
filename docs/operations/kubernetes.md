@@ -43,6 +43,7 @@ Run commands from the repository root. Select an existing authorized context and
 namespace; do not rely on whichever cluster is currently selected:
 
 ```sh
+# Check required selections and create a private directory for this deployment's manifests and receipts.
 : "${WEAVE_KUBE_CONTEXT:?Set the context from your provider chapter}"
 : "${WEAVE_KUBE_NAMESPACE:?Set your existing authorized namespace}"
 export WEAVE_CLOUD_DIR="$HOME/weave-cloud-$(python3 -c 'from uuid import uuid4; print(uuid4().hex)')"
@@ -102,6 +103,7 @@ only in the selected database, and set passwords with protected interactive
 prompts or your secret provisioning system:
 
 ```sql
+-- Create separate application and scheduler logins; neither receives owner or superuser privileges.
 CREATE ROLE weave_api_login LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 GRANT weave_app TO weave_api_login;
 CREATE ROLE weave_catalog_login LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
@@ -137,6 +139,7 @@ reference. Kubernetes supports digest-pinned images; retain the build record and
 registry digest together. See [Kubernetes image names](https://kubernetes.io/docs/concepts/containers/images/).
 
 ```sh
+# Fill the templates with the exact server image digest and a unique migration Job name.
 export WEAVE_MIGRATION_JOB="weave-migrate-$(python3 -c 'from uuid import uuid4; print(uuid4().hex[:12])')"
 python3 - <<'PY'
 import os, re
@@ -188,6 +191,7 @@ your cluster's at-rest encryption/secret lifecycle. The Job references only the
 two named keys. [Kubernetes documents Secret environment injection](https://kubernetes.io/docs/tasks/inject-data-application/distribute-credentials-secure/).
 
 ```sh
+# Provide only migration credentials to the Job, validate its manifest, then wait for completion.
 kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" create secret generic weave-migration \
   --from-env-file="$WEAVE_CLOUD_DIR/migration.env"
 kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" apply \
@@ -212,6 +216,7 @@ environment with the owner URL supplied by your secret system. Set
 provider administration or a verified host access token:
 
 ```sh
+# Link the verified identity once; the receipt records the real local principal for subsequent grants.
 "$WEAVE_PYTHON" -I -m firefly_weave.cli.main admin bootstrap \
   --provider "$WEAVE_PROVIDER_ID" --issuer "$WEAVE_ISSUER" \
   --subject "$WEAVE_HOST_SUBJECT" --kind application \
@@ -248,6 +253,7 @@ Neither Kubernetes workload identity nor a cloud IAM login automatically becomes
 a Weave principal. No Keycloak administrator secret belongs in `api.env`.
 
 ```sh
+# Start the API with runtime credentials and wait for Kubernetes to report a successful rollout.
 kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" create secret generic weave-api-runtime \
   --from-env-file="$WEAVE_CLOUD_DIR/api.env"
 kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" apply \
@@ -260,6 +266,7 @@ For an operator-only first run, open another terminal and restore these same
 context/namespace values, then keep this loopback tunnel running:
 
 ```sh
+# Keep this terminal open: it forwards a loopback port to the API for initial verification.
 kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" port-forward \
   --address 127.0.0.1 service/weave-api 8080:8000
 ```
@@ -283,6 +290,7 @@ API readiness before token acquisition, verifies the intended subject, and
 atomically creates or refreshes the owned token receipt:
 
 ```sh
+# Check API readiness, refresh the host token privately, then create and verify the first workflow run.
 cat > "$WEAVE_CLOUD_DIR/refresh-token.py" <<'PYTOKEN'
 import asyncio, json, os, stat, tempfile
 from pathlib import Path
@@ -374,6 +382,7 @@ overview. Use `WEAVE_CLOUD_DIR` for the new cloud scope and administration
 receipts. Run this once for an unlinked worker identity in that cloud database:
 
 ```sh
+# Create the worker identity and admit its exact build for the environment returned by the first run.
 "$WEAVE_PYTHON" examples/provision_worker.py --provider "$WEAVE_PROVIDER_ID" \
   --output "$WEAVE_CLOUD_DIR/worker-principal.json" &&
 "$WEAVE_PYTHON" examples/admit_worker.py \
@@ -410,6 +419,7 @@ will be read directly from the new admission receipt:
 Create the new owner-only file without printing the credential:
 
 ```sh
+# Write only the worker's required settings to an owner-readable file; no database login is needed.
 python3 - <<'PY'
 import json, os
 from pathlib import Path
@@ -430,6 +440,7 @@ PY
 Set `WEAVE_WORKER_IMAGE_REF` to the worker's real registry digest reference, then:
 
 ```sh
+# Pin the worker image and supply its private API credentials before applying the Deployment.
 python3 - <<'PY'
 import os, re
 from pathlib import Path
@@ -449,6 +460,7 @@ kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" apply -f "$WE
 After confirming the release, grants, activation and receiver, start it deliberately:
 
 ```sh
+# Start one admitted worker after configuration and identity checks have passed.
 kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" scale deployment/weave-worker --replicas=1
 ```
 

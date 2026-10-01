@@ -21,9 +21,9 @@ SPDX-License-Identifier: Apache-2.0
 
 ![WhatsApp message and status facts compared with other messaging providers](../../../docs/diagrams/integrations-messaging.svg)
 
-**How to read this diagram:** Follow the middle column. Incoming text and status
-facts share a normalized envelope but carry different data. Outbound acceptance
-and later delivery-status evidence remain separate.
+**How to read this diagram:** Follow the middle WhatsApp row left to right.
+Incoming text and status facts share a normalized envelope but carry different
+data. Outbound acceptance and later delivery-status evidence remain separate.
 
 These synthetic examples contain no credentials or live destination authorization.
 They show the local profile's request and event shapes, not complete Meta onboarding.

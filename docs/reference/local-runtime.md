@@ -31,7 +31,7 @@ This page explains runtime authority and lifecycle behavior.
 
 ![Local process topology and the retained restart path](../diagrams/operations-topology.svg)
 
-Start with the dependency column, then launch the API and the execution path your workflow requires. On a restart, reuse the existing files and receipts: provisioning a new database is a different operation. The numbered standalone procedure below covers first-time creation.
+Locate PostgreSQL and Keycloak in the top process row, then follow their connections to the API and the execution path your workflow requires. On restart, reuse existing files and receipts; provisioning a new database is a different operation. The sections below explain each process boundary.
 
 [Open diagram at full size](../diagrams/operations-topology.svg)
 
@@ -272,7 +272,7 @@ production facilities.
 
 The locked framework is published PyFly 26.9.15. Read the exact wheel hash and
 upstream commit from [project metadata](../../pyproject.toml). The API source
-version is `0.1.0a3`. Validate readiness, an authorized workflow, and your
+version is `0.1.0a4`. Validate readiness, an authorized workflow, and your
 [backup and restore procedure](../operations/backup-restore.md) in the environment
 you intend to operate.
 

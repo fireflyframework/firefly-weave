@@ -25,6 +25,7 @@ from typing import Any
 import click
 
 from firefly_weave import __version__
+from firefly_weave.branding import LUMI_ASCII
 from firefly_weave.cli import EXIT_USAGE, emit_result, error_result
 from firefly_weave.cli.admin import admin
 from firefly_weave.cli.auth import auth
@@ -35,6 +36,7 @@ from firefly_weave.cli.definitions import definitions
 from firefly_weave.cli.deploy import worker
 from firefly_weave.cli.onboarding import DOCS_URL, docs, init
 from firefly_weave.cli.operations import incident, run
+from firefly_weave.cli.platform import platform
 from firefly_weave.cli.remote import family, machine_result, remote
 from firefly_weave.cli.runs import runs
 from firefly_weave.cli.schedule import schedule
@@ -65,8 +67,10 @@ class OfflineGroup(click.Group):
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         if formatter.width >= 60:
+            companion = {1: "   Firefly Weave", 11: "      Lumi, your guide"}
+            companion.update({index + 4: "   " + line for index, line in enumerate(LUMI_ASCII.splitlines())})
             for index, line in enumerate(_LOGO.splitlines()):
-                title = "   Firefly Weave" if index == 5 else ""
+                title = companion.get(index, "")
                 formatter.write(f"{line:<32}{title}".rstrip() + "\n")
         else:
             formatter.write("Firefly Weave\n")
@@ -78,7 +82,8 @@ class OfflineGroup(click.Group):
                     (f"{ctx.command_path} init hello-weave", "Create an offline starter; see its README."),
                     (f"{ctx.command_path} workflow validate workflow.yaml", "Check a local definition."),
                     (f"{ctx.command_path} workflow compile --help", "Compile with a pinned catalog."),
-                    (f"{ctx.command_path} docs platform", "Start and understand the platform services."),
+                    (f"{ctx.command_path} platform setup", "Set up a local platform from a matching checkout."),
+                    (f"{ctx.command_path} docs platform", "Learn the platform services and deployment choices."),
                     (f"{ctx.command_path} auth --help", "Configure API credentials."),
                     (f"{ctx.command_path} definitions --help", "Publish and activate definitions."),
                     (f"{ctx.command_path} worker deploy --help", "Deploy a worker to an existing platform."),
@@ -90,7 +95,7 @@ class OfflineGroup(click.Group):
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         sections = (
-            ("Start here", ("init", "docs")),
+            ("Start here", ("init", "platform", "docs")),
             ("Author locally", ("workflow", "schema", "connector")),
             (
                 "Connect to a platform",
@@ -115,6 +120,7 @@ class OfflineGroup(click.Group):
         )
         summaries = {
             "init": "Create a safe offline workflow starter.",
+            "platform": "Set up, start, and use a local development platform.",
             "docs": "Find docs for platform startup and next steps.",
             "workflow": "Validate, compile, and simulate local workflows.",
             "schema": "Inspect and export definition schemas.",
@@ -256,6 +262,7 @@ def version(output: str) -> None:
 
 cli.add_command(init)
 cli.add_command(docs)
+cli.add_command(platform)
 workflow.add_command(simulate)
 cli.add_command(workflow)
 cli.add_command(schema)

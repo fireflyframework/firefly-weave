@@ -16,44 +16,109 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="760" viewBox="0 0 1120 760" role="img" aria-labelledby="title desc">
-<title id="title">Two OpenAPI directions, two different products</title>
-<desc id="desc">Native export converts Weave operation metadata to a description of Weave HTTP endpoints. External import converts selected operations in a bounded OpenAPI 3.1 document and explicit policy to reviewable connector, Action, and HTTP profile package metadata. Neither operation deploys or calls providers.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:22px;font-weight:700}.body{font-size:19px}.small{font-size:18px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.return{fill:none;stroke:#507767;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}</style>
-<rect width="1120" height="760" rx="20" fill="#f7faf5"/>
-<text class="title" x="40" y="54">Two OpenAPI directions, two different products</text>
-<text class="body" x="40" y="86">Choose the direction by whose API you are describing.</text>
-<rect x="40" y="115" width="505" height="530" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
-<rect x="575" y="115" width="505" height="530" rx="14" fill="#f0f4f2" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="60" y="151">EXPORT · Describe Weave itself</text>
-<text class="label" x="595" y="151">IMPORT · Describe an external API</text>
-<rect x="60" y="180" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="80" y="214">Weave operation inventory</text>
-<text class="body" x="80" y="245">Methods, paths, DTOs, headers, authority</text>
-<path class="edge" d="M292 280 V317"/>
-<rect x="60" y="317" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="80" y="351">PyFly OpenAPI generator</text>
-<text class="body" x="80" y="382">export_openapi()  ·  optional openapi extra</text>
-<path class="edge" d="M292 417 V454"/>
-<rect x="60" y="454" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="80" y="488">Native OpenAPI document</text>
-<text class="body" x="80" y="519">Weave paths + components.schemas</text>
-<text class="body" x="60" y="592">Use for HTTP documentation and clients.</text>
-<text class="body" x="60" y="620">Runtime authorization is still mandatory.</text>
-<rect x="595" y="180" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="615" y="214">OpenAPI 3.1 + explicit policy</text>
-<text class="body" x="615" y="245">Selected operation IDs; bounded subset</text>
-<path class="edge" d="M827 280 V317"/>
-<rect x="595" y="317" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="615" y="351">Offline metadata importer</text>
-<text class="body" x="615" y="382">import_openapi()  ·  no package execution</text>
-<path class="edge" d="M827 417 V454"/>
-<rect x="595" y="454" width="465" height="100" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="615" y="488">Reviewable connector metadata</text>
-<text class="body" x="615" y="519">Connector + Actions + HTTP profile package</text>
-<text class="body" x="595" y="592">Review, test, and deploy through normal gates.</text>
-<text class="body" x="595" y="620">Import does not install an implementation.</text>
-<rect x="40" y="677" width="1040" height="51" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="body" x="60" y="709">Both operations are offline. Neither starts a service, resolves secrets, or calls a provider.</text>
+
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1176" viewBox="0 0 960 1176" role="img" aria-labelledby="title desc">
+<title id="title">Whose API are you describing?</title><desc id="desc">OpenAPI export describes Weave. OpenAPI import prepares an integration with another service. READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1076" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Whose API are you describing?</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">OpenAPI export describes Weave. OpenAPI import prepares an integration with</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">another service.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</text>
+<text x="48" y="242" font-size="24" font-weight="700" fill="#173D34">EXPORT • Help a client call Weave</text>
+<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="309" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
+<text x="58.0" y="366" font-size="24" font-weight="700" fill="#173D34">Weave operation inventory</text>
+<text x="58.0" y="410" font-size="22" font-weight="400" fill="#173D34">Methods, paths, DTOs, headers, and</text>
+<text x="58.0" y="438" font-size="22" font-weight="400" fill="#173D34">authority.</text>
+<text x="58.0" y="466" font-size="22" font-weight="400" fill="#173D34">PyFly export_openapi() uses the</text>
+<text x="58.0" y="494" font-size="22" font-weight="400" fill="#173D34">openapi extra.</text>
+<path class="edge" d="M465.0 389.5h29"/>
+<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="309" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="518.0" y="366" font-size="24" font-weight="700" fill="#173D34">Weave OpenAPI document</text>
+<text x="518.0" y="410" font-size="22" font-weight="400" fill="#173D34">Paths and component schemas</text>
+<text x="518.0" y="438" font-size="22" font-weight="400" fill="#173D34">describe the native API.</text>
+<text x="518.0" y="466" font-size="22" font-weight="400" fill="#173D34">Clients still need runtime</text>
+<text x="518.0" y="494" font-size="22" font-weight="400" fill="#173D34">authorization.</text>
+<text x="48" y="574" font-size="24" font-weight="700" fill="#173D34">IMPORT • Help a workflow call an external API</text>
+<rect x="40.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="641" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="58.0" y="698" font-size="24" font-weight="700" fill="#173D34">Reviewed OpenAPI 3.1</text>
+<text x="58.0" y="742" font-size="22" font-weight="400" fill="#173D34">Select operation IDs and explicit</text>
+<text x="58.0" y="770" font-size="22" font-weight="400" fill="#173D34">policy.</text>
+<text x="58.0" y="798" font-size="22" font-weight="400" fill="#173D34">The offline importer accepts a</text>
+<text x="58.0" y="826" font-size="22" font-weight="400" fill="#173D34">bounded subset.</text>
+<path class="edge" d="M465.0 721.5h29"/>
+<rect x="500.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="641" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
+<text x="518.0" y="698" font-size="24" font-weight="700" fill="#173D34">Reviewable connector package</text>
+<text x="518.0" y="742" font-size="22" font-weight="400" fill="#173D34">Generated Connector, Actions, and</text>
+<text x="518.0" y="770" font-size="22" font-weight="400" fill="#173D34">HTTP profile metadata.</text>
+<text x="518.0" y="798" font-size="22" font-weight="400" fill="#173D34">Review, test, and deploy through</text>
+<text x="518.0" y="826" font-size="22" font-weight="400" fill="#173D34">normal gates.</text>
+<rect x="40" y="896" width="880" height="136" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 916) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="940" font-size="23" font-weight="700" fill="#326B88">Both operations are offline</text>
+<text x="60" y="979" font-size="21" font-weight="400" fill="#173D34">Neither operation starts services, resolves secrets, or calls a provider.</text>
+<text x="60" y="1008" font-size="21" font-weight="400" fill="#173D34">Importing metadata does not install an implementation.</text><g id="lumi-takeaway">
+<rect x="0" y="1082" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1093) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1111" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1142" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Export Weave’s API; import other APIs only as reviewed metadata.</text>
+</g>
 </svg>

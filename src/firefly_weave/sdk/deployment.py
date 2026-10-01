@@ -304,7 +304,13 @@ OWNERSHIP_LABEL = "io.getfirefly.weave.deployment"
 
 
 def run_command(
-    argv: list[str], *, timeout: float = 30, limit: int = 1024 * 1024, log_path: Path | None = None
+    argv: list[str],
+    *,
+    timeout: float = 30,
+    limit: int = 1024 * 1024,
+    log_path: Path | None = None,
+    env: dict[str, str] | None = None,
+    cwd: Path | None = None,
 ) -> bytes:
     """Bound bytes and wall time, killing only the process group created here."""
     if timeout <= 0 or limit < 1:
@@ -321,7 +327,13 @@ def run_command(
             os.close(parent)
     try:
         child = subprocess.Popen(
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env=env,
+            cwd=cwd,
         )
     except OSError:
         if log is not None:

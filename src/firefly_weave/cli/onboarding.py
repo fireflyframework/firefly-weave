@@ -38,6 +38,11 @@ DOCS_TOPICS = {
     "workers": "guides/workers/",
     "deploy": "operations/deployment/",
     "configuration": "operations/configuration/",
+    "local": "guides/local-platform/",
+    "api": "guides/api-playground/",
+    "sdk": "guides/sdk-tutorial/",
+    "connectors": "guides/custom-connectors-tutorial/",
+    "graphs": "guides/workflow-graphs/",
 }
 
 _WORKFLOW = """# Copyright 2026 Firefly Software Foundation.

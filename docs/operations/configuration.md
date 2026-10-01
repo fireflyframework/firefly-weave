@@ -25,7 +25,7 @@ a process, then use readiness and an authorized request to verify the result.
 
 ![Configuration ownership and successive authorization gates](../diagrams/operations-authority.svg)
 
-Read the upper matrix before selecting an env file. The lower gates explain why a correctly configured process can still lack authority for a particular request; a connector secret has its own resolution path.
+Read the first two cards to select configuration for maintenance, API, native execution, or remote work. Continue downward through identity and grant checks, then the separate credential-resolution path. Correct process configuration alone does not authorize every request.
 
 [Open diagram at full size](../diagrams/operations-authority.svg)
 

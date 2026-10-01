@@ -175,3 +175,18 @@ def test_starter_readme_refreshes_simulation_after_input_edit(tmp_path):
     result = runner.invoke(cli, ["workflow", "simulate", str(tmp_path / "simulation.json"), "--output", "json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["variables"]["output"] == {"message": "Edited input"}
+
+
+def test_lumi_help_keeps_narrow_and_machine_outputs_clean():
+    runner = CliRunner()
+    wide = runner.invoke(cli, ["--help"], terminal_width=80)
+    assert wide.exit_code == 0
+    assert "Lumi, your guide" in wide.output
+    assert "(o o)" in wide.output
+    narrow = runner.invoke(cli, ["--help"], terminal_width=50)
+    assert "Lumi" not in narrow.output
+    assert "Firefly Weave" in narrow.output
+    version = runner.invoke(cli, ["version", "--output", "json"])
+    assert version.exit_code == 0
+    assert isinstance(json.loads(version.output), dict)
+    assert "Lumi" not in version.output

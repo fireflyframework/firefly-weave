@@ -52,6 +52,15 @@ For connector, messaging, schedule, recovery, and maintenance questions, select
 the relevant figure from the catalog below. Each owning page explains how to
 read its arrows and where a receipt, provider ACK, or workflow outcome differs.
 
+## Draw your own workflow
+
+Use [the graph tutorial](guides/workflow-graphs.md) to export your compiled
+workflow as text, Mermaid, or SVG. The drawings in this catalog explain platform
+behavior; a generated workflow graph explains your own definition.
+
+[The platform in plain English](diagrams/platform-in-plain-english.svg) is the
+best first diagram if you are learning how the pieces fit together.
+
 ## How to read the diagrams
 
 - A box names a resource, process, or explicit decision. Read the caption to learn
@@ -73,13 +82,13 @@ needed to view or edit them.
 
 | Topic | Open the figure |
 | --- | --- |
-| Read the result before moving forward | [authoring diagnostic loop](diagrams/authoring-diagnostic-loop.svg) |
-| Choose where your host meets Weave | [authoring execution boundaries](diagrams/authoring-execution-boundaries.svg) |
-| Carry returned identities into the next request | [authoring host sequence](diagrams/authoring-host-sequence.svg) |
-| Two OpenAPI directions, two different products | [authoring openapi directions](diagrams/authoring-openapi-directions.svg) |
-| A schema governs values at each boundary | [authoring schema boundaries](diagrams/authoring-schema-boundaries.svg) |
-| Step execution and move time separately | [authoring simulation controls](diagrams/authoring-simulation-controls.svg) |
-| Admission and registration precede task authority | [authoring worker lifecycle](diagrams/authoring-worker-lifecycle.svg) |
+| Fix one boundary at a time | [authoring diagnostic loop](diagrams/authoring-diagnostic-loop.svg) |
+| Choose where your application meets Weave | [authoring execution boundaries](diagrams/authoring-execution-boundaries.svg) |
+| Carry each returned ID into the next call | [authoring host sequence](diagrams/authoring-host-sequence.svg) |
+| Whose API are you describing? | [authoring openapi directions](diagrams/authoring-openapi-directions.svg) |
+| Check the object you receive and return | [authoring schema boundaries](diagrams/authoring-schema-boundaries.svg) |
+| Move execution and time separately | [authoring simulation controls](diagrams/authoring-simulation-controls.svg) |
+| Give a worker permission for one attempt | [authoring worker lifecycle](diagrams/authoring-worker-lifecycle.svg) |
 | Read evidence without overclaiming | [capability evidence](diagrams/capability-evidence.svg) |
 | Install once, use Weave anywhere | [CLI installation](diagrams/cli-installation.svg) |
 | Move the same application into a cloud environment | [cloud deployment](diagrams/cloud-deployment.svg) |
@@ -91,21 +100,21 @@ needed to view or edit them.
 | Document a behavior that readers can verify | [documentation contribution](diagrams/documentation-contribution.svg) |
 | Follow the message through echo | [echo data flow](diagrams/echo-data-flow.svg) |
 | Ingress and outbound integration delivery | [integration delivery](diagrams/integration-delivery.svg) |
-| From installed code to an admitted execution | [integrations admission](diagrams/integrations-admission.svg) |
-| Three integration paths and their commit boundaries | [integrations directions](diagrams/integrations-directions.svg) |
-| HTTP profile v2: fixed policy, bounded invocation | [integrations http profile](diagrams/integrations-http-profile.svg) |
-| Inspect evidence, then choose an authorized action | [integrations incidents replay](diagrams/integrations-incidents-replay.svg) |
-| Kafka consumption: receipt first, offset second | [integrations kafka receipts](diagrams/integrations-kafka-receipts.svg) |
-| Messaging providers retain different durable facts | [integrations messaging](diagrams/integrations-messaging.svg) |
-| OpenAPI import: review before deployment | [integrations openapi review](diagrams/integrations-openapi-review.svg) |
-| PostgreSQL: one invocation, one external transaction | [integrations sql transaction](diagrams/integrations-sql-transaction.svg) |
-| Calendar starts, duration waits, and signals | [integrations time and signals](diagrams/integrations-time-and-signals.svg) |
-| Give each process only its own authority | [operations authority](diagrams/operations-authority.svg) |
-| Find the boundary, then choose the evidence | [operations evidence](diagrams/operations-evidence.svg) |
-| Restore into a new target; keep the source fenced | [operations restore](diagrams/operations-restore.svg) |
-| Retention is a reviewed, bounded transaction | [operations retention](diagrams/operations-retention.svg) |
-| One installation, separate processes | [operations topology](diagrams/operations-topology.svg) |
-| Three acceptance gates for an upgrade | [operations upgrade](diagrams/operations-upgrade.svg) |
+| Turn installed code into an executable workflow | [integrations admission](diagrams/integrations-admission.svg) |
+| Follow the event in the direction it travels | [integrations directions](diagrams/integrations-directions.svg) |
+| Keep the HTTP operation fixed; fill in values | [integrations http profile](diagrams/integrations-http-profile.svg) |
+| Read evidence before changing execution | [integrations incidents replay](diagrams/integrations-incidents-replay.svg) |
+| Save the receipt before committing the offset | [integrations kafka receipts](diagrams/integrations-kafka-receipts.svg) |
+| Keep each messaging provider’s identity intact | [integrations messaging](diagrams/integrations-messaging.svg) |
+| Review an imported API before you deploy it | [integrations openapi review](diagrams/integrations-openapi-review.svg) |
+| Keep one SQL invocation in one transaction | [integrations sql transaction](diagrams/integrations-sql-transaction.svg) |
+| A schedule starts a run; a wait stays in one | [integrations time and signals](diagrams/integrations-time-and-signals.svg) |
+| Give each process only the authority it needs | [operations authority](diagrams/operations-authority.svg) |
+| Find the failing boundary before retrying | [operations evidence](diagrams/operations-evidence.svg) |
+| Restore to a new target; keep the source fenced | [operations restore](diagrams/operations-restore.svg) |
+| Review a bounded deletion plan before applying it | [operations retention](diagrams/operations-retention.svg) |
+| One installation, separate running processes | [operations topology](diagrams/operations-topology.svg) |
+| Pass all three gates before reopening writers | [operations upgrade](diagrams/operations-upgrade.svg) |
 | Identity, local authority and secret boundaries | [security boundaries](diagrams/security-boundaries.svg) |
 | Firefly Weave system context and components | [system context](diagrams/system-context.svg) |
 | Your path from YAML to a working integration | [tutorial route](diagrams/tutorial-route.svg) |

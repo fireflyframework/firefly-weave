@@ -45,6 +45,7 @@ class Settings(BaseModel):
     operations: OperationsPolicy = Field(default_factory=OperationsPolicy)
     telemetry: TelemetryOptions = Field(default_factory=TelemetryOptions)
     connector_packages: tuple[str, ...] = ()
+    docs_enabled: bool = False
     kafka_consumer_enabled: bool = False
     broker: BrokerPolicy = Field(default_factory=BrokerPolicy)
     providers: tuple[ProviderConfig, ...] = ()
@@ -97,6 +98,9 @@ class Settings(BaseModel):
         kafka_enabled = os.environ.get("WEAVE_KAFKA_CONSUMER_ENABLED", "false").lower()
         if kafka_enabled not in {"true", "false"}:
             raise ValueError("WEAVE_KAFKA_CONSUMER_ENABLED must be true or false")
+        docs_enabled = os.environ.get("WEAVE_DOCS_ENABLED", "false").lower()
+        if docs_enabled not in {"true", "false"}:
+            raise ValueError("WEAVE_DOCS_ENABLED must be true or false")
         providers = json.loads(os.environ.get("WEAVE_OIDC_PROVIDERS", "[]"))
         telemetry_raw = os.environ.get("WEAVE_TELEMETRY", "{}")
         try:
@@ -108,6 +112,7 @@ class Settings(BaseModel):
         return cls(
             database_url=SecretStr(value),
             telemetry=telemetry,
+            docs_enabled=docs_enabled == "true",
             operations=operations_from_env(),
             connector_packages=TypeAdapter(tuple[str, ...]).validate_json(
                 os.environ.get("WEAVE_CONNECTOR_PACKAGES", "[]")

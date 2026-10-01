@@ -73,7 +73,7 @@ how its returned version ID and digest feed activation and run creation.
 
 ![HTTP lifecycle requests, response identities, and authorization checks](../diagrams/authoring-host-sequence.svg)
 
-Solid arrows are requests; dashed arrows are responses. The SDK method labels map to the HTTP operation inventory below. Expected revisions protect edits, while idempotency keys identify exact retries of keyed mutations. [Open the diagram at full size](../diagrams/authoring-host-sequence.svg).
+Read down through the lifecycle. Solid arrows send requests and dashed arrows return identities; the API checks each operation separately. Expected revisions protect edits, while idempotency keys identify exact retries of keyed mutations. [Open the diagram at full size](../diagrams/authoring-host-sequence.svg).
 
 ## Requests, errors and revisions
 

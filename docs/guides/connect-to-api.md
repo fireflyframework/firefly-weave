@@ -27,8 +27,8 @@ server instead, start with [Run Weave locally](standalone.md).
 
 ![Your product or CLI calls Weave through an authenticated API boundary](../diagrams/authoring-execution-boundaries.svg)
 
-Follow the middle column: your CLI sends authenticated requests, and the server
-checks access. You need no database credentials. [Open diagram](../diagrams/authoring-execution-boundaries.svg).
+Follow row B from your authenticated client to the running API. The server
+checks access; your CLI needs no database credentials. [Open diagram](../diagrams/authoring-execution-boundaries.svg).
 
 ## 1. Get your connection details
 

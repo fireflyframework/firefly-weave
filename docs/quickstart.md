@@ -91,6 +91,7 @@ A **workflow definition** describes input, ordered steps, and output. Save the
 following file by copying the entire command into your terminal:
 
 ```sh
+# Keep the tutorial files together so later commands can reuse them.
 mkdir -p .local/tutorial
 cat > .local/tutorial/echo.workflow.yaml <<'YAML'
 apiVersion: weave/v1alpha1
@@ -148,6 +149,7 @@ contracts a workflow can use. Echo has no external dependencies, so create an
 empty catalog once:
 
 ```sh
+# This workflow calls no external actions, so an empty dependency catalog is complete.
 cat > .local/tutorial/empty-catalog.json <<'JSON'
 {"definitions": [], "tasks": [], "adapters": [], "schemas": {}}
 JSON
@@ -170,6 +172,7 @@ Compilation checks the complete definition and its dependencies, then produces a
 **artifact**: the validated representation that the runtime or simulator consumes.
 
 ```sh
+# Turn the checked definition into a reusable artifact for simulation or inspection.
 weave workflow compile .local/tutorial/echo.workflow.yaml \
   --catalog .local/tutorial/empty-catalog.json --strict \
   --directory .local/tutorial/compiled --output json
@@ -195,6 +198,7 @@ The example has no integration tasks, so there are no external responses to mock
 Create its request:
 
 ```sh
+# Bundle the compiled workflow and sample input into the simulator request.
 python3 - <<'PYCODE'
 import json
 from pathlib import Path

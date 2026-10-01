@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # Python SDK
 
+For a small, sequential example, start with [the Python SDK tutorial](../guides/sdk-tutorial.md).
+
 Use the Python SDK when your application needs to call Weave or generate workflow
 definitions. Use the [CLI](../installation.md) for terminal commands. Installing
 the CLI in its own environment does not add Python imports to your application's

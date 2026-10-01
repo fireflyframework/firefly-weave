@@ -16,61 +16,123 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 920" role="img" aria-labelledby="title desc">
-<title id="title">Three acceptance gates for an upgrade</title><desc id="desc">A vertical decision flow tests schema, persisted compatibility and real execution. Failed schema validation stops startup. Other failed acceptance gates keep admission stopped while evidence is investigated.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.line{fill:none;stroke:#C9DBD2;stroke-width:2}</style>
-<rect width="1120" height="920" fill="#FFFFFF"/>
-<text x="40" y="52" class="title">Three acceptance gates for an upgrade</text>
-<text x="40" y="88" class="body">Begin with fenced writers, a verified recovery copy and the exact selected artifact.</text>
-<rect x="40" y="125" width="645" height="680" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
-<rect x="730" y="125" width="350" height="680" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="60" y="162" class="head">VERIFY IN ORDER</text>
-<text x="750" y="162" class="head">IF THE GATE FAILS</text>
-<circle cx="80" cy="261" r="21" fill="#D8EEE4" stroke="#367D68"/>
-<text x="80" y="267" class="head" text-anchor="middle">1</text>
-<rect x="120" y="215" width="450" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="140" y="248" class="head">Schema matches?</text>
-<text x="140" y="280" class="body">Explicit migration owner command</text>
-<text x="140" y="307" class="body">Alembic + sentinel match artifact</text>
-<path d="M630 242.0L666.0 278L630 314.0L594.0 278Z" fill="#D8EEE4" stroke="#367D68" stroke-width="2"/>
-<path d="M570 278H592" class="edge"/>
-<path d="M666 278H735" class="edge"/>
-<text x="676" y="264" class="body">No</text>
-<text x="750" y="256" class="body">Stop startup; inspect migration.</text>
-<text x="750" y="283" class="body">Never edit version markers.</text>
-<path d="M630 314V371H345V413" class="edge"/>
-<text x="642" y="352" class="body">Yes</text>
-<circle cx="80" cy="461" r="21" fill="#D8EEE4" stroke="#367D68"/>
-<text x="80" y="467" class="head" text-anchor="middle">2</text>
-<rect x="120" y="415" width="450" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="140" y="448" class="head">Requirements satisfied?</text>
-<text x="140" y="480" class="body">Complete catalog inventory</text>
-<text x="140" y="507" class="body">Pinned versions + policy match</text>
-<path d="M630 442.0L666.0 478L630 514.0L594.0 478Z" fill="#D8EEE4" stroke="#367D68" stroke-width="2"/>
-<path d="M570 478H592" class="edge"/>
-<path d="M666 478H735" class="edge"/>
-<text x="676" y="464" class="body">No</text>
-<text x="750" y="456" class="body">Keep effect admission restricted.</text>
-<text x="750" y="483" class="body">Repair reported authority,</text>
-<text x="750" y="510" class="body">policy or missing capability.</text>
-<path d="M630 514V571H345V613" class="edge"/>
-<text x="642" y="552" class="body">Yes</text>
-<circle cx="80" cy="661" r="21" fill="#D8EEE4" stroke="#367D68"/>
-<text x="80" y="667" class="head" text-anchor="middle">3</text>
-<rect x="120" y="615" width="450" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="140" y="648" class="head">Real execution verified?</text>
-<text x="140" y="680" class="body">Historical run readable</text>
-<text x="140" y="707" class="body">Authorized workflow + receipt</text>
-<path d="M630 642.0L666.0 678L630 714.0L594.0 678Z" fill="#D8EEE4" stroke="#367D68" stroke-width="2"/>
-<path d="M570 678H592" class="edge"/>
-<path d="M666 678H735" class="edge"/>
-<text x="676" y="664" class="body">No</text>
-<text x="750" y="656" class="body">Keep admission stopped.</text>
-<text x="750" y="683" class="body">Inspect run and external receipts.</text>
-<text x="750" y="710" class="body">Reconcile ambiguous effects.</text>
-<path d="M630 714V845H560" class="edge"/>
-<text x="642" y="752" class="body">Yes</text>
-<rect x="40" y="815" width="520" height="66" rx="12" fill="#D8EEE4" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="60" y="855" class="head">Deliberately reenable writers and monitor</text>
+
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1480" viewBox="0 0 960 1480" role="img" aria-labelledby="title desc">
+<title id="title">Pass all three gates before reopening writers</title><desc id="desc">Begin with fenced writers, a verified recovery copy, and the exact selected artifact. READ GATES TOP TO BOTTOM  •  Right-hand cards explain a failed gate</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1380" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Pass all three gates before reopening writers</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Begin with fenced writers, a verified recovery copy, and the exact selected</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">artifact.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ GATES TOP TO BOTTOM  •  Right-hand cards explain a failed gate</text>
+<text x="48" y="242" font-size="24" font-weight="700" fill="#173D34">GATE 1 • Does the schema match?</text>
+<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="309" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="58.0" y="366" font-size="24" font-weight="700" fill="#173D34">Verify explicitly</text>
+<text x="58.0" y="410" font-size="22" font-weight="400" fill="#173D34">Use the migration owner command.</text>
+<text x="58.0" y="438" font-size="22" font-weight="400" fill="#173D34">Alembic and sentinel must match</text>
+<text x="58.0" y="466" font-size="22" font-weight="400" fill="#173D34">the selected artifact.</text>
+<path class="edge" d="M465.0 389.5h29"/>
+<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="309" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="42" height="42" rx="7"/><path d="m18 18 20 20 M38 18 18 38"/></g>
+<text x="518.0" y="366" font-size="24" font-weight="700" fill="#173D34">If this fails</text>
+<text x="518.0" y="410" font-size="22" font-weight="400" fill="#173D34">Stop startup and inspect the</text>
+<text x="518.0" y="438" font-size="22" font-weight="400" fill="#173D34">migration.</text>
+<text x="518.0" y="466" font-size="22" font-weight="400" fill="#173D34">Never repair compatibility by</text>
+<text x="518.0" y="494" font-size="22" font-weight="400" fill="#173D34">editing version markers.</text>
+<text x="48" y="574" font-size="24" font-weight="700" fill="#173D34">GATE 2 • Are persisted requirements satisfied?</text>
+<rect x="40.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="641" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
+<text x="58.0" y="698" font-size="24" font-weight="700" fill="#173D34">Check the complete inventory</text>
+<text x="58.0" y="742" font-size="22" font-weight="400" fill="#173D34">Inspect the full catalog</text>
+<text x="58.0" y="770" font-size="22" font-weight="400" fill="#173D34">inventory.</text>
+<text x="58.0" y="798" font-size="22" font-weight="400" fill="#173D34">Pinned versions and policy must</text>
+<text x="58.0" y="826" font-size="22" font-weight="400" fill="#173D34">match.</text>
+<path class="edge" d="M465.0 721.5h29"/>
+<rect x="500.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="641" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="42" height="42" rx="7"/><path d="m18 18 20 20 M38 18 18 38"/></g>
+<text x="518.0" y="698" font-size="24" font-weight="700" fill="#173D34">If this fails</text>
+<text x="518.0" y="742" font-size="22" font-weight="400" fill="#173D34">Keep effect admission restricted.</text>
+<text x="518.0" y="770" font-size="22" font-weight="400" fill="#173D34">Repair reported authority, policy,</text>
+<text x="518.0" y="798" font-size="22" font-weight="400" fill="#173D34">or missing capability.</text>
+<text x="48" y="906" font-size="24" font-weight="700" fill="#173D34">GATE 3 • Can the selected build execute correctly?</text>
+<rect x="40.0" y="927" width="420.0" height="225" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="973" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 950) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
+<text x="58.0" y="1030" font-size="24" font-weight="700" fill="#173D34">Verify a real authorized run</text>
+<text x="58.0" y="1074" font-size="22" font-weight="400" fill="#173D34">Read a historical run.</text>
+<text x="58.0" y="1102" font-size="22" font-weight="400" fill="#173D34">Execute an authorized workflow and</text>
+<text x="58.0" y="1130" font-size="22" font-weight="400" fill="#173D34">inspect its receipt.</text>
+<path class="edge" d="M465.0 1039.5h29"/>
+<rect x="500.0" y="927" width="420.0" height="225" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="973" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 950) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="518.0" y="1030" font-size="24" font-weight="700" fill="#173D34">If this fails</text>
+<text x="518.0" y="1074" font-size="22" font-weight="400" fill="#173D34">Keep admission stopped.</text>
+<text x="518.0" y="1102" font-size="22" font-weight="400" fill="#173D34">Inspect run and external receipts;</text>
+<text x="518.0" y="1130" font-size="22" font-weight="400" fill="#173D34">reconcile ambiguous effects.</text>
+<rect x="40" y="1200" width="880" height="136" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 1220) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1244" font-size="23" font-weight="700" fill="#326B88">All three gates must pass</text>
+<text x="60" y="1283" font-size="21" font-weight="400" fill="#173D34">Only then deliberately reenable writers and monitor. A successful process</text>
+<text x="60" y="1312" font-size="21" font-weight="400" fill="#173D34">start is not enough to accept an upgrade.</text><g id="lumi-takeaway">
+<rect x="0" y="1386" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1397) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1415" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1446" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Check schema, persisted requirements and a real run before reopening writers.</text>
+</g>
 </svg>

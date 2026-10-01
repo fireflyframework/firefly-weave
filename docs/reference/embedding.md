@@ -22,7 +22,7 @@ The compiler and immutable builder work without PyFly, a server, network access,
 
 ![Three embedding choices and their authority and persistence boundaries](../diagrams/authoring-execution-boundaries.svg)
 
-Start in the left column for the builder example. Move to a remote or in-process boundary only when you need durable services, and preserve the explicit identity and transaction requirements shown there. [Open the diagram at full size](../diagrams/authoring-execution-boundaries.svg).
+Start with row A for the local builder example. Rows B and C describe remote and in-process services when you need durable operations. Read each row left to right and preserve its explicit identity and transaction requirements. [Open the diagram at full size](../diagrams/authoring-execution-boundaries.svg).
 
 ## Build the same workflow without YAML
 

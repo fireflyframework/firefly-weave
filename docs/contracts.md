@@ -20,8 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ![Definition contract, expression, and runtime value boundaries](diagrams/authoring-schema-boundaries.svg)
 
-Keep the definition’s shape separate from the values its schemas accept.
-The examples below exercise these checks independently.
+Compare the pairs from top to bottom: accepted and rejected input, whole-object
+and string selection, then data and schema references. Keep the definition’s
+shape separate from the values its schemas accept. The examples below exercise
+these checks independently.
 
 [Open diagram at full size](diagrams/authoring-schema-boundaries.svg)
 

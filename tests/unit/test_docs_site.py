@@ -160,3 +160,55 @@ def test_strict_build_retains_theme_assets_and_public_navigation(tmp_path):
     assert not (output / "implementation-status/index.html").exists()
     assert not (output / "contributing/source-inventory.toml").exists()
     assert not (output / ".superpowers").exists()
+
+
+def test_generated_api_reference_matches_exported_contract_and_links_every_schema(tmp_path):
+    import json
+    from html.parser import HTMLParser
+
+    from firefly_weave.contracts.openapi import export_openapi
+
+    output = tmp_path / "site"
+    result = subprocess.run(
+        [sys.executable, "-m", "mkdocs", "build", "--strict", "--site-dir", str(output)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    exported = json.loads((output / "reference/openapi.json").read_text())
+    assert exported == export_openapi()
+    html = (output / "reference/api-explorer/index.html").read_text()
+
+    class ReferenceParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.ids = set()
+            self.links = set()
+
+        def handle_starttag(self, tag, attributes):
+            attrs = dict(attributes)
+            if "id" in attrs:
+                self.ids.add(attrs["id"])
+            if tag == "a" and "href" in attrs:
+                self.links.add(attrs["href"])
+
+    parser = ReferenceParser()
+    parser.feed(html)
+    operations = {op["operationId"] for path in exported["paths"].values() for op in path.values()}
+    assert {"operation-" + identifier for identifier in operations} <= parser.ids
+    assert {"schema-" + name for name in exported["components"]["schemas"]} <= parser.ids
+    assert all(link[1:] in parser.ids for link in parser.links if link.startswith("#schema-"))
+    assert "../openapi.json" in parser.links
+    assert "SwaggerUIBundle" not in html
+
+
+def test_api_reference_renders_operation_contract_and_schema_crosslinks():
+    from firefly_weave.contracts.openapi import export_openapi
+
+    document = HOOK["api_reference"](export_openapi())
+    assert 'id="operation-compiler.compile"' in document
+    assert 'href="#schema-CompilerRequest"' in document
+    assert 'id="schema-CompilerRequest"' in document
+    assert "/api/v1/tenants/{tenant}/projects/{project}/compiler/compile" in document

@@ -27,7 +27,7 @@ are unsupported by `weave worker deploy`.
 
 ![Terminals, owned services, remote worker and native executor](../diagrams/operations-topology.svg)
 
-Read the three columns as process ownership, not steps to run in one shell. The remote worker crosses the HTTP boundary; the optional native executor crosses the database boundary. The bottom strip is the restart path for the same retained installation.
+Start with the operator card, then follow the labeled connections between processes. The remote worker reaches the API over HTTP; the native executor has database authority. The lower callout explains how to resume the same retained installation.
 
 [Open diagram at full size](../diagrams/operations-topology.svg)
 
@@ -106,6 +106,7 @@ are pinned by digest. Every image installs hash-locked dependencies, then the ex
 wheel with `--no-deps`; no editable checkout or source bind mount is used.
 
 ```sh
+# Build the API container from the prepared package and confirm its embedded wheel identity.
 docker --context "$WEAVE_DOCKER_CONTEXT" build --target server \
   --iidfile "$WEAVE_WORK_DIR/server-image.id" \
   "$WEAVE_WORK_DIR/release/images"
@@ -138,6 +139,7 @@ its own handler and matching manifest. Packaging validates declarations and file
 policy without importing or executing the handler.
 
 ```sh
+# Package the handler and its manifest, then build the worker image that will be admitted.
 export WEAVE_WHEEL_NAME="$(python3 -c 'import json,os; print(json.load(open(os.environ["WEAVE_WORK_DIR"]+"/release/release.json"))["wheel"])')"
 "$WEAVE_PYTHON" -I -m firefly_weave.cli.main worker package \
   --manifest examples/worker/manifest.json --entrypoint examples/worker/main.py \
@@ -184,6 +186,7 @@ In terminal 1, with runtime and identity configuration loaded, select the
 host-reachable API origin and run once for this fresh runtime database:
 
 ```sh
+# Link the worker identity and grant its release access to the scope created by the first run.
 export WEAVE_API_URL="http://127.0.0.1:$WEAVE_API_PORT"
 "$WEAVE_PYTHON" examples/provision_worker.py --provider local-keycloak \
   --output "$WEAVE_WORK_DIR/worker-principal.json"
@@ -207,6 +210,7 @@ In terminal 3, run the printed `cd` and `source .../session.env` commands from
 standalone setup, then start the example effect receiver:
 
 ```sh
+# Leave this terminal running: the receiver stands in for the external system called by the worker.
 python3 examples/idempotent_receiver.py --database "$WEAVE_WORK_DIR/effects.sqlite" \
   --host 0.0.0.0 --port 8090
 ```
@@ -226,6 +230,7 @@ load `runtime.env` with `set -a; source "$WEAVE_WORK_DIR/runtime.env"; set +a`.
 Restart the API so the worker container can reach the host:
 
 ```sh
+# Restart the API on the selected interface so the tutorial worker container can reach it.
 env -u WEAVE_MIGRATION_DATABASE_URL \
   "$WEAVE_WORK_DIR/runtime/bin/python" -I -m uvicorn \
   firefly_weave.main:create_application --factory --host 0.0.0.0 \
@@ -236,6 +241,7 @@ The API still requires normal bearer authorization. Return to terminal 1 and
 check both endpoints before proceeding:
 
 ```sh
+# Check both host services, then use host.docker.internal for requests originating inside the worker.
 "$WEAVE_PYTHON" - <<'PY'
 import os, httpx
 for url in ("http://127.0.0.1:8090/health", "http://127.0.0.1:" + os.environ["WEAVE_API_PORT"] + "/health/ready"):
@@ -274,6 +280,7 @@ or identity administrator secret. After setting these six values in your operato
 shell, create the file without printing or copying any unrelated environment:
 
 ```sh
+# Save only the worker settings in a private file and restore the host-facing API URL afterward.
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -306,6 +313,7 @@ already written. Keep `umask 077` in terminal 1 so the redirected deployment
 receipt is private. Leave the API and receiver running throughout this step.
 
 ```sh
+# Deploy the selected image, then inspect the exact container recorded in its deployment receipt.
 "$WEAVE_PYTHON" -I -m firefly_weave.cli.main worker deploy --target compose \
   --image "$WEAVE_WORKER_IMAGE" --project "$WEAVE_LAUNCH_ID-worker" \
   --context "$WEAVE_DOCKER_CONTEXT" --directory "$WEAVE_WORK_DIR/worker-context" \
@@ -337,6 +345,7 @@ only protected logs. The ordinary worker contains no crash-test switch.
 Run the activated worker workflow and wait for its actual output:
 
 ```sh
+# Start one integration run and poll until the worker result has been accepted by the API.
 "$WEAVE_PYTHON" - <<'PY'
 import asyncio, json, os
 from pathlib import Path
@@ -396,6 +405,7 @@ only that release/task, pins its connection and activates a workflow. It reads t
 receiver's `/health` endpoint and performs no provider message action.
 
 ```sh
+# Prepare separate API and native-executor credentials, validate Compose, and start those processes.
 export WEAVE_API_URL="http://127.0.0.1:$WEAVE_API_PORT"
 "$WEAVE_PYTHON" examples/admit_native.py \
   --scope-receipt "$WEAVE_WORK_DIR/first-run.json" \
@@ -464,6 +474,7 @@ principal plus current grants and immutable release/connection pins.
 Verify actual readiness and run the native workflow through the container API:
 
 ```sh
+# Wait for the container API, submit the native integration, and verify the saved output.
 "$WEAVE_PYTHON" - <<'PY'
 import asyncio, json, os
 from pathlib import Path
@@ -520,6 +531,7 @@ Stop a foreground process with Ctrl-C in its own terminal.
 To stop **only the deployed worker**, execute the exact argv from its receipt:
 
 ```sh
+# Stop only the worker identified by its deployment receipt; retain its container and data.
 python3 - <<'PY'
 import json, os, subprocess
 from pathlib import Path
@@ -536,6 +548,7 @@ For **all runtime containers in this installation**, use the explicitly selected
 runtime Compose project:
 
 ```sh
+# Stop API and native execution before stopping the database and identity dependencies.
 docker --context "$WEAVE_DOCKER_CONTEXT" compose --project-name "$WEAVE_LAUNCH_ID" \
   --env-file "$WEAVE_WORK_DIR/postgres.env" --env-file "$WEAVE_WORK_DIR/identity.env" \
   -f compose.yaml -f compose.identity.yaml -f compose.runtime.yaml \
@@ -562,6 +575,7 @@ same stopped container, first check that its recorded image and project still
 match. In terminal 1:
 
 ```sh
+# Check the retained worker's identity and image before restarting that same container.
 python3 - <<'PY'
 import json, os, subprocess
 from pathlib import Path

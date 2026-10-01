@@ -45,6 +45,7 @@ The resource group below contains the cluster; ACR is selected by its existing
 registry name in the same subscription.
 
 ```sh
+# Select the intended subscription and verify the existing cluster and registry names.
 export WEAVE_AZURE_SUBSCRIPTION='your-subscription-id'
 export WEAVE_AZURE_RESOURCE_GROUP='your-cluster-resource-group'
 export WEAVE_AKS_CLUSTER='your-existing-cluster'
@@ -70,6 +71,7 @@ a separate check. Follow the [AKS credential command](https://learn.microsoft.co
 for your cluster's authentication mode.
 
 ```sh
+# Save ordinary cluster-user credentials in a private kubeconfig for this installation.
 umask 077
 export WEAVE_PROVIDER_DIR="$HOME/weave-azure-$(python3 -c 'from uuid import uuid4; print(uuid4().hex)')"
 mkdir -m 700 "$WEAVE_PROVIDER_DIR"
@@ -82,6 +84,7 @@ kubectl config get-contexts
 Expect a context for this AKS cluster. Inspect it and copy the exact context name:
 
 ```sh
+# Check the exact Kubernetes context and node architecture before building images.
 export WEAVE_KUBE_CONTEXT='your-exact-context-name-from-the-list'
 kubectl --context "$WEAVE_KUBE_CONTEXT" get namespaces
 kubectl --context "$WEAVE_KUBE_CONTEXT" get nodes -L kubernetes.io/arch
@@ -99,6 +102,7 @@ local Docker build context first; login does not deploy a workload. See
 [ACR authentication](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-authentication).
 
 ```sh
+# Let Docker authenticate to the registry using your Azure identity; cluster pull access is separate.
 : "${WEAVE_DOCKER_CONTEXT:?Select the local build context in the cloud overview}"
 export WEAVE_ACR_LOGIN_SERVER="$(az acr show --name "$WEAVE_ACR_NAME" --query loginServer --output tsv)"
 DOCKER_CONTEXT="$WEAVE_DOCKER_CONTEXT" az acr login --name "$WEAVE_ACR_NAME"

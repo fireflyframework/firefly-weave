@@ -121,3 +121,36 @@ provide a full-size link and horizontal space for the ER views. On narrow screen
 open the original SVG at its readable width rather than shrinking dense labels.
 The small license/Python/alpha badges state current source facts only; there is no
 fabricated CI, release, coverage or live-provider badge.
+
+## Meet Lumi
+
+![Lumi, the Firefly Weave guide](../assets/lumi.svg)
+
+**Lumi** is a quiet firefly built from folded ribbons and a golden lantern. The wings echo
+Weave’s interlaced symbol; the light represents the next understandable step.
+Lumi accompanies the official logo in CLI help, explains the takeaway below each
+documentation diagram, and appears in exported workflow SVGs.
+
+Run `weave --help` to meet the ASCII edition:
+
+```text
+       \ /
+   \\ (o o) //
+    \\|___|//
+     \|   |/
+      \ * /
+       \_/
+```
+
+Artwork is decorative guidance, not a running job or health indicator. Machine
+JSON output stays free of mascots and animation. Narrow terminals show the product
+name without the wide illustration. For progress animation controls, see the
+[CLI reference](reference/cli.md).
+
+The [editable SVG](../assets/lumi.svg) uses the same forest and jade palette as the
+official identity, with a warm gold light. The softly shaded face uses shaped eyelids, focused pupils, and small highlights;
+the folded wings remain the defining silhouette.
+Keep its proportions and leave space
+around the wings. The mascot supplements the approved logo; the logo remains the
+application icon and primary product mark. The artwork is licensed under
+Apache 2.0 and authored by the Firefly Software Foundation.

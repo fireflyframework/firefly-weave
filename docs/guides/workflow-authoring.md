@@ -37,7 +37,7 @@ not need to import packages from the CLI's isolated environment.
 
 ![Authoring feedback loop showing partial validation, full compilation, diagnostics, and simulation](../diagrams/authoring-diagnostic-loop.svg)
 
-Read the two result columns before following the numbered steps. Partial validation can pass without an artifact; the right column requires an explicit catalog. The return arrow shows how diagnostics guide an edit. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
+Read down through source, partial validation, full compilation, and simulation. Partial validation can pass without an artifact; compilation needs an explicit catalog. The final card explains how a diagnostic sends you back to a concrete source edit. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
 
 ## 1. Write the input and output contract
 

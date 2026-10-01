@@ -25,7 +25,7 @@ does not query that database. Weave's own runtime database is a separate service
 
 ![External PostgreSQL transaction and operation-ledger boundary](../diagrams/integrations-sql-transaction.svg)
 
-**How to read this diagram:** Read the outer transaction first. The inner ledger applies only to idempotent-command; ordinary commands do not gain that protection. A lost COMMIT acknowledgment remains unknown even after cleanup.
+**How to read this diagram:** Read down from the reviewed operation and connection to the external transaction and its result. Step 4 applies only to idempotent-command; ordinary commands do not gain that protection. A lost COMMIT acknowledgment remains unknown even after cleanup.
 
 ## First lookup: from connection to rows
 

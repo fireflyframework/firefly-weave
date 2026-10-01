@@ -25,7 +25,7 @@ own document, or use the source example below to learn with a complete fixture.
 
 ![OpenAPI supported-subset decision followed by artifact review and separate deployment](../diagrams/integrations-openapi-review.svg)
 
-**How to read this diagram:** Follow the decision before the deployment lane. Successful import produces files to review; the later operator steps allocate live IDs and admit the installed package.
+**How to read this diagram:** Read down through contract selection, policy, and the supported-operation check. A rejection returns you to the source; success produces files to review before the separate deployment step allocates live IDs.
 
 ## Choose the integration approach
 

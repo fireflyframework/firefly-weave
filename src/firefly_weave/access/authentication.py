@@ -101,6 +101,12 @@ class AuthenticationFilter(OncePerRequestFilter):
         request.state.audit_context = AuditContext(request_id=uuid4())
         if (
             (
+                getattr(request.app.state, "weave_docs_enabled", False)
+                and request.method in {"GET", "HEAD"}
+                and request.url.path.removeprefix(request.scope.get("root_path", "").rstrip("/"))
+                in {"/docs", "/openapi.json"}
+            )
+            or (
                 request.method in {"GET", "POST"}
                 and re.fullmatch(
                     r"/provider-ingress/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", request.url.path

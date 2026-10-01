@@ -25,7 +25,7 @@ with an actual account; a local fixture is not evidence of Teams delivery.
 
 ![Provider comparison highlighting the Teams reference-generation lifecycle](../diagrams/integrations-messaging.svg)
 
-**How to read this diagram:** Follow the Teams column from authenticated installation to reference lifecycle to outbound target. Its reference ID and generation are server-owned authority facts; the other columns show why WhatsApp or Telegram identifiers cannot substitute for them.
+**How to read this diagram:** Follow the top Teams row from storing an authenticated address to replying through that reference. The reference ID and generation are server-owned authority facts; the other rows show why WhatsApp or Telegram identifiers cannot substitute for them.
 
 ## Build an inbound message and reply flow
 
@@ -87,7 +87,7 @@ and [run incidents](../reference/incident-operations.md).
 
 The optional `teams` extra implements public-cloud Bot Connector text messages for one explicitly configured personal installation per immutable connection/source. It supports reply and proactive text to a stored authenticated reference. It does not create conversations, provision accounts, send Graph messages, or implement channels/groups, SSO, skills, invoke, streaming, attachments or cards. Fixture and local PostgreSQL verification is separate from live Azure/Teams certification.
 
-Install the exact reviewed Weave wheel with `server,teams` extras. Operator configuration must select `firefly-weave:weave-teams:firefly_weave.connectors.teams:package` in `connector_packages`; installing the optional SDK alone does not enable it. Missing extras fail startup when selected. The installed distribution version is `0.1.0a3`; adapter/task behavior is separately pinned at `1.0.0`. Native services share the application's existing PyFly container.
+Install the exact reviewed Weave wheel with `server,teams` extras. Operator configuration must select `firefly-weave:weave-teams:firefly_weave.connectors.teams:package` in `connector_packages`; installing the optional SDK alone does not enable it. Missing extras fail startup when selected. The installed distribution version is `0.1.0a4`; adapter/task behavior is separately pinned at `1.0.0`. Native services share the application's existing PyFly container.
 
 ## Provision and configure
 

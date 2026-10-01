@@ -16,69 +16,135 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="890" viewBox="0 0 1120 890" role="img" aria-labelledby="title desc">
-<title id="title">Messaging providers retain different durable facts</title><desc id="desc">Comparison of Teams reference lifecycle, WhatsApp message and status branches, and Telegram source-local update receipts. Outbound acceptance never proves delivery.</desc>
-<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,sans-serif;fill:#173D34;font-size:18px}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.bold{font-weight:700}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.dash{stroke:#91B4A3;stroke-width:2;stroke-dasharray:7 6}</style>
-<rect width="1120" height="890" fill="#FAFCFA"/>
-<text x="40" y="49" class="title">Messaging providers retain different durable facts</text>
-<text x="40" y="84" class="">A shared inbox does not make provider identity, lifecycle, or delivery evidence interchangeable.</text>
-<rect x="40" y="125" width="320" height="190" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="159" class="head">Teams: stored reference</text>
-<text x="60" y="191" class="">Authenticated personal installation</text>
-<text x="60" y="218" class="">Message stores an address.</text>
-<text x="60" y="245" class="">Workflow receives reference_id,</text>
-<text x="60" y="272" class="">generation and activity_id.</text>
-<rect x="400" y="125" width="320" height="190" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="420" y="159" class="head">WhatsApp: two event kinds</text>
-<text x="420" y="191" class="">Authenticated batch</text>
-<text x="420" y="218" class="">whatsapp-message → text</text>
-<text x="420" y="245" class="">whatsapp-status → status</text>
-<text x="420" y="272" class="">Both kinds are dispatchable.</text>
-<rect x="760" y="125" width="320" height="190" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="780" y="159" class="head">Telegram: source + update</text>
-<text x="780" y="191" class="">Configured bot and allowed chats</text>
-<text x="780" y="218" class="">Secret authenticates webhook.</text>
-<text x="780" y="245" class="">Identity: bot ID + update ID</text>
-<text x="780" y="272" class="">Human text can dispatch.</text>
-<path class="edge" d="M200 315V370"/>
-<path class="edge" d="M560 315V370"/>
-<path class="edge" d="M920 315V370"/>
-<rect x="40" y="380" width="320" height="185" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="414" class="head">Reference lifecycle</text>
-<text x="60" y="446" class="">Removal revokes the generation.</text>
-<text x="60" y="473" class="">Late messages cannot restore it.</text>
-<text x="60" y="500" class="">Explicit reactivation requires</text>
-<text x="60" y="527" class="">a new matching source / revision.</text>
-<rect x="400" y="380" width="320" height="185" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="420" y="414" class="head">Status projection</text>
-<text x="420" y="446" class="">sent → delivered → read</text>
-<text x="420" y="473" class="">Progress never moves backward.</text>
-<text x="420" y="500" class="">failed_seen and deleted_seen</text>
-<text x="420" y="527" class="">remain independent flags.</text>
-<rect x="760" y="380" width="320" height="185" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="780" y="414" class="head">Receipt lifecycle</text>
-<text x="780" y="446" class="">Same facts + ID reuse receipt.</text>
-<text x="780" y="473" class="">Conflicting facts reject admission.</text>
-<text x="780" y="500" class="">Unsupported classes are ignored.</text>
-<text x="780" y="527" class="">Deduplication is source-local.</text>
-<rect x="40" y="620" width="320" height="115" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="654" class="head">Outbound target</text>
-<text x="60" y="686" class="">Stored authorized reference only</text>
-<text x="60" y="713" class="">No conversation bootstrap</text>
-<rect x="400" y="620" width="320" height="115" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="420" y="654" class="head">Outbound target</text>
-<text x="420" y="686" class="">Allowed recipient + text/template</text>
-<text x="420" y="713" class="">Statuses need no Weave send.</text>
-<rect x="760" y="620" width="320" height="115" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="780" y="654" class="head">Outbound target</text>
-<text x="780" y="686" class="">Configured chat + text</text>
-<text x="780" y="713" class="">A reply also pins its message ID.</text>
-<path class="edge" d="M200 565V610"/>
-<path class="edge" d="M560 565V610"/>
-<path class="edge" d="M920 565V610"/>
-<rect x="40" y="785" width="1040" height="80" rx="12" fill="#E0EEE4" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="819" class="head"></text>
-<text x="60" y="818" class="">An accepted send is provider acceptance, not delivery. An unknown send requires reconciliation.</text>
-<text x="60" y="845" class="">These profiles and local fixtures do not certify a live provider account or installation.</text>
+
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1680" viewBox="0 0 960 1680" role="img" aria-labelledby="title desc">
+<title id="title">Keep each messaging provider’s identity intact</title><desc id="desc">A shared inbox does not make provider references, lifecycle facts, or delivery evidence interchangeable. READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1580" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Keep each messaging provider’s identity intact</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">A shared inbox does not make provider references, lifecycle facts, or</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">delivery evidence interchangeable.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</text>
+<text x="48" y="242" font-size="24" font-weight="700" fill="#173D34">TEAMS • An authenticated personal installation</text>
+<rect x="40.0" y="263" width="420.0" height="311" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="309" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="15" r="10"/><path d="M9 51V41c0-20 38-20 38 0v10"/></g>
+<text x="58.0" y="366" font-size="24" font-weight="700" fill="#173D34">Store a usable address</text>
+<text x="58.0" y="410" font-size="22" font-weight="400" fill="#173D34">A message stores reference_id,</text>
+<text x="58.0" y="438" font-size="22" font-weight="400" fill="#173D34">generation, and activity_id for</text>
+<text x="58.0" y="466" font-size="22" font-weight="400" fill="#173D34">the workflow.</text>
+<text x="58.0" y="494" font-size="22" font-weight="400" fill="#173D34">Removal revokes the generation;</text>
+<text x="58.0" y="522" font-size="22" font-weight="400" fill="#173D34">late messages cannot restore it.</text>
+<path class="edge" d="M465.0 418.5h29"/>
+<rect x="500.0" y="263" width="420.0" height="311" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="309" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 47 21L5 49l8-21z M13 28h39"/></g>
+<text x="518.0" y="366" font-size="24" font-weight="700" fill="#173D34">Reply through the stored</text>
+<text x="518.0" y="396" font-size="24" font-weight="700" fill="#173D34">reference</text>
+<text x="518.0" y="440" font-size="22" font-weight="400" fill="#173D34">Explicit reactivation needs a</text>
+<text x="518.0" y="468" font-size="22" font-weight="400" fill="#173D34">matching new source/revision.</text>
+<text x="518.0" y="496" font-size="22" font-weight="400" fill="#173D34">Only an authorized stored</text>
+<text x="518.0" y="524" font-size="22" font-weight="400" fill="#173D34">reference can be used; no</text>
+<text x="518.0" y="552" font-size="22" font-weight="400" fill="#173D34">conversation bootstrap.</text>
+<text x="48" y="632" font-size="24" font-weight="700" fill="#173D34">WHATSAPP • Messages and status events both dispatch</text>
+<rect x="40.0" y="653" width="420.0" height="309" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="699" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 676) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M28 29v24 M15 39a18 18 0 1 1 26 0 M7 46a29 29 0 1 1 42 0"/><circle cx="28" cy="27" r="4"/></g>
+<text x="58.0" y="756" font-size="24" font-weight="700" fill="#173D34">Normalize two event kinds</text>
+<text x="58.0" y="800" font-size="22" font-weight="400" fill="#173D34">whatsapp-message carries text.</text>
+<text x="58.0" y="828" font-size="22" font-weight="400" fill="#173D34">whatsapp-status carries status.</text>
+<text x="58.0" y="856" font-size="22" font-weight="400" fill="#173D34">Statuses need no earlier Weave</text>
+<text x="58.0" y="884" font-size="22" font-weight="400" fill="#173D34">send.</text>
+<path class="edge" d="M465.0 807.5h29"/>
+<rect x="500.0" y="653" width="420.0" height="309" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="699" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 676) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
+<text x="518.0" y="756" font-size="24" font-weight="700" fill="#173D34">Retain delivery progress</text>
+<text x="518.0" y="800" font-size="22" font-weight="400" fill="#173D34">sent → delivered → read never</text>
+<text x="518.0" y="828" font-size="22" font-weight="400" fill="#173D34">moves backward.</text>
+<text x="518.0" y="856" font-size="22" font-weight="400" fill="#173D34">failed_seen and deleted_seen stay</text>
+<text x="518.0" y="884" font-size="22" font-weight="400" fill="#173D34">independent.</text>
+<text x="518.0" y="912" font-size="22" font-weight="400" fill="#173D34">Send text/templates to allowed</text>
+<text x="518.0" y="940" font-size="22" font-weight="400" fill="#173D34">recipients.</text>
+<text x="48" y="1020" font-size="24" font-weight="700" fill="#173D34">TELEGRAM • Pin the bot and allowed chats</text>
+<rect x="40.0" y="1041" width="420.0" height="311" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="1087" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 1064) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="58.0" y="1144" font-size="24" font-weight="700" fill="#173D34">Authenticate the update</text>
+<text x="58.0" y="1188" font-size="22" font-weight="400" fill="#173D34">Webhook secret verifies the</text>
+<text x="58.0" y="1216" font-size="22" font-weight="400" fill="#173D34">source.</text>
+<text x="58.0" y="1244" font-size="22" font-weight="400" fill="#173D34">Identity combines bot ID and</text>
+<text x="58.0" y="1272" font-size="22" font-weight="400" fill="#173D34">update ID.</text>
+<text x="58.0" y="1300" font-size="22" font-weight="400" fill="#173D34">Human text can dispatch.</text>
+<path class="edge" d="M465.0 1196.5h29"/>
+<rect x="500.0" y="1041" width="420.0" height="311" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="1087" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 1064) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 47 21L5 49l8-21z M13 28h39"/></g>
+<text x="518.0" y="1144" font-size="24" font-weight="700" fill="#173D34">Preserve source-local</text>
+<text x="518.0" y="1174" font-size="24" font-weight="700" fill="#173D34">receipts</text>
+<text x="518.0" y="1218" font-size="22" font-weight="400" fill="#173D34">Same facts and ID reuse a receipt;</text>
+<text x="518.0" y="1246" font-size="22" font-weight="400" fill="#173D34">conflicts reject.</text>
+<text x="518.0" y="1274" font-size="22" font-weight="400" fill="#173D34">Unsupported classes are ignored.</text>
+<text x="518.0" y="1302" font-size="22" font-weight="400" fill="#173D34">Send to configured chats; replies</text>
+<text x="518.0" y="1330" font-size="22" font-weight="400" fill="#173D34">pin a message ID.</text>
+<rect x="40" y="1400" width="880" height="136" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 1420) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1444" font-size="23" font-weight="700" fill="#326B88">Provider acceptance is not delivery</text>
+<text x="60" y="1483" font-size="21" font-weight="400" fill="#173D34">Unknown sends need reconciliation. These profiles and local fixtures do not</text>
+<text x="60" y="1512" font-size="21" font-weight="400" fill="#173D34">certify a live account or installation.</text><g id="lumi-takeaway">
+<rect x="0" y="1586" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1597) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1615" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1646" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Preserve each provider’s own reference, receipt and status identities.</text>
+</g>
 </svg>

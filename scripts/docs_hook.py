@@ -22,8 +22,11 @@ The checked-in Markdown therefore remains useful when read directly on GitHub.
 
 from __future__ import annotations
 
+import json
 import os
 import posixpath
+import re
+from html import escape
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
@@ -42,6 +45,7 @@ PROJECT_PAGES = {
     "tests/fixtures/e2-provider/README.md": "project/provider-fixture.md",
 }
 ASSETS = (
+    "assets/lumi.svg",
     "assets/weave-logo.svg",
     "assets/weave-logo-reversed.svg",
     "assets/weave-logo-mono.svg",
@@ -51,6 +55,7 @@ ASSETS = (
     "assets/badges/alpha.svg",
 )
 PRIVATE_PARTS = {"superpowers", ".superpowers", ".codex", ".agents", ".secrets", ".local", "localenv"}
+GENERATED_FILES = {"reference/openapi.json"}
 PRIVATE_NAMES = {"AGENTS.md", "CLAUDE.md", "implementation-status.md"}
 
 
@@ -75,11 +80,12 @@ def rewrite_url(url: str, *, origin: Path, site_uri: str, root: Path, ref: str) 
     target = (origin.parent / unquote(parsed.path)).resolve()
     if not public_path(target, root):
         raise PluginError(f"Documentation link points outside public sources: {origin.relative_to(root)}: {url}")
-    if not target.exists():
+    generated = target.is_relative_to(root / "docs") and target.relative_to(root / "docs").as_posix() in GENERATED_FILES
+    if not target.exists() and not generated:
         raise PluginError(f"Documentation link does not exist: {origin.relative_to(root)}: {url}")
     repo_uri = target.relative_to(root).as_posix()
     destination = PROJECT_PAGES.get(repo_uri)
-    if target.is_relative_to(root / "docs") and target.suffix in {".md", ".svg", ".css"}:
+    if generated or (target.is_relative_to(root / "docs") and target.suffix in {".md", ".svg", ".css"}):
         destination = target.relative_to(root / "docs").as_posix()
     elif repo_uri in ASSETS:
         destination = repo_uri
@@ -128,6 +134,16 @@ def on_files(files, config):
             files.remove(file)
     for source, destination in {**PROJECT_PAGES, **dict.fromkeys(ASSETS)}.items():
         files.append(File.generated(config, destination or source, abs_src_path=str(root / source)))
+    from firefly_weave.contracts.openapi import export_openapi
+
+    config.extra["weave_openapi"] = export_openapi()
+    files.append(
+        File.generated(
+            config,
+            "reference/openapi.json",
+            content=json.dumps(config.extra["weave_openapi"], indent=2, sort_keys=True) + "\n",
+        )
+    )
     return files
 
 
@@ -148,4 +164,70 @@ def on_page_markdown(markdown, page, config, files):
             "![Firefly Weave](../assets/banner.svg)\n\n# Learn and use Firefly Weave",
             1,
         )
+    if page.file.src_uri == "reference/api-explorer.md":
+        markdown = markdown.replace("<!-- WEAVE_API_REFERENCE -->", api_reference(config.extra["weave_openapi"]))
     return markdown
+
+
+def api_reference(spec):
+    """Render the complete exported contract as inert HTML within the branded site."""
+    schemas = spec.get("components", {}).get("schemas", {})
+
+    def contract(value):
+        encoded = escape(json.dumps(value, indent=2, sort_keys=True))
+        return re.sub(
+            r"#/components/schemas/([^&\s]+)",
+            lambda match: f'<a href="#schema-{match[1]}">{match[0]}</a>',
+            encoded,
+        )
+
+    lines = [
+        "[Download the OpenAPI JSON](openapi.json). "
+        "This reference is generated from the same contract as the running API.",
+        "",
+        "## Operations",
+        "",
+        "Choose an operation to inspect its complete parameters, security, request body, responses and headers. "
+        "Schema references link to the definitions below. To make a request, use your installation's "
+        "[API playground](../guides/api-playground.md).",
+        "",
+    ]
+    groups = {}
+    for path, methods in spec["paths"].items():
+        for method, operation in methods.items():
+            groups.setdefault(operation.get("tags", ["API"])[0], []).append((path, method, operation))
+    for tag, operations in sorted(groups.items()):
+        lines.extend([f"### {tag.replace('_', ' ').title()}", ""])
+        for path, method, operation in operations:
+            identifier = escape(operation["operationId"], quote=True)
+            summary = escape(operation.get("summary", operation["operationId"]))
+            lines.extend(
+                [
+                    f'<details id="operation-{identifier}"><summary><strong>{method.upper()}</strong> '
+                    f"<code>{escape(path)}</code> — {summary}</summary>",
+                    f"<p><strong>Operation:</strong> <code>{identifier}</code></p>",
+                    f"<p>{escape(operation.get('description', ''))}</p>",
+                    f"<pre><code>{contract(operation)}</code></pre></details>",
+                    "",
+                ]
+            )
+    lines.extend(
+        [
+            "## Authentication schemes",
+            "",
+            f"<pre><code>{contract(spec['components'].get('securitySchemes', {}))}</code></pre>",
+            "",
+            "## Schemas",
+            "",
+        ]
+    )
+    for name, schema in sorted(schemas.items()):
+        name = escape(name, quote=True)
+        lines.extend(
+            [
+                f'<details id="schema-{name}"><summary><strong>{name}</strong></summary>',
+                f"<pre><code>{contract(schema)}</code></pre></details>",
+                "",
+            ]
+        )
+    return "\n".join(lines)

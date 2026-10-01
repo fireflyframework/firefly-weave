@@ -25,7 +25,7 @@ and Weave's schema sentinel must match the installed artifact.
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
-Follow each yes branch in order. A completed migration reaches only the first gate; retained requirements and an actual authorized run still need evidence before writers are deliberately reenabled.
+Read the three gates from top to bottom. Each left card states what to verify; its right card explains what to do on failure. A completed migration passes only the first gate. Retained requirements and an actual authorized run still need evidence before writers are deliberately reenabled.
 
 [Open diagram at full size](../diagrams/operations-upgrade.svg)
 

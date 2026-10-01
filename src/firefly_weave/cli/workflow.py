@@ -32,6 +32,7 @@ from firefly_weave.cli import (
     export_files,
     read_bounded,
 )
+from firefly_weave.cli.graph import graph
 from firefly_weave.compiler.api import CompiledArtifact, compile_source, validate_source
 from firefly_weave.compiler.canonical import canonical_bytes
 from firefly_weave.compiler.catalog import CatalogLock, CatalogSnapshot
@@ -185,3 +186,5 @@ def _command(name: str) -> click.Command:
 
 for _name in ("validate", "compile", "explain"):
     workflow.add_command(_command(_name))
+
+workflow.add_command(graph)

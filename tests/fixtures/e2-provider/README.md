@@ -38,9 +38,10 @@ Never change an uncertain external outcome into a safe automatic retry.
 
 ![Installed package, immutable definition, and environment admission layers](../../../docs/diagrams/integrations-admission.svg)
 
-**How to read this diagram:** This directory supplies the first layer's test
-package. Publishing its Connector, creating a connection, and binding an admitted
-release remain separate test-harness or deployment operations.
+**How to read this diagram:** This directory supplies the installed test package
+in the top-left card. Publishing contracts follows it in the top row; environment
+authority and activation appear in the lower row. Creating a connection and
+binding an admitted release remain separate test-harness or deployment operations.
 
 The package contains two native services with different responsibilities:
 

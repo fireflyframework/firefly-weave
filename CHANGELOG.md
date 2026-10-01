@@ -18,6 +18,28 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a4
+
+- Add `weave platform` commands for an owned local developer installation:
+  prerequisite checks, setup, foreground startup, readiness, first run, token
+  refresh, and stop/resume with retained data.
+- Show stage progress and terminal-only animation during setup; keep JSON output
+  clean and offer `WEAVE_NO_ANIMATION=1` for plain terminal messages.
+- Introduce Lumi, the firefly guide, in ASCII CLI help and editable documentation SVGs.
+- Export compiled workflow graphs as terminal text, Mermaid, or standalone SVG.
+- Add opt-in same-origin Swagger UI at `/docs` and the actual contract at
+  `/openapi.json`; authenticated operations retain their existing grants.
+- Generate the complete public API reference from the same OpenAPI contract.
+- Add step-by-step SDK, YAML/Python workflow, custom inbound/outbound connector,
+  API playground, local platform, and remote deployment tutorials.
+- Redesign the documentation diagrams with human labels, vector icons, and
+  explicit flow explanations; annotate deployment command blocks with their purpose.
+
+This remains an alpha. The local stack is a developer installation, not a
+production availability claim. Cloud and live-provider validation remain
+specific to the target environment. The earlier intermittent queue timeout
+remains unresolved; no retry or runtime scheduling policy is changed here.
+
 ## 0.1.0a3
 
 - Render the official woven-W logo as plain ASCII in CLI help, with a compact

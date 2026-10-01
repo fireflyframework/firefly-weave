@@ -25,7 +25,7 @@ the data, then collect the provider assets listed below before live setup.
 
 ![Provider comparison highlighting WhatsApp message and status event branches](../diagrams/integrations-messaging.svg)
 
-**How to read this diagram:** Follow the WhatsApp column. Both event kinds can dispatch, but a status updates delivery evidence rather than supplying message text. Progress and independent failure/deletion flags preserve out-of-order facts.
+**How to read this diagram:** Follow the middle WhatsApp row from normalized message/status events to retained delivery progress. Both kinds can dispatch, but status carries delivery evidence rather than message text. Independent failure/deletion flags preserve out-of-order facts.
 
 The [offline fixture walkthrough](../../examples/connectors/whatsapp/README.md) explains
 the sample files and the out-of-order status example before live setup.

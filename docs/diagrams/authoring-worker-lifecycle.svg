@@ -16,62 +16,127 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="900" viewBox="0 0 1120 900" role="img" aria-labelledby="title desc">
-<title id="title">Admission and registration precede task authority</title>
-<desc id="desc">A deployer admits an immutable release. A worker principal registers an instance from that release. A workflow Action creates a compatible task; a claim grants a temporary lease. Heartbeats are capped by the absolute deadline. Completion returns a receipt. Recovery changes the generation but keeps the operation key.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:22px;font-weight:700}.body{font-size:19px}.small{font-size:18px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.return{fill:none;stroke:#507767;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}</style>
-<rect width="1120" height="900" rx="20" fill="#f7faf5"/>
-<text class="title" x="40" y="54">Admission and registration precede task authority</text>
-<text class="body" x="40" y="86">A release declares what may run; a lease authorizes one instance to attempt one task.</text>
-<rect x="40" y="120" width="315" height="151" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="60" y="154">Deployer admits release</text>
-<text class="body" x="60" y="185">Immutable image digest</text>
-<text class="body" x="60" y="213">Exact taskType@taskVersion</text>
-<text class="body" x="60" y="241">Declared schemas + effect policy</text>
-<rect x="402" y="120" width="315" height="151" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="422" y="154">Worker registers instance</text>
-<text class="body" x="422" y="185">Authenticated worker principal</text>
-<text class="body" x="422" y="213">Admitted release ID</text>
-<text class="body" x="422" y="241">Declared task types + capacity</text>
-<rect x="764" y="120" width="315" height="151" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="784" y="154">Workflow prepares task</text>
-<text class="body" x="784" y="185">Activated release binding</text>
-<text class="body" x="784" y="213">Validated immutable input</text>
-<text class="body" x="784" y="241">Stable operation_key</text>
-<path class="edge" d="M355 195 H402"/>
-<text class="small" x="40" y="313">TASK ATTEMPT · CURRENT GRANTS REQUIRED</text>
-<rect x="40" y="380" width="315" height="173" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="60" y="414">Claim compatible task</text>
-<text class="body" x="60" y="445">Returns zero or more leases.</text>
-<text class="body" x="60" y="473">Proof: task ID + generation,</text>
-<text class="body" x="60" y="501">owner instance + secret token.</text>
-<text class="body" x="60" y="529">The proof must stay private.</text>
-<rect x="402" y="380" width="315" height="173" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="422" y="414">Run handler + heartbeat</text>
-<text class="body" x="422" y="445">Pass operation_key to target.</text>
-<text class="body" x="422" y="473">Renew only while authorized.</text>
-<text class="body" x="422" y="501">Expiry cannot extend beyond</text>
-<text class="body" x="422" y="529">the absolute task deadline.</text>
-<rect x="764" y="380" width="315" height="173" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="784" y="414">Deliver outcome</text>
-<text class="body" x="784" y="445">Send proof + completion ID.</text>
-<text class="body" x="784" y="473">Complete or fail returns</text>
-<text class="body" x="784" y="501">a committed acknowledgment.</text>
-<text class="body" x="784" y="529">Read its concrete receipt type.</text>
-<path class="return" d="M560 271 V344 H197 V380"/>
-<path class="return" d="M921 271 V361 H315 V380"/>
-<path class="edge" d="M355 460 H402"/>
-<path class="edge" d="M717 460 H764"/>
-<text class="small" x="40" y="595">IF RECOVERY ISSUES A NEW ATTEMPT</text>
-<rect x="40" y="619" width="495" height="144" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="60" y="654">Changes: generation and lease proof</text>
-<text class="body" x="60" y="687">The old attempt cannot complete the new one.</text>
-<text class="body" x="60" y="715">Heartbeats and fencing do not undo effects.</text>
-<rect x="565" y="619" width="515" height="144" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="585" y="654">Stable: operation_key</text>
-<text class="body" x="585" y="687">The target must durably deduplicate the effect.</text>
-<text class="body" x="585" y="715">An accepted API receipt is separate evidence.</text>
-<text class="label" x="40" y="809">Delivery is at least once. A response lost after an effect may leave an unknown outcome.</text>
-<text class="body" x="40" y="845">The SDK renews authority and delivers outcomes; an admitted release alone cannot execute a task.</text>
+
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1947" viewBox="0 0 960 1947" role="img" aria-labelledby="title desc">
+<title id="title">Give a worker permission for one attempt</title><desc id="desc">A release identifies an allowed build. A lease authorizes one running instance to attempt one task. READ DOWN  •  Each arrow carries the result into the next step</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1847" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Give a worker permission for one attempt</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">A release identifies an allowed build. A lease authorizes one running</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">instance to attempt one task.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
+<rect x="40" y="232" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
+<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Admit the build and register the process</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">The deployer admits an immutable image digest and exact</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">taskType@taskVersion, schemas, and effect policy.</text>
+<text x="168" y="372" font-size="22" font-weight="400" fill="#173D34">The authenticated worker registers its release, task types,</text>
+<text x="168" y="401" font-size="22" font-weight="400" fill="#173D34">and capacity.</text>
+<text x="168" y="430" font-size="18" font-weight="600" fill="#326B88">PREPARE • Current grants are required</text>
+<path class="edge" d="M480 452v35"/>
+<rect x="40" y="500" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="517" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 532) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="168" y="543" font-size="25" font-weight="700" fill="#173D34">2. Prepare the workflow task</text>
+<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">Activation selects the release binding.</text>
+<text x="168" y="611" font-size="22" font-weight="400" fill="#173D34">The task has validated input and a stable operation_key.</text>
+<text x="168" y="640" font-size="18" font-weight="600" fill="#326B88">IDENTITY • Keep the operation key across recovery</text>
+<path class="edge" d="M480 662v35"/>
+<rect x="40" y="710" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="727" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 742) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="19" r="12"/><path d="m27 28 22 22 M36 37l7-7 M43 44l7-7"/></g>
+<text x="168" y="753" font-size="25" font-weight="700" fill="#173D34">3. Claim a compatible task</text>
+<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">The claim may return no work or one or more leases.</text>
+<text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">A proof identifies task, generation, owner instance, and a</text>
+<text x="168" y="850" font-size="22" font-weight="400" fill="#173D34">secret token. Keep that proof private.</text>
+<text x="168" y="879" font-size="18" font-weight="600" fill="#326B88">LEASE • Temporary authority for this attempt</text>
+<path class="edge" d="M480 901v35"/>
+<rect x="40" y="949" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="966" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 981) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="M28 13v16l11 7 M28 5v4 M5 28h4 M47 28h4"/></g>
+<text x="168" y="992" font-size="25" font-weight="700" fill="#173D34">4. Run the handler and renew authority</text>
+<text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">Send operation_key to the external target for deduplication.</text>
+<text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">Heartbeat only while authorized; renewal cannot exceed the</text>
+<text x="168" y="1089" font-size="22" font-weight="400" fill="#173D34">absolute task deadline.</text>
+<text x="168" y="1118" font-size="18" font-weight="600" fill="#326B88">EXECUTE • External effects are separate from completion</text>
+<path class="edge" d="M480 1140v35"/>
+<rect x="40" y="1188" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="1205" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 1220) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
+<text x="168" y="1231" font-size="25" font-weight="700" fill="#173D34">5. Deliver a completion or failure</text>
+<text x="168" y="1270" font-size="22" font-weight="400" fill="#173D34">Send the lease proof and completion ID.</text>
+<text x="168" y="1299" font-size="22" font-weight="400" fill="#173D34">Read the concrete committed acknowledgment returned by the</text>
+<text x="168" y="1328" font-size="22" font-weight="400" fill="#173D34">API.</text>
+<text x="168" y="1357" font-size="18" font-weight="600" fill="#326B88">RECEIPT • Evidence that the outcome was accepted</text>
+<path class="edge" d="M480 1379v35"/>
+<rect x="40" y="1427" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="1444" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 1459) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19A22 22 0 1 1 7 37 M8 6v14h14"/></g>
+<text x="168" y="1470" font-size="25" font-weight="700" fill="#173D34">6. Recover with a new fenced attempt</text>
+<text x="168" y="1509" font-size="22" font-weight="400" fill="#173D34">Recovery changes the generation and lease proof.</text>
+<text x="168" y="1538" font-size="22" font-weight="400" fill="#173D34">The old attempt cannot complete the new one. The operation_key</text>
+<text x="168" y="1567" font-size="22" font-weight="400" fill="#173D34">stays stable; the target must durably deduplicate.</text>
+<text x="168" y="1596" font-size="18" font-weight="600" fill="#326B88">RECOVERY • Heartbeats and fencing do not undo effects</text>
+<rect x="40" y="1638" width="880" height="165" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 1658) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1682" font-size="23" font-weight="700" fill="#326B88">Plan for at-least-once delivery</text>
+<text x="60" y="1721" font-size="21" font-weight="400" fill="#173D34">A lost response after an effect can leave its outcome unknown. A release</text>
+<text x="60" y="1750" font-size="21" font-weight="400" fill="#173D34">alone cannot execute a task; the SDK renews authority and delivers the</text>
+<text x="60" y="1779" font-size="21" font-weight="400" fill="#173D34">attempt outcome.</text><g id="lumi-takeaway">
+<rect x="0" y="1853" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1864) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1882" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1913" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">A current lease permits one attempt; old proofs cannot complete a new one.</text>
+</g>
 </svg>

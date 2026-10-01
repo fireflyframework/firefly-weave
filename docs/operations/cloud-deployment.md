@@ -99,6 +99,7 @@ local `WEAVE_DOCKER_CONTEXT`; the Kubernetes context is a separate selection.
 Inspect the cluster's architecture before choosing a build platform:
 
 ```sh
+# Read the node CPU architecture; the image must match the nodes that will run it.
 kubectl --context "$WEAVE_KUBE_CONTEXT" get nodes \
   -o custom-columns=NAME:.metadata.name,ARCH:.status.nodeInfo.architecture
 ```
@@ -109,6 +110,7 @@ The command builds a single-platform image; it does not create a multiarch index
 A laptop's architecture is not evidence that its image will run on cloud nodes.
 
 ```sh
+# Build API and example-worker images for that architecture and retain their local image IDs.
 export WEAVE_TARGET_PLATFORM=linux/amd64
 export WEAVE_IMAGE_TAG="weave-$(date -u +%Y%m%dT%H%M%SZ)"
 docker --context "$WEAVE_DOCKER_CONTEXT" build \
@@ -135,6 +137,7 @@ After completing the chosen provider's registry login, tag and push the two
 images. Use the same explicit local Docker context that built them:
 
 ```sh
+# Push both verified local images to the selected registry so cluster nodes can download them.
 export WEAVE_SERVER_TAG="$WEAVE_REGISTRY_PREFIX/server:$WEAVE_IMAGE_TAG"
 export WEAVE_WORKER_TAG="$WEAVE_REGISTRY_PREFIX/worker:$WEAVE_IMAGE_TAG"
 docker --context "$WEAVE_DOCKER_CONTEXT" tag \
@@ -149,6 +152,7 @@ Continue only when each required push succeeds. Read the registry digest referen
 from the pushed images, keeping the selected repository unambiguous:
 
 ```sh
+# Record immutable registry digests; Kubernetes uses these rather than mutable image tags.
 docker --context "$WEAVE_DOCKER_CONTEXT" image inspect \
   --format '{{json .RepoDigests}}' "$WEAVE_SERVER_TAG" \
   > "$WEAVE_WORK_DIR/cloud-server-digests.json"

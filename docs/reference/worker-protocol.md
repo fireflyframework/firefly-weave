@@ -43,7 +43,7 @@ needed, use a separate authorized lease request.
 
 ![Admission, registration, claim, heartbeat, and outcome lifecycle](../diagrams/authoring-worker-lifecycle.svg)
 
-Read the top row as prerequisites, then follow the attempt from claim to acknowledgment. Recovery changes attempt authority while preserving the operation key; the target must use that key to deduplicate effects. [Open the diagram at full size](../diagrams/authoring-worker-lifecycle.svg).
+Read down from admission and registration through claim, heartbeat, outcome, and recovery. Recovery changes attempt authority while preserving the operation key; the target must use that key to deduplicate effects. [Open the diagram at full size](../diagrams/authoring-worker-lifecycle.svg).
 
 ## Authentication and endpoints
 

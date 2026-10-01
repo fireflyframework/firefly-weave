@@ -121,10 +121,10 @@ roles should grant local administration. See [host integration](../guides/host-i
 
 ![Process authority, request authorization gates and separate connector-secret resolution](../diagrams/operations-authority.svg)
 
-Read the matrix to distinguish migration, API, native-executor and remote-worker
-credentials. Then follow the request gates: verified identity and current local
-grants are separate checks. The connector path below them resolves a scoped handle
-only for the executing process; a bearer token is not a connector credential.
+Read the first two cards to distinguish maintenance, API, native-executor, and
+remote-worker credentials. Continue downward through identity and current-grant
+checks. The final card follows a scoped secret handle to the executing process;
+a bearer token is not a connector credential.
 
 [Open diagram at full size](../diagrams/operations-authority.svg)
 

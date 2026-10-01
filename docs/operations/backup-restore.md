@@ -34,7 +34,7 @@ backup, secret-provider backup or an RPO/RTO guarantee.
 
 ![Fenced source, retained archive and a separately verified restore target](../diagrams/operations-restore.svg)
 
-Read across the lanes to follow ownership of the source, evidence and target. The completion receipt is written after catalog/data equality; public-run verification is a later operator check. The source stays fenced throughout target verification.
+Read down from fencing the source through capture, restore, comparison, and target verification. The completion receipt is written after catalog/data equality; public-run verification is a later operator check. The source stays fenced throughout target verification.
 
 [Open diagram at full size](../diagrams/operations-restore.svg)
 

@@ -27,9 +27,14 @@ Use Python 3.12+ and the locked dependencies. The [Makefile](Makefile) is the
 source of truth for current checks:
 
 ```sh
-uv sync --locked --no-editable --all-extras --group dev --group docs
+# Install locked tooling and rebuild Weave from this checkout.
+uv sync --locked --no-editable --reinstall-package firefly-weave --all-extras --group dev --group docs
+# Run the complete local gate against the current installed package.
 make check
 ```
+
+The check targets reinstall Weave so a cached wheel cannot hide source edits.
+They keep dependencies locked.
 
 This runs strict source inventory/header checks, documentation navigation/SVG
 checks, a strict MkDocs site build, unit/contracts, Ruff lint and format, strict mypy and package build. For a focused change, first run its relevant

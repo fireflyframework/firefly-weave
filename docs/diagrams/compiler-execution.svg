@@ -15,23 +15,119 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="880" viewBox="0 0 1120 880" role="img" aria-labelledby="title desc">
-<title id="title">Firefly Weave compiler and execution lifecycle</title>
-<desc id="desc">Bounded parsing and catalog-based analysis produce canonical intermediate representation. Authorized publication and activation precede durable runs. Workers report fenced completions; PostgreSQL records state. External effects are not exactly once.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
-<rect width="1120" height="880" rx="20" fill="#f7faf5"/>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:21px;font-weight:700}.small{font-size:18px}.eyebrow{font-size:15px;font-weight:700;letter-spacing:1.5px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.box{fill:#fff;stroke:#adc5b5;stroke-width:1.5}</style><text class="title" x="40" y="52">From definition to durable execution</text><text class="small" x="40" y="82">Compilation checks meaning. Activation checks authority and readiness.</text>
-<rect x="25" y="110" width="1070" height="270" rx="16" fill="#edf4e8" stroke="#adc5b5"/>
-<text class="eyebrow" x="45" y="143">PURE COMPILER · NO SERVICES OR SECRETS</text><rect class="box" x="45" y="205" width="225" height="118" rx="12"/><text class="label" x="63" y="236">Parse + validate</text><text class="small" x="63" y="263">Bounded YAML / JSON</text><text class="small" x="63" y="288">Schema / expressions</text><rect class="box" x="310" y="205" width="240" height="118" rx="12"/><text class="label" x="328" y="236">Analyze + resolve</text><text class="small" x="328" y="263">Immutable catalog lock</text><text class="small" x="328" y="288">Types / dependencies</text><rect class="box" x="590" y="205" width="215" height="118" rx="12"/><text class="label" x="608" y="236">Lower to IR</text><text class="small" x="608" y="263">Graph + guards</text><text class="small" x="608" y="288">Pinned dependencies</text><rect class="box" x="845" y="205" width="230" height="118" rx="12"/><text class="label" x="863" y="236">Canonical artifact</text><text class="small" x="863" y="263">Digest + source map</text><text class="small" x="863" y="288">Versioned envelope</text><path class="edge" d="M270 257 H310"/><path class="edge" d="M550 257 H590"/><path class="edge" d="M805 257 H845"/>
-<text class="small" x="45" y="354">Without a catalog: partial authoring validation only; no executable artifact.</text>
 
-<rect x="25" y="430" width="1070" height="298" rx="16" fill="#f0f4f2" stroke="#adc5b5"/>
-<path class="edge" d="M960 323 V404 H155 V430"/>
-<text class="eyebrow" x="45" y="460">AUTHORIZED APPLICATION SERVICES · PERSISTENT RUNTIME</text><rect class="box" x="45" y="488" width="225" height="120" rx="12"/><text class="label" x="63" y="519">Publish</text><text class="small" x="63" y="546">Recompile source</text><text class="small" x="63" y="571">Immutable revision</text><rect class="box" x="310" y="488" width="240" height="120" rx="12"/><text class="label" x="328" y="519">Activate</text><text class="small" x="328" y="546">Pin artifact + bindings</text><text class="small" x="328" y="571">Check local authority</text><rect class="box" x="590" y="488" width="215" height="120" rx="12"/><text class="label" x="608" y="519">Start + transition</text><text class="small" x="608" y="546">Deterministic kernel</text><text class="small" x="608" y="571">Tasks / waits / signals</text><rect class="box" x="845" y="488" width="230" height="120" rx="12"/><text class="label" x="863" y="519">Execute tasks</text><text class="small" x="863" y="546">Native / remote worker</text><text class="small" x="863" y="571">Fenced lease + receipt</text><path class="edge" d="M270 540 H310"/><path class="edge" d="M550 540 H590"/><path class="edge" d="M805 540 H845"/>
-<path class="edge" d="M155 608 V650"/><path class="edge" d="M430 608 V650"/><path class="edge" d="M697 608 V650"/><path class="edge" d="M960 608 V650"/>
-<rect x="45" y="658" width="1030" height="48" rx="12" fill="#16372a"/>
-<text x="560" y="689" text-anchor="middle" style="fill:#f1fae9;font-size:20px">PostgreSQL transactions · pinned state · task receipts · deadlines · recovery</text>
-<text class="label" x="45" y="778">External effects remain an at-least-once boundary.</text>
-<text class="small" x="45" y="811">A worker may perform an external effect before its completion is accepted. Use provider idempotency</text>
-<text class="small" x="45" y="838">where supported; simulation and recorded replay do not invoke live executors.</text>
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="920" viewBox="0 0 960 920" role="img" aria-labelledby="title desc">
+<title id="title">From a written workflow to durable work</title><desc id="desc">Checking a definition and running it are different operations.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
+<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="820" rx="16" fill="#f7faf8"/>
+<path d="M36 99H924" stroke="#c9dacf"/>
+<text x="36" y="46" class="title">From a written workflow to durable work</text>
+<text x="36" y="79" class="body muted">Checking a definition and running it are different operations.</text>
+<rect x="36" y="121" width="888" height="252" rx="12" fill="#eaf4ed"/>
+<g transform="translate(55,140) scale(1.1923076923076923)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1H15L21 7V23H5Z M15 1V7H21 M9 12H17 M9 17H17"/></g>
+<text x="103" y="163" class="head">First, compile without services or secrets</text>
+<g transform="translate(56,195) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<text x="56" y="254" class="head">Read + validate</text>
+<text x="56" y="289" class="small">Bound YAML / JSON</text>
+<text x="56" y="315" class="small">Check schemas</text>
+<g transform="translate(280,195) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 8L13 5A5 5 0 0 1 20 12L17 15 M14 16L11 19A5 5 0 0 1 4 12L7 9 M8 16L16 8"/></g>
+<text x="280" y="254" class="head">Resolve meaning</text>
+<text x="280" y="289" class="small">Use the catalog lock</text>
+<text x="280" y="315" class="small">Check types + links</text>
+<g transform="translate(503,195) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
+<text x="503" y="254" class="head">Build the graph</text>
+<text x="503" y="289" class="small">Lower to canonical IR</text>
+<text x="503" y="315" class="small">Pin dependencies</text>
+<g transform="translate(730,195) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
+<text x="730" y="254" class="head">Emit an artifact</text>
+<text x="730" y="289" class="small">Digest + source map</text>
+<text x="730" y="315" class="small">Versioned envelope</text>
+<path class="edge" d="M225 211H262"/>
+<path class="edge" d="M448 211H485"/>
+<path class="edge" d="M675 211H712"/>
+<text x="56" y="351" class="small muted">No catalog → partial validation only; no executable artifact.</text>
+<rect x="36" y="405" width="888" height="252" rx="12" fill="white" stroke="#a8bdb1"/>
+<g transform="translate(56,424) scale(1.1923076923076923)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
+<text x="103" y="448" class="head">Then, use authorized server operations</text>
+<circle cx="75" cy="489" r="19" fill="#2d7257"/>
+<text x="75" y="496" class="body white" text-anchor="middle">1</text>
+<text x="56" y="541" class="head">Publish</text>
+<text x="56" y="574" class="small">Recompile source</text>
+<text x="56" y="600" class="small">Store immutable version</text>
+<circle cx="299" cy="489" r="19" fill="#2d7257"/>
+<text x="299" y="496" class="body white" text-anchor="middle">2</text>
+<text x="280" y="541" class="head">Activate</text>
+<text x="280" y="574" class="small">Pin version + bindings</text>
+<text x="280" y="600" class="small">Check current authority</text>
+<circle cx="522" cy="489" r="19" fill="#2d7257"/>
+<text x="522" y="496" class="body white" text-anchor="middle">3</text>
+<text x="503" y="541" class="head">Start a run</text>
+<text x="503" y="574" class="small">Evaluate pinned graph</text>
+<text x="503" y="600" class="small">Persist tasks and waits</text>
+<circle cx="749" cy="489" r="19" fill="#2d7257"/>
+<text x="749" y="496" class="body white" text-anchor="middle">4</text>
+<text x="730" y="541" class="head">Execute tasks</text>
+<text x="730" y="574" class="small">Native or remote worker</text>
+<text x="730" y="600" class="small">Fenced lease + receipt</text>
+<path class="edge" d="M225 489H262"/>
+<path class="edge" d="M448 489H485"/>
+<path class="edge" d="M675 489H712"/>
+<text x="56" y="635" class="small muted">PostgreSQL commits state, task receipts, deadlines and recovery decisions.</text>
+<rect x="36" y="684" width="888" height="81" rx="12" fill="#fff3df"/>
+<g transform="translate(54,704) scale(1.1538461538461537)" fill="none" stroke="#94601b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
+<text x="98" y="718" class="head">An external call can happen before completion is recorded.</text>
+<text x="98" y="749" class="small">Use provider idempotency or reconciliation. Simulation and recorded replay do not call providers.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="826" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 837) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="855" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="886" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Compilation checks meaning; activation checks authority and readiness.</text>
+</g>
 </svg>

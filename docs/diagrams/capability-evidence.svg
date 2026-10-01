@@ -15,39 +15,92 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="500" viewBox="0 0 960 500" role="img" aria-labelledby="title desc">
-<title id="title">Read evidence without overclaiming</title><desc id="desc">Implemented behavior, local verification and live provider verification are separate evidence categories. Source code or a successful local fixture does not establish a customer deployment or real message delivery.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
-<rect width="960" height="500" rx="18" fill="#F7FAF7"/>
-<text class="title" x="36" y="48">Read evidence without overclaiming</text><text class="body muted" x="36" y="80">These are separate questions, not interchangeable success labels.</text>
-<rect x="36" y="127" width="276" height="249" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="56" y="161">Implemented</text>
-<text class="body" x="56" y="193">What behavior exists?</text>
-<text class="body" x="56" y="220"></text>
-<text class="body" x="56" y="247">Code and public contracts</text>
-<text class="body" x="56" y="274">describe supported scope.</text>
-<text class="body" x="56" y="301"></text>
-<text class="body" x="56" y="328">Deferred features remain</text>
-<text class="body" x="56" y="355">outside this release.</text>
-<rect x="342" y="127" width="276" height="249" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="362" y="161">Locally verified</text>
-<text class="body" x="362" y="193">What was exercised here?</text>
-<text class="body" x="362" y="220"></text>
-<text class="body" x="362" y="247">Offline tests, owned services,</text>
-<text class="body" x="362" y="274">and protocol fixtures provide</text>
-<text class="body" x="362" y="301">bounded evidence.</text>
-<text class="body" x="362" y="328"></text>
-<text class="body" x="362" y="355">Read the stated scenario.</text>
-<rect x="648" y="127" width="276" height="249" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="668" y="161">Live-provider verified</text>
-<text class="body" x="668" y="193">Did this account work?</text>
-<text class="body" x="668" y="220"></text>
-<text class="body" x="668" y="247">Provider assets, permission,</text>
-<text class="body" x="668" y="274">networking, and delivery</text>
-<text class="body" x="668" y="301">need their own evidence.</text>
-<text class="body" x="668" y="328"></text>
-<text class="body" x="668" y="355">“Not run” stays “Not run”.</text>
-<text class="body" x="36" y="429">A local message ACK does not prove delivery to a real recipient.</text>
-<text class="body" x="36" y="458">Use the capability matrix and the connector guide together.</text>
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="715" viewBox="0 0 960 715" role="img" aria-labelledby="title desc">
+<title id="title">Three questions before calling it verified</title><desc id="desc">Source code, a local test and a real delivery establish different things.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
+<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="615" rx="16" fill="#f7faf8"/>
+<path d="M36 99H924" stroke="#c9dacf"/>
+<text x="36" y="46" class="title">Three questions before calling it verified</text>
+<text x="36" y="79" class="body muted">Source code, a local test and a real delivery establish different things.</text>
+<g transform="translate(51,141) scale(1.7307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
+<text x="51" y="227" class="head">Implemented</text>
+<text x="51" y="269" class="small muted">Does the behavior exist?</text>
+<text x="51" y="313" class="small">Public contracts and source</text>
+<text x="51" y="343" class="small">describe supported behavior.</text>
+<text x="51" y="373" class="small">Deferred features remain</text>
+<text x="51" y="403" class="small">outside the release.</text>
+<g transform="translate(363,141) scale(1.7307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<text x="363" y="227" class="head">Locally verified</text>
+<text x="363" y="269" class="small muted">What was exercised?</text>
+<text x="363" y="313" class="small">Offline tests, owned services</text>
+<text x="363" y="343" class="small">and protocol fixtures support</text>
+<text x="363" y="373" class="small">the stated scenario.</text>
+<text x="363" y="403" class="small">Read its exact conditions.</text>
+<path d="M335 135V432" stroke="#a8bdb1"/>
+<g transform="translate(675,141) scale(1.7307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
+<text x="675" y="227" class="head">Live-provider verified</text>
+<text x="675" y="269" class="small muted">Did this account work?</text>
+<text x="675" y="313" class="small">Real provider permissions,</text>
+<text x="675" y="343" class="small">network access and delivery</text>
+<text x="675" y="373" class="small">need separate evidence.</text>
+<text x="675" y="403" class="small">“Not run” stays “Not run”.</text>
+<path d="M647 135V432" stroke="#a8bdb1"/>
+<rect x="36" y="476" width="888" height="81" rx="12" fill="#fff3df"/>
+<g transform="translate(54,496) scale(1.1538461538461537)" fill="none" stroke="#94601b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
+<text x="98" y="510" class="head">A local acknowledgment does not prove real delivery.</text>
+<text x="98" y="541" class="small">Read the capability matrix together with the connector guide.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="621" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 632) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="650" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="681" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Match the claim to its evidence: source, local tests, or real provider delivery.</text>
+</g>
 </svg>

@@ -38,7 +38,15 @@ retain their explicit authentication boundaries.
 
 ![Native Weave OpenAPI export compared with external OpenAPI metadata import](../diagrams/authoring-openapi-directions.svg)
 
-Read down the left column for this page. The right column belongs to external connector authoring: it produces metadata for review and deployment, not a running integration. [Open the diagram at full size](../diagrams/authoring-openapi-directions.svg).
+Follow the top EXPORT row left to right for this page. The lower IMPORT row belongs to external connector authoring: it produces metadata for review and deployment, not a running integration. [Open the diagram at full size](../diagrams/authoring-openapi-directions.svg).
+
+## Browse and try the API
+
+The [full API reference](api-explorer.md) expands every exported operation and schema
+on the documentation website and provides a JSON download. To send a request to
+your own installation, follow the [API playground](../guides/api-playground.md).
+The server exposes `/docs` and `/openapi.json` when `WEAVE_DOCS_ENABLED=true`;
+normal bearer authentication and scoped grants still apply to API calls.
 
 ## Export locally
 
@@ -73,7 +81,7 @@ access token, local grants, revision headers, and idempotency keys where require
 ## Versions and scope
 
 The language/schema exporter and pure builder remain independent of PyFly. The
-native document's API version is distinct from package version `0.1.0a3` and
+native document's API version is distinct from package version `0.1.0a4` and
 language `weave/v1alpha1`. The current dependency is PyFly 26.9.15; exact URL,
 SHA-256 and upstream provenance are in [project metadata](../../pyproject.toml)
 and the lockfile.

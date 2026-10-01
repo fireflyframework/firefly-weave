@@ -16,69 +16,139 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 990" role="img" aria-labelledby="title desc">
-<title id="title">One installation, separate processes</title><desc id="desc">Local terminals and containers connect to the same owned services. Remote workers use HTTP while native executors use application and catalog database authority. Resume reuses retained configuration.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.line{fill:none;stroke:#C9DBD2;stroke-width:2}</style>
-<rect width="1120" height="990" fill="#FFFFFF"/>
-<text x="40" y="52" class="title">One installation, separate processes</text>
-<text x="40" y="88" class="body">Terminal numbers belong to the standalone and deployment walkthroughs.</text>
-<rect x="40" y="120" width="320" height="625" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
-<rect x="385" y="120" width="330" height="625" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
-<rect x="740" y="120" width="340" height="625" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="60" y="157" class="head">TERMINAL 1 · OPERATOR</text>
-<text x="405" y="157" class="head">FOREGROUND PROCESSES</text>
-<text x="760" y="157" class="head">OWNED CONTAINERS</text>
-<rect x="60" y="180" width="280" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="80" y="213" class="head">Private configuration</text>
-<text x="80" y="245" class="body">session.env: paths / ports</text>
-<text x="80" y="272" class="body">runtime.env: authorities</text>
-<text x="80" y="299" class="body">Receipts retain real IDs</text>
-<path d="M60 403C60 379 340 379 340 403V504C340 528 60 528 60 504Z" fill="#EEF4F0" stroke="#367D68" stroke-width="2"/>
-<path d="M60 403C60 427 340 427 340 403" class="line"/>
-<text x="80" y="451" class="head">PostgreSQL</text>
-<text x="80" y="481" class="body">Runs, grants and leases</text>
-<text x="80" y="508" class="body">App + catalog logins</text>
-<rect x="60" y="584" width="280" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="80" y="617" class="head">Keycloak</text>
-<text x="80" y="649" class="body">Issues access tokens</text>
-<text x="80" y="676" class="body">Verifies expected client</text>
-<text x="80" y="703" class="body">Retains its own database</text>
-<rect x="405" y="180" width="290" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="425" y="213" class="head">Terminal 2 · API</text>
-<text x="425" y="245" class="body">Bearer + local grants</text>
-<text x="425" y="272" class="body">Readiness + scheduling</text>
-<text x="425" y="299" class="body">Migration URL removed</text>
-<rect x="405" y="584" width="290" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="425" y="617" class="head">Terminal 3 · receiver</text>
-<text x="425" y="649" class="body">effects.sqlite receipts</text>
-<text x="425" y="676" class="body">Same operation key</text>
-<text x="425" y="703" class="body">survives process restart</text>
-<rect x="760" y="180" width="300" height="126" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="780" y="213" class="head">Remote SDK worker</text>
-<text x="780" y="245" class="body">Token → claim → complete</text>
-<text x="780" y="272" class="body">Admitted release + grant</text>
-<text x="780" y="299" class="body">No database credentials</text>
-<rect x="760" y="385" width="300" height="137" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="780" y="418" class="head">Optional native executor</text>
-<text x="780" y="450" class="body">Application + catalog DB</text>
-<text x="780" y="477" class="body">Exact release + grants</text>
-<text x="780" y="504" class="body">Connector egress policy</text>
-<path d="M550 306V350H200V385" class="edge"/>
-<text x="423" y="338" class="body">DB authority</text>
-<path d="M760 241H695" class="edge"/>
-<text x="705" y="222" class="body">HTTP</text>
-<path d="M760 457H340" class="edge"/>
-<text x="423" y="443" class="body">DB authority for native execution</text>
-<path d="M910 306V328H1070V552H570V584" class="edge"/>
-<text x="769" y="575" class="body">Remote effect</text>
-<path d="M910 522V654H695" class="edge"/>
-<text x="760" y="638" class="body">Native read</text>
-<path d="M200 584V555H370V280H405" class="edge" stroke-dasharray="7 5"/>
-<text x="60" y="779" class="body">Dashed: token verification trust. Remote worker also obtains its token from Keycloak.</text>
-<rect x="40" y="805" width="1040" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="60" y="840" class="head">Resume the retained installation</text>
-<text x="60" y="875" class="body">1  Same context, project and files → start dependencies → verify readiness.</text>
-<text x="60" y="902" class="body">2  Same receiver receipts → API → required admitted executors → verify an actual run.</text>
-<text x="60" y="929" class="body">Changed configuration needs deliberate process replacement; startup never migrates.</text>
+
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1578" viewBox="0 0 960 1578" role="img" aria-labelledby="title desc">
+<title id="title">One installation, separate running processes</title><desc id="desc">Keep configuration ownership, database access, and external effects visible. READ THE CONNECTION LABELS  •  Dashed line: token verification trust</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1478" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">One installation, separate running processes</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Keep configuration ownership, database access, and external effects visible.</text>
+<rect x="40" y="125" width="880" height="44" rx="12" fill="#EEF4F0"/>
+<text x="58" y="153" font-size="19" font-weight="600" fill="#173D34">READ THE CONNECTION LABELS  •  Dashed line: token verification trust</text>
+<rect x="40" y="203" width="880" height="123" rx="18" fill="#EEF4F0"/>
+<g transform="translate(60 227) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="15" r="10"/><path d="M9 51V41c0-20 38-20 38 0v10"/></g>
+<text x="140" y="242" font-size="25" font-weight="700" fill="#173D34">Terminal 1 • Operator</text>
+<text x="140" y="276" font-size="21" font-weight="400" fill="#173D34">session.env keeps paths/ports; runtime.env selects authorities.</text>
+<text x="140" y="306" font-size="21" font-weight="400" fill="#173D34">Retained receipts hold real IDs. Startup never migrates.</text>
+<rect x="40" y="365" width="260" height="323" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(60 384) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="58" y="466" font-size="24" font-weight="700" fill="#173D34">PostgreSQL</text>
+<text x="58" y="504" font-size="20" font-weight="400" fill="#173D34">Runs, grants, leases.</text>
+<text x="58" y="531" font-size="20" font-weight="400" fill="#173D34">App and catalog logins.</text>
+<text x="58" y="558" font-size="20" font-weight="400" fill="#173D34">Owned container.</text>
+<rect x="350" y="365" width="260" height="323" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(370 384) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
+<text x="368" y="466" font-size="24" font-weight="700" fill="#173D34">Terminal 2 • API</text>
+<text x="368" y="504" font-size="20" font-weight="400" fill="#173D34">Bearer + local grants.</text>
+<text x="368" y="531" font-size="20" font-weight="400" fill="#173D34">Readiness and</text>
+<text x="368" y="558" font-size="20" font-weight="400" fill="#173D34">scheduling.</text>
+<text x="368" y="585" font-size="20" font-weight="400" fill="#173D34">Migration URL removed.</text>
+<rect x="660" y="365" width="260" height="323" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(680 384) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="678" y="466" font-size="24" font-weight="700" fill="#173D34">Keycloak</text>
+<text x="678" y="504" font-size="20" font-weight="400" fill="#173D34">Issues access tokens.</text>
+<text x="678" y="531" font-size="20" font-weight="400" fill="#173D34">Expected client</text>
+<text x="678" y="558" font-size="20" font-weight="400" fill="#173D34">verified.</text>
+<text x="678" y="585" font-size="20" font-weight="400" fill="#173D34">Its own database.</text>
+<rect x="40" y="782" width="260" height="323" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(60 801) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
+<text x="58" y="883" font-size="24" font-weight="700" fill="#173D34">Native executor</text>
+<text x="58" y="921" font-size="20" font-weight="400" fill="#173D34">Optional separate</text>
+<text x="58" y="948" font-size="20" font-weight="400" fill="#173D34">process.</text>
+<text x="58" y="975" font-size="20" font-weight="400" fill="#173D34">App + catalog DB.</text>
+<text x="58" y="1002" font-size="20" font-weight="400" fill="#173D34">Exact release and</text>
+<text x="58" y="1029" font-size="20" font-weight="400" fill="#173D34">grants.</text>
+<text x="58" y="1056" font-size="20" font-weight="400" fill="#173D34">Connector egress</text>
+<text x="58" y="1083" font-size="20" font-weight="400" fill="#173D34">policy.</text>
+<rect x="350" y="782" width="260" height="323" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(370 801) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
+<text x="368" y="883" font-size="24" font-weight="700" fill="#173D34">Remote SDK worker</text>
+<text x="368" y="921" font-size="20" font-weight="400" fill="#173D34">API token → claim →</text>
+<text x="368" y="948" font-size="20" font-weight="400" fill="#173D34">complete.</text>
+<text x="368" y="975" font-size="20" font-weight="400" fill="#173D34">Admitted release and</text>
+<text x="368" y="1002" font-size="20" font-weight="400" fill="#173D34">grant.</text>
+<text x="368" y="1029" font-size="20" font-weight="400" fill="#173D34">No DB credentials.</text>
+<rect x="660" y="782" width="260" height="323" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<g transform="translate(680 801) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
+<text x="678" y="883" font-size="24" font-weight="700" fill="#173D34">Terminal 3 •</text>
+<text x="678" y="913" font-size="24" font-weight="700" fill="#173D34">Receiver</text>
+<text x="678" y="951" font-size="20" font-weight="400" fill="#173D34">effects.sqlite</text>
+<text x="678" y="978" font-size="20" font-weight="400" fill="#173D34">receipts.</text>
+<text x="678" y="1005" font-size="20" font-weight="400" fill="#173D34">Same operation key</text>
+<text x="678" y="1032" font-size="20" font-weight="400" fill="#173D34">survives a process</text>
+<text x="678" y="1059" font-size="20" font-weight="400" fill="#173D34">restart.</text>
+<path class="edge" d="M348 525H303"/>
+<text x="305" y="499" font-size="18" font-weight="600" fill="#173D34">DB</text>
+<path class="edge" stroke-dasharray="7 5" d="M658 525H613"/>
+<text x="612" y="499" font-size="17" font-weight="600" fill="#173D34">Trust</text>
+<path class="edge" d="M170 778V692"/>
+<text x="66" y="735" font-size="20" font-weight="600" fill="#173D34">DB authority</text>
+<path class="edge" d="M480 778V692"/>
+<text x="440" y="735" font-size="20" font-weight="600" fill="#173D34">HTTP</text>
+<path class="edge" d="M612 949H656"/>
+<text x="614" y="922" font-size="17" font-weight="600" fill="#173D34">Effect</text>
+<path class="edge" d="M170 1107V1154H790V1109"/>
+<text x="346" y="1142" font-size="21" font-weight="600" fill="#173D34">Native read of the receiver</text>
+<text x="48" y="1204" font-size="21" font-weight="400" fill="#173D34">The remote worker also obtains its token from Keycloak.</text>
+<rect x="40" y="1240" width="880" height="194" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 1260) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1284" font-size="23" font-weight="700" fill="#326B88">Resume the retained installation</text>
+<text x="60" y="1323" font-size="21" font-weight="400" fill="#173D34">Use the same context, project, files, and receiver receipts. Start</text>
+<text x="60" y="1352" font-size="21" font-weight="400" fill="#173D34">dependencies, verify readiness, then API and required admitted executors.</text>
+<text x="60" y="1381" font-size="21" font-weight="400" fill="#173D34">Verify an actual run; replace processes deliberately when configuration</text>
+<text x="60" y="1410" font-size="21" font-weight="400" fill="#173D34">changes.</text><g id="lumi-takeaway">
+<rect x="0" y="1484" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1495) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1513" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1544" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Keep process identities separate and reuse the installation’s saved receipts.</text>
+</g>
 </svg>

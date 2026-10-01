@@ -89,7 +89,9 @@ extra_css:
 nav:
   - Start here:
       - Documentation: README.md
+      - Start here: guides/learning-path.md
       - How the platform works: guides/platform-overview.md
+      - Start a local platform: guides/local-platform.md
       - Installation: installation.md
       - First workflow: quickstart.md
       - Concepts: concepts.md
@@ -100,9 +102,13 @@ nav:
       - Run a local platform: guides/standalone.md
       - Publish and run with the CLI: guides/cli-tutorial.md
       - Author workflows: guides/workflow-authoring.md
+      - View workflow graphs: guides/workflow-graphs.md
+      - Python SDK tutorial: guides/sdk-tutorial.md
+      - Try the API: guides/api-playground.md
       - Build workers: guides/workers.md
       - Integrate your product: guides/host-integration.md
   - Integrations:
+      - Build your first connector: guides/custom-connectors-tutorial.md
       - Author a connector: connectors/authoring.md
       - Import OpenAPI metadata: connectors/metadata-import.md
       - HTTP profiles: connectors/http-profiles.md
@@ -112,6 +118,7 @@ nav:
       - WhatsApp: connectors/whatsapp.md
       - Telegram: connectors/telegram.md
   - Operate and deploy:
+      - Remote deployment explained: operations/remote-deployment.md
       - Deployment: operations/deployment.md
       - Cloud deployment: operations/cloud-deployment.md
       - AWS: operations/aws.md
@@ -131,7 +138,8 @@ nav:
       - Compiler: reference/compiler.md
       - Simulation: reference/simulation.md
       - CLI: reference/cli.md
-      - API: reference/api.md
+      - Full API reference: reference/api-explorer.md
+      - API behavior: reference/api.md
       - Python SDK: reference/sdk.md
       - Native OpenAPI: reference/native-openapi.md
       - Embedding: reference/embedding.md

@@ -37,10 +37,10 @@ commands, their files, and their result contracts.
 | Goal | Commands | Prerequisite |
 | --- | --- | --- |
 | Create a local starter or find a guide | `init DIRECTORY`, `docs [TOPIC]` | Base package; no platform required |
-| Check or simulate a local definition | `workflow validate`, `compile`, `explain`, `simulate` | Base package and explicit files |
+| Check or simulate a local definition | `workflow validate`, `compile`, `explain`, `simulate`, `graph` | Base package and explicit files |
 | Export language schemas | `schema export` | Base package |
 | Call a running API | `remote`, `definitions`, `runs`, other remote families | `client` extra, token, scope, local grants |
-| Run durable workflows for the first time | Follow the [standalone tutorial](../guides/standalone.md) | Local API, database, identity setup |
+| Run durable workflows for the first time | `platform doctor/setup/start/status/demo/token/stop` | Matching checkout, uv, and local Docker; [walkthrough](../guides/local-platform.md) |
 
 From a locked source checkout, prefix commands with
 `uv run --locked --no-editable` (and `--extra client` for remote commands).
@@ -50,9 +50,9 @@ Bare `weave` shows the same grouped help and ASCII banner and exits successfully
 `weave --version` prints the installed version. Banners appear only in root help,
 so `weave version --output json` and remote JSON results remain machine-readable.
 
-![Offline CLI validation and compilation result branches](../diagrams/authoring-diagnostic-loop.svg)
+![Offline CLI validation and compilation stages](../diagrams/authoring-diagnostic-loop.svg)
 
-The CLI uses these same compiler branches. With no catalog, a successful validate exits 0, but compile and explain exit 1 because no artifact exists. An explicitly empty catalog selects complete compilation. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
+Read down through the same checks used by the CLI. With no catalog, a successful validate exits 0, but compile and explain exit 1 because no artifact exists. An explicitly empty catalog selects complete compilation. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
 
 ## Create an offline project
 
@@ -116,10 +116,48 @@ a browser launch failure exits 2, so rerun without `--open` to obtain the link.
 | `workers` | [Worker authoring](../guides/workers.md) |
 | `deploy` | [Local worker and container deployment](../operations/deployment.md) |
 | `configuration` | [Runtime configuration](../operations/configuration.md) |
+| `local` | [Local platform](../guides/local-platform.md) |
+| `api` | [API playground](../guides/api-playground.md) |
+| `sdk` | [Python SDK tutorial](../guides/sdk-tutorial.md) |
+| `connectors` | [Custom connectors](../guides/custom-connectors-tutorial.md) |
+| `graphs` | [Workflow graphs](../guides/workflow-graphs.md) |
 
 The links lead to the published documentation site, which may describe a newer
 release than your installed client. Check `weave --version` and the release
 selected by the installation guide when following server setup commands.
+
+## Local platform commands
+
+`weave platform [--directory PATH] COMMAND` operates a retained local development
+installation. The default directory is `.local/platform` relative to your working
+directory. Reuse the same absolute directory when using different terminals.
+Follow [the complete local guide](../guides/local-platform.md) before setup.
+
+| Command | Effect |
+| --- | --- |
+| `doctor [--source REPO] [--context NAME]` | Read-only check of source version, uv, and local Docker |
+| `setup [--source REPO] [--context NAME]` | Build and install an isolated server, start owned dependencies, bootstrap identity |
+| `start` | Resume dependencies and run the API in the foreground |
+| `status` | Inspect saved stage, readiness, URLs, and first-run receipt |
+| `demo` | Create one authorized demo run; reuse its complete saved receipt on repeats |
+| `token` | Refresh the verified token into its private file; print only the path |
+| `stop` | Stop the owned dependencies after the foreground API exits; retain data |
+
+All except foreground `start` accept `--output json`. Setup displays current-stage
+progress with a spinner only in an interactive terminal. Set
+`WEAVE_NO_ANIMATION=1` to keep plain progress messages. Redirected output has no
+animation; JSON output has no progress messages. There are no reset/delete
+operations in this local command family.
+
+## Workflow graph exports
+
+`weave workflow graph ARTIFACT [--format text|mermaid|svg] [--directory PATH]`
+reads a compiled Workflow artifact and checks its integrity before drawing.
+Use the [graph tutorial](../guides/workflow-graphs.md) for a complete example.
+The default is a text graph on stdout; `--directory` exports `workflow.txt`,
+`workflow.mmd`, or `workflow.svg`. Replacing an existing regular file requires
+`--force`. `--output json` returns `ok`, `format`, `content`, and `files`.
+This shows static possible paths, not live run state. No action is executed.
 
 ## Offline workflow commands
 

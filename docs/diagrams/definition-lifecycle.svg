@@ -15,38 +15,98 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="680" viewBox="0 0 960 680" role="img" aria-labelledby="title desc">
-<title id="title">One definition, many executions</title><desc id="desc">Authoring source is compiled and published as an immutable version in a project. An environment activation pins its artifact and bindings. Separate inputs start separate runs pinned to that activation.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
-<rect width="960" height="680" rx="18" fill="#F7FAF7"/>
-<text class="title" x="36" y="48">One definition, many executions</text><text class="body muted" x="36" y="80">Editing source does not rewrite an existing run.</text>
-<rect x="36" y="123" width="275" height="165" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="56" y="157">Authoring source</text>
-<text class="body" x="56" y="189">YAML / JSON / SDK builder</text>
-<text class="body" x="56" y="216">Edits change the source</text>
-<text class="body" x="56" y="243">Optional drafts have revisions</text>
-<rect x="365" y="123" width="559" height="165" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="385" y="157">Published version — project scope</text>
-<text class="body" x="385" y="189">The server recompiles the submitted source.</text>
-<text class="body" x="385" y="216">Version ID + digest identify immutable published behavior.</text>
-<text class="body" x="385" y="243">New behavior requires a new published version.</text>
-<path class="edge" d="M311 205 H365"/>
-<rect x="365" y="342" width="559" height="125" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="385" y="376">Activation — environment scope</text>
-<text class="body" x="385" y="408">Pin the version, connection revisions, and worker releases.</text>
-<text class="body" x="385" y="435">Check authority and resource readiness.</text>
-<path class="edge" d="M645 288 V342"/>
-<rect x="36" y="524" width="421" height="110" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="56" y="558">Run A</text>
-<text class="body" x="56" y="590">Input for customer A; accepted state and history</text>
-<rect x="503" y="524" width="421" height="110" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="523" y="558">Run B</text>
-<text class="body" x="523" y="590">Input for customer B; its own state and history</text>
-<path class="edge" d="M555 467 V495 H247 V524"/>
-<path class="edge" d="M713 467 V524"/>
-<text class="body" x="36" y="360">Compilation is a check.</text>
-<text class="body" x="36" y="392">Publication stores a version.</text>
-<text class="body" x="36" y="424">Activation selects a deployment.</text>
-<text class="body" x="36" y="456">Starting creates an execution.</text>
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="860" viewBox="0 0 960 860" role="img" aria-labelledby="title desc">
+<title id="title">Write once, run with many inputs</title><desc id="desc">An edit never rewrites the behavior of a run already in progress.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
+<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="760" rx="16" fill="#f7faf8"/>
+<path d="M36 99H924" stroke="#c9dacf"/>
+<text x="36" y="46" class="title">Write once, run with many inputs</text>
+<text x="36" y="79" class="body muted">An edit never rewrites the behavior of a run already in progress.</text>
+<circle cx="62" cy="150" r="19" fill="#2d7257"/>
+<text x="62" y="157" class="body white" text-anchor="middle">1</text>
+<g transform="translate(104,132) scale(1.3461538461538463)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1H15L21 7V23H5Z M15 1V7H21 M9 12H17 M9 17H17"/></g>
+<text x="154" y="158" class="head">Write the source</text>
+<text x="104" y="200" class="body">YAML, JSON or the SDK builder</text>
+<text x="104" y="229" class="body">Optional drafts keep revisions.</text>
+<path class="edge" d="M448 182H507"/>
+<text x="451" y="160" class="small muted">publish</text>
+<circle cx="534" cy="150" r="19" fill="#2d7257"/>
+<text x="534" y="157" class="body white" text-anchor="middle">2</text>
+<g transform="translate(576,132) scale(1.3461538461538463)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
+<text x="626" y="158" class="head">Publish a version</text>
+<text x="576" y="200" class="body">The server recompiles the source.</text>
+<text x="576" y="229" class="body">Version ID + digest are immutable.</text>
+<path class="edge" d="M756 263V320H483V363"/>
+<text x="512" y="308" class="small muted">activate in an environment</text>
+<rect x="150" y="364" width="660" height="158" rx="12" fill="#eaf4ed" stroke="#a8bdb1"/>
+<g transform="translate(177,389) scale(1.6153846153846154)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
+<text x="241" y="420" class="head">Choose a deployment: activation</text>
+<text x="180" y="459" class="body">Pin the version, connections and worker releases.</text>
+<text x="180" y="488" class="body">Check authority and resource readiness.</text>
+<path class="edge" d="M480 522V552H234V585"/>
+<path class="edge" d="M480 552H723V585"/>
+<rect x="36" y="588" width="402" height="127" rx="12" fill="white" stroke="#a8bdb1"/>
+<g transform="translate(56,610) scale(1.3461538461538463)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1L23 12L5 23Z"/></g>
+<text x="109" y="637" class="head">Run A</text>
+<text x="109" y="670" class="small">Customer A’s input</text>
+<text x="109" y="695" class="small">Its own accepted state + history</text>
+<rect x="522" y="588" width="402" height="127" rx="12" fill="white" stroke="#a8bdb1"/>
+<g transform="translate(542,610) scale(1.3461538461538463)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1L23 12L5 23Z"/></g>
+<text x="595" y="637" class="head">Run B</text>
+<text x="595" y="670" class="small">Customer B’s input</text>
+<text x="595" y="695" class="small">Its own accepted state + history</text>
+<g id="lumi-takeaway">
+<rect x="0" y="766" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 777) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="795" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="826" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">New inputs create new runs; source edits do not rewrite existing runs.</text>
+</g>
 </svg>

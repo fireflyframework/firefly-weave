@@ -46,6 +46,7 @@ is a region for a regional cluster or a zone for a zonal cluster. The Artifact
 Registry location can differ; obtain it from the repository record.
 
 ```sh
+# Inspect the authenticated account, target project, existing cluster, and Docker repository.
 export WEAVE_GCP_PROJECT='your-existing-project-id'
 export WEAVE_GKE_CLUSTER='your-existing-cluster'
 export WEAVE_GKE_LOCATION='your-cluster-region-or-zone'
@@ -74,6 +75,7 @@ plugin is installed, then use a new private kubeconfig. See
 [GKE client configuration](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl).
 
 ```sh
+# Create a separate kubeconfig so the tutorial does not replace another cluster connection.
 gke-gcloud-auth-plugin --version
 umask 077
 export WEAVE_PROVIDER_DIR="$HOME/weave-gcp-$(python3 -c 'from uuid import uuid4; print(uuid4().hex)')"
@@ -88,6 +90,7 @@ Expect a context generated for the selected project, location, and cluster.
 Inspect the list and copy that exact name:
 
 ```sh
+# Confirm access to the intended namespace and identify the target CPU architecture.
 export WEAVE_KUBE_CONTEXT='your-exact-context-name-from-the-list'
 kubectl --context "$WEAVE_KUBE_CONTEXT" get namespaces
 kubectl --context "$WEAVE_KUBE_CONTEXT" get nodes -L kubernetes.io/arch
@@ -106,6 +109,7 @@ Docker credential-helper configuration; it does not create the repository or
 change its permissions. See [Artifact Registry Docker authentication](https://docs.cloud.google.com/artifact-registry/docs/docker/authentication).
 
 ```sh
+# Register the credential helper for this exact registry host so Docker can push later.
 export WEAVE_AR_HOST="$WEAVE_AR_LOCATION-docker.pkg.dev"
 gcloud auth configure-docker "$WEAVE_AR_HOST"
 export WEAVE_REGISTRY_PREFIX="$WEAVE_AR_HOST/$WEAVE_GCP_PROJECT/$WEAVE_AR_REPOSITORY"

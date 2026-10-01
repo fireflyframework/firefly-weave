@@ -30,12 +30,13 @@ From a source checkout, install [uv](https://docs.astral.sh/uv/) and Python 3.12
 newer, then run:
 
 ```bash
-uv sync --locked --only-group docs
-uv run --locked --only-group docs mkdocs serve --dev-addr 127.0.0.1:8000
+uv sync --locked --group docs --extra openapi
+uv run --locked --group docs --extra openapi mkdocs serve --dev-addr 127.0.0.1:8000
 ```
 
 Open the local address printed by MkDocs. Stop the server with Ctrl-C.
-The docs-only environment does not install the platform or start its services.
+The build installs the package and its OpenAPI extra to generate the complete API
+reference. It does not start the API, database, identity service, or workers.
 If another process owns the checkout's Python environment, set
 `UV_PROJECT_ENVIRONMENT` to a separate local directory before running either
 command. Restart the preview after changing the build hook.
@@ -43,7 +44,7 @@ command. Restart the preview after changing the build hook.
 Run the publication check before submitting:
 
 ```bash
-uv run --locked --only-group docs mkdocs build --strict
+uv run --locked --group docs --extra openapi mkdocs build --strict
 python3 scripts/check_docs.py
 ```
 

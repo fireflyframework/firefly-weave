@@ -15,38 +15,93 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="590" viewBox="0 0 960 590" role="img" aria-labelledby="title desc">
-<title id="title">Follow the message through echo</title><desc id="desc">A message object passes its input schema, is copied by a transform reference, and passes the output schema. Simulation computes locally; a durable run adds identity, grants, publication, activation and PostgreSQL.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:18px}.muted{fill:#62706A}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
-<rect width="960" height="590" rx="18" fill="#F7FAF7"/>
-<text class="title" x="36" y="48">Follow the message through echo</text><text class="body muted" x="36" y="80">One typed input, one transform, one declared output.</text>
-<rect x="36" y="126" width="270" height="180" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="56" y="160">Input guard</text>
-<text class="body" x="56" y="192">Object with message: string</text>
-<text class="body" x="56" y="219">Extra fields are rejected</text>
-<text class="body" x="56" y="246">{&quot;message&quot;: &quot;Hello, Weave&quot;}</text>
-<rect x="345" y="126" width="270" height="180" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="365" y="160">Transform: echo</text>
-<text class="body" x="365" y="192">value: {ref: /input}</text>
-<text class="body" x="365" y="219">Copy the accepted object</text>
-<text class="body" x="365" y="246">No integration task</text>
-<rect x="654" y="126" width="270" height="180" rx="12" fill="#FFFFFF" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="674" y="160">Output guard</text>
-<text class="body" x="674" y="192">Read /steps/echo/output</text>
-<text class="body" x="674" y="219">Check the output schema</text>
-<text class="body" x="674" y="246">{&quot;message&quot;: &quot;Hello, Weave&quot;}</text>
-<path class="edge" d="M306 216 H345"/>
-<path class="edge" d="M615 216 H654"/>
-<rect x="36" y="366" width="421" height="156" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="56" y="400">Chapter 1: simulation</text>
-<text class="body" x="56" y="432">Compiled artifact + fixed starting time</text>
-<text class="body" x="56" y="459">Compute locally without a database</text>
-<text class="body" x="56" y="486">Result: variables.output</text>
-<rect x="503" y="366" width="421" height="156" rx="12" fill="#EEF4F0" stroke="#B3CCBE" stroke-width="1.5"/>
-<text class="head" x="523" y="400">Chapter 2: durable run</text>
-<text class="body" x="523" y="432">Identity + grants + activation</text>
-<text class="body" x="523" y="459">Persist state in PostgreSQL</text>
-<text class="body" x="523" y="486">Result: state.output</text>
-<text class="body muted" x="36" y="562">Both return the same business value; only the durable run creates server-side history.</text>
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="775" viewBox="0 0 960 775" role="img" aria-labelledby="title desc">
+<title id="title">Follow one message through the echo workflow</title><desc id="desc">The transform copies the accepted input; schemas guard both ends.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
+<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="675" rx="16" fill="#f7faf8"/>
+<path d="M36 99H924" stroke="#c9dacf"/>
+<text x="36" y="46" class="title">Follow one message through the echo workflow</text>
+<text x="36" y="79" class="body muted">The transform copies the accepted input; schemas guard both ends.</text>
+<g transform="translate(40,135) scale(1.4615384615384615)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<text x="40" y="214" class="head">Check the input</text>
+<text x="40" y="251" class="small">Object: message is a string</text>
+<text x="40" y="279" class="small">Reject additional fields</text>
+<g transform="translate(357,135) scale(1.4615384615384615)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
+<text x="357" y="214" class="head">Copy the object</text>
+<text x="357" y="251" class="small">value: {ref: /input}</text>
+<text x="357" y="279" class="small">No external task is created</text>
+<g transform="translate(674,135) scale(1.4615384615384615)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<text x="674" y="214" class="head">Check the output</text>
+<text x="674" y="251" class="small">Read /steps/echo/output</text>
+<text x="674" y="279" class="small">Apply the output schema</text>
+<path class="edge" d="M292 151H330"/>
+<path class="edge" d="M609 151H647"/>
+<rect x="40" y="319" width="880" height="67" rx="12" fill="#163e31"/>
+<text x="480" y="361" class="body white" text-anchor="middle">{&quot;message&quot;: &quot;Hello, Weave&quot;}</text>
+<text x="480" y="418" class="body muted" text-anchor="middle">The same business value, two ways to execute</text>
+<rect x="36" y="442" width="420" height="148" rx="12" fill="#eaf4ed"/>
+<g transform="translate(56,460) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2H25V22H1Z M5 7L10 12L5 17 M13 17H20"/></g>
+<text x="104" y="488" class="head">Local simulation</text>
+<text x="56" y="526" class="small">Compiled artifact + fixed start time</text>
+<text x="56" y="555" class="small">No database · result: variables.output</text>
+<rect x="504" y="442" width="420" height="148" rx="12" fill="white" stroke="#a8bdb1"/>
+<g transform="translate(524,460) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="572" y="488" class="head">Durable API run</text>
+<text x="524" y="526" class="small">Identity + grants + activation</text>
+<text x="524" y="555" class="small">PostgreSQL · result: state.output</text>
+<text x="480" y="632" class="body muted" text-anchor="middle">Only the durable run creates server-side state and history.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="681" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 692) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="710" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="741" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">The same message can be simulated locally or saved in a durable run.</text>
+</g>
 </svg>

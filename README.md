@@ -58,7 +58,7 @@ Choose the row that matches what you want to do today:
 | --- | --- | --- |
 | **Try a workflow on my laptop** | [Install the CLI](docs/installation.md), then [run the quickstart](docs/quickstart.md) | A validated YAML workflow and a successful local simulation; no server or Docker required |
 | **Use an existing Weave API** | [Install the CLI](docs/installation.md), then [connect to an existing API](docs/guides/connect-to-api.md) | A verified connection; continue to the CLI tutorial to publish and run |
-| **Run the platform myself** | [Deploy, start, and use the platform](docs/guides/platform-overview.md) | PostgreSQL, Keycloak, a running API, and a successful saved run |
+| **Run the platform myself** | [Local platform in small steps](docs/guides/local-platform.md) | PostgreSQL, Keycloak, a running API, and a successful saved run |
 
 Installing the CLI gives you a terminal client. Running the platform adds the
 services that store and execute workflows. Deploying a worker adds a process that
@@ -67,15 +67,15 @@ performs external work. Each has its own guide so you can stop at the result you
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a3 alpha** into
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a4 alpha** into
 your user account without `sudo`, Git, or Docker:
 
 ```sh
 (
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a3/install.sh \
-    | sh -s -- --version v0.1.0a3
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a4/install.sh \
+    | sh -s -- --version v0.1.0a4
 )
 ```
 
@@ -90,7 +90,7 @@ weave help workflow
 weave docs platform
 ```
 
-Expected: version `0.1.0a3` and a command overview. The
+Expected: version `0.1.0a4` and a command overview. The
 [installation guide](docs/installation.md) explains Python selection, persistent
 PATH setup, upgrades, removal, and troubleshooting. Installation includes the API
 client and OpenAPI import dependencies; it does not start the platform.
@@ -98,6 +98,30 @@ client and OpenAPI import dependencies; it does not start the platform.
 `weave` displays the command overview. Help explains each command family and its
 next steps. The [quickstart](docs/quickstart.md) walks through a complete example;
 you do not need to learn every command first.
+
+### Start your own local platform
+
+After installing the CLI, obtain the matching source checkout for its operator
+assets. You also need `uv` and a running local Docker engine with Compose 2.30+:
+
+```sh
+# Keep the operator files at the same version as the CLI.
+git clone --branch v0.1.0a4 --single-branch https://github.com/fireflyframework/firefly-weave.git
+cd firefly-weave
+
+# Check prerequisites, then prepare private settings and owned dependencies once.
+weave platform doctor
+weave platform setup
+
+# Keep this terminal open while the API runs.
+weave platform start
+```
+
+In a second terminal at that checkout, run `weave platform status`, then
+`weave platform demo`. Open the printed `/docs` URL to explore the API.
+Follow [the local guide](docs/guides/local-platform.md) for expected output,
+stop/resume, and token handling. For remote operation, start with
+[the deployment map](docs/operations/remote-deployment.md).
 
 ### Create a working example
 
@@ -164,7 +188,7 @@ execution path and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a3**, an **alpha** release. Download
+The recommended installation is **v0.1.0a4**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The checked-in documentation describes the source on its branch; a release tag

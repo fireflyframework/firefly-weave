@@ -32,7 +32,7 @@ complete deployment.
 
 ![Worker release admission, instance registration, and task lease lifecycle](../diagrams/authoring-worker-lifecycle.svg)
 
-Read preparation across the top, then the task attempt below. A release, instance, and lease answer different questions: which build is allowed, which process is running, and which attempt it may execute. [Open the diagram at full size](../diagrams/authoring-worker-lifecycle.svg).
+Read down from release admission and registration through claim, execution, completion, and recovery. A release, instance, and lease identify the allowed build, running process, and authorized attempt. [Open the diagram at full size](../diagrams/authoring-worker-lifecycle.svg).
 
 ## 1. Define the work before implementing it
 

@@ -15,64 +15,136 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 989" role="img" aria-labelledby="title desc">
-<title id="title">Integration, provider and status relationships</title><desc id="desc">A selected relational model with scoped composite keys and parent-to-child cardinalities. See the architecture guide for migration sources and omitted logical references.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.small{font-size:16px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
-<rect width="1120" height="989" fill="#FFFFFF"/>
-<text x="40" y="50" class="title">Integration, provider and status relationships</text>
-<text x="40" y="85" class="body">Selected actual foreign keys. Arrows point from parent to child; every child has one shown parent.</text>
-<text x="40" y="114" class="small">P = tenant_id + project_id. E = P + environment_id. ID columns are shown explicitly.</text>
-<rect x="40" y="150" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="184" class="head">integration_events</text>
-<text x="60" y="215" class="body">Parent key: P, id</text>
-<rect x="610" y="150" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="630" y="184" class="head">event_deliveries</text>
-<text x="630" y="215" class="body">Child FK: P, event_id</text>
-<path class="edge" d="M513 199L606 199"/>
-<text x="531" y="178" class="small">0..*</text>
-<rect x="40" y="270" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="304" class="head">event_deliveries</text>
-<text x="60" y="335" class="body">Parent key: E, id</text>
-<rect x="610" y="270" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="630" y="304" class="head">delivery_attempts</text>
-<text x="630" y="335" class="body">Child FK: E, delivery_id</text>
-<path class="edge" d="M513 319L606 319"/>
-<text x="531" y="298" class="small">0..*</text>
-<rect x="40" y="390" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="424" class="head">provider_sources</text>
-<text x="60" y="455" class="body">Parent key: E, id</text>
-<rect x="610" y="390" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="630" y="424" class="head">provider_receipts</text>
-<text x="630" y="455" class="body">Child FK: E, source_id</text>
-<path class="edge" d="M513 439L606 439"/>
-<text x="531" y="418" class="small">0..*</text>
-<rect x="40" y="510" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="544" class="head">provider_receipts</text>
-<text x="60" y="575" class="body">Parent key: E, source_id, id</text>
-<rect x="610" y="510" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="630" y="544" class="head">provider_intents</text>
-<text x="630" y="575" class="body">Child FK: E, source_id, receipt_id</text>
-<path class="edge" d="M513 559L606 559"/>
-<text x="531" y="538" class="small">0..1</text>
-<rect x="40" y="630" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="664" class="head">provider_sources</text>
-<text x="60" y="695" class="body">Parent key: E, id</text>
-<rect x="610" y="630" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="630" y="664" class="head">teams_references</text>
-<text x="630" y="695" class="body">Child FK: E, source_id</text>
-<path class="edge" d="M513 679L606 679"/>
-<text x="531" y="658" class="small">0..*</text>
-<rect x="40" y="750" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="784" class="head">whatsapp_message_states</text>
-<text x="60" y="815" class="body">Parent key: E, id</text>
-<rect x="610" y="750" width="470" height="95" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="630" y="784" class="head">whatsapp_status_facts</text>
-<text x="630" y="815" class="body">Child FK: E, state_id</text>
-<path class="edge" d="M513 799L606 799"/>
-<text x="531" y="778" class="small">0..*</text>
-<text x="40" y="884" class="small">Sources: migrations 0017–0020. Outbox delivery also references a subscription and its source binding.</text>
-<text x="40" y="912" class="small">WhatsApp observations link source, fact and connection revision; Teams lifecycle events reference a reference.</text>
-<text x="40" y="940" class="small">Broker routes/events/receipts use their own scoped FKs (0016). These maps are not retention eligibility rules.</text>
 
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1192" viewBox="0 0 960 1192" role="img" aria-labelledby="title desc">
+<title id="title">How integration receipts and delivery facts relate</title><desc id="desc">Selected actual foreign keys; scoped records retain separate meanings.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
+<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="1092" rx="16" fill="#f7faf8"/>
+<path d="M36 99H924" stroke="#c9dacf"/>
+<text x="36" y="46" class="title">How integration receipts and delivery facts relate</text>
+<text x="36" y="79" class="body muted">Selected actual foreign keys; scoped records retain separate meanings.</text>
+<text x="36" y="132" class="small muted">P = tenant_id + project_id     E = P + environment_id</text>
+<text x="36" y="162" class="small muted">Read left to right: one parent → this many children. Each child has one shown parent.</text>
+<rect x="36" y="188" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
+<rect x="552" y="188" width="372" height="102" rx="12" fill="#eaf4ed"/>
+<g transform="translate(51,207) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="92" y="221" class="code">integration_events</text>
+<text x="56" y="260" class="code">Key: P, id</text>
+<g transform="translate(567,207) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="608" y="221" class="code">event_deliveries</text>
+<text x="572" y="260" class="code">FK: P, event_id</text>
+<path class="edge" d="M408 235H552"/>
+<text x="480" y="217" class="head" text-anchor="middle">0..*</text>
+<text x="480" y="268" class="small muted" text-anchor="middle">deliveries</text>
+<rect x="36" y="315" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
+<rect x="552" y="315" width="372" height="102" rx="12" fill="#eaf4ed"/>
+<g transform="translate(51,334) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="92" y="348" class="code">event_deliveries</text>
+<text x="56" y="387" class="code">Key: E, id</text>
+<g transform="translate(567,334) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="608" y="348" class="code">delivery_attempts</text>
+<text x="572" y="387" class="code">FK: E, delivery_id</text>
+<path class="edge" d="M408 362H552"/>
+<text x="480" y="344" class="head" text-anchor="middle">0..*</text>
+<text x="480" y="395" class="small muted" text-anchor="middle">attempts</text>
+<rect x="36" y="442" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
+<rect x="552" y="442" width="372" height="102" rx="12" fill="#eaf4ed"/>
+<g transform="translate(51,461) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="92" y="475" class="code">provider_sources</text>
+<text x="56" y="514" class="code">Key: E, id</text>
+<g transform="translate(567,461) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="608" y="475" class="code">provider_receipts</text>
+<text x="572" y="514" class="code">FK: E, source_id</text>
+<path class="edge" d="M408 489H552"/>
+<text x="480" y="471" class="head" text-anchor="middle">0..*</text>
+<text x="480" y="522" class="small muted" text-anchor="middle">receipts</text>
+<rect x="36" y="569" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
+<rect x="552" y="569" width="372" height="102" rx="12" fill="#eaf4ed"/>
+<g transform="translate(51,588) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="92" y="602" class="code">provider_receipts</text>
+<text x="56" y="641" class="code">Key: E, source_id, id</text>
+<g transform="translate(567,588) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="608" y="602" class="code">provider_intents</text>
+<text x="572" y="641" class="code">FK: E, source_id, receipt_id</text>
+<path class="edge" d="M408 616H552"/>
+<text x="480" y="598" class="head" text-anchor="middle">0..1</text>
+<text x="480" y="649" class="small muted" text-anchor="middle">intent</text>
+<rect x="36" y="696" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
+<rect x="552" y="696" width="372" height="102" rx="12" fill="#eaf4ed"/>
+<g transform="translate(51,715) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="92" y="729" class="code">provider_sources</text>
+<text x="56" y="768" class="code">Key: E, id</text>
+<g transform="translate(567,715) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="608" y="729" class="code">teams_references</text>
+<text x="572" y="768" class="code">FK: E, source_id</text>
+<path class="edge" d="M408 743H552"/>
+<text x="480" y="725" class="head" text-anchor="middle">0..*</text>
+<text x="480" y="776" class="small muted" text-anchor="middle">references</text>
+<rect x="36" y="823" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
+<rect x="552" y="823" width="372" height="102" rx="12" fill="#eaf4ed"/>
+<g transform="translate(51,842) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="92" y="856" class="code">whatsapp_message_states</text>
+<text x="56" y="895" class="code">Key: E, id</text>
+<g transform="translate(567,842) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="608" y="856" class="code">whatsapp_status_facts</text>
+<text x="572" y="895" class="code">FK: E, state_id</text>
+<path class="edge" d="M408 870H552"/>
+<text x="480" y="852" class="head" text-anchor="middle">0..*</text>
+<text x="480" y="903" class="small muted" text-anchor="middle">facts</text>
+<text x="36" y="970" class="small muted">Migrations 0017–0020. Deliveries also reference subscriptions and source bindings.</text>
+<text x="36" y="996" class="small muted">WhatsApp observations join source, fact and connection revision; Teams records reference lifecycle.</text>
+<text x="36" y="1022" class="small muted">Broker receipts have separate FKs (0016). This view does not define retention eligibility.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="1098" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1109) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1127" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1158" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Event, receipt and delivery-attempt identities describe different facts.</text>
+</g>
 </svg>

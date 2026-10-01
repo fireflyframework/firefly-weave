@@ -18,6 +18,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # Architecture
 
+Start with [the plain-language overview](guides/learning-path.md) if the API,
+worker, and runtime terms are new. This chapter follows a real request and then
+maps those responsibilities to source modules and database relationships.
+
+![The platform components and the job each one performs](diagrams/platform-in-plain-english.svg)
+
 ## Follow one run through the system
 
 A **modular monolith** keeps the catalog, runtime, connections, and operations in

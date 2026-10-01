@@ -39,7 +39,7 @@ jobs:
       # Build only public documentation; the hook explicitly selects assets and
       # project pages. The repository itself is never uploaded as a Pages artifact.
       - name: Build the documentation
-        run: uv run --locked --only-group docs mkdocs build --strict
+        run: uv run --locked --group docs --extra openapi mkdocs build --strict
       - name: Upload the site
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v4

@@ -16,56 +16,116 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 940" role="img" aria-labelledby="title desc">
-<title id="title">Restore into a new target; keep the source fenced</title><desc id="desc">Three lanes show a stopped and fenced source, retained backup evidence, and a new empty target. Catalog and data equality precede a completion receipt. Only the selected target is started.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.line{fill:none;stroke:#C9DBD2;stroke-width:2}</style>
-<rect width="1120" height="940" fill="#FFFFFF"/>
-<text x="40" y="52" class="title">Restore into a new target; keep the source fenced</text>
-<text x="40" y="88" class="body">Guarded local PostgreSQL 17 exercise · all writers stopped before capture</text>
-<rect x="40" y="120" width="300" height="630" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="60" y="158" class="head">SOURCE</text>
-<rect x="375" y="120" width="350" height="630" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="395" y="158" class="head">PROTECTED EVIDENCE</text>
-<rect x="760" y="120" width="320" height="630" rx="12" fill="#F6F8F5" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="780" y="158" class="head">NEW TARGET</text>
-<rect x="60" y="188" width="260" height="100" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="80" y="221" class="head">1 · Quiesce</text>
-<text x="80" y="253" class="body">Stop every source writer</text>
-<rect x="60" y="334" width="260" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="80" y="367" class="head">2 · Fence logins</text>
-<text x="80" y="399" class="body">No remaining sessions</text>
-<text x="80" y="426" class="body">Connection limit = 0</text>
-<text x="80" y="453" class="body">Source stays fenced</text>
-<path d="M190 288V332" class="edge"/>
-<rect x="395" y="334" width="310" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="415" y="367" class="head">3 · Capture</text>
-<text x="415" y="399" class="body">Catalog + data manifest</text>
-<text x="415" y="426" class="body">Custom dump + SHA</text>
-<text x="415" y="453" class="body">Owners, ACLs and RLS</text>
-<path d="M320 410H390" class="edge"/>
-<path d="M780 350C780 326 1060 326 1060 350V468C1060 492 780 492 780 468Z" fill="#EEF4F0" stroke="#367D68" stroke-width="2"/>
-<path d="M780 350C780 374 1060 374 1060 350" class="line"/>
-<text x="800" y="398" class="head">4 · Restore</text>
-<text x="800" y="428" class="body">Unique empty database</text>
-<text x="800" y="455" class="body">One restore transaction</text>
-<path d="M705 410H775" class="edge"/>
-<rect x="395" y="544" width="310" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="415" y="577" class="head">5 · Compare</text>
-<text x="415" y="609" class="body">Source still unchanged</text>
-<text x="415" y="636" class="body">Target catalog/data equal</text>
-<text x="415" y="663" class="body">Then: restore.json</text>
-<path d="M920 486V515H550V542" class="edge"/>
-<rect x="780" y="544" width="280" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="800" y="577" class="head">6 · Verify target</text>
-<text x="800" y="609" class="body">Load target.env only</text>
-<text x="800" y="636" class="body">Explicit schema check</text>
-<text x="800" y="663" class="body">Read original public run</text>
-<path d="M705 612H775" class="edge"/>
-<path d="M190 484V700" class="line"/>
-<text x="81" y="728" class="body">Never automatically reopened</text>
-<rect x="40" y="790" width="1040" height="108" rx="12" fill="#D8EEE4" stroke="#C9DBD2" stroke-width="1.5"/>
-<text x="60" y="825" class="head">Preserve independent effect receipts</text>
-<text x="60" y="857" class="body">A restored lease has its original proofs and deadlines; it is not a new fencing epoch.</text>
-<text x="60" y="884" class="body">Reconcile ambiguous external effects and deliberately select one active deployment.</text>
+
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1650" viewBox="0 0 960 1650" role="img" aria-labelledby="title desc">
+<title id="title">Restore to a new target; keep the source fenced</title><desc id="desc">This guarded local PostgreSQL 17 exercise stops every writer before capture. READ DOWN  •  Each arrow carries the result into the next step</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1550" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Restore to a new target; keep the source fenced</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">This guarded local PostgreSQL 17 exercise stops every writer before capture.</text>
+<rect x="40" y="125" width="880" height="44" rx="12" fill="#EEF4F0"/>
+<text x="58" y="153" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
+<rect x="40" y="203" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="220" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 235) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="42" height="42" rx="7"/><path d="m18 18 20 20 M38 18 18 38"/></g>
+<text x="168" y="246" font-size="25" font-weight="700" fill="#173D34">1. Quiesce and fence the source</text>
+<text x="168" y="285" font-size="22" font-weight="400" fill="#173D34">Stop all source writers and wait for no remaining sessions.</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Fence logins and set connection limit to zero. Keep the source</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">fenced.</text>
+<text x="168" y="372" font-size="18" font-weight="600" fill="#326B88">SOURCE • Never automatically reopen it</text>
+<path class="edge" d="M480 394v35"/>
+<rect x="40" y="442" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="459" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 474) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
+<text x="168" y="485" font-size="25" font-weight="700" fill="#173D34">2. Capture protected recovery evidence</text>
+<text x="168" y="524" font-size="22" font-weight="400" fill="#173D34">Retain catalog/data manifest, custom dump, SHA, owners, ACLs,</text>
+<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">and RLS.</text>
+<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">Preserve independent receipts for external effects.</text>
+<text x="168" y="611" font-size="18" font-weight="600" fill="#326B88">EVIDENCE • A database copy does not reverse outside effects</text>
+<path class="edge" d="M480 633v35"/>
+<rect x="40" y="681" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="698" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 713) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="168" y="724" font-size="25" font-weight="700" fill="#173D34">3. Restore into a unique empty database</text>
+<text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">Use one restore transaction for the new target.</text>
+<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">Keep source and target identities distinct.</text>
+<text x="168" y="821" font-size="18" font-weight="600" fill="#326B88">NEW TARGET • Do not overwrite the source</text>
+<path class="edge" d="M480 843v35"/>
+<rect x="40" y="891" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="908" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 923) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="168" y="934" font-size="25" font-weight="700" fill="#173D34">4. Compare before accepting the copy</text>
+<text x="168" y="973" font-size="22" font-weight="400" fill="#173D34">Confirm the source is still unchanged.</text>
+<text x="168" y="1002" font-size="22" font-weight="400" fill="#173D34">Compare target catalog and data; only then produce</text>
+<text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">restore.json.</text>
+<text x="168" y="1060" font-size="18" font-weight="600" fill="#326B88">COMPARE • Success needs more than a completed restore command</text>
+<path class="edge" d="M480 1082v35"/>
+<rect x="40" y="1130" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="1147" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 1162) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
+<text x="168" y="1173" font-size="25" font-weight="700" fill="#173D34">5. Verify the target deliberately</text>
+<text x="168" y="1212" font-size="22" font-weight="400" fill="#173D34">Load target.env only; run an explicit schema check.</text>
+<text x="168" y="1241" font-size="22" font-weight="400" fill="#173D34">Read an original public run and reconcile ambiguous effects</text>
+<text x="168" y="1270" font-size="22" font-weight="400" fill="#173D34">before selecting one active deployment.</text>
+<text x="168" y="1299" font-size="18" font-weight="600" fill="#326B88">RESUME • Reopening writers is a separate decision</text>
+<rect x="40" y="1341" width="880" height="165" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 1361) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1385" font-size="23" font-weight="700" fill="#326B88">Restored leases are not newly fenced attempts</text>
+<text x="60" y="1424" font-size="21" font-weight="400" fill="#173D34">Their original proofs and deadlines remain. A restore does not create a new</text>
+<text x="60" y="1453" font-size="21" font-weight="400" fill="#173D34">fencing epoch; avoid running both deployments against the same external</text>
+<text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">effects.</text><g id="lumi-takeaway">
+<rect x="0" y="1556" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1567) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1585" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1616" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Keep the source fenced while you verify the separate restored target.</text>
+</g>
 </svg>

@@ -121,7 +121,7 @@ SERVICE_PACKAGES = (
 )
 
 
-@pyfly_application(name="firefly-weave", version="0.1.0a3", scan_packages=["firefly_weave.api", *SERVICE_PACKAGES])
+@pyfly_application(name="firefly-weave", version="0.1.0a4", scan_packages=["firefly_weave.api", *SERVICE_PACKAGES])
 class WeaveApplication:
     pass
 
@@ -439,6 +439,10 @@ def make_app(
     app.add_middleware(BodyBoundary)
 
     install_aliases(app)
+    if settings.docs_enabled:
+        from firefly_weave.api.documentation import install_documentation
+
+        install_documentation(app)
     app.state.pyfly = pyfly
     app.state.resources = resources
     app.state.telemetry = telemetry

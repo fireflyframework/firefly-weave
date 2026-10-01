@@ -41,7 +41,7 @@ language and contracts; they do not share implicit administrative authority.
 
 ![Local library, remote host, and in-process integration boundaries](../diagrams/authoring-execution-boundaries.svg)
 
-Read each column vertically to compare what your host supplies and what Weave checks. Choose a boundary before configuring identity or adding lifecycle operations. [Open the diagram at full size](../diagrams/authoring-execution-boundaries.svg).
+Compare the three rows: local authoring, remote API calls, and trusted in-process services. Read each row left to right to see what your host supplies and what Weave does. Choose a boundary before configuring identity or adding lifecycle operations. [Open the diagram at full size](../diagrams/authoring-execution-boundaries.svg).
 
 ## 2. Connect identity and scope
 

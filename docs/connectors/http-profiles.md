@@ -25,7 +25,7 @@ supported request/response policy; it does not create an API account or start a 
 
 ![Fixed HTTP connection and Action policy with bounded invocation values](../diagrams/integrations-http-profile.svg)
 
-**How to read this diagram:** Read from the three inputs into the native execution gate. Invocation values fill declared fields; the connection and published Action retain authority over origin, authentication, effect, and response policy.
+**How to read this diagram:** Read down from the connection and Action policy to invocation values, bounded execution, and outcome. Input fills declared fields; the connection and published Action retain control of origin, authentication, effect, and response policy.
 
 ## Build a bounded HTTP operation
 

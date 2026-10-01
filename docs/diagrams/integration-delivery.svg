@@ -15,39 +15,102 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 745" role="img" aria-labelledby="title desc">
-<title id="title">Ingress and outbound integration delivery</title><desc id="desc">Separate inbound durable admission and outbound integration event/delivery paths, with Teams reference, WhatsApp status and Telegram receipt boundaries.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.small{font-size:16px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
-<rect width="1120" height="745" fill="#FFFFFF"/>
-<text x="40" y="50" class="title">Ingress and outbound integration delivery</text>
-<text x="40" y="84" class="body">Durable admission and external acknowledgment are separate commit boundaries.</text>
-<rect x="40" y="125" width="490" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="159" class="head">Inbound provider / broker event</text>
-<text x="60" y="190" class="body">Verify source protocol and current authority.</text>
-<text x="60" y="216" class="body">Persist recognized, ignored or conflicting facts.</text>
-<text x="60" y="242" class="body">Provider receipt / intent or broker receipt</text>
-<rect x="590" y="125" width="490" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="610" y="159" class="head">Workflow admission</text>
-<text x="610" y="190" class="body">Dispatch the durable accepted intent.</text>
-<text x="610" y="216" class="body">Pin activation or signal the scoped run.</text>
-<text x="610" y="242" class="body">Record outcome under receipt identity.</text>
-<path class="edge" d="M532 200L585 200"/>
-<rect x="40" y="330" width="490" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="364" class="head">Outbound integration event</text>
-<text x="60" y="395" class="body">Business transition + integration event commit</text>
-<text x="60" y="421" class="body">Subscription selects scoped delivery intent.</text>
-<text x="60" y="447" class="body">Delivery attempts retain generation and outcome.</text>
-<rect x="590" y="330" width="490" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="610" y="364" class="head">Bounded external delivery</text>
-<text x="610" y="395" class="body">Current binding / grants / destination checked</text>
-<text x="610" y="421" class="body">Fenced attempt; provider acceptance recorded</text>
-<text x="610" y="447" class="body">Unknown outcomes require reconciliation.</text>
-<path class="edge" d="M532 405L585 405"/>
-<rect x="40" y="535" width="1040" height="120" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="569" class="head">Provider-specific durable facts</text>
-<text x="60" y="600" class="body">Teams: reference lifecycle and revocation fence. WhatsApp: status facts and observations.</text>
-<text x="60" y="626" class="body">Telegram: source-local update receipts. None of these facts certify actual live delivery.</text>
-<text x="40" y="705" class="small">At-least-once delivery; deduplication is scoped. Broker offsets are not global effect transactions.</text>
 
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="880" viewBox="0 0 960 880" role="img" aria-labelledby="title desc">
+<title id="title">Events come in; delivery attempts go out</title><desc id="desc">Admission, workflow progress and provider acknowledgment are separate facts.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
+<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="780" rx="16" fill="#f7faf8"/>
+<path d="M36 99H924" stroke="#c9dacf"/>
+<text x="36" y="46" class="title">Events come in; delivery attempts go out</text>
+<text x="36" y="79" class="body muted">Admission, workflow progress and provider acknowledgment are separate facts.</text>
+<rect x="36" y="126" width="888" height="220" rx="12" fill="#eaf4ed"/>
+<text x="58" y="162" class="head">Incoming event → workflow admission</text>
+<g transform="translate(58,185) scale(1.3076923076923077)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2L23 12L1 22L5 12Z M5 12H23"/></g>
+<text x="58" y="247" class="head">Verify the source</text>
+<text x="58" y="282" class="small">Provider or broker protocol</text>
+<text x="58" y="309" class="small">Current source authority</text>
+<g transform="translate(378,185) scale(1.3076923076923077)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="378" y="247" class="head">Keep the receipt</text>
+<text x="378" y="282" class="small">Recognized / ignored / conflict</text>
+<text x="378" y="309" class="small">Durable receipt + intent</text>
+<g transform="translate(692,185) scale(1.3076923076923077)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1L23 12L5 23Z"/></g>
+<text x="692" y="247" class="head">Admit the work</text>
+<text x="692" y="282" class="small">Pin an activation</text>
+<text x="692" y="309" class="small">Or signal a scoped run</text>
+<path class="edge" d="M296 202H355"/>
+<path class="edge" d="M617 202H673"/>
+<rect x="36" y="377" width="888" height="220" rx="12" fill="white" stroke="#a8bdb1"/>
+<text x="58" y="414" class="head">Committed business event → external delivery</text>
+<g transform="translate(58,437) scale(1.3076923076923077)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<text x="58" y="499" class="head">Commit the event</text>
+<text x="58" y="534" class="small">With the business transition</text>
+<text x="58" y="561" class="small">Subscription selects intent</text>
+<g transform="translate(378,437) scale(1.3076923076923077)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
+<text x="378" y="499" class="head">Admit the attempt</text>
+<text x="378" y="534" class="small">Current bindings + grants</text>
+<text x="378" y="561" class="small">Generation fences results</text>
+<g transform="translate(692,437) scale(1.3076923076923077)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
+<text x="692" y="499" class="head">Record the outcome</text>
+<text x="692" y="534" class="small">Provider acceptance</text>
+<text x="692" y="561" class="small">Reconcile unknown results</text>
+<path class="edge" d="M296 454H355"/>
+<path class="edge" d="M617 454H673"/>
+<rect x="36" y="627" width="888" height="108" rx="12" fill="#fff3df"/>
+<g transform="translate(54,647) scale(1.1538461538461537)" fill="none" stroke="#94601b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
+<text x="98" y="661" class="head">Provider-specific records are evidence, not delivery guarantees.</text>
+<text x="98" y="692" class="small">Teams retains reference lifecycle; WhatsApp retains status facts; Telegram retains update receipts.</text>
+<text x="98" y="719" class="small">At-least-once delivery remains. Broker offsets do not create a global effects transaction.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="786" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 797) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="815" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="846" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">An admission receipt and a provider acknowledgment prove different things.</text>
+</g>
 </svg>

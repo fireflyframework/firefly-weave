@@ -25,7 +25,7 @@ registered as a process global.
 
 ![Diagnostic stages and the evidence appropriate to each boundary](../diagrams/operations-evidence.svg)
 
-Follow a question to its evidence source. Metrics and traces are a parallel observation channel: use the stored run and independent external receipts to establish an outcome, including when export is incomplete.
+Read downward through dependency, readiness, authorization, runtime, and external-effect checks. Metrics and traces are a parallel observation channel: use the stored run and independent external receipts to establish an outcome, including when export is incomplete.
 
 [Open diagram at full size](../diagrams/operations-evidence.svg)
 

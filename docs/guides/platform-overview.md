@@ -28,11 +28,11 @@ you need to run, then follow the linked tutorial for its exact commands.
 | --- | --- | --- |
 | I want to try a workflow on my laptop | CLI only; local files and simulation | [Offline quickstart](../quickstart.md) |
 | My team already has a Weave API | CLI plus an API URL, login, scope IDs, and grants | [Connect to an API](connect-to-api.md) |
-| I need my first complete local platform | Source checkout, isolated server environment, PostgreSQL, Keycloak, and foreground API | [Local platform setup](standalone.md) |
+| I need my first complete local platform | Source checkout, isolated server environment, PostgreSQL, Keycloak, and foreground API | [Local platform setup](local-platform.md) |
 | I need a worker to call an external system | The working local platform plus an admitted worker image and handler | [Worker and container deployment](../operations/deployment.md) |
 | I need a shared cloud installation | Prepared infrastructure, registry images, PostgreSQL, HTTPS identity, and Kubernetes | [Cloud deployment](../operations/cloud-deployment.md) |
 
-**For your first deployment, follow local platform setup.** It gives you a saved
+**For your first deployment, follow [local platform setup](local-platform.md).** It gives you a saved
 successful workflow before adding workers or cloud infrastructure. An offline
 simulation is useful for learning the language but creates no server or saved run.
 
@@ -78,19 +78,23 @@ after creating the database, runtime configuration, and identity link. The full
 command includes the selected Python executable, environment, interface, and
 port; starting it without that configuration is not a complete installation.
 
-There is no `weave serve` or whole-platform `weave deploy` command. The existing
+`weave platform setup` prepares the local installation and `weave platform start`
+launches its API. Use `status`, `demo`, and `stop` to inspect, try, and stop it.
+Follow [the short CLI walkthrough](local-platform.md) for exact commands. The existing
 `weave worker deploy --target compose` starts a prepared **worker container** on
 a selected local Docker engine. Cloud infrastructure and Kubernetes deployment
 use the operator procedures in the cloud guide.
 
-## Deploy your first local platform in order
+## Inspect the manual setup steps
 
 Prepare Python 3.12+, Git, `uv`, and a running local Docker engine with Compose
 2.30 or newer. Use Bash or Zsh and the release checkout selected by the
 [prerequisites](standalone.md#before-you-start). Allow package and image downloads.
 A client-only installation does not supply the repository's setup scripts.
 
-Keep this checklist beside the [full local walkthrough](standalone.md). Each row
+The CLI automates these steps for a first local installation. Use this checklist
+with the [manual local walkthrough](standalone.md) when you want to inspect each
+operator action. Each row
 links to the commands and expected result for that stage; do not skip ahead.
 
 | Step | Action | Ready to continue when… |

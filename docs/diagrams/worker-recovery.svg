@@ -15,39 +15,98 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 745" role="img" aria-labelledby="title desc">
-<title id="title">Worker execution and the crash window</title><desc id="desc">Four steps show claim, execution, remote effect and fenced completion, followed by possible recovery and duplicate external effects.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.head{font-size:21px;font-weight:700}.body{font-size:18px}.small{font-size:16px}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}</style>
-<rect width="1120" height="745" fill="#FFFFFF"/>
-<text x="40" y="50" class="title">Worker execution and the crash window</text>
-<text x="40" y="84" class="body">A lease fences accepted state. It cannot undo an external effect.</text>
-<rect x="40" y="125" width="490" height="130" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="159" class="head">1 · Claim admitted work</text>
-<text x="60" y="190" class="body">Worker authenticates; release and scope match.</text>
-<text x="60" y="216" class="body">Task lease carries generation and deadline.</text>
-<rect x="590" y="125" width="490" height="130" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="610" y="159" class="head">2 · Execute under the lease</text>
-<text x="610" y="190" class="body">Heartbeat maintains ownership while allowed.</text>
-<text x="610" y="216" class="body">Bounded call uses granted credentials.</text>
-<path class="edge" d="M532 190L585 190"/>
-<rect x="590" y="305" width="490" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="610" y="339" class="head">3 · External system accepts</text>
-<text x="610" y="370" class="body">The remote effect may already exist.</text>
-<text x="610" y="396" class="body">A crash here leaves completion uncertain.</text>
-<path class="edge" d="M835 256L835 300"/>
-<rect x="40" y="305" width="490" height="140" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="339" class="head">4 · Submit completion</text>
-<text x="60" y="370" class="body">Current generation + owner + deadline checked.</text>
-<text x="60" y="396" class="body">Accepted result and receipt become durable.</text>
-<path class="edge" d="M585 375L535 375"/>
-<rect x="40" y="505" width="1040" height="150" rx="12" fill="#EEF4F0" stroke="#C9DBD2"/>
-<text x="60" y="539" class="head">Recovery after a missing completion</text>
-<text x="60" y="570" class="body">Eligible safe retries can receive a new lease; stale completions remain fenced.</text>
-<text x="60" y="596" class="body">Ambiguous non-idempotent effects require reconciliation before retry.</text>
-<text x="60" y="622" class="body">Cancellation does not prove that an external operation never happened.</text>
-<path class="edge" stroke-dasharray="7 5" d="M835 446L835 500"/>
-<text x="590" y="478" class="small">If no accepted completion</text>
-<text x="40" y="705" class="small">Source: workers/leases.py · sdk/worker.py · runtime/recovery.py · worker protocol</text>
 
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="950" viewBox="0 0 960 950" role="img" aria-labelledby="title desc">
+<title id="title">A worker can crash after the remote action</title><desc id="desc">The lease protects accepted state. It cannot undo an external effect.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
+<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="850" rx="16" fill="#f7faf8"/>
+<path d="M36 99H924" stroke="#c9dacf"/>
+<text x="36" y="46" class="title">A worker can crash after the remote action</text>
+<text x="36" y="79" class="body muted">The lease protects accepted state. It cannot undo an external effect.</text>
+<circle cx="58" cy="148" r="19" fill="#2d7257"/>
+<text x="58" y="155" class="body white" text-anchor="middle">1</text>
+<g transform="translate(111,130) scale(1.4230769230769231)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
+<text x="170" y="158" class="head">Claim an admitted task</text>
+<text x="111" y="199" class="body">Worker identity, release and scope must match.</text>
+<text x="111" y="227" class="body">The lease records its generation and deadline.</text>
+<path class="edge" d="M58 174V239"/>
+<circle cx="58" cy="285" r="19" fill="#2d7257"/>
+<text x="58" y="292" class="body white" text-anchor="middle">2</text>
+<g transform="translate(111,267) scale(1.4230769230769231)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 12A11 11 0 1 1 1 12A11 11 0 1 1 23 12 M12 5V12L17 15"/></g>
+<text x="170" y="295" class="head">Work while the lease is current</text>
+<text x="111" y="336" class="body">Heartbeat preserves ownership while allowed.</text>
+<text x="111" y="364" class="body">Use bounded calls and granted credentials.</text>
+<path class="edge" d="M58 311V376"/>
+<rect x="94" y="394" width="830" height="126" rx="12" fill="#fff3df"/>
+<circle cx="58" cy="422" r="19" fill="#2d7257"/>
+<text x="58" y="429" class="body white" text-anchor="middle">3</text>
+<g transform="translate(111,404) scale(1.4230769230769231)" fill="none" stroke="#94601b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
+<text x="170" y="432" class="head">The external system accepts the call</text>
+<text x="111" y="473" class="body">The side effect may now exist outside Weave.</text>
+<text x="111" y="501" class="body">A crash here leaves completion uncertain.</text>
+<path class="edge" d="M58 448V513"/>
+<circle cx="58" cy="559" r="19" fill="#2d7257"/>
+<text x="58" y="566" class="body white" text-anchor="middle">4</text>
+<g transform="translate(111,541) scale(1.4230769230769231)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<text x="170" y="569" class="head">Report completion to Weave</text>
+<text x="111" y="610" class="body">Check generation, owner and deadline.</text>
+<text x="111" y="638" class="body">Commit the accepted result and receipt.</text>
+<rect x="36" y="687" width="888" height="108" rx="12" fill="#fff3df"/>
+<g transform="translate(54,707) scale(1.1538461538461537)" fill="none" stroke="#94601b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
+<text x="98" y="721" class="head">No accepted completion? Recover according to the effect.</text>
+<text x="98" y="752" class="small">Safe retries may get a new lease; late results stay fenced.</text>
+<text x="98" y="779" class="small">Ambiguous non-idempotent effects need reconciliation. Cancellation is not proof of no effect.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="856" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 867) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="885" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="916" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">A missing completion does not mean the external action never happened.</text>
+</g>
 </svg>

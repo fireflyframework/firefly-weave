@@ -16,52 +16,121 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="810" viewBox="0 0 1120 810" role="img" aria-labelledby="title desc">
-<title id="title">Calendar starts, duration waits, and signals</title><desc id="desc">Three timelines compare future UTC cron starts, persisted duration wait deadlines, and signal acceptance strictly before its deadline. Recorded facts support offline replay.</desc>
-<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,sans-serif;fill:#173D34;font-size:18px}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.bold{font-weight:700}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.dash{stroke:#91B4A3;stroke-width:2;stroke-dasharray:7 6}</style>
-<rect width="1120" height="810" fill="#FAFCFA"/>
-<text x="40" y="49" class="title">Calendar starts, duration waits, and signals</text>
-<text x="40" y="84" class="">A schedule creates a run. A wait or signal belongs to an existing run.</text>
-<rect x="40" y="130" width="240" height="150" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="164" class="head">UTC schedule</text>
-<text x="60" y="196" class="">Future calendar instants</text>
-<text x="60" y="223" class="">Pinned activation</text>
-<text x="60" y="250" class="">missed_policy: skip</text>
-<path class="edge" d="M330 205H1050"/>
-<circle cx="420" cy="205" r="8" fill="#367D68"/>
-<text x="393" y="178" class="">12:00</text>
-<text x="368" y="242" class="">New run</text>
-<circle cx="690" cy="205" r="8" fill="#367D68"/>
-<text x="663" y="178" class="">12:05</text>
-<text x="638" y="242" class="">New run</text>
-<circle cx="960" cy="205" r="8" fill="#367D68"/>
-<text x="933" y="178" class="">12:10</text>
-<text x="908" y="242" class="">New run</text>
-<text x="330" y="290" class="">Missed minutes become skipped ranges; there is no catch-up backlog.</text>
-<rect x="40" y="340" width="240" height="140" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="374" class="head">Duration wait</text>
-<text x="60" y="406" class="">Same run pauses</text>
-<text x="60" y="433" class="">Persisted deadline</text>
-<text x="60" y="460" class="">Scheduler observes due</text>
-<path class="edge" d="M330 405H1050"/>
-<text x="330" y="380" class="">Wait issued</text>
-<text x="730" y="380" class="">Deadline</text>
-<line x1="760" y1="387" x2="760" y2="449" class="dash"/>
-<text x="800" y="441" class="">wait_elapsed → null output</text>
-<text x="330" y="492" class="">Elapsed facts behind an incident barrier defer normal continuation.</text>
-<rect x="40" y="540" width="240" height="140" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="574" class="head">Signal wait</text>
-<text x="60" y="606" class="">Same run awaits input</text>
-<text x="60" y="633" class="">Named signal + schema</text>
-<text x="60" y="660" class="">Persisted deadline</text>
-<path class="edge" d="M330 605H1050"/>
-<text x="330" y="580" class="">Signal receipt</text>
-<text x="780" y="580" class="">Deadline</text>
-<line x1="815" y1="588" x2="815" y2="655" class="dash"/>
-<text x="360" y="642" class="">Accepted strictly before deadline wins</text>
-<text x="846" y="642" class="">Equal is too late</text>
-<rect x="40" y="730" width="1040" height="53" rx="12" fill="#E0EEE4" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="764" class="head"></text>
-<text x="60" y="763" class="">Database time governs live admission. Offline replay uses recorded receipts and deadline facts.</text>
+
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1610" viewBox="0 0 960 1610" role="img" aria-labelledby="title desc">
+<title id="title">A schedule starts a run; a wait stays in one</title><desc id="desc">Calendar starts, duration waits, and named signals use different time boundaries. READ EACH TIMELINE LEFT TO RIGHT  •  Each row is a different mechanism</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1510" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">A schedule starts a run; a wait stays in one</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Calendar starts, duration waits, and named signals use different time</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">boundaries.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ EACH TIMELINE LEFT TO RIGHT  •  Each row is a different mechanism</text>
+<rect x="40" y="232" width="880" height="340" rx="18" fill="white" stroke="#BFD2C8"/>
+<g transform="translate(59 252) scale(0.85)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="M28 13v16l11 7 M28 5v4 M5 28h4 M47 28h4"/></g>
+<text x="125" y="279" font-size="26" font-weight="700" fill="#173D34">UTC schedule</text>
+<text x="62" y="330" font-size="22" font-weight="400" fill="#173D34">Create separate runs at future calendar instants.</text>
+<path class="edge" d="M105 392H855"/>
+<circle cx="135" cy="392" r="9" fill="#367D68"/>
+<text x="110" y="371" font-size="21" font-weight="700" fill="#173D34">12:00</text>
+<text x="110" y="434" font-size="20" font-weight="400" fill="#173D34">New run</text>
+<circle cx="438" cy="392" r="9" fill="#367D68"/>
+<text x="413" y="371" font-size="21" font-weight="700" fill="#173D34">12:05</text>
+<text x="413" y="434" font-size="20" font-weight="400" fill="#173D34">New run</text>
+<circle cx="720" cy="392" r="9" fill="#367D68"/>
+<text x="695" y="371" font-size="21" font-weight="700" fill="#173D34">12:10</text>
+<text x="695" y="434" font-size="20" font-weight="400" fill="#173D34">New run</text>
+<text x="62" y="489" font-size="21" font-weight="400" fill="#173D34">Pinned activation • missed_policy: skip. Missed minutes become skipped</text>
+<text x="62" y="517" font-size="21" font-weight="400" fill="#173D34">ranges; no catch-up backlog.</text>
+<rect x="40" y="598" width="880" height="340" rx="18" fill="white" stroke="#BFD2C8"/>
+<g transform="translate(59 618) scale(0.85)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="M28 13v16l11 7 M28 5v4 M5 28h4 M47 28h4"/></g>
+<text x="125" y="645" font-size="26" font-weight="700" fill="#173D34">Duration wait</text>
+<text x="62" y="696" font-size="22" font-weight="400" fill="#173D34">Pause the same run until its persisted deadline.</text>
+<path class="edge" d="M105 758H855"/>
+<circle cx="135" cy="758" r="9" fill="#367D68"/>
+<text x="110" y="737" font-size="21" font-weight="700" fill="#173D34">Wait issued</text>
+<text x="110" y="800" font-size="20" font-weight="400" fill="#173D34">Same run</text>
+<circle cx="438" cy="758" r="9" fill="#367D68"/>
+<text x="413" y="737" font-size="21" font-weight="700" fill="#173D34">Deadline</text>
+<text x="413" y="800" font-size="20" font-weight="400" fill="#173D34">Scheduler sees due</text>
+<circle cx="720" cy="758" r="9" fill="#367D68"/>
+<text x="695" y="737" font-size="21" font-weight="700" fill="#173D34">wait_elapsed</text>
+<text x="695" y="800" font-size="20" font-weight="400" fill="#173D34">Null output</text>
+<text x="62" y="855" font-size="21" font-weight="400" fill="#173D34">A due timer behind an incident barrier records an elapsed fact; normal</text>
+<text x="62" y="883" font-size="21" font-weight="400" fill="#173D34">continuation remains deferred.</text>
+<rect x="40" y="964" width="880" height="340" rx="18" fill="white" stroke="#BFD2C8"/>
+<g transform="translate(59 984) scale(0.85)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M28 29v24 M15 39a18 18 0 1 1 26 0 M7 46a29 29 0 1 1 42 0"/><circle cx="28" cy="27" r="4"/></g>
+<text x="125" y="1011" font-size="26" font-weight="700" fill="#173D34">Named signal wait</text>
+<text x="62" y="1062" font-size="22" font-weight="400" fill="#173D34">Pause the same run for a schema-checked payload.</text>
+<path class="edge" d="M105 1124H855"/>
+<circle cx="135" cy="1124" r="9" fill="#367D68"/>
+<text x="110" y="1103" font-size="21" font-weight="700" fill="#173D34">Receipt arrives</text>
+<text x="110" y="1166" font-size="20" font-weight="400" fill="#173D34">Before deadline</text>
+<circle cx="438" cy="1124" r="9" fill="#367D68"/>
+<text x="413" y="1103" font-size="21" font-weight="700" fill="#173D34">Accept signal</text>
+<text x="413" y="1166" font-size="20" font-weight="400" fill="#173D34">Same run continues</text>
+<circle cx="720" cy="1124" r="9" fill="#367D68"/>
+<text x="695" y="1103" font-size="21" font-weight="700" fill="#173D34">Deadline</text>
+<text x="695" y="1166" font-size="20" font-weight="400" fill="#173D34">Equal is too late</text>
+<text x="62" y="1221" font-size="21" font-weight="400" fill="#173D34">Admission strictly before the deadline wins. A receipt at the deadline is</text>
+<text x="62" y="1249" font-size="21" font-weight="400" fill="#173D34">too late; a timely signal continues the existing run.</text>
+<rect x="40" y="1330" width="880" height="136" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 1350) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1374" font-size="23" font-weight="700" fill="#326B88">Use the right clock as evidence</text>
+<text x="60" y="1413" font-size="21" font-weight="400" fill="#173D34">Database time governs live admission. Offline replay uses the recorded</text>
+<text x="60" y="1442" font-size="21" font-weight="400" fill="#173D34">receipts and deadline facts, not the current wall clock.</text><g id="lumi-takeaway">
+<rect x="0" y="1516" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1527) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1545" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1576" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Schedules create runs; waits and signals continue an existing run.</text>
+</g>
 </svg>

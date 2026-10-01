@@ -24,9 +24,9 @@ does not run the workflow. Start with [workflow authoring](../guides/workflow-au
 for the echo file used below; use the [standalone tutorial](../guides/standalone.md)
 when you want a durable run.
 
-![Compiler result branches and correction loop](../diagrams/authoring-diagnostic-loop.svg)
+![Compiler checks and the source correction loop](../diagrams/authoring-diagnostic-loop.svg)
 
-Start at the editable source. The left branch checks only part of the contract; the right branch can produce an executable. An error code, semantic path, and source span lead back to a concrete edit. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
+Start at the editable source and read down. The partial check establishes shape and schema validity; full compilation adds an explicit catalog and can produce an executable. The final card shows how an error code and semantic path guide a source edit. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
 
 ## Compile the tutorial file in Python
 

@@ -16,46 +16,116 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="850" viewBox="0 0 1120 850" role="img" aria-labelledby="title desc">
-<title id="title">Read the result before moving forward</title>
-<desc id="desc">An author edits workflow source, uses partial validation without a catalog or complete compilation with an explicit catalog, reads diagnostic codes and locations, then repairs the source. Only complete success produces an artifact for simulation.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#507767"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#16372a}.title{font-size:30px;font-weight:700}.label{font-size:22px;font-weight:700}.body{font-size:19px}.small{font-size:18px}.edge{fill:none;stroke:#507767;stroke-width:2.5;marker-end:url(#arrow)}.return{fill:none;stroke:#507767;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow)}</style>
-<rect width="1120" height="850" rx="20" fill="#f7faf5"/>
-<text class="title" x="40" y="54">Read the result before moving forward</text>
-<text class="body" x="40" y="86">The echo exercise separates source validity, executable validity, and runtime behavior.</text>
-<rect x="270" y="115" width="580" height="106" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="290" y="149">Editable workflow source</text>
-<text class="body" x="290" y="180">echo.workflow.yaml  ·  YAML, JSON, or builder document</text>
-<path class="edge" d="M410 221 V255 H290 V284"/>
-<path class="edge" d="M710 221 V255 H810 V284"/>
-<rect x="70" y="284" width="440" height="193" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="90" y="318">validate_source · no catalog</text>
-<text class="body" x="90" y="349">Parse + outer shape + embedded schemas</text>
-<text class="body" x="90" y="377">When partial checks pass:</text>
-<text class="body" x="90" y="405">validationOk: true  ·  partial: true</text>
-<text class="body" x="90" y="433">ok: false  ·  artifact: null</text>
-<rect x="610" y="284" width="440" height="193" rx="14" fill="#ffffff" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="630" y="318">compile_source · explicit catalog</text>
-<text class="body" x="630" y="349">Also resolve exact dependencies and types</text>
-<text class="body" x="630" y="377">When full compilation passes:</text>
-<text class="body" x="630" y="405">validationOk: true  ·  partial: false</text>
-<text class="body" x="630" y="433">ok: true  ·  artifact present</text>
-<path class="edge" d="M290 477 V520"/>
-<path class="edge" d="M810 477 V520"/>
-<rect x="70" y="520" width="440" height="145" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="90" y="554">Partial success stops here</text>
-<text class="body" x="90" y="585">Do not offer an executable yet.</text>
-<text class="body" x="90" y="613">Supply a catalog for full analysis.</text>
-<text class="body" x="90" y="641">An empty catalog is still explicit.</text>
-<rect x="610" y="520" width="440" height="145" rx="14" fill="#edf4e8" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="630" y="554">Artifact can be simulated</text>
-<text class="body" x="630" y="585">Use fixed input and explicit Action mocks.</text>
-<text class="body" x="630" y="613">A successful simulation does not prove</text>
-<text class="body" x="630" y="641">that a worker or provider is available.</text>
-<rect x="70" y="707" width="980" height="100" rx="14" fill="#f5eee2" stroke="#adc5b5" stroke-width="1.5"/>
-<text class="label" x="90" y="739">On diagnostics: keep the source editable and repair the reported location.</text>
-<text class="body" x="90" y="772">Example: WV-COMP-TYPE_MISMATCH at /spec/output; a string cannot fulfill an object schema.</text>
-<path class="return" d="M70 756 H30 V168 H270"/>
-<text class="small" x="82" y="694">Correction loop</text>
+
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1650" viewBox="0 0 960 1650" role="img" aria-labelledby="title desc">
+<title id="title">Fix one boundary at a time</title><desc id="desc">A valid-looking file, a compiled workflow, and a successful run are three different results. READ DOWN  •  Each arrow carries the result into the next step</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1550" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Fix one boundary at a time</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">A valid-looking file, a compiled workflow, and a successful run are three</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">different results.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
+<rect x="40" y="232" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Write the workflow</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Keep echo.workflow.yaml editable while you work.</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">YAML, JSON, and Python-built documents use the same language.</text>
+<text x="168" y="372" font-size="18" font-weight="600" fill="#326B88">SOURCE • Your editable definition</text>
+<path class="edge" d="M480 394v35"/>
+<rect x="40" y="442" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="459" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 474) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="168" y="485" font-size="25" font-weight="700" fill="#173D34">2. Check the shape first</text>
+<text x="168" y="524" font-size="22" font-weight="400" fill="#173D34">Without a catalog, validation checks parsing and schemas.</text>
+<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">validationOk: true with partial: true is only a partial check.</text>
+<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">ok: false and artifact: null mean there is no executable yet.</text>
+<text x="168" y="611" font-size="18" font-weight="600" fill="#326B88">PARTIAL CHECK • Supply dependencies to continue</text>
+<path class="edge" d="M480 633v35"/>
+<rect x="40" y="681" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="698" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 713) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m19 35-5 5c-14 14-28-1-14-14l10-10c10-10 23-2 19 7 M36 21l5-5c14-14 28 1 14 14L45 40c-10 10-23 2-19-7 M18 36l19-17" transform="translate(1 0) scale(.94)"/></g>
+<text x="168" y="724" font-size="25" font-weight="700" fill="#173D34">3. Compile with an explicit catalog</text>
+<text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">The compiler resolves exact dependencies and checks types.</text>
+<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">Even a workflow with no dependencies needs an empty catalog.</text>
+<text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">Success: ok: true, partial: false, and an artifact.</text>
+<text x="168" y="850" font-size="18" font-weight="600" fill="#326B88">FULL CHECK • The artifact can now be simulated</text>
+<path class="edge" d="M480 872v35"/>
+<rect x="40" y="920" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="937" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 952) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
+<text x="168" y="963" font-size="25" font-weight="700" fill="#173D34">4. Try a fixed input in the simulator</text>
+<text x="168" y="1002" font-size="22" font-weight="400" fill="#173D34">Provide explicit Action mocks and a fixed clock.</text>
+<text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">A successful simulation checks local behavior, not worker</text>
+<text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">availability.</text>
+<text x="168" y="1089" font-size="18" font-weight="600" fill="#326B88">SIMULATION • External services still need separate checks</text>
+<path class="edge" d="M480 1111v35"/>
+<rect x="40" y="1159" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="1176" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 1191) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19A22 22 0 1 1 7 37 M8 6v14h14"/></g>
+<text x="168" y="1202" font-size="25" font-weight="700" fill="#173D34">5. Use the diagnostic to repair the source</text>
+<text x="168" y="1241" font-size="22" font-weight="400" fill="#173D34">Example: WV-COMP-TYPE_MISMATCH at /spec/output.</text>
+<text x="168" y="1270" font-size="22" font-weight="400" fill="#173D34">A string cannot satisfy an object schema. Fix the value, then</text>
+<text x="168" y="1299" font-size="22" font-weight="400" fill="#173D34">validate and compile again.</text>
+<text x="168" y="1328" font-size="18" font-weight="600" fill="#326B88">CORRECTION LOOP • Return to your editable source</text>
+<rect x="40" y="1370" width="880" height="136" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 1390) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1414" font-size="23" font-weight="700" fill="#326B88">What this tells you</text>
+<text x="60" y="1453" font-size="21" font-weight="400" fill="#173D34">Move forward only when the boundary you need has passed. Keep source</text>
+<text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">location and diagnostic code together when explaining a failure.</text><g id="lumi-takeaway">
+<rect x="0" y="1556" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1567) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1585" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1616" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Fix the first reported boundary, then check the definition again.</text>
+</g>
 </svg>

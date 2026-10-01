@@ -16,69 +16,131 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="870" viewBox="0 0 1120 870" role="img" aria-labelledby="title desc">
-<title id="title">Three integration paths and their commit boundaries</title><desc id="desc">Swimlanes distinguish signed webhooks with atomic receipt and run admission, provider inbox commit before background dispatch, and outbound integration events committed with source mutations.</desc>
-<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,sans-serif;fill:#173D34;font-size:18px}.title{font-size:28px;font-weight:700}.head{font-size:21px;font-weight:700}.bold{font-weight:700}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.dash{stroke:#91B4A3;stroke-width:2;stroke-dasharray:7 6}</style>
-<rect width="1120" height="870" fill="#FAFCFA"/>
-<text x="40" y="49" class="title">Three integration paths and their commit boundaries</text>
-<text x="40" y="84" class="">Choose the ingress contract first; outbound lifecycle notifications use a separate dispatcher.</text>
-<text x="40" y="132" class="head">External system</text>
-<text x="390" y="132" class="head">Weave durable state</text>
-<text x="740" y="132" class="head">Execution / delivery</text>
-<rect x="40" y="160" width="290" height="155" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="194" class="head">Signed webhook</text>
-<text x="60" y="226" class="">Weave HMAC envelope</text>
-<text x="60" y="253" class="">eventId + payload</text>
-<text x="60" y="280" class="">Exact bytes + timestamp</text>
-<rect x="390" y="160" width="290" height="155" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="410" y="194" class="head">One transaction</text>
-<text x="410" y="226" class="">Authenticate + authority</text>
-<text x="410" y="253" class="">Receipt + run or signal</text>
-<text x="410" y="280" class="">Commit, then 202 receipt</text>
-<rect x="740" y="160" width="340" height="155" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="760" y="194" class="head">Workflow execution</text>
-<text x="760" y="226" class="">Native or remote task execution</text>
-<text x="760" y="253" class="">Continues from admitted state</text>
-<text x="760" y="280" class="">Receipt ≠ completed Workflow</text>
-<path class="edge" d="M330 234H380"/>
-<path class="edge" d="M680 234H730"/>
-<rect x="40" y="365" width="290" height="155" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="399" class="head">Provider ingress</text>
-<text x="60" y="431" class="">Provider-specific protocol</text>
-<text x="60" y="458" class="">Teams / WhatsApp / Telegram</text>
-<text x="60" y="485" class="">Authenticate raw bytes</text>
-<rect x="390" y="365" width="290" height="155" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="410" y="399" class="head">Inbox transaction</text>
-<text x="410" y="431" class="">Protocol facts + receipts</text>
-<text x="410" y="458" class="">Pending dispatch intent</text>
-<text x="410" y="485" class="">Commit, then provider ACK</text>
-<rect x="740" y="365" width="340" height="155" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="760" y="399" class="head">Background dispatch</text>
-<text x="760" y="431" class="">Recheck source + target authority</text>
-<text x="760" y="458" class="">Start pinned run or signal target</text>
-<text x="760" y="485" class="">Settle runtime + receipt atomically</text>
-<path class="edge" d="M330 439H380"/>
-<path class="edge" d="M680 439H730"/>
-<rect x="40" y="570" width="290" height="155" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="604" class="head">Notification receiver</text>
-<text x="60" y="636" class="">Verify timestamp + HMAC</text>
-<text x="60" y="663" class="">Durably deduplicate eventId</text>
-<text x="60" y="690" class="">Commit effect, then ACK</text>
-<rect x="390" y="570" width="290" height="155" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="410" y="604" class="head">Source transaction</text>
-<text x="410" y="636" class="">Lifecycle mutation</text>
-<text x="410" y="663" class="">Integration event</text>
-<text x="410" y="690" class="">Matching delivery intents</text>
-<rect x="740" y="570" width="340" height="155" rx="12" fill="#EEF5EF" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="760" y="604" class="head">Outbox dispatcher</text>
-<text x="760" y="636" class="">Lease + current authority</text>
-<text x="760" y="663" class="">Bounded HTTP attempt</text>
-<text x="760" y="690" class="">Record success, retry or incident</text>
-<path class="edge" d="M680 644H730"/>
-<path class="edge" d="M910 725V759H182V735"/>
-<text x="353" y="752" class="">Same event body and identity across attempts</text>
-<rect x="40" y="790" width="1040" height="53" rx="12" fill="#E0EEE4" stroke="#BFD6C9" stroke-width="1.5"/>
-<text x="60" y="824" class="head"></text>
-<text x="60" y="823" class="">All paths need current scoped authority. An acknowledgment has only the meaning stated in its lane.</text>
+
+
+
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1593" viewBox="0 0 960 1593" role="img" aria-labelledby="title desc">
+<title id="title">Follow the event in the direction it travels</title><desc id="desc">An acknowledgment means different things for a signed webhook, provider inbox, and outbound notification. READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1493" rx="24" fill="#FAFCFB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Follow the event in the direction it travels</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">An acknowledgment means different things for a signed webhook, provider</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">inbox, and outbound notification.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</text>
+<text x="48" y="242" font-size="24" font-weight="700" fill="#173D34">INBOUND A • Your sender uses Weave signatures</text>
+<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="309" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 47 21L5 49l8-21z M13 28h39"/></g>
+<text x="58.0" y="366" font-size="24" font-weight="700" fill="#173D34">Send the signed envelope</text>
+<text x="58.0" y="410" font-size="22" font-weight="400" fill="#173D34">HMAC covers exact bytes,</text>
+<text x="58.0" y="438" font-size="22" font-weight="400" fill="#173D34">timestamp, and eventId.</text>
+<text x="58.0" y="466" font-size="22" font-weight="400" fill="#173D34">Weave checks authentication and</text>
+<text x="58.0" y="494" font-size="22" font-weight="400" fill="#173D34">current authority.</text>
+<path class="edge" d="M465.0 389.5h29"/>
+<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="309" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="518.0" y="366" font-size="24" font-weight="700" fill="#173D34">Commit receipt and runtime</text>
+<text x="518.0" y="410" font-size="22" font-weight="400" fill="#173D34">One transaction admits the run or</text>
+<text x="518.0" y="438" font-size="22" font-weight="400" fill="#173D34">signal and receipt.</text>
+<text x="518.0" y="466" font-size="22" font-weight="400" fill="#173D34">Return HTTP 202 after commit;</text>
+<text x="518.0" y="494" font-size="22" font-weight="400" fill="#173D34">execution may still be running.</text>
+<text x="48" y="574" font-size="24" font-weight="700" fill="#173D34">INBOUND B • A vendor uses its own protocol</text>
+<rect x="40.0" y="595" width="420.0" height="281" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="641" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="58.0" y="698" font-size="24" font-weight="700" fill="#173D34">Authenticate and store inbox</text>
+<text x="58.0" y="742" font-size="22" font-weight="400" fill="#173D34">Teams, WhatsApp, or Telegram</text>
+<text x="58.0" y="770" font-size="22" font-weight="400" fill="#173D34">authenticates raw bytes.</text>
+<text x="58.0" y="798" font-size="22" font-weight="400" fill="#173D34">Commit protocol facts, receipts,</text>
+<text x="58.0" y="826" font-size="22" font-weight="400" fill="#173D34">and pending intent; then ACK.</text>
+<path class="edge" d="M465.0 735.5h29"/>
+<rect x="500.0" y="595" width="420.0" height="281" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="641" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
+<text x="518.0" y="698" font-size="24" font-weight="700" fill="#173D34">Dispatch the pending intent</text>
+<text x="518.0" y="742" font-size="22" font-weight="400" fill="#173D34">Recheck source and target</text>
+<text x="518.0" y="770" font-size="22" font-weight="400" fill="#173D34">authority.</text>
+<text x="518.0" y="798" font-size="22" font-weight="400" fill="#173D34">Start or signal the pinned target;</text>
+<text x="518.0" y="826" font-size="22" font-weight="400" fill="#173D34">settle runtime and receipt</text>
+<text x="518.0" y="854" font-size="22" font-weight="400" fill="#173D34">together.</text>
+<text x="48" y="934" font-size="24" font-weight="700" fill="#173D34">OUTBOUND • Weave sends lifecycle notifications</text>
+<rect x="40.0" y="955" width="420.0" height="281" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="86.0" cy="1001" r="29" fill="#EEF4F0"/>
+<g transform="translate(63.0 978) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="58.0" y="1058" font-size="24" font-weight="700" fill="#173D34">Record the lifecycle change</text>
+<text x="58.0" y="1102" font-size="22" font-weight="400" fill="#173D34">Source transaction stores the</text>
+<text x="58.0" y="1130" font-size="22" font-weight="400" fill="#173D34">integration event and matching</text>
+<text x="58.0" y="1158" font-size="22" font-weight="400" fill="#173D34">delivery intents.</text>
+<text x="58.0" y="1186" font-size="22" font-weight="400" fill="#173D34">The outbox dispatcher leases a</text>
+<text x="58.0" y="1214" font-size="22" font-weight="400" fill="#173D34">bounded HTTP attempt.</text>
+<path class="edge" d="M465.0 1095.5h29"/>
+<rect x="500.0" y="955" width="420.0" height="281" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<circle cx="546.0" cy="1001" r="29" fill="#EEF4F0"/>
+<g transform="translate(523.0 978) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 47 21L5 49l8-21z M13 28h39"/></g>
+<text x="518.0" y="1058" font-size="24" font-weight="700" fill="#173D34">Receiver commits its effect</text>
+<text x="518.0" y="1102" font-size="22" font-weight="400" fill="#173D34">Verify timestamp and HMAC; durably</text>
+<text x="518.0" y="1130" font-size="22" font-weight="400" fill="#173D34">deduplicate eventId.</text>
+<text x="518.0" y="1158" font-size="22" font-weight="400" fill="#173D34">ACK after commit; dispatcher</text>
+<text x="518.0" y="1186" font-size="22" font-weight="400" fill="#173D34">records success, retry, or</text>
+<text x="518.0" y="1214" font-size="22" font-weight="400" fill="#173D34">incident.</text>
+<rect x="40" y="1284" width="880" height="165" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 1304) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1328" font-size="23" font-weight="700" fill="#326B88">An ACK is evidence at a specific boundary</text>
+<text x="60" y="1367" font-size="21" font-weight="400" fill="#173D34">Outbound retries retain the same event body and identity. All lanes need</text>
+<text x="60" y="1396" font-size="21" font-weight="400" fill="#173D34">current scoped authority; no receipt alone proves a completed workflow or</text>
+<text x="60" y="1425" font-size="21" font-weight="400" fill="#173D34">external delivery.</text><g id="lumi-takeaway">
+<rect x="0" y="1499" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1510) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1528" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1559" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Read an acknowledgment in the context of the boundary that produced it.</text>
+</g>
 </svg>

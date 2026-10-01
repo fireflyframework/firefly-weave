@@ -27,7 +27,7 @@ Returned plans explicitly list those omitted resource classes and their reasons.
 
 ![Reviewed retention plan and atomic application](../diagrams/operations-retention.svg)
 
-The left lane is the operator decision; the right lane is the server transaction boundary. Review and apply are separate steps. The result can contain both deleted and blocked candidates, and omitted resource classes remain retained.
+Read down from the operator’s plan request and review to the server’s transactional recheck and commit. Review and apply remain separate decisions. The result can contain both deleted and blocked candidates, and omitted resource classes remain retained.
 
 [Open diagram at full size](../diagrams/operations-retention.svg)
 

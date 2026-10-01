@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ![Offline consistency verification separated from operations that change execution](../diagrams/integrations-incidents-replay.svg)
 
-**How to read this diagram:** Take the left branch to replay. A consistent report describes the retained terminal evidence; it does not independently prove delivery or historical authorization. The right branch requires a separate authorized operations decision.
+**How to read this diagram:** Follow the top row left to right for read-only replay and its result. A consistent report describes retained terminal evidence; it does not independently prove delivery or historical authorization. The lower row requires a separate authorized decision to change execution.
 
 ## Inspect what happened without repeating it
 
