@@ -28,7 +28,7 @@ browser connects to a paired Python host; API credentials remain in that host.
 
 | Your goal | What must be running | Start here |
 | --- | --- | --- |
-| Open Studio as a native desktop app | A matching desktop build for your operating system | [Build and use the desktop app](desktop.md) |
+| Open Studio as a native desktop app | A matching desktop build for your operating system | [Install desktop](desktop.md) |
 | Draw or import a process on your computer | Studio's local host | [Install and launch Studio](#install-the-alpha5-browser-application) |
 | Save and run processes on your laptop | Studio plus a separate local Weave platform | [Start the platform](local-platform.md), then [connect Studio](#connect-an-authorized-api-profile) |
 | Work with your team's remote platform | Studio on your computer; your team's API remains remote | [Get your connection details](connect-to-api.md), then [connect Studio](#connect-an-authorized-api-profile) |

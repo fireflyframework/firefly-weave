@@ -18,18 +18,25 @@ SPDX-License-Identifier: Apache-2.0
 
 # Weave Studio desktop
 
-Alpha5 provides a native macOS ARM desktop asset,
-`firefly-weave-studio-0.1.0-alpha.5-aarch64-apple-darwin.dmg`, on the
+Choose a matching installer **actually attached** to the
 [v0.1.0a5 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a5).
-The app is **unsigned and not notarized**. Check its SHA-256 against the release
-inventory before opening it. Your organization's macOS security policy determines
-whether it can be installed; do not disable system protections to bypass a refusal.
+The desktop product version is `0.1.0-alpha.5`; its bundled Python host is
+`0.1.0a5`. These installers are **unsigned**; macOS builds are not notarized.
+Build and frozen-host smoke checks do not establish interactive GUI testing on
+every operating system. Your organization's installation policy still applies.
 
-Windows, Linux, and Intel macOS builds require successful platform-specific CI
-and matching published assets. Do not treat the source workflow as evidence that
-those installers are ready. Use the [browser installation](studio.md#install-the-alpha5-browser-application)
-where a matching desktop release asset is unavailable. Alpha4 Python releases do
-not contain Studio or desktop installers.
+| Computer | Target | Installer filename |
+| --- | --- | --- |
+| macOS Apple silicon | `aarch64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.5-aarch64-apple-darwin.dmg` |
+| macOS Intel | `x86_64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.5-x86_64-apple-darwin.dmg` |
+| Windows x64 | `x86_64-pc-windows-msvc` | `firefly-weave-studio-0.1.0-alpha.5-x86_64-pc-windows-msvc.exe` or `.msi` |
+| Linux x64 | `x86_64-unknown-linux-gnu` | `firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.deb` or `.AppImage` |
+
+Download the chosen installer and its target's checksum inventory,
+`weave-studio-TARGET-SHA256SUMS`, from that same release. The matrix describes
+filenames, not a promise that every asset is already available. If your matching
+asset is absent, use the [browser installation](studio.md#install-the-alpha5-browser-application)
+instead. Alpha4 Python releases do not contain Studio or desktop installers.
 
 ## What is packaged
 
@@ -50,14 +57,82 @@ This follows Tauri's [sidecar model](https://v2.tauri.app/develop/sidecar/) and
 
 ## Install on macOS
 
-Open the DMG, then drag the Weave Studio app on the left into **Applications**
-on the right. The cream and forest installer shows the destination and a gold
-arrow. Open Studio from Applications after the copy finishes, then eject the
-installer volume. The alpha5 app is unsigned and not notarized; no signed installer is claimed.
+1. Open **Apple menu → About This Mac**. Choose the Apple silicon DMG for an Apple
+   chip, or the Intel DMG for an Intel processor.
+2. Download the DMG and matching `weave-studio-TARGET-SHA256SUMS` release asset.
+3. In Terminal, enter the download directory and calculate the file's checksum.
+   For Apple silicon:
+
+   ```bash
+   # Inspect the downloaded installer without opening it.
+   cd ~/Downloads
+   shasum -a 256 firefly-weave-studio-0.1.0-alpha.5-aarch64-apple-darwin.dmg
+   # Show the expected digest for this exact filename.
+   grep 'firefly-weave-studio-0.1.0-alpha.5-aarch64-apple-darwin.dmg$' weave-studio-aarch64-apple-darwin-SHA256SUMS
+   ```
+
+   Both displayed digests must match. For Intel, replace `aarch64-apple-darwin`
+   with `x86_64-apple-darwin` in both filenames. Stop if the digest differs.
+4. Open the verified DMG, then drag **Firefly Weave Studio** on the left into
+   **Applications** on the right. The cream and forest installer shows the
+   destination and a gold arrow.
+5. Open Studio from Applications after copying finishes, then eject the installer
+   volume. The app is unsigned and not notarized. Follow your organization's
+   macOS installation policy; do not disable system protections to bypass a refusal.
 
 The background is maintained as `desktop/artwork/dmg-background.svg` with its
 Finder-compatible PNG alongside it. Tauri's DMG settings define the window and
 icon positions; the artwork does not replace the actual app or Applications icons.
+
+## Install on Windows
+
+Choose the x64 **EXE** for an interactive setup, or **MSI** when your organization
+uses Windows Installer deployment. Install one format, not both. Download its
+matching `weave-studio-x86_64-pc-windows-msvc-SHA256SUMS` inventory first.
+
+```powershell
+# Inspect the downloaded EXE before running it.
+Set-Location "$HOME\Downloads"
+Get-FileHash .\firefly-weave-studio-0.1.0-alpha.5-x86_64-pc-windows-msvc.exe -Algorithm SHA256
+# Compare the digest with the line for this exact filename.
+Select-String -Path .\weave-studio-x86_64-pc-windows-msvc-SHA256SUMS -Pattern 'firefly-weave-studio-0.1.0-alpha.5-x86_64-pc-windows-msvc.exe$'
+```
+
+For MSI, substitute `.msi` in both commands. Compare digests without regard to
+letter case; stop on a mismatch. Double-click the verified installer, complete its
+setup, then open **Firefly Weave Studio** from the Start menu. The installer may
+need network access to provision WebView2. Unsigned-installation warnings remain
+subject to your organization's policy. The MSI's internal version is `0.1.5`, a
+monotonic Windows Installer counter; the displayed product remains alpha5.
+
+## Install on Linux
+
+Choose the x64 **DEB** for a Debian/Ubuntu system, or **AppImage** for a portable
+application where your distribution supports its runtime. Download the matching
+`weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS` inventory.
+
+```bash
+# Enter the download directory, verify this exact file, then install only on success.
+cd ~/Downloads &&
+  grep 'firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.deb$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
+  sudo apt install ./firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.deb
+```
+
+Open **Firefly Weave Studio** from your desktop application launcher. For AppImage:
+
+```bash
+# Verify this exact portable file; a failed or missing checksum prevents launch.
+cd ~/Downloads &&
+  grep 'firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.AppImage$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
+  chmod +x firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.AppImage &&
+  ./firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.AppImage
+```
+
+Linux requires the distribution's WebKitGTK runtime, and AppImage execution may
+require its FUSE compatibility package. If the launcher reports a missing runtime,
+use the distribution-supported package installation or the browser fallback.
+The connection assistant also needs an unlocked Secret Service/keyring; authoring
+without a platform connection does not need sign-in.
 
 ## First launch and connection
 
