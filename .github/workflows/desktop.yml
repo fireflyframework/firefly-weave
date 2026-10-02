@@ -148,6 +148,16 @@ jobs:
           PYASSETS
           uv run --no-sync python desktop/scripts/hash_installers.py desktop/work/release-assets
           mv desktop/work/release-assets/SHA256SUMS desktop/work/release-assets/weave-studio-${{ matrix.target }}-SHA256SUMS
+      - name: Retain offline frozen startup diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weave-studio-${{ matrix.target }}-offline-diagnostics
+          if-no-files-found: ignore
+          path: |
+            desktop/work/frozen-startup-error.txt
+            desktop/work/build/weave-studio-host/warn-weave-studio-host.txt
+            desktop/src-tauri/binaries/weave-studio-host-*
       - name: Retain installers and host integrity manifest
         uses: actions/upload-artifact@v4
         with:

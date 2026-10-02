@@ -38,7 +38,14 @@ async def check(binary: Path, expected_version: str | None = None) -> None:
         assert child.stdout is not None
         line = await asyncio.wait_for(child.stdout.readline(), timeout=45)
         if not line:
-            raise RuntimeError("Frozen host exited before readiness")
+            # This invocation never supplies a profile or performs login; keep only
+            # bounded offline startup stderr, never the bootstrap or environment.
+            diagnostic = Path("desktop/work/frozen-startup-error.txt")
+            diagnostic.parent.mkdir(parents=True, exist_ok=True)
+            assert child.stderr is not None
+            stderr = await asyncio.wait_for(child.stderr.read(65536), timeout=5)
+            diagnostic.write_bytes(stderr)
+            raise RuntimeError("Frozen host exited before readiness; see desktop/work/frozen-startup-error.txt")
         boot = json.loads(line)
         parsed = urlsplit(boot["origin"])
         assert boot["type"] == "weave-desktop-ready" and parsed.hostname == "127.0.0.1"
