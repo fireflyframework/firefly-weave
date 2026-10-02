@@ -261,7 +261,7 @@ If you already use the CLI, authenticate using your operator's OAuth configurati
 
 ```bash
 # Uses your configured CIAM and saves credentials in the native credential store.
-.venv/bin/weave auth login --auth-config /absolute/path/to/oauth.json
+weave auth login --auth-config /absolute/path/to/oauth.json
 ```
 
 Create a Studio profile from the **same** login configuration. This avoids typing
@@ -269,7 +269,7 @@ the API origin twice or accidentally selecting a different server:
 
 ```bash
 # Generate a non-secret profile; an existing file is never overwritten.
-.venv/bin/weave studio configure \
+weave studio configure \
   --name "My team" \
   --auth-config /absolute/path/to/oauth.json \
   --output ./studio-profile.json
@@ -307,8 +307,7 @@ Then launch with that profile:
 ```bash
 # Use your operator-provided, non-secret profile JSON file.
 # Its auth_config points to the supported CLI OAuth configuration.
-.venv/bin/weave studio --profile /path/to/studio-profile.json \
-  --assets studio/dist/studio/browser --no-browser
+weave studio --profile /path/to/studio-profile.json --no-browser
 ```
 
 The profile defines the API server and initial tenant/project/environment scope.

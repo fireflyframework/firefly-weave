@@ -69,7 +69,7 @@ Choose the row that matches what you want to do today:
 | **Try a workflow on my laptop** | [Install the CLI](docs/installation.md), then [run the quickstart](docs/quickstart.md) | A validated YAML workflow and a successful local simulation; no server or Docker required |
 | **Use an existing Weave API** | [Install the CLI](docs/installation.md), then [connect to an existing API](docs/guides/connect-to-api.md) | A verified connection; continue to the CLI tutorial to publish and run |
 | **Run the platform myself** | [Local platform in small steps](docs/guides/local-platform.md) | PostgreSQL, local development identity, a running API, and a successful saved run |
-| **Draw a process and work on approvals** | [Studio from source](docs/guides/studio.md), then [human tasks](docs/guides/human-tasks.md) | A visual definition and, with an authorized API, assigned tasks and recorded decisions |
+| **Draw a process and work on approvals** | [Install and use Studio](docs/guides/studio.md), then [human tasks](docs/guides/human-tasks.md) | A visual definition and, with an authorized API, assigned tasks and recorded decisions |
 
 Installing the CLI gives you a terminal client. Running the platform adds the
 services that store and execute workflows. Deploying a worker adds a process that
