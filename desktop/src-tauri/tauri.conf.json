@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Firefly Weave Studio",
+  "version": "0.1.0-alpha.5",
+  "identifier": "io.getfirefly.weave.studio",
+  "build": {
+    "frontendDist": "../bootstrap"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "launcher",
+        "title": "Firefly Weave Studio",
+        "width": 1000,
+        "height": 720
+      }
+    ],
+    "security": {
+      "capabilities": [],
+      "csp": "default-src 'self'; script-src 'none'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+      "freezePrototype": true
+    },
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": [
+      "binaries/weave-studio-host"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Author workflows and work through human tasks",
+    "longDescription": "Firefly Weave Studio with an isolated, paired loopback Python host.",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "dmg": {
+        "background": "../artwork/dmg-background.png",
+        "windowSize": {
+          "width": 720,
+          "height": 480
+        },
+        "appPosition": {
+          "x": 190,
+          "y": 236
+        },
+        "applicationFolderPosition": {
+          "x": 530,
+          "y": 236
+        },
+        "windowPosition": {
+          "x": 200,
+          "y": 160
+        }
+      },
+      "bundleVersion": "0.1.5"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "wix": {
+        "version": "0.1.5"
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../LICENSE": "LICENSE",
+      "../../NOTICE": "NOTICE"
+    }
+  }
+}

@@ -706,7 +706,7 @@ wheels = [
 
 [[package]]
 name = "firefly-weave"
-version = "0.1.0a4"
+version = "0.1.0a5"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -743,6 +743,12 @@ server = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "pyfly", extra = ["client", "data-relational", "idp-keycloak", "observability", "postgresql", "scheduling", "security", "web"] },
     { name = "pyjwt", extra = ["crypto"] },
+]
+studio = [
+    { name = "httpx" },
+    { name = "keyring" },
+    { name = "pyfly", extra = ["oauth2-client", "web"] },
+    { name = "uvicorn" },
 ]
 teams = [
     { name = "microsoft-agents-activity" },
@@ -785,9 +791,11 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'client'", specifier = ">=0.28.1,<1" },
     { name = "httpx", marker = "extra == 'integration'", specifier = ">=0.28.1,<1" },
     { name = "httpx", marker = "extra == 'server'", specifier = ">=0.28.1,<1" },
+    { name = "httpx", marker = "extra == 'studio'", specifier = ">=0.28.1,<1" },
     { name = "httpx", marker = "extra == 'worker'", specifier = ">=0.28.1,<1" },
     { name = "jsonschema", extras = ["format-nongpl"], specifier = ">=4.26.0,<5" },
     { name = "keyring", marker = "extra == 'client'", specifier = ">=25.6,<26" },
+    { name = "keyring", marker = "extra == 'studio'", specifier = ">=25.6,<26" },
     { name = "microsoft-agents-activity", marker = "extra == 'teams'", specifier = "==1.7.0" },
     { name = "microsoft-agents-hosting-core", marker = "extra == 'teams'", specifier = "==1.7.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'server'", specifier = ">=1.41.1,<2" },
@@ -796,13 +804,15 @@ requires-dist = [
     { name = "pyfly", extras = ["client", "observability"], marker = "extra == 'worker'", url = "https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl" },
     { name = "pyfly", extras = ["oauth2-client"], marker = "extra == 'client'", url = "https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl" },
     { name = "pyfly", extras = ["oauth2-client", "security", "web"], marker = "extra == 'teams'", url = "https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl" },
+    { name = "pyfly", extras = ["web", "oauth2-client"], marker = "extra == 'studio'", url = "https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl" },
     { name = "pyfly", extras = ["web", "security", "data-relational", "postgresql", "client", "observability", "idp-keycloak", "scheduling"], marker = "extra == 'server'", url = "https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'server'", specifier = ">=2.15.1,<3" },
     { name = "pyyaml", specifier = ">=6.0.3,<7" },
     { name = "regex", specifier = ">=2026.1.15" },
     { name = "rfc8785", specifier = ">=0.1.4,<1" },
+    { name = "uvicorn", marker = "extra == 'studio'", specifier = ">=0.41,<1" },
 ]
-provides-extras = ["client", "openapi", "server", "worker", "teams", "kafka", "integration"]
+provides-extras = ["studio", "client", "openapi", "server", "worker", "teams", "kafka", "integration"]
 
 [package.metadata.requires-dev]
 dev = [

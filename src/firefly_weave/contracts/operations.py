@@ -119,7 +119,21 @@ class WaitReceipt(ContractModel):
     complete: bool = True
 
 
+class HumanTaskFact(ContractModel):
+    task_id: UUID
+    node_id: str
+    assignment_digest: Digest
+
+
+class HumanDecisionReceipt(ContractModel):
+    task: HumanTaskFact
+    actor_id: UUID
+    accepted_at: AwareDatetime
+
+
 class RecordedEvidence(ContractModel):
+    issued_human_tasks: list[HumanTaskFact] = Field(default_factory=list, max_length=1000, exclude_if=lambda v: not v)
+    human_receipt: HumanDecisionReceipt | None = Field(default=None, exclude_if=lambda v: v is None)
     version: Literal["weave/recorded-v1"] = "weave/recorded-v1"
     provenance: Literal["accepted_transaction", "synthetic_kernel"] = "accepted_transaction"
     run_id: UUID

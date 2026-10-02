@@ -46,10 +46,29 @@ TABLES = frozenset(
 
 
 async def page_ids(
-    tx: Transaction, table: str, limit: int, after: UUID | None, *, run_id: UUID | None = None
+    tx: Transaction,
+    table: str,
+    limit: int,
+    after: UUID | None,
+    *,
+    run_id: UUID | None = None,
+    run_filters: dict[str, str | bool | None] | None = None,
 ) -> list[UUID]:
     if table not in TABLES or not 1 <= limit <= 100 or (run_id is not None and table != "incidents"):
         raise CatalogError(422, "WV-PAGE", "A bounded page is required")
+    if run_filters is not None and table != "runs":
+        raise CatalogError(422, "WV-PAGE", "Run filters require the runs collection")
+    predicates = ""
+    filter_params: dict[str, str | bool | None] = {}
+    if run_filters is not None:
+        for key in ("business_key", "correlation_key", "status"):
+            value = run_filters.get(key)
+            if value is not None:
+                column = "state" if key == "status" else "request"
+                predicates += f" AND {column}->>'{key}'=:filter_{key}"
+                filter_params[f"filter_{key}"] = value
+        if not run_filters.get("include_archived", False):
+            predicates += " AND NOT EXISTS (SELECT 1 FROM run_archives a WHERE a.run_id=runs.id AND a.archived=true)"
     measurement = (
         "public.weave_runs_bytes(selected_row::public.runs)"
         if table == "runs"
@@ -62,9 +81,11 @@ async def page_ids(
             f"SELECT * FROM {table} WHERE tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
             + (" AND id>:after" if after is not None else "")
             + (" AND run_id=:run" if run_id is not None else "")
+            + predicates
             + " ORDER BY id LIMIT :limit) AS selected_row ORDER BY selected_row.id"
         ),
         {
+            **filter_params,
             "tenant": tx.scope.tenant_id,
             "project": tx.scope.project_id,
             "environment": tx.scope.environment_id,

@@ -26,7 +26,8 @@ from starlette.responses import JSONResponse
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
 from firefly_weave.api.transport import page_request, page_response
-from firefly_weave.contracts.runtime import SignalRequest, StartRunRequest
+from firefly_weave.contracts.human_tasks import ManualControlRequest
+from firefly_weave.contracts.runtime import RunListFilters, SignalRequest, StartRunRequest
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.signals import SignalService
 
@@ -81,8 +82,42 @@ class RunController:
     @operation("runs.list")
     async def discover(self, request: Request) -> JSONResponse:
         scope = request_scope(request, environment=True)
-        limit, cursor = page_request(request, scope, "runs")
+        values: dict[str, str | bool] = {
+            key: request.query_params[key] for key in RunListFilters.model_fields if key in request.query_params
+        }
+        if "include_archived" in values:
+            if values["include_archived"] not in {"true", "false"}:
+                raise ValueError("include_archived must be true or false")
+            values["include_archived"] = values["include_archived"] == "true"
+        filters = RunListFilters.model_validate(values)
+        collection = filters.cursor_collection()
+        limit, cursor = page_request(request, scope, collection)
         result = await self.service.list(
-            request.state.principal, scope, limit=limit, cursor=cursor, context=request.state.audit_context
+            request.state.principal,
+            scope,
+            limit=limit,
+            cursor=cursor,
+            filters=filters,
+            context=request.state.audit_context,
         )
-        return JSONResponse(page_response(result, scope, "runs", request.url.path))
+        return JSONResponse(page_response(result, scope, collection, request.url.path))
+
+    @operation("runs.pause")
+    async def pause(self, request: Request) -> JSONResponse:
+        return await self._manual_control(request, paused=True)
+
+    @operation("runs.resume")
+    async def resume(self, request: Request) -> JSONResponse:
+        return await self._manual_control(request, paused=False)
+
+    async def _manual_control(self, request: Request, *, paused: bool) -> JSONResponse:
+        result = await self.service.manual_control(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            ManualControlRequest.model_validate_json(await request.body()),
+            request.headers.get("Idempotency-Key", ""),
+            paused=paused,
+            context=request.state.audit_context,
+        )
+        return JSONResponse(result.model_dump(mode="json"))

@@ -411,3 +411,22 @@ assert not any(name.split('.')[0] in blocked for name in sys.modules)
 def test_document_is_plain_interoperable_json() -> None:
     builder = new_builder().with_output(LiteralExpression(literal={"unicode": "café", "empty": None}))
     assert json.loads(json.dumps(builder.to_document(), allow_nan=False)) == builder.to_document()
+
+
+def test_human_task_builder_uses_native_contract_and_new_ir():
+    from firefly_weave.contracts.definitions import HumanTaskStep
+
+    step = HumanTaskStep.model_validate(
+        {
+            "id": "review",
+            "kind": "humanTask",
+            "assignment": "reviewers",
+            "title": {"literal": "Review"},
+            "context": {"literal": {}},
+            "formSchema": {"type": "object"},
+        }
+    )
+    builder = new_builder().add_step(step).with_output(RefExpression(ref="/steps/review/output"))
+    result = compile_source(builder.to_document(), format="object", catalog=CatalogSnapshot.empty())
+    assert result.ok and result.artifact.executable["irVersion"] == "weave/ir-v1alpha2"
+    assert builder.to_definition().spec.steps[0].kind == "humanTask"

@@ -32,6 +32,7 @@ from firefly_weave.compiler.ir import (
     BranchOutputNode,
     EndNode,
     FailNode,
+    HumanTaskNode,
     IRNode,
     JoinNode,
     Node,
@@ -60,6 +61,7 @@ from firefly_weave.runtime.models import (
     BranchState,
     ControlCommand,
     Deadline,
+    HumanTaskIntent,
     IncidentState,
     JoinState,
     RunState,
@@ -353,6 +355,16 @@ def _advance_owned(
             definition = action(node)[1]
             validate_action(ir, definition, "output", completion.data["output"])
             schema = definition.spec.output_schema
+        elif isinstance(node, HumanTaskNode) and completion.type == "human_completed":
+            schema = {
+                "type": "object",
+                "properties": {
+                    "decision": {"type": "string", "enum": cast(list[JsonValue], node.decisions)},
+                    "data": node.form_schema,
+                },
+                "required": ["decision", "data"],
+                "additionalProperties": False,
+            }
         elif isinstance(node, SignalNode) and completion.type == "signal_received":
             schema = ir.schemas[node.schema_ref]
         else:
@@ -366,6 +378,20 @@ def _advance_owned(
 
     try:
         if not cursor.admitted:
+            if event.type in {"paused", "resumed"}:
+                paused = event.type == "paused"
+                if current_state.manual_paused == paused:
+                    raise KernelError("WV-RUNTIME-STATE")
+                current_state = current_state.model_copy(
+                    update={"manual_paused": paused, "control_revision": current_state.control_revision + 1}
+                )
+                if paused or current_state.incidents or current_state.incident is not None:
+                    return checkpoint(result.model_copy(update={"state": current_state}))
+                deferred = current_state.deferred_results
+                current_state = current_state.model_copy(update={"deferred_results": [], "status": "waiting"})
+                for completion in deferred:
+                    accept(completion)
+                return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
             if event.type == "cancelled":
                 terminate("cancelled")
                 return checkpoint(result.model_copy(update={"state": current_state}))
@@ -393,7 +419,7 @@ def _advance_owned(
                     if any(e.data.get("node_id") == prior.node_id for e in current_state.deferred_results):
                         raise KernelError("WV-RUNTIME-EVENT")
                     current_state.deferred_results.append(completion)
-                if current_state.incidents:
+                if current_state.incidents or current_state.manual_paused:
                     return checkpoint(result.model_copy(update={"state": current_state}))
                 current_state = current_state.model_copy(update={"status": "waiting"})
                 deferred = current_state.deferred_results
@@ -445,7 +471,7 @@ def _advance_owned(
                             else None
                         }
                     )
-                    if current_state.incidents:
+                    if current_state.incidents or current_state.manual_paused:
                         return checkpoint(result.model_copy(update={"state": current_state}))
                     current_state = current_state.model_copy(update={"status": "waiting"})
                     deferred = current_state.deferred_results
@@ -473,7 +499,7 @@ def _advance_owned(
                         Deadline(node_id="@run", deadline=checked_deadline(event.timestamp, ir.timeout_seconds))
                     )
             else:
-                if state.status == "suspended":
+                if state.status == "suspended" or state.manual_paused:
                     # Validate the immutable fact now, but keep every continuation behind the barrier.
                     accept(event)
                     if any(e.data.get("node_id") == current for e in state.deferred_results):
@@ -580,12 +606,33 @@ def _advance_owned(
                 result.commands.append(ControlCommand(kind="join", node_id=node.id))
                 current_state.joins[node.owner] = join.model_copy(update={"status": "joined"})
                 queue.append(successors[node.id])
-            elif isinstance(node, (ActionNode, SignalNode, WaitNode)):
+            elif isinstance(node, (ActionNode, SignalNode, WaitNode, HumanTaskNode)):
                 if node.id in current_state.active:
                     raise KernelError("WV-RUNTIME-ACTIVATION")
                 current_state.active.append(node.id)
                 result.steps.append(StepChange(node_id=node.id, status="waiting"))
-                if isinstance(node, ActionNode):
+                if isinstance(node, HumanTaskNode):
+                    title = mapping(node, cast(JsonObject, node.title.model_dump(by_alias=True)))
+                    context = mapping(node, cast(JsonObject, node.context.model_dump(by_alias=True)))
+                    validate(ir, {"type": "string", "minLength": 1, "maxLength": 512}, title)
+                    validate(ir, {"type": "object"}, context)
+                    expiry = checked_deadline(event.timestamp, node.expiry_seconds) if node.expiry_seconds else None
+                    result.commands.append(
+                        HumanTaskIntent(
+                            node_id=node.id,
+                            assignment=node.assignment,
+                            title=cast(str, title),
+                            context=cast(JsonObject, context),
+                            form_schema=node.form_schema,
+                            decisions=node.decisions,
+                            due_at=checked_deadline(event.timestamp, node.due_seconds) if node.due_seconds else None,
+                            expires_at=expiry,
+                        )
+                    )
+                    if expiry:
+                        current_state.waits[node.id] = expiry
+                        result.commands.append(Deadline(node_id=node.id, deadline=expiry))
+                elif isinstance(node, ActionNode):
                     reference, definition = action(node)
                     value = mapping(node, cast(JsonObject, node.input.model_dump(by_alias=True)))
                     validate_action(ir, definition, "input", value)

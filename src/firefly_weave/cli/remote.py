@@ -79,9 +79,18 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                     raise ValueError("Request bound exceeded")
                 body = TypeAdapter(operation.request).validate_json(raw)
             query = {}
-            for key in ("cursor", "limit", "after", "message_id"):
+            for key in (
+                "cursor",
+                "limit",
+                "after",
+                "message_id",
+                "business_key",
+                "correlation_key",
+                "status",
+                "include_archived",
+            ):
                 if options.get(key) is not None:
-                    query[key] = options[key]
+                    query[key] = str(options[key]).lower() if isinstance(options[key], bool) else options[key]
             async with WeaveClient(options["base_url"], provider, scope) as sdk:
                 if operation_id == "retention.apply":
                     assert identifier is not None
@@ -191,6 +200,18 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
         )
         if operation.page or operation_id == "runs.history":
             params.append(click.Option(["--cursor"]))
+    if operation_id == "runs.list":
+        params += [
+            click.Option(["--business-key"]),
+            click.Option(["--correlation-key"]),
+            click.Option(
+                ["--status"],
+                type=click.Choice(
+                    ["queued", "running", "waiting", "suspended", "succeeded", "failed", "cancelled", "timed_out"]
+                ),
+            ),
+            click.Option(["--include-archived"], is_flag=True),
+        ]
     return click.Command(
         name or operation_id.split(".")[-1].replace("_", "-"),
         params=params,
@@ -223,4 +244,6 @@ for operation_id, name in (
     ("environments.read", "environment"),
 ):
     access.add_command(command(operation_id, name))
+access.add_command(family("principals", "principals"))
+access.add_command(family("members", "members"))
 remote.add_command(access)

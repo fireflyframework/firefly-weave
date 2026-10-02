@@ -20,7 +20,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "firefly-weave"
-version = "0.1.0a4"
+version = "0.1.0a5"
 description = "API-first workflow orchestration and integration platform built on PyFly"
 readme = "README.md"
 license = "Apache-2.0"
@@ -56,11 +56,13 @@ Organization = "https://github.com/fireflyframework"
 weave = "firefly_weave.cli.main:cli"
 
 [project.entry-points."firefly_weave.connectors"]
+weave-email = "firefly_weave.connectors.email:package"
 weave-telegram = "firefly_weave.connectors.telegram:package"
 weave-teams = "firefly_weave.connectors.teams:package"
 weave-whatsapp = "firefly_weave.connectors.whatsapp:package"
 
 [project.optional-dependencies]
+studio = ["uvicorn>=0.41,<1", "httpx>=0.28.1,<1", "keyring>=25.6,<26", "pyfly[web,oauth2-client] @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"]
 client = ["httpx>=0.28.1,<1", "keyring>=25.6,<26", "pyfly[oauth2-client] @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"]
 openapi = ["pyfly @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"]
 server = [
@@ -110,14 +112,18 @@ allow-direct-references = true
 exclude = [
   "**/.superpowers/**", "**/.codex/**", "**/.agents/**", "**/.secrets/**", "**/.local/**",
   "**/AGENTS.md", "**/CLAUDE.md", "/docs/superpowers/**", "/docs/implementation-status.md",
-  "**/.env*", "**/__pycache__/**", "**/*.pyc", "/build/**", "/dist/**",
+  "**/node_modules/**", "**/.angular/**", "**/test-results/**", "**/playwright-report/**",
+  "**/dist/**", "**/.env*", "**/__pycache__/**", "**/*.pyc", "/build/**", "/dist/**",
+  "/desktop/.venv/**", "/desktop/work/**", "/desktop/src-tauri/target/**",
+  "/desktop/src-tauri/gen/**", "/desktop/src-tauri/binaries/weave-studio-host*", "/desktop/requirements-host.txt",
 ]
 
 [tool.hatch.build.targets.sdist]
 include = [
   "/pyproject.toml", "/uv.lock", "/README.md", "/LICENSE", "/NOTICE",
-  "/CONTRIBUTING.md", "/SECURITY.md", "/CHANGELOG.md", "/Makefile", "/Dockerfile", "/install.sh",
+  "/studio", "/desktop", "/CONTRIBUTING.md", "/SECURITY.md", "/CHANGELOG.md", "/Makefile", "/Dockerfile", "/install.sh",
   "/.dockerignore", "/.gitignore", "/.github/workflows/ci.yml", "/.github/workflows/docs.yml", "/mkdocs.yml",
+  "/.github/workflows/desktop.yml",
   "/alembic.ini", "/pyfly.yaml", "/compose.yaml", "/compose.identity.yaml",
   "/compose.kafka.yaml", "/compose.runtime.yaml", "/compose.local-runtime.yaml",
   "/src", "/migrations", "/examples", "/infra", "/docker", "/scripts", "/tests", "/assets", "/deploy",

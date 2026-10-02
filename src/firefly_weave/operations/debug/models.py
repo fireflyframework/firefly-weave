@@ -113,7 +113,7 @@ class DebugCreate(ContractModel):
 
 
 class DebugCommand(ContractModel):
-    kind: Literal["next", "continue", "signal", "advance_time", "breakpoints"]
+    kind: Literal["next", "continue", "signal", "human_decision", "advance_time", "breakpoints"]
     name: str | None = None
     payload: JsonData = None
     seconds: int | None = Field(default=None, ge=0)

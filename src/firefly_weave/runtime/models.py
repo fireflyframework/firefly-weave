@@ -35,6 +35,9 @@ class RuntimeEvent(ContractModel):
         "task_completed",
         "task_failed",
         "signal_received",
+        "human_completed",
+        "paused",
+        "resumed",
         "wait_elapsed",
         "timed_out",
         "recovery_scheduled",
@@ -77,6 +80,8 @@ class IncidentState(ContractModel):
 
 
 class RunState(ContractModel):
+    manual_paused: bool = Field(default=False, exclude_if=lambda v: not v)
+    control_revision: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
     admission_policy: Literal["classified-v1"] | None = Field(default=None, exclude_if=lambda v: v is None)
     unavailable: bool = Field(default=False, exclude_if=lambda v: not v)
     status: Literal["queued", "running", "waiting", "suspended", "succeeded", "failed", "cancelled", "timed_out"] = (
@@ -113,6 +118,18 @@ class TaskIntent(ContractModel):
     deadline: datetime
 
 
+class HumanTaskIntent(ContractModel):
+    kind: Literal["human_task"] = "human_task"
+    node_id: str
+    assignment: str
+    title: str = Field(min_length=1, max_length=512)
+    context: JsonObjectData
+    form_schema: JsonObjectData
+    decisions: list[str]
+    due_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
 class Deadline(ContractModel):
     kind: Literal["deadline"] = "deadline"
     node_id: str
@@ -134,5 +151,5 @@ class ControlCommand(ContractModel):
 
 class Transition(ContractModel):
     state: RunState
-    commands: list[TaskIntent | Deadline | ControlCommand] = Field(default_factory=list)
+    commands: list[TaskIntent | HumanTaskIntent | Deadline | ControlCommand] = Field(default_factory=list)
     steps: list[StepChange] = Field(default_factory=list)

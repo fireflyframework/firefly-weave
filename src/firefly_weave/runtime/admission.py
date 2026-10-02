@@ -54,7 +54,7 @@ def require_available(row: dict[str, Any]) -> None:
 
 def terminal_signals(row: dict[str, Any]) -> dict[str, str] | None:
     """Structurally verified pinned control metadata; no secret-policy/execution bypass."""
-    from firefly_weave.compiler.ir import ArtifactEnvelope, SignalNode, WorkflowIR
+    from firefly_weave.compiler.ir import ArtifactEnvelope, HumanTaskNode, SignalNode, WorkflowIR
     from firefly_weave.compiler.lowering import DEFAULT_ARTIFACT_LIMITS
     from firefly_weave.compiler.parser import ParseFailure, parse_source
 
@@ -63,6 +63,10 @@ def terminal_signals(row: dict[str, Any]) -> dict[str, str] | None:
         executable = ArtifactEnvelope.model_validate(parsed.value).executable
         if not isinstance(executable, WorkflowIR):
             return None
-        return {node.id: node.name for node in executable.graph.nodes if isinstance(node, SignalNode)}
+        return {
+            node.id: node.name if isinstance(node, SignalNode) else "@human:" + node.id
+            for node in executable.graph.nodes
+            if isinstance(node, (SignalNode, HumanTaskNode))
+        }
     except (ValueError, RecursionError, ParseFailure):
         return None

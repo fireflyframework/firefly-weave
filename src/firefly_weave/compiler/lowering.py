@@ -25,7 +25,7 @@ from pydantic import Field, TypeAdapter
 from firefly_weave.compiler.analyzer import AnalysisResult, AnalyzedStep
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.compiler.expressions import measure_value
-from firefly_weave.compiler.ir import IR_VERSION, Executable
+from firefly_weave.compiler.ir import HUMAN_IR_VERSION, IR_VERSION, Executable
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -241,6 +241,8 @@ class _Lowerer:
         else:
             self.budget.charge(spec)
             value["spec"] = spec
+        if any(isinstance(node, dict) and node.get("kind") == "humanTask" for node in self.nodes):
+            value["irVersion"] = HUMAN_IR_VERSION
         measure_value(value, limits=self.budget.limits.value_limits())
         return cast(JsonObject, _EXECUTABLE.validate_python(value).model_dump(by_alias=True))
 

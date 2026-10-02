@@ -35,6 +35,7 @@ from firefly_weave.contracts.definitions import (
     ConnectorSpec,
     ContractModel,
     Expression,
+    HumanTaskStep,
     JsonPointer,
     Metadata,
     ParallelStep,
@@ -52,6 +53,7 @@ from firefly_weave.contracts.values import JsonObject, JsonObjectData, JsonValue
 type Digest = Annotated[UnicodeString, Field(pattern=r"^[a-f0-9]{64}$")]
 type NodeId = Annotated[UnicodeString, Field(min_length=1)]
 IR_VERSION = "weave/ir-v1alpha1"
+HUMAN_IR_VERSION = "weave/ir-v1alpha2"
 
 
 class Dependency(ContractModel):
@@ -78,6 +80,7 @@ class Guard(ContractModel):
         "action_input",
         "action_output",
         "signal_payload",
+        "human_output",
         "branch_output",
         "workflow_input",
         "workflow_output",
@@ -122,6 +125,17 @@ class SignalNode(Node):
     name: ResourceName
     timeout_seconds: PositiveInt = Field(alias="timeoutSeconds")
     schema_ref: Digest = Field(alias="schemaRef")
+
+
+class HumanTaskNode(Node):
+    kind: Literal["humanTask"]
+    assignment: ResourceName
+    title: Expression
+    context: Expression
+    form_schema: JsonObjectData = Field(alias="formSchema")
+    decisions: list[ResourceName] = Field(min_length=1, max_length=32)
+    due_seconds: PositiveInt | None = Field(default=None, alias="dueSeconds", exclude_if=lambda v: v is None)
+    expiry_seconds: PositiveInt | None = Field(default=None, alias="expirySeconds", exclude_if=lambda v: v is None)
 
 
 class FailNode(Node):
@@ -178,6 +192,7 @@ type IRNode = Annotated[
     | TransformNode
     | WaitNode
     | SignalNode
+    | HumanTaskNode
     | FailNode
     | SwitchNode
     | ParallelNode
@@ -362,7 +377,7 @@ class IRGraph(ContractModel):
 
 
 class ExecutableBase(ContractModel):
-    ir_version: Literal["weave/ir-v1alpha1"] = Field(alias="irVersion")
+    ir_version: Literal["weave/ir-v1alpha1", "weave/ir-v1alpha2"] = Field(alias="irVersion")
     api_version: Literal["weave/v1alpha1"] = Field(alias="apiVersion")
     metadata: Metadata
     dependencies: list[Dependency]
@@ -392,6 +407,8 @@ class WorkflowIR(ExecutableBase):
 
     @model_validator(mode="after")
     def workflow_references(self) -> WorkflowIR:
+        if any(isinstance(n, HumanTaskNode) for n in self.graph.nodes) and self.ir_version != HUMAN_IR_VERSION:
+            raise ValueError("Human tasks require ir-v1alpha2")
         if self.input_schema not in self.schemas or self.output_schema not in self.schemas:
             raise ValueError("Unknown workflow schema")
         actions = {d.digest for d in self.dependencies if d.kind == "Action"}
@@ -485,6 +502,8 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
                     action = definitions[("Action", step.uses)]
                     assert isinstance(action, ActionDefinition)
                     binding(step.connection, action.spec.connection, spec.connections)
+                elif isinstance(step, HumanTaskStep):
+                    schema_roots.append(step.form_schema)
                 elif isinstance(step, SignalStep):
                     schema_roots.append(step.payload_schema)
                 elif isinstance(step, SwitchStep):

@@ -23,7 +23,21 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from firefly_weave.contracts.access import Scope
 
-Role = Literal["platform_admin", "tenant_admin", "developer", "deployer", "operator", "viewer", "worker"]
+Role = Literal[
+    "platform_admin",
+    "tenant_admin",
+    "developer",
+    "deployer",
+    "operator",
+    "viewer",
+    "worker",
+    "task_participant",
+    "task_manager",
+    "email_reader",
+    "email_sender",
+    "email_manager",
+    "execution_manager",
+]
 
 
 class Grant(BaseModel):

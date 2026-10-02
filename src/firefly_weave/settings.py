@@ -54,6 +54,17 @@ class Settings(BaseModel):
     postgres_ca_file: str | None = None
     postgres_max_connections: int = Field(default=8, ge=1, le=64)
     http_private_networks: tuple[str, ...] = ()
+    mail_private_networks: tuple[str, ...] = Field(default=(), max_length=128)
+    mail_allowed_ports: tuple[int, ...] = Field(default=(25, 465, 587, 143, 993), min_length=1, max_length=128)
+    mail_allow_local_fixture: bool = False
+
+    @field_validator("mail_allowed_ports")
+    @classmethod
+    def valid_mail_ports(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        if any(not 1 <= port <= 65535 for port in value):
+            raise ValueError("Mail ports must be between 1 and 65535")
+        return value
+
     native_executors: tuple[ExecutorConfig, ...] = ()
     native_image_digest: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
     secret_grants: tuple[SecretGrant, ...] = ()
@@ -101,6 +112,9 @@ class Settings(BaseModel):
         docs_enabled = os.environ.get("WEAVE_DOCS_ENABLED", "false").lower()
         if docs_enabled not in {"true", "false"}:
             raise ValueError("WEAVE_DOCS_ENABLED must be true or false")
+        mail_fixture = os.environ.get("WEAVE_MAIL_ALLOW_LOCAL_FIXTURE", "false").lower()
+        if mail_fixture not in {"true", "false"}:
+            raise ValueError("WEAVE_MAIL_ALLOW_LOCAL_FIXTURE must be true or false")
         providers = json.loads(os.environ.get("WEAVE_OIDC_PROVIDERS", "[]"))
         telemetry_raw = os.environ.get("WEAVE_TELEMETRY", "{}")
         try:
@@ -125,6 +139,9 @@ class Settings(BaseModel):
             postgres_ca_file=os.environ.get("WEAVE_POSTGRES_CA_FILE"),
             postgres_max_connections=int(os.environ.get("WEAVE_POSTGRES_MAX_CONNECTIONS", "8")),
             http_private_networks=json.loads(os.environ.get("WEAVE_HTTP_PRIVATE_NETWORKS", "[]")),
+            mail_private_networks=json.loads(os.environ.get("WEAVE_MAIL_PRIVATE_NETWORKS", "[]")),
+            mail_allowed_ports=json.loads(os.environ.get("WEAVE_MAIL_ALLOWED_PORTS", "[25,465,587,143,993]")),
+            mail_allow_local_fixture=mail_fixture == "true",
             native_executors=TypeAdapter(tuple[ExecutorConfig, ...]).validate_json(
                 os.environ.get("WEAVE_NATIVE_EXECUTORS", "[]")
             ),

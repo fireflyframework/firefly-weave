@@ -439,6 +439,15 @@ class DefinitionService:
             connector_pins = await self.execution_readiness(
                 actor, scope, request, artifact, capability="release.activate", context=context, tx=tx
             )
+            from firefly_weave.compiler.ir import HumanTaskNode
+            from firefly_weave.human_tasks.service import pin_assignments
+            from firefly_weave.runtime.kernel import workflow
+
+            assignment_pins = await pin_assignments(
+                tx,
+                request.assignment_binding_ids,
+                {node.assignment for node in workflow(artifact).graph.nodes if isinstance(node, HumanTaskNode)},
+            )
             requirements = spec.get("connections", {})
             required = {slot for slot, requirement in requirements.items() if requirement.get("required", True)}
             supplied_slots = set(request.connection_revision_ids)
@@ -464,6 +473,7 @@ class DefinitionService:
                 name=row["name"],
                 request=request,
                 connector_execution_pins=connector_pins,
+                assignment_pins=assignment_pins,
             )
             await self._insert_activation(repository, activation)
             for slot, identifier in request.connection_revision_ids.items():
@@ -798,6 +808,7 @@ class DefinitionService:
                 request=selected.request,
                 retired=True,
                 connector_execution_pins=selected.connector_execution_pins,
+                assignment_pins=selected.assignment_pins,
             )
             await self._insert_activation(repository, activation)
             await audit(

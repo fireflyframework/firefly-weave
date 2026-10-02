@@ -53,7 +53,11 @@ you execute authorized requests against that instance.
 | Build your own integration | [Inbound and outbound connectors](guides/custom-connectors-tutorial.md) | A custom action or incoming webhook workflow |
 | Implement and run a task handler | [Worker walkthrough](guides/workers.md) → [worker deployment](operations/deployment.md) | An admitted handler that can claim and complete work |
 | Use your organization's identity provider | [OIDC/CIAM setup](operations/identity-and-secrets.md#use-your-own-identity-provider) | Verified tokens, explicit identity links, and scoped grants |
-| Draw a workflow | [Workflow graphs](guides/workflow-graphs.md) | Terminal, Mermaid, and SVG views |
+| Draw and edit a workflow | [Local Studio](guides/studio.md) | A visual editor using the same YAML/JSON definitions |
+| Configure integration and approval steps | [Studio step reference](guides/studio-step-reference.md) | The right properties, expressions, and bindings for each kind of work |
+| Onboard people and assign permissions | [People and access](guides/people-and-access.md) | Explicit CIAM links and scoped Weave roles |
+| Ask a person for a decision | [Human tasks](guides/human-tasks.md) | An assigned, durable approval task |
+| Process a conversation | [Email](connectors/email.md) | Inbound messages and outbound replies linked to a thread |
 | Deploy on remote infrastructure | [Remote deployment](operations/remote-deployment.md) | An ordered path through AWS, Azure, or Google Cloud |
 
 ## The first three things to understand
@@ -73,7 +77,7 @@ Run one command block, check its expected result, then continue. Comments inside
 code blocks explain why the commands are there. When a terminal is running API
 logs, keep it open and use a second terminal for requests.
 
-The current installation guide pins **v0.1.0a4 alpha**. This is a preview release.
+The current installation guide pins **v0.1.0a5 alpha**. This is a preview release.
 [Capabilities and limits](capabilities.md) distinguishes local verification from
 provider-account and cloud checks you must perform in your environment.
 

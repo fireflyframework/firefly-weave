@@ -28,11 +28,16 @@ from firefly_weave.connectors.packages import PackageDocument, PackageMetadata
 class BuiltinDeclaration:
     entry_point: str
     service: str
-    verifier_service: str
+    verifier_service: str | None
     supporting_services: tuple[str, ...] = ()
 
 
 BUILTIN_DECLARATIONS = {
+    "weave-email": BuiltinDeclaration(
+        "firefly_weave.connectors.email:package",
+        "firefly_weave.connectors.email:EmailConnector",
+        None,
+    ),
     "weave-whatsapp": BuiltinDeclaration(
         "firefly_weave.connectors.whatsapp:package",
         "firefly_weave.connectors.whatsapp:WhatsAppConnector",

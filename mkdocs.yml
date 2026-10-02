@@ -103,6 +103,13 @@ nav:
       - Run a local platform: guides/standalone.md
       - Publish and run with the CLI: guides/cli-tutorial.md
       - Author workflows: guides/workflow-authoring.md
+      - Install, draw, and operate with Studio: guides/studio.md
+      - Install and use Studio desktop: guides/desktop.md
+      - Configure Studio steps and integrations: guides/studio-step-reference.md
+      - Manage people and permissions: guides/people-and-access.md
+      - Human tasks and approvals: guides/human-tasks.md
+      - Manage executions and business cases: guides/execution-management.md
+      - Build an email conversation workflow: guides/email.md
       - View workflow graphs: guides/workflow-graphs.md
       - Build workers: guides/workers.md
   - API and SDKs:
@@ -114,6 +121,7 @@ nav:
       - Python SDK reference: reference/sdk.md
       - Embed the compiler or services: reference/embedding.md
   - Integrations:
+      - Email conversations and triggers: connectors/email.md
       - Build your first connector: guides/custom-connectors-tutorial.md
       - Author a connector: connectors/authoring.md
       - Import OpenAPI metadata: connectors/metadata-import.md

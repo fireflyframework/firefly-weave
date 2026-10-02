@@ -34,6 +34,9 @@ ROLE_CAPABILITIES = MappingProxyType(
                 "run.start",
                 "run.signal",
                 "run.cancel",
+                "run.pause",
+                "run.resume",
+                "run.archive",
                 "incident.read",
                 "incident.resolve",
                 "run.retry",
@@ -42,6 +45,15 @@ ROLE_CAPABILITIES = MappingProxyType(
             }
         ),
         "viewer": frozenset({"catalog.read", "run.read", "status.read", "delivery.read"}),
+        # Business decisions and message content require purpose-specific grants.
+        "task_participant": frozenset(
+            {"human_task.read", "human_task.claim", "human_task.release", "human_task.complete", "assignment.read"}
+        ),
+        "task_manager": frozenset({"human_task.read", "human_task.manage", "assignment.read", "assignment.manage"}),
+        "email_reader": frozenset({"email.read"}),
+        "email_sender": frozenset({"email.read", "email.send"}),
+        "email_manager": frozenset({"email.read", "email.send", "email.manage"}),
+        "execution_manager": frozenset({"run.read", "run.archive", "run.purge"}),
         "worker": frozenset({"worker.register", "task.claim", "task.heartbeat", "task.complete", "credential.lease"}),
     }
 )

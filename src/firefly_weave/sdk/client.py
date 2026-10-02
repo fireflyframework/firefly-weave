@@ -41,6 +41,18 @@ from firefly_weave.contracts.catalog import (
 )
 from firefly_weave.contracts.compatibility import CompatibilityReport
 from firefly_weave.contracts.connectors import ConnectionRequest, ConnectionRevision, ConnectionTestResult
+from firefly_weave.contracts.human_tasks import (
+    AssignmentBinding,
+    AssignmentBindingList,
+    AssignmentBindingRequest,
+    CompleteHumanTask,
+    HumanTask,
+    HumanTaskCommand,
+    ManualControlRequest,
+    ReassignHumanTask,
+    TaskGroup,
+    TaskGroupRequest,
+)
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
 from firefly_weave.contracts.maintenance import RetentionApplication, RetentionPlan, RetentionRequest
 from firefly_weave.contracts.operations import (
@@ -75,6 +87,7 @@ from firefly_weave.contracts.public import (
     VersionView,
     catalog_lock,
 )
+from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
     RunView,
@@ -631,9 +644,34 @@ class WeaveClient:
             await self.invoke("connections.list", query=self._page(limit, cursor)),
         )
 
-    async def list_runs(self, *, limit: int = 50, cursor: str | None = None) -> Page[RunView | UnavailableResource]:
+    async def list_runs(
+        self,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        business_key: str | None = None,
+        correlation_key: str | None = None,
+        status: str | None = None,
+        include_archived: bool = False,
+    ) -> Page[RunView | UnavailableResource]:
         return cast(
-            Page[RunView | UnavailableResource], await self.invoke("runs.list", query=self._page(limit, cursor))
+            Page[RunView | UnavailableResource],
+            await self.invoke(
+                "runs.list",
+                query={
+                    **self._page(limit, cursor),
+                    **{
+                        key: value
+                        for key, value in {
+                            "business_key": business_key,
+                            "correlation_key": correlation_key,
+                            "status": status,
+                        }.items()
+                        if value is not None
+                    },
+                    "include_archived": str(include_archived).lower(),
+                },
+            ),
         )
 
     async def list_workers(self, *, limit: int = 50, cursor: str | None = None) -> Page[WorkerInstance]:
@@ -752,4 +790,107 @@ class WeaveClient:
             await self.invoke(
                 "whatsapp_statuses.facts", identifier=source_id, state_id=state_id, query=self._page(limit, cursor)
             ),
+        )
+
+    async def human_tasks(
+        self, *, status: str | None = None, limit: int = 50, cursor: str | None = None
+    ) -> Page[HumanTask]:
+        query = self._page(limit, cursor)
+        if status is not None:
+            query["status"] = status
+        return cast(Page[HumanTask], await self.invoke("human_tasks.list", query=query))
+
+    async def read_human_task(self, identifier: UUID) -> HumanTask:
+        return cast(HumanTask, await self.invoke("human_tasks.read", identifier=identifier))
+
+    async def claim_human_task(self, identifier: UUID, *, revision: int, idempotency_key: str) -> HumanTask:
+        return cast(
+            HumanTask,
+            await self.invoke(
+                "human_tasks.claim",
+                identifier=identifier,
+                body=HumanTaskCommand(expected_revision=revision),
+                idempotency_key=idempotency_key,
+            ),
+        )
+
+    async def release_human_task(self, identifier: UUID, *, revision: int, idempotency_key: str) -> HumanTask:
+        return cast(
+            HumanTask,
+            await self.invoke(
+                "human_tasks.release",
+                identifier=identifier,
+                body=HumanTaskCommand(expected_revision=revision),
+                idempotency_key=idempotency_key,
+            ),
+        )
+
+    async def complete_human_task(
+        self, identifier: UUID, request: CompleteHumanTask, *, idempotency_key: str
+    ) -> HumanTask:
+        return cast(
+            HumanTask,
+            await self.invoke(
+                "human_tasks.complete", identifier=identifier, body=request, idempotency_key=idempotency_key
+            ),
+        )
+
+    async def reassign_human_task(
+        self, identifier: UUID, request: ReassignHumanTask, *, idempotency_key: str
+    ) -> HumanTask:
+        return cast(
+            HumanTask,
+            await self.invoke(
+                "human_tasks.reassign", identifier=identifier, body=request, idempotency_key=idempotency_key
+            ),
+        )
+
+    async def assignment_bindings(self) -> AssignmentBindingList:
+        return cast(AssignmentBindingList, await self.invoke("human_assignments.list"))
+
+    async def put_assignment_binding(
+        self, request: AssignmentBindingRequest, *, idempotency_key: str
+    ) -> AssignmentBinding:
+        return cast(
+            AssignmentBinding, await self.invoke("human_assignments.put", body=request, idempotency_key=idempotency_key)
+        )
+
+    async def put_human_group(self, request: TaskGroupRequest, *, idempotency_key: str) -> TaskGroup:
+        return cast(TaskGroup, await self.invoke("human_groups.put", body=request, idempotency_key=idempotency_key))
+
+    async def pause_run(self, identifier: UUID, request: ManualControlRequest, *, idempotency_key: str) -> RunView:
+        return cast(
+            RunView,
+            await self.invoke("runs.pause", identifier=identifier, body=request, idempotency_key=idempotency_key),
+        )
+
+    async def run_lifecycle(self, identifier: UUID) -> RunLifecycle:
+        return cast(RunLifecycle, await self.invoke("runs.lifecycle", identifier=identifier))
+
+    async def archive_run(
+        self, identifier: UUID, request: RunLifecycleRequest, *, idempotency_key: str
+    ) -> RunLifecycle:
+        return cast(
+            RunLifecycle,
+            await self.invoke("runs.archive", identifier=identifier, body=request, idempotency_key=idempotency_key),
+        )
+
+    async def restore_run(
+        self, identifier: UUID, request: RunLifecycleRequest, *, idempotency_key: str
+    ) -> RunLifecycle:
+        return cast(
+            RunLifecycle,
+            await self.invoke("runs.restore", identifier=identifier, body=request, idempotency_key=idempotency_key),
+        )
+
+    async def purge_run(self, identifier: UUID, request: RunPurgeRequest, *, idempotency_key: str) -> RunLifecycle:
+        return cast(
+            RunLifecycle,
+            await self.invoke("runs.purge", identifier=identifier, body=request, idempotency_key=idempotency_key),
+        )
+
+    async def resume_run(self, identifier: UUID, request: ManualControlRequest, *, idempotency_key: str) -> RunView:
+        return cast(
+            RunView,
+            await self.invoke("runs.resume", identifier=identifier, body=request, idempotency_key=idempotency_key),
         )

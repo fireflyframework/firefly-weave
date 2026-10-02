@@ -23,13 +23,20 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
-from firefly_weave.compiler.ir import ActionNode, IRNode, SignalNode, WaitNode
+from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, IRNode, SignalNode, WaitNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
-from firefly_weave.contracts.operations import DeadlineFact, RecordedEvidence, ReplayDiagnostic, ReplayReport, TaskFact
+from firefly_weave.contracts.operations import (
+    DeadlineFact,
+    HumanTaskFact,
+    RecordedEvidence,
+    ReplayDiagnostic,
+    ReplayReport,
+    TaskFact,
+)
 from firefly_weave.operations.exports import bounded_size, lock_digest, safe_event, transition_digest
 from firefly_weave.operations.redaction import project
 from firefly_weave.runtime.kernel import deadline_order, transition, validate, validate_action, workflow
-from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
 
 MAX_EVENTS = 10_000
 MAX_BYTES = 64 * 1024 * 1024
@@ -67,6 +74,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
         return report("inconsistent", "WV-REPLAY-ARTIFACT", 0)
     size = len(artifact.to_bytes()) + 2
     identity = None
+    human_tasks: dict[str, HumanTaskFact] = {}
     seen: set[UUID] = set()
     accepted_receipts: set[UUID] = set()
     issued_wait_ids: set[UUID] = set()
@@ -111,7 +119,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 "WV-REPLAY-REDACTED",
                 missing=True,
             )
-            if event.type not in {"started", "cancelled", "timed_out", "incident_resolved"}:
+            if event.type not in {"started", "cancelled", "timed_out", "incident_resolved", "paused", "resumed"}:
                 require(event.data.get("node_id") in nodes, "WV-REPLAY-EVENT")
             projected = safe_event(event, artifact)
             changes = {key for key in event.data if key not in projected.data}
@@ -233,6 +241,25 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     )
                     assert isinstance(definition, ActionDefinition)
                     validate_action(ir, definition, "output", event.data["output"])
+            elif event.type == "human_completed":
+                human_receipt = evidence.human_receipt
+                require(human_receipt is not None, "WV-REPLAY-HUMAN-RECEIPT", missing=True)
+                assert human_receipt is not None
+                require(isinstance(node, HumanTaskNode) and node_id in state.active, "WV-REPLAY-HUMAN-EVENT")
+                require(
+                    human_tasks.get(node_id) == human_receipt.task
+                    and str(human_receipt.task.task_id) == event.data.get("task_id")
+                    and str(human_receipt.actor_id) == event.data.get("actor_id")
+                    and human_receipt.accepted_at == event.timestamp,
+                    "WV-REPLAY-HUMAN-RECEIPT",
+                )
+                require(
+                    not any(e.data.get("node_id") == node_id for e in state.deferred_results),
+                    "WV-REPLAY-HUMAN-DUPLICATE",
+                )
+                if node_id in deadlines:
+                    require(event.timestamp < deadlines[node_id].deadline, "WV-REPLAY-HUMAN-EXPIRED")
+                    deadlines.pop(node_id)
             elif event.type in {"wait_elapsed", "timed_out", "signal_received"}:
                 _verify_wait(event, evidence, deadlines, nodes)
                 if event.type == "signal_received":
@@ -244,6 +271,14 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
             result = transition(state, fact, artifact)
             require(bounded_size(result, MAX_BYTES - 1024) is not None, "WV-REPLAY-STATE-LIMIT", missing=True)
             require(transition_digest(result) == evidence.expected_transition_digest, "WV-REPLAY-TRANSITION")
+            human_commands = [c for c in result.commands if isinstance(c, HumanTaskIntent)]
+            require(len(human_commands) == len(evidence.issued_human_tasks), "WV-REPLAY-HUMAN-ISSUANCE", missing=True)
+            for human_command, issued_human in zip(human_commands, evidence.issued_human_tasks, strict=True):
+                require(
+                    human_command.node_id == issued_human.node_id and issued_human.node_id not in human_tasks,
+                    "WV-REPLAY-HUMAN-ISSUANCE",
+                )
+                human_tasks[issued_human.node_id] = issued_human
             task_commands = [c for c in result.commands if isinstance(c, TaskIntent)]
             deadline_commands = [c for c in result.commands if isinstance(c, Deadline)]
             require(

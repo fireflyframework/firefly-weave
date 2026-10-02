@@ -106,7 +106,11 @@ class _TaskOperation:
                 if locked is None:
                     continue
                 run, task = locked
-                if task["status"] != "ready" or run["state"]["status"] != "waiting":
+                if (
+                    task["status"] != "ready"
+                    or run["state"]["status"] != "waiting"
+                    or run["state"].get("manual_paused")
+                ):
                     continue
                 payload = task["payload"]
                 capability = f"{payload['task_type']}@{payload['task_version']}"
@@ -218,6 +222,7 @@ class _TaskOperation:
             or attempt["status"] != "active"
             or task["status"] != "leased"
             or run["state"]["status"] not in ({"waiting", "suspended"} if operation == "task.complete" else {"waiting"})
+            or (operation != "task.complete" and run["state"].get("manual_paused"))
             or attempt["expires_at"] <= checked_at
             or attempt["deadline"] <= checked_at
         ):

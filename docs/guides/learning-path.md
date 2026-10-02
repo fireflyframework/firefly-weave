@@ -35,7 +35,7 @@ do the work.
 | PostgreSQL | The platform's durable memory | Keep order 123 waiting even when the API restarts |
 
 Your configured identity provider supplies access tokens; the local development
-setup uses Keycloak. Weave's grants decide what each identity may do. The CLI and Python SDK are clients of the API. Installing a
+setup uses Keycloak. Weave's grants decide what each identity may do. The CLI, Python SDK, and local Studio are clients of the API. Installing a
 client does not start the API, just as installing a database client does not
 start a database server.
 
@@ -45,6 +45,7 @@ start a database server.
 
 | I want to… | Follow this guide | What success looks like |
 | --- | --- | --- |
+| Draw a workflow visually | [Install and use Studio](studio.md) | A centered graph with editable step properties |
 | Try the language without services | [Install](../installation.md), then [first workflow](../quickstart.md) | The simulator returns your message |
 | Run my own local platform | [Local platform in small steps](local-platform.md) | A real run is saved in PostgreSQL |
 | Use my team's existing platform | [Connect to an API](connect-to-api.md) | Your client can call the authorized API |
@@ -53,8 +54,8 @@ start a database server.
 | Connect an external system | [Custom inbound and outbound connectors](custom-connectors-tutorial.md) | An incoming event starts work or a task calls your code |
 | Run Weave on remote infrastructure | [Remote deployment, one stage at a time](../operations/remote-deployment.md) | A reachable API with persistent state and verified access |
 
-Pick the first row if you are exploring. Pick the second if your goal is a
-running service. You can skip the offline tutorial when you already understand
+Choose Studio or the language tutorial if you are exploring. Choose the local
+platform walkthrough if your goal is a running service. You can skip the offline tutorial when you already understand
 workflow definitions.
 
 ## 3. Learn the lifecycle with one example

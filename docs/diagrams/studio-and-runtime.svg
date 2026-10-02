@@ -1,0 +1,62 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="990" viewBox="0 0 1120 990" role="img" aria-labelledby="title desc">
+<title id="title">Studio edits the process. The platform remembers and runs it.</title>
+<desc id="desc">On your computer, the browser connects only to the paired local Studio host. The host holds API credentials and connects to the selected local or remote Weave API. The API checks permissions and saves progress in PostgreSQL. Workers execute integration actions; people complete assigned tasks. Email replies preserve conversation context and do not approve a task.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="1120" height="990" rx="24" fill="#EEF4F0"/>
+<text class="title" x="40" y="55">Draw locally. Run on your platform.</text>
+<text class="p" x="40" y="90">Studio is another client of the same API your products and SDKs use.</text>
+<rect x="30" y="120" width="1060" height="245" rx="18" fill="none" stroke="#A8C8B9" stroke-dasharray="8 6"/>
+<text class="small" x="50" y="150">YOUR COMPUTER</text>
+<rect x="50" y="170" width="440" height="170" rx="14" fill="white"/>
+<g class="icon" transform="translate(72 193)"><rect width="44" height="32" rx="4"/><path d="M0 10h44M13 40h18M22 32v8"/></g>
+<text class="h" x="136" y="221">1. Studio in your browser</text>
+<text class="p" x="72" y="267">Draw, edit YAML, inspect a run.</text>
+<text class="small" x="72" y="307">API tokens never enter browser storage.</text>
+<path class="arrow" d="M490 240H610"/><text class="small" x="511" y="216">Paired</text><text class="small" x="503" y="274">session</text>
+<rect x="620" y="170" width="450" height="170" rx="14" fill="white"/>
+<g class="icon" transform="translate(644 192)"><path d="M3 2l20-7 20 7v20c0 14-20 24-20 24S3 36 3 22Z"/><path d="M14 18l7 7 13-16"/></g>
+<text class="h" x="706" y="221">2. Local Python host</text>
+<text class="p" x="644" y="267">Holds your selected login profile.</text>
+<text class="small" x="644" y="307">Local validation works without a platform.</text>
+<path class="arrow" d="M845 365V431"/><text class="small" x="590" y="405">HTTPS to your selected API</text>
+<rect x="50" y="440" width="1020" height="165" rx="16" fill="#173D34"/>
+<text class="h" x="78" y="482" style="fill:white">3. The Weave API checks and coordinates</text>
+<text class="p" x="78" y="524" style="fill:white">Save a draft → publish a version → activate it → start a run.</text>
+<text class="small" x="78" y="568" style="fill:#CEE4D8">Your CIAM verifies identity. Scoped Weave grants decide which actions are allowed.</text>
+<path class="arrow" d="M210 605V661"/><path class="arrow" d="M560 605V661"/><path class="arrow" d="M905 605V661"/>
+<rect x="50" y="670" width="315" height="212" rx="14" fill="white"/>
+<g class="icon" transform="translate(74 694)"><ellipse cx="21" cy="7" rx="21" ry="7"/><path d="M0 7v29c0 10 42 10 42 0V7M0 22c0 10 42 10 42 0"/></g>
+<text class="h" x="136" y="723">Remember</text>
+<text class="p" x="74" y="768">PostgreSQL stores</text><text class="p" x="74" y="797">progress and decisions.</text>
+<text class="small" x="74" y="847">A wait survives a restart.</text>
+<rect x="400" y="670" width="315" height="212" rx="14" fill="white"/>
+<g class="icon" transform="translate(424 694)"><rect x="3" y="3" width="34" height="34" rx="6"/><path d="M-3 12h6M-3 27h6M37 12h6M37 27h6M12-3v6M27-3v6M12 37v6M27 37v6"/></g>
+<text class="h" x="486" y="723">Execute</text>
+<text class="p" x="424" y="768">Workers call external</text><text class="p" x="424" y="797">systems and report back.</text>
+<text class="small" x="424" y="847">Email keeps its thread.</text>
+<rect x="750" y="670" width="320" height="212" rx="14" fill="#FFF7E5"/>
+<g class="icon" transform="translate(774 694)"><circle cx="20" cy="10" r="9"/><path d="M2 43V31c0-15 36-15 36 0v12"/></g>
+<text class="h" x="836" y="723">Decide</text>
+<text class="p" x="774" y="768">An assigned person</text><text class="p" x="774" y="797">submits a decision.</text>
+<text class="small" x="774" y="847">No worker sits idle waiting.</text>
+<text class="p" x="50" y="930">Sending an email reply and approving a task are separate, authorized actions.</text>
+<text class="small" x="50" y="963">Closing Studio does not stop a workflow running on the platform.</text>
+</svg>

@@ -33,6 +33,11 @@ because a provider token contains a role string.
 
 ## Configure token verification
 
+To create Weave principals, link existing CIAM identities, and manage editor,
+operator, viewer, and administrator bindings, follow
+[People and access](../guides/people-and-access.md). The administration surface
+uses the same authorization boundary described here.
+
 A successful request passes three checks in order: the token is valid for this
 API, its verified identity is linked to an active Weave principal, and that
 principal has a grant covering this operation and scope. These checks explain why

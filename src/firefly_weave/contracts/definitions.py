@@ -229,6 +229,28 @@ class SignalStep(ContractModel):
     payload_schema: JsonObjectData = Field(alias="payloadSchema")
 
 
+class HumanTaskStep(ContractModel):
+    id: ResourceName
+    kind: Literal["humanTask"]
+    assignment: ResourceName
+    title: Expression
+    context: Expression
+    form_schema: JsonObjectData = Field(alias="formSchema")
+    decisions: list[ResourceName] = Field(default_factory=lambda: ["approve", "reject"], min_length=1, max_length=32)
+    due_seconds: OmissionOnly[PositiveInt] = Field(
+        default=None, alias="dueSeconds", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    expiry_seconds: OmissionOnly[PositiveInt] = Field(
+        default=None, alias="expirySeconds", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def unique_decisions(self) -> HumanTaskStep:
+        if len(set(self.decisions)) != len(self.decisions):
+            raise ValueError("Decision identifiers must be unique")
+        return self
+
+
 class FailStep(ContractModel):
     id: ResourceName
     kind: Literal["fail"]
@@ -237,7 +259,7 @@ class FailStep(ContractModel):
 
 
 type Step = Annotated[
-    ActionStep | TransformStep | SwitchStep | ParallelStep | WaitStep | SignalStep | FailStep,
+    ActionStep | TransformStep | SwitchStep | ParallelStep | WaitStep | SignalStep | HumanTaskStep | FailStep,
     Field(discriminator="kind"),
 ]
 

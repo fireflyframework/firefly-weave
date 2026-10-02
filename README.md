@@ -46,8 +46,11 @@ workflow and reads its status through an API. A worker performs the external
 calls. The workflow definition determines what happens next.
 
 You can run Weave as a standalone service or integrate it into another product.
-The current interface is the **API, CLI, and Python SDK**. There is no graphical
-workflow editor in this alpha.
+Alpha5 provides the **API, CLI, Python SDK, and Studio** visual workspace,
+including human-task inboxes, email conversations, execution management, and scoped
+people/access administration. [Install Studio](docs/guides/studio.md#install-the-alpha5-browser-application)
+with its matching optional browser bundle, or use the verified macOS ARM desktop
+asset described in the [desktop guide](docs/guides/desktop.md).
 
 ![From offline authoring to an API, worker, and host product](docs/diagrams/tutorial-route.svg)
 
@@ -66,6 +69,7 @@ Choose the row that matches what you want to do today:
 | **Try a workflow on my laptop** | [Install the CLI](docs/installation.md), then [run the quickstart](docs/quickstart.md) | A validated YAML workflow and a successful local simulation; no server or Docker required |
 | **Use an existing Weave API** | [Install the CLI](docs/installation.md), then [connect to an existing API](docs/guides/connect-to-api.md) | A verified connection; continue to the CLI tutorial to publish and run |
 | **Run the platform myself** | [Local platform in small steps](docs/guides/local-platform.md) | PostgreSQL, local development identity, a running API, and a successful saved run |
+| **Draw a process and work on approvals** | [Studio from source](docs/guides/studio.md), then [human tasks](docs/guides/human-tasks.md) | A visual definition and, with an authorized API, assigned tasks and recorded decisions |
 
 Installing the CLI gives you a terminal client. Running the platform adds the
 services that store and execute workflows. Deploying a worker adds a process that
@@ -74,15 +78,15 @@ performs external work. Each has its own guide so you can stop at the result you
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a4 alpha** into
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a5 alpha** into
 your user account without `sudo`, Git, or Docker:
 
 ```sh
 (
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a4/install.sh \
-    | sh -s -- --version v0.1.0a4
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a5/install.sh \
+    | sh -s -- --version v0.1.0a5
 )
 ```
 
@@ -97,10 +101,11 @@ weave help workflow
 weave docs platform
 ```
 
-Expected: version `0.1.0a4` and a command overview. The
+Expected: version `0.1.0a5` and a command overview. The
 [installation guide](docs/installation.md) explains Python selection, persistent
 PATH setup, upgrades, removal, and troubleshooting. Installation includes the API
-client and OpenAPI import dependencies; it does not start the platform.
+client, OpenAPI import, and Studio host dependencies; it does not start the
+platform or install the optional browser ZIP.
 
 `weave` displays the command overview. Help explains each command family and its
 next steps. The [quickstart](docs/quickstart.md) walks through a complete example;
@@ -113,7 +118,7 @@ assets. You also need `uv` and a running local Docker engine with Compose 2.30+:
 
 ```sh
 # Keep the operator files at the same version as the CLI.
-git clone --branch v0.1.0a4 --single-branch https://github.com/fireflyframework/firefly-weave.git
+git clone --branch v0.1.0a5 --single-branch https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 
 # Check prerequisites, then prepare private settings and owned dependencies once.
@@ -201,7 +206,7 @@ components, a narrated execution path, and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a4**, an **alpha** release. Download
+The recommended installation is **v0.1.0a5**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The checked-in documentation describes the source on its branch; a release tag

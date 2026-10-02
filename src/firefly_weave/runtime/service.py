@@ -33,9 +33,11 @@ from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.expressions import ExpressionFailure
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation
+from firefly_weave.contracts.human_tasks import ManualControlRequest
 from firefly_weave.contracts.operations import CancelRunRequest
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
+    RunListFilters,
     RunView,
     StartRunRequest,
     UnavailableRunAcknowledgment,
@@ -85,6 +87,73 @@ class RuntimeService:
         self.definitions.require(actor, scope, capability, context)
         if scope.environment_id is None:
             raise CatalogError(422, "WV-SCOPE", "Runtime requires an environment")
+
+    async def manual_control(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        request: ManualControlRequest,
+        idempotency_key: str,
+        *,
+        paused: bool,
+        context: AuditContext,
+    ) -> RunView:
+        capability = "run.pause" if paused else "run.resume"
+        self.require(actor, scope, capability, context)
+        async with self.definitions.transaction(scope, None) as tx:
+            repository = RuntimeRepository(tx, self.definitions.outbox)
+            row = await repository.run(identifier, lock=True)
+            actor = await load_principal(tx.session, actor.id)
+            self.require(actor, scope, capability, context)
+            replay = Idempotency(
+                tx,
+                actor.id,
+                f"{capability}:{scope.environment_id}:{identifier}",
+                idempotency_key,
+                request.model_dump(mode="json"),
+            )
+            prior = await replay.replay()
+            if prior is not None:
+                return RunView.model_validate_json(json.dumps(prior))
+            if not paused:
+                self.definitions.registry.require_operational()
+                await repository.require_work(identifier, row["state"])
+            from firefly_weave.runtime.waits import TERMINAL, settle
+
+            await settle(repository, row, terminal_only=True)
+            row = await repository.run(identifier)
+            view = view_of(row)
+            if view.state.status in TERMINAL or view.state.manual_paused == paused:
+                raise CatalogError(409, "WV-RUN-CONTROL", "Run cannot apply this manual control")
+            if view.state.control_revision != request.expected_revision:
+                raise CatalogError(409, "WV-RUN-CONTROL-REVISION", "Manual control revision changed")
+            event = RuntimeEvent(
+                id=uuid4(),
+                type="paused" if paused else "resumed",
+                timestamp=await repository.now(),
+                sequence=view.state.accepted_sequence + 1,
+                data={
+                    "actor_id": str(actor.id),
+                    "reason": request.reason,
+                    "control_revision": request.expected_revision + 1,
+                },
+            )
+            result = await transition(view.state, event, import_artifact(row["artifact"]))
+            view = view.model_copy(update={"state": result.state})
+            await repository.persist(view, event, result, event_hash(event))
+            await replay.save(view.model_dump(mode="json"))
+            await audit(
+                tx.session,
+                actor,
+                capability,
+                str(identifier),
+                scope=scope,
+                capability=capability,
+                context=context,
+                details={"reason": request.reason, "control_revision": result.state.control_revision},
+            )
+            return view
 
     async def start(
         self,
@@ -496,7 +565,14 @@ class RuntimeService:
             return view
 
     async def list(
-        self, actor: Principal, scope: Scope, *, limit: int = 50, cursor: UUID | None = None, context: AuditContext
+        self,
+        actor: Principal,
+        scope: Scope,
+        *,
+        limit: int = 50,
+        cursor: UUID | None = None,
+        filters: RunListFilters | None = None,
+        context: AuditContext,
     ) -> dict[str, Any]:
         from firefly_weave.access.repository import load_principal
         from firefly_weave.persistence.paging import page_ids
@@ -505,7 +581,7 @@ class RuntimeService:
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
             actor = await load_principal(tx.session, actor.id)
             self.require(actor, scope, "run.read", context)
-            ids = await page_ids(tx, "runs", limit, cursor)
+            ids = await page_ids(tx, "runs", limit, cursor, run_filters=(filters or RunListFilters()).model_dump())
             items = []
             for identifier in ids[:limit]:
                 try:

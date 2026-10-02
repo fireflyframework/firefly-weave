@@ -30,7 +30,15 @@ from firefly_weave.contracts.runtime import RunView, StartRunRequest, Unavailabl
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.persistence.uow import Transaction
-from firefly_weave.runtime.models import ControlCommand, Deadline, RuntimeEvent, TaskIntent, TerminalControl, Transition
+from firefly_weave.runtime.models import (
+    ControlCommand,
+    Deadline,
+    HumanTaskIntent,
+    RuntimeEvent,
+    TaskIntent,
+    TerminalControl,
+    Transition,
+)
 
 RUN_FETCH_BYTES = 128 * 1024 * 1024
 
@@ -206,6 +214,10 @@ class RuntimeRepository:
                     release=release,
                     operation=f"{view.id}:{command.node_id}",
                 )
+            elif isinstance(command, HumanTaskIntent):
+                from firefly_weave.human_tasks.service import create_task
+
+                await create_task(self, view, command, event.timestamp)
             elif isinstance(command, Deadline):
                 await self.execute(
                     "INSERT INTO "
@@ -223,13 +235,16 @@ class RuntimeRepository:
                 run=view.id,
                 node=event.data["node_id"],
             )
-        if event.type in {"signal_received", "wait_elapsed"}:
+        if event.type in {"signal_received", "wait_elapsed", "human_completed"}:
             await self.execute(
                 f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND node_id=:node",
                 run=view.id,
                 node=event.data["node_id"],
             )
         if result.state.status in {"succeeded", "failed", "cancelled", "timed_out"}:
+            from firefly_weave.human_tasks.persistence import close_tasks
+
+            await close_tasks(self, view.id, result.state.status, event.data.get("node_id", "@run"))
             from firefly_weave.workers.control import revoke_attempts
 
             tasks = await self.rows(
@@ -389,7 +404,7 @@ class RuntimeRepository:
             "AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN "
             "jsonb_typeof(runs.artifact->'executable'->'graph'->'nodes')='array' "
             "THEN runs.artifact->'executable'->'graph'->'nodes' ELSE '[]'::jsonb END) n "
-            "WHERE n->>'kind'='signal' AND n->>'id'=d.node_id AND NOT EXISTS "
+            "WHERE n->>'kind' IN ('signal','humanTask') AND n->>'id'=d.node_id AND NOT EXISTS "
             "(SELECT 1 FROM signal_receipts s WHERE s.run_id=runs.id AND s.name=n->>'name' "
             "AND s.accepted_at<d.deadline)))))) "
             "ORDER BY id LIMIT :limit FOR UPDATE SKIP LOCKED",
@@ -461,6 +476,8 @@ class RuntimeRepository:
         from firefly_weave.compiler.api import import_artifact
         from firefly_weave.contracts.operations import (
             DeadlineFact,
+            HumanDecisionReceipt,
+            HumanTaskFact,
             RecordedEvidence,
             SignalFact,
             SourceReference,
@@ -527,6 +544,21 @@ class RuntimeRepository:
                     node=command.node_id,
                 )
                 evidence.issued_tasks.append(task_fact(tasks[0]))
+            elif isinstance(command, HumanTaskIntent):
+                human_rows = await self.rows(
+                    f"SELECT id,assignment FROM human_tasks WHERE {SCOPE} AND run_id=:run AND node_id=:node",
+                    run=view.id,
+                    node=command.node_id,
+                )
+                from firefly_weave.compiler.canonical import canonical_digest
+
+                evidence.issued_human_tasks.append(
+                    HumanTaskFact(
+                        task_id=human_rows[0]["id"],
+                        node_id=command.node_id,
+                        assignment_digest=canonical_digest(human_rows[0]["assignment"]),
+                    )
+                )
             elif isinstance(command, Deadline):
                 due = await self.rows(
                     f"SELECT id FROM run_deadlines WHERE {SCOPE} AND run_id=:run AND node_id=:node",
@@ -538,6 +570,27 @@ class RuntimeRepository:
                         wait_id=due[0]["id"], node_id=command.node_id, deadline=command.deadline, name=command.name
                     )
                 )
+        if event.type == "human_completed":
+            human_rows = await self.rows(
+                f"SELECT id,assignment FROM human_tasks WHERE {SCOPE} AND run_id=:run AND node_id=:node",
+                run=view.id,
+                node=event.data.get("node_id"),
+            )
+            from firefly_weave.compiler.canonical import canonical_digest
+
+            evidence = evidence.model_copy(
+                update={
+                    "human_receipt": HumanDecisionReceipt(
+                        task=HumanTaskFact(
+                            task_id=human_rows[0]["id"],
+                            node_id=str(event.data["node_id"]),
+                            assignment_digest=canonical_digest(human_rows[0]["assignment"]),
+                        ),
+                        actor_id=UUID(str(event.data["actor_id"])),
+                        accepted_at=event.timestamp,
+                    )
+                }
+            )
         if event.type in {"task_completed", "task_failed", "incident_opened", "recovery_scheduled"}:
             tasks = await self.rows(
                 f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND node_id=:node",

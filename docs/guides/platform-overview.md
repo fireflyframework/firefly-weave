@@ -30,6 +30,7 @@ business-process example and the difference between a worker and an operator.
 | Your situation | What you install or run | First guide |
 | --- | --- | --- |
 | I want to try a workflow on my laptop | CLI only; local files and simulation | [Offline quickstart](../quickstart.md) |
+| I want a visual workflow editor | Source-built Studio; optional authorized API profile | [Studio setup and usage](studio.md) |
 | My team already has a Weave API | CLI plus an API URL, login, scope IDs, and grants | [Connect to an API](connect-to-api.md) |
 | I need my first complete local platform | Source checkout, isolated server environment, PostgreSQL, Keycloak, and foreground API | [Local platform setup](local-platform.md) |
 | I need a worker to call an external system | The working local platform plus an admitted worker image and handler | [Worker and container deployment](../operations/deployment.md) |
@@ -49,7 +50,7 @@ first echo workflow. [Open the diagram at full size](../diagrams/operations-topo
 
 | Component | Why it exists | Required for the first saved run? |
 | --- | --- | --- |
-| `weave` CLI or Python SDK | Sends requests and reads results | A client is needed to submit the run; it can exit afterward |
+| `weave` CLI, Python SDK, or Studio | Sends requests and reads results | A client is needed to submit the run; it can exit afterward |
 | Weave API | Authorizes requests, stores definitions, starts runs, and schedules work | Yes; keep the API process running |
 | PostgreSQL | Retains workflow state, grants, task leases, and history | Yes; local setup creates a dedicated database |
 | Identity provider | Issues tokens the API verifies | Yes; local setup uses Keycloak and its own database container |

@@ -38,3 +38,9 @@ CLAUDE.md
 /docs/implementation-status.md
 .secrets/
 .local/
+
+# Studio dependencies, build products, and browser-test evidence.
+node_modules/
+.angular/
+playwright-report/
+test-results/

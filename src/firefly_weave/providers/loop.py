@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from firefly_weave.access.scheduler import next_scope
+from firefly_weave.email.source import EmailSourceService
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.providers.dispatcher import ProviderDispatcher
@@ -30,8 +31,15 @@ from firefly_weave.settings import Settings
 
 
 class ProviderLoop:
-    def __init__(self, settings: Settings, uow: UnitOfWork, dispatcher: ProviderDispatcher) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        uow: UnitOfWork,
+        dispatcher: ProviderDispatcher,
+        email_sources: EmailSourceService | None = None,
+    ) -> None:
         self.settings, self.uow, self.dispatcher = settings, uow, dispatcher
+        self.email_sources = email_sources
         self.engine: AsyncEngine | None = None
         self.task: asyncio.Task[None] | None = None
 
@@ -74,6 +82,8 @@ class ProviderLoop:
             authority = await next_scope(self.uow, tenant, provider=True)
         if authority is not None:
             await self.dispatcher.scan(authority, 10)
+            if self.email_sources is not None:
+                await self.email_sources.scan(authority, 1)
 
     async def poll(self) -> None:
         while True:

@@ -35,6 +35,22 @@ class StartRunRequest(ContractModel):
     business_key: str | None = Field(default=None, max_length=200)
 
 
+class RunListFilters(ContractModel):
+    business_key: str | None = Field(default=None, max_length=200)
+    correlation_key: str | None = Field(default=None, max_length=200)
+    status: (
+        Literal["queued", "running", "waiting", "suspended", "succeeded", "failed", "cancelled", "timed_out"] | None
+    ) = None
+    include_archived: bool = False
+
+    def cursor_collection(self) -> str:
+        import hashlib
+        import json
+
+        raw = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()
+        return "runs:" + hashlib.sha256(raw).hexdigest()
+
+
 class RunView(ContractModel):
     id: UUID
     activation: Activation

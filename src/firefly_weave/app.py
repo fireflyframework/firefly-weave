@@ -71,6 +71,8 @@ from firefly_weave.connectors.postgresql import PostgresConnector, PostgresPolic
 from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
 from firefly_weave.definitions.ports import ConnectionBindingPort, WorkerAdmissionPort
 from firefly_weave.definitions.service import DefinitionService
+from firefly_weave.email.source import EmailSourceService
+from firefly_weave.email.transport import MailPolicy
 from firefly_weave.observability import OwnedMeterConfiguration, OwnedTracingConfiguration, TelemetryDrops
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.debug.store import DebugService
@@ -100,6 +102,10 @@ from firefly_weave.workers.service import WorkerService
 
 SERVICE_PACKAGES = (
     "firefly_weave.access.service",
+    "firefly_weave.access.discovery",
+    "firefly_weave.access.members",
+    "firefly_weave.human_tasks",
+    "firefly_weave.email",
     "firefly_weave.access.authorization",
     "firefly_weave.access.authentication",
     "firefly_weave.access.identity_links",
@@ -185,6 +191,14 @@ def make_app(
             plaintext_networks=settings.postgres_plaintext_networks,
             ca_file=settings.postgres_ca_file,
             max_connections=settings.postgres_max_connections,
+        ),
+    )
+    pyfly.context.container.register_instance(
+        MailPolicy,
+        MailPolicy(
+            private_networks=settings.mail_private_networks,
+            allowed_ports=settings.mail_allowed_ports,
+            allow_local_fixture=settings.mail_allow_local_fixture,
         ),
     )
     pyfly.context.container.register_instance(BrokerPolicy, settings.broker)
@@ -324,7 +338,10 @@ def make_app(
                     await kafka_loop.open()
                     app.state.kafka_loop = kafka_loop
                     provider_loop = ProviderLoop(
-                        settings, pyfly.context.get_bean(UnitOfWork), pyfly.context.get_bean(ProviderDispatcher)
+                        settings,
+                        pyfly.context.get_bean(UnitOfWork),
+                        pyfly.context.get_bean(ProviderDispatcher),
+                        pyfly.context.get_bean(EmailSourceService),
                     )
                     await provider_loop.open()
                     app.state.provider_loop = provider_loop

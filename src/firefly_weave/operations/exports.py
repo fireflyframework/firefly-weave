@@ -21,7 +21,7 @@ from typing import cast
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.canonical import canonical_digest
-from firefly_weave.compiler.ir import ActionNode, SignalNode
+from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import TaskError
@@ -55,6 +55,9 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
     omissions: list[Omission] = []
     fields = {
         "started": {"admission_policy"},
+        "human_completed": {"node_id", "task_id", "actor_id", "output"},
+        "paused": {"actor_id", "reason", "control_revision"},
+        "resumed": {"actor_id", "reason", "control_revision"},
         "task_completed": {"node_id", "generation", "output"},
         "task_failed": {"node_id", "generation", "output"},
         "incident_opened": {"node_id", "generation", "code", "next_attempt_at"},
@@ -103,6 +106,8 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
         if isinstance(node, ActionNode) and event.type in {"task_completed", "incident_resolved"}:
             definition = load_definition(next(d.document for d in ir.dependencies if d.digest == node.dependency))
             schemas = action_schemas(ir, cast(ActionDefinition, definition), "output")
+        elif isinstance(node, HumanTaskNode) and event.type == "human_completed":
+            schemas = [{"type": "object", "properties": {"data": node.form_schema, "decision": {"type": "string"}}}]
         elif isinstance(node, SignalNode) and event.type == "signal_received":
             schemas = [ir.schemas[node.schema_ref]]
         bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}

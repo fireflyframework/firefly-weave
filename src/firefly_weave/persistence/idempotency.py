@@ -71,6 +71,10 @@ class Idempotency:
             return None
         if row["request_hash"] != self.values["hash"]:
             raise CatalogError(409, "WV-IDEMPOTENCY-CONFLICT", "Idempotency key was used for another request")
+        if row["response"].get("_weave_purged") is True:
+            raise CatalogError(
+                410, "WV-RUN-PURGED", "Execution data was permanently deleted; this command cannot be replayed"
+            )
         return dict(row["response"])
 
     async def save(self, response: dict[str, Any]) -> None:

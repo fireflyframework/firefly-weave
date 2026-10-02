@@ -34,6 +34,7 @@ LABELS = {
     "transform": "Shape the data",
     "wait": "Wait for a duration",
     "signal": "Wait for a signal",
+    "humanTask": "Wait for a human decision",
     "switch": "Choose a branch",
     "parallel": "Run branches",
     "branch-output": "Collect branch result",

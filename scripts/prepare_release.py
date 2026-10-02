@@ -101,6 +101,8 @@ def prepare(root: Path, destination: Path) -> dict:
                 "client",
                 "--extra",
                 "openapi",
+                "--extra",
+                "studio",
             ],
             timeout=60,
             limit=4 * 1024 * 1024,

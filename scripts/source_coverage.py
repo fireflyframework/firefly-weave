@@ -49,6 +49,9 @@ PRUNED = {
     "build",
     "dist",
     ".cache",
+    ".angular",
+    "test-results",
+    "playwright-report",
 }
 HASH_SUFFIXES = {".py", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".Dockerfile"}
 HASH_NAMES = {"Dockerfile", "Makefile", ".gitignore", ".dockerignore"}
@@ -93,6 +96,13 @@ def inventory(root: Path) -> tuple[list[Path], list[dict[str, str]]]:
         for name in sorted(dirs + names):
             path = base / name
             reason = exclusion(name)
+            if path.relative_to(root).as_posix() in {
+                "desktop/work",
+                "desktop/src-tauri/target",
+                "desktop/src-tauri/gen",
+                "desktop/src-tauri/binaries",
+            }:
+                reason = "generated desktop build output or frozen sidecar"
             if path.parent == root and name in LEGAL_NAMES:
                 reason = "project legal text; not a source header target"
             if reason:
@@ -151,7 +161,7 @@ def load_exceptions(path: Path, *, required: bool = False) -> dict[str, dict[str
 def leading_comment(path: Path, text: str) -> str | None:
     """Only comments before executable content qualify as the attribution header."""
     suffix = path.with_suffix("").suffix if path.suffix == ".tmpl" else path.suffix
-    if suffix == ".css":
+    if suffix in {".css", ".scss", ".ts", ".js", ".mjs", ".rs"}:
         value = text.lstrip()
         if value.startswith("/*") and "*/" in value:
             return "\n".join(

@@ -193,3 +193,132 @@ reason = "Strict WhatsApp JSON wire/configuration fixture; no comment fields in 
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/tsconfig.json"
+kind = "commentless"
+reason = "Angular and npm require strict JSON configuration without source comments."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/package.json"
+kind = "commentless"
+reason = "Angular and npm require strict JSON configuration without source comments."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/package-lock.json"
+kind = "commentless"
+reason = "Angular and npm require strict JSON configuration without source comments."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/angular.json"
+kind = "commentless"
+reason = "Angular and npm require strict JSON configuration without source comments."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/.prettierrc.json"
+kind = "commentless"
+reason = "Prettier uses strict JSON configuration; Angular templates require the Angular parser."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/package.json"
+kind = "commentless"
+reason = "Desktop dependency resolution or strict Tauri configuration; preserve managed parser bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/package-lock.json"
+kind = "commentless"
+reason = "Desktop dependency resolution or strict Tauri configuration; preserve managed parser bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/src-tauri/tauri.conf.json"
+kind = "commentless"
+reason = "Desktop dependency resolution or strict Tauri configuration; preserve managed parser bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/src-tauri/Cargo.lock"
+kind = "commentless"
+reason = "Desktop dependency resolution or strict Tauri configuration; preserve managed parser bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/128x128.png"
+kind = "commentless"
+reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/128x128@2x.png"
+kind = "commentless"
+reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/32x32.png"
+kind = "commentless"
+reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/icon.icns"
+kind = "commentless"
+reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/icon.ico"
+kind = "commentless"
+reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/icon.png"
+kind = "commentless"
+reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+
+[[exceptions]]
+path = "desktop/artwork/dmg-background.png"
+kind = "commentless"
+reason = "Installer background raster generated from the adjacent Apache-licensed SVG using CairoSVG; Finder requires PNG."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"

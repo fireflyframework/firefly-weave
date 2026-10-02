@@ -43,6 +43,9 @@ DOCS_TOPICS = {
     "sdk": "guides/sdk-tutorial/",
     "connectors": "guides/custom-connectors-tutorial/",
     "graphs": "guides/workflow-graphs/",
+    "studio": "guides/studio/",
+    "human-tasks": "guides/human-tasks/",
+    "email": "guides/email/",
 }
 
 _WORKFLOW = """# Copyright 2026 Firefly Software Foundation.

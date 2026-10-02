@@ -46,11 +46,13 @@ original HTTP request open.
 | “Check this customer” | Action and task | The Action describes the reusable operation; the task records this particular work item |
 | Python code that calls the customer service | Remote worker handler | Receives a task lease and returns the business result; the worker SDK manages claiming, heartbeats, and completion |
 | A packaged HTTP or messaging integration | Connector and native executor | Calls a configured operation through the installed connector implementation |
-| “Wait until an approval arrives” | Wait and signal | Keeps durable waiting state; your product submits the authorized signal |
+| “Wait until an external event arrives” | Wait and signal | Keeps durable waiting state; your product submits the authorized signal |
+| “Ask an assigned person to approve” | Human task | Saves an assignment, form, claim, and explicit authenticated decision |
 
-There is no built-in human approval inbox or graphical process editor in this
-alpha. Your product can provide an approval screen and send a signal to Weave.
-The [definition contracts](../contracts.md) describe supported steps; the
+Alpha5 includes [Studio and its task inbox](studio.md) and
+[human approvals](human-tasks.md). Alpha4 predates these features; follow the
+matching installation and platform-upgrade guides. A generic signal is an integration event; it does not complete a native
+human task. The [definition contracts](../contracts.md) describe supported steps; the
 [capability matrix](../capabilities.md) records the current limits.
 
 ## 2. Know which responsibilities belong to your team
@@ -67,6 +69,7 @@ assigned deliberately at the appropriate scope.
 | Deployer | Admit implementation releases, configure connections, and activate exact versions | [Worker deployment](../operations/deployment.md) |
 | Platform operator | Configure the API, database, identity, monitoring, backups, and upgrades | [Remote deployment](../operations/remote-deployment.md) and [configuration](../operations/configuration.md) |
 | Run operator | Inspect run history, investigate incidents, and take authorized recovery actions | [Observability](../operations/observability.md) and [incident operations](../reference/incident-operations.md) |
+| Human reviewer | Claim assigned tasks, complete forms, and record decisions | [Human tasks and approvals](human-tasks.md) |
 
 An **operator** here means the person or automation responsible for running the
 platform or managing its executions. It does not mean a Kubernetes Operator
@@ -89,8 +92,9 @@ procedures; Weave does not ship a Kubernetes Operator in this release.
 5. **Start.** Submit input for that activation. Each start creates a run with its
    own ID and progress; use a stable idempotency key for a deliberate retry of
    the same request.
-6. **Observe and respond.** Read run state and history, send an authorized signal
-   when a wait needs one, or investigate an incident when execution cannot proceed.
+6. **Observe and respond.** Read run state and history, complete an assigned human
+   task, send an authorized signal when a signal wait needs one, or investigate
+   an incident when execution cannot proceed.
 
 Follow [publish and run with the CLI](cli-tutorial.md) to execute this sequence.
 The [Python tutorial](sdk-tutorial.md) covers the same lifecycle from application

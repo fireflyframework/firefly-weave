@@ -36,6 +36,28 @@ jobs:
           version: '0.8.22'
           python-version: '3.12'
       - run: uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python scripts/check.py
+  studio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+      - run: uv sync --locked --all-extras --group docs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: npm ci
+        working-directory: studio
+      - run: npm run check && npm run format:check && npm test && npm run build
+        working-directory: studio
+      - run: npx playwright install --with-deps chromium
+        working-directory: studio
+      - run: npm run test:browser
+        working-directory: studio
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release
     runs-on: [self-hosted, weave-owned-release]

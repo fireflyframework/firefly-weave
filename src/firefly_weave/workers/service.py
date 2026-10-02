@@ -216,6 +216,7 @@ class WorkerService(WorkerAdmissionPort):
             "transform",
             "action",
             "signal",
+            "humanTask",
             "wait",
             "switch",
             "parallel",

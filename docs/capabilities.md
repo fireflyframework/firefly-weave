@@ -44,10 +44,19 @@ need a runnable environment rather than an implementation inventory.
 
 
 Firefly Weave is an alpha workflow and integration platform. This page describes
-version `0.1.0a4`. Published artifacts are listed in
+version `0.1.0a5`. Published artifacts are listed in
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The integration catalog includes Teams, WhatsApp, and Telegram with
-PyFly 26.9.15 and schema revision `0021_operations`.
+PyFly 26.9.15 and schema revision `0025_run_lifecycle`.
+
+Alpha5 includes [Studio](guides/studio.md),
+[human tasks and operator pause/resume](guides/human-tasks.md),
+[email conversations and triggers](connectors/email.md),
+[people and access administration](guides/people-and-access.md), and
+[execution management](guides/execution-management.md), with migrations through
+`0025_run_lifecycle`. Alpha4 used `0021_operations` and predates these additions.
+Install the matching browser bundle for Studio; desktop asset availability is
+reported separately in the [desktop guide](guides/desktop.md).
 
 Implementation, local verification, and live-provider verification are separate.
 Local verification includes offline contracts, owned PostgreSQL/Keycloak services,

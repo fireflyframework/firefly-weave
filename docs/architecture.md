@@ -81,6 +81,26 @@ with explicit actor, scope, audit and transaction context.
 
 ## System and component boundaries
 
+### Visual authoring, people, and email
+
+[Studio](guides/studio.md) runs on your computer. Its Angular application connects
+to a paired Python host on loopback; that host holds your API credentials and
+forwards only supported operations to the selected platform. Closing Studio does
+not stop a workflow: execution state belongs to the platform's PostgreSQL database.
+
+![How Studio, the durable runtime, people, and email work together](diagrams/studio-and-runtime.svg)
+
+A [human task](guides/human-tasks.md) records an assignment and form in the
+database. A person claims it and submits a decision through the authenticated
+API. The runtime validates that decision before continuing the process. An
+operator pause is different: it holds the whole run until an authorized resume.
+
+[Email](connectors/email.md) supplies SMTP delivery and IMAP ingestion. Messages
+belong to conversations; replies use message identifiers and scoped correlation
+rules. Receiving an email does not implicitly approve a human task. Design the
+workflow to decide which incoming message should start a run or satisfy a wait,
+and require an authenticated task decision wherever approval is needed.
+
 ![Clients, compiler, native PyFly services, PostgreSQL, identity provider and workers](diagrams/system-context.svg)
 
 The [composition root](../src/firefly_weave/app.py) registers controllers and

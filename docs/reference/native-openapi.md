@@ -81,7 +81,7 @@ access token, local grants, revision headers, and idempotency keys where require
 ## Versions and scope
 
 The language/schema exporter and pure builder remain independent of PyFly. The
-native document's API version is distinct from package version `0.1.0a4` and
+native document's API version is distinct from package version `0.1.0a5` and
 language `weave/v1alpha1`. The current dependency is PyFly 26.9.15; exact URL,
 SHA-256 and upstream provenance are in [project metadata](../../pyproject.toml)
 and the lockfile.

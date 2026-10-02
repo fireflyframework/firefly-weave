@@ -27,10 +27,16 @@ installing the package does not start a server or a worker.
 | Your job | Python entry point | Does it need a running API? | Start here |
 | --- | --- | --- | --- |
 | Build a workflow definition | `firefly_weave.sdk.builder.WorkflowBuilder` | No; it creates definition data locally | [Build the same workflow in YAML and Python](../guides/sdk-tutorial.md#4-build-the-equivalent-definition-in-python) |
+| Manage people and roles | `firefly_weave.sdk.members.MembersClient` | Authorized platform or tenant administrator | [People and access](../guides/people-and-access.md) |
 | Check the definition | `firefly_weave.compiler.api.compile_source` | No; supply an explicit dependency catalog | [Compile and simulate locally](../guides/sdk-tutorial.md) |
 | Publish, activate, start, or read runs | `firefly_weave.sdk.client.WeaveClient` | Yes; provide its API origin, token source, and scope | [Run the complete Python example](../guides/sdk-tutorial.md#6-connect-your-python-application-to-an-api) |
 | Run your business code for an Action | `firefly_weave.sdk.worker.Worker` with `WorkerTransport` | Yes; the operator must admit the release and authorize its worker | [Build and run a worker](../guides/workers.md) |
 | Add a reusable connector | Connector implementation and package registration | Authoring can be local; live calls need an installed executor and connection | [Build your first connector](../guides/custom-connectors-tutorial.md) |
+| Assign and complete human work | `HumanTaskStep` and `WeaveClient` human-task methods | Authoring is local; assignment and completion use the API | [Human tasks and approvals](../guides/human-tasks.md) |
+| Send or reply to email | `EmailClient` and email contracts | Yes; provision a scoped mail connection first | [Email conversations and triggers](../connectors/email.md) |
+
+The human-task, email, membership, and execution-lifecycle clients are included in
+alpha5. Upgrade both client and server; alpha4 predates these contracts.
 
 **New to Weave?** Follow the [Python SDK tutorial](../guides/sdk-tutorial.md) from
 step 1. It has complete scripts, expected output, and a local-platform option.

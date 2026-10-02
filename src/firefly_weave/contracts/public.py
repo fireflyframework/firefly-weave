@@ -251,7 +251,7 @@ class OperationalCapabilities(ContractModel):
 class Capabilities(ContractModel):
     wire_version: Literal["weave/api-v1"] = "weave/api-v1"
     language_versions: list[str] = Field(default_factory=lambda: ["weave/v1alpha1"])
-    ir_versions: list[str] = Field(default_factory=lambda: ["weave/ir-v1alpha1"])
+    ir_versions: list[str] = Field(default_factory=lambda: ["weave/ir-v1alpha1", "weave/ir-v1alpha2"])
     step_kinds: list[str] = Field(
         default_factory=lambda: ["action", "transform", "switch", "parallel", "wait", "signal", "fail"]
     )

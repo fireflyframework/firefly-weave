@@ -127,7 +127,7 @@ def admit_authoring(
                 walk(item)
         elif isinstance(value, dict):
             for key, child in value.items():
-                if key in {"inputSchema", "outputSchema", "payloadSchema", "authSchema", "configSchema"}:
+                if key in {"inputSchema", "outputSchema", "payloadSchema", "formSchema", "authSchema", "configSchema"}:
                     schema(child)
                 elif key not in {"literal", "default", "examples", "const", "enum"}:
                     walk(child)

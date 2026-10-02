@@ -21,19 +21,22 @@ SPDX-License-Identifier: Apache-2.0
 **Goal:** type `weave` from any directory to write workflows or call an existing
 Weave API. Installing the CLI does not start a server, database, or worker.
 
-The installer includes local authoring, the API client, authentication, and
-OpenAPI import dependencies. It keeps these in a separate Python environment, so
+The installer includes local authoring, the API client, authentication, OpenAPI
+import, and the Studio host dependencies. Install the optional matching browser
+bundle separately using the [Studio guide](guides/studio.md#install-the-alpha5-browser-application). It keeps these in a separate Python environment, so
 your application's packages stay independent.
 
 ## Choose the installation path
 
-**Recommended:** install the pinned **v0.1.0a4 alpha** below. You do not need Git,
+**Recommended:** install the pinned **v0.1.0a5 alpha** below. You do not need Git,
 a source checkout, Docker, or `sudo`. An alpha is a preview release; use it to
 evaluate the platform and check the [current limits](capabilities.md).
 
 | Your situation | Start here |
 | --- | --- |
-| You want to use Weave | [Install the release](#install-a-release), then [check the result](#check-the-result) |
+| You want the visual browser workspace | [Install Studio](guides/studio.md#install-the-alpha5-browser-application) |
+| You want a native desktop app | [Desktop installation](guides/desktop.md) |
+| You want to use the CLI or API | [Install the release](#install-a-release), then [check the result](#check-the-result) |
 | You contribute code or need unreleased changes | [Install the current source](#install-the-current-source) |
 | You already have the CLI | [Upgrade or select another version](#installation-locations-and-upgrades) |
 
@@ -75,8 +78,8 @@ that same version explicitly:
   # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a4/install.sh \
-    | sh -s -- --version v0.1.0a4
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a5/install.sh \
+    | sh -s -- --version v0.1.0a5
 )
 ```
 
@@ -92,14 +95,14 @@ route instead:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a4/install.sh \
+  https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a5/install.sh \
   -o weave-install.sh
 ```
 
 After the download succeeds, inspect `weave-install.sh` in your editor, then run:
 
 ```sh
-sh weave-install.sh --version v0.1.0a4
+sh weave-install.sh --version v0.1.0a5
 ```
 
 HTTPS and checksums protect the artifact path; checksums are not an independent
@@ -123,7 +126,7 @@ weave version --output json
 weave docs platform
 ```
 
-Expected for the pinned installation: version `0.1.0a4`, branded help with command
+Expected for the pinned installation: version `0.1.0a5`, branded help with command
 groups and examples, and one JSON object with `version`, `apiVersion`, and `irVersion`. The banner appears only in
 root help; it never contaminates command results or JSON output. For help on one
 operation, run `weave help workflow compile` or `weave workflow compile --help`.
@@ -158,7 +161,7 @@ on it. Keep old environments until you no longer need them.
 
 ### Select a version or release channel
 
-The explicit `--version v0.1.0a4` in the recommended command makes installation
+The explicit `--version v0.1.0a5` in the recommended command makes installation
 repeatable. To upgrade, use the installer URL and `--version` value from the same
 new release shown on [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The tag includes a leading `v`; `weave --version` shows the package version without it.
@@ -167,7 +170,7 @@ If you retained `weave-install.sh`, these commands select a channel instead:
 
 | Command | What it selects |
 | --- | --- |
-| `sh weave-install.sh --version v0.1.0a4` | Exactly this documented alpha |
+| `sh weave-install.sh --version v0.1.0a5` | Exactly this documented alpha |
 | `sh weave-install.sh --prerelease` | The most recently published release, including alpha previews |
 | `sh weave-install.sh` | The latest stable release only |
 
@@ -192,7 +195,7 @@ removal option:
   # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a4/install.sh \
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a5/install.sh \
     | sh -s -- --uninstall
 )
 ```
@@ -208,7 +211,7 @@ configuration before uninstalling if you also want to clear the CLI's saved logi
 | Symptom | What to do |
 | --- | --- |
 | Python version or `venv` error | Select Python 3.12+ with `WEAVE_INSTALL_PYTHON`; install your distribution's venv support |
-| No stable release | Run the pinned `v0.1.0a4` command above or explicitly choose `--prerelease` |
+| No stable release | Run the pinned `v0.1.0a5` command above or explicitly choose `--prerelease` |
 | Missing installer assets | The selected release is too old; do not mix assets from different releases |
 | Checksum mismatch | Stop and obtain the complete assets again from the same trusted release |
 | Existing unrelated `weave` | Choose a different `--bin-dir`; inspect the old command before replacing it yourself |

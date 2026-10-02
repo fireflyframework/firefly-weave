@@ -49,6 +49,7 @@ their display names cannot be used in the path.
 | --- | --- | --- |
 | Catalog and workflow definitions | `/api/v1/tenants/{tenant}/projects/{project}` | Definitions belong to a project and can be used in its environments |
 | Activations, connections, and runs | The project path plus `/environments/{environment}` | Execution uses an environment's prepared bindings and permissions |
+| Your identity and authorized workspaces | `/api/v1/identity` | Discover your own scopes and grants without entering someone else's IDs |
 | Health | `/health/live` and `/health/ready` | Operators check whether the API is running and ready |
 
 For example, append `/catalog` to the project path to read its available
@@ -206,6 +207,43 @@ The following operation inventory is generated from the same explicit product me
 | `provider_receipts.retry` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/provider-receipts/{identifier}/retry` | run.retry + current source/target authority |
 | `provider_ingress.receive` | `POST /provider-ingress/{identifier}` | provider verification |
 | `provider_ingress.challenge` | `GET /provider-ingress/{identifier}` | provider challenge verification |
+| `human_tasks.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks` | human_task.read |
+| `human_tasks.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}` | human_task.read |
+| `human_tasks.claim` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/claim` | human_task.claim |
+| `human_tasks.release` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/release` | human_task.release |
+| `human_tasks.reassign` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/reassign` | human_task.manage |
+| `human_tasks.complete` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/complete` | human_task.complete |
+| `human_assignments.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-assignments` | assignment.read |
+| `human_assignments.put` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-assignments` | assignment.manage |
+| `human_groups.put` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-groups` | assignment.manage |
+| `runs.lifecycle` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/lifecycle` | run.read |
+| `runs.archive` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/archive` | run.archive |
+| `runs.restore` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/restore` | run.archive |
+| `runs.purge` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/purge` | run.purge |
+| `runs.pause` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/pause` | run.pause |
+| `runs.resume` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/resume` | run.resume |
+| `email_conversations.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/conversations` | email.read |
+| `email_conversations.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/conversations/{identifier}` | email.read |
+| `email_submissions.send` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/submissions` | email.send |
+| `email_submissions.reply` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/conversations/{identifier}/reply` | email.send |
+| `email_submissions.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/submissions/{identifier}` | email.read |
+| `email_submissions.execute` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/submissions/{identifier}/execute` | email.send |
+| `email_receipts.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/receipts` | email.read |
+| `email_sources.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/sources` | email.manage |
+| `email_sources.poll` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/sources/{identifier}/poll` | email.manage |
+| `email_sources.rebaseline` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/sources/{identifier}/rebaseline` | email.manage |
+| `email_receipts.correlate` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/receipts/{identifier}/correlate` | email.manage |
+| `email_receipts.dispatch` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/receipts/{identifier}/dispatch` | email.manage |
+| `email_tokens.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/correlation-tokens` | email.manage |
+| `email_tokens.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/email/correlation-tokens/{identifier}/revoke` | email.manage |
+| `principals.list` | `GET /api/v1/admin/principals` | grant.admin |
+| `principals.create` | `POST /api/v1/admin/principals` | grant.admin |
+| `principals.link` | `POST /api/v1/admin/principals/{identifier}/identity-links` | grant.admin |
+| `principals.status` | `POST /api/v1/admin/principals/{identifier}/status` | grant.admin |
+| `members.list` | `GET /api/v1/tenants/{tenant}/members` | grant.manage or grant.admin |
+| `members.grant` | `POST /api/v1/tenants/{tenant}/members` | grant.manage or grant.admin |
+| `members.revoke` | `POST /api/v1/tenants/{tenant}/members/{identifier}/revoke` | grant.manage or grant.admin |
+| `identity.read` | `GET /api/v1/identity` | authenticated identity |
 | `health.live` | `GET /health/live` | Public probe |
 | `health.ready` | `GET /health/ready` | Public probe |
 | `admin.tenant` | `POST /admin/tenants` | tenant.create |

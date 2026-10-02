@@ -72,6 +72,9 @@ current models are [Settings](../../src/firefly_weave/settings.py),
 | `WEAVE_SECRET_GRANTS` | `[]` | JSON scoped grants for secret references; never put secret values here |
 | `WEAVE_SECRET_ROOT` | Absent | Enables the mounted-file secret provider rooted at this path |
 | `WEAVE_HTTP_PRIVATE_NETWORKS` | `[]` | Explicit private-network allowance for HTTP egress; empty permits no private exception |
+| `WEAVE_MAIL_PRIVATE_NETWORKS` | `[]` | JSON array of operator-approved private CIDRs for SMTP/IMAP; connection metadata cannot grant its own network access |
+| `WEAVE_MAIL_ALLOWED_PORTS` | `[25,465,587,143,993]` | JSON array of allowed SMTP/IMAP destination ports |
+| `WEAVE_MAIL_ALLOW_LOCAL_FIXTURE` | `false` | Explicit test-only plaintext loopback allowance; keep false for deployed mail services |
 | `WEAVE_POSTGRES_PRIVATE_NETWORKS` | `[]` | JSON private-network allowance for connector targets |
 | `WEAVE_POSTGRES_PLAINTEXT_NETWORKS` | `[]` | Explicit plaintext PostgreSQL network exception |
 | `WEAVE_POSTGRES_CA_FILE` | Absent | Trusted CA file for PostgreSQL connector TLS |

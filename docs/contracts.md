@@ -138,6 +138,7 @@ Every step has `id` and a discriminating `kind`:
 | `parallel` | Nonempty `branches: {name: {steps, output}}`; required positive integer `concurrency` |
 | `wait` | Required positive integer `durationSeconds` |
 | `signal` | Required `name`, positive integer `timeoutSeconds`, `payloadSchema` object |
+| `humanTask` | Required `assignment`, `title` and `context` expressions, `formSchema`; `decisions` defaults to `approve`, `reject`; optional positive `dueSeconds` and `expirySeconds` |
 | `fail` | Required business-error `code` and nonempty safe `message` |
 
 Branches may contain zero steps but must declare output. The enclosing
@@ -146,6 +147,18 @@ workflow requires `inputSchema`, `outputSchema`, `steps`, and `output`;
 to `{}` and maps slot names to `{connector: <exact ref>, required: <bool>}`;
 `required` defaults to `true`. Global ID uniqueness, signal-name uniqueness,
 branch scope, output compatibility, and concurrency budgets are compiler checks.
+
+Native `humanTask` support is included in alpha5. It compiles to
+`weave/ir-v1alpha2`; definitions without human work retain the established IR
+version. A human task needs an environment assignment binding, and completing it
+requires the current claim and task permission. See the
+[complete human-task walkthrough](guides/human-tasks.md) before activating one.
+
+In [Studio](guides/studio.md), **Call an integration** creates an `action` step.
+Its version reference selects a published Action, whose implementation selects
+the worker task or connector operation. Retry policy and action timeout belong
+to that Action definition; they are not legal extra fields on a workflow step.
+Workflow-wide timeout is the separate `spec.timeoutSeconds` field.
 
 ## Actions and connectors
 

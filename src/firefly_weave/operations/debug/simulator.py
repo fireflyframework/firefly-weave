@@ -24,7 +24,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
-from firefly_weave.compiler.ir import ActionNode, SignalNode, WaitNode
+from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, SignalNode, WaitNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -285,6 +285,28 @@ class Simulator:
                 )
         return d.pending.pop(0) if d.pending else None
 
+    def human_decision(self, node_id: str, payload: JsonValue) -> DebugView:
+        def receive() -> None:
+            node = next((n for n in self.ir.graph.nodes if isinstance(n, HumanTaskNode) and n.id == node_id), None)
+            if node is None or node_id not in self.data.state.active or self.data.state.status in TERMINAL:
+                raise DebugError("WV-DEBUG-HUMAN-TASK")
+            validate(
+                self.ir,
+                {
+                    "type": "object",
+                    "properties": {
+                        "decision": {"enum": cast(list[JsonValue], node.decisions)},
+                        "data": node.form_schema,
+                    },
+                    "required": ["decision", "data"],
+                    "additionalProperties": False,
+                },
+                payload,
+            )
+            self.data.pending.append(self._event("human_completed", {"node_id": node_id, "output": payload}))
+
+        return self._mutate(receive)
+
     def signal(self, name: str, payload: JsonValue) -> DebugView:
         def receive() -> None:
             if self.data.state.status in TERMINAL:
@@ -321,6 +343,8 @@ class Simulator:
             return self.next()
         if command.kind == "continue":
             return self.continue_until_breakpoint()
+        if command.kind == "human_decision" and command.name is not None:
+            return self.human_decision(command.name, command.payload)
         if command.kind == "signal" and command.name is not None:
             return self.signal(command.name, command.payload)
         if command.kind == "advance_time" and command.seconds is not None:

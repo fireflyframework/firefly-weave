@@ -18,6 +18,38 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a5
+
+- Add the local Angular Studio with a branded workflow editor, structured canvas,
+  source editing, API profiles, run inspection, human tasks, and email conversations.
+- Add `weave studio`, browser pairing, a same-origin API bridge, and a versioned,
+  checksummed optional asset bundle that runs without Node.js.
+- Include the Studio host in the CLI installer's verified dependency closure;
+  install the matching browser bundle separately with its published checksum.
+- Add native human tasks with scoped assignments, schema-driven decisions, durable
+  waits, and explicit operator pause/resume controls.
+- Add generic SMTP/IMAP email integration, conversation replies, fenced submissions,
+  inbound receipts, and authorized correlation to workflow runs.
+- Add identity/workspace discovery and separate task and email permissions.
+- Add exact business/correlation-key and status searches across independent runs,
+  terminal-run archive/restore, and separately authorized permanent deletion with
+  dependency checks, audit receipts, and protection against idempotent recreation.
+- Add a guided Studio connection setup with reviewed CIAM configuration, cancellable
+  device/PKCE sign-in, connection checks, and authorized workspace selection.
+- Add scoped people/access administration through the API, SDK, CLI, and Studio,
+  keeping CIAM account management separate from Weave identity links and grants.
+- Add typed configuration for every workflow step, recursive expression editing,
+  integration action discovery, workflow settings, and a centered Start/End canvas.
+- Add a Tauri desktop wrapper, branded drag-to-Applications macOS disk image,
+  and native installer build matrix. Desktop artifacts are unsigned.
+
+These changes require the matching server, migrations through 0025, CLI, and Studio
+build. Back up the database and follow the upgrade guide. This remains an alpha;
+desktop signing/notarization and live CIAM/mail/cloud validation are separate
+deployment acceptance steps. Native human tasks use IR v1alpha2; workflows that
+do not use them retain the prior IR. The earlier intermittent queue timeout is
+not claimed fixed by this release.
+
 ## 0.1.0a4
 
 - Add `weave platform` commands for an owned local developer installation:

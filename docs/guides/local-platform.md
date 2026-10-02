@@ -43,7 +43,7 @@ matching checkout, preserving any checkout you already use for development:
 
 ```sh
 # Download the release's operator files into a new directory.
-git clone --branch v0.1.0a4 --single-branch https://github.com/fireflyframework/firefly-weave.git firefly-weave-local
+git clone --branch v0.1.0a5 --single-branch https://github.com/fireflyframework/firefly-weave.git firefly-weave-local
 # Run the following steps from that matching checkout.
 cd firefly-weave-local
 ```

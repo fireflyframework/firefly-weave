@@ -93,6 +93,7 @@ class ActionContext:
     invocation: ConnectorInvocation
     authorize: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
     reference: Callable[[UUID, int, str | None], Awaitable[JsonObject]] | None = field(default=None, repr=False)
+    email_submit: Callable[[JsonObject], Awaitable[JsonObject]] | None = field(default=None, repr=False)
 
 
 class ConnectorAdapter(Protocol):

@@ -1,0 +1,342 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+:host {
+  display: block;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+}
+.home {
+  max-width: 1264px;
+  margin: 0 auto;
+  padding: 32px 40px 48px;
+}
+.welcome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  padding: 8px 0 28px;
+}
+.dashboard-status {
+  display: inline-block;
+  background: #e7f0eb;
+  border-radius: 20px;
+  padding: 6px 11px;
+  font-size: 12px;
+  color: var(--forest);
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+h1 {
+  font-size: clamp(26px, 2.5vw, 36px);
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -0.8px;
+  margin: 0 0 12px;
+  color: var(--forest);
+}
+.welcome-description {
+  font-size: 16px;
+  line-height: 1.65;
+  max-width: 600px;
+  color: var(--muted);
+  margin: 0;
+}
+.lumi {
+  flex: 0 0 auto;
+  width: 136px;
+  height: 136px;
+  object-fit: contain;
+}
+.start-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+  margin-bottom: 36px;
+}
+.create-panel,
+.import-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 28px;
+  min-width: 0;
+}
+.create-panel {
+  background: #f5faf7;
+  color: var(--forest);
+  border-color: #c5d8ce;
+}
+.create-panel .panel-note {
+  color: var(--muted);
+}
+.create-panel .panel-icon {
+  background: #dfede5;
+  color: var(--forest);
+}
+.create-panel button.primary {
+  background: var(--forest);
+  color: white;
+  border-color: var(--forest);
+}
+.create-panel button.primary:hover {
+  background: #285d49;
+}
+.import-panel {
+  background: var(--surface);
+  border-style: dashed;
+  border-color: #95b4a4;
+}
+.import-panel.dragging {
+  background: #e6f3e9;
+  outline: 3px solid var(--jade);
+  outline-offset: 3px;
+}
+.panel-icon {
+  display: inline-flex;
+  padding: 12px;
+  background: var(--mist);
+  color: var(--jade);
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+h2 {
+  font-size: 20px;
+  line-height: 1.3;
+  color: var(--forest);
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+.start-grid p {
+  line-height: 1.65;
+  max-width: 48ch;
+  margin: 0 0 20px;
+  color: var(--muted);
+}
+.start-grid .create-panel p {
+  color: var(--muted);
+}
+.start-grid button {
+  min-height: 44px;
+}
+.panel-note {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+.start-grid .import-help {
+  font-size: 12px;
+  margin: 16px 0 0;
+  max-width: 54ch;
+}
+.file-picker {
+  display: none;
+}
+.start-grid .import-error {
+  color: var(--danger);
+  margin: 12px 0 0;
+  font-weight: 550;
+}
+.work-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 32px;
+}
+.work-panel {
+  min-width: 0;
+}
+.section-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.section-heading h2 {
+  font-size: 18px;
+}
+.section-heading p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+button.text-button {
+  padding: 4px 0 4px 8px;
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--jade);
+  font-size: 13px;
+}
+.preview-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.preview-list li {
+  border-bottom: 1px solid var(--line);
+}
+button.preview-row {
+  display: flex;
+  text-align: left;
+  justify-content: start;
+  width: 100%;
+  padding: 16px 4px;
+  gap: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  white-space: normal;
+}
+button.preview-row:hover {
+  background: var(--mist);
+}
+.row-icon {
+  color: var(--jade);
+  display: inline-flex;
+  padding: 8px;
+  border-radius: 8px;
+  background: #eaf1ec;
+}
+.row-copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 5px;
+}
+.row-copy strong {
+  overflow-wrap: anywhere;
+  font-weight: 550;
+}
+.row-copy > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: capitalize;
+}
+.empty {
+  color: var(--muted);
+  padding: 24px 4px;
+  line-height: 1.5;
+}
+.empty p {
+  margin: 8px 0 4px;
+  font-weight: 500;
+}
+.empty > span {
+  font-size: 12px;
+}
+.offline-guide {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 40px;
+  padding: 8px 0;
+}
+.offline-guide p {
+  color: var(--muted);
+  line-height: 1.7;
+  margin: 0;
+  max-width: 56ch;
+}
+.offline-guide ol {
+  margin: 0;
+  padding-left: 24px;
+  display: grid;
+  gap: 20px;
+}
+.offline-guide li {
+  padding-left: 8px;
+  color: var(--jade);
+}
+.offline-guide strong {
+  display: block;
+  color: var(--text);
+  font-weight: 550;
+  margin-bottom: 5px;
+}
+.offline-guide li span {
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 13px;
+}
+button:focus-visible {
+  outline: 3px solid var(--jade);
+  outline-offset: 4px;
+}
+.create-panel button:focus-visible {
+  outline-color: var(--mint);
+}
+@media (max-width: 1000px) {
+  .home {
+    padding: 24px;
+  }
+  .welcome {
+    gap: 16px;
+  }
+  .lumi {
+    width: 112px;
+    height: 112px;
+  }
+  .start-grid {
+    gap: 16px;
+  }
+  .create-panel,
+  .import-panel {
+    padding: 24px;
+  }
+  .section-heading {
+    flex-direction: column;
+  }
+}
+@media (max-width: 700px) {
+  .home {
+    padding: 24px 16px;
+  }
+  .welcome {
+    align-items: start;
+    padding-bottom: 24px;
+  }
+  .lumi {
+    width: 64px;
+    height: 64px;
+  }
+  .welcome-description {
+    font-size: 14px;
+  }
+  .start-grid,
+  .work-grid,
+  .offline-guide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .start-grid {
+    margin-bottom: 28px;
+  }
+  .work-grid {
+    gap: 24px;
+  }
+  .offline-guide {
+    gap: 24px;
+  }
+  .section-heading {
+    flex-direction: row;
+  }
+}

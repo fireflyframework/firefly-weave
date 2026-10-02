@@ -23,6 +23,7 @@ from pydantic import Field, model_validator
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
+from firefly_weave.contracts.human_tasks import AssignmentPin
 from firefly_weave.contracts.values import JsonObjectData
 from firefly_weave.contracts.workers import ConnectorExecutionPin
 
@@ -59,6 +60,7 @@ class Draft(ContractModel):
 
 
 class ActivationRequest(ContractModel):
+    assignment_binding_ids: dict[ResourceName, UUID] = Field(default_factory=dict, exclude_if=lambda v: not v)
     version_id: UUID
     artifact_digest: Digest
     scope: Scope
@@ -74,6 +76,7 @@ class ActivationRequest(ContractModel):
 
 
 class Activation(ContractModel):
+    assignment_pins: dict[ResourceName, AssignmentPin] = Field(default_factory=dict, exclude_if=lambda v: not v)
     connector_execution_pins: list[ConnectorExecutionPin] = Field(default_factory=list, exclude_if=lambda v: not v)
     id: UUID
     revision: int = Field(ge=1)

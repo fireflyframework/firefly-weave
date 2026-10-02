@@ -38,8 +38,44 @@ from firefly_weave.contracts.catalog import (
 )
 from firefly_weave.contracts.compatibility import CompatibilityReport
 from firefly_weave.contracts.connectors import ConnectionRequest, ConnectionRevision, ConnectionTestResult
+from firefly_weave.contracts.email import (
+    EmailConversation,
+    EmailConversationDetail,
+    EmailCorrelationRequest,
+    EmailCorrelationToken,
+    EmailReceipt,
+    EmailReplyRequest,
+    EmailSendRequest,
+    EmailSourceRequest,
+    EmailSourceResult,
+    EmailSourceStatus,
+    EmailSubmission,
+    EmailTokenRequest,
+)
+from firefly_weave.contracts.human_tasks import (
+    AssignmentBinding,
+    AssignmentBindingList,
+    AssignmentBindingRequest,
+    CompleteHumanTask,
+    HumanTask,
+    HumanTaskCommand,
+    ManualControlRequest,
+    ReassignHumanTask,
+    TaskGroup,
+    TaskGroupRequest,
+)
+from firefly_weave.contracts.identity import IdentityView
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
 from firefly_weave.contracts.maintenance import RetentionApplication, RetentionPlan, RetentionRequest
+from firefly_weave.contracts.members import (
+    MemberBinding,
+    MemberGrantRequest,
+    PrincipalCreateRequest,
+    PrincipalIdentityRequest,
+    PrincipalIdentityResult,
+    PrincipalRecord,
+    PrincipalStatusRequest,
+)
 from firefly_weave.contracts.operations import (
     CancelRunRequest,
     EventPage,
@@ -78,6 +114,7 @@ from firefly_weave.contracts.public import (
     VersionView,
     WebhookEnvelope,
 )
+from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
     RunView,
@@ -157,6 +194,31 @@ class Operation:
             )
             for name in re.findall(r"{([^}]+)}", self.path)
         ]
+        if self.id == "runs.list":
+            params += [
+                OpenAPIParameter("business_key", "query", Annotated[str, Field(max_length=200)], required=False),
+                OpenAPIParameter("correlation_key", "query", Annotated[str, Field(max_length=200)], required=False),
+                OpenAPIParameter(
+                    "status",
+                    "query",
+                    Literal[
+                        "queued", "running", "waiting", "suspended", "succeeded", "failed", "cancelled", "timed_out"
+                    ],
+                    required=False,
+                ),
+                OpenAPIParameter("include_archived", "query", bool, required=False, default=False),
+            ]
+        if self.id == "human_tasks.list":
+            params.append(
+                OpenAPIParameter(
+                    "status", "query", Literal["ready", "claimed", "completed", "expired", "cancelled"], required=False
+                )
+            )
+        if self.id == "email_conversations.read":
+            params += [
+                OpenAPIParameter("limit", "query", PageLimit, required=False, default=50),
+                OpenAPIParameter("cursor", "query", str, required=False),
+            ]
         if self.id == "whatsapp_statuses.read":
             params.append(OpenAPIParameter("message_id", "query", MessageId))
         if self.page:
@@ -420,6 +482,274 @@ OPERATIONS = {
             ProviderIngressResponse,
             "provider challenge verification",
         ),
+        Operation(
+            "human_tasks.list", ENVIRONMENT + "/human-tasks", "GET", Page[HumanTask], "human_task.read", page=True
+        ),
+        Operation("human_tasks.read", ENVIRONMENT + "/human-tasks/{identifier}", "GET", HumanTask, "human_task.read"),
+        Operation(
+            "human_tasks.claim",
+            ENVIRONMENT + "/human-tasks/{identifier}/claim",
+            "POST",
+            HumanTask,
+            "human_task.claim",
+            HumanTaskCommand,
+            idempotency=True,
+        ),
+        Operation(
+            "human_tasks.release",
+            ENVIRONMENT + "/human-tasks/{identifier}/release",
+            "POST",
+            HumanTask,
+            "human_task.release",
+            HumanTaskCommand,
+            idempotency=True,
+        ),
+        Operation(
+            "human_tasks.reassign",
+            ENVIRONMENT + "/human-tasks/{identifier}/reassign",
+            "POST",
+            HumanTask,
+            "human_task.manage",
+            ReassignHumanTask,
+            idempotency=True,
+        ),
+        Operation(
+            "human_tasks.complete",
+            ENVIRONMENT + "/human-tasks/{identifier}/complete",
+            "POST",
+            HumanTask,
+            "human_task.complete",
+            CompleteHumanTask,
+            idempotency=True,
+        ),
+        Operation(
+            "human_assignments.list",
+            ENVIRONMENT + "/human-assignments",
+            "GET",
+            AssignmentBindingList,
+            "assignment.read",
+        ),
+        Operation(
+            "human_assignments.put",
+            ENVIRONMENT + "/human-assignments",
+            "POST",
+            AssignmentBinding,
+            "assignment.manage",
+            AssignmentBindingRequest,
+            idempotency=True,
+        ),
+        Operation(
+            "human_groups.put",
+            ENVIRONMENT + "/human-groups",
+            "POST",
+            TaskGroup,
+            "assignment.manage",
+            TaskGroupRequest,
+            idempotency=True,
+        ),
+        Operation("runs.lifecycle", ENVIRONMENT + "/runs/{identifier}/lifecycle", "GET", RunLifecycle, "run.read"),
+        Operation(
+            "runs.archive",
+            ENVIRONMENT + "/runs/{identifier}/archive",
+            "POST",
+            RunLifecycle,
+            "run.archive",
+            RunLifecycleRequest,
+            idempotency=True,
+        ),
+        Operation(
+            "runs.restore",
+            ENVIRONMENT + "/runs/{identifier}/restore",
+            "POST",
+            RunLifecycle,
+            "run.archive",
+            RunLifecycleRequest,
+            idempotency=True,
+        ),
+        Operation(
+            "runs.purge",
+            ENVIRONMENT + "/runs/{identifier}/purge",
+            "POST",
+            RunLifecycle,
+            "run.purge",
+            RunPurgeRequest,
+            idempotency=True,
+        ),
+        Operation(
+            "runs.pause",
+            ENVIRONMENT + "/runs/{identifier}/pause",
+            "POST",
+            RunView,
+            "run.pause",
+            ManualControlRequest,
+            idempotency=True,
+        ),
+        Operation(
+            "runs.resume",
+            ENVIRONMENT + "/runs/{identifier}/resume",
+            "POST",
+            RunView,
+            "run.resume",
+            ManualControlRequest,
+            idempotency=True,
+        ),
+        Operation(
+            "email_conversations.list",
+            ENVIRONMENT + "/email/conversations",
+            "GET",
+            Page[EmailConversation],
+            "email.read",
+            page=True,
+        ),
+        Operation(
+            "email_conversations.read",
+            ENVIRONMENT + "/email/conversations/{identifier}",
+            "GET",
+            EmailConversationDetail,
+            "email.read",
+        ),
+        Operation(
+            "email_submissions.send",
+            ENVIRONMENT + "/email/submissions",
+            "POST",
+            EmailSubmission,
+            "email.send",
+            EmailSendRequest,
+            (202,),
+        ),
+        Operation(
+            "email_submissions.reply",
+            ENVIRONMENT + "/email/conversations/{identifier}/reply",
+            "POST",
+            EmailSubmission,
+            "email.send",
+            EmailReplyRequest,
+            (202,),
+        ),
+        Operation(
+            "email_submissions.read",
+            ENVIRONMENT + "/email/submissions/{identifier}",
+            "GET",
+            EmailSubmission,
+            "email.read",
+        ),
+        Operation(
+            "email_submissions.execute",
+            ENVIRONMENT + "/email/submissions/{identifier}/execute",
+            "POST",
+            EmailSubmission,
+            "email.send",
+        ),
+        Operation(
+            "email_receipts.list", ENVIRONMENT + "/email/receipts", "GET", Page[EmailReceipt], "email.read", page=True
+        ),
+        Operation(
+            "email_sources.create",
+            ENVIRONMENT + "/email/sources",
+            "POST",
+            EmailSourceResult,
+            "email.manage",
+            EmailSourceRequest,
+            (201,),
+        ),
+        Operation(
+            "email_sources.poll",
+            ENVIRONMENT + "/email/sources/{identifier}/poll",
+            "POST",
+            EmailSourceStatus,
+            "email.manage",
+        ),
+        Operation(
+            "email_sources.rebaseline",
+            ENVIRONMENT + "/email/sources/{identifier}/rebaseline",
+            "POST",
+            EmailSourceStatus,
+            "email.manage",
+        ),
+        Operation(
+            "email_receipts.correlate",
+            ENVIRONMENT + "/email/receipts/{identifier}/correlate",
+            "POST",
+            EmailSourceStatus,
+            "email.manage",
+            EmailCorrelationRequest,
+        ),
+        Operation(
+            "email_receipts.dispatch",
+            ENVIRONMENT + "/email/receipts/{identifier}/dispatch",
+            "POST",
+            EmailSourceStatus,
+            "email.manage",
+        ),
+        Operation(
+            "email_tokens.create",
+            ENVIRONMENT + "/email/correlation-tokens",
+            "POST",
+            EmailCorrelationToken,
+            "email.manage",
+            EmailTokenRequest,
+            (201,),
+        ),
+        Operation(
+            "email_tokens.revoke",
+            ENVIRONMENT + "/email/correlation-tokens/{identifier}/revoke",
+            "POST",
+            EmailSourceStatus,
+            "email.manage",
+        ),
+        Operation(
+            "principals.list", "/api/v1/admin/principals", "GET", Page[PrincipalRecord], "grant.admin", page=True
+        ),
+        Operation(
+            "principals.create",
+            "/api/v1/admin/principals",
+            "POST",
+            PrincipalRecord,
+            "grant.admin",
+            PrincipalCreateRequest,
+            (201,),
+        ),
+        Operation(
+            "principals.link",
+            "/api/v1/admin/principals/{identifier}/identity-links",
+            "POST",
+            PrincipalIdentityResult,
+            "grant.admin",
+            PrincipalIdentityRequest,
+        ),
+        Operation(
+            "principals.status",
+            "/api/v1/admin/principals/{identifier}/status",
+            "POST",
+            PrincipalRecord,
+            "grant.admin",
+            PrincipalStatusRequest,
+        ),
+        Operation(
+            "members.list",
+            "/tenants/{tenant}/members",
+            "GET",
+            Page[MemberBinding],
+            "grant.manage or grant.admin",
+            page=True,
+        ),
+        Operation(
+            "members.grant",
+            "/tenants/{tenant}/members",
+            "POST",
+            MemberBinding,
+            "grant.manage or grant.admin",
+            MemberGrantRequest,
+            (201,),
+        ),
+        Operation(
+            "members.revoke",
+            "/tenants/{tenant}/members/{identifier}/revoke",
+            "POST",
+            Revoked,
+            "grant.manage or grant.admin",
+        ),
+        Operation("identity.read", "/api/v1/identity", "GET", IdentityView, "authenticated identity"),
         Operation("health.live", "/health/live", "GET", Health, ""),
         Operation("health.ready", "/health/ready", "GET", Health, ""),
         Operation("admin.tenant", "/admin/tenants", "POST", Identifier, "tenant.create", NameRequest),

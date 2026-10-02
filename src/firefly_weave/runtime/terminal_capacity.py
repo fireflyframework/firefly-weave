@@ -141,6 +141,9 @@ async def persist_terminal(
     )
     if len(inserted) != 1:
         raise CatalogError(409, "WV-RUNTIME-SEQUENCE", "Terminal sequence changed")
+    from firefly_weave.human_tasks.persistence import close_tasks
+
+    await close_tasks(repository, row["id"], event.type, event.data.get("node_id", "@run"))
     while True:
         tasks = await repository.rows(
             f"SELECT id,run_id,tenant_id,project_id,environment_id,status FROM task_intents WHERE {SCOPE} "

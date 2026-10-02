@@ -38,8 +38,10 @@ mode = sys.argv[1]
 origin = pathlib.Path(firefly_weave.__file__).resolve()
 assert origin.is_relative_to(pathlib.Path(sys.prefix).resolve())
 assert 'site-packages' in origin.parts
-for name in ('sqlalchemy', 'asyncpg', 'alembic', 'starlette', 'uvicorn'):
+for name in ('sqlalchemy', 'asyncpg', 'alembic'):
     assert (importlib.util.find_spec(name) is not None) == (mode in ('server', 'teams', 'kafka'))
+for name in ('starlette', 'uvicorn'):
+    assert (importlib.util.find_spec(name) is not None) == (mode in ('cli', 'server', 'teams', 'kafka'))
 assert (importlib.util.find_spec('pyfly') is not None) == (mode != 'base')
 assert (importlib.util.find_spec('microsoft_agents') is not None) == (mode == 'teams')
 assert (importlib.util.find_spec('aiokafka') is not None) == (mode == 'kafka')
@@ -47,6 +49,7 @@ if mode != 'base':
     assert importlib.metadata.version('pyfly') == '26.9.15'
 if mode == 'cli':
     import httpx, keyring
+    from firefly_weave.studio.host import make_studio_app
 if mode == 'worker':
     from firefly_weave.sdk.transport import WorkerTransport
     from firefly_weave.sdk.worker import Worker

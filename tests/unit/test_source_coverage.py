@@ -300,3 +300,19 @@ def test_explicit_missing_inventory_is_configuration_failure(tmp_path):
     code, report = run(tmp_path, "--strict", "--inventory", str(tmp_path / "missing.toml"))
     assert code == 2
     assert report["error"] == "FileNotFoundError"
+
+
+@pytest.mark.parametrize("suffix", [".ts", ".js", ".mjs", ".scss"])
+def test_studio_source_requires_full_block_header(tmp_path, suffix):
+    body = "/*\n" + "\n".join(line.removeprefix("# ").removeprefix("#") for line in HEADER.splitlines()) + "\n*/\n"
+    path = tmp_path / ("component" + suffix)
+    path.write_text(body + "const example = 1;\n")
+    assert run(tmp_path, "--strict")[0] == 0
+    path.write_text("/* SPDX-License-Identifier: Apache-2.0 */\nconst example = 1;\n")
+    assert "missing-header" in {item["code"] for item in run(tmp_path)[1]["issues"]}
+
+
+def test_rust_block_header_is_recognized(tmp_path):
+    header = "/*\n" + "\n".join(line.removeprefix("# ") for line in HEADER.splitlines()) + "\n*/\n"
+    (tmp_path / "main.rs").write_text(header + "fn main() {}\n")
+    assert run(tmp_path, "--strict")[0] == 0

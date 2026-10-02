@@ -1,0 +1,159 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+name: Desktop installers
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - 'desktop/**'
+      - 'studio/**'
+      - 'src/firefly_weave/studio/**'
+      - 'src/firefly_weave/sdk/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'studio/**'
+      - 'src/firefly_weave/studio/**'
+      - 'src/firefly_weave/sdk/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/desktop.yml'
+permissions:
+  contents: read
+jobs:
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.19'
+          python-version: '3.12.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: |
+            studio/package-lock.json
+            desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt,clippy
+          targets: ${{ matrix.target }}
+      - name: Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+      - name: Locked host closure and freezing tool
+        run: |
+          uv sync --locked --extra studio
+          uv pip install pyinstaller==6.16.0
+      - name: Record product version
+        id: product
+        run: |
+          uv run --no-sync python - <<'PYMETA'
+          import json, os, tomllib
+          from pathlib import Path
+          version = json.loads(Path("desktop/src-tauri/tauri.conf.json").read_text())["version"]
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+              stream.write(f"version={version}\n")
+              python_version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+              stream.write(f"python_version={python_version}\n")
+          PYMETA
+      - name: Compile Studio frontend
+        working-directory: studio
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm run build
+      - name: Freeze target-native host and verify installed closure
+        run: |
+          uv run --no-sync python desktop/scripts/build_sidecar.py --target ${{ matrix.target }}
+          uv run --no-sync python desktop/scripts/smoke_sidecar.py desktop/src-tauri/binaries/weave-studio-host-${{ matrix.target }}${{ runner.os == 'Windows' && '.exe' || '' }} --expected-version ${{ steps.product.outputs.python_version }}
+      - name: Native policy tests
+        run: |
+          cargo fmt --check --manifest-path desktop/src-tauri/Cargo.toml
+          cargo clippy --locked --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Build unsigned installers
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - name: Collect exact installer assets and provenance
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          uv run --no-sync python - <<'PYASSETS'
+          import json, os, shutil, tomllib
+          from pathlib import Path
+          config = json.loads(Path("desktop/src-tauri/tauri.conf.json").read_text())
+          target = os.environ["BUILD_TARGET"]
+          bundle = Path("desktop/src-tauri/target") / target / "release/bundle"
+          output = Path("desktop/work/release-assets")
+          output.mkdir(parents=True)
+          installers = sorted(p for p in bundle.rglob("*") if p.is_file() and p.suffix.lower() in {".dmg", ".msi", ".exe", ".deb", ".appimage"})
+          if not installers:
+              raise SystemExit("No native installers were produced")
+          for installer in installers:
+              canonical = f"firefly-weave-studio-{config['version']}-{target}{installer.suffix}"
+              destination = output / canonical
+              if destination.exists():
+                  raise SystemExit("Installer extension collision; choose explicit canonical names")
+              shutil.copy2(installer, destination)
+          metadata = {"product_version": config["version"], "python_version": tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"], "target": target, "commit": os.environ["SOURCE_COMMIT"], "unsigned": True, "msi_version": config["bundle"]["windows"]["wix"]["version"]}
+          (output / f"weave-studio-{target}-build.json").write_text(json.dumps(metadata, indent=2) + "\n")
+          shutil.copy2("desktop/work/sidecar-manifest.json", output / f"weave-studio-{target}-host.json")
+          PYASSETS
+          uv run --no-sync python desktop/scripts/hash_installers.py desktop/work/release-assets
+          mv desktop/work/release-assets/SHA256SUMS desktop/work/release-assets/weave-studio-${{ matrix.target }}-SHA256SUMS
+      - name: Retain installers and host integrity manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: weave-studio-${{ steps.product.outputs.version }}-${{ matrix.target }}-unsigned
+          if-no-files-found: error
+          path: |
+            desktop/work/release-assets/**
+# This workflow builds reviewable artifacts only. It neither creates a GitHub
+# Release nor uploads signing keys, notarizes, or claims an installer is published.

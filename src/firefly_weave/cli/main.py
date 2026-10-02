@@ -34,6 +34,8 @@ from firefly_weave.cli.connectors import connector
 from firefly_weave.cli.debug import simulate
 from firefly_weave.cli.definitions import definitions
 from firefly_weave.cli.deploy import worker
+from firefly_weave.cli.email import email
+from firefly_weave.cli.human_tasks import human_assignments, human_groups, human_tasks
 from firefly_weave.cli.onboarding import DOCS_URL, docs, init
 from firefly_weave.cli.operations import incident, run
 from firefly_weave.cli.platform import platform
@@ -41,6 +43,7 @@ from firefly_weave.cli.remote import family, machine_result, remote
 from firefly_weave.cli.runs import runs
 from firefly_weave.cli.schedule import schedule
 from firefly_weave.cli.schema import schema
+from firefly_weave.cli.studio import StudioLaunchError, studio
 from firefly_weave.cli.triggers import triggers
 from firefly_weave.cli.workers import workers
 from firefly_weave.cli.workflow import workflow
@@ -95,8 +98,9 @@ class OfflineGroup(click.Group):
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         sections = (
-            ("Start here", ("init", "platform", "docs")),
+            ("Start here", ("init", "platform", "studio", "docs")),
             ("Author locally", ("workflow", "schema", "connector")),
+            ("Human work and email", ("human-tasks", "human-assignments", "human-groups", "email")),
             (
                 "Connect to a platform",
                 ("auth", "definitions", "connections", "run", "runs", "incident", "schedule", "workers"),
@@ -119,6 +123,11 @@ class OfflineGroup(click.Group):
             ("Help and version", ("help", "version")),
         )
         summaries = {
+            "human-tasks": "Find, claim, and complete assigned human work.",
+            "human-assignments": "Bind workflow assignments to people or groups.",
+            "human-groups": "Manage the people eligible for task assignments.",
+            "email": "Read conversations, manage incoming mail, and send replies.",
+            "studio": "Open the visual workflow editor and task inbox.",
             "init": "Create a safe offline workflow starter.",
             "platform": "Set up, start, and use a local development platform.",
             "docs": "Find docs for platform startup and next steps.",
@@ -180,7 +189,12 @@ class OfflineGroup(click.Group):
                 windows_expand_args=windows_expand_args,
                 **extra,
             )
-        except click.ClickException:
+        except click.ClickException as error:
+            if isinstance(error, StudioLaunchError):
+                error.show()
+                if standalone_mode:
+                    raise SystemExit(error.exit_code) from None
+                raise
             # Click errors may echo arbitrary option values; keep machine/local errors value-free.
             machine = "--output=json" in arguments or any(
                 arguments[i : i + 2] == ["--output", "json"] for i in range(len(arguments))
@@ -263,6 +277,11 @@ def version(output: str) -> None:
 cli.add_command(init)
 cli.add_command(docs)
 cli.add_command(platform)
+cli.add_command(studio)
+cli.add_command(human_tasks)
+cli.add_command(human_assignments)
+cli.add_command(human_groups)
+cli.add_command(email)
 workflow.add_command(simulate)
 cli.add_command(workflow)
 cli.add_command(schema)

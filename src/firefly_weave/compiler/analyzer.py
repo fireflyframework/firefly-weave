@@ -349,6 +349,10 @@ class _Analyzer:
                 else:
                     self.signals[name] = step_path + "/name"
                 self.schema(cast(JsonObject, step["payloadSchema"]), step_path + "/payloadSchema")
+            if kind == "humanTask":
+                self.schema(cast(JsonObject, step["formSchema"]), step_path + "/formSchema")
+                self.count(cast(JsonObject, step["title"]), step_path + "/title")
+                self.count(cast(JsonObject, step["context"]), step_path + "/context")
             if kind in {"action", "transform"}:
                 key = "with" if kind == "action" else "value"
                 self.count(cast(JsonObject, step[key]), step_path + "/" + key)
@@ -540,6 +544,24 @@ class _Analyzer:
                     self.guard(location, "action_output", output)
                 else:
                     output = {}
+            elif kind == "humanTask":
+                self.expression(
+                    cast(JsonObject, step["title"]),
+                    location + "/title",
+                    visible,
+                    {"type": "string", "minLength": 1, "maxLength": 512},
+                )
+                self.expression(cast(JsonObject, step["context"]), location + "/context", visible, {"type": "object"})
+                output = {
+                    "type": "object",
+                    "properties": {
+                        "decision": {"type": "string", "enum": step["decisions"]},
+                        "data": step["formSchema"],
+                    },
+                    "required": ["decision", "data"],
+                    "additionalProperties": False,
+                }
+                self.guard(location, "human_output", output)
             elif kind == "signal":
                 output = cast(JsonObject, step["payloadSchema"])
                 self.guard(location, "signal_payload", output)

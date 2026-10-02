@@ -16,8 +16,9 @@
 
 """Native connector dispatch reuses the same current-authority task service as remote workers."""
 
+import json
 from typing import TYPE_CHECKING, Any, cast
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pyfly.container import service
 
@@ -26,6 +27,7 @@ from firefly_weave.access.service import AccessService
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.connectors import ActionContext, ResolvedSecret
+from firefly_weave.contracts.email import EmailReplyRequest, EmailSendRequest
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import (
     CompletionAcknowledgment,
@@ -34,8 +36,10 @@ from firefly_weave.contracts.workers import (
     TaskError,
     TaskLease,
 )
+from firefly_weave.email.service import EmailService
 from firefly_weave.operations.execution import request_execution
 from firefly_weave.persistence.uow import UnitOfWork
+from firefly_weave.runtime.repository import RuntimeRepository
 from firefly_weave.workers.leases import TaskService
 
 if TYPE_CHECKING:
@@ -50,8 +54,10 @@ class ConnectorExecutionService:
         access: AccessService,
         uow: UnitOfWork,
         registry: ConnectorRegistry,
+        email: EmailService,
     ) -> None:
         self.tasks, self.access, self.uow, self.registry = tasks, access, uow, registry
+        self.email = email
 
     async def operation(self, name: str, scope: Scope, principal_id: UUID, *args: Any) -> Any:
         if name not in {"claim", "heartbeat", "complete", "fail", "invocation"}:
@@ -103,10 +109,43 @@ class ConnectorExecutionService:
             references = cast("TeamsReferences", self.registry.builtin_verifier(adapter).references)
             return await references.resolve(scope, invocation.connection.id, identifier, generation, activity_id)
 
+        async def email_submit(payload: JsonObject) -> JsonObject:
+            await authorize()
+            if adapter != "weave-email" or invocation.action not in {"send", "reply"}:
+                raise ValueError("Email authority unavailable")
+            async with self.uow.open(scope, mutation=False) as tx:
+                rows = await RuntimeRepository(tx).rows(
+                    "SELECT r.principal_id FROM task_intents t JOIN runs r ON r.id=t.run_id "
+                    "WHERE t.tenant_id=:tenant AND t.project_id=:project AND t.environment_id=:environment "
+                    "AND t.id=:id",
+                    id=lease.proof.task_id,
+                )
+                if not rows:
+                    raise ValueError("Email run unavailable")
+                owner = await self.access.load_principal(rows[0]["principal_id"], tx=tx)
+            values = {
+                **payload,
+                "request_id": str(uuid5(NAMESPACE_URL, "weave-email:" + lease.operation_key)),
+                "connection_revision_id": str(invocation.connection.id),
+            }
+            command: EmailSendRequest | EmailReplyRequest
+            conversation_id = None
+            if invocation.action == "reply":
+                conversation_id = UUID(str(values.pop("conversation_id")))
+                command = EmailReplyRequest.model_validate_json(json.dumps(values))
+            else:
+                command = EmailSendRequest.model_validate_json(json.dumps(values))
+            submission = await self.email.queue(owner, scope, command, conversation_id, automated=True)
+            await authorize()
+            result = await self.email.execute(owner, scope, submission.id, authorize=authorize)
+            return cast(JsonObject, result.model_dump(mode="json"))
+
         try:
             return await self.registry.get(adapter).execute(
                 cast(JsonObject, lease.input),
-                ActionContext(lease.operation_key, lease.deadline, credentials, invocation, authorize, reference),
+                ActionContext(
+                    lease.operation_key, lease.deadline, credentials, invocation, authorize, reference, email_submit
+                ),
             )
         finally:
             active = False

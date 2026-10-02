@@ -26,8 +26,8 @@ test:
 	uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs pytest tests/unit tests/contracts
 
 lint:
-	uv run --locked --no-editable --reinstall-package firefly-weave --all-extras ruff check src tests examples scripts
-	uv run --locked --no-editable --reinstall-package firefly-weave --all-extras ruff format --check src tests examples scripts
+	uv run --locked --no-editable --reinstall-package firefly-weave --all-extras ruff check src tests examples scripts desktop/scripts
+	uv run --locked --no-editable --reinstall-package firefly-weave --all-extras ruff format --check src tests examples scripts desktop/scripts
 
 type:
 	uv run --locked --no-editable --reinstall-package firefly-weave --all-extras mypy
@@ -49,3 +49,12 @@ check-e2e:
 
 check-release:
 	uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python scripts/check.py --release --docker-context "$(WEAVE_TEST_DOCKER_CONTEXT)"
+
+# Build Studio separately so Python-only users do not need Node.js.
+.PHONY: studio-check studio-build
+studio-check:
+	cd studio && npm ci && npm run check && npm test && npm run test:browser
+
+studio-build:
+	cd studio && npm ci && npm run build
+	uv run --locked python scripts/build_studio.py

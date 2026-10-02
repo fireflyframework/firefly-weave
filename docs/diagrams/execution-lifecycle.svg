@@ -1,0 +1,41 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="650" viewBox="0 0 1120 650" role="img" aria-labelledby="title desc">
+<title id="title">One business case can have many executions</title>
+<desc id="desc">Business key order-1042 groups payment and shipping runs, each with its own run ID and state. Finished runs can be archived, restored, and permanently purged with separate authorization if no retained references block removal. A minimal deletion receipt survives.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:22px;font-weight:700}.p{font-size:19px}.s{font-size:17px;fill:#4D655D}.line{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="1120" height="650" rx="24" fill="#EEF4F0"/>
+<text class="title" x="36" y="53">Find the case. Choose the execution. Manage its history.</text>
+<text class="p" x="36" y="89">Keys group related work; the run ID selects one exact instance.</text>
+<rect x="36" y="123" width="318" height="186" rx="15" fill="white"/>
+<g class="icon" transform="translate(59 147)"><rect width="33" height="28" rx="3"/><path d="M8 9h17M8 18h10"/></g>
+<text class="h" x="107" y="171">Business case</text><text class="h" x="59" y="220">order-1042</text>
+<text class="p" x="59" y="262">Search by business key.</text><text class="s" x="59" y="289">A key does not have to be unique.</text>
+<path class="line" d="M354 185H415"/><path class="line" d="M354 244H415"/>
+<rect x="430" y="123" width="654" height="86" rx="13" fill="white"/><text class="h" x="453" y="158">Payment run</text><text class="p" x="453" y="187">Own run ID · waiting for a human decision</text>
+<rect x="430" y="224" width="654" height="85" rx="13" fill="white"/><text class="h" x="453" y="259">Shipping run</text><text class="p" x="453" y="288">Different run ID · completed</text>
+<text class="h" x="36" y="362">When an execution has finished</text>
+<rect x="36" y="390" width="280" height="145" rx="15" fill="white"/><text class="h" x="57" y="428">1. Retain</text><text class="p" x="57" y="462">Inspect tasks and history.</text><text class="s" x="57" y="502">Visible in the normal run list.</text>
+<path class="line" d="M324 459H397"/>
+<rect x="410" y="390" width="280" height="145" rx="15" fill="white"/><text class="h" x="431" y="428">2. Archive</text><text class="p" x="431" y="462">Hide it; keep its records.</text><text class="s" x="431" y="502">Restore to show it again.</text>
+<path class="line" d="M698 459H771"/>
+<rect x="784" y="390" width="300" height="145" rx="15" fill="#FFF7E6" stroke="#D6A646"/><text class="h" x="805" y="428">3. Purge after review</text><text class="p" x="805" y="462">Remove execution payloads.</text><text class="s" x="805" y="502">Separate permission required.</text>
+<text class="p" x="36" y="578">Live leases or retained references block purge; nothing is partially deleted.</text>
+<text class="s" x="36" y="613">A small deletion receipt and access audit remain. External systems and backups are managed separately.</text>
+</svg>
