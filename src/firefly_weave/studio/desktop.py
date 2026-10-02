@@ -63,7 +63,8 @@ class DesktopServer(uvicorn.Server):
 
 
 def packaged_assets() -> Path:
-    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[3]))
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    root = Path(frozen_root) if frozen_root is not None else Path(__file__).resolve().parents[3]
     return root / "studio-assets"
 
 
