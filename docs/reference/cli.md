@@ -42,11 +42,11 @@ commands, their files, and their result contracts.
 | Export language schemas | `schema export` | Base package |
 | Call a running API | `remote`, `definitions`, `runs`, other remote families | `client` extra, token, scope, local grants |
 | Run durable workflows for the first time | `platform doctor/setup/start/status/demo/token/stop` | Matching checkout, uv, and local Docker; [walkthrough](../guides/local-platform.md) |
-| Draw and inspect a workflow | `studio`, `studio configure`, `studio install` | Matching alpha5 browser bundle and `studio` extra; [Studio setup](../guides/studio.md) |
+| Draw and inspect a workflow | `studio`, `studio configure`, `studio install` | Matching alpha6 browser bundle and `studio` extra; [Studio setup](../guides/studio.md) |
 | Claim or complete a human task | `human-tasks`, `human-assignments`, `human-groups` | Authorized API profile; [human task walkthrough](../guides/human-tasks.md) |
 | Read or reply to a conversation | `email` | Authorized API and email connection; [email walkthrough](../connectors/email.md) |
 
-Studio, human tasks, email, and membership administration are included in alpha5.
+Studio, human tasks, email, and membership administration are included in alpha6.
 Alpha4 predates these additions. Studio starts a loopback server and compiler;
 connecting a profile also enables authenticated platform calls.
 

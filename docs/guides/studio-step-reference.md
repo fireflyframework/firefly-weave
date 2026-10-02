@@ -23,8 +23,8 @@ versioned definition language as YAML, the CLI, and the Python SDK. A step's
 **kind** determines its properties; adding a field that belongs to a different
 kind does not add that behavior.
 
-Studio and native human tasks are included in alpha5. Install the matching host
-and browser bundle using the [Studio installation guide](studio.md#install-the-alpha5-browser-application).
+Studio and native human tasks are included in alpha6. Install the matching host
+and browser bundle using the [Studio installation guide](studio.md#install-the-alpha6-browser-application).
 
 ## Start with the outcome you need
 

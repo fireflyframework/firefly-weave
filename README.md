@@ -46,11 +46,15 @@ workflow and reads its status through an API. A worker performs the external
 calls. The workflow definition determines what happens next.
 
 You can run Weave as a standalone service or integrate it into another product.
-Alpha5 provides the **API, CLI, Python SDK, and Studio** visual workspace,
+Alpha6 provides the **API, CLI, Python SDK, and Studio** visual workspace,
 including human-task inboxes, email conversations, execution management, and scoped
-people/access administration. [Install Studio](docs/guides/studio.md#install-the-alpha5-browser-application)
+people/access administration. [Install Studio](docs/guides/studio.md#install-the-alpha6-browser-application)
 with its matching optional browser bundle, or use the verified macOS ARM desktop
-asset described in the [desktop guide](docs/guides/desktop.md).
+asset described in the [desktop guide](docs/guides/desktop.md). Alpha5 macOS
+installers have a damaged-bundle packaging defect; use alpha6 instead. Alpha6
+macOS bundles are ad-hoc signed, not Developer ID signed or notarized, and may
+still require policy-approved manual approval. The browser installation is the
+fallback.
 
 ![From offline authoring to an API, worker, and host product](docs/diagrams/tutorial-route.svg)
 
@@ -78,15 +82,15 @@ performs external work. Each has its own guide so you can stop at the result you
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a5 alpha** into
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a6 alpha** into
 your user account without `sudo`, Git, or Docker:
 
 ```sh
 (
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a5/install.sh \
-    | sh -s -- --version v0.1.0a5
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a6/install.sh \
+    | sh -s -- --version v0.1.0a6
 )
 ```
 
@@ -101,7 +105,7 @@ weave help workflow
 weave docs platform
 ```
 
-Expected: version `0.1.0a5` and a command overview. The
+Expected: version `0.1.0a6` and a command overview. The
 [installation guide](docs/installation.md) explains Python selection, persistent
 PATH setup, upgrades, removal, and troubleshooting. Installation includes the API
 client, OpenAPI import, and Studio host dependencies; it does not start the
@@ -118,7 +122,7 @@ assets. You also need `uv` and a running local Docker engine with Compose 2.30+:
 
 ```sh
 # Keep the operator files at the same version as the CLI.
-git clone --branch v0.1.0a5 --single-branch https://github.com/fireflyframework/firefly-weave.git
+git clone --branch v0.1.0a6 --single-branch https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 
 # Check prerequisites, then prepare private settings and owned dependencies once.
@@ -206,7 +210,7 @@ components, a narrated execution path, and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a5**, an **alpha** release. Download
+The recommended installation is **v0.1.0a6**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The checked-in documentation describes the source on its branch; a release tag

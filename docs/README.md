@@ -77,7 +77,7 @@ Run one command block, check its expected result, then continue. Comments inside
 code blocks explain why the commands are there. When a terminal is running API
 logs, keep it open and use a second terminal for requests.
 
-The current installation guide pins **v0.1.0a5 alpha**. This is a preview release.
+The current installation guide pins **v0.1.0a6 alpha**. This is a preview release.
 [Capabilities and limits](capabilities.md) distinguishes local verification from
 provider-account and cloud checks you must perform in your environment.
 

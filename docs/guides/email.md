@@ -152,7 +152,7 @@ or target outcomes remain actionable in the inbox and are not dispatched repeate
 
 ## Run the examples from this source checkout
 
-Email conversations and triggers are included in alpha5. Use a matching alpha5
+Email conversations and triggers are included in alpha6. Use a matching alpha6
 server and client; alpha4 predates these contracts. The examples below use this
 checkout’s development CLI, or the installed `weave` command with the same arguments.
 Install the client dependencies with `pip install -e '.[client]'` in your selected

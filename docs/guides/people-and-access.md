@@ -24,7 +24,7 @@ role bindings. Each binding names a role and the tenant, project, environment,
 and optional resources where it applies.
 
 The administration API, CLI, SDK, and Studio controls described here are included
-in alpha5. Use a matching server/client and the [Studio installation](studio.md).
+in alpha6. Use a matching server/client and the [Studio installation](studio.md).
 Alpha4 predates these administration contracts.
 
 ## 1. Choose who manages which part

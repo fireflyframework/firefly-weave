@@ -115,7 +115,7 @@ compatibility sentinel updated by the revision; startup checks it and Alembic's
 revision together. Startup never migrates. The migration command requires
 `WEAVE_MIGRATION_DATABASE_URL`; no destructive downgrade/reset is implemented.
 Migration assets are included in installed wheels. Published alpha4 expects
-`0021_operations`; alpha5 expects `0025_run_lifecycle`.
+`0021_operations`; alpha5 and alpha6 expect `0025_run_lifecycle`.
 See [upgrades](../operations/upgrades.md) for compatibility
 checks and the forward-migration procedure.
 
@@ -273,7 +273,7 @@ production facilities.
 
 The locked framework is published PyFly 26.9.15. Read the exact wheel hash and
 upstream commit from [project metadata](../../pyproject.toml). The API source
-version is `0.1.0a5`. Validate readiness, an authorized workflow, and your
+version is `0.1.0a6`. Validate readiness, an authorized workflow, and your
 [backup and restore procedure](../operations/backup-restore.md) in the environment
 you intend to operate.
 

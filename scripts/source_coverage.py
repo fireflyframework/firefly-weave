@@ -55,7 +55,7 @@ PRUNED = {
 }
 HASH_SUFFIXES = {".py", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".Dockerfile"}
 HASH_NAMES = {"Dockerfile", "Makefile", ".gitignore", ".dockerignore"}
-XML_SUFFIXES = {".svg", ".md", ".html", ".xml"}
+XML_SUFFIXES = {".svg", ".md", ".html", ".xml", ".plist"}
 LEGAL_NAMES = {"LICENSE", "NOTICE"}
 BOILERPLATE = (
     'Licensed under the Apache License, Version 2.0 (the "License");',

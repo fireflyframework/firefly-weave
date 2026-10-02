@@ -20,9 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 
 Weave uses explicit forward migrations and checks persisted requirements before
 admitting effect-producing work. Starting an API never migrates its database.
-The published alpha4 package expects `0021_operations`. Alpha5
-expects `0025_run_lifecycle`, adding human tasks, email, run filters, and
-execution lifecycle state. Both Alembic's revision and Weave's schema sentinel
+The published alpha4 package expects `0021_operations`. Alpha5 introduced
+`0025_run_lifecycle`, adding human tasks, email, run filters, and execution
+lifecycle state. Alpha6 retains that same schema revision; its macOS packaging
+correction introduces no new database migration. Both Alembic's revision and Weave's schema sentinel
 must match the installed artifact. Installing Studio does not migrate a platform.
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)

@@ -31,7 +31,7 @@ Operators can lower these ceilings through the
 Archiving preserves the retained-run count; a successful purge releases it.
 These are admission ceilings, not a claim of measured throughput at that scale.
 
-These additions are included in alpha5; alpha4 predates them. First follow
+These additions are included in alpha6; alpha4 predates them. First follow
 [Studio setup](studio.md) or [connect your client](connect-to-api.md).
 
 ![Business keys, independent runs, and the archive lifecycle](../diagrams/execution-lifecycle.svg)

@@ -18,10 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Human tasks
 
-Human tasks and Studio are included in alpha5. Install the matching client/server
+Human tasks and Studio are included in alpha6. Install the matching client/server
 and follow the [Studio setup guide](studio.md); alpha4 predates these commands.
-The examples below run from the matching alpha5 source checkout with its
-development CLI (`.venv/bin/weave`). With an installed alpha5 CLI, use `weave`
+The examples below run from the matching alpha6 source checkout with its
+development CLI (`.venv/bin/weave`). With an installed alpha6 CLI, use `weave`
 in place of that executable path; obtain the referenced example files from the
 same tag. It uses saved human OAuth credentials, never an application
 or worker token. See [identity setup](../operations/identity-and-secrets.md) first.

@@ -36,7 +36,7 @@ installing the package does not start a server or a worker.
 | Send or reply to email | `EmailClient` and email contracts | Yes; provision a scoped mail connection first | [Email conversations and triggers](../connectors/email.md) |
 
 The human-task, email, membership, and execution-lifecycle clients are included in
-alpha5. Upgrade both client and server; alpha4 predates these contracts.
+alpha6. Upgrade both client and server; alpha4 predates these contracts.
 
 **New to Weave?** Follow the [Python SDK tutorial](../guides/sdk-tutorial.md) from
 step 1. It has complete scripts, expected output, and a local-platform option.

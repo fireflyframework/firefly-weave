@@ -112,6 +112,7 @@ jobs:
           uv run --no-sync python desktop/scripts/smoke_sidecar.py desktop/src-tauri/binaries/weave-studio-host-${{ matrix.target }}${{ runner.os == 'Windows' && '.exe' || '' }} --expected-version ${{ steps.product.outputs.python_version }}
       - name: Native policy tests
         run: |
+          uv run --no-sync python -m pytest tests/unit/test_macos_seal.py -q
           cargo fmt --check --manifest-path desktop/src-tauri/Cargo.toml
           cargo clippy --locked --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings
           cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
@@ -120,13 +121,21 @@ jobs:
         run: |
           npm ci
           npm run build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - name: Verify macOS nested and outer bundle seals
+        if: runner.os == 'macOS'
+        run: |
+          uv run --no-sync python desktop/scripts/verify_macos_bundle.py "desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Firefly Weave Studio.app"
+          uv run --no-sync python desktop/scripts/smoke_sidecar.py "desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Firefly Weave Studio.app/Contents/MacOS/weave-studio-host" --expected-version ${{ steps.product.outputs.python_version }}
+          for dmg in desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg; do
+            uv run --no-sync python desktop/scripts/verify_macos_bundle.py "$dmg"
+          done
       - name: Collect exact installer assets and provenance
         env:
           BUILD_TARGET: ${{ matrix.target }}
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           uv run --no-sync python - <<'PYASSETS'
-          import json, os, shutil, tomllib
+          import hashlib, json, os, shutil, tomllib
           from pathlib import Path
           config = json.loads(Path("desktop/src-tauri/tauri.conf.json").read_text())
           target = os.environ["BUILD_TARGET"]
@@ -142,9 +151,17 @@ jobs:
               if destination.exists():
                   raise SystemExit("Installer extension collision; choose explicit canonical names")
               shutil.copy2(installer, destination)
-          metadata = {"product_version": config["version"], "python_version": tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"], "target": target, "commit": os.environ["SOURCE_COMMIT"], "unsigned": True, "msi_version": config["bundle"]["windows"]["wix"]["version"]}
+          metadata = {"product_version": config["version"], "python_version": tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"], "target": target, "commit": os.environ["SOURCE_COMMIT"], "unsigned": True, "signing": "adhoc" if "apple-darwin" in target else "none", "notarized": False, "msi_version": config["bundle"]["windows"]["wix"]["version"]}
           (output / f"weave-studio-{target}-build.json").write_text(json.dumps(metadata, indent=2) + "\n")
-          shutil.copy2("desktop/work/sidecar-manifest.json", output / f"weave-studio-{target}-host.json")
+          host = json.loads(Path("desktop/work/sidecar-manifest.json").read_text())
+          if "apple-darwin" in target:
+              signed_host = bundle / "macos/Firefly Weave Studio.app/Contents/MacOS/weave-studio-host"
+              host["pre_sign_sha256"] = host["sha256"]
+              host["pre_sign_filename"] = host["filename"]
+              host["filename"] = "weave-studio-host"
+              host["sha256"] = hashlib.sha256(signed_host.read_bytes()).hexdigest()
+              host["digest_scope"] = "signed-app-Contents/MacOS"
+          (output / f"weave-studio-{target}-host.json").write_text(json.dumps(host, indent=2) + "\n")
           PYASSETS
           uv run --no-sync python desktop/scripts/hash_installers.py desktop/work/release-assets
           mv desktop/work/release-assets/SHA256SUMS desktop/work/release-assets/weave-studio-${{ matrix.target }}-SHA256SUMS

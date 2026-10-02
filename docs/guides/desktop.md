@@ -19,24 +19,32 @@ SPDX-License-Identifier: Apache-2.0
 # Weave Studio desktop
 
 Choose a matching installer **actually attached** to the
-[v0.1.0a5 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a5).
-The desktop product version is `0.1.0-alpha.5`; its bundled Python host is
-`0.1.0a5`. These installers are **unsigned**; macOS builds are not notarized.
+[v0.1.0a6 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a6).
+The desktop product version is `0.1.0-alpha.6`; its bundled Python host is
+`0.1.0a6`. macOS bundles use **ad-hoc signing** for resource integrity; they are
+**not Developer ID signed and not notarized**. Windows installers remain unsigned.
 Build and frozen-host smoke checks do not establish interactive GUI testing on
 every operating system. Your organization's installation policy still applies.
 
 | Computer | Target | Installer filename |
 | --- | --- | --- |
-| macOS Apple silicon | `aarch64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.5-aarch64-apple-darwin.dmg` |
-| macOS Intel | `x86_64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.5-x86_64-apple-darwin.dmg` |
-| Windows x64 | `x86_64-pc-windows-msvc` | `firefly-weave-studio-0.1.0-alpha.5-x86_64-pc-windows-msvc.exe` or `.msi` |
-| Linux x64 | `x86_64-unknown-linux-gnu` | `firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.deb` or `.AppImage` |
+| macOS Apple silicon | `aarch64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.6-aarch64-apple-darwin.dmg` |
+| macOS Intel | `x86_64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.6-x86_64-apple-darwin.dmg` |
+| Windows x64 | `x86_64-pc-windows-msvc` | `firefly-weave-studio-0.1.0-alpha.6-x86_64-pc-windows-msvc.exe` or `.msi` |
+| Linux x64 | `x86_64-unknown-linux-gnu` | `firefly-weave-studio-0.1.0-alpha.6-x86_64-unknown-linux-gnu.deb` or `.AppImage` |
 
 Download the chosen installer and its target's checksum inventory,
 `weave-studio-TARGET-SHA256SUMS`, from that same release. The matrix describes
 filenames, not a promise that every asset is already available. If your matching
-asset is absent, use the [browser installation](studio.md#install-the-alpha5-browser-application)
+asset is absent, use the [browser installation](studio.md#install-the-alpha6-browser-application)
 instead. Alpha4 Python releases do not contain Studio or desktop installers.
+
+**Do not use the alpha5 macOS installers.** Their outer application bundle lacked
+its resource seal, causing macOS to report that the application was damaged.
+Alpha6 adds explicit ad-hoc bundle signing and a strict verification gate for both
+the built application and the application enclosed in its DMG. Download the
+matching alpha6 asset rather than attempting to bypass the alpha5 failure.
+Ad-hoc integrity does not establish publisher trust or Gatekeeper acceptance.
 
 ## What is packaged
 
@@ -66,9 +74,9 @@ This follows Tauri's [sidecar model](https://v2.tauri.app/develop/sidecar/) and
    ```bash
    # Inspect the downloaded installer without opening it.
    cd ~/Downloads
-   shasum -a 256 firefly-weave-studio-0.1.0-alpha.5-aarch64-apple-darwin.dmg
+   shasum -a 256 firefly-weave-studio-0.1.0-alpha.6-aarch64-apple-darwin.dmg
    # Show the expected digest for this exact filename.
-   grep 'firefly-weave-studio-0.1.0-alpha.5-aarch64-apple-darwin.dmg$' weave-studio-aarch64-apple-darwin-SHA256SUMS
+   grep 'firefly-weave-studio-0.1.0-alpha.6-aarch64-apple-darwin.dmg$' weave-studio-aarch64-apple-darwin-SHA256SUMS
    ```
 
    Both displayed digests must match. For Intel, replace `aarch64-apple-darwin`
@@ -76,9 +84,18 @@ This follows Tauri's [sidecar model](https://v2.tauri.app/develop/sidecar/) and
 4. Open the verified DMG, then drag **Firefly Weave Studio** on the left into
    **Applications** on the right. The cream and forest installer shows the
    destination and a gold arrow.
-5. Open Studio from Applications after copying finishes, then eject the installer
-   volume. The app is unsigned and not notarized. Follow your organization's
-   macOS installation policy; do not disable system protections to bypass a refusal.
+5. After copying, verify the installed bundle’s resource integrity in Terminal:
+
+   ```bash
+   # Check the copied app without launching it. Stop if verification fails.
+   codesign --verify --deep --strict --verbose=4 "/Applications/Firefly Weave Studio.app"
+   ```
+
+6. Open Studio from Applications after verification succeeds, then eject the
+   installer volume. The app is ad-hoc signed, not Developer ID signed, and not notarized.
+   macOS may still require manual approval allowed by your organization’s policy.
+   If that policy does not permit it, use the browser installation. Do not remove
+   quarantine or disable system protections to bypass a refusal.
 
 The background is maintained as `desktop/artwork/dmg-background.svg` with its
 Finder-compatible PNG alongside it. Tauri's DMG settings define the window and
@@ -93,17 +110,17 @@ matching `weave-studio-x86_64-pc-windows-msvc-SHA256SUMS` inventory first.
 ```powershell
 # Inspect the downloaded EXE before running it.
 Set-Location "$HOME\Downloads"
-Get-FileHash .\firefly-weave-studio-0.1.0-alpha.5-x86_64-pc-windows-msvc.exe -Algorithm SHA256
+Get-FileHash .\firefly-weave-studio-0.1.0-alpha.6-x86_64-pc-windows-msvc.exe -Algorithm SHA256
 # Compare the digest with the line for this exact filename.
-Select-String -Path .\weave-studio-x86_64-pc-windows-msvc-SHA256SUMS -Pattern 'firefly-weave-studio-0.1.0-alpha.5-x86_64-pc-windows-msvc.exe$'
+Select-String -Path .\weave-studio-x86_64-pc-windows-msvc-SHA256SUMS -Pattern 'firefly-weave-studio-0.1.0-alpha.6-x86_64-pc-windows-msvc.exe$'
 ```
 
 For MSI, substitute `.msi` in both commands. Compare digests without regard to
 letter case; stop on a mismatch. Double-click the verified installer, complete its
 setup, then open **Firefly Weave Studio** from the Start menu. The installer may
 need network access to provision WebView2. Unsigned-installation warnings remain
-subject to your organization's policy. The MSI's internal version is `0.1.5`, a
-monotonic Windows Installer counter; the displayed product remains alpha5.
+subject to your organization's policy. The MSI's internal version is `0.1.6`, a
+monotonic Windows Installer counter; the displayed product remains alpha6.
 
 ## Install on Linux
 
@@ -114,8 +131,8 @@ application where your distribution supports its runtime. Download the matching
 ```bash
 # Enter the download directory, verify this exact file, then install only on success.
 cd ~/Downloads &&
-  grep 'firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.deb$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
-  sudo apt install ./firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.deb
+  grep 'firefly-weave-studio-0.1.0-alpha.6-x86_64-unknown-linux-gnu.deb$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
+  sudo apt install ./firefly-weave-studio-0.1.0-alpha.6-x86_64-unknown-linux-gnu.deb
 ```
 
 Open **Firefly Weave Studio** from your desktop application launcher. For AppImage:
@@ -123,9 +140,9 @@ Open **Firefly Weave Studio** from your desktop application launcher. For AppIma
 ```bash
 # Verify this exact portable file; a failed or missing checksum prevents launch.
 cd ~/Downloads &&
-  grep 'firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.AppImage$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
-  chmod +x firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.AppImage &&
-  ./firefly-weave-studio-0.1.0-alpha.5-x86_64-unknown-linux-gnu.AppImage
+  grep 'firefly-weave-studio-0.1.0-alpha.6-x86_64-unknown-linux-gnu.AppImage$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
+  chmod +x firefly-weave-studio-0.1.0-alpha.6-x86_64-unknown-linux-gnu.AppImage &&
+  ./firefly-weave-studio-0.1.0-alpha.6-x86_64-unknown-linux-gnu.AppImage
 ```
 
 Linux requires the distribution's WebKitGTK runtime, and AppImage execution may
@@ -209,10 +226,33 @@ The Desktop installers GitHub Actions workflow builds each host natively:
 | Windows x64 | `windows-2022` | NSIS `.exe`, WiX `.msi` |
 | Linux x64 | `ubuntu-22.04` | `.deb`, `.AppImage` |
 
-Artifacts are explicitly labeled **unsigned**, retained per workflow run, and are
-not automatically released. Windows/macOS/Linux matrix outcomes must be checked
+Artifacts are retained per workflow run and are not automatically released.
+macOS bundles are ad-hoc signed; Windows remains unsigned. A workflow artifact
+label containing `unsigned` is not a statement that the macOS resource seal is
+absent. Windows/macOS/Linux matrix outcomes must be checked
 before claiming those installers work. Building against Ubuntu 22.04 sets a concrete
 Linux baseline; an AppImage does not imply compatibility with every distribution.
+
+The macOS integrity gate verifies the outer resource seal and both native
+executables using `codesign --verify --deep --strict --verbose=4`. It checks
+`Contents/_CodeSignature/CodeResources` and repeats verification against the app
+inside a read-only DMG mount before collecting release assets. From a matching
+source checkout, you can run that same gate on an explicitly downloaded DMG:
+
+```bash
+# Verify resource integrity without launching the application.
+# Replace the path with the actual alpha6 installer you downloaded.
+.venv/bin/python desktop/scripts/verify_macos_bundle.py /path/to/firefly-weave-studio-0.1.0-alpha.6-aarch64-apple-darwin.dmg
+```
+
+The build also smoke-tests the frozen host after Tauri signs it. Hardened runtime
+remains enabled, with one library-validation exception so the PyInstaller host can
+load its bundled Python library and extensions without an Apple Team ID. The
+exception grants no native webview IPC and does not bypass Gatekeeper.
+
+This is a packaging-integrity check, not a Gatekeeper or notarization test. A
+source checkout is needed only for this contributor verification command; ordinary
+installation follows the checksum and platform steps above.
 
 For a production macOS release, configure the application and sidecar signing
 identity plus notarization credentials through the release environment, following
@@ -222,5 +262,6 @@ Tauri's own signing configuration. Use Tauri's documented Apple certificate,
 password and notarization environment variables rather than committing credentials.
 For Windows, configure a trusted signing certificate or an approved signing service
 following [Tauri Windows signing](https://v2.tauri.app/distribute/sign/windows/).
-Signing/notarization have not been performed or verified by this implementation.
-Do not treat an unsigned CI artifact as a production download.
+Developer ID signing, Windows publisher signing, and notarization have not been
+performed or verified by this implementation. Ad-hoc signing only protects bundle
+integrity; it does not make a CI artifact a trusted production download.

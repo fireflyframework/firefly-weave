@@ -49,7 +49,7 @@ original HTTP request open.
 | “Wait until an external event arrives” | Wait and signal | Keeps durable waiting state; your product submits the authorized signal |
 | “Ask an assigned person to approve” | Human task | Saves an assignment, form, claim, and explicit authenticated decision |
 
-Alpha5 includes [Studio and its task inbox](studio.md) and
+Alpha6 includes [Studio and its task inbox](studio.md) and
 [human approvals](human-tasks.md). Alpha4 predates these features; follow the
 matching installation and platform-upgrade guides. A generic signal is an integration event; it does not complete a native
 human task. The [definition contracts](../contracts.md) describe supported steps; the

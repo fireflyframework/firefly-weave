@@ -29,7 +29,7 @@ browser connects to a paired Python host; API credentials remain in that host.
 | Your goal | What must be running | Start here |
 | --- | --- | --- |
 | Open Studio as a native desktop app | A matching desktop build for your operating system | [Install desktop](desktop.md) |
-| Draw or import a process on your computer | Studio's local host | [Install and launch Studio](#install-the-alpha5-browser-application) |
+| Draw or import a process on your computer | Studio's local host | [Install and launch Studio](#install-the-alpha6-browser-application) |
 | Save and run processes on your laptop | Studio plus a separate local Weave platform | [Start the platform](local-platform.md), then [connect Studio](#connect-an-authorized-api-profile) |
 | Work with your team's remote platform | Studio on your computer; your team's API remains remote | [Get your connection details](connect-to-api.md), then [connect Studio](#connect-an-authorized-api-profile) |
 | Approve a task or inspect a run | Connected Studio with the relevant Weave grants | [Human work](#complete-human-work) and [execution lifecycle](#save-publish-activate-and-run) |
@@ -43,40 +43,40 @@ computer. You can create, import, edit, and validate workflow definitions. Conne
 when you want to save them to a shared platform, run processes, or handle tasks.
 This status does not mean your computer has lost its internet connection.
 
-## Install the alpha5 browser application
+## Install the alpha6 browser application
 
-Alpha5 includes the Studio host. Its browser assets are an optional, matching
+Alpha6 includes the Studio host. Its browser assets are an optional, matching
 release bundle; the Python wheel does not embed the Angular application. Alpha4
 does not include Studio. Download all files from the same
-[v0.1.0a5 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a5).
+[v0.1.0a6 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a6).
 The CLI installer does not automatically fetch or install the Studio ZIP.
 
-Use Python 3.12 or newer. The alpha5 CLI installer includes the Studio host
+Use Python 3.12 or newer. The alpha6 CLI installer includes the Studio host
 and authentication dependencies, but downloads no browser ZIP automatically.
 These Bash/Zsh commands need neither Node nor a source checkout:
 
 ```bash
 # Install the pinned CLI into its isolated installation directory.
 # Review the installer first using the download-and-inspect alternative in Installation.
-curl --fail --location https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a5/install.sh \
-  | sh -s -- --version v0.1.0a5
+curl --fail --location https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a6/install.sh \
+  | sh -s -- --version v0.1.0a6
 # Make the installed command available in this terminal.
 export PATH="$HOME/.local/bin:$PATH"
 # Check that the host version matches the browser bundle you will install.
 weave --version
 
 # Keep the downloaded optional browser bundle and its digest together.
-mkdir weave-studio-alpha5
-cd weave-studio-alpha5
-curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a5/firefly-weave-studio-0.1.0a5.zip
-curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a5/firefly-weave-studio-0.1.0a5.zip.sha256
+mkdir weave-studio-alpha6
+cd weave-studio-alpha6
+curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a6/firefly-weave-studio-0.1.0a6.zip
+curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a6/firefly-weave-studio-0.1.0a6.zip.sha256
 # Verify the bundle on macOS. Stop if the check fails.
-shasum -a 256 --check firefly-weave-studio-0.1.0a5.zip.sha256
+shasum -a 256 --check firefly-weave-studio-0.1.0a6.zip.sha256
 # On Linux, use sha256sum --check in place of shasum -a 256 --check.
 
 # Install only the bundle whose version and verified digest match this host.
-weave studio install --bundle firefly-weave-studio-0.1.0a5.zip \
-  --sha256 "$(awk '{print $1}' firefly-weave-studio-0.1.0a5.zip.sha256)"
+weave studio install --bundle firefly-weave-studio-0.1.0a6.zip \
+  --sha256 "$(awk '{print $1}' firefly-weave-studio-0.1.0a6.zip.sha256)"
 # Start the local host without opening a browser automatically.
 weave studio --no-browser
 ```
@@ -93,8 +93,8 @@ Studio neither provisions nor migrates a platform.
 
 ## Start from source
 
-Contributors can build the matching browser assets themselves. For the alpha5
-release, check out `v0.1.0a5`; development `main` can differ from released assets.
+Contributors can build the matching browser assets themselves. For the alpha6
+release, check out `v0.1.0a6`; development `main` can differ from released assets.
 
 From the repository root, install the development dependencies first. Node is
 required only for building the browser application.

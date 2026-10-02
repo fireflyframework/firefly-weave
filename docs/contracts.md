@@ -148,7 +148,7 @@ to `{}` and maps slot names to `{connector: <exact ref>, required: <bool>}`;
 `required` defaults to `true`. Global ID uniqueness, signal-name uniqueness,
 branch scope, output compatibility, and concurrency budgets are compiler checks.
 
-Native `humanTask` support is included in alpha5. It compiles to
+Native `humanTask` support is included in alpha6. It compiles to
 `weave/ir-v1alpha2`; definitions without human work retain the established IR
 version. A human task needs an environment assignment binding, and completing it
 requires the current claim and task permission. See the

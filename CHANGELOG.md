@@ -18,6 +18,27 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a6
+
+- Fix the macOS desktop outer application resource seal with explicit ad-hoc
+  signing, replacing the damaged alpha5 macOS installers.
+- Add strict `codesign` verification of the outer bundle, native executable, and
+  frozen host, then repeat it against the application inside the read-only DMG
+  before collecting release assets.
+- Keep hardened runtime with the PyInstaller library-validation entitlement and
+  smoke-test the host after signing, before collecting installers.
+- Bump the matching Python host/browser bundle to `0.1.0a6` and desktop product
+  to `0.1.0-alpha.6`; the native internal installer counter is `0.1.6`.
+- Update installation guidance to use matching alpha6 artifacts and retain the
+  browser fallback. Do not use the alpha5 macOS downloads.
+
+macOS bundles are ad-hoc signed, **not Developer ID signed and not notarized**.
+Resource-integrity verification does not establish Gatekeeper acceptance or
+publisher trust. Manual approval may still be required by macOS and must comply
+with local policy; no quarantine-removal workaround is recommended. Windows
+publisher signing is also not provided. Schema revision remains
+`0025_run_lifecycle`, as introduced by alpha5; no new database migration is added.
+
 ## 0.1.0a5
 
 - Add the local Angular Studio with a branded workflow editor, structured canvas,
