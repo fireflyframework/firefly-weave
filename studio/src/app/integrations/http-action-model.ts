@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // diagnostics back to form rows. Checks here mirror the Python rules and are
 // kept honest by a parity test that runs them side by side.
 import { parse } from "yaml";
+import { validVersion } from "../forms/core/identifiers";
 import { ApiError } from "../api";
 import { describeError } from "../errors";
 import { describeDiagnostic, type Severity } from "../designer/diagnostic-copy";
@@ -77,8 +78,7 @@ export const isRead = (method: Method) => method === "GET" || method === "HEAD";
 
 // Mirrors of the Python contract patterns (contracts/definitions.py and
 // contracts/http_profiles.py); the parity test compares them case by case.
-const SEMVER =
-  /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
 const RESOURCE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,127}$/;
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
@@ -105,7 +105,7 @@ const PROTECTED = new Set([
 
 export const validName = (name: string) =>
   name.length <= 128 && RESOURCE_NAME.test(name);
-export const validVersion = (version: string) => SEMVER.test(version);
+export { validVersion } from "../forms/core/identifiers";
 /** Headers the executor sets itself or that would carry credentials. */
 export function isProtectedHeader(name: string) {
   const lower = name.toLowerCase();

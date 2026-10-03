@@ -60,7 +60,7 @@ export function catalogItems(
     [loading]="host().catalogState === 'loading'"
     [hasMore]="!!host().actionNextCursor"
     [loadingMore]="host().catalogAppending"
-    [canCreate]="host().can('definition.publish')"
+    [canCreate]="canCreate() && host().can('definition.publish')"
     [disabled]="disabled()"
     (choose)="choose.emit($event)"
     (createAction)="host().openApiBuilder('step')"
@@ -75,6 +75,7 @@ export class CatalogPicker {
   value = input<string | null>(null);
   label = input("Published action");
   disabled = input(false);
+  canCreate = input(true);
   choose = output<ActionPickerChoice>();
 
   private memo: {

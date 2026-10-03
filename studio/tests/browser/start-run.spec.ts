@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // WP-22a: a run starts from a form built from the activated version's input
 // schema; problems stay in the dialog in plain words; the last input is
 // remembered; a toast offers to open the new run.
+import { selectChoice } from "./support";
 import { test, expect, Page, Request } from "@playwright/test";
 import { allCapabilities, connected } from "./support";
 
@@ -106,9 +107,10 @@ for (const viewport of [
       await page
         .getByRole("button", { name: "Start run", exact: true })
         .click();
-      await dialog(page)
-        .getByLabel("Version to run", { exact: true })
-        .selectOption("act-1");
+      await selectChoice(
+        dialog(page).getByLabel("Version to run", { exact: true }),
+        "act-1",
+      );
       const customer = dialog(page).getByLabel("Customer ID");
       await expect(customer).toBeVisible();
       await dialog(page).getByText("Add a business key (optional)").click();
@@ -148,9 +150,10 @@ for (const viewport of [
       await page
         .getByRole("button", { name: "Start run", exact: true })
         .click();
-      await dialog(page)
-        .getByLabel("Version to run", { exact: true })
-        .selectOption("act-1");
+      await selectChoice(
+        dialog(page).getByLabel("Version to run", { exact: true }),
+        "act-1",
+      );
       await expect(dialog(page).getByLabel("Customer ID")).toHaveValue("C-104");
       await expect(
         dialog(page).getByRole("textbox", { name: "API key" }),
@@ -165,11 +168,13 @@ for (const viewport of [
       await page
         .getByRole("button", { name: "Start run", exact: true })
         .click();
-      await dialog(page)
-        .getByLabel("Version to run", { exact: true })
-        .selectOption("act-1");
+      await selectChoice(
+        dialog(page).getByLabel("Version to run", { exact: true }),
+        "act-1",
+      );
       const priority = dialog(page).getByLabel("Priority");
       await priority.pressSequentially("1.5", { delay: 50 });
+      await priority.press("Tab");
       const error = dialog(page).getByText("Priority must be a whole number.");
       await expect(error).toBeVisible();
       // Typing elsewhere keeps the error and the typed text.
@@ -237,9 +242,10 @@ for (const viewport of [
       await page
         .getByRole("button", { name: "Start run", exact: true })
         .click();
-      await dialog(page)
-        .getByLabel("Version to run", { exact: true })
-        .selectOption("act-1");
+      await selectChoice(
+        dialog(page).getByLabel("Version to run", { exact: true }),
+        "act-1",
+      );
       await dialog(page).getByLabel("Customer ID").fill("C-7");
       await dialog(page).getByLabel("User").fill("ana");
       await expect(
@@ -269,9 +275,10 @@ for (const viewport of [
       await page
         .getByRole("button", { name: "Start run", exact: true })
         .click();
-      await dialog(page)
-        .getByLabel("Version to run", { exact: true })
-        .selectOption("act-1");
+      await selectChoice(
+        dialog(page).getByLabel("Version to run", { exact: true }),
+        "act-1",
+      );
       await dialog(page).getByLabel("Edit as JSON").check();
       const text = dialog(page).getByLabel("Run input (JSON)");
       await text.fill("{bad");

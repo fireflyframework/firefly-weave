@@ -87,6 +87,10 @@ function expressionSummary(expression: unknown) {
  */
 export function stepSummary(step: Step, definition?: unknown): string {
   switch (step.kind) {
+    case "decisionTable":
+      return String(step["uses"] ?? "Choose a decision table");
+    case "llm":
+      return `${step["profile"] || "Choose a profile"} · ${step["connection"] || "Choose a connection"}`;
     case "action": {
       const uses = String(step["uses"] ?? "");
       if (!uses || uses === placeholderAction) return "Choose an action";

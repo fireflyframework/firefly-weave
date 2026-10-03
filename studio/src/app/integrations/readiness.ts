@@ -458,7 +458,7 @@ export function integrationReadiness(facts: ReadinessFacts): Readiness {
       : waiting
         ? `${waiting} ${waiting === 1 ? "thing" : "things"} to set up`
         : looksReady
-          ? "Ready to publish"
+          ? "Platform ready for API actions"
           : "Studio couldn't check everything",
     local,
     connectorVersionId,

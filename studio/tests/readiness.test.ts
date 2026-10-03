@@ -103,7 +103,7 @@ describe("integration readiness", () => {
     expect(result.releaseIds).toEqual([releaseId]);
     expect(result.summary).toContain("Looks ready");
     // The API action builder's one line (W3-12).
-    expect(result.short).toBe("Ready to publish");
+    expect(result.short).toBe("Platform ready for API actions");
     expect(
       result.steps.filter((s) => s.status === "action").map((s) => s.id),
     ).toEqual([]);

@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // Activation pins (WP-09): connector releases, worker releases and human task
 // assignments are chosen from the environment instead of typed, and the
 // request carries connector_release_ids.
+import { selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import {
   command,
@@ -302,7 +303,7 @@ async function platform(page: Page, options: Platform = {}) {
 }
 
 /** Opens the published workflow's activation dialog with the crm contract loaded. */
-async function openActivation(page: Page, contracts: string[]) {
+async function openActivation(page: Page, contracts: string[], review = true) {
   const designer = new DesignerPage(page);
   await newWorkflow(page);
   await designer.setSource(source);
@@ -321,8 +322,31 @@ async function openActivation(page: Page, contracts: string[]) {
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText(/Activate \S+ \d+\.\d+\.\d+/);
   await expect(dialog.getByRole("status")).toHaveCount(0);
+  const reviewButton = dialog.getByRole("button", {
+    name: "Review",
+    exact: true,
+  });
+  if (review && (await reviewButton.isVisible())) await reviewButton.click();
   return dialog;
 }
+
+test("one compatible choice is collapsed and activation fits at 1280x720", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const captured = await platform(page);
+  const dialog = await openActivation(page, captured.contracts, false);
+  await expect(dialog).toContainText("4 items picked automatically");
+  await expect(dialog.getByRole("combobox")).toHaveCount(0);
+  expect(
+    await dialog.evaluate(
+      (element) => element.scrollHeight <= element.clientHeight,
+    ),
+  ).toBe(true);
+  await dialog.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(dialog.getByLabel(/^pets/)).toHaveValue(revision);
+  await expect(dialog.getByLabel(/^crm-lookup/)).toHaveValue(workerRelease);
+});
 
 for (const [width, height] of [
   [1440, 900],
@@ -347,12 +371,9 @@ for (const [width, height] of [
     const labels = await connector
       .locator("option")
       .evaluateAll((items) => items.map((o) => o.textContent?.trim()));
-    expect(labels).toEqual([
-      "Choose a release",
-      "Release 3f2a9b1c · build bbbbbbbbbbbb",
-    ]);
+    expect(labels).toEqual(["Choose a release", "Version 2.0.0"]);
     await connector.scrollIntoViewIfNeeded();
-    await connector.selectOption(httpRelease);
+    await selectChoice(connector, httpRelease);
     const submit = dialog.getByRole("button", { name: "Activate version" });
     await submit.scrollIntoViewIfNeeded();
     await submit.click();
@@ -425,7 +446,7 @@ test("an added worker row needs a task type and an ID; keyboard works", async ({
   await expect(dialog.getByRole("alert")).toHaveCount(0);
   // Removing the focused row keeps focus in the dialog, on the Add button.
   await expect(add).toBeFocused();
-  await dialog.getByLabel(/^weave-http@2\.0\.0/).selectOption(httpRelease);
+  await selectChoice(dialog.getByLabel(/^weave-http@2\.0\.0/), httpRelease);
   await dialog.getByRole("button", { name: "Activate version" }).click();
   await expect(dialog).toHaveCount(0);
   expect(Object.keys(captured.body!["worker_release_ids"] as object)).toEqual([
@@ -490,6 +511,7 @@ test("after editing a published workflow, the published version's slots are boun
   await expect(dialog).toContainText(/Activate \S+ \d+\.\d+\.\d+/);
   await expect(dialog.getByRole("status")).toHaveCount(0);
   // Only the published version's slot is offered and bound.
+  await dialog.getByRole("button", { name: "Review", exact: true }).click();
   await expect(dialog.getByLabel(/^audit/)).toHaveCount(0);
   await expect(dialog.getByLabel(/^pets/)).toHaveValue(revision);
   await dialog.getByRole("button", { name: "Activate version" }).click();

@@ -26,6 +26,8 @@ SPDX-License-Identifier: Apache-2.0
 // - compile results are cached per project, format and source, so Simulate
 //   and the publish gate reuse the artifact instead of compiling twice.
 
+export { contractGaps } from "./contract-gaps";
+
 export type SourceFormat = "yaml" | "json";
 export type ValidationMode = "local" | "project";
 

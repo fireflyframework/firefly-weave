@@ -231,8 +231,16 @@ export class DesignerPage {
         await body.focus();
         await this.settled();
       }
-      if (!(await this.reachable(body))) await this.fit();
+      if (!(await this.reachable(body))) {
+        await this.fit();
+        await this.canvas.focus();
+        await body.focus();
+        await this.settled();
+      }
     }
+    await body.focus();
+    await this.settled();
+    await expect.poll(() => this.reachable(body)).toBe(true);
     await body.click();
     await expect(this.node(stepId)).toHaveClass(/\bselected\b/);
     await expect(this.inspector).toBeVisible();

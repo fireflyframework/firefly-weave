@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // The inspector (W3-4, W3-6, W3-7): decision conditions as rule rows, a
 // wider panel with folding sections and a clear apply model, and one
 // vocabulary for where a value comes from.
+import { selectChoice } from "./support";
 import { test, expect, type Page } from "@playwright/test";
 import {
   closeSheet,
@@ -51,8 +52,7 @@ spec:
   output: { literal: {} }
 `;
 const inspector = (page: Page) => new DesignerPage(page).inspector;
-const apply = (page: Page) =>
-  inspector(page).getByRole("button", { name: "Apply changes" });
+const finishField = (page: Page) => page.locator(".inspector-header h2");
 
 for (const viewport of [
   { width: 1440, height: 900 },
@@ -71,20 +71,25 @@ for (const viewport of [
       await designer.selectStep("decision-1");
       const condition = inspector(page).locator('[data-field="cases/0/when"]');
       // A new case has no condition: it says so instead of "always".
-      await expect(condition).toContainText("Choose when this path applies.");
+      await expect(condition).not.toContainText(
+        "Choose when this path applies.",
+      );
       await condition
         .getByRole("combobox", { name: "Condition 1 data" })
         .fill("/input/amount");
-      await condition
-        .getByLabel("Condition 1 test")
-        .selectOption({ label: "is greater than" });
+      await selectChoice(
+        condition.getByLabel("Condition 1 test", { exact: true }),
+        {
+          label: "is greater than",
+        },
+      );
       const value = condition.getByLabel("Condition 1 value");
       await expect(value).toHaveAttribute("type", "number");
       await value.fill("1000");
       await expect(condition).not.toContainText(
         "Choose when this path applies.",
       );
-      await apply(page).click();
+      await finishField(page).click();
       const source = await sourceText(page);
       expect(source).toContain("name: gt");
       expect(source).toMatch(/- ref: \/input\/amount\n\s+- literal: 1000/);
@@ -93,7 +98,7 @@ for (const viewport of [
       await closeSheet(page);
       await designer.fit();
       const labels = await page
-        .locator(".canvas .placeholder-branch, .canvas .branch-label")
+        .locator(".canvas .lane-header")
         .allTextContents();
       expect(labels.map((l) => l.trim())).toEqual([
         "Amount > 1000",
@@ -106,10 +111,10 @@ for (const viewport of [
       ).toHaveText("Amount > 1000 · otherwise");
       // Another path starts without a condition; Validate reports it.
       await designer.selectStep("decision-1");
-      await inspector(page).getByRole("button", { name: "Add case" }).click();
+      await inspector(page).getByRole("button", { name: "+ Add path" }).click();
       await expect(
         inspector(page).locator('[data-field="cases/1/when"]'),
-      ).toContainText("Choose when this path applies.");
+      ).not.toContainText("Choose when this path applies.");
       await closeSheet(page);
       await page
         .getByRole("toolbar", { name: "Workflow commands" })
@@ -121,7 +126,7 @@ for (const viewport of [
       expect(await sourceText(page)).not.toContain("literal: true");
     });
 
-    test("Step name renames on blur; Apply, Discard and Ctrl+Enter settle the edits", async ({
+    test("Step name and duration update live and Undo restores the previous field", async ({
       page,
     }) => {
       await offline(page);
@@ -129,22 +134,17 @@ for (const viewport of [
       await insertStep(page, "Wait for time");
       const designer = new DesignerPage(page);
       await designer.selectStep("wait-1");
-      // The first field is the step's name; it commits when focus leaves.
       const name = inspector(page).getByLabel("Step name");
       await name.fill("cool-down");
-      await inspector(page).getByLabel("Duration", { exact: true }).click();
-      await expect(designer.node("cool-down")).toHaveCount(1);
-      // An edit marks the step until it is applied.
       const duration = inspector(page).getByLabel("Duration", { exact: true });
+      await duration.click();
+      await expect(designer.node("cool-down")).toHaveCount(1);
       await duration.fill("5");
-      await expect(designer.node("cool-down")).toHaveClass(/\bdirty\b/);
-      await expect(inspector(page)).toContainText("Not applied yet");
-      await inspector(page).getByRole("button", { name: "Discard" }).click();
+      await expect(designer.node("cool-down")).toContainText("5 min");
+      await duration.press("ControlOrMeta+z");
       await expect(duration).toHaveValue("1");
-      await expect(designer.node("cool-down")).not.toHaveClass(/\bdirty\b/);
+      await expect(designer.node("cool-down")).toHaveCount(1);
       await duration.fill("5");
-      await duration.press("ControlOrMeta+Enter");
-      await expect(inspector(page)).not.toContainText("Not applied yet");
       expect(await sourceText(page)).toContain("durationSeconds: 300");
     });
 
@@ -231,10 +231,10 @@ test.describe("1440x900", () => {
     const designer = new DesignerPage(page);
     await designer.setSource(routed);
     await designer.selectStep("transform-1");
-    const modes = inspector(page).getByRole("group", {
+    const modes = inspector(page).getByRole("radiogroup", {
       name: "Value expression mode",
     });
-    await expect(modes.getByRole("button")).toHaveText([
+    await expect(modes.getByRole("radio")).toHaveText([
       "Value",
       "Data",
       "Formula",
@@ -249,21 +249,20 @@ test.describe("1440x900", () => {
     ];
     expect(Math.abs(labelBox!.y - modeBox!.y)).toBeLessThan(12);
     expect(
-      (await modes.getByRole("button", { name: "Value" }).boundingBox())!
-        .height,
+      (await modes.getByRole("radio", { name: "Value" }).boundingBox())!.height,
     ).toBeGreaterThanOrEqual(24);
-    await modes.getByRole("button", { name: "Formula" }).click();
+    await modes.getByRole("radio", { name: "Formula" }).click();
     const operator = inspector(page).getByLabel("Value operator", {
       exact: true,
     });
-    await expect(operator.locator("option:checked")).toHaveText(
-      "Choose a formula…",
-    );
-    await expect(inspector(page)).toContainText("Choose a formula.");
-    await operator.selectOption({ label: "Greater than" });
-    await expect(operator).toHaveValue("gt");
+    await expect(operator).toHaveAttribute("placeholder", "Choose a formula…");
+    await expect(
+      inspector(page).getByText("Choose a formula.", { exact: true }),
+    ).toBeHidden();
+    await selectChoice(operator, { label: "is greater than" });
+    await expect(operator).toHaveAttribute("data-value", "gt");
     // Data shows the workflow input as words, the pointer below it.
-    await modes.getByRole("button", { name: "Data" }).click();
+    await modes.getByRole("radio", { name: "Data" }).click();
     const reference = inspector(page).getByRole("combobox", {
       name: "Value reference",
     });
@@ -289,17 +288,17 @@ test.describe("1440x900", () => {
     await expect(inspector(page).locator(".ref-combo-token")).toHaveText(
       "Input › Amount",
     );
-    await expect(reference).toHaveValue("/input/amount");
+    await expect(reference).toHaveValue("Input › Amount");
   });
 
-  test("a human task offers a path for each answer at the top", async ({
+  test("a human task offers a path for each answer in How they answer", async ({
     page,
   }) => {
     await offline(page);
     await newWorkflow(page);
     await insertStep(page, "Human task");
     const lead = inspector(page).getByRole("button", {
-      name: "Add a path for each answer (approve, reject)",
+      name: "Create a path for each answer",
     });
     await expect(lead).toBeVisible();
     await lead.click();

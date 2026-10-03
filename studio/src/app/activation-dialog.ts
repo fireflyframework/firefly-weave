@@ -79,14 +79,19 @@ const maximumPages = 4;
         <strong>{{ environmentLabel() }}</strong
         >. New runs use this version; runs already in progress keep theirs.
       </p>
-      <h3>Connection slots</h3>
-      <p class="hint">
-        A connection slot is a named placeholder. When you activate a version,
-        you choose a real connection for each slot in that environment.
-      </p>
-      @if (!activeSlots().length) {
-        <p class="hint">This workflow has no connection slots.</p>
-      } @else {
+      @if (automaticCount) {
+        <p class="automatic-choices">
+          {{ automaticCount }}
+          {{ automaticCount === 1 ? "item" : "items" }} picked automatically ·
+          <button type="button" class="text-link" (click)="toggleReview()">
+            {{ reviewAutomatic() ? "Hide review" : "Review" }}
+          </button>
+        </p>
+      }
+      @if (
+        visibleSlots().length || (activeSlots().length && state() !== "ready")
+      ) {
+        <h3>Connections</h3>
         @switch (state()) {
           @case ("loading") {
             <p class="dialog-status" role="status">
@@ -122,7 +127,7 @@ const maximumPages = 4;
           }
         }
         <div class="binding-list">
-          @for (slot of activeSlots(); track slot.name) {
+          @for (slot of visibleSlots(); track slot.name) {
             <div class="binding-row slot-row">
               <p class="slot-need" [id]="'slot-need-' + slot.name">
                 <strong>{{ slot.name }}</strong> needs a
@@ -256,6 +261,30 @@ export class ActivationDialog implements OnInit {
   error = signal<{ message: string; code: string } | null>(null);
   connections = signal<Record<string, unknown>[]>([]);
   choices: Record<string, string> = {};
+  reviewAutomatic = signal(false);
+  private automaticSlot(slot: ActivationSlot) {
+    const candidates = this.compatible(slot);
+    return (
+      this.state() === "ready" &&
+      candidates.length === 1 &&
+      this.choices[slot.name] === candidates[0]?.["id"]
+    );
+  }
+  visibleSlots() {
+    return this.activeSlots().filter(
+      (slot) => this.reviewAutomatic() || !this.automaticSlot(slot),
+    );
+  }
+  get automaticCount() {
+    return (
+      this.activeSlots().filter((slot) => this.automaticSlot(slot)).length +
+      (this.picker()?.automaticRows().length ?? 0)
+    );
+  }
+  toggleReview() {
+    this.reviewAutomatic.set(!this.reviewAutomatic());
+    this.picker()?.reviewAutomatic.set(this.reviewAutomatic());
+  }
   problem = "";
   /** The lazily created release and assignment pickers. */
   picker = signal<ActivationPinsPicker | null>(null);
@@ -314,6 +343,7 @@ export class ActivationDialog implements OnInit {
       ref.setInput("assignments", this.assignments());
       ref.instance.changed.subscribe(() => (this.problem = ""));
       this.picker.set(ref.instance);
+      ref.instance.reviewAutomatic.set(this.reviewAutomatic());
     } catch {
       // Without the pickers the platform asks for any pin it needs.
     } finally {

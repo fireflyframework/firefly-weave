@@ -24,6 +24,41 @@ import {
 } from "../src/app/property-grid";
 import { createStep, freshWorkflow } from "../src/app/model";
 describe("step property draft", () => {
+  it("keeps required examples out of new step values", () => {
+    for (const [kind, key] of [
+      ["signal", "name"],
+      ["fail", "message"],
+      ["decisionTable", "uses"],
+    ] as const) {
+      const step = createStep(kind, "new-step");
+      expect(step[key]).toBe("");
+      expect(new PropertyDraft(step).errors.has(key)).toBe(true);
+    }
+  });
+  it("explains durations in the chosen unit and parallel limits", () => {
+    const grid = new StepPropertyGrid();
+    grid.step = createStep("wait", "wait");
+    grid.ngOnChanges();
+    expect(grid.durationHelp(grid.fields[0])).toBe(
+      "The run pauses for 1 minute, then continues to the next step.",
+    );
+    grid.step = createStep("signal", "signal");
+    grid.ngOnChanges();
+    const timeout = grid.fields.find(
+      (field) => field.path[0] === "timeoutSeconds",
+    )!;
+    expect(grid.durationHelp(timeout)).toBe(
+      "If nothing arrives within 1 hour, the run ends as timed out.",
+    );
+    grid.durationUnits.set("timeoutSeconds", "min");
+    grid.change(timeout, 120);
+    expect(grid.durationHelp(timeout)).toBe(
+      "If nothing arrives within 2 minutes, the run ends as timed out.",
+    );
+    grid.step = createStep("parallel", "parallel");
+    grid.ngOnChanges();
+    expect(grid.fields[0].label).toBe("Run at most");
+  });
   it("blocks invalid positive integers and preserves input", () => {
     const source = createStep("wait", "one"),
       draft = new PropertyDraft(source);
@@ -202,4 +237,73 @@ it("an echoed value keeps local validity; an external change resets it", () => {
   editor.ngOnChanges();
   expect(editor.invalid.size).toBe(0);
   expect(editor.generation).toBe(generation + 1);
+});
+
+it("switching from Fields to a typed value and back from Data keeps that value", () => {
+  const editor = new ExpressionEditor();
+  editor.value = { literal: {} };
+  editor.ngOnChanges();
+  editor.setMode("literal");
+  editor.replaceBody("kept text");
+  editor.setMode("ref");
+  editor.setMode("literal");
+  expect(editor.current).toEqual({ literal: "kept text" });
+});
+
+it("editing a literal list keeps literals plain and encodes data as an expression", () => {
+  const editor = new ExpressionEditor();
+  editor.value = { literal: [{ amount: 7 }, "kept"] };
+  editor.ngOnChanges();
+  editor.update("0", { literal: { amount: 9 } });
+  expect(editor.current).toEqual({ literal: [{ amount: 9 }, "kept"] });
+  editor.update("0", { ref: "/input/amount" });
+  expect(editor.current).toEqual({
+    array: [{ ref: "/input/amount" }, { literal: "kept" }],
+  });
+});
+
+it("emits a valid sibling edit without replacing an invalid field draft", () => {
+  const grid = new StepPropertyGrid();
+  grid.step = createStep("fail", "failed");
+  grid.ngOnChanges();
+  const emitted: unknown[] = [];
+  grid.stepChange.subscribe((value) => emitted.push(value));
+  const code = grid.fields.find((field) => field.path[0] === "code")!;
+  const message = grid.fields.find((field) => field.path[0] === "message")!;
+  grid.change(code, "bad code");
+  expect(emitted).toEqual([]);
+  grid.change(message, "Payment rejected");
+  expect(emitted.at(-1)).toMatchObject({
+    code: grid.step["code"],
+    message: "Payment rejected",
+  });
+  expect(grid.draft.get(code.path)).toBe("bad code");
+  expect(grid.error(code)).toBe("");
+  grid.touchedFields.add(grid.key(code));
+  expect(grid.error(code)).toContain("Use letters");
+});
+
+it("emits the valid Fields sibling while preserving a nested invalid draft", () => {
+  const grid = new StepPropertyGrid();
+  grid.step = { ...createStep("action", "lookup"), uses: "lookup@1.0.0" };
+  grid.ngOnChanges();
+  const field = grid.fields.find((item) => item.path[0] === "with")!;
+  const editor = new ExpressionEditor();
+  editor.value = { literal: { a: 0, b: "" } };
+  editor.ngOnChanges();
+  const emitted: unknown[] = [];
+  const validity: boolean[] = [];
+  editor.validityChange.subscribe((valid) => grid.validity(field, valid));
+  editor.valueChange.subscribe((value) => grid.change(field, value));
+  grid.stepChange.subscribe((value) => emitted.push(value));
+  grid.validityChange.subscribe((valid) => validity.push(valid));
+  const [a, b] = editor.fieldDraft.rows;
+  editor.childValidity("field-" + a.id, false);
+  editor.updateField(b, { literal: "hello" });
+  expect(emitted.at(-1)).toMatchObject({
+    with: { literal: { a: 0, b: "hello" } },
+  });
+  expect(validity.at(-1)).toBe(false);
+  expect(editor.invalid.has("field-" + a.id)).toBe(true);
+  expect(grid.error(field)).toBe(""); // The nested editor owns its inline error.
 });

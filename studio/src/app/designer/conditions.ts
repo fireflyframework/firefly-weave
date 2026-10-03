@@ -35,14 +35,22 @@ export type ConditionOperator =
   | "lt"
   | "lte"
   | "exists"
-  | "missing";
+  | "missing"
+  | "contains"
+  | "notContains"
+  | "in"
+  | "notIn"
+  | "startsWith"
+  | "endsWith";
 export type ConditionJoin = "and" | "or";
+export type ConditionScalar = string | number | boolean | null;
 export interface ConditionRow {
   /** JSON pointer of the data the row tests, such as /input/amount. */
   ref: string;
   operator: ConditionOperator;
   /** The literal compared with; unused by "exists" and "missing". */
-  value?: string | number | boolean | null;
+  value?: ConditionScalar | ConditionScalar[];
+  compareRef?: string;
 }
 export interface Condition {
   join: ConditionJoin;
@@ -61,10 +69,26 @@ export const conditionOperators: {
   { value: "gte", label: "is at least", symbol: "≥" },
   { value: "lt", label: "is less than", symbol: "<" },
   { value: "lte", label: "is at most", symbol: "≤" },
+  { value: "contains", label: "contains", symbol: "contains" },
+  {
+    value: "notContains",
+    label: "does not contain",
+    symbol: "does not contain",
+  },
+  { value: "in", label: "is in list", symbol: "is in" },
+  { value: "notIn", label: "is not in list", symbol: "is not in" },
+  { value: "startsWith", label: "starts with", symbol: "starts with" },
+  { value: "endsWith", label: "ends with", symbol: "ends with" },
   { value: "exists", label: "is present", symbol: "is present" },
   { value: "missing", label: "is missing", symbol: "is missing" },
 ];
-const comparisons = new Set(["eq", "ne", "gt", "gte", "lt", "lte"]);
+const comparisons = new Set(
+  conditionOperators
+    .filter((op) => !["exists", "missing"].includes(op.value))
+    .map((op) => op.value),
+);
+export const membership = (operator: string) =>
+  operator === "in" || operator === "notIn";
 /** Operators that need no value. */
 export const unary = (operator: ConditionOperator) =>
   operator === "exists" || operator === "missing";
@@ -73,7 +97,7 @@ export const unary = (operator: ConditionOperator) =>
 export const missingConditionText = "Choose when this path applies.";
 const pointer = /^(?:\/(?:[^~/]|~[01])*)+$/;
 
-const scalar = (value: unknown): value is ConditionRow["value"] =>
+const scalar = (value: unknown): value is ConditionScalar =>
   value === null || ["string", "number", "boolean"].includes(typeof value);
 const refOf = (expression: unknown) =>
   isRecord(expression) &&
@@ -96,21 +120,32 @@ const operation = (expression: unknown) =>
 function rowOf(expression: unknown): ConditionRow | null {
   const op = operation(expression);
   if (!op) return null;
-  if (comparisons.has(op.name) && op.args.length === 2) {
+  if (comparisons.has(op.name as ConditionOperator) && op.args.length === 2) {
     const ref = refOf(op.args[0]);
+    const compareRef = refOf(op.args[1]);
+    if (ref !== null && compareRef !== null)
+      return { ref, operator: op.name as ConditionOperator, compareRef };
     const literal = op.args[1];
     if (
       ref === null ||
       !isRecord(literal) ||
       Object.keys(literal).length !== 1 ||
-      !("literal" in literal) ||
-      !scalar(literal["literal"])
+      !("literal" in literal)
+    )
+      return null;
+    const value = literal["literal"];
+    if (membership(op.name)) {
+      if (!Array.isArray(value) || !value.every(scalar)) return null;
+    } else if (
+      !scalar(value) ||
+      (["startsWith", "endsWith"].includes(op.name) &&
+        typeof value !== "string")
     )
       return null;
     return {
       ref,
       operator: op.name as ConditionOperator,
-      value: literal["literal"],
+      value: value as ConditionRow["value"],
     };
   }
   if (op.name === "exists" && op.args.length === 1) {
@@ -147,7 +182,10 @@ export function parseCondition(when: unknown): Condition | null {
 export function rowComplete(row: ConditionRow) {
   if (!pointer.test(row.ref)) return false;
   if (unary(row.operator)) return true;
-  if (row.value === undefined || row.value === "") return false;
+  if (row.compareRef !== undefined) return pointer.test(row.compareRef);
+  if (membership(row.operator))
+    return Array.isArray(row.value) && row.value.every(scalar);
+  if (row.value === undefined) return false;
   return (
     typeof row.value !== "number" ||
     (Number.isFinite(row.value) && !Number.isNaN(row.value))
@@ -161,7 +199,17 @@ function rowExpression(row: ConditionRow): Json {
     return {
       op: { name: "not", args: [{ op: { name: "exists", args: [ref] } }] },
     };
-  return { op: { name: row.operator, args: [ref, { literal: row.value }] } };
+  return {
+    op: {
+      name: row.operator,
+      args: [
+        ref,
+        row.compareRef !== undefined
+          ? { ref: row.compareRef }
+          : { literal: row.value },
+      ],
+    },
+  };
 }
 
 /**
@@ -212,7 +260,13 @@ export function referenceTitle(ref: string, definition?: unknown): string {
 }
 
 const valueText = (value: ConditionRow["value"]) =>
-  value === null ? "null" : String(value);
+  Array.isArray(value)
+    ? value
+        .map((item) => (item === null ? "no value" : String(item)))
+        .join(", ")
+    : value === null
+      ? "no value"
+      : String(value);
 
 /** "Amount > 1000", "decision is approve". */
 export function rowSummary(row: ConditionRow, definition?: unknown) {
@@ -220,7 +274,7 @@ export function rowSummary(row: ConditionRow, definition?: unknown) {
   const subject = referenceTitle(row.ref, definition);
   return unary(row.operator)
     ? `${subject} ${operator.symbol}`
-    : `${subject} ${operator.symbol} ${valueText(row.value)}`;
+    : `${subject} ${operator.symbol} ${row.compareRef !== undefined ? referenceTitle(row.compareRef, definition) : valueText(row.value)}`;
 }
 
 /** A condition in a few words, for branch labels and node summaries. */
@@ -249,6 +303,20 @@ export function branchName(step: Json, branch: string, definition?: unknown) {
     const index = Number(branch.replace(/^case /, "")) - 1;
     const cases = Array.isArray(step["cases"]) ? step["cases"] : [];
     const found = cases[index];
+    const condition = parseCondition(
+      isRecord(found) ? found["when"] : undefined,
+    );
+    const row = condition?.rows.length === 1 ? condition.rows[0] : undefined;
+    if (
+      row?.operator === "eq" &&
+      /^\/steps\/[^/]+\/output\/decision$/.test(row.ref) &&
+      typeof row.value === "string" &&
+      row.value
+    )
+      return (
+        row.value.charAt(0).toUpperCase() +
+        row.value.slice(1).replace(/[-_]/g, " ")
+      );
     return conditionSummary(
       isRecord(found) ? found["when"] : undefined,
       definition,

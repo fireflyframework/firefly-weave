@@ -2561,24 +2561,27 @@ details.disclosure[open] > summary::before {
   align-items: center;
   gap: var(--space-3) var(--space-4);
   min-height: 52px;
-  padding: 8px 16px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
   flex: none;
   min-width: 0;
+}
+.editor-heading {
+  min-width: 0;
+  flex: 1 1 280px;
 }
 .editor-identity {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  flex: 1 1 auto;
 }
 .editor-identity .back-link {
   border: 0;
   background: transparent;
   padding: 0 2px;
-  min-height: 32px;
+  min-height: 24px;
   color: var(--link);
   font: var(--type-small);
   font-weight: 500;
@@ -2587,14 +2590,12 @@ details.disclosure[open] > summary::before {
 .editor-identity .back-link:hover {
   text-decoration: underline;
 }
-/* The name never gives up width to its neighbors (a 1 px squeeze would cut
-   two letters): it shortens only at its own maximum, and the status chip
-   takes the squeeze instead. */
+/* Keep the workflow name readable until its responsive maximum. */
 .editor-identity h1 {
   font: var(--type-title-sm);
   color: var(--forest);
   margin: 0;
-  flex: none;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 240px;
   white-space: nowrap;
@@ -2604,13 +2605,11 @@ details.disclosure[open] > summary::before {
 .editor-identity .version-badge {
   flex: none;
 }
-/* The name keeps its room longer than the status chip: the chip shortens
-   first, with an ellipsis (its full text in the tooltip). It counts as 3em
-   when the bar decides what fits on one row, then grows to its text. */
+/* Lifecycle status stays readable when the toolbar wraps. */
 .editor-identity .status-chip {
-  flex: 1 100 auto;
-  width: 3em;
-  min-width: 3em;
+  flex: none;
+  width: auto;
+  min-width: max-content;
   max-width: max-content;
   overflow: hidden;
 }
@@ -2855,7 +2854,7 @@ details.disclosure[open] > summary::before {
 }
 /* The palette waits too: dimmed, and inert so nothing reaches it. */
 .palette[inert] > :not(.pane-resizer) {
-  opacity: 0.55;
+  opacity: 1;
 }
 .canvas {
   flex: 1;
@@ -2919,14 +2918,14 @@ details.disclosure[open] > summary::before {
 }
 .graph-node {
   position: absolute;
-  width: 208px;
-  height: 64px;
+  width: 240px;
+  height: 72px;
   pointer-events: auto;
 }
 .node-body {
   position: relative;
   width: 100%;
-  height: 64px;
+  height: 72px;
   background: var(--surface);
   border: 1px solid var(--node-border);
   border-radius: var(--radius-md);
@@ -2950,7 +2949,8 @@ details.disclosure[open] > summary::before {
   display: block;
   font: 600 max(14px, calc(12px / var(--zoom, 1))) / 1.2 var(--font-sans);
   color: var(--forest);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -2995,11 +2995,12 @@ details.disclosure[open] > summary::before {
   align-items: center;
   gap: 4px;
   height: 22px;
+  min-height: 22px;
   padding: 0 8px 0 6px;
   border-radius: var(--radius-pill);
   font: 600 12px/16px var(--font-sans);
   white-space: nowrap;
-  pointer-events: none;
+  pointer-events: auto;
   z-index: 1;
   border: 1px solid var(--warning-bd);
   background: var(--warning-bg);
@@ -3068,12 +3069,13 @@ details.disclosure[open] > summary::before {
   text-overflow: ellipsis;
   pointer-events: auto;
 }
-/* "+": light on the line until it is wanted. The hit area is 36 px. */
+/* Insertion controls stay usable when the canvas is zoomed out. */
 .insertion-target {
   position: absolute;
-  width: 20px;
-  height: 20px;
-  min-height: 20px;
+  width: max(24px, calc(24px / var(--zoom, 1)));
+  height: max(24px, calc(24px / var(--zoom, 1)));
+  min-height: 24px;
+  transform: translate(-50%, -50%);
   padding: 0;
   border: 1.5px solid var(--jade);
   border-radius: 50%;
@@ -3091,9 +3093,9 @@ details.disclosure[open] > summary::before {
   border-radius: 50%;
 }
 .insertion-target weave-icon {
-  width: 14px;
-  height: 14px;
-  opacity: 0.55;
+  width: max(14px, calc(14px / var(--zoom, 1))) !important;
+  height: max(14px, calc(14px / var(--zoom, 1))) !important;
+  opacity: 1;
 }
 .insertion-target:hover,
 .insertion-target:focus-visible,
@@ -3113,7 +3115,7 @@ details.disclosure[open] > summary::before {
    condition summary keeps its 28 characters. */
 .insertion-target.branch-placeholder {
   width: 208px;
-  height: 48px;
+  height: max(48px, calc(24px / var(--zoom, 1)));
   min-height: 48px;
   display: flex;
   flex-direction: column;
@@ -3204,19 +3206,75 @@ details.disclosure[open] > summary::before {
 .canvas.simulating .canvas-empty {
   display: none;
 }
-/* Overview (below 60 %): titles only, no editing targets, no dot grid. */
+/* Overview keeps names, lane labels and problem indicators available. */
 .canvas.overview {
   background-image: none;
 }
 .canvas.overview .node-summary,
-.canvas.overview .node-chip,
 .canvas.overview .branch-label,
-.canvas.overview .insertion-target:not(.branch-placeholder),
 .canvas.overview .canvas-empty {
   display: none;
 }
 .canvas.overview .node-title {
-  font-size: calc(12px / var(--zoom, 1));
+  font-size: max(14px, calc(10px / max(var(--zoom, 1), 0.4)));
+  line-height: 1.05;
+}
+.canvas.overview .node-body {
+  padding: 4px 8px;
+  gap: 5px;
+}
+.canvas.overview .node-chip {
+  width: calc(8px / max(var(--zoom, 1), 0.4));
+  height: calc(8px / max(var(--zoom, 1), 0.4));
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--warning-ink);
+}
+.canvas.overview .has-error .node-chip {
+  background: var(--danger-ink);
+}
+.canvas.overview .node-chip weave-icon,
+.canvas.overview .node-chip-text {
+  display: none;
+}
+.node-actions {
+  position: absolute !important;
+  right: 2px;
+  top: 2px;
+  opacity: 0;
+}
+.graph-node:hover .node-actions,
+.graph-node:focus-within .node-actions,
+.node-actions.menu-open {
+  opacity: 1;
+}
+.node-actions .row-menu-toggle {
+  background: var(--surface);
+}
+.answer-branch-prompt {
+  position: absolute;
+  top: 88px;
+  width: 240px;
+  height: 48px;
+  border: 1px dashed var(--border-hover);
+  background: var(--surface);
+  color: var(--muted);
+  font: var(--type-caption);
+  white-space: normal;
+  padding: 4px 8px;
+  gap: 6px;
+}
+.graph-node.dragging {
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0.7;
+}
+.insertion-target.drop-hover {
+  outline: 3px solid var(--jade);
+  outline-offset: 4px;
 }
 .canvas-tools {
   position: absolute;
@@ -3394,9 +3452,6 @@ details.disclosure[open] > summary::before {
   margin: 16px 0 8px;
 }
 .inspector-section > summary {
-  position: sticky;
-  top: -12px;
-  z-index: 2;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3435,7 +3490,9 @@ details.disclosure[open] > summary::before {
 .property-mode {
   margin-top: 12px;
 }
-.step-editor {
+.inspector textarea.step-editor {
+  field-sizing: content;
+  max-height: 70vh;
   min-height: 220px;
   font: var(--type-mono);
 }
@@ -3528,8 +3585,7 @@ details.disclosure[open] > summary::before {
 .diagnostics-icon[data-tone="warnings"] {
   color: var(--warning-ink);
 }
-.diagnostics-icon[data-tone="passed"],
-.diagnostics-icon[data-tone="checked"] {
+.diagnostics-icon[data-tone="passed"] {
   color: var(--success);
 }
 .diagnostics-headline {
@@ -3732,8 +3788,16 @@ kbd {
 }
 
 @media (max-width: 1440px) {
+  .editor-identity .back-link {
+    display: none;
+  }
   .editor-identity h1 {
     max-width: 180px;
+  }
+}
+@media (min-width: 1024px) and (max-width: 1440px) {
+  .editor-heading {
+    min-width: 330px;
   }
 }
 /* Below 1366 px the local note keeps only its link; the reason stays in the
@@ -3916,4 +3980,73 @@ kbd {
   .graph-node.has-error .node-body {
     border: 1px solid CanvasText;
   }
+}
+
+/* Sibling paths share a split and a join; the enclosing border never catches clicks. */
+.lane-group {
+  position: absolute;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+}
+.lane-header {
+  position: absolute;
+  padding: 4px 8px;
+  color: var(--forest);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: 600 max(12px, calc(11px / max(var(--zoom, 1), 0.4))) / 1.2
+    var(--font-sans);
+  overflow-wrap: anywhere;
+  text-align: left;
+  z-index: 1;
+  pointer-events: auto;
+}
+.lane-terminal {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--text);
+  border: 2px solid var(--surface);
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+}
+.lane-add-label {
+  position: absolute;
+  left: calc(100% + 6px);
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--surface);
+  font: var(--type-caption);
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+  pointer-events: none;
+}
+.workflow-progress {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font: 400 12px/14px var(--font-sans);
+  color: var(--muted);
+}
+.workflow-progress li + li::before {
+  content: "→";
+  margin-right: 8px;
+}
+.workflow-progress [aria-current="step"] {
+  color: var(--forest);
+  font-weight: 700;
+}
+.canvas.tiny-overview .insertion-target,
+.canvas.tiny-overview .answer-branch-prompt {
+  display: none;
+}
+.contract-gap-list {
+  margin: 0;
+  padding: 8px 16px 8px 32px;
 }

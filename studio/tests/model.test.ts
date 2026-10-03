@@ -16,6 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   StructuredCanvasAdapter,
   freshWorkflow,
@@ -23,6 +24,88 @@ import {
   type Kind,
 } from "../src/app/model";
 describe("structured workflow authoring", () => {
+  it("renames a human answer and matching nested decision conditions in one undo", () => {
+    const model = new StructuredCanvasAdapter();
+    const task = model.insert("humanTask");
+    const choice = model.branchOnDecision(task.id);
+    const nested = model.insert("wait", `${choice.id}/case 1`);
+    const before = model.source;
+    expect(model.renameDecision(task.id, "approve", "accept")).toBe(1);
+    expect(
+      model.nodes().find((node) => node.step.id === task.id)!.step["decisions"],
+    ).toEqual(["accept", "reject"]);
+    const renamed = model.nodes().find((node) => node.step.id === choice.id)!
+      .step["cases"] as any[];
+    expect(renamed[0].when.op.args[1]).toEqual({ literal: "accept" });
+    expect(renamed[0].steps[0].id).toBe(nested.id);
+    expect(renamed[0].output).toEqual({ literal: {} });
+    model.undo();
+    expect(model.source).toBe(before);
+    expect(() => model.renameDecision(task.id, "approve", "reject")).toThrow();
+    expect(() =>
+      model.renameDecision(task.id, "approve", "bad name"),
+    ).toThrow();
+    expect(model.source).toBe(before);
+  });
+  it("groups an immediate derived update with its initiating edit, fencing later edits", () => {
+    const model = new StructuredCanvasAdapter();
+    const action = model.insert("action");
+    const revision = model.revision;
+    model.continueEdit(revision, () =>
+      model.update(
+        action.id,
+        JSON.stringify({ ...action, connection: "primary" }),
+      ),
+    );
+    model.undo();
+    expect(model.definition.spec.steps).toHaveLength(0);
+    model.redo();
+    const prior = model.revision;
+    model.insert("wait");
+    model.continueEdit(prior, () =>
+      model.update(
+        action.id,
+        JSON.stringify({ ...action, connection: "other" }),
+      ),
+    );
+    model.undo();
+    expect(model.definition.spec.steps).toHaveLength(2);
+    expect(model.definition.spec.steps[0]["connection"]).toBe("primary");
+  });
+  it("keeps the rendered node identity stable until rename teardown", () => {
+    const model = new StructuredCanvasAdapter();
+    const step = model.insert("wait");
+    const rendered = model.nodes()[0];
+    model.renameStep(step.id, "pause");
+    expect(rendered.step.id).toBe("wait-1");
+    expect(model.nodes()[0].step.id).toBe("pause");
+    model.undo();
+    expect(model.nodes()[0].step.id).toBe("wait-1");
+  });
+  it("round trips decision tables and AI tasks without rewriting their expressions", () => {
+    const m = new StructuredCanvasAdapter();
+    const decision = m.insert("decisionTable" as Kind);
+    const ai = m.insert("llm" as Kind);
+    expect(decision.kind).toBe("decisionTable");
+    expect(decision["with"]).toEqual({ ref: "/input" });
+    expect(ai["prompt"]).toEqual({ literal: "" });
+    expect(m.readonly).toBe(false);
+    const copy = new StructuredCanvasAdapter();
+    copy.setSource(m.source);
+    expect(copy.definition.spec.steps).toEqual(m.definition.spec.steps);
+    m.update(
+      ai.id,
+      JSON.stringify({
+        ...ai,
+        prompt: { ref: `/steps/${decision.id}/output` },
+      }),
+    );
+    expect(
+      m
+        .referenceSites()
+        .filter((site) => site.ref === `/steps/${decision.id}/output`),
+    ).toHaveLength(1);
+  });
   it("branch management preserves nested steps and rejects unsafe removal", () => {
     const m = new StructuredCanvasAdapter();
     m.insert("parallel");
@@ -301,10 +384,12 @@ describe("designer safety and canvas reachability", () => {
     m.insert("wait", "parallel-1/first");
     expect(m.visualConnections(true)).toEqual([
       { from: "$start", to: "parallel-1" },
-      { from: "parallel-1", to: "wait-1" },
-      { from: "parallel-1", to: "$empty:parallel-1/second" },
-      { from: "$empty:parallel-1/second", to: "$end" },
-      { from: "wait-1", to: "$end" },
+      { from: "parallel-1", to: "$split:parallel-1" },
+      { from: "$split:parallel-1", to: "wait-1" },
+      { from: "$split:parallel-1", to: "$empty:parallel-1/second" },
+      { from: "$empty:parallel-1/second", to: "$join:parallel-1" },
+      { from: "$join:parallel-1", to: "$end" },
+      { from: "wait-1", to: "$join:parallel-1" },
     ]);
     expect(m.visualConnections()).toContainEqual({
       from: "parallel-1",
@@ -320,7 +405,7 @@ describe("designer safety and canvas reachability", () => {
     expect(labels).toContain(
       "Add a step here, at the start of Case 1 of decision-1",
     );
-    expect(labels).toContain("Add a step here, after wait-1");
+    expect(labels).toContain("Add a step after wait-1, in Case 1");
     expect(labels).toContain("Add a step here, after decision-1");
   });
   it("inserts a step with initial fields in one undo step", () => {
@@ -587,5 +672,44 @@ describe("designer naming and editing (W3-2, W3-6)", () => {
       "parallel-1",
       "transform-2",
     ]);
+  });
+});
+
+describe("fixture insertion target ownership", () => {
+  it("gives every insertion place its own hit target on the fixture", () => {
+    const model = new StructuredCanvasAdapter();
+    model.setSource(
+      readFileSync(
+        new URL("./fixtures/vendor-payment-approval.yaml", import.meta.url),
+        "utf8",
+      ),
+    );
+    const targets = model.targets();
+    const boxes = targets.map((target) => ({
+      ...target,
+      x: target.point.x - (target.empty ? 104 : 12),
+      y: target.point.y - (target.empty ? 24 : 12),
+      width: target.empty ? 208 : 24,
+      height: target.empty ? 48 : 24,
+    }));
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i],
+          b = boxes[j];
+        expect(
+          a.x + a.width <= b.x ||
+            b.x + b.width <= a.x ||
+            a.y + a.height <= b.y ||
+            b.y + b.height <= a.y,
+          `${a.owner}:${a.index} overlaps ${b.owner}:${b.index}`,
+        ).toBe(true);
+      }
+    }
+    expect(
+      targets.find(
+        (target) =>
+          target.owner === "pay-and-notify/ledger" && target.index === 1,
+      )?.label,
+    ).toBe("Add a step after post-ledger-entry, in ledger");
   });
 });

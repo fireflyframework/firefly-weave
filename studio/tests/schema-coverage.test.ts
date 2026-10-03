@@ -44,7 +44,8 @@ import json
 from typing import get_args
 from firefly_weave.contracts import definitions as d
 models = [d.ActionStep, d.TransformStep, d.SwitchStep, d.ParallelStep,
-          d.WaitStep, d.SignalStep, d.HumanTaskStep, d.FailStep]
+          d.WaitStep, d.SignalStep, d.HumanTaskStep, d.FailStep,
+          d.DecisionTableStep, d.LLMStep]
 def fields(model):
     return [f.alias or name for name, f in model.model_fields.items()]
 print(json.dumps({
@@ -80,7 +81,10 @@ describe.skipIf(!available)(
       const spec = fields
         .filter((f) => f.path[0] === "spec")
         .map((f) => f.path[1]);
-      expect([...spec, "steps"].sort()).toEqual(schema.workflow.sort());
+      // Canvas owns steps, ConnectionSlotList the slots, and LlmInspector profiles.
+      expect([...spec, "steps", "connections", "llmProfiles"].sort()).toEqual(
+        schema.workflow.sort(),
+      );
       const metadata = fields
         .filter((f) => f.path[0] === "metadata")
         .map((f) => f.path[1]);

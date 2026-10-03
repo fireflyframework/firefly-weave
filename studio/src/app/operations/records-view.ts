@@ -25,6 +25,8 @@ import type { App, View } from "../app";
 import { Icon } from "../icon";
 import { ModalSheet, sheetWhen } from "../modal-sheet";
 import { TaskForm } from "../task-form";
+import { FilePicker } from "../forms/ui/file-picker";
+import { filesIn } from "../forms/core/file-reference";
 import type { Schema } from "../task-schema";
 import { ConnectionDetail } from "../integrations/connection-detail";
 import { NewMenu } from "../templates/new-menu";
@@ -123,6 +125,7 @@ const runStatusFilters: [string, string][] = [
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: true,
   imports: [
+    FilePicker,
     Icon,
     ModalSheet,
     TaskForm,
@@ -740,6 +743,19 @@ const runStatusFilters: [string, string][] = [
           </dd>
         }
       </dl>
+      @for (
+        attachment of taskFiles();
+        track attachment.label + attachment.file.id
+      ) {
+        @defer (on immediate) {
+          <weave-file-picker
+            [value]="attachment.file"
+            [access]="h.taskFileAccess"
+            [label]="attachment.label"
+            [readOnly]="true"
+          />
+        }
+      }
       @if (hasKeys(facts.nested)) {
         <details class="disclosure">
           <summary>Technical details</summary>
@@ -766,6 +782,7 @@ const runStatusFilters: [string, string][] = [
           <fieldset [disabled]="h.taskConflict">
             @for (taskId of [text(record["id"])]; track taskId) {
               <weave-task-form
+                [fileAccess]="h.taskFileAccess"
                 [schema]="taskSchema()"
                 (dataChange)="h.taskData = $event"
                 (validityChange)="h.taskFormValid = $event"
@@ -1157,6 +1174,13 @@ export class RecordsView {
   }
   taskFacts() {
     return contextFacts(this.host().selectedRecord?.["context"]);
+  }
+  taskFiles() {
+    const record = this.host().selectedRecord;
+    return [
+      ...filesIn(record?.["context"], "Context"),
+      ...filesIn(record?.["output"], "Answer"),
+    ];
   }
   outputFacts() {
     const output = (this.host().selectedRecord?.["output"] ?? {}) as Json;

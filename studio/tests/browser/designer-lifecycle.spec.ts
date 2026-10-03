@@ -96,7 +96,7 @@ for (const viewport of [
       await closeSheet(page);
       // The autosave settles on its own: the chip doesn't stay on "Saving…".
       await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-        "Kept on this computer",
+        /Draft saved \d{2}:\d{2}/,
       );
       await expect(await primary(page)).toHaveText(/Save to file/);
       await expect(toolbar(page)).toContainText(
@@ -133,12 +133,12 @@ for (const viewport of [
       await closeSheet(page);
       const chip = page.locator(".editor-identity .status-chip");
       await expect(await primary(page)).toHaveText("Save draft");
-      await expect(chip).toHaveText("Unsaved changes");
+      await expect(chip).toHaveText("Unsaved");
 
       await (await primary(page)).click();
       await expect.poll(() => calls).toEqual(["save"]);
       await expect(await primary(page)).toHaveText("Publish…");
-      await expect(chip).toHaveText("Draft saved");
+      await expect(chip).toHaveText(/Draft saved \d{2}:\d{2}/);
       await expect(page.locator(".toast")).toContainText("Draft saved.");
 
       await (await primary(page)).click();
@@ -232,7 +232,7 @@ test.describe("1280x720", () => {
       // Measure the settled bar: the status chip's longest steady text.
       await expect(page.locator(".status-chip")).toHaveAttribute(
         "title",
-        mode === "local" ? "Kept on this computer" : "Unsaved changes",
+        mode === "local" ? /Draft saved \d{2}:\d{2}/ : "Unsaved",
       );
       const canvas = await page.locator(".canvas").boundingBox();
       const bar = await page.locator(".editor-bar").boundingBox();

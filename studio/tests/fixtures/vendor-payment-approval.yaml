@@ -1,0 +1,80 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: vendor-payment-approval, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    required: [customerId, amount]
+    properties:
+      customerId: {type: string, title: Customer ID}
+      amount: {type: number, title: Amount}
+      region: {type: string, title: Region, enum: [eu, us]}
+      vip: {type: boolean, title: VIP}
+  outputSchema: {type: object}
+  connections:
+    ledger-db: {connector: weave-postgresql@1.0.0, required: true}
+  steps:
+    - id: prepare-request
+      kind: transform
+      value: {object: {customer: {ref: /input/customerId}, amount: {ref: /input/amount}}}
+    - id: approval
+      kind: humanTask
+      assignment: finance-approvers
+      title: {literal: Approve vendor payment}
+      context: {ref: /steps/prepare-request/output}
+      formSchema: {type: object}
+      decisions: [approve, reject]
+    - id: route
+      kind: switch
+      cases:
+        - when: {op: {name: eq, args: [{ref: /steps/approval/output/decision}, {literal: approve}]}}
+          steps:
+            - id: pay-vendor
+              kind: action
+              uses: sql.lookup@1.0.0
+              connection: ledger-db
+              with: {object: {parameters: {object: {customerId: {ref: /input/customerId}}}}}
+            - id: pay-and-notify
+              kind: parallel
+              concurrency: 2
+              branches:
+                ledger:
+                  steps:
+                    - id: post-ledger-entry
+                      kind: action
+                      uses: sql.lookup@1.0.0
+                      connection: ledger-db
+                      with: {object: {parameters: {object: {customerId: {ref: /input/customerId}}}}}
+                  output: {literal: {}}
+                email:
+                  steps:
+                    - id: send-confirmation
+                      kind: action
+                      uses: crm.lookup@2.0.0
+                      with: {object: {customer: {ref: /input/customerId}}}
+                  output: {literal: {}}
+          output: {literal: {}}
+        - when: {op: {name: eq, args: [{ref: /steps/approval/output/decision}, {literal: reject}]}}
+          steps:
+            - {id: rejected, kind: fail, code: payment-rejected, message: The approver rejected the payment.}
+          output: {literal: {}}
+      default: {steps: [], output: {literal: {}}}
+    - id: record-result
+      kind: transform
+      value: {object: {decision: {ref: /steps/approval/output/decision}}}
+  output: {ref: /steps/record-result/output}

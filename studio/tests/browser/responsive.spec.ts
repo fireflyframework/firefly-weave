@@ -121,7 +121,7 @@ for (const size of sizes) {
     await chooseAction(page, "sql.lookup@1.0.0");
     await expect(page.locator(".integration-requirements")).toBeVisible();
     await expectGeometry(page, "designer");
-    await expectReachable(page, "Apply changes");
+    await expectReachable(page, "Step actions");
     const inspector = (await page.locator(".inspector").boundingBox())!;
     expect(inspector.x + inspector.width).toBeLessThanOrEqual(size.width);
     expect(inspector.y + inspector.height).toBeLessThanOrEqual(size.height);
@@ -131,12 +131,9 @@ for (const size of sizes) {
     const close = page.getByRole("button", { name: "Close inspector" });
     if (await close.isVisible()) await close.click();
     await command(page, "Publish…");
-    // The chosen action is not applied yet, so Studio asks first.
-    const unapplied = page.getByRole("dialog", { name: "Apply your changes?" });
-    await expect(unapplied).toBeVisible();
-    await expectGeometry(page, "unapplied dialog");
-    await expectReachable(page, "Apply and continue");
-    await unapplied.getByRole("button", { name: "Discard changes" }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Apply your changes?" }),
+    ).toHaveCount(0);
     await expect(page.getByRole("dialog")).toBeVisible();
     await expectGeometry(page, "dialog");
     await expectReachable(page, "Publish version");

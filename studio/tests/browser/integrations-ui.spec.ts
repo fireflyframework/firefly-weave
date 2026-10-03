@@ -144,9 +144,7 @@ spec:
         page.getByLabel("Connection slot", { exact: true }),
       ).toHaveValue("db");
       await page.getByLabel(/^Customer ID/).fill("c-1");
-      await page
-        .getByRole("button", { name: "Apply changes", exact: true })
-        .click();
+      await page.locator(".inspector-header h2").click();
       const source = await sourceText(page);
       expect(source).toContain("uses: sql.lookup@1.0.0");
       expect(source).toContain("connection: db");
@@ -161,13 +159,20 @@ spec:
       await new DesignerPage(page).selectStep("call-action-1");
       const picker = actionPicker(page);
       await picker.click();
-      await page.getByRole("option", { name: "New API action" }).click();
+      await new DesignerPage(page).inspector
+        .getByRole("button", { name: "New API action", exact: true })
+        .click();
       const builder = page.getByRole("dialog", { name: "New API action" });
       await expect(builder).toBeVisible();
       await expect(builder.getByLabel("Name", { exact: true })).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(builder).toHaveCount(0);
-      await expect(picker).toBeFocused();
+      await expect(
+        new DesignerPage(page).inspector.getByRole("button", {
+          name: "New API action",
+          exact: true,
+        }),
+      ).toBeFocused();
     });
 
     test("the palette lists published actions and inserts one with its slot as one undo step", async ({
@@ -475,9 +480,9 @@ spec:
       await expect(designer.node("review")).toBeVisible();
       // Focus moves to the new workflow's first step, not to the page.
       await expect(designer.node("review").locator(".node-body")).toBeFocused();
-      // Nothing is kept yet: the template opens as an untouched new draft.
-      await expect(page.locator(".editor-identity .status-chip")).toHaveCount(
-        0,
+      // The new template is queued for local saving.
+      await expect(page.locator(".editor-identity .status-chip")).toHaveText(
+        /^(Unsaved|Draft saved \d{2}:\d{2})$/,
       );
       // A template starts its own undo history.
       expect(await canUndo(page)).toBe(false);

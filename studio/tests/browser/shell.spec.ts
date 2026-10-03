@@ -392,7 +392,7 @@ test("an ended session keeps designer edits for after pairing again", async ({
   await page.getByRole("button", { name: "Pair browser" }).click();
   await expect(page.locator('[data-step="transform-1"]')).toBeVisible();
   await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-    "Kept on this computer",
+    "Draft saved",
   );
 });
 

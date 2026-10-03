@@ -22,6 +22,9 @@ SPDX-License-Identifier: Apache-2.0
 import { ChangeDetectionStrategy, Component, input } from "@angular/core";
 import { Icon } from "../icon";
 import { CatalogPicker } from "../integrations/catalog-picker";
+import { ConnectionSlotList } from "../integrations/connection-slot-list";
+import { Select, type SelectOption } from "../forms/ui/select";
+import { StepPropertyGrid } from "../property-grid";
 import { TaskForm } from "../task-form";
 import type { App } from "../app";
 
@@ -30,7 +33,14 @@ import type { App } from "../app";
   // A view of the shell's state: checked whenever the shell renders.
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: true,
-  imports: [Icon, CatalogPicker, TaskForm],
+  imports: [
+    Icon,
+    CatalogPicker,
+    TaskForm,
+    ConnectionSlotList,
+    StepPropertyGrid,
+    Select,
+  ],
   template: `@let h = host();
     @if (h.selected; as selected) {
       <!-- One contract: the action, its connection, its input and output. -->
@@ -42,13 +52,27 @@ import type { App } from "../app";
         >
           <summary id="integration-heading" tabindex="-1">Action</summary>
           <section class="section-body" aria-labelledby="integration-heading">
+            @if (h.integrationState !== "ready") {
+              <weave-step-property-grid
+                [step]="h.propertyStep || selected.step"
+                [readOnly]="h.model.readonly || h.editingLocked"
+                [hiddenFields]="manualHiddenFields"
+                (fieldChange)="h.actionVersionEdit($event.value)"
+                (fieldValidity)="h.inspectorFieldValidity($event)"
+                (input)="h.touchInspector('step')"
+              />
+              <p class="hint">
+                Enter the published action name and version, such as
+                erp.lookup&#64;1.0.0.
+              </p>
+            }
             @switch (h.integrationState) {
               @case ("offline") {
                 <div class="integration-state">
                   <p>
                     <strong>Working locally.</strong> Enter the action version
-                    to call in the properties below. Connect to a platform in
-                    Settings to choose from published actions.
+                    above. Connect to a platform in Settings to choose from
+                    published actions.
                   </p>
                   <button type="button" (click)="h.navigate('settings')">
                     Open Settings
@@ -72,7 +96,7 @@ import type { App } from "../app";
                   <p>
                     Your account cannot read the action catalog in this
                     workspace. Ask an administrator for catalog access, or enter
-                    the action version below.
+                    the action version above.
                   </p>
                   <small class="support-code"
                     >Needed permission: catalog.read</small
@@ -126,6 +150,7 @@ import type { App } from "../app";
                 @defer (on immediate) {
                   <weave-catalog-picker
                     [host]="h"
+                    [canCreate]="false"
                     [value]="h.bufferedUses()"
                     [disabled]="h.model.readonly || !h.bufferReadable"
                     (choose)="h.chooseCatalogAction($event.id ?? '')"
@@ -136,10 +161,7 @@ import type { App } from "../app";
               }
             }
             @if (
-              !h.model.readonly &&
-              h.bufferReadable &&
-              h.canCreateIntegration() &&
-              (!h.bufferedUses() || h.bufferedUses() === "your-action@1.0.0")
+              !h.model.readonly && h.bufferReadable && h.canCreateIntegration()
             ) {
               <div class="integration-state integration-create">
                 <p>
@@ -226,41 +248,13 @@ import type { App } from "../app";
         >
           <summary>Connection</summary>
           <div class="section-body">
-            <label
-              >Connection slot<select
-                aria-label="Connection slot"
-                [disabled]="h.model.readonly || !h.bufferReadable"
-                (change)="h.chooseConnectionSlot($event)"
-              >
-                <option value="" [selected]="!h.bufferedConnection()">
-                  {{
-                    h.actionContract && h.actionRequirement()
-                      ? h.actionRequirement()?.required === false
-                        ? "No connection"
-                        : "Choose a connection slot"
-                      : "No connection"
-                  }}
-                </option>
-                @for (slot of h.compatibleSlots(); track slot.name) {
-                  <option
-                    [value]="slot.name"
-                    [selected]="slot.name === h.bufferedConnection()"
-                  >
-                    {{ slot.name }} · {{ slot.connector }}
-                  </option>
-                }
-                @if (
-                  h.bufferedConnection() &&
-              !h.compatibleSlots().some(
-                (slot) => slot.name === h.bufferedConnection()
-              )
-                ) {
-                  <option [value]="h.bufferedConnection()" selected>
-                    {{ h.bufferedConnection() }} (not compatible)
-                  </option>
-                }
-              </select></label
-            >
+            <weave-select
+              label="Connection slot"
+              [options]="connectionOptions()"
+              [value]="h.bufferedConnection()"
+              [disabled]="h.model.readonly || !h.bufferReadable"
+              (choose)="h.chooseConnectionSlot($event)"
+            />
             @if (h.profile && h.httpSlot()) {
               <div class="integration-state">
                 <p>
@@ -293,64 +287,17 @@ import type { App } from "../app";
                 environment.
               </p>
             }
-            @if (!h.actionContract || h.actionRequirement()) {
-              <details
-                class="add-slot"
-                [open]="!!h.actionRequirement() && !h.compatibleSlots().length"
+            @if (h.actionRequirement() && !h.compatibleSlots().length) {
+              <button
+                type="button"
+                [disabled]="h.editingLocked || h.model.readonly"
+                (click)="h.addConnectionSlot()"
               >
-                <summary>Add connection slot</summary>
-                <div class="add-slot-fields">
-                  <label
-                    >Slot name<input
-                      [value]="
-                        h.newSlotNameEdited
-                          ? h.newSlotName
-                          : h.suggestedSlotName()
-                      "
-                      (input)="
-                        h.newSlotName = h.value($event);
-                        h.newSlotNameEdited = true
-                      "
-                  /></label>
-                  @if (h.actionContract && h.actionRequirement()) {
-                    <p class="hint">
-                      Connector:
-                      <code>{{ h.actionRequirement()?.connector }}</code>
-                    </p>
-                  } @else {
-                    <label
-                      >Connector<input
-                        placeholder="crm@1.0.0"
-                        [value]="h.newSlotConnector"
-                        (input)="h.newSlotConnector = h.value($event)"
-                    /></label>
-                  }
-                  @if (
-                    !h.actionContract ||
-                    h.actionRequirement()?.required === false
-                  ) {
-                    <label class="checkbox-field"
-                      ><input
-                        type="checkbox"
-                        [checked]="h.newSlotRequired"
-                        (change)="h.newSlotRequired = !h.newSlotRequired"
-                      />Required at activation</label
-                    >
-                  }
-                  <button
-                    type="button"
-                    [disabled]="h.model.readonly || !h.bufferReadable"
-                    (click)="h.addConnectionSlot()"
-                  >
-                    Add slot
-                  </button>
-                  @if (h.slotError) {
-                    <p class="error" role="alert">
-                      {{ h.slotError }}
-                    </p>
-                  }
-                </div>
-              </details>
+                {{ h.connectionSlotButton() }}
+              </button>
+            }
+            @if (!h.actionContract || h.actionRequirement()) {
+              <weave-connection-slots [host]="h" />
             }
           </div>
         </details>
@@ -365,6 +312,7 @@ import type { App } from "../app";
               @if (h.actionInputMode === "fields") {
                 <form
                   class="action-input-form"
+                  novalidate
                   data-field="with"
                   aria-label="Action input"
                   (submit)="$event.preventDefault()"
@@ -380,6 +328,7 @@ import type { App } from "../app";
                     @for (key of [selected.step.id]; track key) {
                       @defer (on immediate) {
                         <weave-task-form
+                          [fileAccess]="h.fileAccess"
                           [schema]="h.actionInputSchema()"
                           [bindings]="true"
                           [expression]="h.actionInitialInput"
@@ -476,4 +425,29 @@ import type { App } from "../app";
 export class ActionInspector {
   /** The editor shell. */
   host = input.required<App>();
+  readonly manualHiddenFields = ["connection", "with"];
+  connectionOptions(): SelectOption[] {
+    const h = this.host();
+    const options: SelectOption[] = [
+      {
+        value: "",
+        label: h.actionRequirement()?.required
+          ? "Choose a connection slot"
+          : "No connection",
+      },
+      ...h.compatibleSlots().map((slot) => ({
+        value: slot.name,
+        label: slot.name,
+        description: slot.connector,
+      })),
+    ];
+    const value = h.bufferedConnection();
+    if (value && !options.some((option) => option.value === value))
+      options.push({
+        value,
+        label: value,
+        description: "This slot is not compatible with the action.",
+      });
+    return options;
+  }
 }

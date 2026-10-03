@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { selectChoice } from "./support";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -323,9 +324,10 @@ test("run keys group separate executions and filters reset the cursor", async ({
   for (let i = 0; i < 2; i++) {
     await page.getByRole("button", { name: "Start run", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Start a run" });
-    await dialog
-      .getByLabel("Version to run", { exact: true })
-      .selectOption("activation");
+    await selectChoice(
+      dialog.getByLabel("Version to run", { exact: true }),
+      "activation",
+    );
     await dialog.getByText("Add a business key (optional)").click();
     await dialog
       .getByLabel("Business key", { exact: true })
@@ -603,18 +605,20 @@ test("catalog integration fields compile against the real Python action contract
     .click();
   await chooseAction(page, "lookup-customer@1.0.0");
   await expect(page.getByText("crm@1.0.0", { exact: true })).toBeVisible();
+  await page.locator(".inspector-header h2").click();
   await page
-    .getByRole("button", { name: "Apply changes", exact: true })
-    .click();
-  await page.getByLabel("Customer identifier").fill("customer-104");
-  await page
-    .getByRole("button", { name: "Apply changes", exact: true })
-    .click();
+    .getByRole("textbox", { name: "Customer identifier", exact: true })
+    .fill("customer-104");
+  await page.locator(".inspector-header h2").click();
   await page
     .getByRole("button", {
       name: "Use action output as workflow result",
       exact: true,
     })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Replace the workflow result?" })
+    .getByRole("button", { name: "Replace result", exact: true })
     .click();
   await page.getByRole("tab", { name: "Source", exact: true }).click();
   const source = await page

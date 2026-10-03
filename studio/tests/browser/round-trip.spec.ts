@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A configured integration step survives YAML and JSON export, re-import and
 // a draft save without losing or reshaping any value.
+import { selectChoice } from "./support";
 import { readFile } from "node:fs/promises";
 import { test, expect, Page, Download } from "@playwright/test";
 import { parse } from "yaml";
@@ -68,9 +69,9 @@ async function reimport(
 async function expectConfigured(page: Page) {
   await expect(actionPicker(page)).toHaveValue("sql.lookup@1.0.0");
   await expect(page.getByLabel(/^Customer ID/)).toHaveValue("customer-104");
-  await expect(page.getByLabel(/^Region(\s*\(optional\))?$/)).toHaveValue("1");
+  await expect(page.getByLabel(/^Region(\s*\(optional\))?$/)).toHaveValue("us");
   await expect(page.getByLabel(/^Limit(\s*\(optional\))?$/)).toHaveValue("25");
-  await expect(page.getByLabel(/^Mode(\s*\(optional\))?$/)).toHaveValue("1");
+  await expect(page.getByLabel(/^Mode(\s*\(optional\))?$/)).toHaveValue("safe");
   await expect(page.getByLabel(/^Label(\s*\(optional\))?$/)).toHaveValue(
     "Quarterly review",
   );
@@ -78,7 +79,7 @@ async function expectConfigured(page: Page) {
     "priority",
   );
   await expect(page.getByLabel(/^Dry run(\s*\(optional\))?$/)).toHaveValue(
-    "true",
+    "Yes",
   );
   // Options is an open object: named entries, each any JSON value.
   await expect(page.getByLabel("Options name 1", { exact: true })).toHaveValue(
@@ -105,26 +106,30 @@ test("integration configuration survives YAML and JSON export, import and draft 
   await insertStep(page, "Call an action");
   await chooseAction(page, "sql.lookup@1.0.0");
   await page.getByLabel(/^Customer ID/).fill("customer-104");
-  await page.getByLabel(/^Region(\s*\(optional\))?$/).selectOption("us");
+  await selectChoice(page.getByLabel(/^Region(\s*\(optional\))?$/), "us");
   await page.getByLabel(/^Limit(\s*\(optional\))?$/).fill("25");
-  await page.getByLabel(/^Mode(\s*\(optional\))?$/).selectOption("safe");
+  await selectChoice(page.getByLabel(/^Mode(\s*\(optional\))?$/), "safe");
   await page.getByLabel(/^Label(\s*\(optional\))?$/).fill("Quarterly review");
   await page.getByRole("button", { name: "Add Tags item" }).click();
   await page.getByLabel("Tags item 1", { exact: true }).fill("priority");
-  await page.getByLabel(/^Dry run(\s*\(optional\))?$/).selectOption("true");
+  await selectChoice(page.getByLabel(/^Dry run(\s*\(optional\))?$/), "true");
   await page.getByRole("button", { name: "Add Options entry" }).click();
   const entry = page.getByLabel("Options name 1", { exact: true });
   await entry.fill("retries");
   await entry.press("Tab");
   await page.getByLabel("Options value 1", { exact: true }).fill("2");
-  await page.locator(".add-slot").getByLabel("Slot name").fill("orders");
-  await page.getByRole("button", { name: "Add slot", exact: true }).click();
   await page
-    .getByRole("button", { name: "Apply changes", exact: true })
+    .getByRole("button", {
+      name: "Add a PostgreSQL connection slot",
+      exact: true,
+    })
     .click();
+  await page.getByLabel("Slot name", { exact: true }).fill("orders");
+  await page.getByLabel("Slot name", { exact: true }).press("Tab");
+  await page.locator(".inspector-header h2").click();
   await expectConfigured(page);
   await page.getByRole("button", { name: "Validate", exact: true }).click();
-  await expect(page.locator(".diagnostics")).toContainText("No problems found");
+  await expect(page.locator(".diagnostics")).toContainText("Checked locally");
 
   const yamlFiles = await exported(page, () => command(page, "Save to file"));
   const yamlSource = yamlFiles["untitled-workflow.yaml"];
@@ -153,7 +158,7 @@ test("integration configuration survives YAML and JSON export, import and draft 
   });
 
   await page.getByRole("tab", { name: "Source", exact: true }).click();
-  await page.getByLabel("Source format", { exact: true }).selectOption("json");
+  await selectChoice(page.getByLabel("Source format", { exact: true }), "json");
   await page.getByRole("tab", { name: "Designer", exact: true }).click();
   const jsonFiles = await exported(page, () => command(page, "Save to file"));
   const jsonSource = jsonFiles["untitled-workflow.json"];
@@ -178,6 +183,6 @@ test("integration configuration survives YAML and JSON export, import and draft 
   await expect.poll(() => saved).not.toBeNull();
   expect(saved.document).toEqual(definition);
   await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-    "Draft saved",
+    /Draft saved \d{2}:\d{2}/,
   );
 });

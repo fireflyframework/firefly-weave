@@ -169,6 +169,7 @@ SPDX-License-Identifier: Apache-2.0
           <button
             type="button"
             class="platform-indicator"
+            #platformMenuButton
             aria-controls="platform-menu"
             [attr.aria-expanded]="platformMenuOpen"
             [attr.aria-label]="platformIndicatorLabel"
@@ -210,6 +211,9 @@ SPDX-License-Identifier: Apache-2.0
             <div
               id="platform-menu"
               class="platform-menu"
+              [weaveAnchoredPopover]="platformMenuOpen"
+              [popoverAnchor]="platformMenuButton"
+              (popoverClosed)="closePlatformMenu(false)"
               role="group"
               aria-label="Platform"
               (keydown)="platformMenuKey($event)"
@@ -245,6 +249,9 @@ SPDX-License-Identifier: Apache-2.0
             </div>
           }
         </div>
+        <button type="button" (click)="lumiOpen = true" title="Ask Lumi">
+          <weave-icon name="llm" /><span>Ask Lumi</span>
+        </button>
       </header>
       <main id="main" class="main-view" tabindex="-1">
         @if (platformNotice && view !== "connect") {
@@ -459,6 +466,7 @@ SPDX-License-Identifier: Apache-2.0
       @if (showStartRun) {
         @defer (on immediate) {
           <weave-start-run-dialog
+            [fileAccess]="fileAccess"
             [api]="api"
             [activations]="availableActivations"
             [workspace]="workspaceText"
@@ -582,35 +590,13 @@ SPDX-License-Identifier: Apache-2.0
           />
         }
       }
-      @if (unapplied) {
-        <weave-modal
-          heading="Apply your changes?"
-          describedBy="unapplied-description"
-          (dismiss)="settleUnapplied('cancel')"
-        >
-          <p id="unapplied-description" class="dialog-message">
-            {{ unapplied.message }}
-          </p>
-          <div class="dialog-actions">
-            <button type="button" (click)="settleUnapplied('cancel')">
-              Keep editing</button
-            ><button type="button" (click)="settleUnapplied('discard')">
-              Discard changes</button
-            ><button
-              type="button"
-              class="primary"
-              data-initial-focus
-              (click)="settleUnapplied('apply')"
-            >
-              Apply and continue
-            </button>
-          </div>
-        </weave-modal>
-      }
       @if (apiBuilder || connectionDialog || showTemplates) {
         @defer (on immediate) {
           <weave-integration-dialogs [host]="this" />
         }
+      }
+      @defer (when lumiOpen) {
+        <weave-lumi-panel [host]="this" />
       }
       <weave-dialog-host />
     </div>

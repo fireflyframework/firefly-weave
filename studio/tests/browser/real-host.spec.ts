@@ -177,7 +177,7 @@ test("real PyFly host pairs the production app under CSP and validates local sou
     await page.getByRole("button", { name: "Validate", exact: true }).click();
     // One honest status line: what passed, and what waits for a platform.
     await expect(page.locator(".diagnostics-headline")).toHaveText(
-      "No problems found. Actions and connections are checked when you connect.",
+      "Checked locally — Validate to check against the project",
     );
     await expect(page.locator(".toast")).toContainText("No problems found.");
     expect(errors).toEqual([]);

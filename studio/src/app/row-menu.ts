@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A row's "⋯" menu: secondary and destructive row actions. A menu button
 // with arrow keys, Home/End, Escape (focus returns to the button) and Tab
-// (closes). The list is fixed to the viewport, so a scrolling table never
+// (closes). The list is in the top layer, so a scrolling table never
 // clips it. Used by lazily loaded views only.
 import {
   Component,
@@ -30,6 +30,7 @@ import {
   viewChild,
 } from "@angular/core";
 import { Icon } from "./icon";
+import { AnchoredPopover, pageOptionIndex } from "./forms/ui/anchored-popover";
 
 export interface RowMenuItem {
   label: string;
@@ -46,12 +47,11 @@ let sequence = 0;
 @Component({
   selector: "weave-row-menu",
   standalone: true,
-  imports: [Icon],
+  imports: [Icon, AnchoredPopover],
   host: {
     class: "row-menu",
     "(focusout)": "focusOut($event)",
     "(document:pointerdown)": "outside($event)",
-    "(window:resize)": "close(false)",
   },
   template: `<button
       #toggle
@@ -69,12 +69,12 @@ let sequence = 0;
     @if (open()) {
       <div
         class="row-menu-list"
+        [weaveAnchoredPopover]="open()"
+        [popoverAnchor]="toggle"
+        (popoverClosed)="close(false)"
         role="menu"
         [id]="id + '-menu'"
         [attr.aria-label]="label()"
-        [style.top.px]="place().top"
-        [style.bottom.px]="place().bottom"
-        [style.right.px]="place().right"
         (keydown)="menuKey($event)"
       >
         @for (item of items(); track item.label) {
@@ -101,11 +101,7 @@ let sequence = 0;
         display: inline-flex;
       }
       .row-menu-list {
-        position: fixed;
-        z-index: 30;
-        min-width: 200px;
-        max-width: min(320px, calc(100vw - 32px));
-        max-height: calc(100dvh - 16px);
+        color: var(--text);
         overflow: auto;
         padding: var(--space-1);
         display: grid;
@@ -153,11 +149,6 @@ export class RowMenu {
   text = input("");
   readonly id = `row-menu-${++sequence}`;
   open = signal(false);
-  place = signal<{ top: number | null; bottom: number | null; right: number }>({
-    top: 0,
-    bottom: null,
-    right: 0,
-  });
   private toggle = viewChild<ElementRef<HTMLButtonElement>>("toggle");
   private host = inject<ElementRef<HTMLElement>>(ElementRef);
   private injector = inject(Injector);
@@ -171,40 +162,22 @@ export class RowMenu {
   }
   private focusItem(index: number) {
     afterNextRender(
-      () => {
-        const entries = this.entries();
-        entries[(index + entries.length) % entries.length]?.focus();
-      },
+      () =>
+        queueMicrotask(() => {
+          const entries = this.entries();
+          entries[(index + entries.length) % entries.length]?.focus();
+        }),
       { injector: this.injector },
     );
   }
-  /**
-   * Below the toggle, or above it when the window has no room below (a
-   * menu in a panel's footer, for example).
-   */
-  private measure() {
-    const box = this.toggle()?.nativeElement.getBoundingClientRect();
-    if (!box) return;
-    const height =
-      this.items().reduce((sum, item) => sum + (item.detail ? 56 : 40), 0) + 10;
-    const below = window.innerHeight - box.bottom - 8;
-    const up = below < height && box.top - 8 > below;
-    this.place.set({
-      top: up ? null : box.bottom + 4,
-      bottom: up ? window.innerHeight - box.top + 4 : null,
-      right: Math.max(8, window.innerWidth - box.right),
-    });
-  }
   toggleMenu() {
     if (this.open()) return this.close();
-    this.measure();
     this.open.set(true);
     this.focusItem(0);
   }
   toggleKey(event: KeyboardEvent) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
-    this.measure();
     this.open.set(true);
     this.focusItem(event.key === "ArrowDown" ? 0 : -1);
   }
@@ -219,7 +192,12 @@ export class RowMenu {
     else if (event.key === "ArrowUp") move(index - 1);
     else if (event.key === "Home") move(0);
     else if (event.key === "End") move(entries.length - 1);
-    else if (event.key === "Escape") {
+    else if (event.key === "PageDown" || event.key === "PageUp") {
+      const list =
+        this.host.nativeElement.querySelector<HTMLElement>("[role=menu]");
+      if (list)
+        move(pageOptionIndex(list, index, event.key === "PageDown" ? 1 : -1));
+    } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       this.close();

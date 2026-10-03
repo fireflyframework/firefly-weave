@@ -26,7 +26,9 @@ import {
   output,
 } from "@angular/core";
 import { NgTemplateOutlet } from "@angular/common";
+import { Select } from "./forms/ui/select";
 import { Icon } from "./icon";
+import { RowMenu, type RowMenuItem } from "./row-menu";
 import { ReferenceCombobox } from "./forms/ui/reference-combobox";
 import { LazyComponent, type LazyOutputs } from "./forms/ui/lazy-component";
 import type { FieldInfo } from "./forms/core/resolve";
@@ -62,6 +64,7 @@ import {
   type ReferenceContext,
 } from "./forms/core/reference-context";
 import type { Schema } from "./task-schema";
+import type { FileAccess } from "./forms/core/file-reference";
 // The schema helpers live apart so the shell can use them without loading the form.
 export {
   type Schema,
@@ -75,15 +78,6 @@ type Data = Record<string, unknown>;
 type Path = (string | number)[];
 /** Where a bound field's value comes from. */
 type Mode = "value" | "data" | "formula";
-const modes: { mode: Mode; label: string; hint: string }[] = [
-  { mode: "value", label: "Value", hint: "Type the value" },
-  {
-    mode: "data",
-    label: "Data",
-    hint: "Use the workflow input or a step's output",
-  },
-  { mode: "formula", label: "Formula", hint: "Combine data with an operation" },
-];
 /**
  * What an unwritten formula shows: "Choose a formula…", not a null value.
  * One object, so its editor isn't reset.
@@ -115,8 +109,15 @@ let sequence = 0;
 @Component({
   selector: "weave-task-form",
   standalone: true,
-  imports: [NgTemplateOutlet, Icon, ReferenceCombobox, LazyComponent],
-  template: `<div class="task-fields">
+  imports: [
+    NgTemplateOutlet,
+    Icon,
+    ReferenceCombobox,
+    LazyComponent,
+    RowMenu,
+    Select,
+  ],
+  template: `<div class="task-fields" (focusout)="touchField($event)">
       <ng-container
         *ngTemplateOutlet="
           group;
@@ -240,7 +241,7 @@ let sequence = 0;
                   @let itemPath = fieldPath.concat($index);
                   @let itemId = idFor(itemPath);
                   @let itemKey = key(itemPath);
-                  <div class="schema-list-row">
+                  <div class="schema-list-row" [attr.data-path]="itemKey">
                     <ng-container
                       *ngTemplateOutlet="
                         scalar;
@@ -264,9 +265,9 @@ let sequence = 0;
                       Remove
                     </button>
                   </div>
-                  @if (errors[itemKey]) {
+                  @if (shownError(itemKey)) {
                     <p class="error" [id]="itemId + '-error'">
-                      {{ errors[itemKey] }}
+                      {{ shownError(itemKey) }}
                     </p>
                   }
                 }
@@ -285,7 +286,7 @@ let sequence = 0;
                   @let entryPath = fieldPath.concat(pair.key);
                   @let entryId = idFor(entryPath);
                   @let keyId = entryId + "-key";
-                  <div class="schema-map-row">
+                  <div class="schema-map-row" [attr.data-path]="key(entryPath)">
                     <input
                       [id]="keyId"
                       [attr.aria-label]="field.label + ' name ' + ($index + 1)"
@@ -326,9 +327,9 @@ let sequence = 0;
                       {{ errors[k + "#" + $index] }}
                     </p>
                   }
-                  @if (errors[key(entryPath)]) {
+                  @if (shownError(key(entryPath))) {
                     <p class="error" [id]="entryId + '-error'">
-                      {{ errors[key(entryPath)] }}
+                      {{ shownError(key(entryPath)) }}
                     </p>
                   }
                 }
@@ -403,6 +404,9 @@ let sequence = 0;
                   [value]="pointerAt(fieldPath)"
                   [options]="references"
                   [target]="field.schema"
+                  [removable]="true"
+                  [focusOnMount]="dataFocus === k"
+                  (removed)="switchMode(fieldPath, widget, 'value')"
                   [describedByIds]="described ?? ''"
                   (valueChange)="setReference(fieldPath, $event)"
                 />
@@ -416,12 +420,25 @@ let sequence = 0;
                   value: formulaAt(fieldPath),
                   label: field.label,
                   references,
+                  compact: true,
+                  controls: false,
                 }"
                 [lazyOutputs]="handlers('formula', fieldPath)"
               />
             } @else {
               @switch (widget) {
                 @case ("checkbox") {}
+                @case ("file") {
+                  <ng-container
+                    [weaveLazy]="loadFile"
+                    [lazyInputs]="{
+                      value: read(fieldPath),
+                      access: fileAccess(),
+                      label: field.label,
+                    }"
+                    [lazyOutputs]="handlers('file', fieldPath)"
+                  />
+                }
                 @case ("secret") {
                   <p
                     class="schema-locked"
@@ -462,7 +479,7 @@ let sequence = 0;
                     "
                     [value]="jsonText(fieldPath)"
                     [required]="enforced"
-                    [attr.aria-invalid]="!!errors[k] || null"
+                    [attr.aria-invalid]="!!shownError(k) || null"
                     [attr.aria-describedby]="described"
                     (input)="setJson(fieldPath, $event, field)"
                   ></textarea>
@@ -499,8 +516,8 @@ let sequence = 0;
             @if (field.description) {
               <p class="hint" [id]="id + '-hint'">{{ field.description }}</p>
             }
-            @if (errors[k]) {
-              <p class="error" [id]="id + '-error'">{{ errors[k] }}</p>
+            @if (shownError(k) && mode !== "data" && mode !== "formula") {
+              <p class="error" [id]="id + '-error'">{{ shownError(k) }}</p>
             }
           </div>
         }
@@ -518,24 +535,32 @@ let sequence = 0;
     >
       <!-- The group name leaves the field label out, so the field's own
            label names only its control; each button is described by it. -->
-      <span
-        class="binding-modes"
-        role="group"
-        aria-label="Where the value comes from"
-      >
-        @for (option of modes; track option.mode) {
+      <span class="binding-modes">
+        @if (mode !== "data") {
           <button
             type="button"
             class="binding-mode"
-            [attr.data-mode]="option.mode"
-            [attr.aria-pressed]="mode === option.mode"
+            data-mode="data"
             [attr.aria-describedby]="labelId"
-            [title]="option.hint"
-            (click)="switchMode(path, widget, option.mode)"
+            (click)="switchMode(path, widget, 'data')"
           >
-            {{ option.label }}
+            Use data
           </button>
         }
+        @if (mode === "formula") {
+          <button
+            type="button"
+            class="binding-mode"
+            data-mode="value"
+            (click)="switchMode(path, widget, 'value')"
+          >
+            Use value
+          </button>
+        }
+        <weave-row-menu
+          [label]="'Options for ' + field.label"
+          [items]="sourceActions(path, widget)"
+        />
       </span>
     </ng-template>
 
@@ -554,47 +579,34 @@ let sequence = 0;
       @let widget = scalarWidget(field);
       @let k = key(path);
       @let isNull = value === null;
-      @let invalid = !!errors[k] || null;
-      @let describe = described ?? (errors[k] ? id + "-error" : null);
+      @let invalid = !!shownError(k) || null;
+      @let describe = described ?? (shownError(k) ? id + "-error" : null);
       @switch (widget) {
         @case ("choice") {
-          <select
-            [id]="id"
-            [attr.aria-label]="label || null"
-            [required]="required"
+          <weave-select
+            [controlId]="id"
+            [label]="label || field.label"
+            [hideLabel]="true"
+            [options]="choiceOptions(field)"
+            [value]="choiceValue(field, value)"
             [disabled]="isNull"
-            [attr.aria-describedby]="describe"
-            (change)="setChoice(path, $event, field)"
-          >
-            <option value="" [selected]="choiceIndex(field, value) < 0">
-              Choose a value
-            </option>
-            @for (option of field.options; track $index) {
-              <option
-                [value]="$index"
-                [selected]="choiceIndex(field, value) === $index"
-              >
-                {{ option.label }}
-              </option>
-            }
-          </select>
+            [invalid]="invalid"
+            [describedBy]="describe"
+            (choose)="setChoice(path, $event, field)"
+          />
         }
         @case ("tristate") {
-          <select
-            [id]="id"
-            [attr.aria-label]="label || null"
+          <weave-select
+            [controlId]="id"
+            [label]="label || field.label"
+            [hideLabel]="true"
+            [options]="tristateOptions(member)"
+            [value]="value === true ? 'true' : value === false ? 'false' : ''"
             [disabled]="isNull"
-            [attr.aria-describedby]="describe"
-            (change)="setTristate(path, $event)"
-          >
-            @if (!member) {
-              <option value="" [selected]="value !== true && value !== false">
-                Not set
-              </option>
-            }
-            <option value="true" [selected]="value === true">Yes</option>
-            <option value="false" [selected]="value === false">No</option>
-          </select>
+            [invalid]="invalid"
+            [describedBy]="describe"
+            (choose)="setTristate(path, $event)"
+          />
         }
         @case ("multiline") {
           <textarea
@@ -744,6 +756,7 @@ let sequence = 0;
   ],
 })
 export class TaskForm implements OnChanges {
+  fileAccess = input<FileAccess | null>(null);
   schema = input<Schema>({});
   initialData = input<Record<string, unknown>>({});
   /** Edit an expression whose fields each take a value, data or a formula. */
@@ -763,13 +776,25 @@ export class TaskForm implements OnChanges {
   values: Data = {};
   bound: Bound = { kind: "object", entries: {} };
   errors: Record<string, string> = {};
+  private touched = new Set<string>();
+  dataFocus: string | null = null;
+  touchField(event: FocusEvent) {
+    const field = (event.target as HTMLElement).closest<HTMLElement>(
+      "[data-path]",
+    );
+    if (field?.dataset["path"] !== undefined)
+      this.touched.add(field.dataset["path"]);
+  }
+  shownError(key: string) {
+    return this.touched.has(key) ? this.errors[key] : undefined;
+  }
   /** A polite announcement for added and removed rows. */
   status = "";
-  modes = modes;
   /** Text the person typed that isn't a value yet (JSON, dates, references). */
   private drafts = new Map<string, string>();
   /** A source chosen for a field that has no value from it yet. */
   private chosen = new Map<string, Mode>();
+  private formulaDrafts = new Map<string, unknown>();
   /** What each source held, so switching back restores it. */
   private memory = new Map<string, Partial<Record<Mode, Bound>>>();
   private fieldCache = new WeakMap<object, FieldInfo[]>();
@@ -785,8 +810,9 @@ export class TaskForm implements OnChanges {
   /** The formula and typed-value editors live in the property grid's chunk. */
   loadFormula = () => import("./property-grid").then((m) => m.ExpressionEditor);
   loadValue = () => import("./property-grid").then((m) => m.PropertyValue);
+  loadFile = () => import("./forms/ui/file-picker").then((m) => m.FilePicker);
   /** Output handlers of a lazily loaded editor, one stable set per field. */
-  handlers(kind: "formula" | "any", path: Path): LazyOutputs {
+  handlers(kind: "formula" | "any" | "file", path: Path): LazyOutputs {
     const key = `${kind}\u001e${this.key(path)}`;
     let handlers = this.handlerCache.get(key);
     if (!handlers)
@@ -818,8 +844,11 @@ export class TaskForm implements OnChanges {
       return;
     const generation = ++this.generation;
     this.errors = {};
+    this.touched.clear();
+    this.dataFocus = null;
     this.drafts.clear();
     this.chosen.clear();
+    this.formulaDrafts.clear();
     this.memory.clear();
     if (this.bindings()) {
       const bound = decode(this.expression() ?? { literal: {} }, this.schema());
@@ -986,10 +1015,20 @@ export class TaskForm implements OnChanges {
     return node?.kind === "ref" ? node.pointer : "";
   }
   formulaAt(path: Path): unknown {
+    if (this.formulaDrafts.has(this.key(path)))
+      return this.formulaDrafts.get(this.key(path));
     const node = boundAt(this.bound, path);
     if (!node) return emptyFormula;
     if (!this.expressions.has(node)) this.expressions.set(node, encode(node));
     return this.expressions.get(node);
+  }
+  sourceActions(path: Path, widget: Widget): RowMenuItem[] {
+    return [
+      {
+        label: "Calculate…",
+        run: () => this.switchMode(path, widget, "formula"),
+      },
+    ];
   }
   /** Switches a field's source; what the previous source held is kept. */
   switchMode(path: Path, widget: Widget, mode: Mode) {
@@ -1003,24 +1042,35 @@ export class TaskForm implements OnChanges {
     let next = memory[mode];
     // A formula starts from the current value; with none, nothing is
     // written until the formula is edited.
-    if (!next && mode === "formula" && node) next = formula(encode(node));
-    this.bound = this.place(path, next);
+    if (!next && mode === "formula")
+      this.formulaDrafts.set(key, {
+        op: { name: "", args: node ? [encode(node)] : [] },
+      });
+    if (next || mode === "value") this.bound = this.place(path, next);
     this.chosen.set(key, mode);
+    this.dataFocus = mode === "data" ? key : null;
     this.drafts.delete(key);
     this.clearErrors(key);
-    this.publish();
+    if (next || mode === "value") this.publish();
     this.cdr.detectChanges();
     // A group, list or map is drawn differently per source, so the button
     // that was pressed may be gone: keep focus on the new one.
     const host = this.host.nativeElement as HTMLElement;
-    if (!host.contains(document.activeElement)) {
+    if (!host.contains(document.activeElement) || mode === "data") {
       const field = host.querySelector(`[data-path="${CSS.escape(key)}"]`);
       const button = [
         ...(field?.querySelectorAll<HTMLElement>(
           `.binding-mode[data-mode="${mode}"]`,
         ) ?? []),
       ].find((element) => element.closest("[data-path]") === field);
-      button?.focus();
+      const control =
+        mode === "data"
+          ? field?.querySelector<HTMLElement>("input[role=combobox]")
+          : (button ??
+            field?.querySelector<HTMLElement>(
+              "input, select, textarea, button",
+            ));
+      control?.focus();
     }
   }
   setReference(path: Path, text: string) {
@@ -1040,6 +1090,7 @@ export class TaskForm implements OnChanges {
     this.publish();
   }
   setFormula(path: Path, expression: unknown) {
+    this.formulaDrafts.delete(this.key(path));
     this.chosen.set(this.key(path), "formula");
     this.bound = this.place(path, formula(expression));
     this.clearErrors(this.key(path));
@@ -1125,15 +1176,41 @@ export class TaskForm implements OnChanges {
     const { [key]: _, ...rest } = this.errors;
     this.errors = rest;
   }
-  setChoice(path: Path, event: Event, field: FieldInfo) {
-    const index = (event.target as HTMLSelectElement).value;
+  choiceOptions(field: FieldInfo) {
+    return [
+      { value: "", label: "Choose a value" },
+      ...(field.options ?? []).map((option, index) => ({
+        value: String(index),
+        label: option.label,
+      })),
+    ];
+  }
+  choiceValue(field: FieldInfo, value: unknown) {
+    const index = this.choiceIndex(field, value);
+    return index < 0 ? "" : String(index);
+  }
+  tristateOptions(member: boolean) {
+    return [
+      ...(member ? [] : [{ value: "", label: "Not set" }]),
+      { value: "true", label: "Yes" },
+      { value: "false", label: "No" },
+    ];
+  }
+  setChoice(path: Path, event: Event | string, field: FieldInfo) {
+    const index =
+      typeof event === "string"
+        ? event
+        : (event.target as HTMLSelectElement).value;
     this.write(
       path,
       index === "" ? undefined : field.options?.[Number(index)]?.value,
     );
   }
-  setTristate(path: Path, event: Event) {
-    const text = (event.target as HTMLSelectElement).value;
+  setTristate(path: Path, event: Event | string) {
+    const text =
+      typeof event === "string"
+        ? event
+        : (event.target as HTMLSelectElement).value;
     this.write(path, text === "" ? undefined : text === "true");
   }
   setBoolean(path: Path, event: Event) {
@@ -1341,6 +1418,7 @@ export class TaskForm implements OnChanges {
     );
     for (const key of [...this.drafts.keys()])
       if (stale(key)) this.drafts.delete(key);
+    this.touched = new Set([...this.touched].filter((key) => !stale(key)));
   }
   /** Moves the typed text and errors of a renamed map entry to its new name. */
   private moveRow(from: Path, to: Path) {
@@ -1356,6 +1434,7 @@ export class TaskForm implements OnChanges {
         message,
       ]),
     );
+    this.touched = new Set([...this.touched].map(moved));
     for (const [key, text] of [...this.drafts])
       if (moved(key) !== key) {
         this.drafts.delete(key);

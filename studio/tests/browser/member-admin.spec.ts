@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 const tenant = "00000000-0000-0000-0000-000000000001";
 const project = "00000000-0000-0000-0000-000000000002";
@@ -240,8 +241,8 @@ test("account and role forms send exact typed bodies through local CSRF", async 
     .click();
   const grant = page.locator(".member-grant-form");
   await grant.getByLabel("Account ID").fill(target);
-  await grant.getByLabel("Role", { exact: true }).selectOption("developer");
-  await grant.getByLabel("Applies to").selectOption("environment");
+  await selectChoice(grant.getByLabel("Role", { exact: true }), "developer");
+  await selectChoice(grant.getByLabel("Applies to"), "environment");
   await grant.getByLabel("Limit to resources").fill("action-a, action-b");
   await grant.getByRole("button", { name: "Assign role", exact: true }).click();
   await expect.poll(() => commands.length).toBe(3);
@@ -322,3 +323,49 @@ test("lost account creation is held for checking and never retried by itself", a
     page.getByRole("button", { name: "Create account", exact: true }),
   ).toBeDisabled();
 });
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 600, height: 500 },
+]) {
+  test(`file and Lumi roles can be granted independently at ${viewport.width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    const commands = await administration(page);
+    await people(page);
+    for (const role of [
+      "file_reader",
+      "file_manager",
+      "lumi_user",
+      "lumi_manager",
+    ]) {
+      await page
+        .locator(".administration .card-heading")
+        .getByRole("button", { name: "Assign role", exact: true })
+        .click();
+      const grant = page.locator(".member-grant-form");
+      await grant.getByLabel("Account ID").fill(target);
+      await selectChoice(grant.getByLabel("Role", { exact: true }), role);
+      await selectChoice(grant.getByLabel("Applies to"), "environment");
+      await grant
+        .getByRole("button", { name: "Assign role", exact: true })
+        .click();
+      await expect
+        .poll(() => commands.at(-1)?.body)
+        .toEqual({
+          principal_id: target,
+          role,
+          project_id: project,
+          environment_id: environment,
+          resources: [],
+        });
+      // A pointer user can dismiss feedback before the next form at short heights.
+      await page
+        .getByRole("button", { name: "Dismiss notification", exact: true })
+        .click();
+      await expect(page.locator(".toast")).not.toBeVisible();
+    }
+    expect(commands).toHaveLength(4);
+  });
+}

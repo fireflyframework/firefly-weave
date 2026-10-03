@@ -158,3 +158,35 @@ describe("action search", () => {
     expect(found.groups[0].items).toHaveLength(PICKER_LIMIT);
   });
 });
+
+it("shows latest stable semantic versions by name and keeps explicit versions searchable", () => {
+  const versions = ["3.0.0", "2.0.0", "3.1.0-rc.1", "3.1.0", "3.10.0", "3.2.0"];
+  const actions = versions.map((version) => ({ name: "erp.lookup", version }));
+  expect(
+    searchActions("erp", actions)
+      .groups.flatMap((group) => group.items)
+      .map((item) => item.version),
+  ).toEqual(["3.10.0"]);
+  expect(
+    searchActions("erp.lookup@2.0.0", actions).groups[0].items[0].version,
+  ).toBe("2.0.0");
+});
+
+it("reads worker connection and side-effect metadata for action grouping", () => {
+  const item = actionPickerItem(
+    { name: "crm.update", version: "1.0.0" },
+    {
+      spec: {
+        implementation: {
+          kind: "worker",
+          taskType: "crm.update",
+          taskVersion: "1.0.0",
+        },
+        connection: { connector: "salesforce@1.0.0" },
+        sideEffect: "non_idempotent",
+      },
+    },
+  );
+  expect(item?.connector).toBe("salesforce@1.0.0");
+  expect(item?.sideEffect).toBe("non_idempotent");
+});

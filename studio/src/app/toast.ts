@@ -143,6 +143,14 @@ export class ToastService {
             {{ action.label }}
           </button>
         }
+        <button
+          type="button"
+          class="toast-dismiss"
+          aria-label="Dismiss notification"
+          (click)="toasts.dismiss(toast.id)"
+        >
+          ×
+        </button>
       </div>
     </ng-template>`,
 })
@@ -183,10 +191,11 @@ export class ToastHost implements OnDestroy {
     if (
       !this.toasts.current() ||
       !(focused instanceof HTMLElement) ||
-      focused === document.body ||
-      region.contains(focused)
+      focused === document.body
     )
       return this.place(false);
+    // Keep an action under the pointer as it receives focus between down/up.
+    if (region.contains(focused)) return;
     const toast = region.querySelector(".toast");
     if (!toast) return;
     const box = toast.getBoundingClientRect();
