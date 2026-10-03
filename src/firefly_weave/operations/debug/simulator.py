@@ -70,18 +70,19 @@ class Simulator:
         self._bounded()
 
     def _validate_mocks(self, mocks: dict[str, JsonValue]) -> None:
-        actions = {}
+        actions: dict[str, list[tuple[ActionDefinition, ActionNode]]] = {}
         for node in self.ir.graph.nodes:
             if isinstance(node, ActionNode):
                 dep = next(d for d in self.ir.dependencies if d.digest == node.dependency and d.kind == "Action")
                 definition = cast(ActionDefinition, load_definition(dep.document))
-                actions["node:" + node.id] = definition
-                actions["action:" + dep.reference] = definition
+                actions["node:" + node.id] = [(definition, node)]
+                actions.setdefault("action:" + dep.reference, []).append((definition, node))
         for key, value in mocks.items():
             if key not in actions:
                 raise DebugError("WV-DEBUG-MOCK-KEY")
             try:
-                validate_action(self.ir, actions[key], "output", value)
+                for definition, node in actions[key]:
+                    validate_action(self.ir, definition, "output", value, node=node)
             except ValueError:
                 raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
 

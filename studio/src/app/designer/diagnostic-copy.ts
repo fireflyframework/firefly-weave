@@ -40,6 +40,18 @@ interface Copy {
 }
 
 const compiler: Record<string, Copy> = {
+  LLM_PROFILE: {
+    text: "This AI profile is missing or invalid.",
+    hint: "Choose a workflow AI profile, or configure its model and result fields.",
+  },
+  LLM_ACTION: {
+    text: "This action does not provide the required AI worker contract.",
+    hint: "Choose the published weave-agentic-generate action and its required connection.",
+  },
+  DECISION_EMPTY_OUTPUT: {
+    text: "A Collect table must allow an empty list as its result.",
+    hint: "Remove a minimum item count or another constraint that rejects no matches.",
+  },
   UNAVAILABLE_REFERENCE: {
     text: "This uses data from a step that hasn't finished at this point in the workflow.",
     hint: "Use the workflow input or a step that runs earlier on the same path.",
@@ -216,6 +228,34 @@ const families: Record<string, { copy: Record<string, Copy>; fallback: Copy }> =
     EXPR: {
       copy: expression,
       fallback: { text: "This expression can't be evaluated." },
+    },
+    DECISION: {
+      copy: {
+        REFERENCE: {
+          text: "A decision rule can only read the table input.",
+          hint: "Pass workflow data into the table, then choose it from Input data.",
+        },
+        MULTIPLE_MATCHES: {
+          text: "More than one rule matched a Unique table.",
+          hint: "Make the rules mutually exclusive, or choose First or Collect.",
+        },
+        NO_MATCH: {
+          text: "No decision rule matched and there is no default result.",
+          hint: "Add a default result or a rule for this input.",
+        },
+        PREDICATE: { text: "A rule condition must produce true or false." },
+        INPUT: {
+          text: "The data passed to this table does not match its input fields.",
+        },
+        OUTPUT: {
+          text: "The decision result does not match its declared output fields.",
+        },
+        CONTRACT: { text: "The decision table is incomplete or invalid." },
+        RESOURCE_LIMIT: {
+          text: "The decision table exceeds an evaluation limit.",
+        },
+      },
+      fallback: { text: "This decision table could not be evaluated." },
     },
     SCHEMA: {
       copy: schema,

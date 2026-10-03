@@ -70,6 +70,7 @@ STUDIO_FAMILIES = frozenset(
         "email_receipts",
         "email_tokens",
         "connections",
+        "files",
         "connector_descriptors",
         "workers",
         "environments",
@@ -82,7 +83,7 @@ STUDIO_FAMILIES = frozenset(
 # Single read operations from families that otherwise stay operator-only: releases.create
 # registers image identities and remains a CLI/operator step.
 STUDIO_OPERATIONS = frozenset({"releases.list", "releases.read"})
-CATALOG_COLLECTIONS = frozenset({"drafts", "workflows", "actions", "connectors"})
+CATALOG_COLLECTIONS = frozenset({"drafts", "workflows", "actions", "connectors", "decision-tables"})
 
 
 class StudioProfile(BaseModel):

@@ -96,3 +96,23 @@ def test_restore_cleanup_attempts_every_owned_resource():
         )
     assert calls == ["receiver", "outbox", "trial"]
     assert [str(error) for error in errors.value.exceptions] == ["receiver", "outbox"]
+
+
+@pytest.mark.parametrize("context,container", [("foreign", "a" * 64), ("colima-weave-tests", "b" * 64)])
+def test_custom_restore_arguments_must_match_approved_receipt(monkeypatch, tmp_path, context, container):
+    import asyncio
+
+    from sqlalchemy import make_url
+
+    module = restore_module()
+    monkeypatch.setenv("WEAVE_RELEASE_BACKENDS", str(tmp_path / "owned.json"))
+    monkeypatch.setenv("WEAVE_TEST_DOCKER_CONTEXT", "colima-weave-tests")
+    monkeypatch.setenv("WEAVE_TEST_POSTGRES_CONTAINER", "a" * 64)
+    monkeypatch.setattr(
+        module,
+        "guard_control",
+        lambda _: make_url("postgresql+asyncpg://weave_b1_owner:x@127.0.0.1:55541/weave_b1_control"),
+    )
+    with pytest.raises(ValueError, match="receipt"):
+        asyncio.run(module.restore(tmp_path / "absent.env", tmp_path / "backup", context, container))
+    assert not (tmp_path / "backup").exists()

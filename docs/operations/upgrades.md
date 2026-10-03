@@ -37,6 +37,7 @@ the desktop app never migrates a platform.
 | alpha5 | `0025_run_lifecycle` | New migrations for human tasks, email, run filters, and execution lifecycle state |
 | alpha6 | `0025_run_lifecycle` | macOS packaging correction; no new migration |
 | alpha7 | `0025_run_lifecycle` | No new migration; adds optional server settings for [published sign-in](#after-the-upgrade-clients-and-sign-in) and the executor `build` field, whose default `image` keeps existing executor configuration valid |
+| alpha8 | `0028_files` | Adds decision-table artifacts, separate Lumi configuration, file metadata/chunks/retention, and new scoped file and assistant roles. Existing grants do not automatically gain these roles. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 

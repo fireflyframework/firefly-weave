@@ -131,6 +131,17 @@ def admit_authoring(
                     schema(child)
                 elif key not in {"literal", "default", "examples", "const", "enum"}:
                     walk(child)
+            if value.get("kind") == "llm":
+                spec = document.get("spec")
+                profiles = spec.get("llmProfiles") if isinstance(spec, dict) else None
+                profile = profiles.get(str(value.get("profile", ""))) if isinstance(profiles, dict) else None
+                fields: JsonObject = {}
+                for name in ("prompt", "context"):
+                    if isinstance(value.get(name), dict):
+                        fields[name] = value[name]
+                if isinstance(profile, dict):
+                    fields["profile"] = {"literal": profile}
+                walk({"kind": "action", "uses": value.get("uses"), "with": {"object": fields}})
             if value.get("kind") == "action" and "with" in value:
                 resource = catalog.resolve("Action", str(value.get("uses", "")))
                 spec = cast(JsonObject, resource.definition.value.get("spec", {})) if resource else {}
@@ -149,6 +160,23 @@ def admit_authoring(
                         if isinstance(descriptor, dict):
                             secondary = descriptor.get("inputSchema")
                 binding(secondary, value["with"])
+            if value.get("kind") == "decisionTable" and "with" in value:
+                resource = catalog.resolve("DecisionTable", str(value.get("uses", "")))
+                spec = cast(JsonObject, resource.definition.value.get("spec", {})) if resource else {}
+                binding(spec.get("inputSchema"), value["with"])
+            if value.get("kind") == "DecisionTable" and isinstance(value.get("spec"), dict):
+                spec = cast(JsonObject, value["spec"])
+                output = spec.get("outputSchema")
+                row_output = (
+                    output.get("items") if isinstance(output, dict) and spec.get("hitPolicy") == "collect" else output
+                )
+                rules = spec.get("rules")
+                if isinstance(rules, list):
+                    for rule in rules:
+                        if isinstance(rule, dict):
+                            binding(row_output, rule.get("output"))
+                if "defaultOutput" in spec:
+                    binding(output, spec["defaultOutput"])
             if "output" in value and "outputSchema" in value:
                 binding(value["outputSchema"], value["output"])
             if value.get("kind") == "connector" and "config" in value:
@@ -200,6 +228,11 @@ def admit_artifact(executable: JsonObject) -> None:
             if node["kind"] == "action":
                 action = next(r for r in resources.values() if r.kind == "Action" and r.digest == node["dependency"])
                 admit_authoring({"kind": "action", "uses": action.reference, "with": node["with"]}, catalog)
+            elif node["kind"] == "decisionTable":
+                table = next(
+                    r for r in resources.values() if r.kind == "DecisionTable" and r.digest == node["dependency"]
+                )
+                admit_authoring({"kind": "decisionTable", "uses": table.reference, "with": node["with"]}, catalog)
             elif node["kind"] == "end":
                 admit_binding(
                     cast(JsonObject, schemas[cast(str, executable["outputSchema"])]),

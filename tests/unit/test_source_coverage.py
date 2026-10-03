@@ -316,3 +316,8 @@ def test_rust_block_header_is_recognized(tmp_path):
     header = "/*\n" + "\n".join(line.removeprefix("# ") for line in HEADER.splitlines()) + "\n*/\n"
     (tmp_path / "main.rs").write_text(header + "fn main() {}\n")
     assert run(tmp_path, "--strict")[0] == 0
+
+
+def test_dockerfile_specific_ignore_uses_its_own_comment_header(tmp_path):
+    (tmp_path / "Dockerfile.dockerignore").write_text(HEADER + "**\n!src\n")
+    assert run(tmp_path, "--strict")[0] == 0

@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { changeSlot, slotValidation } from "./integrations/connection-slots";
 import {
   Component,
   HostListener,
@@ -25,9 +26,11 @@ import {
   inject,
   ChangeDetectorRef,
 } from "@angular/core";
+import type { FileAccess } from "./forms/core/file-reference";
 import { Title } from "@angular/platform-browser";
 import { Router } from "@angular/router";
 import { Icon } from "./icon";
+import { AnchoredPopover } from "./forms/ui/anchored-popover";
 import { type Schema, missingRequired } from "./task-schema";
 import { ConnectionWizard } from "./connection-wizard";
 import {
@@ -72,6 +75,7 @@ import {
 import { StartRunDialog, type StartRunRequest } from "./run/start-run-dialog";
 import type { SuggestedChange } from "./designer/diagnostics-list";
 import type { DiagnosticLocation } from "./designer/diagnostic-location";
+import type { ContractGap } from "./designer/contract-gaps";
 import type { ReferenceContext } from "./forms/core/reference-context";
 import type { InferSchema } from "./forms/ui/schema-designer";
 import type {
@@ -118,6 +122,7 @@ import {
   fitAll as fitAllView,
   readableFit,
   reveal,
+  revealGroup,
   usableViewport,
   wheelFactor,
   zoomAt,
@@ -131,11 +136,7 @@ import { IntegrationDialogs } from "./integrations/integration-dialogs";
 import { TemplateGallery } from "./templates/template-gallery";
 import { sheetWhen } from "./modal-sheet";
 import { ToastHost, ToastService, type ToastAction } from "./toast";
-import {
-  LocalDrafts,
-  localKeepLabel,
-  type LocalDraftEntry,
-} from "./local-drafts";
+import { LocalDrafts, type LocalDraftEntry } from "./local-drafts";
 import { runStatus } from "./status-labels";
 import {
   loadingWorkspace,
@@ -147,6 +148,7 @@ import {
 // The operations pages and Settings load lazily (@defer): only these classes.
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
+import { LumiPanel } from "./lumi/lumi-panel";
 import type {
   BuilderTab,
   HttpActionUse,
@@ -186,7 +188,6 @@ interface ConnectionSlot {
   required: boolean;
 }
 type CatalogState = "idle" | "loading" | "ready" | "error";
-type UnappliedChoice = "apply" | "discard" | "cancel";
 /** Commands whose buttons explain why they are unavailable. */
 type Command = "save" | "publish" | "simulate" | "activate" | "run";
 /** Where the open workflow is in its life: what the one primary button does next. */
@@ -290,8 +291,6 @@ const decisionPast = (decision: string) =>
 const sessionLostMessage =
   "Your Studio session ended. Export your workflow to keep your edits, then quit and reopen Firefly Weave Studio.";
 const noHiddenFields: string[] = [];
-const actionHiddenFields = ["connection"];
-const actionFieldsHiddenFields = ["connection", "with"];
 const actionPickerHiddenFields = ["connection", "uses"];
 const actionFieldsPickerHiddenFields = ["connection", "with", "uses"];
 const sideEffects: Record<string, string> = {
@@ -305,6 +304,7 @@ const sideEffects: Record<string, string> = {
   standalone: true,
   imports: [
     Icon,
+    AnchoredPopover,
     HomeDashboard,
     ConnectionWizard,
     DialogHost,
@@ -319,6 +319,7 @@ const sideEffects: Record<string, string> = {
     DesignerView,
     RecordsView,
     SettingsPage,
+    LumiPanel,
   ],
   templateUrl: "./app.html",
 })
@@ -351,6 +352,7 @@ export class App {
     /** A plain sentence about the outcome, for "sign-in-failed". */
     detail?: string;
   } | null = null;
+  lumiOpen = false;
   platformMenuOpen = false;
   platformBusy = "";
   // Fences platform checks and status reads against later platform changes.
@@ -373,6 +375,57 @@ export class App {
   } | null = null;
 
   api = new StudioApi();
+  private currentFileAccess: FileAccess | null = null;
+  private currentTaskFileAccess: FileAccess | null = null;
+  private fileAccessKey() {
+    return JSON.stringify([
+      this.profile,
+      this.identity?.principal_id,
+      this.can("file.read"),
+      this.can("file.manage"),
+    ]);
+  }
+  get fileAccess(): FileAccess | null {
+    if (!this.profile) return null;
+    const key = this.fileAccessKey();
+    if (this.currentFileAccess?.key !== key)
+      this.currentFileAccess = {
+        api: this.api,
+        key,
+        canRead: this.can("file.read"),
+        canManage: this.can("file.manage"),
+        active: () => key === this.fileAccessKey(),
+      };
+    return this.currentFileAccess;
+  }
+  private taskFileAccessKey() {
+    return JSON.stringify([
+      this.fileAccessKey(),
+      this.selectedRecord?.["id"],
+      this.selectedRecord?.["revision"],
+      this.selectedRecord?.["status"],
+      this.selectedRecord?.["claimant_id"],
+      this.taskConflict,
+    ]);
+  }
+  get taskFileAccess(): FileAccess | null {
+    const task = this.selectedRecord;
+    if (!this.profile || this.view !== "tasks" || !task) return null;
+    const key = this.taskFileAccessKey();
+    if (this.currentTaskFileAccess?.key !== key)
+      this.currentTaskFileAccess = {
+        api: this.api,
+        key,
+        canRead: this.can("human_task.read", String(task["id"])),
+        canManage:
+          this.taskOwned() &&
+          task["status"] === "claimed" &&
+          !this.taskConflict,
+        task: { id: String(task["id"]), revision: Number(task["revision"]) },
+        active: () => this.view === "tasks" && key === this.taskFileAccessKey(),
+      };
+    return this.currentTaskFileAccess;
+  }
   connection = new ConnectionClient(this.api);
   /** Follows a pending sign-in, also after the person leaves the wizard. */
   loginWatcher = new LoginWatcher(this.connection);
@@ -601,6 +654,10 @@ export class App {
     { value: "email_reader", label: "Email reader" },
     { value: "email_sender", label: "Email sender" },
     { value: "email_manager", label: "Email manager" },
+    { value: "file_reader", label: "File reader" },
+    { value: "file_manager", label: "File manager" },
+    { value: "lumi_user", label: "Lumi user" },
+    { value: "lumi_manager", label: "Lumi manager" },
   ];
   // Published action catalog, loaded once per workspace and shared by every action step.
   actionVersions: Record<string, unknown>[] = [];
@@ -612,6 +669,12 @@ export class App {
   private catalogGeneration = 0;
   // Action contracts by name@version; the inspector shows the one its buffer uses.
   private contractCache = new Map<string, Record<string, unknown>>();
+  readonly decisionContracts = new Map<string, Record<string, unknown>>();
+  cacheDecisionContract(uses: string, document: Record<string, unknown>) {
+    this.decisionContracts.set(uses, document);
+    this.tick.update((value) => value + 1);
+    this.cdr.markForCheck();
+  }
   actionContract: Record<string, unknown> | null = null;
   contractState: CatalogState = "idle";
   contractError = "";
@@ -654,11 +717,19 @@ export class App {
   showActivation = false;
   /** Why the last activation failed, shown inside the activation dialog. */
   activationError: { message: string; code: string } | null = null;
-  /** The open "Apply your changes?" question, answered by its buttons. */
-  unapplied: {
-    message: string;
-    resolve: (choice: UnappliedChoice) => void;
+  private inspectorTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingInspector: {
+    scope: "step" | "workflow" | "rename";
+    id: string;
+    text: string;
+    key: string;
+    opened: number;
+    continueRevision?: number;
   } | null = null;
+  private actionChoiceRevision: number | null = null;
+  private committingInspector = false;
+  renameDraft = "";
+  private draftSavedAt = "";
   advancedProperties = false;
   zoom = 1;
   pan = { x: 0, y: 0 };
@@ -671,6 +742,8 @@ export class App {
     pointer: number;
   } | null = null;
   connectingNode = "";
+  dragTarget: Target | null = null;
+  private suppressNodeClick = false;
   /** The open step picker and the "+" it inserts at. */
   picker: { target: Target; anchor: HTMLElement } | null = null;
   /** A press on empty canvas; a release close to it returns to workflow settings. */
@@ -705,6 +778,12 @@ export class App {
   private cachedTick = -1;
   private cachedNodes: Node[] = [];
   private cachedBoundaries = this.model.boundaries();
+  private cachedLaneGroups: ReturnType<StructuredCanvasAdapter["laneGroups"]> =
+    [];
+  private cachedLaneTerminals: ReturnType<
+    StructuredCanvasAdapter["terminals"]
+  > = [];
+  private cachedJunctions: Record<string, Point> = {};
   private nodeById = new Map<string, Node>();
   private visualLinks: { from: string; to: string }[] = [];
   private cachedTargets: Target[] = [];
@@ -713,7 +792,7 @@ export class App {
   private edgeCache: {
     tick: number;
     drag: unknown;
-    paths: { key: string; d: string }[];
+    paths: { key: string; from: string; d: string }[];
   } = { tick: -1, drag: null, paths: [] };
   /** Error and warning counts per step from the last diagnostics. */
   private diagnosticSteps = new Map<
@@ -744,6 +823,61 @@ export class App {
   } = { source: null, actions: [] };
   /** Bumped whenever an action contract is cached or dropped. */
   private contractRevision = 0;
+  private findContractGaps:
+    | typeof import("./designer/contract-gaps").contractGaps
+    | null = null;
+  private gapCache: {
+    tick: number;
+    revision: number;
+    rows: (ContractGap & { stepId: string })[];
+  } = { tick: -1, revision: -1, rows: [] };
+  get contractIssues() {
+    const contractGaps = this.findContractGaps;
+    if (!contractGaps) return [];
+    const tick = this.tick();
+    if (
+      this.gapCache.tick !== tick ||
+      this.gapCache.revision !== this.contractRevision
+    ) {
+      this.gapCache = {
+        tick,
+        revision: this.contractRevision,
+        rows: this.nodes.flatMap((node) =>
+          contractGaps(
+            node.step,
+            this.contractCache.get(String(node.step["uses"])) ??
+              this.decisionContracts.get(String(node.step["uses"])),
+            this.model.definition,
+          ).map((gap) => ({ ...gap, stepId: node.step.id })),
+        ),
+      };
+    }
+    return this.gapCache.rows;
+  }
+  async openContractIssue(issue: ContractGap & { stepId: string }) {
+    await this.openDiagnostic({
+      stepId: issue.stepId,
+      stepPointer: "",
+      fieldPath: "/" + issue.field,
+      field: [issue.field],
+      dataPath: issue.dataPath,
+      exact: true,
+    });
+    afterNextRender(
+      () =>
+        requestAnimationFrame(() =>
+          this.focusField(issue.field, issue.dataPath),
+        ),
+      { injector: this.injector },
+    );
+  }
+  openNodeIssue(node: Node) {
+    const issue = this.contractIssues.find(
+      (issue) => issue.stepId === node.step.id,
+    );
+    if (issue) void this.openContractIssue(issue);
+    else void this.select(node);
+  }
   private contractView: {
     revision: number;
     map: ReadonlyMap<string, Record<string, unknown>>;
@@ -957,12 +1091,16 @@ export class App {
     const revision = this.tick();
     if (revision !== this.cachedTick) {
       this.cachedTick = revision;
-      this.cachedNodes = this.model.nodes();
-      this.visualLinks = this.model.visualConnections(true);
-      this.cachedBoundaries = this.model.boundaries();
-      this.cachedTargets = this.model.targets();
+      const layout = this.model.canvasLayout();
+      this.cachedNodes = layout.nodes;
+      this.visualLinks = layout.edges;
+      this.cachedBoundaries = layout.boundaries;
+      this.cachedTargets = layout.targets;
+      this.cachedLaneGroups = layout.groups;
+      this.cachedLaneTerminals = layout.terminals;
+      this.cachedJunctions = layout.junctions;
       this.placeholderByOwner = new Map(
-        this.model.placeholders().map((p) => [p.owner, p]),
+        layout.placeholders.map((p) => [p.owner, p]),
       );
       this.nodeById = new Map(this.cachedNodes.map((n) => [n.step.id, n]));
       const points = [
@@ -981,6 +1119,14 @@ export class App {
     this.nodes;
     return this.cachedTargets;
   }
+  get laneGroups() {
+    this.nodes;
+    return this.cachedLaneGroups;
+  }
+  get laneTerminals() {
+    this.nodes;
+    return this.cachedLaneTerminals;
+  }
   /** Edge paths; recomputed when the workflow changes or a node is dragged. */
   get edgePaths() {
     this.nodes;
@@ -991,6 +1137,7 @@ export class App {
         drag: this.dragNode,
         paths: this.visualLinks.map((link) => ({
           key: `${link.from}>${link.to}`,
+          from: link.from,
           d: this.connectionPath(this.model, link.from, link.to, this.nodes),
         })),
       };
@@ -1077,9 +1224,11 @@ export class App {
   }
   changed() {
     this.tick.update((n) => n + 1);
-    this.workflowProperties = structuredClone(this.model.definition);
-    this.workflowBuffer = JSON.stringify(this.model.definition);
-    this.touched.workflow = false;
+    if (!this.committingInspector) {
+      this.workflowProperties = structuredClone(this.model.definition);
+      this.workflowBuffer = JSON.stringify(this.model.definition);
+      this.touched.workflow = false;
+    }
     this.sourceBuffer = this.model.source;
     this.saveState = "Unsaved";
     this.workflowOpen = true;
@@ -1093,7 +1242,14 @@ export class App {
       this.tab === "Designer"
     )
       this.showInspector = true;
-    // Layout-only or unrelated changes keep unapplied inspector edits.
+    // A field commit keeps the mounted controls and their invalid local drafts.
+    if (this.committingInspector) {
+      this.inspectorBase = this.selected
+        ? JSON.stringify(this.selected.step)
+        : "";
+      return;
+    }
+    // Layout-only or unrelated changes keep local inspector edits.
     const step = this.selected?.step;
     if (
       !step ||
@@ -1132,6 +1288,9 @@ export class App {
   }
   /** Loads the inspector buffers from the selected model step. */
   loadInspector() {
+    this.cancelInspectorCommit();
+    this.actionChoiceRevision = null;
+    this.renameDraft = this.selected?.step.id ?? "";
     this.renameError = "";
     this.touched.step = false;
     const step = this.selected?.step;
@@ -1155,6 +1314,12 @@ export class App {
     this.newSlotNameEdited = false;
     if (step?.kind !== "action") {
       this.actionContract = null;
+      if (
+        this.nodes.some(
+          (node) => node.step.kind === "action" || node.step.kind === "llm",
+        )
+      )
+        void this.loadActionCatalog();
       return;
     }
     this.actionContract = null;
@@ -1213,6 +1378,7 @@ export class App {
     return true;
   }
   async navigate(view: View) {
+    if (this.view === "designer" && view !== "designer") this.leaveInspector();
     if (
       this.view === "designer" &&
       view !== "designer" &&
@@ -1291,6 +1457,7 @@ export class App {
     if (!saved) this.storageFailed();
     else {
       this.keptLocally = true;
+      this.draftSavedAt = savedAt;
       if (this.view === "workflows" || this.view === "home")
         this.refreshLocalList();
     }
@@ -1361,6 +1528,7 @@ export class App {
   @HostListener("window:beforeunload", ["$event"])
   beforeUnload(event: BeforeUnloadEvent) {
     if (!this.paired) return;
+    this.flushInspector();
     this.flushLocalSave();
     if (!this.unsavedWork) return;
     event.preventDefault();
@@ -1389,6 +1557,7 @@ export class App {
     this.restoredView =
       !!kept && (kept.zoom !== 1 || kept.pan.x !== 0 || kept.pan.y !== 0);
     this.keptLocally = true;
+    this.draftSavedAt = document.savedAt;
     this.model = model;
     this.draftId = id;
     this.draftRevision = undefined;
@@ -1511,6 +1680,10 @@ export class App {
    * without opening the inspector (focus moving through the canvas).
    */
   async select(node: Node, reveal = true) {
+    if (this.suppressNodeClick) {
+      this.suppressNodeClick = false;
+      return;
+    }
     // Selecting the step already in the inspector keeps its unapplied edits.
     if (
       this.model.selected === node.step.id &&
@@ -1522,7 +1695,7 @@ export class App {
       }
       return;
     }
-    if (!(await this.ensureApplied())) return;
+    this.leaveInspector();
     if (reveal) this.showInspector = true;
     this.message = `Selected ${node.step.id}, ${this.label(node.step.kind)}, ${ownerLabel(node.owner, this.stepsById()).replace(/^Main sequence$/, "main sequence")}.`;
     this.model.selected = node.step.id;
@@ -1539,6 +1712,8 @@ export class App {
    * inspector holds edits for another step) and pans into view.
    */
   nodeFocused(node: Node) {
+    // Keyboard navigation supersedes the import's still-pending initial fit.
+    this.needsFit = false;
     this.afterFocusScroll(() => this.revealStep(node.step.id));
     if (this.model.selected !== node.step.id && !this.editsPending)
       void this.select(node, this.windowWidth > 767 && this.showInspector);
@@ -1602,59 +1777,183 @@ export class App {
       return;
     this.touched[scope] = true;
   }
-  /**
-   * Commands read the workflow, so edits still in the inspector must be
-   * applied or discarded first. Resolves false when the command must stop:
-   * the person kept editing, or an applied value is invalid (its field gets
-   * focus).
-   */
+  /** Commands use the last valid fields and never interrupt with an edit dialog. */
   async ensureApplied(): Promise<boolean> {
-    const pending = this.editsPending;
-    if (!pending) return true;
-    if (this.unapplied) return false;
-    const subject =
-      pending === "step"
-        ? `The inspector has changes to ${this.selected?.step.id} that aren't applied to the workflow yet.`
-        : "The workflow settings have changes that aren't applied yet.";
-    const choice = await new Promise<UnappliedChoice>((resolve) => {
-      this.unapplied = {
-        message: `${subject} Apply them before continuing, or discard them.`,
-        resolve,
-      };
+    this.flushInspector();
+    return true;
+  }
+  private cancelInspectorCommit() {
+    if (this.inspectorTimer) clearTimeout(this.inspectorTimer);
+    this.inspectorTimer = null;
+    this.pendingInspector = null;
+  }
+  private queueInspector(
+    scope: "step" | "workflow" | "rename",
+    text: string,
+    key: string,
+    delay = 300,
+  ) {
+    if (this.editingLocked || this.model.readonly) return;
+    if (this.pendingInspector && this.pendingInspector.key !== key)
+      this.flushInspector();
+    this.cancelInspectorCommit();
+    this.pendingInspector = {
+      scope,
+      text,
+      key,
+      id: this.model.selected,
+      opened: this.model.opened,
+    };
+    this.inspectorTimer = setTimeout(() => this.flushInspector(), delay);
+  }
+  flushInspector() {
+    const pending = this.pendingInspector;
+    this.cancelInspectorCommit();
+    if (!pending || pending.opened !== this.model.opened || this.editingLocked)
+      return;
+    this.committingInspector = true;
+    try {
+      // Explicit field and schema row reordering must survive a commit.
+      const compare = JSON.stringify;
+      if (pending.scope === "rename") {
+        if (pending.id === pending.text) return;
+        this.model.renameStep(pending.id, pending.text);
+        this.inspectorStepId = this.model.selected;
+        this.renameDraft = this.model.selected;
+        const step = this.selected?.step;
+        this.inspectorBuffer = step ? JSON.stringify(step, null, 2) : "";
+        this.propertyStep = step ? structuredClone(step) : null;
+      } else if (pending.scope === "step") {
+        const step = this.model
+          .nodes()
+          .find((node) => node.step.id === pending.id)?.step;
+        if (!step || compare(step) === compare(JSON.parse(pending.text)))
+          return;
+        const next = JSON.parse(pending.text) as Step;
+        const answers = step["decisions"];
+        const nextAnswers = next["decisions"];
+        if (
+          pending.key === "decisions" &&
+          step.kind === "humanTask" &&
+          Array.isArray(answers) &&
+          Array.isArray(nextAnswers) &&
+          answers.length === nextAnswers.length
+        ) {
+          this.model.batch(() => {
+            for (let index = 0; index < answers.length; index++)
+              if (answers[index] !== nextAnswers[index])
+                this.model.renameDecision(
+                  pending.id,
+                  answers[index],
+                  nextAnswers[index],
+                );
+            this.model.update(pending.id, pending.text);
+          });
+        } else if (pending.continueRevision !== undefined)
+          this.model.continueEdit(pending.continueRevision, () =>
+            this.model.update(pending.id, pending.text),
+          );
+        else this.model.update(pending.id, pending.text);
+      } else {
+        const value = JSON.parse(pending.text) as Workflow;
+        if (compare(value) === compare(this.model.definition)) return;
+        this.model.updateWorkflow(value);
+      }
+      this.dirty = true;
+      this.changed();
+    } catch (error) {
+      this.renameError = describeError(error).message;
+    } finally {
+      this.committingInspector = false;
       this.cdr.markForCheck();
-    });
-    if (choice === "cancel") {
-      // Keep editing: the inspector shows the edits again, also where it is
-      // a sheet that was closed to reach the command.
-      this.showInspector = true;
-      this.cdr.markForCheck();
-      return false;
     }
-    if (choice === "discard") {
-      if (pending === "step") this.loadInspector();
-      else this.loadWorkflowSettings();
-      this.cdr.markForCheck();
-      return true;
+  }
+  inspectorFieldValidity(change: { path: string; valid: boolean }) {
+    if (!change.valid && this.pendingInspector?.key === change.path)
+      this.cancelInspectorCommit();
+  }
+  inspectorInteraction(event: Event) {
+    const target = event.target as HTMLElement;
+    if (
+      event.type === "change" &&
+      target.matches("select, input[type=checkbox], input[type=radio]")
+    )
+      this.flushInspector();
+    if (
+      event.type === "focusout" &&
+      target.closest("[data-field], [data-path]") !==
+        ((event as FocusEvent).relatedTarget as HTMLElement | null)?.closest(
+          "[data-field], [data-path]",
+        )
+    )
+      this.flushInspector();
+    if (event.type === "click" && target.closest("button, [role=option]"))
+      this.flushInspector();
+  }
+  workflowEdit(change: { value: unknown; path: string }) {
+    this.workflowBuffer = JSON.stringify(change.value);
+    this.queueInspector("workflow", this.workflowBuffer, change.path);
+  }
+  editInspectorJson(event: Event) {
+    this.inspectorBuffer = this.value(event);
+    this.touched.step = true;
+    try {
+      const step = JSON.parse(this.inspectorBuffer) as Step;
+      if (
+        step.id !== this.selected?.step.id ||
+        step.kind !== this.selected?.step.kind
+      )
+        throw Error("Keep the step name and kind unchanged here.");
+      this.propertyValid.set(true);
+      this.queueInspector("step", this.inspectorBuffer, "advanced");
+    } catch {
+      this.propertyValid.set(false);
+      this.cancelInspectorCommit();
     }
-    const form = document.querySelector<HTMLFormElement>(".action-input-form");
-    const valid =
-      pending === "step"
-        ? this.canApply &&
-          (this.actionInputMode !== "fields" || !form || form.checkValidity())
-        : this.workflowValid();
-    if (!valid) {
-      this.focusInvalidField();
-      return false;
-    }
-    if (pending === "step") this.updateStep();
-    else this.updateWorkflowOptions();
-    this.cdr.markForCheck();
-    return !this.error;
+  }
+  private leaveInspector() {
+    this.flushInspector();
+    if (!this.renameError && !this.editsPending) return;
+    const id = this.model.selected;
+    const opened = this.model.opened;
+    const field =
+      document
+        .querySelector<HTMLElement>(
+          ".inspector [aria-invalid=true], .inspector .property-error",
+        )
+        ?.closest<HTMLElement>("[data-field]")?.dataset["field"] ??
+      (this.renameError ? "id" : "");
+    this.notify(
+      "The invalid edit wasn't saved. The last valid value is kept.",
+      {
+        label: "Go back",
+        run: () => {
+          if (opened !== this.model.opened) return;
+          this.flushInspector();
+          this.model.selected = id;
+          this.loadInspector();
+          this.showInspector = true;
+          this.tab = "Designer";
+          this.focusLater(
+            () =>
+              document.querySelector<HTMLElement>(
+                '.inspector [data-field="' + CSS.escape(field) + '"] input',
+              ) ?? document.querySelector<HTMLElement>(".inspector-header h2"),
+          );
+        },
+      },
+    );
+    this.loadInspector();
+    this.loadWorkflowSettings();
+  }
+  closeInspector() {
+    this.leaveInspector();
+    this.showInspector = false;
   }
   /** Returns the inspector to the workflow settings. */
   async deselect() {
     if (!this.model.selected) return true;
-    if (!(await this.ensureApplied())) return false;
+    this.leaveInspector();
     this.model.selected = "";
     this.loadInspector();
     this.loadWorkflowSettings();
@@ -1686,11 +1985,6 @@ export class App {
       Math.hypot(event.clientX - press.x, event.clientY - press.y) < 4
     )
       void this.deselect();
-  }
-  settleUnapplied(choice: UnappliedChoice) {
-    const question = this.unapplied;
-    this.unapplied = null;
-    question?.resolve(choice);
   }
   /** Shows the inspector and moves focus to the first field with a problem. */
   private focusInvalidField() {
@@ -1795,9 +2089,10 @@ export class App {
     );
     if (!this.profile) {
       if (this.localDrafts.failed) return { text: "Not saved", tone: "danger" };
-      if (this.localTimer && this.dirty) return { text: "Saving…", tone: "" };
+      if (this.localTimer || this.pendingInspector)
+        return { text: "Unsaved", tone: "warning" };
       if (this.dirty || this.keptLocally)
-        return { text: localKeepLabel(this.desktopShell), tone: "" };
+        return { text: this.savedDraftLabel(), tone: "" };
       return null;
     }
     if (this.busy === "save") return { text: "Saving…", tone: "" };
@@ -1812,10 +2107,15 @@ export class App {
       case "published":
         return { text: `Published ${version}`, tone: "info" };
       case "saved":
-        return { text: "Draft saved", tone: "" };
+        return { text: this.savedDraftLabel(), tone: "" };
       default:
-        return { text: "Unsaved changes", tone: "warning" };
+        return { text: "Unsaved", tone: "warning" };
     }
+  }
+  private savedDraftLabel() {
+    return this.draftSavedAt
+      ? `Draft saved ${new Date(this.draftSavedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}`
+      : "Draft saved";
   }
   /** The open workflow has a copy kept on this computer. */
   private keptLocally = false;
@@ -1905,7 +2205,8 @@ export class App {
     items: [],
   };
   toggleInspector() {
-    this.showInspector = !this.showInspector;
+    if (this.showInspector) this.closeInspector();
+    else this.showInspector = true;
     if (this.showInspector) this.revealSelected();
   }
   /** Simulating: the workflow can't change until the simulation stops. */
@@ -2025,14 +2326,24 @@ export class App {
    * name is never dropped. The field carries the ID it was rendered for:
    * by the time it loses focus, another step may already be selected.
    */
-  commitRename(event: Event) {
+  inputRename(event: Event) {
     const input = event.target as HTMLInputElement;
+    this.renameDraft = input.value;
     const id = input.dataset["stepId"] ?? "";
-    if (!id || input.value.trim() === id) {
-      this.renameError = "";
+    this.renameError = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(input.value)
+      ? ""
+      : "Use letters, numbers, dots, underscores or hyphens.";
+    if (this.renameError) {
+      if (this.pendingInspector?.scope === "rename")
+        this.cancelInspectorCommit();
       return;
     }
-    void this.renameStep(id, input.value);
+    if (id && id !== input.value)
+      this.queueInspector("rename", input.value, "id");
+  }
+  commitRename(event: Event) {
+    this.inputRename(event);
+    this.flushInspector();
   }
   /** Renames a step and every reference to it. */
   async renameStep(id: string, value: string) {
@@ -2056,18 +2367,8 @@ export class App {
     const id = this.selected?.step.id;
     if (id) await this.renameStep(id, value);
   }
-  /** "Discard": the inspector goes back to what the workflow holds. */
-  discardInspector() {
-    if (this.selected) this.loadInspector();
-    else this.loadWorkflowSettings();
-    this.message = "Changes discarded.";
-    this.cdr.markForCheck();
-  }
-  /** The step whose inspector edits aren't applied yet: its card is marked. */
   get dirtyStep() {
-    return this.selected && this.editsPending === "step"
-      ? this.selected.step.id
-      : "";
+    return "";
   }
   /** The inspector's ⋯ menu: Move to…, Duplicate, Delete step. */
   get stepMenu(): RowMenuItem[] {
@@ -2137,11 +2438,11 @@ export class App {
   readonly shortcuts = [
     { keys: "↑ ↓", does: "Select the previous or next step" },
     { keys: "Enter", does: "Edit the focused step in the inspector" },
+    { keys: "A or /", does: "Add a step after the focused step" },
     { keys: "Delete", does: "Delete the focused step (Backspace too)" },
     { keys: "⌘/Ctrl Z", does: "Undo" },
     { keys: "⌘/Ctrl Shift Z", does: "Redo" },
     { keys: "⌘/Ctrl S", does: "Save the draft, or save to file locally" },
-    { keys: "⌘/Ctrl Enter", does: "Apply the inspector's changes" },
     { keys: "+ −", does: "Zoom in or out" },
     { keys: "⌘/Ctrl 0", does: "Zoom to 100%" },
     { keys: "Shift 1", does: "Fit all steps on screen" },
@@ -2191,10 +2492,12 @@ export class App {
   }
   /** The diagnostics strip's icon: none before the first result. */
   get diagnosticsIcon() {
+    if (this.contractIssues.length) return "warning";
     const tone = this.validationView.tone;
     if (tone === "errors" || tone === "failed") return "failCircle";
     if (tone === "warnings") return "warning";
-    if (tone === "passed" || tone === "checked") return "check";
+    if (tone === "passed") return "check";
+    if (tone === "checked") return "help";
     return "";
   }
   /**
@@ -2203,12 +2506,23 @@ export class App {
    */
   get statusLine() {
     const view = this.validationView;
+    const gaps = this.contractIssues.length;
+    if (gaps)
+      return `${gaps} ${gaps === 1 ? "item needs" : "items need"} attention${view.countLine ? ` · ${view.countLine}` : ""}`;
     if (view.tone === "passed" || view.tone === "checked") {
       const waiting = this.nodes.filter(
         (n) => incompleteChip(n.step) === "Choose an action",
       ).length;
       if (waiting)
         return `No errors · ${waiting === 1 ? "1 step still needs" : `${waiting} steps still need`} an action.`;
+    }
+    if (view.tone === "checked" && this.validation?.snapshot.mode === "local") {
+      const context = this.validationContext();
+      if (context.signedOut)
+        return "Checked locally — Sign in again to check actions and connections against the project.";
+      if (context.connected && !context.canCompile)
+        return "Checked locally — Your account can't check actions and connections against the project catalog.";
+      return "Checked locally — Validate to check against the project";
     }
     return view.headline;
   }
@@ -2221,12 +2535,12 @@ export class App {
     return decisions.join(", ");
   }
   /** Adds a decision after the selected human task, one case per decision. */
-  async branchOnDecision() {
-    const id = this.selected?.step.id;
+  async branchOnDecision(id = this.selected?.step.id) {
     if (!id || !(await this.ensureApplied())) return;
     this.perform(() => this.model.branchOnDecision(id));
     if (!this.error)
       this.message = `Added ${this.model.selected} with a path for each answer of ${id}.`;
+    this.revealSelected();
     this.cdr.markForCheck();
   }
   /**
@@ -2266,6 +2580,11 @@ export class App {
     this.validationModule ??= import("./designer/validation");
     const module = await this.validationModule;
     this.summarize = module.summarize;
+    if (!this.findContractGaps) {
+      this.findContractGaps = module.contractGaps;
+      this.contractRevision++;
+      this.cdr.markForCheck();
+    }
     // Decision cases without a condition are named by Studio itself: the
     // compiler reports such a step only as a whole.
     const conditions =
@@ -2483,7 +2802,13 @@ export class App {
     let info = this.infoCache.info.get(node.step.id);
     if (!info) {
       const summary = stepSummary(node.step, this.model.definition);
-      const issues = stepIssues(node.step);
+      const gaps = this.contractIssues.filter(
+        (gap) => gap.stepId === node.step.id,
+      );
+      const issues = [
+        ...stepIssues(node.step),
+        ...gaps.map((gap) => gap.label),
+      ];
       const found = this.diagnosticSteps.get(node.step.id);
       const counts = [
         found?.errors
@@ -2510,7 +2835,7 @@ export class App {
         status === "error" || status === "warning"
           ? `${problems} ${problems === 1 ? "problem" : "problems"}`
           : status === "incomplete"
-            ? incompleteChip(node.step) || "Needs attention"
+            ? gaps[0]?.label || incompleteChip(node.step) || "Needs attention"
             : "";
       const statusText = [
         counts.length ? `Has ${counts.join(" and ")}.` : "",
@@ -2537,18 +2862,21 @@ export class App {
   }
   undo() {
     if (this.editingLocked) return;
+    this.flushInspector();
     this.model.undo();
     this.dirty = true;
     this.changed();
   }
   redo() {
     if (this.editingLocked) return;
+    this.cancelInspectorCommit();
     this.model.redo();
     this.dirty = true;
     this.changed();
   }
   readonly editorViews = ["Designer", "Source", "Outline"];
   selectTab(tab: string) {
+    if (tab !== this.tab) this.leaveInspector();
     this.tab = tab;
     if (tab === "Designer") this.outlineNotice = false;
     if (tab !== "Designer" && window.innerWidth <= 1280)
@@ -2682,10 +3010,9 @@ export class App {
     event?: Event,
   ) {
     if (!this.propertyValid() || !this.selected) return;
+    this.flushInspector();
     const id = this.selected.step.id;
     this.perform(() => {
-      if (this.inspectorBuffer !== JSON.stringify(this.selected!.step, null, 2))
-        this.model.update(id, this.inspectorBuffer);
       this.model.editBranches(
         id,
         operation,
@@ -3012,11 +3339,12 @@ export class App {
       return null;
     }
   }
-  private setBuffer(step: Step, refreshGrid = false) {
+  private setBuffer(step: Step, refreshGrid = false, field = "step") {
     this.inspectorBuffer = JSON.stringify(step, null, 2);
     if (refreshGrid) this.propertyStep = structuredClone(step);
+    this.queueInspector("step", this.inspectorBuffer, field);
   }
-  stepEdit(value: unknown) {
+  stepEdit(value: unknown, field = "step") {
     const step = value as Step;
     // Fields edited outside the property table keep their buffered values.
     if (step.kind === "action") {
@@ -3025,8 +3353,15 @@ export class App {
         if (buffer[key] === undefined) delete step[key];
         else step[key] = buffer[key];
     }
-    this.setBuffer(step);
+    this.setBuffer(step, false, field);
     if (step.kind === "action") this.syncActionContract();
+  }
+  actionVersionEdit(value: unknown) {
+    const step = this.editableStep();
+    if (!step) return;
+    step["uses"] = (value as Step)["uses"];
+    this.setBuffer(step, false, "uses");
+    this.syncActionContract();
   }
   /**
    * Fields the property table leaves out because the inspector shows them
@@ -3035,19 +3370,9 @@ export class App {
    */
   get inspectorHiddenFields() {
     if (this.selected?.step.kind !== "action") return noHiddenFields;
-    // The picker already shows a published action version; another one
-    // (a placeholder, an unpublished version) stays editable here.
-    const picker =
-      this.integrationState === "ready" && !!this.selectedCatalogAction;
-    const fields =
-      this.actionInputMode === "fields" && this.actionContract
-        ? picker
-          ? actionFieldsPickerHiddenFields
-          : actionFieldsHiddenFields
-        : picker
-          ? actionPickerHiddenFields
-          : actionHiddenFields;
-    return fields;
+    return this.actionInputMode === "fields" && this.actionContract
+      ? actionFieldsPickerHiddenFields
+      : actionPickerHiddenFields;
   }
   /** True when the inspector holds edits that are not applied to the workflow yet. */
   get inspectorDirty() {
@@ -3075,6 +3400,13 @@ export class App {
             (
               this.contractCache.get(uses)?.["spec"] as Record<string, unknown>
             )?.["outputSchema"],
+          decisionOutput: (uses) =>
+            (
+              this.decisionContracts.get(uses)?.["spec"] as Record<
+                string,
+                unknown
+              >
+            )?.["outputSchema"],
         },
       };
     return this.scopeCache.value!;
@@ -3093,8 +3425,10 @@ export class App {
       this.catalogScope === this.profile &&
       this.catalogState !== "idle" &&
       this.catalogState !== "error"
-    )
+    ) {
+      if (this.catalogState === "ready") void this.loadWorkflowContracts();
       return;
+    }
     const generation = ++this.catalogGeneration,
       scope = this.profile;
     this.catalogScope = scope;
@@ -3116,6 +3450,7 @@ export class App {
       this.actionNextCursor = page.next_cursor;
       this.catalogState = "ready";
       this.syncActionContract();
+      void this.loadWorkflowContracts();
     } catch (e) {
       if (generation !== this.catalogGeneration) return;
       if (append) this.fail(e);
@@ -3127,6 +3462,59 @@ export class App {
       if (generation === this.catalogGeneration) this.catalogAppending = false;
       this.cdr.markForCheck();
     }
+  }
+  private loadingWorkflowContracts = new Set<string>();
+  /** Three bounded readers warm the contracts needed by cards outside the inspector. */
+  private async loadWorkflowContracts() {
+    const scope = this.profile,
+      opened = this.model.opened;
+    if (!scope || !this.can("catalog.read")) return;
+    const uses = new Set(
+      this.nodes
+        .filter(
+          (node) => node.step.kind === "action" || node.step.kind === "llm",
+        )
+        .map((node) => String(node.step["uses"] ?? "")),
+    );
+    const queue = this.actionVersions.filter((entry) => {
+      const ref = `${entry["name"]}@${entry["version"]}`;
+      return (
+        uses.has(ref) &&
+        !this.contractCache.has(ref) &&
+        this.contractPending !== ref &&
+        !this.loadingWorkflowContracts.has(ref)
+      );
+    });
+    for (const entry of queue)
+      this.loadingWorkflowContracts.add(`${entry["name"]}@${entry["version"]}`);
+    const read = async () => {
+      while (queue.length) {
+        const entry = queue.shift()!,
+          ref = `${entry["name"]}@${entry["version"]}`;
+        try {
+          if (scope !== this.profile || opened !== this.model.opened) continue;
+          const result = await this.api.request<Record<string, unknown>>(
+            `${this.api.project}/actions/${encodeURIComponent(String(entry["id"]))}/export`,
+          );
+          if (
+            scope === this.profile &&
+            opened === this.model.opened &&
+            result["document"] &&
+            typeof result["document"] === "object"
+          )
+            this.cacheContract(
+              ref,
+              result["document"] as Record<string, unknown>,
+            );
+        } catch {
+          // A catalog read is optional; explicit project validation reports missing access.
+        } finally {
+          this.loadingWorkflowContracts.delete(ref);
+          this.cdr.markForCheck();
+        }
+      }
+    };
+    await Promise.all([read(), read(), read()]);
   }
   /** The catalog entry for the action version the inspector buffer uses. */
   get selectedCatalogAction() {
@@ -3197,6 +3585,7 @@ export class App {
   private async fetchContract(id: string, uses: string, fresh: boolean) {
     const generation = ++this.contractGeneration,
       scope = this.profile,
+      opened = this.model.opened,
       nodeId = this.selected?.step.id;
     this.contractPending = uses;
     this.actionContract = null;
@@ -3217,6 +3606,7 @@ export class App {
       }
       this.contractCache.set(uses, document);
       this.contractRevision++;
+      this.infoCache.tick = -1;
       if (generation !== this.contractGeneration) return;
       this.contractPending = "";
       // Contracts are keyed by version: show it only if the inspector still uses it.
@@ -3233,7 +3623,12 @@ export class App {
         this.contractState = "idle";
         return;
       }
-      this.showContract(document, fresh && nodeId === this.selected?.step.id);
+      this.showContract(
+        document,
+        fresh &&
+          opened === this.model.opened &&
+          nodeId === this.selected?.step.id,
+      );
     } catch (e) {
       if (generation !== this.contractGeneration) return;
       this.contractPending = "";
@@ -3278,6 +3673,12 @@ export class App {
     this.actionInitialInput = input;
     this.actionMissing = [];
     this.actionInputValid.set(true);
+    if (fresh && this.pendingInspector) {
+      if (this.actionChoiceRevision !== null)
+        this.pendingInspector.continueRevision = this.actionChoiceRevision;
+      this.flushInspector();
+      this.actionChoiceRevision = null;
+    }
   }
   /**
    * The input of a newly chosen action: inputs its schema doesn't allow are
@@ -3426,8 +3827,8 @@ export class App {
       return "";
     }
   }
-  chooseConnectionSlot(event: Event) {
-    const name = this.value(event);
+  chooseConnectionSlot(event: Event | string) {
+    const name = typeof event === "string" ? event : this.value(event);
     const step = this.editableStep();
     if (!step) return;
     if (name) step["connection"] = name;
@@ -3450,40 +3851,104 @@ export class App {
     while (used.has(name)) name = `${base}-${n++}`;
     return name;
   }
-  /** Declares a workflow connection slot and selects it for this step. */
-  addConnectionSlot() {
-    const requirement = this.actionRequirement();
-    const name = (
-      this.newSlotNameEdited ? this.newSlotName : this.suggestedSlotName()
-    ).trim();
-    const connector = requirement?.connector ?? this.newSlotConnector.trim();
-    const required =
-      requirement && requirement.required !== false
-        ? true
-        : this.newSlotRequired;
-    this.slotError = !resourceName.test(name)
-      ? "Use letters, numbers, dots, underscores or hyphens for the slot name."
-      : this.workflowSlots.some((slot) => slot.name === name)
-        ? `The workflow already has a slot named ${name}.`
-        : !versionedName.test(connector)
-          ? "Enter the connector as name@version, for example crm@1.0.0."
-          : "";
-    if (this.slotError || !this.selected) return;
-    const buffered = this.editableStep();
-    if (!buffered) return;
-    const document = structuredClone(this.model.definition);
-    document.spec["connections"] = {
-      ...((document.spec["connections"] ?? {}) as Record<string, unknown>),
-      [name]: { connector, required },
-    };
-    this.perform(() => this.model.updateWorkflow(document));
+  slotUseCount(name: string) {
+    return this.nodes.filter(
+      (node) => node.step.kind === "action" && node.step["connection"] === name,
+    ).length;
+  }
+  slotConnectorOptions() {
+    return [
+      ...new Set([
+        ...this.workflowSlots.map((slot) => slot.connector),
+        ...(this.actionRequirement()
+          ? [this.actionRequirement()!.connector]
+          : []),
+      ]),
+    ];
+  }
+  async updateConnectionSlot(previous: string, slot: ConnectionSlot) {
+    if (
+      this.editingLocked ||
+      this.model.readonly ||
+      !(await this.ensureApplied())
+    )
+      return;
+    this.perform(() => changeSlot(this.model, previous, slot));
+    this.cdr.markForCheck();
+  }
+  async removeConnectionSlot(name: string) {
+    if (
+      this.editingLocked ||
+      this.model.readonly ||
+      !(await this.ensureApplied())
+    )
+      return;
+    const count = this.slotUseCount(name);
+    if (
+      !(await this.dialogs.confirm({
+        title: "Remove connection slot?",
+        message: `${name} is used by ${count} ${count === 1 ? "step" : "steps"}. Removing it clears those assignments. Steps that require a connection will need another slot.`,
+        confirmLabel: "Remove slot",
+      }))
+    )
+      return;
+    this.perform(() => changeSlot(this.model, name, null));
     if (this.error) return;
-    buffered["connection"] = name;
-    this.setBuffer(buffered);
+    const revision = this.model.revision;
+    this.notify(`Removed connection slot ${name}.`, {
+      label: "Undo",
+      run: () => {
+        if (this.model.revision === revision) this.undo();
+        else
+          this.notify("The workflow changed since. Use Undo in the toolbar.");
+      },
+    });
+    this.cdr.markForCheck();
+  }
+  connectionSlotButton() {
+    const name =
+      this.actionRequirement()
+        ?.connector.split("@")[0]
+        .replace(/^weave-/, "") ?? "";
+    const label =
+      name === "postgresql" ? "PostgreSQL" : name === "http" ? "HTTP" : name;
+    return label ? `Add a ${label} connection slot` : "Add connection slot";
+  }
+  /** Declares and selects the slot as a single reversible change. */
+  addConnectionSlot() {
+    if (this.editingLocked || this.model.readonly) return;
+    const requirement = this.actionRequirement();
+    const slot = {
+      name: (this.newSlotNameEdited
+        ? this.newSlotName
+        : this.suggestedSlotName()
+      ).trim(),
+      connector: requirement?.connector ?? this.newSlotConnector.trim(),
+      required:
+        requirement?.required !== false && !!requirement
+          ? true
+          : this.newSlotRequired,
+    };
+    this.slotError = slotValidation(slot, this.workflowSlots);
+    if (this.slotError) return;
+    const buffered = this.selected ? this.editableStep() : null;
+    if (this.selected && !buffered) return;
+    this.perform(() =>
+      this.model.batch(() => {
+        changeSlot(this.model, "", slot);
+        if (buffered)
+          this.model.update(
+            buffered.id,
+            JSON.stringify({ ...buffered, connection: slot.name }),
+          );
+      }),
+    );
+    if (this.error) return;
     this.newSlotName = "";
     this.newSlotNameEdited = false;
     this.newSlotConnector = "";
-    this.message = `Added connection slot ${name}. Apply the configuration to use it in this step.`;
+    this.message = `Added connection slot ${slot.name}.`;
+    this.cdr.markForCheck();
   }
   /** Plain-language reasons the selected action step cannot run yet. */
   integrationIssues() {
@@ -3549,9 +4014,12 @@ export class App {
     if (!item) return;
     const step = this.editableStep();
     if (!step) return;
+    this.actionChoiceRevision = null;
     step["uses"] = `${item["name"]}@${item["version"]}`;
     this.setBuffer(step, true);
     this.syncActionContract(true);
+    this.flushInspector();
+    this.actionChoiceRevision = this.model.revision;
   }
   /** The action version in the inspector buffer, for the action picker. */
   bufferedUses(): string | null {
@@ -3575,6 +4043,7 @@ export class App {
     if (document) this.contractCache.set(uses, document);
     else this.contractCache.delete(uses);
     this.contractRevision++;
+    this.infoCache.tick = -1;
   }
   /** The selected step's slot when it names a weave-http@2.0.0 connection. */
   httpSlot(): string {
@@ -3621,10 +4090,13 @@ export class App {
    * render returns focus to its opener in a microtask, so this runs after it.
    */
   focusStep(id: string) {
+    const selection = this.model.selected;
     this.focusLater(() =>
-      document.querySelector<HTMLElement>(
-        `[data-step="${CSS.escape(id)}"] .node-body`,
-      ),
+      this.model.selected === selection
+        ? document.querySelector<HTMLElement>(
+            `[data-step="${CSS.escape(id)}"] .node-body`,
+          )
+        : null,
     );
   }
   /** Moves focus to the inspector's Action section, for example after "Use in this step". */
@@ -3694,22 +4166,62 @@ export class App {
     }
     this.cdr.markForCheck();
   }
-  useActionOutput() {
+  async useActionOutput() {
     if (
       !this.selected ||
       !this.actionContract ||
+      this.model.readonly ||
+      this.editingLocked ||
+      !this.canApply ||
       this.selected.owner !== "root"
     )
       return;
+    this.flushInspector();
+    const opened = this.model.opened,
+      revision = this.model.revision,
+      stepId = this.selected.step.id;
+    const schema = structuredClone(this.actionSpec()["outputSchema"] ?? {});
+    if (
+      !(await this.dialogs.confirm({
+        title: "Replace the workflow result?",
+        message:
+          "This uses the action's output and schema as the workflow result. The current result mapping will be replaced. You can undo this change.",
+        confirmLabel: "Replace result",
+        cancelLabel: "Keep current result",
+      }))
+    )
+      return;
+    if (
+      opened !== this.model.opened ||
+      revision !== this.model.revision ||
+      stepId !== this.selected?.step.id ||
+      this.editingLocked ||
+      this.model.readonly
+    ) {
+      this.notify(
+        "The draft changed while the dialog was open. Review the result again.",
+      );
+      return;
+    }
     const doc = structuredClone(this.model.definition);
-    doc.spec.output = { ref: `/steps/${this.selected.step.id}/output` };
-    doc.spec["outputSchema"] = structuredClone(
-      this.actionSpec()["outputSchema"] ?? {},
-    );
-    this.perform(() => {
-      this.model.update(this.selected!.step.id, this.inspectorBuffer);
-      this.model.updateWorkflow(doc);
+    doc.spec.output = { ref: `/steps/${stepId}/output` };
+    doc.spec["outputSchema"] = schema;
+    this.perform(() => this.model.updateWorkflow(doc));
+    if (this.error) return;
+    const changedRevision = this.model.revision;
+    this.notify("Workflow result updated.", {
+      label: "Undo",
+      run: () => {
+        if (
+          this.model.opened === opened &&
+          this.model.revision === changedRevision
+        )
+          this.undo();
+        else
+          this.notify("The workflow changed since. Use Undo in the toolbar.");
+      },
     });
+    this.cdr.markForCheck();
   }
   serializeStep(step: unknown) {
     return JSON.stringify(step, null, 2);
@@ -3771,10 +4283,10 @@ export class App {
     this.cdr.markForCheck();
   }
   pointerDown(event: PointerEvent, node: Node) {
-    if (event.button !== 0 || this.model.readonly) return;
+    if (event.button !== 0 || this.model.readonly || this.editingLocked) return;
     // Switching away from unapplied edits asks first; no drag starts meanwhile.
     const asks = this.model.selected !== node.step.id && !!this.editsPending;
-    void this.select(node);
+    void this.select(node, false);
     if (asks) return;
     this.dragNode = {
       id: node.step.id,
@@ -3794,19 +4306,60 @@ export class App {
       point: { x: this.dragNode.point.x + dx, y: this.dragNode.point.y + dy },
       start: { x: event.clientX, y: event.clientY },
     };
+    this.dragTarget = this.targetAt(event.clientX, event.clientY);
+  }
+  private targetAt(x: number, y: number): Target | null {
+    const elements =
+      document.querySelectorAll<HTMLElement>(".insertion-target");
+    for (const element of elements) {
+      const box = element.getBoundingClientRect();
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom)
+        continue;
+      const target = this.targets.find(
+        (candidate) =>
+          candidate.owner === element.dataset["owner"] &&
+          candidate.index === Number(element.dataset["index"]),
+      );
+      if (target && this.validMoveTarget(target)) return target;
+    }
+    return null;
+  }
+  validMoveTarget(target: Target) {
+    const id = this.dragNode?.id ?? this.connectingNode;
+    if (!id) return false;
+    const node = this.nodeById.get(id);
+    if (!node) return true;
+    if (
+      target.owner === node.owner &&
+      (target.index === node.index || target.index === node.index + 1)
+    )
+      return false;
+    let owner = target.owner;
+    while (owner !== "root") {
+      const parent = owner.split("/")[0];
+      if (parent === id) return false;
+      owner = this.nodeById.get(parent)?.owner ?? "root";
+    }
+    return true;
   }
   pointerUp(event: PointerEvent) {
     if (!this.dragNode) return;
     const drag = this.dragNode;
+    const target = this.targetAt(event.clientX, event.clientY);
     this.dragNode = null;
+    this.dragTarget = null;
     // A click is not a move: it must not checkpoint layout or reset the inspector.
     if (
       Math.hypot(event.clientX - drag.origin.x, event.clientY - drag.origin.y) <
       4
     )
       return;
-    this.perform(() => this.model.position(drag.id, drag.point, !event.altKey));
-    this.message = "Node position updated. Workflow semantics are unchanged.";
+    this.suppressNodeClick = true;
+    setTimeout(() => {
+      this.suppressNodeClick = false;
+    }, 0);
+    if (target) this.moveTo(drag.id, target);
+    else this.notify("Drop on a highlighted + to move this step.");
   }
   nodePoint(node: Node) {
     return this.dragNode?.id === node.step.id
@@ -3815,6 +4368,7 @@ export class App {
   }
   cancelGesture() {
     this.dragNode = null;
+    this.dragTarget = null;
     this.dragPreview = null;
     this.connectingNode = "";
   }
@@ -3831,16 +4385,8 @@ export class App {
     if (this.editingLocked) return;
     if (this.connectingNode) {
       const id = this.connectingNode;
-      this.perform(() => {
-        if (this.model.unplaced.some((s) => s.id === id))
-          this.model.place(id, target.owner, target.index);
-        else this.model.move(id, target.owner, target.index);
-      });
       this.connectingNode = "";
-      if (!this.error) {
-        this.notify(`Moved ${id}.`);
-        this.focusStep(id);
-      }
+      this.moveTo(id, target);
       return;
     }
     if (this.pickerOpenAt(target)) {
@@ -3852,6 +4398,53 @@ export class App {
     this.picker = { target, anchor };
     this.connectingNode = "";
     if (this.profile) void this.loadActionCatalog();
+  }
+  private moveTo(id: string, target: Target) {
+    this.perform(() => {
+      if (this.model.unplaced.some((step) => step.id === id))
+        this.model.place(id, target.owner, target.index);
+      else this.model.move(id, target.owner, target.index);
+    });
+    if (this.error) return;
+    const revision = this.model.revision;
+    this.notify(`Moved ${id}.`, {
+      label: "Undo",
+      run: () => {
+        if (this.model.revision !== revision)
+          return this.notify(
+            "The workflow changed since. Use Undo in the toolbar.",
+          );
+        this.undo();
+        this.focusStep(id);
+      },
+    });
+    this.focusStep(id);
+  }
+  nodeActions(node: Node): RowMenuItem[] {
+    const disabled = this.model.readonly || this.editingLocked;
+    return [
+      ...(node.step.kind === "humanTask"
+        ? [
+            {
+              label: "Add paths for answers",
+              disabled,
+              run: () => void this.branchOnDecision(node.step.id),
+            },
+          ]
+        : []),
+      { label: "Move to…", disabled, run: () => this.startMove(node.step.id) },
+      {
+        label: "Duplicate",
+        disabled,
+        run: () => void this.duplicate(node.step.id),
+      },
+      {
+        label: "Delete step",
+        disabled,
+        danger: true,
+        run: () => void this.remove(node.step.id),
+      },
+    ];
   }
   pickerOpenAt(target: Target) {
     return (
@@ -3900,7 +4493,45 @@ export class App {
   }
   /** Where a "+" puts a step, for the picker's title: "after check". */
   pickerPlace(target: Target) {
-    return target.label.replace(/^Add a step here, /, "");
+    return target.label.replace(/^Add a step(?: here,)?\s*/, "");
+  }
+  private openInsertionAtFocus(element: HTMLElement) {
+    if (this.editingLocked || this.model.readonly) return;
+    const slot = element.closest<HTMLElement>(".insertion-target");
+    const id =
+      element.closest("[data-step]")?.getAttribute("data-step") ??
+      this.model.selected;
+    const node = this.nodeById.get(id);
+    const target = slot
+      ? this.targets.find(
+          (target) =>
+            target.owner === slot.dataset["owner"] &&
+            target.index === Number(slot.dataset["index"]),
+        )
+      : node
+        ? this.targets.find(
+            (target) =>
+              target.owner === node.owner && target.index === node.index + 1,
+          )
+        : this.targets.find(
+            (target) => target.owner === "root" && target.index === 0,
+          );
+    if (!target) return;
+    if (this.zoom < 0.4) {
+      this.setView(0.4, this.pan);
+      afterNextRender(() => this.openInsertionAtFocus(element), {
+        injector: this.injector,
+      });
+      return;
+    }
+    const anchor =
+      document.querySelector<HTMLElement>(
+        `.insertion-target[data-owner="${CSS.escape(target.owner)}"][data-index="${target.index}"]`,
+      ) ?? document.querySelector<HTMLElement>(".first-step");
+    if (!anchor) return;
+    this.revealTarget(target);
+    this.picker = { target, anchor };
+    if (this.profile) void this.loadActionCatalog();
   }
   /** The canvas element and its size, or null while it isn't shown. */
   private canvasBox() {
@@ -3935,7 +4566,7 @@ export class App {
   zoomReset() {
     this.zoomBy(1 / this.zoom);
   }
-  /** Below 60 % the canvas is an overview: titles only, no editing targets. */
+  /** Below 60 % the canvas emphasizes names, lanes and problem markers. */
   get overview() {
     return this.zoom < OVERVIEW_BELOW;
   }
@@ -3965,7 +4596,7 @@ export class App {
       }),
     );
   }
-  /** The graph's extent: steps, empty-branch cards, Start and End. */
+  /** The full extent includes lane borders and insertion targets. */
   private graphBounds(): Bounds {
     const bounds = this.boundaries;
     const points = [
@@ -3973,12 +4604,19 @@ export class App {
       ...[...this.placeholderByOwner.values()].map((p) => p.point),
       bounds.start,
       bounds.end,
+      ...this.laneGroups.map((group) => group.point),
     ];
     return {
       minX: Math.min(...points.map((p) => p.x)),
       minY: Math.min(...points.map((p) => p.y)),
-      maxX: Math.max(...points.map((p) => p.x)) + 208,
-      maxY: Math.max(...points.map((p) => p.y)) + 64,
+      maxX: Math.max(
+        ...points.map((p) => p.x + 240),
+        ...this.laneGroups.map((group) => group.point.x + group.width),
+      ),
+      maxY: Math.max(
+        ...points.map((p) => p.y + 72),
+        ...this.laneGroups.map((group) => group.point.y + group.height),
+      ),
     };
   }
   /**
@@ -3998,7 +4636,7 @@ export class App {
     );
     this.setView(view.zoom, view.pan);
   }
-  /** "Fit all" (⇧1): the whole workflow, down to 40 %. */
+  /** "Fit all" (⇧1): include the complete workflow, including End. */
   fitAll() {
     this.needsFit = false;
     const box = this.canvasBox();
@@ -4006,11 +4644,13 @@ export class App {
     const view = fitAllView(this.graphBounds(), box);
     this.setView(view.zoom, view.pan);
   }
-  /** "Tidy layout": positions back to automatic, then the readable fit. */
+  /** Reset saved positions and fit the complete workflow, including a no-op tidy. */
   tidyLayout() {
     if (this.editingLocked) return;
-    this.perform(() => this.model.autoLayout());
-    this.scheduleFit();
+    const changed = Object.keys(this.model.layout.positions).length > 0;
+    if (changed) this.perform(() => this.model.autoLayout());
+    this.fitAll();
+    this.notify(changed ? "Layout tidied" : "Layout is already tidy");
   }
   /** Scroll pans; Ctrl or ⌘ with the wheel (or a pinch) zooms at the pointer. */
   panCanvas(event: WheelEvent) {
@@ -4040,7 +4680,7 @@ export class App {
     if (!node || !box) return;
     const pan = reveal(
       { zoom: this.zoom, pan: this.pan },
-      { x: node.point.x, y: node.point.y, width: 208, height: 64 },
+      { x: node.point.x, y: node.point.y, width: 240, height: 72 },
       box,
       margin,
     );
@@ -4076,7 +4716,7 @@ export class App {
   revealTarget(target: Target, margin = 64) {
     const box = this.canvasBox();
     if (!box) return;
-    const width = target.empty ? 208 : 20;
+    const width = target.empty ? 208 : 24;
     const height = target.empty ? 48 : 20;
     const pan = reveal(
       { zoom: this.zoom, pan: this.pan },
@@ -4096,9 +4736,31 @@ export class App {
   revealSelected() {
     const id = this.model.selected;
     if (!id) return;
-    afterNextRender(() => requestAnimationFrame(() => this.revealStep(id)), {
-      injector: this.injector,
-    });
+    afterNextRender(
+      () =>
+        requestAnimationFrame(() => {
+          if (this.model.selected !== id) return;
+          const group = this.laneGroups.find((group) => group.id === id);
+          const node = this.nodeById.get(id);
+          const box = this.canvasBox();
+          if (!group || !node || !box) return this.revealStep(id);
+          const top = Math.min(group.point.y, node.point.y);
+          const view = revealGroup(
+            { zoom: this.zoom, pan: this.pan },
+            {
+              x: group.point.x,
+              y: top,
+              width: group.width,
+              height: group.point.y + group.height - top,
+            },
+            box,
+          );
+          this.setView(view.zoom, view.pan);
+        }),
+      {
+        injector: this.injector,
+      },
+    );
   }
   graphHeight() {
     this.nodes;
@@ -4116,21 +4778,35 @@ export class App {
   ) {
     const boundaries =
       model === this.model ? this.cachedBoundaries : model.boundaries();
-    const point = (id: string) =>
-      id === "$start"
-        ? boundaries.start
-        : id === "$end"
-          ? boundaries.end
-          : id.startsWith("$empty:")
-            ? this.placeholderByOwner.get(id.slice(7))!.point
-            : model === this.model
-              ? this.nodePoint(this.nodeById.get(id)!)
-              : nodes.find((n) => n.step.id === id)!.point;
-    const a = point(from),
-      b = point(to);
-    // Start and placeholder cards are 48 px tall, steps 64 px.
-    const y = a.y + (from === "$start" || from.startsWith("$empty:") ? 48 : 64);
-    return `M ${a.x + 104} ${y} L ${a.x + 104} ${y + 24} L ${b.x + 104} ${y + 24} L ${b.x + 104} ${b.y}`;
+    const junctions =
+      model === this.model ? this.cachedJunctions : model.junctions();
+    const endpoint = (id: string, outgoing: boolean) => {
+      if (junctions[id]) return junctions[id];
+      const boundary = id === "$start" || id === "$end";
+      const placeholder = id.startsWith("$empty:");
+      const p =
+        id === "$start"
+          ? boundaries.start
+          : id === "$end"
+            ? boundaries.end
+            : placeholder
+              ? model === this.model
+                ? this.placeholderByOwner.get(id.slice(7))!.point
+                : model
+                    .placeholders()
+                    .find((item) => item.owner === id.slice(7))!.point
+              : model === this.model
+                ? this.nodePoint(this.nodeById.get(id)!)
+                : nodes.find((node) => node.step.id === id)!.point;
+      return {
+        x: p.x + (boundary || placeholder ? 104 : 120),
+        y: p.y + (outgoing ? (boundary || placeholder ? 48 : 72) : 0),
+      };
+    };
+    const a = endpoint(from, true),
+      b = endpoint(to, false);
+    const middle = a.y + Math.max(0, (b.y - a.y) / 2);
+    return `M ${a.x} ${a.y} L ${a.x} ${middle} L ${b.x} ${middle} L ${b.x} ${b.y}`;
   }
   /**
    * The Validate command: a fresh compile against the project catalog when
@@ -4581,6 +5257,7 @@ export class App {
       );
       this.draftRevision = result.revision;
       this.saveState = source === this.model.source ? "Draft saved" : "Unsaved";
+      this.draftSavedAt = new Date().toISOString();
       if (source === this.model.source) this.dirty = false;
       this.notify("Draft saved.");
       this.error = "";
@@ -6587,17 +7264,14 @@ export class App {
   @HostListener("window:keydown", ["$event"]) key(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
     const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
-    // ⌘/Ctrl+Enter applies the inspector's changes, also from a field.
     if (
       this.view === "designer" &&
-      (event.metaKey || event.ctrlKey) &&
-      event.key === "Enter" &&
       target.closest?.(".inspector") &&
-      !this.dialogs.current()
+      (event.ctrlKey || event.metaKey) &&
+      event.key.toLowerCase() === "z"
     ) {
       event.preventDefault();
-      if (this.selected) this.updateStep();
-      else this.updateWorkflowOptions();
+      event.shiftKey ? this.redo() : this.undo();
       return;
     }
     if (typing) return;
@@ -6615,7 +7289,7 @@ export class App {
         }
       } else if (this.view === "designer" && this.model.selected)
         void this.deselect();
-      else if (this.windowWidth <= 1280) this.showInspector = false;
+      else if (this.windowWidth <= 1280) this.closeInspector();
     }
     if (this.view !== "designer") return;
     // Step shortcuts act only while focus is on the canvas or the outline, never
@@ -6648,6 +7322,15 @@ export class App {
       this.shortcutsOpen = true;
     }
     if (!onGraph) return;
+    if (
+      !command &&
+      !event.altKey &&
+      (event.key === "/" || event.key.toLowerCase() === "a")
+    ) {
+      event.preventDefault();
+      this.openInsertionAtFocus(target);
+      return;
+    }
     if (!command && (event.key === "+" || event.key === "=")) this.zoomBy(1.2);
     if (!command && event.key === "-") this.zoomBy(1 / 1.2);
     if (event.key === "Delete" || event.key === "Backspace") {

@@ -47,11 +47,18 @@ gives the steps and what you finish with.
 | An administrator | Install the platform, configure sign-in, and give people access | [Start a local platform](guides/local-platform.md) | [Identity and secrets](operations/identity-and-secrets.md), [remote deployment](operations/remote-deployment.md), [people and access](guides/people-and-access.md), and [configuration](operations/configuration.md) |
 | An operator | Keep runs healthy, fix incidents, upgrade, and back up | [Connect the CLI](guides/connect-to-api.md), then [manage runs](guides/execution-management.md) | [Incidents](reference/incident-operations.md), [troubleshooting](operations/troubleshooting.md), [observability](operations/observability.md), [upgrades](operations/upgrades.md), [backup](operations/backup-restore.md), and [debug-session retention](operations/retention.md) |
 
-Start each path by [installing the CLI](installation.md) from the v0.1.0a7
+Start each path by [installing the CLI](installation.md) from the v0.1.0a8
 release.
 
 [Who does what](guides/roles-and-lifecycle.md) explains these roles with an
 order-approval example, and which Weave permissions each one needs.
+
+## Files, decisions, and AI
+
+- [Work with files](guides/files.md): upload documents, pass references through workflows, and transfer content from workers.
+- [Decision tables](reference/decision-tables.md): put reusable business rules behind a versioned decision step.
+- [Run AI steps](guides/ai-workers.md): configure workflow model profiles and operate an Agentic worker.
+- [Configure Lumi](guides/lumi.md): give Studio its own assistant configuration, separately from workflow AI.
 
 ## Choose your next task
 
@@ -97,7 +104,7 @@ Run one command block, check its **Expected** result, then continue. Comments
 inside code blocks explain why each command is there. When a terminal shows
 server logs, keep it open and use a second terminal for client commands.
 
-The guides pin the **v0.1.0a7 alpha** release, a preview, which includes every
+The guides pin the **v0.1.0a8 alpha** release, a preview, which includes every
 feature they describe, such as saved platforms, REST calls without code, and the
 Studio editor. When a guide shows how to work with an alpha6 or earlier client
 or server, it says so.

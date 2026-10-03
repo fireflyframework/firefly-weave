@@ -326,3 +326,42 @@ def test_optional_empty_request_bodies_retain_schema_without_requiring_presence(
             else:
                 assert required is True, operation["operationId"]
     assert found == optional
+
+
+@pytest.mark.parametrize("operator", ["contains", "notContains", "in", "notIn", "startsWith", "endsWith"])
+async def test_comparison_compile_contract_is_shared_by_sdk_and_api(operator):
+    source = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "comparison-api", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {"type": "boolean"},
+            "steps": [],
+            "output": {
+                "op": {
+                    "name": operator,
+                    "args": [{"literal": "a"}, {"literal": ["a"] if operator in {"in", "notIn"} else "a"}],
+                },
+            },
+        },
+    }
+    catalog = CatalogSnapshot.empty()
+    local = compile_source(source, format="object", catalog=catalog)
+    assert local.ok
+
+    def receive(request):
+        payload = json.loads(request.content)
+        result = compile_source(payload["source"], format=payload["format"], catalog=catalog)
+        return httpx.Response(200, content=result.to_bytes())
+
+    async with client_type()(
+        "https://api.example",
+        lambda: "access",
+        Scope(tenant_id=uuid4(), project_id=uuid4()),
+        transport=httpx.MockTransport(receive),
+    ) as sdk:
+        remote = await sdk.compile(source=source, format="object", catalog=catalog)
+    assert remote.artifact.digest == local.artifact.digest
+    assert remote.artifact.executable["irVersion"] == "weave/ir-v1alpha3"
+    assert remote.diagnostics == local.diagnostics

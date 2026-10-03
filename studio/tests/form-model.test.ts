@@ -290,3 +290,28 @@ print(json.dumps([d.code for d in result.diagnostics]))
     expect(codes(prepared)).not.toContain("WV-SCHEMA-SECRET_VALUE");
   });
 });
+
+it("a file reference is one file widget and is not seeded with an incomplete discriminator", () => {
+  const file = {
+    type: "object",
+    required: ["kind", "id"],
+    properties: { kind: { const: "weave/file" }, id: { type: "string" } },
+  };
+  const schema = {
+    type: "object",
+    required: ["attachment"],
+    properties: { attachment: file },
+  };
+  expect(widgetFor(formFields(schema)[0])).toBe("file");
+  expect(prepareData(schema, {}).data).toEqual({});
+  expect(
+    widgetFor(
+      formFields({
+        type: "object",
+        properties: {
+          group: { type: "object", properties: { kind: { const: "other" } } },
+        },
+      })[0],
+    ),
+  ).toBe("group");
+});

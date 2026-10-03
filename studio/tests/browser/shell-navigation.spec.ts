@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // a title per page, Build/Operate navigation, the platform indicator and
 // menu, Home's "Needs you", template rows, connections, Start a run and
 // Settings.
+import { selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import { allCapabilities, connected, offline } from "./support";
 import {
@@ -313,9 +314,10 @@ test("Connections: one New connection, the dialog's success and the real grant c
   await dialog
     .getByLabel("API address", { exact: true })
     .fill("https://api.pets.example");
-  await dialog
-    .getByLabel("How the API checks who is calling", { exact: true })
-    .selectOption("api-key");
+  await selectChoice(
+    dialog.getByLabel("How the API checks who is calling", { exact: true }),
+    "api-key",
+  );
   await dialog.getByLabel("Header name", { exact: true }).fill("X-API-Key");
   await dialog.getByLabel("API key handle", { exact: true }).fill("pets-key");
   await dialog.getByRole("button", { name: "Create connection" }).click();
@@ -346,9 +348,10 @@ test("Connections: one New connection, the dialog's success and the real grant c
   await dialog
     .getByLabel("API address", { exact: true })
     .fill("https://api.todos.example");
-  await dialog
-    .getByLabel("How the API checks who is calling", { exact: true })
-    .selectOption("none");
+  await selectChoice(
+    dialog.getByLabel("How the API checks who is calling", { exact: true }),
+    "none",
+  );
   await dialog.getByRole("button", { name: "Create connection" }).click();
   await expect(created).toHaveText("Created pets (revision 1).");
   await expect(dialog).toContainText(
@@ -435,7 +438,7 @@ test("Start a run: one version field, keys behind a disclosure, a toast with Vie
   await dialog.getByRole("button", { name: "Start run" }).click();
   await expect(dialog.getByText("Choose a version to run.")).toBeVisible();
   await expect(version).toHaveAttribute("aria-invalid", "true");
-  await version.selectOption("act-1");
+  await selectChoice(version, "act-1");
   await expect(dialog.getByLabel("Business key")).toBeHidden();
   await dialog.getByText("Add a business key (optional)").click();
   await dialog.getByLabel("Business key").fill("order-7");
@@ -577,8 +580,8 @@ test("Settings: one Platforms section, People and access in its own tab", async 
   const panel = page.getByRole("complementary", {
     name: "Assign a role to Account 1a2b3c4d",
   });
-  await panel.getByLabel("Role", { exact: true }).selectOption("viewer");
-  await panel.getByLabel("Applies to").selectOption("project");
+  await selectChoice(panel.getByLabel("Role", { exact: true }), "viewer");
+  await selectChoice(panel.getByLabel("Applies to"), "project");
   await panel.getByRole("button", { name: "Assign role", exact: true }).click();
   await expect.poll(() => commands.length).toBe(1);
   expect(commands[0].body).toEqual({

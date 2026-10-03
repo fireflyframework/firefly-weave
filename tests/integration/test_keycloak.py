@@ -24,17 +24,13 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-async def test_live_keycloak_links_and_scoped_authorization(services, access_db, provisioned):
+async def test_live_keycloak_links_and_scoped_authorization(services, access_db, provisioned, release_backends):
     from firefly_weave.access.authentication import AuthenticationService, VerifierSet
     from firefly_weave.access.authorization import AccessDenied, AuthorizationService
     from firefly_weave.access.models import Grant
     from firefly_weave.access.oidc import AuthenticationFailed, OIDCVerifier, ProviderConfig
 
-    endpoint = os.environ.get("WEAVE_KEYCLOAK_TEST_URL")
-    if endpoint not in {"http://localhost:18080", "http://localhost:18081"}:
-        pytest.fail(
-            "Live Keycloak required: set WEAVE_KEYCLOAK_TEST_URL=http://localhost:18080 and source .env.identity"
-        )
+    endpoint = release_backends["keycloak_endpoint"](legacy_ports=(18080, 18081))
     secrets = [os.environ.get(name) for name in ("WEAVE_HOST_SECRET", "WEAVE_WORKER_SECRET", "WEAVE_DENIED_SECRET")]
     if not all(secrets):
         pytest.fail("Live Keycloak requires generated local client secret environment")

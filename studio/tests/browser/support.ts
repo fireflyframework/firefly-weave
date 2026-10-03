@@ -18,6 +18,38 @@ SPDX-License-Identifier: Apache-2.0
 // Shared route mocks for the integration editor, round-trip and layout specs.
 import { expect, Locator, Page } from "@playwright/test";
 
+/** Exercise a native or shared Select through its public keyboard/pointer UI. */
+export async function selectChoice(
+  field: Locator,
+  choice: string | { label?: string; value?: string; index?: number },
+) {
+  if (await field.evaluate((element) => element.tagName === "SELECT")) {
+    await field.selectOption(choice);
+    return;
+  }
+  await field.click();
+  const id = await field.getAttribute("aria-controls");
+  const list = field.page().locator(`[id=${JSON.stringify(id)}]`);
+  await expect(list).toBeVisible();
+  const options = list.getByRole("option");
+  let option: Locator;
+  if (typeof choice !== "string" && choice.index !== undefined) {
+    option = options.nth(choice.index);
+  } else {
+    const value = typeof choice === "string" ? choice : choice.value;
+    const label = typeof choice === "string" ? choice : choice.label;
+    const byValue = list.locator(
+      `[role="option"][data-value=${JSON.stringify(value ?? "")} ]`,
+    );
+    option =
+      value !== undefined && (await byValue.count())
+        ? byValue
+        : list.getByRole("option", { name: label, exact: true });
+  }
+  await option.click();
+  await expect(list).not.toBeVisible();
+}
+
 export const profile = {
   name: "Test platform",
   baseUrl: "https://weave.invalid",
@@ -257,7 +289,9 @@ export async function newWorkflow(page: Page) {
 // popover is a modal sheet there: the insert closes it before anything else.
 export async function insertStep(page: Page, label: string) {
   await expect(page.locator(".palette-step").first()).toBeAttached();
-  const step = page.locator(".palette-step").filter({ hasText: label });
+  const step = page
+    .locator(".palette")
+    .getByRole("button", { name: label, exact: true });
   if (!(await step.isVisible()))
     await page.getByRole("button", { name: "Insert step" }).click();
   await step.click();

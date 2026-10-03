@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Regression tests for the layout defects the visual tour found: each test
 // holds one fix at the size where the defect showed.
+import { selectChoice } from "./support";
 import { test, expect, Locator, Page } from "@playwright/test";
 import { allCapabilities, connected, newWorkflow, offline } from "./support";
 import { DesignerPage } from "./designer-po";
@@ -200,8 +201,11 @@ test.describe("360x740", () => {
     await newWorkflow(page);
     await addStep(page, "Call an action");
     await new DesignerPage(page).selectStep("call-action-1");
+    await new DesignerPage(page).inspector
+      .getByRole("button", { name: "+ Add field", exact: true })
+      .click();
     const name = new DesignerPage(page).inspector
-      .getByRole("textbox", { name: "New property name" })
+      .getByRole("textbox", { name: "Field name", exact: true })
       .first();
     await name.scrollIntoViewIfNeeded();
     expect((await box(name)).width).toBeGreaterThanOrEqual(100);
@@ -372,9 +376,10 @@ test.describe("1440x900", () => {
     await dialog
       .getByLabel("API address", { exact: true })
       .fill("https://api.pets.example");
-    await dialog
-      .getByLabel("How the API checks who is calling", { exact: true })
-      .selectOption("api-key");
+    await selectChoice(
+      dialog.getByLabel("How the API checks who is calling", { exact: true }),
+      "api-key",
+    );
     await dialog.getByLabel("Header name", { exact: true }).fill("X-API-Key");
     await dialog
       .getByLabel("API key handle", { exact: true })

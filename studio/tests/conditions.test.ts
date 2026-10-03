@@ -124,7 +124,7 @@ describe("condition rows", () => {
       parseCondition({
         op: {
           name: "eq",
-          args: [{ ref: "/input/a" }, { ref: "/input/b" }],
+          args: [{ ref: "/input/a" }, { object: { b: { ref: "/input/b" } } }],
         },
       }),
     ).toBeNull();
@@ -292,4 +292,24 @@ describe("condition values", () => {
     expect(typedValue("42", text, "eq")).toBe("42");
     expect(typedValue("approve", text, "eq")).toBe("approve");
   });
+});
+
+it("round-trips comparisons between two data fields and their summaries", () => {
+  const expression = {
+    op: {
+      name: "gt",
+      args: [
+        { ref: "/input/amount" },
+        { ref: "/steps/prepare-request/output/amount" },
+      ],
+    },
+  };
+  const rows = parseCondition(expression);
+  expect(rows?.rows[0]).toEqual({
+    ref: "/input/amount",
+    operator: "gt",
+    compareRef: "/steps/prepare-request/output/amount",
+  });
+  expect(buildCondition(rows!)).toEqual(expression);
+  expect(conditionSummary(expression, definition)).toBe("Amount > amount");
 });

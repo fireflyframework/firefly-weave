@@ -202,3 +202,34 @@ def test_local_validate_keeps_its_pairing_and_request_bounds(tmp_path):
             == 422
         )
         assert browser.post("/studio/local/validate", json=payload, headers=headers).status_code == 200
+
+
+def test_local_llm_contract_is_canonical_and_requires_paired_session(tmp_path):
+    from firefly_weave.contracts.llm import LLMProfile
+
+    with client(tmp_path) as browser:
+        assert browser.get("/studio/contracts/llm-profile").status_code == 401
+        pair(browser)
+        response = browser.get("/studio/contracts/llm-profile")
+        assert response.status_code == 200
+        assert response.json() == LLMProfile.model_json_schema(by_alias=True)
+        assert response.headers["cache-control"] == "no-store"
+
+
+def test_file_and_lumi_contracts_require_pairing_and_match_canonical_models(tmp_path):
+    from firefly_weave.contracts.files import file_reference_schema
+    from firefly_weave.contracts.lumi import LumiConfigurationRequest
+
+    with client(tmp_path) as browser:
+        paths = {
+            "/studio/contracts/file-reference": file_reference_schema(),
+            "/studio/contracts/lumi-configuration": LumiConfigurationRequest.model_json_schema(by_alias=True),
+        }
+        for path in paths:
+            assert browser.get(path).status_code == 401
+        pair(browser)
+        for path, schema in paths.items():
+            response = browser.get(path)
+            assert response.status_code == 200
+            assert response.headers["cache-control"] == "no-store"
+            assert response.json() == schema

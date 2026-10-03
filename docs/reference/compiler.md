@@ -202,7 +202,14 @@ A `CompiledArtifact` owns canonical, immutable bytes. Its `executable` and
   original locations live in the same envelope, outside executable identity.
 
 **IR version.** Executables use `irVersion: weave/ir-v1alpha1`, or
-`weave/ir-v1alpha2` when the workflow contains a human task. `ir.py` defines
+`weave/ir-v1alpha2` when the workflow contains a human task. Workflows using
+`contains`, `notContains`, `in`, `notIn`, `startsWith`, or `endsWith` select
+`weave/ir-v1alpha3`, including workflows that also contain human tasks. Feature
+selection reads expression syntax, never operator-shaped literal data. Existing
+workflows retain their prior IR version and executable digest. Readers that do
+not support v1alpha3 reject these artifacts; upgrade runtime readers before
+activating them. The capabilities response advertises accepted IR versions.
+`ir.py` defines
 every node, edge, control, join, guard, dependency, and executable field as a
 strict Pydantic model, and `export_schemas()` publishes `executable` and
 `compiled-artifact` with the other contracts.
@@ -373,16 +380,38 @@ snapshot identity and digest validation; `export_schemas()` includes it as
 
 **Expressions.** The supported forms are `literal`, `ref`, `object`, `array`, and
 `op`. Operators are `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `and`, `or`, `not`,
-`exists`, and `coalesce`. Function calls, code, imports, secret or environment
+`exists`, `coalesce`, `contains`, `notContains`, `in`, `notIn`, `startsWith`, and
+`endsWith`. Function calls, code, imports, secret or environment
 access, and remote references are not supported.
 
 | Operators | Operands | Evaluation |
 | --- | --- | --- |
 | `eq`, `ne`, `lt`, `lte`, `gt`, `gte` | Exactly two | Numeric comparisons never convert strings or Booleans |
+| `contains`, `notContains` | Exactly two | Text substring search, or structural membership in the left-hand array |
+| `in`, `notIn` | Exactly two | Structural membership in the right-hand array; a text container is invalid |
+| `startsWith`, `endsWith` | Exactly two strings | Case-sensitive prefix or suffix match |
 | `not` | Exactly one | Boolean negation |
 | `exists` | Exactly one direct `ref` | True when the referenced value is present |
 | `and`, `or` | At least one | Lazy; keeps the difference between missing and `null` |
 | `coalesce` | At least one | Returns the first present, non-null operand; `null` when all are exhausted |
+
+Text matching is case-sensitive and performs no Unicode normalization. Empty
+text matches every string; membership in an empty array is false. Array
+membership uses JSON structural equality: object key order does not matter,
+`1` equals `1.0`, and Booleans never equal numbers. A membership needle or array
+element may be `null`; a null container or text operand fails with
+`WV-EXPR-TYPE`. Missing references retain `WV-EXPR-MISSING`. Negated operators
+negate a successful result, never an operand error.
+
+The compiler rejects provably invalid operand types. Uncertain schema unions
+produce `WV-COMP-UNKNOWN_COMPATIBILITY` and an `operator_operands` runtime guard;
+strict compilation promotes that diagnostic to an error. All six operators
+return a Boolean and accept exactly two operands. Evaluation shares a cumulative
+work budget: structural membership comparisons charge `max_document_nodes`,
+and compared string characters and object keys charge `max_payload_bytes`.
+These additional work charges apply to the new operators; existing operator
+limits and evaluation semantics remain unchanged. Exhaustion fails with
+`WV-EXPR-RESOURCE_LIMIT`, including repeated searches of the same reference.
 
 Numbers must be finite IEEE-754 values, and integers must stay within
 ±9,007,199,254,740,991. Validate exact decimal business amounts as strings.

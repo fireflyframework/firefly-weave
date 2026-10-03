@@ -23,10 +23,19 @@ import {
   OnChanges,
   SimpleChanges,
   forwardRef,
+  ViewChildren,
+  QueryList,
+  ElementRef,
+  AfterViewChecked,
 } from "@angular/core";
 import { Step, Workflow } from "./model";
+import { typeLabels } from "./forms/core/type-labels";
+import { FieldsDraft, type FieldRow } from "./forms/core/fields";
+import { decode, encode, set } from "./forms/core/binding";
+import { Select } from "./forms/ui/select";
+import { RowMenu, type RowMenuItem } from "./row-menu";
 import { ConditionEditor } from "./designer/condition-editor";
-import { parseCondition } from "./designer/conditions";
+import { parseCondition, conditionOperators } from "./designer/conditions";
 import { ReferenceCombobox } from "./forms/ui/reference-combobox";
 import type { ReferenceOption } from "./forms/ui/reference-combobox";
 import { LazyComponent, type LazyOutputs } from "./forms/ui/lazy-component";
@@ -54,21 +63,51 @@ export const supportedOperators = [
   "not",
   "exists",
   "coalesce",
+  "contains",
+  "notContains",
+  "in",
+  "notIn",
+  "startsWith",
+  "endsWith",
 ];
 /** Operators in words; the stored name stays the language's own. */
-export const operatorLabels: Record<string, string> = {
-  eq: "Equals",
-  ne: "Does not equal",
-  lt: "Less than",
-  lte: "At most",
-  gt: "Greater than",
-  gte: "At least",
-  and: "All of",
-  or: "Any of",
-  not: "Not",
-  exists: "Is present",
-  coalesce: "First available",
-};
+export const operatorLabels: Record<string, string> = Object.fromEntries([
+  ...conditionOperators.map(({ value, label }) => [value, label]),
+  ["and", "all of"],
+  ["or", "any of"],
+  ["not", "not"],
+  ["coalesce", "first available of"],
+]);
+export const operatorGroups = [
+  {
+    label: "Compare",
+    names: [
+      "eq",
+      "ne",
+      "lt",
+      "lte",
+      "gt",
+      "gte",
+      "contains",
+      "notContains",
+      "in",
+      "notIn",
+      "startsWith",
+      "endsWith",
+    ],
+    description: "Compare two values.",
+  },
+  {
+    label: "Combine",
+    names: ["and", "or", "coalesce"],
+    description: "Combine rules, or use the first value that is present.",
+  },
+  {
+    label: "Check",
+    names: ["not", "exists"],
+    description: "Check whether data is present, or reverse a rule.",
+  },
+];
 /**
  * Where an expression's value comes from, in the words the action input
  * form uses too: Value, Data, Formula, Fields, List.
@@ -113,6 +152,7 @@ interface Field {
     | "schema"
     | "decisions";
   optional?: boolean;
+  optionalResult?: boolean;
 }
 export function propertyFields(step: EditableDocument): Field[] {
   const f = (
@@ -132,10 +172,9 @@ export function propertyFields(step: EditableDocument): Field[] {
         kind: "schema",
       },
       {
-        label: "Connection slots",
-        path: ["spec", "connections"],
-        kind: "value",
-        optional: true,
+        label: "Workflow output",
+        path: ["spec", "output"],
+        kind: "expression",
       },
       {
         label: "Workflow timeout",
@@ -143,17 +182,23 @@ export function propertyFields(step: EditableDocument): Field[] {
         kind: "duration",
         optional: true,
       },
-      {
-        label: "Workflow output",
-        path: ["spec", "output"],
-        kind: "expression",
-      },
     ];
   const result: Record<string, Field[]> = {
     action: [
       f("Action version", "uses", "text"),
       f("Connection slot", "connection", "name", true),
       f("Input", "with", "expression"),
+    ],
+    decisionTable: [
+      f("Table version", "uses", "text"),
+      f("Table input", "with", "expression"),
+    ],
+    llm: [
+      f("AI action version", "uses", "text"),
+      f("Workflow AI profile", "profile", "name"),
+      f("AI connection slot", "connection", "name"),
+      f("Prompt", "prompt", "expression"),
+      f("Context", "context", "expression"),
     ],
     transform: [f("Value", "value", "expression")],
     wait: [f("Duration", "durationSeconds", "duration")],
@@ -172,7 +217,7 @@ export function propertyFields(step: EditableDocument): Field[] {
       f("Expires after", "expirySeconds", "duration", true),
       f("Form schema", "formSchema", "schema"),
     ],
-    parallel: [f("Concurrency", "concurrency", "positive")],
+    parallel: [f("Run at most", "concurrency", "positive")],
     switch: [],
   };
   const fields = result[step.kind] ?? [];
@@ -188,12 +233,14 @@ export function propertyFields(step: EditableDocument): Field[] {
         label: `Case ${i + 1} output`,
         path: ["cases", i, "output"],
         kind: "expression",
+        optionalResult: true,
       });
     });
     fields.push({
       label: "Otherwise output",
       path: ["default", "output"],
       kind: "expression",
+      optionalResult: true,
     });
   }
   if (step.kind === "parallel" && object(step["branches"]))
@@ -202,6 +249,7 @@ export function propertyFields(step: EditableDocument): Field[] {
         label: `${key} output`,
         path: ["branches", key, "output"],
         kind: "expression",
+        optionalResult: true,
       }),
     );
   return fields;
@@ -209,7 +257,8 @@ export function propertyFields(step: EditableDocument): Field[] {
 function expressionValid(v: unknown): boolean {
   if (!object(v) || Object.keys(v).length !== 1) return false;
   if ("literal" in v) return true;
-  if ("ref" in v) return typeof v["ref"] === "string" && pointer.test(v["ref"]);
+  if ("ref" in v)
+    return typeof v["ref"] === "string" && !!v["ref"] && pointer.test(v["ref"]);
   if ("object" in v)
     return (
       object(v["object"]) && Object.values(v["object"]).every(expressionValid)
@@ -297,6 +346,10 @@ export class PropertyDraft {
         error = "Use letters, numbers, dots, underscores or hyphens.";
       if (field.kind === "text" && !(typeof v === "string" && v.length > 0))
         error = "Enter a value.";
+      if (this.value.kind === "signal" && field.path[0] === "name" && !v)
+        error = "Enter a signal name.";
+      if (this.value.kind === "fail" && field.path[0] === "message" && !v)
+        error = "Enter a failure reason.";
       if (
         field.path[0] === "uses" &&
         !(typeof v === "string" && versionedReference.test(v))
@@ -312,24 +365,6 @@ export class PropertyDraft {
         !object(v)
       )
         error = "Schema must be an object.";
-      if (
-        field.path.join("/") === "spec/connections" &&
-        v !== undefined &&
-        !(
-          object(v) &&
-          Object.entries(v).every(
-            ([key, value]) =>
-              name.test(key) &&
-              object(value) &&
-              typeof value["connector"] === "string" &&
-              versionedReference.test(value["connector"]) &&
-              (value["required"] === undefined ||
-                typeof value["required"] === "boolean"),
-          )
-        )
-      )
-        error =
-          "Each slot requires connector name@version and optional required boolean.";
       if (field.kind === "expression" && !expressionValid(v))
         error = "Choose a literal or a valid JSON pointer reference.";
       if (
@@ -363,13 +398,36 @@ export class PropertyDraft {
       }
       if (error) this.errors.set(field.path.join("/"), error);
     }
+    const slots =
+      this.value.kind === "Workflow"
+        ? this.get(["spec", "connections"])
+        : undefined;
+    if (
+      slots !== undefined &&
+      !(
+        object(slots) &&
+        Object.entries(slots).every(
+          ([key, slot]) =>
+            name.test(key) &&
+            object(slot) &&
+            typeof slot["connector"] === "string" &&
+            versionedReference.test(slot["connector"]) &&
+            (slot["required"] === undefined ||
+              typeof slot["required"] === "boolean"),
+        )
+      )
+    )
+      this.errors.set(
+        "spec/connections",
+        "Give each connection slot a name and a connector name@version.",
+      );
   }
 }
 
 @Component({
   selector: "weave-property-value",
   standalone: true,
-  imports: [forwardRef(() => PropertyValue)],
+  imports: [Select, forwardRef(() => PropertyValue)],
   template: `<div class="value-editor">
     @if (depth > 6) {
       <details>
@@ -382,15 +440,16 @@ export class PropertyDraft {
         ></textarea>
       </details>
     } @else {
-      <select
-        [disabled]="readOnly"
-        (change)="changeType($event)"
-        aria-label="Value type"
-      >
-        @for (t of types; track t) {
-          <option [value]="t" [selected]="t === type">{{ t }}</option>
-        }
-      </select>
+      @if (!simple) {
+        <weave-select
+          label="Value type"
+          [hideLabel]="true"
+          [options]="typeOptions"
+          [value]="type"
+          [disabled]="readOnly"
+          (choose)="changeType($event)"
+        />
+      }
       @switch (type) {
         @case ("object") {
           <div class="nested-properties">
@@ -454,17 +513,17 @@ export class PropertyDraft {
           </button>
         }
         @case ("boolean") {
-          <select
+          <weave-select
+            label="Boolean value"
+            [hideLabel]="true"
+            [options]="booleanOptions"
+            [value]="value === true ? 'true' : 'false'"
             [disabled]="readOnly"
-            (change)="scalar($event)"
-            aria-label="Boolean value"
-          >
-            <option value="true" [selected]="value === true">True</option>
-            <option value="false" [selected]="value !== true">False</option>
-          </select>
+            (choose)="scalar($event)"
+          />
         }
         @case ("null") {
-          <span>Null</span>
+          <span>No value</span>
         }
         @default {
           <input
@@ -486,9 +545,11 @@ export class PropertyDraft {
 export class PropertyValue implements OnChanges {
   @Input() value: unknown = null;
   @Input() depth = 0;
+  @Input() simple = false;
   @Input() readOnly = false;
   @Output() valueChange = new EventEmitter<unknown>();
   @Output() validityChange = new EventEmitter<boolean>();
+  typeLabels = typeLabels;
   types = ["string", "number", "boolean", "object", "array", "null"];
   buffer = "";
   advanced = "";
@@ -529,9 +590,17 @@ export class PropertyValue implements OnChanges {
   }
   /** What each value type held, so switching back restores it (F8). */
   private memory = new Map<string, unknown>();
-  changeType(e: Event) {
+  get typeOptions() {
+    return this.types.map((value) => ({ value, label: typeLabels[value] }));
+  }
+  booleanOptions = [
+    { value: "true", label: "Yes" },
+    { value: "false", label: "No" },
+  ];
+  changeType(e: Event | string) {
     if (this.readOnly) return;
-    const type = (e.target as HTMLSelectElement).value;
+    const type =
+      typeof e === "string" ? e : (e.target as HTMLSelectElement).value;
     const defaults: RecordValue = {
       string: "",
       number: 0,
@@ -554,10 +623,11 @@ export class PropertyValue implements OnChanges {
     this.known = JSON.stringify(value);
     this.buffer = String(value ?? "");
     this.validityChange.emit(this.invalid.size === 0);
-    if (!this.invalid.size) this.valueChange.emit(structuredClone(value));
+    this.valueChange.emit(structuredClone(value));
   }
-  scalar(e: Event) {
-    const text = (e.target as HTMLInputElement).value;
+  scalar(e: Event | string) {
+    const text =
+      typeof e === "string" ? e : (e.target as HTMLInputElement).value;
     this.buffer = text;
     if (this.type === "number") {
       const value = Number(text);
@@ -622,39 +692,132 @@ let expressionSequence = 0;
   standalone: true,
   imports: [
     PropertyValue,
+    Select,
     ReferenceCombobox,
+    RowMenu,
     forwardRef(() => ExpressionEditor),
   ],
   styleUrl: "./property-grid.css",
-  template: `<div class="expression-editor">
-    <div class="expression-head">
-      @if (heading) {
-        <span class="expression-label" [id]="prefix + '-label'">{{
-          heading
-        }}</span>
-      }
-      <span
-        class="mode-switch"
-        role="group"
-        [attr.aria-label]="label + ' expression mode'"
-      >
-        @for (option of modes; track option.value) {
+  template: `<div class="expression-editor" (focusout)="touched = true">
+    @if (controls) {
+      <div class="expression-head">
+        @if (heading) {
+          <span class="expression-label" [id]="prefix + '-label'">{{
+            heading
+          }}</span>
+        }
+        @if (!compact && !conditionOnly) {
+          <span
+            class="mode-switch"
+            role="radiogroup"
+            [attr.aria-label]="label + ' expression mode'"
+          >
+            @for (option of modes; track option.value) {
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="option.value === displayMode"
+                [attr.tabindex]="option.value === displayMode ? 0 : -1"
+                (keydown)="modeKey($event, option.value)"
+                [attr.data-mode]="option.value"
+                [title]="option.hint"
+                [disabled]="readOnly"
+                (click)="setMode(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            }
+          </span>
+        } @else if (!conditionOnly) {
           <button
             type="button"
-            [attr.aria-pressed]="option.value === mode"
-            [attr.data-mode]="option.value"
-            [title]="option.hint"
             [disabled]="readOnly"
-            (click)="setMode(option.value)"
+            (click)="setMode(mode === 'ref' ? 'literal' : 'ref')"
           >
-            {{ option.label }}
+            {{ mode === "ref" ? "Use value" : "Use data" }}
           </button>
         }
-      </span>
-    </div>
-    @if (mode === "literal") {
+        <weave-row-menu [label]="label + ' options'" [items]="menuItems" />
+      </div>
+    }
+    @if (advancedOpen) {
+      <label
+        >Advanced: JSON value
+        <textarea
+          [value]="advancedText"
+          [disabled]="readOnly"
+          (input)="editJson($event)"
+          aria-label="Advanced JSON value"
+        ></textarea>
+      </label>
+      <button type="button" (click)="advancedOpen = false">
+        Done editing JSON
+      </button>
+    } @else if (isFields) {
+      <div class="fields-builder">
+        @for (row of fieldDraft.rows; track row.id; let index = $index) {
+          <div class="fields-row">
+            <label
+              >Name
+              <input
+                #fieldName
+                [value]="row.name"
+                [disabled]="readOnly"
+                aria-label="Field name"
+                (change)="renameField(row, text($event))"
+              />
+            </label>
+            <weave-expression-editor
+              [value]="row.expression"
+              [compact]="true"
+              heading="Value"
+              [label]="row.name || 'Field'"
+              [references]="references"
+              [readOnly]="readOnly"
+              (valueChange)="updateField(row, $event)"
+              (validityChange)="childValidity('field-' + row.id, $event)"
+            />
+            <div class="field-actions">
+              <button
+                type="button"
+                aria-label="Move field up"
+                [disabled]="readOnly || index === 0"
+                (click)="moveField(row, -1)"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                aria-label="Move field down"
+                [disabled]="readOnly || index === fieldDraft.rows.length - 1"
+                (click)="moveField(row, 1)"
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                aria-label="Remove field"
+                [disabled]="readOnly"
+                (click)="removeField(row)"
+              >
+                Remove
+              </button>
+            </div>
+            @if (fieldDraft.error(row)) {
+              <small class="property-error" role="alert">{{
+                fieldDraft.error(row)
+              }}</small>
+            }
+          </div>
+        }
+        <button type="button" [disabled]="readOnly" (click)="addField()">
+          + Add field
+        </button>
+      </div>
+    } @else if (mode === "literal" && !isList) {
       <weave-property-value
         [value]="body"
+        [simple]="true"
         [readOnly]="readOnly"
         (valueChange)="replaceBody($event)"
         (validityChange)="validityChange.emit($event)"
@@ -664,27 +827,27 @@ let expressionSequence = 0;
         [value]="refText"
         [options]="references"
         [ariaLabel]="label + ' reference'"
-        placeholder="/input/customer"
+        [placeholder]="compact ? 'Choose data or type a value' : 'Choose data…'"
+        [removable]="true"
+        (removed)="setMode('literal')"
         [disabled]="readOnly"
         (valueChange)="replaceBody($event)"
       />
     } @else {
       @if (mode === "op") {
-        <select
+        <weave-select
+          [label]="label + ' operator'"
+          [hideLabel]="true"
+          [options]="formulaOptions"
+          [value]="operator"
+          placeholder="Choose a formula…"
+          [invalid]="touched && !operator"
           [disabled]="readOnly"
-          (change)="changeOperator($event)"
-          [attr.aria-label]="label + ' operator'"
-          [attr.aria-invalid]="!operator || null"
-        >
-          <option value="" [selected]="!operator" disabled>
-            Choose a formula…
-          </option>
-          @for (name of operators; track name) {
-            <option [value]="name" [selected]="name === operator">
-              {{ operatorLabel(name) }}
-            </option>
-          }
-        </select>
+          (choose)="changeOperator($event)"
+        />
+        @if (operator) {
+          <p class="property-hint">{{ formulaDescription }}</p>
+        }
       }
       @for (entry of entries; track entry.key + ":" + generation) {
         <div class="expression-argument">
@@ -700,36 +863,52 @@ let expressionSequence = 0;
             [value]="entry.value"
             [readOnly]="readOnly"
             [references]="references"
+            [compact]="true"
             [heading]="
-              mode === 'object' ? '' : 'Argument ' + (Number(entry.key) + 1)
+              isList
+                ? 'Item ' + (Number(entry.key) + 1)
+                : slotLabel(Number(entry.key))
             "
             [label]="label + ' ' + entry.key"
             (valueChange)="update(entry.key, $event)"
             (validityChange)="childValidity(entry.key, $event)"
           />
-          <button
-            type="button"
-            [disabled]="readOnly"
-            (click)="remove(entry.key)"
-          >
-            Remove {{ mode === "object" ? "field" : "argument" }}
-          </button>
+          @if (mode !== "op" || variableArity) {
+            <button
+              type="button"
+              [disabled]="readOnly || entries.length <= 1"
+              (click)="remove(entry.key)"
+            >
+              Remove {{ isList ? "item" : "value" }}
+            </button>
+          }
         </div>
       }
-      @if (mode !== "op" || operator) {
+      @if (mode !== "op" || (operator && variableArity)) {
         <button type="button" [disabled]="readOnly" (click)="add()">
-          Add {{ mode === "object" ? "field" : "argument" }}
+          Add {{ isList ? "item" : "value" }}
         </button>
       }
     }
-    @if (error) {
+    @if (error && touched) {
       <p role="alert" class="property-error">{{ error }}</p>
     }
   </div>`,
 })
-export class ExpressionEditor implements OnChanges {
+export class ExpressionEditor implements OnChanges, AfterViewChecked {
   @Input() value: unknown = { literal: null };
   @Input() readOnly = false;
+  @Input() compact = false;
+  @Input() controls = true;
+  @Input() conditionOnly = false;
+  @Input() startWithField = false;
+  @ViewChildren("fieldName") fieldNames?: QueryList<
+    ElementRef<HTMLInputElement>
+  >;
+  private pendingFocus: number | null = null;
+  fieldDraft = new FieldsDraft({ literal: {} });
+  advancedOpen = false;
+  advancedText = "";
   @Input() label = "Expression";
   /** Visible label beside the mode switch; empty when the host labels it. */
   @Input() heading = "";
@@ -739,6 +918,40 @@ export class ExpressionEditor implements OnChanges {
   @Output() validityChange = new EventEmitter<boolean>();
   Number = Number;
   operators = supportedOperators;
+  operatorGroups = operatorGroups;
+  touched = false;
+  get variableArity() {
+    return ["and", "or", "coalesce"].includes(this.operator);
+  }
+  get formulaDescription() {
+    return this.operator === "coalesce"
+      ? "Use the first value that is present. Later values are fallbacks."
+      : (operatorGroups.find((group) => group.names.includes(this.operator))
+          ?.description ?? "");
+  }
+  slotLabel(index: number) {
+    if (this.variableArity)
+      return `${this.operatorLabel(this.operator)} · value ${index + 1}`;
+    if (["exists", "not"].includes(this.operator))
+      return this.operatorLabel(this.operator);
+    return index === 0
+      ? "Compare this value"
+      : this.operatorLabel(this.operator);
+  }
+  modeKey(event: KeyboardEvent, current: string) {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const index = this.modes.findIndex((mode) => mode.value === current);
+    const next =
+      this.modes[
+        (index + (event.key === "ArrowRight" ? 1 : this.modes.length - 1)) %
+          this.modes.length
+      ];
+    this.setMode(next.value);
+    (event.target as HTMLElement).parentElement
+      ?.querySelector<HTMLElement>(`[data-mode="${next.value}"]`)
+      ?.focus();
+  }
   modes = expressionModes;
   readonly prefix = `expression-${++expressionSequence}`;
   operatorLabel(name: string) {
@@ -764,7 +977,103 @@ export class ExpressionEditor implements OnChanges {
     this.invalid.clear();
     this.renameErrors.clear();
     this.error = "";
+    this.resetFields();
+    if (this.startWithField && this.isFields && !this.fieldDraft.rows.length)
+      this.addField();
     if (wasInvalid) this.validityChange.emit(true);
+  }
+  ngAfterViewChecked() {
+    if (this.pendingFocus === null) return;
+    const input = this.fieldNames?.get(this.pendingFocus)?.nativeElement;
+    if (input) {
+      this.pendingFocus = null;
+      input.focus();
+    }
+  }
+  get isFields() {
+    return (
+      this.mode === "object" || (this.mode === "literal" && object(this.body))
+    );
+  }
+  get isList() {
+    return (
+      this.mode === "array" ||
+      (this.mode === "literal" && Array.isArray(this.body))
+    );
+  }
+  get displayMode() {
+    return this.isFields ? "object" : this.isList ? "array" : this.mode;
+  }
+  private resetFields() {
+    this.fieldDraft = new FieldsDraft(this.current);
+  }
+  get menuItems(): RowMenuItem[] {
+    return [
+      {
+        label: "Calculate…",
+        disabled: this.readOnly,
+        run: () => this.setMode("op"),
+      },
+      {
+        label: "Advanced: JSON value",
+        disabled: this.readOnly,
+        run: () => {
+          this.advancedText = JSON.stringify(
+            this.mode === "literal" ? this.body : {},
+            null,
+            2,
+          );
+          this.advancedOpen = true;
+        },
+      },
+    ];
+  }
+  editJson(event: Event) {
+    if (this.readOnly) return;
+    this.advancedText = this.text(event);
+    try {
+      this.current = { literal: JSON.parse(this.advancedText) };
+      this.invalid.clear();
+      this.resetFields();
+      this.emit();
+    } catch {
+      this.error = "Enter valid JSON. Your last valid value is kept.";
+      this.validityChange.emit(false);
+    }
+  }
+  addField() {
+    if (this.readOnly) return;
+    this.fieldDraft.add();
+    this.pendingFocus = this.fieldDraft.rows.length - 1;
+  }
+  renameField(row: FieldRow, name: string) {
+    if (this.readOnly) return;
+    this.fieldDraft.rename(row, name);
+    this.emitFields();
+  }
+  updateField(row: FieldRow, expression: unknown) {
+    if (this.readOnly) return;
+    this.fieldDraft.update(row, expression);
+    this.emitFields();
+  }
+  moveField(row: FieldRow, direction: number) {
+    if (this.readOnly) return;
+    this.fieldDraft.move(row, direction);
+    this.emitFields();
+  }
+  removeField(row: FieldRow) {
+    if (this.readOnly) return;
+    this.fieldDraft.remove(row);
+    this.invalid.delete("field-" + row.id);
+    this.emitFields();
+  }
+  private emitFields() {
+    if (!this.fieldDraft.valid) {
+      this.validityChange.emit(false);
+      return;
+    }
+    this.current = this.fieldDraft.expression() as RecordValue;
+    this.emit();
   }
   get mode() {
     return Object.keys(this.current)[0] ?? "literal";
@@ -782,7 +1091,10 @@ export class ExpressionEditor implements OnChanges {
     const values =
       this.mode === "op" && object(this.body) ? this.body["args"] : this.body;
     return object(values) || Array.isArray(values)
-      ? Object.entries(values).map(([key, value]) => ({ key, value }))
+      ? Object.entries(values).map(([key, value]) => ({
+          key,
+          value: this.mode === "literal" ? { literal: value } : value,
+        }))
       : [];
   }
   text(event: Event) {
@@ -796,10 +1108,10 @@ export class ExpressionEditor implements OnChanges {
       (this.mode === "op" && !this.operator
         ? "Choose a formula."
         : !this.invalid.size && !structural
-          ? "Fix references and operation arguments before applying."
+          ? "Fix references and operation arguments. The last valid value is kept."
           : "");
     this.validityChange.emit(valid);
-    if (valid && !this.readOnly) {
+    if (structural && !this.renameErrors.size && !this.readOnly) {
       this.known = JSON.stringify(this.current);
       this.valueChange.emit(structuredClone(this.current));
     }
@@ -815,36 +1127,59 @@ export class ExpressionEditor implements OnChanges {
     this.setMode(this.text(event));
   }
   setMode(mode: string) {
-    if (this.readOnly || mode === this.mode) return;
-    this.memory.set(this.mode, structuredClone(this.body));
+    if (this.readOnly || mode === this.displayMode) return;
+    this.advancedOpen = false;
+    this.touched = false;
+    this.memory.set(
+      this.displayMode,
+      this.isFields || this.isList
+        ? structuredClone(this.current)
+        : structuredClone(this.body),
+    );
     this.invalid.clear();
     this.renameErrors.clear();
     this.current = {
       [mode]: this.memory.has(mode)
         ? structuredClone(this.memory.get(mode))
         : mode === "ref"
-          ? "/input"
+          ? ""
           : mode === "op"
             ? structuredClone(unchosenFormula.op)
             : mode === "object"
               ? {}
               : mode === "array"
                 ? []
-                : null,
+                : "",
     };
+    if ((mode === "object" || mode === "array") && this.memory.has(mode))
+      this.current = structuredClone(this.memory.get(mode)) as RecordValue;
+    this.resetFields();
     this.emit();
   }
-  changeOperator(event: Event) {
+  get formulaOptions() {
+    return this.operatorGroups.flatMap((group) =>
+      group.names.map((value) => ({
+        value,
+        label: this.operatorLabel(value),
+        group: group.label,
+      })),
+    );
+  }
+  changeOperator(event: Event | string) {
     if (this.readOnly) return;
-    const name = this.text(event);
+    const name = typeof event === "string" ? event : this.text(event);
     let args = this.entries.map((e) => e.value);
     if (["not", "exists"].includes(name))
       args = [
-        name === "exists" ? { ref: "/input" } : (args[0] ?? { literal: true }),
+        name === "exists"
+          ? args[0] && object(args[0]) && "ref" in args[0]
+            ? args[0]
+            : { ref: "" }
+          : (args[0] ?? { ref: "" }),
       ];
     else if (!["and", "or", "coalesce"].includes(name))
-      args = [args[0] ?? { literal: null }, args[1] ?? { literal: null }];
-    else if (!args.length) args = [{ literal: null }, { literal: null }];
+      args = [args[0] ?? { ref: "" }, args[1] ?? { ref: "" }];
+    else if (!args.length) args = [{ ref: "" }, { ref: "" }];
     this.current = { op: { name, args } };
     this.emit();
   }
@@ -853,12 +1188,19 @@ export class ExpressionEditor implements OnChanges {
     this.validityChange.emit(
       !this.invalid.size &&
         !this.renameErrors.size &&
+        (!this.isFields || this.fieldDraft.valid) &&
         expressionValid(this.current),
     );
   }
   update(key: string, value: unknown) {
     if (this.readOnly) return;
-    this.invalid.delete(key);
+    if (this.mode === "literal" && this.isList) {
+      this.current = encode(
+        set(decode(this.current), [Number(key)], decode(value)),
+      ) as RecordValue;
+      this.emit();
+      return;
+    }
     const next = structuredClone(this.body);
     if (this.mode === "op" && object(next))
       (next["args"] as unknown[])[Number(key)] = value;
@@ -873,8 +1215,9 @@ export class ExpressionEditor implements OnChanges {
       while (`field${n}` in next) n++;
       next[`field${n}`] = { literal: null };
     } else if (this.mode === "op" && object(next))
-      (next["args"] as unknown[]).push({ literal: null });
-    else (next as unknown[]).push({ literal: null });
+      (next["args"] as unknown[]).push({ ref: "" });
+    else
+      (next as unknown[]).push(this.mode === "literal" ? "" : { literal: "" });
     this.replaceBody(next);
   }
   remove(key: string) {
@@ -923,11 +1266,27 @@ let gridSequence = 0;
   template: `@if (draft) {
     <div class="property-grid">
       @for (field of fields; track key(field)) {
+        @if (step.kind === "Workflow") {
+          @if (key(field) === "spec/inputSchema") {
+            <h3 class="property-section">Inputs</h3>
+          }
+          @if (key(field) === "spec/outputSchema") {
+            <h3 class="property-section">Result</h3>
+          }
+          @if (key(field) === "spec/timeoutSeconds") {
+            <div class="property-section">
+              <h3>Connections</h3>
+              <ng-content />
+            </div>
+            <h3 class="property-section">Limits</h3>
+          }
+        }
         @if (field.kind === "schema") {
           <!-- Schemas get the full width: a field list with a preview (WP-15). -->
           <div
             class="property-field wide schema-property"
             [attr.data-field]="key(field)"
+            (focusout)="touchedFields.add(key(field))"
           >
             @if (raw.has(key(field))) {
               <div class="schema-property-head">
@@ -951,6 +1310,7 @@ let gridSequence = 0;
                 [weaveLazy]="loadDesigner"
                 [lazyInputs]="{
                   heading: field.label,
+                  compact: step.kind === 'Workflow',
                   purpose: purposeOf(field),
                   schema: draft.get(field.path),
                   revision,
@@ -974,8 +1334,21 @@ let gridSequence = 0;
             }
           </div>
         } @else if (field.kind === "expression") {
-          <div class="property-field wide" [attr.data-field]="key(field)">
-            @if (isCondition(field) && !formulaFields.has(key(field))) {
+          <div
+            class="property-field wide"
+            [attr.data-field]="key(field)"
+            (focusout)="touchedFields.add(key(field))"
+          >
+            @if (resultUnset(field) && !expandedResults.has(key(field))) {
+              <span class="property-label">{{ field.label }}</span>
+              <button
+                type="button"
+                class="optional-result"
+                (click)="expandedResults.add(key(field))"
+              >
+                Not set (optional)
+              </button>
+            } @else if (isCondition(field) && !formulaFields.has(key(field))) {
               <span class="property-label" [id]="labelId(field)">{{
                 field.label
               }}</span>
@@ -996,6 +1369,9 @@ let gridSequence = 0;
                 [references]="referencesFor(field)"
                 [label]="field.label"
                 [heading]="field.label"
+                [startWithField]="
+                  step.kind === 'transform' && key(field) === 'value'
+                "
                 (valueChange)="change(field, $event)"
                 (validityChange)="validity(field, $event)"
               />
@@ -1016,11 +1392,18 @@ let gridSequence = 0;
             }
           </div>
         } @else {
-          <div class="property-field" [attr.data-field]="key(field)">
+          <div
+            class="property-field"
+            [attr.data-field]="key(field)"
+            (focusout)="touchedFields.add(key(field))"
+          >
             <span class="property-label" [id]="labelId(field)">{{
               field.label
             }}</span>
-            <div class="property-control">
+            <div
+              class="property-control"
+              [class.parallel-limit]="key(field) === 'concurrency'"
+            >
               @if (field.kind === "duration") {
                 <span class="duration-field">
                   <input
@@ -1033,6 +1416,9 @@ let gridSequence = 0;
                     [attr.aria-invalid]="!!error(field)"
                     (input)="durationInput(field, $event)"
                     [attr.aria-label]="field.label"
+                    [attr.aria-describedby]="
+                      durationHelp(field) ? labelId(field) + '-help' : null
+                    "
                   /><select
                     [disabled]="readOnly"
                     [attr.aria-label]="field.label + ' unit'"
@@ -1063,10 +1449,19 @@ let gridSequence = 0;
                   [type]="field.kind === 'positive' ? 'number' : 'text'"
                   [attr.min]="field.kind === 'positive' ? 1 : null"
                   [value]="text(field)"
+                  [placeholder]="placeholder(field)"
                   (input)="scalar(field, $event)"
                   [attr.aria-label]="field.label"
                   [attr.aria-invalid]="!!error(field) || null"
                 />
+                @if (key(field) === "concurrency") {
+                  <span>branches at once</span>
+                }
+              }
+              @if (field.kind === "duration" && durationHelp(field)) {
+                <p class="property-hint" [id]="labelId(field) + '-help'">
+                  {{ durationHelp(field) }}
+                </p>
               }
               @if (error(field)) {
                 <small class="property-error" role="alert">{{
@@ -1104,11 +1499,21 @@ export class StepPropertyGrid implements OnChanges {
   /** Sample-to-schema inference for the schema editors; null hides it. */
   @Input() inferSchema: InferSchema | null = null;
   @Output() stepChange = new EventEmitter<EditableDocument>();
+  @Output() fieldChange = new EventEmitter<{
+    value: EditableDocument;
+    path: string;
+  }>();
+  @Output() fieldValidity = new EventEmitter<{
+    path: string;
+    valid: boolean;
+  }>();
   @Output() validityChange = new EventEmitter<boolean>();
   draft!: PropertyDraft;
+  private saved!: PropertyDraft;
   fields: Field[] = [];
   buffers = new Map<string, string>();
   invalid = new Set<string>();
+  touchedFields = new Set<string>();
   /** The unit chosen for each duration field; seconds are what is stored. */
   durationUnits = new Map<string, DurationUnit>();
   units = durationUnits;
@@ -1135,6 +1540,16 @@ export class StepPropertyGrid implements OnChanges {
   revision = 0;
   /** Case conditions the person chose to edit as a formula. */
   formulaFields = new Set<string>();
+  expandedResults = new Set<string>();
+  resultUnset(field: Field) {
+    const value = this.draft.get(field.path);
+    return (
+      field.optionalResult &&
+      object(value) &&
+      object(value["literal"]) &&
+      !Object.keys(value["literal"]).length
+    );
+  }
   private readonly prefix = `property-grid-${++gridSequence}`;
   labelId(field: Field) {
     return `${this.prefix}-${this.key(field).replace(/[^A-Za-z0-9_-]/g, "-")}`;
@@ -1161,10 +1576,13 @@ export class StepPropertyGrid implements OnChanges {
     if (!changes || changes["step"] || !this.draft) {
       this.revision++;
       this.draft = new PropertyDraft(this.step);
+      this.saved = new PropertyDraft(this.step);
       this.buffers.clear();
       this.durationUnits.clear();
       this.invalid.clear();
       this.formulaFields.clear();
+      this.expandedResults.clear();
+      this.touchedFields.clear();
     }
     this.fields = propertyFields(this.draft.value).filter(
       (field) => !this.hiddenFields.includes(String(field.path[0])),
@@ -1232,10 +1650,14 @@ export class StepPropertyGrid implements OnChanges {
     );
   }
   error(field: Field) {
+    if (!this.touchedFields.has(this.key(field))) return "";
+    if (field.kind === "expression" || field.kind === "schema") return "";
+    if (field.kind === "duration" && this.draft.errors.has(this.key(field)))
+      return `Enter a positive number of ${durationUnits.find((unit) => unit.unit === this.unitOf(field))?.label ?? "seconds"}.`;
     return (
       this.draft.errors.get(this.key(field)) ||
       (this.invalid.has(this.key(field))
-        ? "Fix this value before applying changes."
+        ? "Fix this value. The last valid value is kept."
         : "")
     );
   }
@@ -1246,13 +1668,24 @@ export class StepPropertyGrid implements OnChanges {
   }
   change(field: Field, value: unknown) {
     if (this.readOnly) return;
-    this.invalid.delete(this.key(field));
     this.draft.set(field.path, value);
-    this.emit();
+    const valid = !this.draft.errors.has(this.key(field));
+    this.fieldValidity.emit({
+      path: this.key(field),
+      valid: valid && !this.invalid.has(this.key(field)),
+    });
+    this.report(this.draft.valid && this.invalid.size === 0);
+    if (valid) {
+      this.saved.set(field.path, value);
+      const snapshot = this.saved.snapshot();
+      this.stepChange.emit(snapshot);
+      this.fieldChange.emit({ value: snapshot, path: this.key(field) });
+    }
   }
   validity(field: Field, valid: boolean) {
     if (valid) this.invalid.delete(this.key(field));
     else this.invalid.add(this.key(field));
+    this.fieldValidity.emit({ path: this.key(field), valid });
     this.report(this.draft.valid && this.invalid.size === 0);
   }
   unitOf(field: Field): DurationUnit {
@@ -1260,6 +1693,34 @@ export class StepPropertyGrid implements OnChanges {
       this.durationUnits.get(this.key(field)) ??
       splitDuration(this.draft.get(field.path)).unit
     );
+  }
+  placeholder(field: Field) {
+    if (field.path[0] === "uses")
+      return this.step.kind === "decisionTable"
+        ? "payment-policy@1.0.0"
+        : "action.name@1.0.0";
+    if (this.step.kind === "signal" && field.path[0] === "name")
+      return "message-received";
+    if (this.step.kind === "fail" && field.path[0] === "message")
+      return "Provide a failure reason";
+    return "";
+  }
+  durationHelp(field: Field) {
+    if (this.draft.errors.has(this.key(field))) return "";
+    const amount = Number(this.durationAmount(field));
+    const unit = durationUnits.find(
+      (item) => item.unit === this.unitOf(field),
+    )!.label;
+    const duration = `${amount} ${amount === 1 ? unit.slice(0, -1) : unit}`;
+    if (this.step.kind === "wait")
+      return `The run pauses for ${duration}, then continues to the next step.`;
+    if (this.step.kind === "signal")
+      return `If nothing arrives within ${duration}, the run ends as timed out.`;
+    if (this.step.kind === "Workflow")
+      return amount > 0
+        ? `If the run has not finished within ${duration}, it ends as timed out.`
+        : "Set a limit for the total time this run may take.";
+    return "";
   }
   /** The amount shown in the unit field; empty for an unset optional duration. */
   durationAmount(field: Field) {
@@ -1299,7 +1760,8 @@ export class StepPropertyGrid implements OnChanges {
   }
   scalar(field: Field, e: Event) {
     if (this.readOnly) return;
-    const text = (e.target as HTMLInputElement).value;
+    const text =
+      typeof e === "string" ? e : (e.target as HTMLInputElement).value;
     this.buffers.set(this.key(field), text);
     this.change(
       field,

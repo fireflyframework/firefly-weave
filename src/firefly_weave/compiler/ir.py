@@ -25,19 +25,27 @@ from pydantic import Field, model_validator
 
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.catalog import CatalogResource, FrozenDocument, ResourceKind
+from firefly_weave.compiler.decision_tables import validate_decision_expressions
+from firefly_weave.compiler.expressions import COLLECTION_COMPARISONS
 from firefly_weave.compiler.schema_profile import SCHEMA_ARRAYS, SCHEMA_MAPS, SCHEMA_SINGLE
 from firefly_weave.contracts.definitions import (
     ActionDefinition,
     ActionSpec,
     ActionStep,
+    ArrayExpression,
     ConnectionRequirement,
     ConnectorDefinition,
     ConnectorSpec,
     ContractModel,
+    DecisionTableSpec,
+    DecisionTableStep,
     Expression,
     HumanTaskStep,
     JsonPointer,
+    LLMStep,
     Metadata,
+    ObjectExpression,
+    OpExpression,
     ParallelStep,
     PositiveInt,
     ResourceName,
@@ -48,12 +56,14 @@ from firefly_weave.contracts.definitions import (
     load_definition,
 )
 from firefly_weave.contracts.diagnostics import Diagnostic, SourceRange
+from firefly_weave.contracts.llm import LLMProfile
 from firefly_weave.contracts.values import JsonObject, JsonObjectData, JsonValue, UnicodeString
 
 type Digest = Annotated[UnicodeString, Field(pattern=r"^[a-f0-9]{64}$")]
 type NodeId = Annotated[UnicodeString, Field(min_length=1)]
 IR_VERSION = "weave/ir-v1alpha1"
 HUMAN_IR_VERSION = "weave/ir-v1alpha2"
+COMPARISON_IR_VERSION = "weave/ir-v1alpha3"
 
 
 class Dependency(ContractModel):
@@ -79,6 +89,8 @@ class Guard(ContractModel):
         "transform_output",
         "action_input",
         "action_output",
+        "decision_input",
+        "decision_output",
         "signal_payload",
         "human_output",
         "branch_output",
@@ -108,11 +120,18 @@ class ActionNode(Node):
     dependency: Digest
     input: Expression = Field(alias="with")
     connection: ResourceName | None
+    llm_profile: LLMProfile | None = Field(default=None, alias="llmProfile", exclude_if=lambda value: value is None)
 
 
 class TransformNode(Node):
     kind: Literal["transform"]
     value: Expression
+
+
+class DecisionTableNode(Node):
+    kind: Literal["decisionTable"]
+    dependency: Digest
+    input: Expression = Field(alias="with")
 
 
 class WaitNode(Node):
@@ -189,6 +208,7 @@ type IRNode = Annotated[
     StartNode
     | EndNode
     | ActionNode
+    | DecisionTableNode
     | TransformNode
     | WaitNode
     | SignalNode
@@ -310,7 +330,9 @@ class IRGraph(ContractModel):
                     raise ValueError("Orphan join")
                 if not node.completes and actual:
                     raise ValueError("Noncompleting join has successor")
-            if isinstance(node, (StartNode, ActionNode, TransformNode, WaitNode, SignalNode, JoinNode)):
+            if isinstance(
+                node, (StartNode, ActionNode, DecisionTableNode, TransformNode, WaitNode, SignalNode, JoinNode)
+            ):
                 expected_count = 0 if isinstance(node, JoinNode) and not node.completes else 1
                 if len(actual) != expected_count or any(
                     kind != "next" or branch is not None for _, kind, branch in actual
@@ -376,8 +398,41 @@ class IRGraph(ContractModel):
         return self
 
 
+def workflow_ir_version(graph: IRGraph) -> str:
+    """Select features from typed expression positions, never similarly shaped literal/schema data."""
+    expressions: list[Expression] = []
+    human = False
+    for node in graph.nodes:
+        if isinstance(node, DecisionTableNode):
+            return COMPARISON_IR_VERSION
+        if isinstance(node, (EndNode, BranchOutputNode)):
+            expressions.append(node.output)
+        elif isinstance(node, TransformNode):
+            expressions.append(node.value)
+        elif isinstance(node, ActionNode):
+            if node.llm_profile is not None:
+                return COMPARISON_IR_VERSION
+            expressions.append(node.input)
+        elif isinstance(node, HumanTaskNode):
+            human = True
+            expressions.extend((node.title, node.context))
+        elif isinstance(node, SwitchNode):
+            expressions.extend(case.when for case in node.cases)
+    while expressions:
+        expression = expressions.pop()
+        if isinstance(expression, OpExpression):
+            if expression.op.name in COLLECTION_COMPARISONS:
+                return COMPARISON_IR_VERSION
+            expressions.extend(expression.op.args)
+        elif isinstance(expression, ObjectExpression):
+            expressions.extend(expression.object.values())
+        elif isinstance(expression, ArrayExpression):
+            expressions.extend(expression.array)
+    return HUMAN_IR_VERSION if human else IR_VERSION
+
+
 class ExecutableBase(ContractModel):
-    ir_version: Literal["weave/ir-v1alpha1", "weave/ir-v1alpha2"] = Field(alias="irVersion")
+    ir_version: Literal["weave/ir-v1alpha1", "weave/ir-v1alpha2", "weave/ir-v1alpha3"] = Field(alias="irVersion")
     api_version: Literal["weave/v1alpha1"] = Field(alias="apiVersion")
     metadata: Metadata
     dependencies: list[Dependency]
@@ -407,14 +462,20 @@ class WorkflowIR(ExecutableBase):
 
     @model_validator(mode="after")
     def workflow_references(self) -> WorkflowIR:
-        if any(isinstance(n, HumanTaskNode) for n in self.graph.nodes) and self.ir_version != HUMAN_IR_VERSION:
-            raise ValueError("Human tasks require ir-v1alpha2")
+        required = workflow_ir_version(self.graph)
+        if required == COMPARISON_IR_VERSION and self.ir_version != COMPARISON_IR_VERSION:
+            raise ValueError("Collection comparisons require ir-v1alpha3")
+        if required == HUMAN_IR_VERSION and self.ir_version == IR_VERSION:
+            raise ValueError("Human tasks require ir-v1alpha2 or newer")
         if self.input_schema not in self.schemas or self.output_schema not in self.schemas:
             raise ValueError("Unknown workflow schema")
         actions = {d.digest for d in self.dependencies if d.kind == "Action"}
+        tables = {d.digest for d in self.dependencies if d.kind == "DecisionTable"}
         for node in self.graph.nodes:
             if isinstance(node, ActionNode) and node.dependency not in actions:
                 raise ValueError("Unknown action dependency")
+            if isinstance(node, DecisionTableNode) and node.dependency not in tables:
+                raise ValueError("Unknown decision table dependency")
             if isinstance(node, SignalNode) and node.schema_ref not in self.schemas:
                 raise ValueError("Unknown signal schema")
         return self
@@ -430,12 +491,23 @@ class ConnectorIR(ExecutableBase):
     spec: ConnectorSpec
 
 
+class DecisionTableIR(ExecutableBase):
+    kind: Literal["DecisionTable"]
+    spec: DecisionTableSpec
+
+    @model_validator(mode="after")
+    def feature_version(self) -> DecisionTableIR:
+        if self.ir_version != COMPARISON_IR_VERSION:
+            raise ValueError("Decision tables require ir-v1alpha3")
+        return self
+
+
 def _validate_dependency_closure(executable: ExecutableBase) -> None:
     resources = {(d.kind, d.reference): d for d in executable.dependencies}
     definitions = {
         key: load_definition(dependency.document)
         for key, dependency in resources.items()
-        if dependency.kind in {"Workflow", "Action", "Connector"}
+        if dependency.kind in {"Workflow", "Action", "Connector", "DecisionTable"}
     }
 
     def require(kind: ResourceKind, reference: str) -> None:
@@ -470,10 +542,13 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
             schema_roots.extend(cast(JsonObject, dependency.document[key]) for key in ("inputSchema", "outputSchema"))
     # Validate each document once; never expand manifests per action node.
     specs = [definition.spec for definition in definitions.values()]
-    if isinstance(executable, (ActionIR, ConnectorIR)):
+    if isinstance(executable, (ActionIR, ConnectorIR, DecisionTableIR)):
         specs.append(executable.spec)
     for spec in specs:
-        if isinstance(spec, ActionSpec):
+        if isinstance(spec, DecisionTableSpec):
+            schema_roots.extend((spec.input_schema, spec.output_schema))
+            validate_decision_expressions(cast(JsonObject, spec.model_dump(by_alias=True)))
+        elif isinstance(spec, ActionSpec):
             schema_roots.extend((spec.input_schema, spec.output_schema))
             implementation = spec.implementation
             if isinstance(implementation, WorkerImplementation):
@@ -497,11 +572,13 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
             pending = list(spec.steps)
             while pending:
                 step = pending.pop()
-                if isinstance(step, ActionStep):
+                if isinstance(step, (ActionStep, LLMStep)):
                     require("Action", step.uses)
                     action = definitions[("Action", step.uses)]
                     assert isinstance(action, ActionDefinition)
                     binding(step.connection, action.spec.connection, spec.connections)
+                elif isinstance(step, DecisionTableStep):
+                    require("DecisionTable", step.uses)
                 elif isinstance(step, HumanTaskStep):
                     schema_roots.append(step.form_schema)
                 elif isinstance(step, SignalStep):
@@ -524,6 +601,24 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
                 if not isinstance(locked_action, ActionDefinition):
                     raise ValueError("Unknown action dependency")
                 binding(node.connection, locked_action.spec.connection, executable.connections)
+                if node.llm_profile is not None:
+                    from firefly_weave.compiler.llm import llm_action_valid, llm_output_schema
+
+                    profile = node.llm_profile.model_dump(mode="json", by_alias=True)
+                    if not llm_action_valid(locked_action.spec.model_dump(by_alias=True), profile):
+                        raise ValueError("AI action violates the bounded worker policy")
+                    expression = node.input.model_dump(by_alias=True)
+                    fields = expression.get("object", {})
+                    if set(fields) != {"profile", "prompt", "context"} or fields["profile"] != {"literal": profile}:
+                        raise ValueError("AI task input must match its pinned profile")
+                    expected = llm_output_schema(profile)
+                    guards = [
+                        guard
+                        for guard in executable.guards
+                        if guard.path == node.path and guard.purpose == "action_output"
+                    ]
+                    if len(guards) != 1 or executable.schemas[guards[0].schema_ref] != expected:
+                        raise ValueError("AI output requires the pinned profile schema guard")
     # Follow schema vocabulary only: const/default/enum/examples contain ordinary data.
     pending_schemas: list[JsonValue] = list(schema_roots)
     while pending_schemas:
@@ -544,7 +639,7 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
         pending_schemas.extend(schema[key] for key in SCHEMA_SINGLE if key in schema)
 
 
-type Executable = Annotated[WorkflowIR | ActionIR | ConnectorIR, Field(discriminator="kind")]
+type Executable = Annotated[WorkflowIR | ActionIR | ConnectorIR | DecisionTableIR, Field(discriminator="kind")]
 
 
 class ArtifactEnvelope(ContractModel):

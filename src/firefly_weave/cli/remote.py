@@ -300,9 +300,9 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
             click.Option(
                 ["--collection"],
                 type=click.Choice(
-                    ["workflows", "actions", "connectors", "drafts"]
+                    ["workflows", "actions", "connectors", "decision-tables", "drafts"]
                     if operation.method == "GET"
-                    else ["workflows", "actions", "connectors"]
+                    else ["workflows", "actions", "connectors", "decision-tables"]
                 ),
                 required=True,
             )
@@ -358,7 +358,14 @@ def family(name: str, prefix: str, *, include: tuple[str, ...] = ()) -> click.Gr
 
 
 remote = click.Group("remote", help="Authenticated compilation and server contracts.")
-for operation_id in ("compiler.compile", "compiler.validate", "catalog.read", "capabilities.read", "schemas.read"):
+for operation_id in (
+    "compiler.compile",
+    "compiler.validate",
+    "compiler.evaluate_decision",
+    "catalog.read",
+    "capabilities.read",
+    "schemas.read",
+):
     remote.add_command(command(operation_id, operation_id.split(".")[0] if operation_id.endswith(".read") else None))
 
 

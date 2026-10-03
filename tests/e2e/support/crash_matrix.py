@@ -166,7 +166,7 @@ class InstalledSlice(base.VerticalSlice):
 
     async def bootstrap(self):
         assert os.environ.get("WEAVE_TEST_DOCKER_CONTEXT") == "colima-weave-tests", "Explicit owned context required"
-        assert os.environ.get("WEAVE_KEYCLOAK_TEST_URL") == "http://localhost:18081", "Owned Keycloak required"
+        base.BACKENDS["keycloak_endpoint"]()
         await super().bootstrap()
         self.observer = create_async_engine(self.owner_url, hide_parameters=True)
         async with self.observer.connect() as connection:

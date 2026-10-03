@@ -107,6 +107,7 @@ platform; the others need the `client` extra and either a
 | Create and test integration connections | `connections` | `connection.manage`; [no-code REST integration](../connectors/http-without-code.md) |
 | Start, inspect, and manage runs | `runs` (with `incidents` and `debug`), `run replay` | Grants in the environment; [manage runs](../guides/execution-management.md) |
 | Claim or complete human tasks | `human-tasks`, `human-assignments`, `human-groups` | [Human tasks](../guides/human-tasks.md) |
+| Transfer and inspect workflow files | `files upload`, `download`, `list`, `read`, `delete` | `file_manager` to upload/manage; `file_reader` to read; [file tutorial](../guides/files.md) |
 | Read or reply to email conversations | `email` | An email connection; [email workflow](../guides/email.md) |
 | Start runs from webhooks, schedules, or messages | `triggers` (with `schedules`), `broker-triggers`, `provider-sources`, `provider-receipts` | `trigger.manage`; [schedules](schedules-and-timers.md), [Kafka](../connectors/kafka.md), [provider sources](provider-sources.md) |
 | Send workflow events to other systems | `subscriptions`, `deliveries`, `source-bindings`, `teams-references`, `whatsapp-statuses` | [Outbound integration events](integration-events.md) |

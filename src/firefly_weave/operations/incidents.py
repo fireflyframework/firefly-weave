@@ -169,7 +169,7 @@ class IncidentService:
                             409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Reconciled output and evidence are required"
                         )
                     try:
-                        validate_action(ir, definition, "output", request.output)
+                        validate_action(ir, definition, "output", request.output, node=node)
                     except ValueError as error:
                         raise CatalogError(
                             422, "WV-RUNTIME-OUTPUT", "Reconciled output violates the pinned schema"

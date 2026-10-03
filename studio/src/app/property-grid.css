@@ -58,6 +58,18 @@ SPDX-License-Identifier: Apache-2.0
 .property-control {
   min-width: 0;
 }
+.parallel-limit {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.parallel-limit input {
+  width: 72px;
+}
+.parallel-limit .property-error {
+  flex-basis: 100%;
+}
 .expression-head {
   display: flex;
   flex-wrap: wrap;
@@ -91,12 +103,13 @@ SPDX-License-Identifier: Apache-2.0
 .mode-switch button:hover:not(:disabled) {
   background: var(--hover);
 }
-.mode-switch button[aria-pressed="true"] {
+.mode-switch button[aria-checked="true"],
+.mode-switch button[aria-checked="true"]:hover:not(:disabled) {
   background: var(--forest);
   color: var(--on-dark);
   font-weight: 600;
 }
-.mode-switch button:disabled[aria-pressed="true"] {
+.mode-switch button:disabled[aria-checked="true"] {
   background: var(--disabled-ink);
   color: var(--on-dark);
 }
@@ -219,4 +232,42 @@ textarea {
 .duration-field select {
   width: auto;
   flex: none;
+}
+
+.fields-builder,
+.fields-row {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.fields-row {
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.fields-row > label {
+  display: grid;
+  gap: var(--space-1);
+}
+.field-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+.field-actions button {
+  min-width: 28px;
+  min-height: 28px;
+}
+.fields-builder > button,
+.optional-result {
+  justify-self: start;
+}
+
+.property-section {
+  grid-column: 1 / -1;
+  margin: 12px 0 0;
+  min-width: 0;
+}
+.property-section h3 {
+  margin: 0 0 10px;
 }

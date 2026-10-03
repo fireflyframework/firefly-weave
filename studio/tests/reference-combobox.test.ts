@@ -101,7 +101,9 @@ describe("reference suggestions", () => {
       ["approval", "Human task"],
     ]);
     expect(view.flat.map((o) => o.option.ref)).toEqual(
-      options.map((o) => o.ref),
+      [options[1], options[0], options[3], options[2], options[4]].map(
+        (o) => o.ref,
+      ),
     );
     // Indexes are positions in the flat list, used for option ids.
     expect(view.groups[1].options.map((o) => o.index)).toEqual([2, 3]);
@@ -111,8 +113,8 @@ describe("reference suggestions", () => {
     const refs = (query: string) =>
       referenceView(options, query).flat.map((o) => o.option.ref);
     expect(refs("/steps/ch")).toEqual([
-      "/steps/check/output",
       "/steps/check/output/eligible",
+      "/steps/check/output",
     ]);
     expect(refs("customer")).toEqual(["/input/customerId"]);
     expect(refs("check yes")).toEqual(["/steps/check/output/eligible"]);
@@ -125,14 +127,14 @@ describe("reference suggestions", () => {
     const view = referenceView(options, "", { type: "boolean" });
     const fits = view.flat.map((o) => [o.option.ref, o.fit]);
     expect(fits).toEqual([
-      ["/input", "incompatible"],
-      ["/input/customerId", "incompatible"],
       ["/steps/check/output/eligible", "compatible"],
       ["/steps/check/output", "incompatible"],
+      ["/input/customerId", "incompatible"],
+      ["/input", "incompatible"],
       ["/steps/approval/output/decision", "incompatible"],
     ]);
-    // Within a group, compatible entries come first; group order is kept.
-    expect(view.groups[1].options.map((o) => o.option.ref)).toEqual([
+    // A group with a compatible leaf comes first; its container remains reachable.
+    expect(view.groups[0].options.map((o) => o.option.ref)).toEqual([
       "/steps/check/output/eligible",
       "/steps/check/output",
     ]);
@@ -197,4 +199,12 @@ describe("hints for typed references", () => {
     for (const text of ["input/x", "/x", "/steps/later/output"])
       expect(referenceHint(text, options)?.message).not.toMatch(/WV-/);
   });
+});
+
+it("ranks compatible leaf groups before incompatible containers", () => {
+  const view = referenceView(options, "", { type: "boolean" });
+  expect(view.flat[0].option.ref).toBe("/steps/check/output/eligible");
+  expect(referenceView(options, "").groups[0].options[0].option.ref).toBe(
+    "/input/customerId",
+  );
 });

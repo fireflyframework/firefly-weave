@@ -38,10 +38,10 @@ computer at `127.0.0.1`. That host keeps your saved platforms, which it shares
 with the `weave` command line, and keeps your sign-in in the operating system's
 credential store. The page never receives your tokens.
 
-**This page describes Studio 0.1.0a7.** An alpha6 or earlier browser bundle
+**This page describes Studio 0.1.0a8.** An alpha6 or earlier browser bundle
 shows an earlier connection assistant, which imports a login configuration file,
 and lacks the editor features and API actions described here. To follow this
-page, [install the alpha7 browser application](#install-the-alpha7-browser-application).
+page, [install the alpha8 browser application](#install-the-alpha8-browser-application).
 
 ![Studio and runtime boundaries](../diagrams/studio-and-runtime.svg)
 
@@ -55,7 +55,7 @@ happens on the platform and keeps running after you close Studio.
 | Your goal | What must be running | Start here |
 | --- | --- | --- |
 | Open Studio as a native desktop app | A matching desktop build for your operating system | [Install desktop](desktop.md) |
-| Draw, import, or validate a workflow on your computer | Studio's local host; no account | [Install Studio](#install-the-alpha7-browser-application), then [work locally](#work-locally-without-signing-in) |
+| Draw, import, or validate a workflow on your computer | Studio's local host; no account | [Install Studio](#install-the-alpha8-browser-application), then [work locally](#work-locally-without-signing-in) |
 | Learn the editor with a small example | Studio's local host | [Try it: draw your first workflow](#try-it-draw-your-first-workflow) |
 | Save and run workflows on your laptop | Studio plus a separate local Weave platform | [Start the platform](local-platform.md), then [connect Studio](#connect-to-a-platform) |
 | Work with your team's platform | Studio on your computer and the server address from your administrator | [Connect to a platform](#connect-to-a-platform) |
@@ -71,45 +71,45 @@ computer. You can create, import, edit, and validate workflow definitions.
 Connect when you want to save them to a shared platform, run processes, or handle
 tasks. This status does not mean your computer has lost its internet connection.
 
-## Install the alpha7 browser application
+## Install the alpha8 browser application
 
 Alpha7 includes the Studio host. Its browser assets are an optional, matching
 release bundle; the Python wheel does not embed the Angular application. Alpha4
 does not include Studio. Download all files from the same
-[v0.1.0a7 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a7).
+[v0.1.0a8 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a8).
 The CLI installer does not automatically fetch or install the Studio ZIP.
 
-Use Python 3.12 or newer. The alpha7 CLI installer includes the Studio host
+Use Python 3.12 or newer. The alpha8 CLI installer includes the Studio host
 and authentication dependencies, but downloads no browser ZIP automatically.
 These Bash/Zsh commands need neither Node nor a source checkout:
 
 ```sh
 # Install the pinned CLI into its isolated installation directory.
 # Review the installer first using the download-and-inspect alternative in Installation.
-curl --fail --location https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a7/install.sh \
-  | sh -s -- --version v0.1.0a7
+curl --fail --location https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a8/install.sh \
+  | sh -s -- --version v0.1.0a8
 # Make the installed command available in this terminal.
 export PATH="$HOME/.local/bin:$PATH"
 # Check that the host version matches the browser bundle you will install.
 weave --version
 
 # Keep the downloaded optional browser bundle and its digest together.
-mkdir weave-studio-alpha7
-cd weave-studio-alpha7
-curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a7/firefly-weave-studio-0.1.0a7.zip
-curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a7/firefly-weave-studio-0.1.0a7.zip.sha256
+mkdir weave-studio-alpha8
+cd weave-studio-alpha8
+curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a8/firefly-weave-studio-0.1.0a8.zip
+curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a8/firefly-weave-studio-0.1.0a8.zip.sha256
 # Verify the bundle on macOS. Stop if the check fails.
-shasum -a 256 --check firefly-weave-studio-0.1.0a7.zip.sha256
+shasum -a 256 --check firefly-weave-studio-0.1.0a8.zip.sha256
 # On Linux, use sha256sum --check in place of shasum -a 256 --check.
 
 # Install only the bundle whose version and verified digest match this host.
-weave studio install --bundle firefly-weave-studio-0.1.0a7.zip \
-  --sha256 "$(awk '{print $1}' firefly-weave-studio-0.1.0a7.zip.sha256)"
+weave studio install --bundle firefly-weave-studio-0.1.0a8.zip \
+  --sha256 "$(awk '{print $1}' firefly-weave-studio-0.1.0a8.zip.sha256)"
 # Start the local host without opening a browser automatically.
 weave studio --no-browser
 ```
 
-Expected: `weave --version` prints `Firefly Weave 0.1.0a7`, the checksum line
+Expected: `weave --version` prints `Firefly Weave 0.1.0a8`, the checksum line
 ends with `OK`, and the install prints `Studio installed at PATH. Start it with:
 weave studio`. The host then prints `Firefly Weave Studio · Local authoring (no
 platform selected)`, or `Firefly Weave Studio · Platform: NAME` when a saved
@@ -131,7 +131,7 @@ or the [remote deployment guide](../operations/remote-deployment.md).
 
 **This route is for contributors,** and for trying changes made after the
 latest release; the release bundle above already has everything this page
-describes. To reproduce the alpha7 release exactly, check out `v0.1.0a7`
+describes. To reproduce the alpha8 release exactly, check out `v0.1.0a8`
 instead; development `main` can differ from released assets.
 
 From the repository root, install the development dependencies first. Node 24
@@ -167,7 +167,7 @@ while you use Studio.
 
 **Already installed a release browser bundle?** Installed bundles are kept per
 version, and a checkout can report the same version as the latest release, for
-example `0.1.0a7`. A plain `weave studio` then keeps serving the installed
+example `0.1.0a8`. A plain `weave studio` then keeps serving the installed
 release screens, and `weave studio install` keeps that bundle instead of
 replacing it. Always start a source build with `--assets studio/dist/studio/browser`.
 
@@ -611,21 +611,19 @@ waits 30 seconds, watch Studio check it, and save it as a file.
    step** card between them. A new workflow is named `untitled-workflow`,
    version `1.0.0`.
 2. **Name it.** Select **Start** to open the workflow settings, change **Name**
-   to `first-wait`, and select **Apply changes**. The name identifies the
+   to `first-wait`. Valid edits are kept automatically. The name identifies the
    workflow on a platform and names the files you save.
 3. **Add a step.** Select **Add your first step**. A picker titled "Add a step
    here, at the start" opens. Type `wait` in **Search steps and actions** and
    choose **Wait for time**. Expected: a step named `wait-1` appears with the
    summary `1 min`, and the inspector opens.
 4. **Change the duration.** In the inspector, set **Duration** to `30`, choose
-   **seconds**, and select **Apply changes**, or press Ctrl+Enter
-   (Command-Enter on macOS). While your edit is not applied, the inspector
-   footer shows **Not applied yet**. Expected: that label disappears, and the
-   step's summary reads `30 s`.
+   **seconds**, and leave the field. Expected: the step summary reads `30 s`.
 5. **Read the check.** A moment later, the **Diagnostics** bar at the bottom
-   reads "No problems found. Actions and connections are checked when you
-   connect." Studio's local host ran this check; nothing left your computer.
-   Next to the version, the status reads **Kept on this computer**: Studio
+   reads "Checked locally — Validate to check against the project". Studio's
+   local host ran this check; nothing left your computer. A local check does
+   not claim that the project's actions and connections are ready.
+   Next to the version, the status reads **Draft saved**: Studio
    keeps your work in this browser as you edit.
 6. **Look at the source.** Open the **Source** tab: the same workflow is YAML,
    with `kind: wait` and `durationSeconds: 30`. Canvas edits update the source
@@ -637,8 +635,8 @@ waits 30 seconds, watch Studio check it, and save it as a file.
    the layout file only keeps the positions on the canvas.
 
 **What you learned:** a workflow is a sequence of steps between Start and End,
-each step's properties live in the inspector until you apply them, and Studio
-checks your work as you go. Next, [connect to a platform](#connect-to-a-platform)
+valid inspector edits update that workflow automatically, and Studio checks
+your work as you go. Next, [connect to a platform](#connect-to-a-platform)
 to publish and run it, or read on to learn every editor feature.
 
 ### Start a workflow
@@ -659,7 +657,7 @@ name in your environment, as in [human tasks, step 2](human-tasks.md#2-create-a-
 
 **Working locally, your workflows stay on this computer.** Studio keeps each
 workflow in this browser shortly after every change, and the status next to the
-version reads **Kept on this computer**. **Workflows** lists them on the **On
+version reads **Draft saved**. **Workflows** lists them on the **On
 this computer** tab, next to **Published** and **Drafts**, which need a platform.
 On Home, **Continue editing** reopens the last one. **Delete** on a row removes
 a workflow from this computer after you confirm, and the message that follows
@@ -706,20 +704,27 @@ actions." In a window 1024 pixels wide or narrower, the palette is hidden, and
 - **Add a path for each answer**, at the top of a selected Human task's
   inspector, adds a Decision after it with one case for each decision people
   can make.
-- **Dragging a step changes layout only.** To change execution order, open the
-  **Step actions** menu (⋯) at the bottom of the inspector, select **Move to…**,
-  then select the **+** where the step should go; Escape cancels. A Decision or
+- **Drag a step onto a highlighted + to change execution order.** The move
+  offers Undo. Dropping on blank canvas leaves the step in its original place.
+  The node's actions menu also offers **Move to…**, **Duplicate** and **Delete
+  step** on hover, keyboard focus or right-click. A Decision or
   Parallel group keeps ownership of its nested steps; cycles and moving a group
   inside itself are rejected.
-- A drop onto blank canvas creates an unplaced step. Studio lists unplaced
+- A palette drop onto blank canvas creates an unplaced step. Studio lists unplaced
   steps in a bar under the canvas, each with a button, such as "Place Wait for
   time", that works like **Move to…**. Unplaced steps block saving to a file
   and publishing.
 
 The canvas tools at the bottom right zoom out and in; the percentage between
 them returns to 100%. **Fit all** shows the whole workflow, and **Tidy layout**
-puts the steps back in order, which you can undo. Below 60 percent, steps show
-only their names and the canvas says "Zoom in to edit steps". Scroll to pan, and
+restores automatic positions and re-fits, reporting when the layout was already
+tidy. Below 60 percent, the overview keeps wrapped names, lane labels and problem
+dots. The **+** controls remain usable at 40 percent; press **A** or **/** with
+a step focused to open its following insertion slot. Very large graphs may fit
+below 40 percent; insertion buttons are hidden to avoid overlapping targets.
+Press **A** or **/** on a step to zoom to 40 percent and open its following
+insertion slot, or use the palette. A Human task without following
+answer paths offers **Branch on the answer** below its card. Scroll to pan, and
 hold Ctrl or Command while you scroll to zoom.
 
 Start and End are fixed visual boundaries, including an empty Start → End flow;
@@ -730,26 +735,31 @@ they are never added as synthetic execution steps.
 **Workflow settings** hold the name, version, input and output schemas,
 connection slots, workflow timeout, and workflow output. Open them by selecting
 empty canvas, the Start node, or the inspector's **Workflow settings** link,
-or by pressing Escape once to deselect the step. Select **Apply changes** to
-keep your changes.
+or by pressing Escape once to deselect the step. Inputs, Result, Connections,
+and Limits group the settings. Existing schema fields expand when selected.
+Valid edits are kept automatically.
 
 Select a step to edit it in the inspector. **Step name** comes first. The step's
 settings follow in sections you can fold, such as **Action**, **Connection**,
 **Input**, and **Output** for **Call an action**, and **Properties** (**Paths**
 for a Decision, **Branches** for a Parallel); Studio remembers which sections
 you folded. Durations take an amount and a unit (seconds, minutes, hours, or
-days). Select **Apply changes**, or press Ctrl+Enter (Command-Enter on macOS),
-to commit your edits, or **Discard** to drop them. Until you apply them, the
-footer shows **Not applied yet** and the step's card has a dashed outline.
-Invalid values keep the existing step intact. **Advanced JSON**, at the end of
-the inspector, edits the step as JSON. **Show inspector** and **Hide inspector**,
-at the right end of the toolbar, show or hide it; in a window wider than 1280
-pixels, drag its edge to resize it.
+days). Valid edits update the local definition after a short pause or when you
+leave a field. One Undo restores the edit. Invalid drafts stay inline while the
+canvas and source keep the last valid value; valid sibling fields still save.
+Leaving an invalid draft shows a **Go back** link to resume editing it.
+**Advanced JSON**, at the end of the inspector, provides a growing editor for
+the step. **Show inspector** and **Hide inspector** control the panel; in a
+window wider than 1280 pixels, drag its edge to resize it.
 
-**Studio asks before it drops unapplied edits.** When you save, validate,
-publish, simulate, save to a file, switch steps, or insert a step with edits
-that are not applied yet, Studio shows **Apply your changes?** with **Apply and
-continue**, **Discard changes**, and **Keep editing**.
+Choice fields open a list inside the window, even at the bottom of an inspector.
+Long lists have search. Use the arrow keys to move, Enter to choose, and Escape
+to close without changing the value. Page Up and Page Down move by a visible
+page of options.
+
+Outcome messages offer **Dismiss notification** so you can clear feedback before
+continuing. Dismissing a message does not undo the change; use **Undo** when that
+is the action you want.
 
 **Renaming a step updates what reads it.** Type the new name in **Step name** and
 press Enter, or move to another field. Studio updates every expression that reads
@@ -778,6 +788,17 @@ Each field of an action's input offers three sources:
 Other expression fields in the inspector, such as a Transform's **Value**, also
 offer **Fields**, to build an object field by field, and **List**. Data you
 choose shows as a readable name, such as "Input › Amount".
+
+The **Fields** builder opens with a row ready for its name. Select **+ Add field**
+to add another, **Use data** to read workflow data, or **Calculate…** in the row's
+⋯ menu to build a formula. Reorder or remove rows without opening JSON. Empty
+path and branch results start collapsed as **Not set (optional)**.
+
+Workflow settings and action steps share **Connection slots**. Rename a slot to
+update all its uses, see **Used by N steps**, or **Remove** it after reviewing the
+impact. **Undo** restores the slot and its assignments. When an action has no
+compatible slot, its **Add a PostgreSQL connection slot** button (named for the
+connector) creates and selects one for you.
 
 Fields you do not touch keep their original expression. To write the whole input
 as one expression instead, select **Write one expression for the whole input**;
@@ -864,7 +885,7 @@ canvas tools, to see the shortcuts:
 | --- | --- |
 | Ctrl+Z or Command-Z, with Shift to redo | Undo and redo |
 | Ctrl+S or Command-S | Save a draft on a connected platform, or save to a file while you work locally |
-| Ctrl+Enter or Command-Enter, in the inspector | Apply the inspector's changes |
+| Ctrl+Enter or Command-Enter, in the inspector | Flush valid edits immediately |
 | Arrow up and down, while the canvas or outline has focus | Select the previous or next step |
 | Enter, on a focused step | Edit the step in the inspector |
 | Delete or Backspace, while the canvas has focus | Delete the focused step |
@@ -1049,9 +1070,10 @@ values; **Technical details** holds the adapter and the revision ID.
 
 Publish the workflow, then select **Activate…**. The activation dialog, titled
 with the workflow's name and version, such as "Activate first-wait 1.0.0", lists
-each slot under **Connection slots**, for example "pets needs a weave-http 2.0.0
-connection", with a **Connection** to choose. It preselects the connector release
-under **Connector releases** when only one matches. Select **Activate version**;
+connections under **Connections**, with a **Connection** to choose where a
+choice is needed. When only one compatible choice exists, Studio groups it
+under **items picked automatically**; select **Review** to inspect it. Integration
+versions, task versions, and people and teams use the same review. Select **Activate version**;
 a failure is shown inside the dialog so you can correct the bindings. Then select
 **Start run…**, as described in the next section.
 
@@ -1065,7 +1087,8 @@ executes it once with real input. Each step needs its own permission.
 The designer's toolbar shows one main button at a time, for the next step:
 **Save draft**, then **Publish…**, then **Activate…**, then **Start run…**. The
 other commands are in the toolbar's **More** menu (⋯). The status next to the
-version says where you are, such as **Draft saved**. A command that can't run
+version says where you are, such as **Draft saved**. **Draft → Published → Active**
+marks the current stage. A command that can't run
 stays in place; select it and Studio says why under the toolbar, for example
 "Publish this version before activating it." Screen readers announce the same
 reason. Each result appears for a few seconds at the bottom of the window, often
@@ -1087,10 +1110,12 @@ with a button for the next step.
    first-wait 1.0.0." with **Activate**, and the status "Published 1.0.0".
 3. **Activate it.** Select **Activate…**, or **Activate** in that message. The
    activation dialog, such as "Activate first-wait 1.0.0", binds the published
-   version to your selected environment: choose a **Connection** for each slot
-   under **Connection slots**, and review the **Connector releases**, **Worker
-   releases**, and **Human task assignments** it needs. Under **Human task
-   assignments**, Studio lists only enabled bindings with the step's exact
+   version to your selected environment: choose a **Connection** where needed,
+   and review the **Integration versions**, **Task versions**, and **People and
+   teams** it needs. Single compatible choices are picked automatically; select
+   **Review** to inspect them. Version labels use the release's declared
+   capability versions; **Technical details** keeps full release IDs and image
+   digests available for support. Under **People and teams**, Studio lists only enabled bindings with the step's exact
    assignment name; if none exists, it says "No enabled assignment binding named
    NAME exists here. A task manager creates one." Select **Activate
    version**. The platform rejects missing or invalid bindings, and the dialog

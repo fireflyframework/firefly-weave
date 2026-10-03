@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // The canvas viewport: which part of the workflow graph is on screen and how
 // large. Opening a workflow uses a readable fit (75–100 %, top-aligned, the
 // spine centered) instead of shrinking a long flow to a few pixels; "Fit
-// all" shows everything down to 40 %; zooming keeps the point under the
+// all" includes the complete graph; zooming keeps the point under the
 // pointer in place. Coordinates: world units of the graph, screen pixels of
 // the canvas element; screen = world * zoom + pan.
 
@@ -47,7 +47,7 @@ export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 2;
 export const FIT_ALL_MIN = 0.4;
 export const READABLE_MIN = 0.75;
-/** Below this zoom the canvas shows an overview: titles only, no editing. */
+/** Below this zoom, overview mode simplifies labels while keeping insertion. */
 export const OVERVIEW_BELOW = 0.6;
 
 const clamp = (value: number, low: number, high: number) =>
@@ -71,14 +71,14 @@ export function readableFit(bounds: Bounds, view: Size, spineX: number): View {
   return { zoom, pan: { x, y: 32 - bounds.minY * zoom } };
 }
 
-/** "Fit all": the whole graph, centered, between 40 % and 100 %. */
+/** Fit the complete graph; exceptionally large workflows need a smaller overview. */
 export function fitAll(bounds: Bounds, view: Size): View {
   const width = Math.max(1, bounds.maxX - bounds.minX);
   const height = Math.max(1, bounds.maxY - bounds.minY);
-  const zoom = clamp(
-    Math.min(1, (view.width - 96) / width, (view.height - 128) / height),
-    FIT_ALL_MIN,
+  const zoom = Math.min(
     1,
+    Math.max(1, view.width - 96) / width,
+    Math.max(1, view.height - 128) / height,
   );
   return {
     zoom,
@@ -90,6 +90,21 @@ export function fitAll(bounds: Bounds, view: Size): View {
       ),
     },
   };
+}
+
+/** Reveal every lane after a structural edit, within the available canvas. */
+export function revealGroup(
+  current: View,
+  rect: { x: number; y: number; width: number; height: number },
+  view: Size,
+  margin = 24,
+): View {
+  const zoom = Math.min(
+    current.zoom,
+    Math.max(1, view.width - margin * 2) / rect.width,
+    Math.max(1, view.height - margin * 2) / rect.height,
+  );
+  return { zoom, pan: reveal({ ...current, zoom }, rect, view, margin) };
 }
 
 /**
@@ -149,6 +164,6 @@ export function usableViewport(value: unknown): View | null {
     x = Number(v["x"]),
     y = Number(v["y"]);
   if (![zoom, x, y].every(Number.isFinite)) return null;
-  if (zoom < MIN_ZOOM || zoom > MAX_ZOOM) return null;
+  if (zoom <= 0 || zoom > MAX_ZOOM) return null;
   return { zoom, pan: { x, y } };
 }

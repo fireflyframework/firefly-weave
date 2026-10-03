@@ -28,7 +28,6 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
-from sqlalchemy import make_url
 
 from firefly_weave.contracts.connectors import ActionContext, ConnectionRevision, ConnectorInvocation, ResolvedSecret
 
@@ -36,18 +35,11 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-async def external_database():
+async def external_database(release_backends):
     value = os.environ.get("WEAVE_TEST_DATABASE_URL")
     if not value:
         pytest.fail("Real PostgreSQL required: set WEAVE_TEST_DATABASE_URL for colima-weave-tests", pytrace=False)
-    url = make_url(value)
-    if (
-        url.host not in {"localhost", "127.0.0.1"}
-        or url.port != 55433
-        or url.username != "weave_b1_owner"
-        or url.database != "weave_b1_control"
-    ):
-        pytest.fail("D1 requires the retained isolated PostgreSQL on port 55433", pytrace=False)
+    url = release_backends["postgres_endpoint"](value, legacy_ports=(55433,))
     kwargs = dict(
         host="127.0.0.1",
         port=url.port,
@@ -146,14 +138,14 @@ def sql_action_context(external_database):
             config={
                 "dialect": "postgresql",
                 "host": "127.0.0.1",
-                "port": 55433,
+                "port": external_database["kwargs"]["port"],
                 "database": external_database["name"],
                 "user": external_database["roles"]["read" if action == "read" else "write"],
                 "role": "read" if action == "read" else "command",
                 "tls": "disable",
             },
             secretRef={"password": "external-password"},
-            allowed_destinations=("postgresql://127.0.0.1:55433",),
+            allowed_destinations=(f"postgresql://127.0.0.1:{external_database['kwargs']['port']}",),
         )
         config = {
             "statement": statement,
@@ -378,14 +370,14 @@ async def test_idempotency_identity_conflict_and_command_row_count(
 
 
 @asynccontextmanager
-async def commit_ack_loss_proxy(*, hold=False):
+async def commit_ack_loss_proxy(*, backend_port=55433, hold=False):
     """Forward actual PG protocol, cut only after backend COMMIT command completion."""
     evidence = {"commit_ack_dropped": 0, "committed": asyncio.Event()}
     handlers = set()
 
     async def handle(client_reader, client_writer):
         handlers.add(asyncio.current_task())
-        backend_reader, backend_writer = await asyncio.open_connection("127.0.0.1", 55433)
+        backend_reader, backend_writer = await asyncio.open_connection("127.0.0.1", backend_port)
         committing = False
 
         async def upstream():
@@ -451,7 +443,7 @@ async def test_real_network_loss_after_commit_is_unknown(postgres_connector, sql
         action="command",
         parameters={"status": {"type": "string"}, "customerId": {"type": "string"}},
     )
-    async with commit_ack_loss_proxy() as (port, evidence):
+    async with commit_ack_loss_proxy(backend_port=external_database["kwargs"]["port"]) as (port, evidence):
         revision = context.invocation.connection.model_copy(
             update={
                 "config": context.invocation.connection.config | {"port": port},
@@ -570,7 +562,7 @@ async def test_cancellation_during_real_commit_is_unknown(postgres_connector, sq
         action="command",
         parameters={"status": {"type": "string"}, "customerId": {"type": "string"}},
     )
-    async with commit_ack_loss_proxy(hold=True) as (port, evidence):
+    async with commit_ack_loss_proxy(backend_port=external_database["kwargs"]["port"], hold=True) as (port, evidence):
         revision = context.invocation.connection.model_copy(
             update={
                 "config": context.invocation.connection.config | {"port": port},
@@ -610,7 +602,7 @@ async def test_idempotent_commit_loss_recovers_saved_result(postgres_connector, 
         },
     )
     input = {"parameters": {"id": "recover", "status": "committed", "amount": None, "created": None, "data": None}}
-    async with commit_ack_loss_proxy() as (port, evidence):
+    async with commit_ack_loss_proxy(backend_port=external_database["kwargs"]["port"]) as (port, evidence):
         revision = context.invocation.connection.model_copy(
             update={
                 "config": context.invocation.connection.config | {"port": port},

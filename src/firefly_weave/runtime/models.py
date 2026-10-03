@@ -141,6 +141,7 @@ class StepChange(ContractModel):
     node_id: str
     status: Literal["completed", "waiting"]
     output: JsonData = None
+    decision: JsonObjectData | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ControlCommand(ContractModel):

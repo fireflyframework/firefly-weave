@@ -170,7 +170,8 @@ object with exactly one of these keys:
 | `op` | An operator with expression arguments: `{op: {name, args}}` | `{op: {name: eq, args: [{ref: /input/urgent}, {literal: true}]}}` |
 
 Operators are `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `and`, `or`, `not`, `exists`,
-and `coalesce`. There are no function calls, scripts, environment variables, or
+`coalesce`, `contains`, `notContains`, `in`, `notIn`, `startsWith`, and `endsWith`.
+There are no function calls, scripts, environment variables, or
 file access. The compiler checks arity, types, and scope; the
 [compiler reference](reference/compiler.md#cli-and-published-catalog-contract)
 explains evaluation rules.

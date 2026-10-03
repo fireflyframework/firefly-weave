@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // activate with the connector release pinned, and start a run from a form.
 // The local authoring endpoints run the repository's real Python code; the
 // platform is mocked. Every step leaves a screenshot under journey/.
+import { selectChoice } from "./support";
 import { test, expect, Page, Request } from "@playwright/test";
 import { parse } from "yaml";
 import {
@@ -396,7 +397,7 @@ for (const [width, height] of [
       ).toBeFocused();
       // Readiness is one line, with the checklist behind Show.
       await expect(builder(page).locator(".readiness-line")).toContainText(
-        "Ready to publish",
+        "Platform ready for API actions",
       );
 
       // 3. Describe GET /v1/records/{id} with a response sample.
@@ -407,9 +408,10 @@ for (const [width, height] of [
       await builder(page)
         .getByLabel("Path", { exact: true })
         .fill("/v1/records/{id}");
-      await builder(page)
-        .getByLabel("How the API checks who is calling")
-        .selectOption("api-key");
+      await selectChoice(
+        builder(page).getByLabel("How the API checks who is calling"),
+        "api-key",
+      );
       await builder(page)
         .getByLabel("Header that carries the key")
         .fill("X-API-Key");
@@ -517,6 +519,9 @@ for (const [width, height] of [
       const activate = page.getByRole("dialog");
       await expect(activate).toContainText(/Activate \S+ \d+\.\d+\.\d+/);
       await expect(activate.getByRole("status")).toHaveCount(0);
+      await activate
+        .getByRole("button", { name: "Review", exact: true })
+        .click();
       await expect(activate.getByLabel(/^weave-http@2\.0\.0/)).toHaveValue(
         httpRelease,
       );

@@ -24,7 +24,7 @@ from pydantic import AwareDatetime, Field, model_validator
 from firefly_weave.compiler.catalog import TaskCapability
 from firefly_weave.contracts.connectors import ResolvedSecret
 from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
-from firefly_weave.contracts.values import JsonData
+from firefly_weave.contracts.values import JsonData, JsonObjectData
 from firefly_weave.operations.redaction import Omission
 
 
@@ -148,6 +148,21 @@ class CompleteRequest(ContractModel):
 class FailRequest(ContractModel):
     lease: LeaseProof
     error: TaskError
+
+
+class TaskConnectionContext(ContractModel):
+    """Public metadata of the connection pinned to this task; no secret handles or values."""
+
+    revision_id: UUID
+    connector: str
+    config: JsonObjectData
+    allowed_destinations: tuple[str, ...]
+    secret_slots: list[ResourceName]
+
+
+class TaskExecutionContext(ContractModel):
+    connection: TaskConnectionContext | None
+    expires_at: AwareDatetime
 
 
 class CredentialRequest(ContractModel):

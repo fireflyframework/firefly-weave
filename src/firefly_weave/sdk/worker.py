@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.contracts.workers import CompletionAcknowledgment, LeaseProof, TaskError, TaskLease
+from firefly_weave.sdk._settlement import lease_settlement
 
 TaskHandler = Callable[[TaskLease], Awaitable[JsonValue]]
 
@@ -91,7 +92,10 @@ class Worker:
         expires_at = loop.time() + remaining
 
         # The watchdog belongs to execution, independently of a potentially stalled renewal.
-        async with asyncio.timeout_at(expires_at) as validity:
+        async with (
+            asyncio.timeout_at(expires_at) as validity,
+            lease_settlement(lease.proof, absolute_deadline),
+        ):
             handler = self.handlers.get(lease.capability)
             if handler is None:
                 await self.client.fail(

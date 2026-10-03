@@ -258,9 +258,10 @@ describe("matching environment releases and bindings", () => {
     expect(onlyChoice([release])).toBe(release);
     expect(onlyChoice([])).toBe("");
     expect(onlyChoice([release, workerRelease])).toBe("");
-    expect(releaseLabel(releases[0])).toBe(
-      "Release 3f2a9b1c · build aaaaaaaaaaaa",
-    );
+    expect(releaseLabel(releases[0])).toBe("Version 2.0.0");
+    expect(
+      releaseLabel({ ...releases[0], created_at: "2026-10-03T12:00:00Z" }),
+    ).toBe("Version 2.0.0 · 2026-10-03");
   });
 });
 

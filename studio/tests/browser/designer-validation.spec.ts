@@ -132,7 +132,7 @@ for (const viewport of [
       );
       await newWorkflow(page);
       await expect(panel(page)).toContainText(
-        "No problems found. Actions and connections are checked when you connect.",
+        "Checked locally — Validate to check against the project",
       );
       await page.getByRole("tab", { name: "Source", exact: true }).click();
       const started = Date.now();
@@ -202,7 +202,7 @@ for (const viewport of [
       await expect.poll(() => local.length).toBe(1);
       // A local check never claims the project catalog passed.
       await expect(panel(page)).toContainText(
-        "Validate to check actions and connections against the project.",
+        "Checked locally — Validate to check against the project",
       );
       await expect(panel(page)).not.toContainText("Passed");
       await press(page, "Validate");
@@ -341,7 +341,9 @@ for (const viewport of [
       await panel(page)
         .getByRole("button", { name: "Apply suggested edit" })
         .click();
-      await expect(panel(page)).toContainText("No problems found");
+      await expect(panel(page)).toContainText(
+        "Checked locally — Validate to check against the project",
+      );
       expect(await sourceText(page)).toContain("Customer not found");
       await command(page, "Undo");
       expect(await sourceText(page)).not.toContain("Customer not found");
@@ -460,7 +462,9 @@ for (const viewport of [
       }
       expect(shown.join("\n")).not.toContain("old workflow");
       expect(shown.join("\n")).not.toContain("1 error");
-      await expect(panel(page)).toContainText("No problems found");
+      await expect(panel(page)).toContainText(
+        "Checked locally — Validate to check against the project",
+      );
     });
 
     test("a busy Studio host is asked again instead of reporting a failure", async ({
@@ -483,9 +487,12 @@ for (const viewport of [
           : r.fulfill({ json: { ...clean, partial: true } });
       });
       await newWorkflow(page);
-      await expect(panel(page)).toContainText("No problems found", {
-        timeout: 4000,
-      });
+      await expect(panel(page)).toContainText(
+        "Checked locally — Validate to check against the project",
+        {
+          timeout: 4000,
+        },
+      );
       await expect(panel(page)).not.toContainText("couldn't check");
       expect(calls).toBe(2);
     });
@@ -528,7 +535,9 @@ for (const viewport of [
         page,
         panel(page).getByRole("button", { name: "Apply suggested edit" }),
       );
-      await expect(panel(page)).toContainText("No problems found");
+      await expect(panel(page)).toContainText(
+        "Checked locally — Validate to check against the project",
+      );
       const text = await sourceText(page);
       expect(text).toContain("Customer not found");
       expect(text).toContain("typed-only");

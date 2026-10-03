@@ -49,8 +49,8 @@ async def docker(*args):
 async def test_real_postgres_verified_tls_and_invalid_ca(tmp_path):
     from firefly_weave.connectors.postgresql import PostgresConnector, PostgresPolicy
 
-    image = await docker("image", "ls", "postgres", "--format", "{{.ID}}")
-    assert len(image.splitlines()) == 1, "Expected one retained PostgreSQL base image"
+    image = "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
+    await docker("image", "inspect", image, "--format", "{{.Id}}")
     key, cert = tmp_path / "server.key", tmp_path / "server.crt"
     process = await asyncio.create_subprocess_exec(
         "openssl",

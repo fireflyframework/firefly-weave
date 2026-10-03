@@ -37,12 +37,14 @@ def write_image_proof(base: Path, kind: str, value: dict) -> Path:
     return path
 
 
-async def native_postgres_host(image: str) -> str:
+async def native_postgres_host(image: str, *, port: int = 55433) -> str:
     """Resolve and check the owned target from the same bridge namespace as the executor."""
     if os.environ.get("WEAVE_TEST_DOCKER_CONTEXT") != "colima-weave-tests":
         raise ValueError("Native SQL probe requires owned colima-weave-tests context")
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
         raise ValueError("Native SQL probe requires an exact image ID")
+    if type(port) is not int or not 1024 <= port <= 65535:
+        raise ValueError("Native SQL probe requires the validated local fixture port")
     configured = os.environ.get("WEAVE_D1_NATIVE_PG_HOST")
     if configured is not None:
         try:
@@ -57,14 +59,25 @@ async def native_postgres_host(image: str) -> str:
     code = (
         "import ipaddress,socket,sys; "
         "address=str(ipaddress.IPv4Address(socket.gethostbyname(sys.argv[1]))); "
-        "connection=socket.create_connection((address,55433),timeout=3); "
+        "connection=socket.create_connection((address,int(sys.argv[2])),timeout=3); "
         "connection.close(); print(address)"
     )
 
     def probe() -> str:
         identifier = (
             run_command(
-                [*docker, "create", "--name", "weave-d1-network-" + uuid4().hex, image, "python", "-c", code, target],
+                [
+                    *docker,
+                    "create",
+                    "--name",
+                    "weave-d1-network-" + uuid4().hex,
+                    image,
+                    "python",
+                    "-c",
+                    code,
+                    target,
+                    str(port),
+                ],
                 timeout=15,
                 limit=65536,
             )

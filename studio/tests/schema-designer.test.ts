@@ -676,3 +676,34 @@ describe("new rows", () => {
     expect(r).toMatchObject({ name: "", type: "string", required: false });
   });
 });
+
+it("keeps a file reference as one File field without rewriting its contract", () => {
+  const file = {
+    type: "object",
+    required: ["kind", "id"],
+    properties: {
+      kind: { const: "weave/file" },
+      id: { type: "string", format: "uuid" },
+    },
+    additionalProperties: false,
+  };
+  const source = { type: "object", properties: { attachment: file } };
+  const model = schemaToModel(source);
+  expect(model.rows[0].type).toBe("file");
+  expect(modelToSchema(model)).toEqual(source);
+  model.rows[0].title = "Invoice";
+  expect((modelToSchema(model) as any).properties.attachment).toEqual({
+    ...file,
+    title: "Invoice",
+  });
+  model.rows[0].nullable = true;
+  const nullable = modelToSchema(model) as any;
+  expect(nullable.properties.attachment.type).toEqual(["object", "null"]);
+  expect(schemaToModel(nullable).rows[0].nullable).toBe(true);
+  changeType(model.rows[0], "string");
+  model.rows[0].nullable = false;
+  expect((modelToSchema(model) as any).properties.attachment).toEqual({
+    type: "string",
+    title: "Invoice",
+  });
+});

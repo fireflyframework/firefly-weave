@@ -181,7 +181,7 @@ test("the desktop app says local drafts last until it quits", async ({
   await newWorkflow(page);
   await insertStep(page, "Transform");
   await expect(page.locator(".status-chip")).toContainText(
-    "Kept until you quit",
+    /Draft saved \d{2}:\d{2}/,
     { timeout: 10_000 },
   );
   await page.getByRole("button", { name: "Workflows", exact: true }).click();

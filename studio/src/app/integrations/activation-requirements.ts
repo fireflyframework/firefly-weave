@@ -88,6 +88,7 @@ export interface ReleaseBinding {
 }
 export interface ReleaseView {
   id: string;
+  created_at?: string;
   image_digest: string;
   capabilities: ReleaseCapability[];
   connector_bindings: ReleaseBinding[];
@@ -290,6 +291,9 @@ export function readReleases(items: unknown): ReleaseView[] {
     .filter((item) => uuidPattern.test(text(item["id"])))
     .map((item) => ({
       id: text(item["id"]),
+      ...(typeof item["created_at"] === "string"
+        ? { created_at: item["created_at"] }
+        : {}),
       image_digest: text(item["image_digest"]),
       capabilities: list(item["capabilities"])
         .map(record)
@@ -465,12 +469,20 @@ export function onlyChoice(ids: string[]): string {
   return ids.length === 1 ? ids[0] : "";
 }
 
-const shortId = (id: string) => id.slice(0, 8);
-
 /** A plain label for a release in a picker. */
 export function releaseLabel(release: ReleaseView): string {
-  const image = release.image_digest.replace(/^sha256:/, "").slice(0, 12);
-  return `Release ${shortId(release.id)}${image ? ` · build ${image}` : ""}`;
+  const versions = unique(
+    release.capabilities
+      .map((capability) => capability.taskVersion)
+      .filter(Boolean),
+  );
+  const date =
+    release.created_at &&
+    /^\d{4}-\d{2}-\d{2}T/.test(release.created_at) &&
+    Number.isFinite(Date.parse(release.created_at))
+      ? release.created_at.slice(0, 10)
+      : "";
+  return `${versions.length ? `Version${versions.length > 1 ? "s" : ""} ${versions.join(", ")}` : "Version unavailable"}${date ? ` · ${date}` : ""}`;
 }
 
 /** A plain label for an assignment binding in a picker. */
@@ -547,7 +559,7 @@ interface PinRow {
   key: string;
   label: string;
   detail: string;
-  options: { id: string; label: string }[];
+  options: { id: string; label: string; details?: string }[];
   value: string;
   /** Connector rows: the published connector version the release is pinned for. */
   versionId: string;
@@ -560,9 +572,9 @@ interface PinRow {
 type Lookup<T> = { ok: true; value: T } | { ok: false; status: number };
 const maximumPages = 4;
 const pinGroups = [
-  ["connector", "Connector releases"],
-  ["worker", "Worker releases"],
-  ["assignment", "Human task assignments"],
+  ["connector", "Integration versions"],
+  ["worker", "Task versions"],
+  ["assignment", "People and teams"],
 ] as const;
 let pickerSequence = 0;
 
@@ -688,6 +700,17 @@ async function lookup<T>(read: () => Promise<T>): Promise<Lookup<T>> {
                 @if (row.note) {
                   <p class="hint" [id]="pinId(row, 'note')">{{ row.note }}</p>
                 }
+                @if (row.options.length) {
+                  <details class="release-details">
+                    <summary>Technical details</summary>
+                    @for (option of row.options; track option.id) {
+                      <p>
+                        {{ option.label }}<br /><code>{{ option.id }}</code
+                        ><br /><code>{{ option.details }}</code>
+                      </p>
+                    }
+                  </details>
+                }
                 @if (row.custom) {
                   <button type="button" (click)="remove(row)">Remove</button>
                 }
@@ -734,6 +757,18 @@ export class ActivationPinsPicker implements OnInit {
   loading = signal(true);
   source = signal<"artifact" | "workflow">("workflow");
   rows = signal<PinRow[]>([]);
+  reviewAutomatic = signal(false);
+  automaticRows() {
+    return this.rows().filter((row) => this.automatic(row));
+  }
+  private automatic(row: PinRow) {
+    return (
+      !row.custom &&
+      !row.typeVersion &&
+      row.options.length === 1 &&
+      row.value === row.options[0].id
+    );
+  }
   notice = signal("");
   readonly groups = pinGroups;
   readonly prefix = `pin-${++pickerSequence}`;
@@ -756,7 +791,10 @@ export class ActivationPinsPicker implements OnInit {
     return (event.target as HTMLInputElement).value.trim();
   }
   rowsOf(kind: PinRow["kind"]) {
-    return this.rows().filter((row) => row.kind === kind);
+    return this.rows().filter(
+      (row) =>
+        row.kind === kind && (this.reviewAutomatic() || !this.automatic(row)),
+    );
   }
   pinId(row: PinRow, part: string) {
     return `${this.prefix}-${this.rows().indexOf(row)}-${part}`;
@@ -917,6 +955,7 @@ export class ActivationPinsPicker implements OnInit {
       const option = (release: ReleaseView) => ({
         id: release.id,
         label: releaseLabel(release),
+        details: release.image_digest,
       });
       const used = (usedBy: string[], otherwise: string) =>
         usedBy.length ? `Used by ${usedBy.join(", ")}` : otherwise;

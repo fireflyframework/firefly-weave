@@ -102,12 +102,18 @@ for (const viewport of [
       await expect(
         page.getByRole("combobox", { name: "Search steps and actions" }),
       ).toBeFocused();
+      await page.keyboard.type("Transform");
       await page.keyboard.press("ArrowDown");
       await page.keyboard.press("Enter");
       await expect(page.locator('[data-step="transform-1"]')).toBeVisible();
-      await expect(
-        page.locator('[data-step="transform-1"] .node-body'),
-      ).toBeFocused();
+      if (viewport.width > 767)
+        await expect(
+          page.getByRole("textbox", { name: "Field name", exact: true }),
+        ).toBeFocused();
+      else
+        await expect(
+          page.locator('[data-step="transform-1"] .node-body'),
+        ).toBeFocused();
       expect((await steps(page)).map((s) => s.id)).toEqual(["transform-1"]);
     });
 
@@ -146,7 +152,7 @@ for (const viewport of [
         designer.target("Add a step here, in Case 1 of decision-1"),
       ).toHaveCount(0);
       await expect(
-        designer.target("Add a step here, after transform-1"),
+        designer.target("Add a step after transform-1, in Case 1"),
       ).toHaveCount(1);
     });
 
@@ -244,21 +250,28 @@ for (const viewport of [
         });
       });
       expect(fits).toBe(true);
-      // It opens at a readable zoom and scrolls; Fit all shows the whole
-      // flow down to 40%, and zooming steps by 20% down to 25%.
+      // Fit all includes both boundaries even for a 130-step workflow.
       const zoom = page.locator(".zoom-level");
       const level = async () =>
         Number((await zoom.textContent())?.replace("%", ""));
       await expect.poll(level).toBeGreaterThanOrEqual(75);
       await page.getByRole("button", { name: "Fit all", exact: true }).click();
-      await expect.poll(level).toBe(40);
-      // That's an overview: titles only, no "+" targets.
+      await expect.poll(level).toBeLessThan(40);
       await expect(page.locator(".canvas")).toHaveClass(/\boverview\b/);
-      await page.getByRole("button", { name: "Zoom in" }).click();
-      await expect.poll(level).toBe(48);
+      await expect
+        .poll(async () => {
+          const end = await page
+            .getByRole("img", { name: "Workflow end", exact: true })
+            .boundingBox();
+          const canvas = await page.locator(".canvas").boundingBox();
+          return end!.y + end!.height <= canvas!.y + canvas!.height;
+        })
+        .toBe(true);
+      await zoom.click();
+      await expect.poll(level).toBe(100);
       await page.getByRole("button", { name: "Zoom out" }).click();
-      await expect.poll(level).toBe(40);
-      for (let i = 0; i < 6; i++)
+      await expect.poll(level).toBe(83);
+      for (let i = 0; i < 8; i++)
         await page.getByRole("button", { name: "Zoom out" }).click();
       await expect.poll(level).toBe(25);
     });

@@ -22,6 +22,8 @@ import type { Kind } from "../model";
 /** Plain-language names for step kinds. */
 export const stepKindLabels: Record<Kind, string> = {
   action: "Call an action",
+  decisionTable: "Decision table",
+  llm: "AI task",
   transform: "Transform",
   switch: "Decision",
   parallel: "Parallel",
@@ -32,6 +34,8 @@ export const stepKindLabels: Record<Kind, string> = {
 };
 export const stepKindDescriptions: Record<Kind, string> = {
   action: "Run a published action",
+  decisionTable: "Evaluate reusable rules",
+  llm: "Ask an AI model for a typed result",
   transform: "Shape and map data",
   switch: "Follow a different path based on a condition",
   parallel: "Run independent branches at the same time",
@@ -44,6 +48,8 @@ export const stepKindDescriptions: Record<Kind, string> = {
 /** Everyday words people search with, so "approval" finds the human task. */
 export const stepKindKeywords: Record<Kind, string> = {
   action: "api http request rest webhook connector worker integration",
+  decisionTable: "rules policy evaluate table first unique collect",
+  llm: "ai model llm prompt reasoning generate agentic",
   transform: "map set assign merge format",
   switch: "if else condition branch route rule decision",
   parallel: "fork concurrent split",
@@ -57,9 +63,9 @@ export const stepKindKeywords: Record<Kind, string> = {
  * actions the palette lists under it.
  */
 export const stepKindGroups: { label: string; kinds: Kind[] }[] = [
-  { label: "Logic", kinds: ["switch", "parallel", "fail"] },
+  { label: "Logic", kinds: ["switch", "decisionTable", "parallel", "fail"] },
   { label: "Data", kinds: ["transform"] },
   { label: "Waiting", kinds: ["wait", "signal"] },
   { label: "People", kinds: ["humanTask"] },
-  { label: "Actions", kinds: ["action"] },
+  { label: "Actions", kinds: ["action", "llm"] },
 ];

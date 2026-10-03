@@ -128,6 +128,14 @@ class WorkerController:
             result = await self.tasks.fail(tx, body.lease, body.error, **authority)
         return JSONResponse(result.model_dump(mode="json"))
 
+    @operation("tasks.context")
+    async def context(self, request: Request) -> JSONResponse:
+        body = LeaseProof.model_validate_json(await request.body())
+        authority = self.authority(request)
+        async with self.service.definitions.transaction(authority["scope"], None) as tx:
+            result = await self.tasks.context(tx, body, **authority)
+        return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
     @operation("tasks.credentials")
     async def credentials(self, request: Request) -> JSONResponse:
         result = await self.tasks.credentials(

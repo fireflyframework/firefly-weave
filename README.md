@@ -53,28 +53,29 @@ maps service tasks, user tasks, gateways, and timers to Weave steps.
 
 ## What you get
 
-The **v0.1.0a7 alpha** release provides the **API, CLI, Python SDK, and Studio**
+The **v0.1.0a8 alpha** release provides the **API, CLI, Python SDK, and Studio**
 visual workspace, with human-task inboxes, email conversations, execution
 management, and administration of people and access. Run Weave as a standalone
 service or embed it in another product.
 
-**New in 0.1.0a7:**
+**New in 0.1.0a8:**
 
-- **Sign-in by server address.** `weave auth setup` and Studio's connection steps
-  read the platform's published sign-in settings, sign you in, and save the
-  platform and your workspace. The CLI, Studio, and the desktop app share these
-  saved platforms; tokens stay in your operating system's credential store.
-- **REST calls without code.** Describe a request, or import operations from an
-  OpenAPI document, and publish it as an Action on the built-in `weave-http@2.0.0`
-  connector, from the CLI or from Studio's API action builder.
-- **A more guided Studio editor.** Templates, a step picker on the canvas,
-  workflow settings, a schema designer, live validation, simulation controls,
-  and a form for starting runs.
-- **A more complete local platform.** `weave platform user` creates a person who
-  can sign in, and `weave platform integrations` and `secret` let it run REST
-  calls.
+- **Files across workflows.** Upload through the API, CLI, Python SDK or Studio,
+  pass verified references between steps, and attach documents to human tasks.
+  File workers connect FTP/FTPS/SFTP, SharePoint/OneDrive and Google Drive.
+- **Decision rules and AI tasks.** Versioned decision tables and workflow model
+  profiles use the same compiler and durable task protocol. An independent
+  Firefly Agentic worker executes the configured provider, model and pattern.
+- **Lumi in Studio.** Ask for help with a workflow, run or simulation; choose
+  what context to share, review proposed source and explicitly apply it to a
+  local draft. Lumi uses its own model configuration.
+- **A clearer editor.** Decision and parallel lanes, immediate valid edits with
+  Undo, guided human tasks, and action version selection keep changes visible.
 
-Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha7-browser-application)
+Read the [capability matrix](docs/capabilities.md) for tested boundaries and
+live-provider checks that remain environment-specific.
+
+Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha8-browser-application)
 or as a [desktop app](docs/guides/desktop.md). The macOS desktop bundles
 are ad-hoc signed, not Developer ID signed or notarized, so macOS may ask you to
 approve them; do not use the alpha5 macOS installers, which were damaged. The
@@ -112,7 +113,7 @@ integration code. Each has its own guide, so you can stop at the result you need
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a7 alpha**
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a8 alpha**
 into your user account without `sudo`, Git, or Docker:
 
 ```sh
@@ -120,12 +121,12 @@ into your user account without `sudo`, Git, or Docker:
   # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a7/install.sh \
-    | sh -s -- --version v0.1.0a7
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a8/install.sh \
+    | sh -s -- --version v0.1.0a8
 )
 ```
 
-Expected: `Installed Firefly Weave 0.1.0a7:` followed by the command's path. Then
+Expected: `Installed Firefly Weave 0.1.0a8:` followed by the command's path. Then
 make the default command directory available in this terminal and look around:
 
 ```sh
@@ -139,7 +140,7 @@ weave help workflow
 weave docs platform
 ```
 
-Expected: `Firefly Weave 0.1.0a7`, the command overview, the `workflow`
+Expected: `Firefly Weave 0.1.0a8`, the command overview, the `workflow`
 commands, and the address of the platform guide. You do not need to learn every
 command first: help explains each family and its next steps. The
 [installation guide](docs/installation.md) covers choosing Python, a permanent
@@ -172,7 +173,7 @@ Compose files and setup helpers. Clone the tag that matches the CLI:
 
 ```sh
 # Keep the platform files at the same version as the CLI.
-git clone --branch v0.1.0a7 --single-branch https://github.com/fireflyframework/firefly-weave.git
+git clone --branch v0.1.0a8 --single-branch https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 
 # Check prerequisites, then prepare private settings and dependencies once.
@@ -258,7 +259,7 @@ path, and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a7**, an **alpha** release. Download
+The recommended installation is **v0.1.0a8**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The documentation on a branch describes the source on that branch; a release tag
@@ -287,7 +288,9 @@ Windows and Linux is not verified.
 **Lumi is Weave's firefly guide.** The folded wings echo the woven Weave logo,
 and the warm lantern represents a clear next step through a complex process.
 
-You will find Lumi in the CLI help and throughout the documentation. In diagrams,
+You will find Lumi in the CLI help, throughout the documentation, and in Studio's
+**Ask Lumi** panel. [Configure the assistant](docs/guides/lumi.md) separately from
+workflow AI tasks. In diagrams,
 **Lumi's takeaway** highlights the main idea to remember before moving on.
 Start with the [visual guide](docs/visual-guide.md) to explore the platform together.
 

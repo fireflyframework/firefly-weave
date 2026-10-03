@@ -182,3 +182,36 @@ def test_native_sql_and_kafka_images_are_exported_only_after_verified_build(runn
             "sha256:server",
             "sha256:kafka",
         )
+
+
+@pytest.mark.parametrize("release", [False, True])
+def test_worker_gates_keep_independent_locked_python_runtimes(runner, monkeypatch, tmp_path, release):
+    evidence = tmp_path / "checks"
+    calls = capture(runner, monkeypatch, evidence)
+    assert runner.run(ROOT, evidence, release=release, context=None) == 0
+    commands = {name: argv for name, argv, _ in calls}
+    for worker, version in (("agentic", "3.13"), ("files", "3.12")):
+        for gate in ("tests", "lint", "format", "types"):
+            command = commands[f"worker-{worker}-{gate}"]
+            assert command[:7] == ["uv", "run", "--locked", "--project", f"workers/{worker}", "--python", version]
+            assert f"workers/{worker}/{'tests' if gate == 'tests' else 'src'}" in command
+            assert list(commands).index(f"worker-{worker}-{gate}") < list(commands).index("prepare")
+
+
+def test_worker_failure_stops_packaging_with_private_evidence(runner, monkeypatch, tmp_path):
+    evidence = tmp_path / "checks"
+    calls = capture(runner, monkeypatch, evidence, fail="worker-agentic-tests")
+    assert runner.run(ROOT, evidence, release=False, context=None) == 1
+    result = json.loads((evidence / "checks.json").read_text())
+    assert result["stages"]["worker-agentic-tests"]["status"] == "failed"
+    assert result["stages"]["prepare"]["status"] == "not_run"
+    assert calls[-1][0] == "worker-agentic-tests"
+
+
+def test_integration_allocates_its_own_private_native_image_proof(runner, monkeypatch, tmp_path):
+    evidence = tmp_path / "checks"
+    capture(runner, monkeypatch, evidence)
+    runner.os.environ.pop("WEAVE_IMAGE_PROOF_PATH", None)
+    assert runner.run(ROOT, evidence, release=False, integration=True, context=None) == 0
+    proof = runner.os.environ.get("WEAVE_IMAGE_PROOF_PATH")
+    assert proof == str(evidence / "native-image.json")

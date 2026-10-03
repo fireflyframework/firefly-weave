@@ -33,6 +33,7 @@ from firefly_weave.contracts.definitions import (
     ActionDefinition,
     ConnectorDefinition,
     ContractModel,
+    DecisionTableDefinition,
     Definition,
     PositiveInt,
     ResourceName,
@@ -44,8 +45,8 @@ from firefly_weave.contracts.definitions import (
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonObjectData, UnicodeString
 
-DefinitionModel = WorkflowDefinition | ActionDefinition | ConnectorDefinition
-ResourceKind = Literal["Workflow", "Action", "Connector", "TaskCapability", "Adapter", "Schema"]
+DefinitionModel = WorkflowDefinition | ActionDefinition | ConnectorDefinition | DecisionTableDefinition
+ResourceKind = Literal["Workflow", "Action", "Connector", "DecisionTable", "TaskCapability", "Adapter", "Schema"]
 _NAME_ADAPTER: TypeAdapter[str] = TypeAdapter(ResourceName)
 _STORAGE_LIMITS = Limits(max_depth=128)
 
@@ -102,7 +103,7 @@ class CatalogResource:
 
     def __post_init__(self) -> None:
         value = self.definition.value
-        if self.kind in {"Workflow", "Action", "Connector"}:
+        if self.kind in {"Workflow", "Action", "Connector", "DecisionTable"}:
             model = load_definition(value)
             expected = f"{model.metadata.name}@{model.metadata.version}"
             if model.kind != self.kind or self.reference != expected:

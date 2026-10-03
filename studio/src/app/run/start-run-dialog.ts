@@ -30,6 +30,7 @@ import {
 import { Modal } from "../dialog";
 import { describeError, PlainError } from "../errors";
 import { StudioApi } from "../api";
+import type { FileAccess } from "../forms/core/file-reference";
 import { TaskForm } from "../task-form";
 import { type Schema, groupedObject, missingRequired } from "../task-schema";
 import { remember, remembered, rememberable } from "./run-memory";
@@ -152,6 +153,7 @@ const isRecord = (value: unknown): value is Json =>
             <!-- The seed only changes when the form is recreated: feeding
                  each change back would reset the form's own field errors. -->
             <weave-task-form
+              [fileAccess]="fileAccess()"
               [schema]="schema"
               [initialData]="formSeed"
               (dataChange)="formData = $event; problem = ''"
@@ -238,6 +240,7 @@ const isRecord = (value: unknown): value is Json =>
   ],
 })
 export class StartRunDialog implements OnChanges {
+  fileAccess = input<FileAccess | null>(null);
   api = input.required<StudioApi>();
   activations = input<Record<string, unknown>[]>([]);
   initialActivationId = input("");

@@ -85,6 +85,10 @@ business data.
 | Task participant | `task_participant` | Read eligible tasks; claim, release, and complete assigned work |
 | Task manager | `task_manager` | Manage assignment bindings, groups, and human tasks |
 | Email reader, Email sender, Email manager | `email_reader`, `email_sender`, `email_manager` | Read conversations, send messages, or manage email sources |
+| File reader | `file_reader` | Read file metadata and download verified content in the granted scope |
+| File manager | `file_manager` | Read, upload and delete files; deletion remains blocked while retained runs use them |
+| Lumi user | `lumi_user` | Ask the configured assistant using only context the caller may access |
+| Lumi manager | `lumi_manager` | Use Lumi and change its separate environment model configuration; selecting a connection also needs `connection.manage` |
 | Tenant administrator | `tenant_admin` | Manage the tenant's projects, environments, grants, and integration connections |
 | Worker | `worker` | For worker identities only: register workers and claim and complete their tasks |
 | Not granted in Studio | `platform_admin` | Manage platform identities, create tenants, and grant across the platform |
@@ -97,6 +101,11 @@ business data.
   `deployer` deliberately.
 - **Approvals and email are separate.** Grant `task_participant` or an email
   role only to the people who need them.
+
+**Files and Lumi require explicit roles.** Add them only in the intended project
+or environment. A task participant can use attachments offered by a current
+human-task claim without receiving access to the whole environment file store.
+Lumi access does not allow publishing or starting workflows.
 
 A worker identity stays limited to worker capabilities even if a human role is
 attached to it by mistake.

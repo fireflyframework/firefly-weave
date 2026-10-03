@@ -33,6 +33,155 @@ from firefly_weave.contracts.access import Scope
 pytestmark = pytest.mark.integration
 
 
+def decision_publication():
+    return {
+        "format": "json",
+        "source": json.dumps(
+            {
+                "apiVersion": "weave/v1alpha1",
+                "kind": "DecisionTable",
+                "metadata": {"name": "decision-policy", "version": "1.0.0"},
+                "spec": {
+                    "inputSchema": {"type": "object"},
+                    "outputSchema": {"type": "string"},
+                    "hitPolicy": "first",
+                    "rules": [{"id": "approve", "when": {"literal": True}, "output": {"literal": "approved"}}],
+                },
+            }
+        ),
+    }
+
+
+async def test_decision_table_publication_lock_retirement_and_tenant_isolation(
+    author, headers, other_headers, project_url, access_db, provisioned
+):
+    url = project_url + "/decision-tables"
+    body = decision_publication()
+    response = await author[0].post(url, headers={**headers, "Idempotency-Key": "decision"}, json=body)
+    assert response.status_code == 201, response.text
+    identity = response.json()["id"]
+    assert response.json()["kind"] == "DecisionTable"
+    replay = await author[0].post(url, headers={**headers, "Idempotency-Key": "decision"}, json=body)
+    assert replay.json() == response.json()
+    listed = await author[0].get(url, headers=headers)
+    assert listed.status_code == 200 and listed.json()["items"][0]["id"] == identity
+    exported = await author[0].get(url + "/" + identity + "/export", headers=headers)
+    assert exported.status_code == 200, exported.text
+    assert exported.json()["artifact"]["executable"]["irVersion"] == "weave/ir-v1alpha3"
+    denied = await author[0].get(url + "/" + identity, headers=other_headers)
+    assert denied.status_code == 403
+    catalog = await author[0].get(project_url + "/catalog", headers=headers)
+    assert any(d["document"]["kind"] == "DecisionTable" for d in catalog.json()["definitions"])
+    changed = {**body, "source": body["source"].replace('"approved"', '"rejected"')}
+    conflict = await author[0].post(url, headers={**headers, "Idempotency-Key": "decision-conflict"}, json=changed)
+    assert conflict.status_code == 409
+    await access_db[2].grant(
+        provisioned[0],
+        author[1].id,
+        Grant(role="deployer", scope=Scope(tenant_id=author[2].tenant_id, project_id=author[2].project_id)),
+    )
+    retired = await author[0].post(
+        url + "/" + identity + "/retire", headers={**headers, "Idempotency-Key": "retire-decision"}, json={}
+    )
+    assert retired.status_code == 200, retired.text
+
+
+async def test_pure_decision_evaluation_requires_compile_access_and_never_persists_input(
+    author, headers, other_headers, project_url, access_db, provisioned, caplog
+):
+    body = {**decision_publication(), "input": {"private": "never-persist-this"}}
+    url = project_url + "/compiler/evaluate-decision"
+    denied = await author[0].post(url, headers=other_headers, json=body)
+    assert denied.status_code == 403
+    async with access_db[1]() as observer:
+        viewer = await observer.scalar(text("SELECT principal_id FROM identity_links WHERE subject='1'"))
+    await access_db[2].grant(
+        provisioned[0],
+        viewer,
+        Grant(role="viewer", scope=Scope(tenant_id=author[2].tenant_id, project_id=author[2].project_id)),
+    )
+    assert (await author[0].get(project_url + "/catalog", headers=other_headers)).status_code == 200
+    denied = await author[0].post(url, headers=other_headers, json=body)
+    assert denied.status_code == 403
+    result = await author[0].post(url, headers=headers, json=body)
+    assert result.status_code == 200, result.text
+    assert result.json() == {"output": "approved", "matched_rule_ids": ["approve"], "used_default": False}
+    invalid = {**body, "source": body["source"].replace('"literal": true', '"literal": false')}
+    rejected = await author[0].post(url, headers=headers, json=invalid)
+    assert rejected.status_code == 422 and rejected.json()["code"] == "WV-DECISION-NO_MATCH"
+    assert "never-persist-this" not in rejected.text
+    assert "never-persist-this" not in caplog.text
+    async with access_db[1]() as observer:
+        assert await observer.scalar(text("SELECT count(*) FROM definition_versions")) == 0
+        assert await observer.scalar(text("SELECT count(*) FROM runs")) == 0
+        assert await observer.scalar(text("SELECT count(*) FROM task_intents")) == 0
+
+
+async def test_published_decision_runs_without_workers_and_keeps_table_pin_after_retirement(
+    author, headers, project_url, env_url, access_db, provisioned
+):
+    table = await author[0].post(
+        project_url + "/decision-tables",
+        headers={**headers, "Idempotency-Key": "decision"},
+        json=decision_publication(),
+    )
+    assert table.status_code == 201, table.text
+    document = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "decision-flow", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {"type": "object"},
+            "outputSchema": {"type": "string"},
+            "steps": [
+                {"id": "choose", "kind": "decisionTable", "uses": "decision-policy@1.0.0", "with": {"ref": "/input"}}
+            ],
+            "output": {"ref": "/steps/choose/output"},
+        },
+    }
+    flow = await author[0].post(
+        project_url + "/workflows",
+        headers={**headers, "Idempotency-Key": "decision-flow"},
+        json={"source": json.dumps(document), "format": "json"},
+    )
+    assert flow.status_code == 201, flow.text
+    activation = await author[0].post(
+        env_url + "/activations",
+        headers={**headers, "Idempotency-Key": "decision-activation"},
+        json={
+            "version_id": flow.json()["id"],
+            "artifact_digest": flow.json()["digest"],
+            "scope": author[2].model_dump(mode="json"),
+        },
+    )
+    assert activation.status_code == 201, activation.text
+    await access_db[2].grant(provisioned[0], author[1].id, Grant(role="operator", scope=author[2]))
+    await access_db[2].grant(
+        provisioned[0],
+        author[1].id,
+        Grant(role="deployer", scope=Scope(tenant_id=author[2].tenant_id, project_id=author[2].project_id)),
+    )
+    retired = await author[0].post(
+        project_url + "/decision-tables/" + table.json()["id"] + "/retire",
+        headers={**headers, "Idempotency-Key": "retire-decision"},
+        json={},
+    )
+    assert retired.status_code == 200, retired.text
+    run = await author[0].post(
+        env_url + "/runs",
+        headers={**headers, "Idempotency-Key": "decision-run"},
+        json={"activation_id": activation.json()["id"], "input": {}},
+    )
+    assert run.status_code == 201, run.text
+    assert run.json()["state"]["status"] == "succeeded"
+    assert run.json()["state"]["output"] == "approved"
+    async with access_db[1]() as observer:
+        assert await observer.scalar(text("SELECT count(*) FROM task_intents")) == 0
+        transition = await observer.scalar(text("SELECT transition FROM run_events"))
+        decision = next(step["decision"] for step in transition["steps"] if step["node_id"] == "choose")
+        assert decision == {"matched_rule_ids": ["approve"], "used_default": False}
+
+
 @pytest.fixture
 async def author(client, authenticated_client, access_db, provisioned):
     sessions, _, access, _ = access_db

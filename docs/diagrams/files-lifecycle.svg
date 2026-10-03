@@ -1,0 +1,69 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="740" viewBox="0 0 1160 740" role="img" aria-labelledby="title description">
+
+<title id="title">How a file moves through Firefly Weave</title>
+<desc id="description">Upload bytes to a scoped content store. Pass the verified file reference into a workflow. Workers and human reviewers download only authorized files. Execution history retains references and prevents premature deletion.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker>
+  <g id="file"><path d="M0 0h18l9 9v29H0zM18 0v9h9M6 18h15M6 25h15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></g>
+  <g id="check"><circle cx="16" cy="16" r="15" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m8 16 5 5 11-12" fill="none" stroke="currentColor" stroke-width="2.5"/></g>
+</defs>
+<rect width="1160" height="740" rx="24" fill="#EEF4F0"/>
+<g font-family="Inter,Arial,sans-serif">
+  <text x="40" y="53" font-size="13" font-weight="700" letter-spacing="1.8" fill="#367D68">FIREFLY WEAVE · FILES</text>
+  <text x="40" y="99" font-size="32" font-weight="700" fill="#173D34">One file. A reference every step can use.</text>
+  <text x="40" y="131" font-size="17" fill="#4D655D">Keep the content separate; keep access tied to the task and environment.</text>
+  <rect x="30" y="164" width="1100" height="193" rx="18" fill="#E3ECDD"/>
+  <text x="52" y="193" font-size="13" font-weight="700" fill="#367D68">1  UPLOAD AND VERIFY</text>
+  <rect x="52" y="208" width="290" height="125" rx="14" fill="white"/>
+  <use href="#file" x="74" y="231" color="#367D68"/>
+  <text x="119" y="242" font-size="19" font-weight="700" fill="#173D34">Your app or CLI</text>
+  <text x="74" y="282" font-size="15" fill="#4D655D">Send small, resumable chunks.</text>
+  <text x="74" y="306" font-size="15" fill="#4D655D">A stable key resumes the upload.</text>
+  <path d="M353 271h49" stroke="#367D68" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="414" y="208" width="306" height="125" rx="14" fill="white"/>
+  <use href="#check" x="436" y="232" color="#367D68"/>
+  <text x="483" y="242" font-size="19" font-weight="700" fill="#173D34">Weave verifies the file</text>
+  <text x="436" y="282" font-size="15" fill="#4D655D">Check size, SHA-256, and scope.</text>
+  <text x="436" y="306" font-size="15" fill="#4D655D">Only complete files become ready.</text>
+  <path d="M731 271h48" stroke="#367D68" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="791" y="208" width="315" height="125" rx="14" fill="#173D34"/>
+  <text x="815" y="242" font-size="19" font-weight="700" fill="white">Separate content storage</text>
+  <text x="815" y="282" font-size="15" fill="#DDEAE3">Binary chunks stay in PostgreSQL.</text>
+  <text x="815" y="306" font-size="15" fill="#DDEAE3">They do not enter workflow history.</text>
+  <rect x="30" y="378" width="1100" height="206" rx="18" fill="#E4EFEC"/>
+  <text x="52" y="407" font-size="13" font-weight="700" fill="#367D68">2  PASS THE REFERENCE</text>
+  <rect x="52" y="426" width="290" height="134" rx="14" fill="white"/>
+  <text x="74" y="458" font-size="19" font-weight="700" fill="#173D34">Workflow input or result</text>
+  <text x="74" y="494" font-size="15" fill="#4D655D">ID + filename + size + checksum</text>
+  <text x="74" y="522" font-size="15" fill="#4D655D">The next step receives this value.</text>
+  <path d="M353 491h49" stroke="#367D68" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="414" y="426" width="306" height="134" rx="14" fill="white"/>
+  <text x="436" y="458" font-size="19" font-weight="700" fill="#173D34">Worker or integration</text>
+  <text x="436" y="494" font-size="15" fill="#4D655D">Use a live task lease to read input.</text>
+  <text x="436" y="522" font-size="15" fill="#4D655D">Return a new file as task output.</text>
+  <path d="M731 491h48" stroke="#367D68" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="791" y="426" width="315" height="134" rx="14" fill="white"/>
+  <text x="815" y="458" font-size="19" font-weight="700" fill="#173D34">Human review</text>
+  <text x="815" y="494" font-size="15" fill="#4D655D">Open documents shown by the task.</text>
+  <text x="815" y="522" font-size="15" fill="#4D655D">Attach a file with the decision.</text>
+  <rect x="30" y="606" width="1100" height="104" rx="18" fill="#173D34"/>
+  <text x="54" y="642" font-size="18" font-weight="700" fill="white">3  RETAIN THE EVIDENCE</text>
+  <text x="54" y="674" font-size="16" fill="#DDEAE3">History keeps references. A file cannot be deleted while a retained execution still uses it.</text>
+</g></svg>

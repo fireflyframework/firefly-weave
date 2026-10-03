@@ -32,6 +32,7 @@ from firefly_weave.contracts.public import (
     CompatibilityAvailability,
     CompilerRequest,
     DebugCapabilities,
+    DecisionEvaluationRequest,
     OperationalCapabilities,
     ProcessCapabilities,
     RuntimeCapabilities,
@@ -82,6 +83,14 @@ class CompilerController:
             context=request.state.audit_context,
         )
         return compile_payload(result)
+
+    @operation("compiler.evaluate_decision")
+    async def evaluate_decision(self, request: Request) -> dict[str, Any]:
+        body = DecisionEvaluationRequest.model_validate_json(await request.body())
+        result = await self.service.evaluate_decision(
+            request.state.principal, request_scope(request), body, context=request.state.audit_context
+        )
+        return result.model_dump(mode="json")
 
     @operation("catalog.read")
     async def catalog(self, request: Request) -> dict[str, Any]:

@@ -48,6 +48,16 @@ class CompilerRequest(ContractModel):
         return self
 
 
+class DecisionEvaluationRequest(CompilerRequest):
+    input: JsonData
+
+
+class DecisionEvaluation(ContractModel):
+    output: JsonData
+    matched_rule_ids: list[str] = Field(max_length=1000)
+    used_default: bool
+
+
 class CompileResponse(ContractModel):
     diagnostics: list[Diagnostic]
     artifact: ArtifactEnvelope | None
@@ -251,9 +261,11 @@ class OperationalCapabilities(ContractModel):
 class Capabilities(ContractModel):
     wire_version: Literal["weave/api-v1"] = "weave/api-v1"
     language_versions: list[str] = Field(default_factory=lambda: ["weave/v1alpha1"])
-    ir_versions: list[str] = Field(default_factory=lambda: ["weave/ir-v1alpha1", "weave/ir-v1alpha2"])
+    ir_versions: list[str] = Field(
+        default_factory=lambda: ["weave/ir-v1alpha1", "weave/ir-v1alpha2", "weave/ir-v1alpha3"]
+    )
     step_kinds: list[str] = Field(
-        default_factory=lambda: ["action", "transform", "switch", "parallel", "wait", "signal", "fail"]
+        default_factory=lambda: ["action", "decisionTable", "transform", "switch", "parallel", "wait", "signal", "fail"]
     )
     limits: dict[str, int]
     schemas: list[str]
@@ -268,7 +280,7 @@ def catalog_lock(snapshot: CatalogSnapshot) -> CatalogLock:
             "definitions": [
                 {"document": r.definition.value, "digest": r.digest}
                 for r in values
-                if r.kind in {"Workflow", "Action", "Connector"}
+                if r.kind in {"Workflow", "Action", "Connector", "DecisionTable"}
             ],
             "tasks": [r.definition.value for r in values if r.kind == "TaskCapability"],
             "adapters": [r.reference for r in values if r.kind == "Adapter"],

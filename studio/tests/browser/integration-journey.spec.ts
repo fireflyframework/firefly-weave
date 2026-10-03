@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The "Call an action" journey: explicit catalog states, the action's
 // requirements, connection slots, schema-driven input and activation bindings.
+import { selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import {
   allCapabilities,
@@ -34,8 +35,7 @@ import {
 } from "./integrations-po";
 
 const contract = (page: Page) => page.locator(".integration-contract");
-const apply = (page: Page) =>
-  page.getByRole("button", { name: "Apply changes", exact: true });
+const inspectorHeading = (page: Page) => page.locator(".inspector header h2");
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -58,13 +58,15 @@ test("offline: explains how to connect and declares a connection slot", async ({
     .getByLabel("Action version", { exact: true })
     .fill("crm.lookup@2.0.0");
   await contract(page).getByText("Add connection slot").click();
-  await page.getByLabel("Slot name", { exact: true }).fill("crm");
-  await page.getByLabel("Connector", { exact: true }).fill("crm@1.0.0");
+  await page.getByLabel("New slot name", { exact: true }).fill("crm");
+  await page
+    .getByLabel("New slot connector", { exact: true })
+    .fill("crm@1.0.0");
   await page.getByRole("button", { name: "Add slot", exact: true }).click();
-  await expect(page.getByLabel("Connection slot", { exact: true })).toHaveValue(
-    "crm",
-  );
-  await apply(page).click();
+  await expect(
+    page.getByLabel("Connection slot", { exact: true }),
+  ).toHaveAttribute("data-value", "crm");
+  await inspectorHeading(page).click();
   const source = await sourceText(page);
   expect(source).toContain("uses: crm.lookup@2.0.0");
   expect(source).toContain("connection: crm");
@@ -157,20 +159,25 @@ test("requirements, required inputs and a compatible slot complete the step", as
     "Choose a connection slot for weave-postgresql@1.0.0.",
   );
   await page.getByLabel(/^Customer ID/).fill("customer-104");
-  await page.getByLabel(/^Region(\s*\(optional\))?$/).selectOption("us");
+  await selectChoice(page.getByLabel(/^Region(\s*\(optional\))?$/), "us");
   await page.getByRole("button", { name: "Add Tags item" }).click();
   await page.getByLabel("Tags item 1", { exact: true }).fill("priority");
   await page.getByRole("button", { name: "Add Tags item" }).click();
   await page.getByLabel("Tags item 2", { exact: true }).fill("emea");
   // An optional yes/no input is "Not set", "Yes" or "No" (F3).
-  await page.getByLabel(/^Dry run(\s*\(optional\))?$/).selectOption("true");
+  await selectChoice(page.getByLabel(/^Dry run(\s*\(optional\))?$/), "true");
   await expect(issues).not.toContainText("required inputs");
-  await page.getByRole("button", { name: "Add slot", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Add a PostgreSQL connection slot",
+      exact: true,
+    })
+    .click();
   await expect(page.getByLabel("Connection slot", { exact: true })).toHaveValue(
     "weave-postgresql",
   );
   await expect(issues).toHaveCount(0);
-  await apply(page).click();
+  await inspectorHeading(page).click();
   await expect(page.locator(".apply-state")).toHaveCount(0);
   const source = await sourceText(page);
   expect(source).toContain("connection: weave-postgresql");
@@ -192,8 +199,8 @@ test("later steps discover the action output reference", async ({ page }) => {
   ).toBeVisible();
   await insertStep(page, "Transform");
   await page
-    .getByRole("group", { name: "Value expression mode", exact: true })
-    .getByRole("button", { name: "Data" })
+    .getByRole("radiogroup", { name: "Value expression mode", exact: true })
+    .getByRole("radio", { name: "Data" })
     .click();
   const reference = page.getByRole("combobox", {
     name: "Value reference",
@@ -207,7 +214,7 @@ test("later steps discover the action output reference", async ({ page }) => {
     await options.evaluateAll((items) =>
       items.map((o) => o.getAttribute("data-ref")),
     ),
-  ).toEqual(["/input", "/steps/call-action-1/output"]);
+  ).toEqual(["/steps/call-action-1/output", "/input"]);
 });
 
 test("activation binds each connection slot to an environment connection", async ({
@@ -263,8 +270,13 @@ test("activation binds each connection slot to an environment connection", async
   await insertStep(page, "Call an action");
   await chooseAction(page, "sql.lookup@1.0.0");
   await page.getByLabel(/^Customer ID/).fill("customer-104");
-  await page.getByRole("button", { name: "Add slot", exact: true }).click();
-  await apply(page).click();
+  await page
+    .getByRole("button", {
+      name: "Add a PostgreSQL connection slot",
+      exact: true,
+    })
+    .click();
+  await inspectorHeading(page).click();
   await command(page, "Publish…");
   await page
     .getByRole("dialog")
@@ -276,12 +288,9 @@ test("activation binds each connection slot to an environment connection", async
   await expect(dialog).toContainText("could not complete this request");
   await expect(dialog).toContainText("Support code: WV-INTERNAL");
   await dialog.getByRole("button", { name: "Try again" }).click();
-  const slot = dialog.getByLabel(/^weave-postgresql/);
-  await expect(slot).toHaveValue("0f8fad5b-d9cb-469f-a165-70867728950e");
-  const labels = await slot
-    .locator("option")
-    .evaluateAll((items) => items.map((o) => o.textContent?.trim()));
-  expect(labels).toEqual(["Choose a connection", "orders-db · revision 3"]);
+  await expect(dialog).toContainText("picked automatically");
+  await dialog.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(dialog).toContainText("orders-db");
   await dialog.getByRole("button", { name: "Activate version" }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => activation).not.toBeNull();
@@ -299,7 +308,11 @@ test("activation binds each connection slot to an environment connection", async
 test("activation without connection permission accepts revision IDs", async ({
   page,
 }) => {
-  await connected(page);
+  await connected(page, {
+    capabilities: allCapabilities.filter(
+      (capability) => capability !== "catalog.read",
+    ),
+  });
   await page.route("**/environments/development/connections?*", (r) =>
     r.fulfill({ status: 403, json: { code: "WV-DENIED" } }),
   );
@@ -318,9 +331,11 @@ test("activation without connection permission accepts revision IDs", async ({
     .getByLabel("Action version", { exact: true })
     .fill("custom.lookup@1.0.0");
   await contract(page).getByText("Add connection slot").click();
-  await page.getByLabel("Connector", { exact: true }).fill("crm@1.0.0");
+  await page
+    .getByLabel("New slot connector", { exact: true })
+    .fill("crm@1.0.0");
   await page.getByRole("button", { name: "Add slot", exact: true }).click();
-  await apply(page).click();
+  await inspectorHeading(page).click();
   await command(page, "Publish…");
   await page
     .getByRole("dialog")
@@ -341,7 +356,11 @@ test("activation without connection permission accepts revision IDs", async ({
 test("activation keeps its dialog open while it runs and shows failures inline", async ({
   page,
 }) => {
-  await connected(page);
+  await connected(page, {
+    capabilities: allCapabilities.filter(
+      (capability) => capability !== "catalog.read",
+    ),
+  });
   await page.route("**/environments/development/connections?*", (r) =>
     r.fulfill({ status: 403, json: { code: "WV-DENIED" } }),
   );
@@ -372,9 +391,11 @@ test("activation keeps its dialog open while it runs and shows failures inline",
     .getByLabel("Action version", { exact: true })
     .fill("custom.lookup@1.0.0");
   await contract(page).getByText("Add connection slot").click();
-  await page.getByLabel("Connector", { exact: true }).fill("crm@1.0.0");
+  await page
+    .getByLabel("New slot connector", { exact: true })
+    .fill("crm@1.0.0");
   await page.getByRole("button", { name: "Add slot", exact: true }).click();
-  await apply(page).click();
+  await inspectorHeading(page).click();
   await command(page, "Publish…");
   await page
     .getByRole("dialog")

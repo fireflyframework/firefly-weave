@@ -338,7 +338,7 @@ describe("typed reference suggestions", () => {
       stepId: "check",
       stepKind: "action",
       breadcrumb: "check › eligible",
-      typeLabel: "Yes or no",
+      typeLabel: "Yes/No",
     });
     const unknown = visibleRefs(w, "decision", "/value");
     expect(unknown.find((r) => r.ref === "/steps/check/output")).toMatchObject({
@@ -361,7 +361,7 @@ describe("typed reference suggestions", () => {
     const signals = visibleRefs(fixtures.signal, "done", "/value");
     expect(
       signals.find((r) => r.ref === "/steps/approval/output/approved"),
-    ).toMatchObject({ typeLabel: "Yes or no", optional: false });
+    ).toMatchObject({ typeLabel: "Yes/No", optional: false });
     const shaped = workflow([
       transform("shape", {
         object: {
@@ -385,9 +385,9 @@ describe("typed reference suggestions", () => {
           .map((r) => [r.ref, r.typeLabel]),
       ),
     ).toEqual({
-      "/steps/shape/output": "Object",
+      "/steps/shape/output": "Group",
       "/steps/shape/output/total": "Whole number",
-      "/steps/shape/output/ok": "Yes or no",
+      "/steps/shape/output/ok": "Yes/No",
       "/steps/shape/output/copy": "Text",
     });
     const waits = visibleRefs(fixtures.sequence, "d", "/value");

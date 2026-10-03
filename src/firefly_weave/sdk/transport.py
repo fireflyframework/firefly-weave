@@ -18,11 +18,14 @@
 
 import asyncio
 import json
+import math
 from uuid import UUID
 
 from httpx import AsyncClient, Response
 from pydantic import TypeAdapter
 
+from firefly_weave.contracts.file_workers import WorkerFileAccess
+from firefly_weave.contracts.files import FileChunk, FileCreate, FileUpload
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.contracts.workers import (
     CompletionAcknowledgment,
@@ -30,8 +33,10 @@ from firefly_weave.contracts.workers import (
     CredentialRequest,
     LeaseProof,
     TaskError,
+    TaskExecutionContext,
     TaskLease,
 )
+from firefly_weave.sdk._settlement import settlement_deadline
 
 
 class WorkerTransport:
@@ -61,6 +66,7 @@ class WorkerTransport:
             "/tasks/complete",
             {"lease": lease.model_dump(mode="json"), "completion_id": str(completion_id), "output": output},
             settlement=True,
+            lease=lease,
         )
         response.raise_for_status()
         return TypeAdapter(CompletionAcknowledgment).validate_json(response.content)
@@ -70,6 +76,7 @@ class WorkerTransport:
             "/tasks/fail",
             {"lease": lease.model_dump(mode="json"), "error": error.model_dump(mode="json")},
             settlement=True,
+            lease=lease,
         )
         response.raise_for_status()
         return TypeAdapter(CompletionAcknowledgment).validate_json(response.content)
@@ -87,7 +94,9 @@ class WorkerTransport:
             "WV-OPERATION-CAPACITY",
         )
 
-    async def _post_rejected(self, path: str, body: object, *, settlement: bool = False) -> Response:
+    async def _post_rejected(
+        self, path: str, body: object, *, settlement: bool = False, lease: LeaseProof | None = None
+    ) -> Response:
         # Freeze caller-owned values before the first attempt, including the completion identity.
         content = json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
         headers = {"Content-Type": "application/json"}
@@ -95,10 +104,17 @@ class WorkerTransport:
         if not self._capacity_rejected(response):
             return response
         # Only explicit rollback/admission rejection permits replay. Wire errors remain ambiguous.
-        # Settlement can outlast a short admission burst; renewal retains its short window.
-        # The Worker's lease watchdog can cancel either policy sooner, without rerunning work.
+        # Direct callers retain a finite retry window. The owning Worker can wait
+        # through a longer rejection burst while its current lease watchdog remains authoritative.
         attempts, seconds = (48, 10) if settlement else (3, 1)
-        async with asyncio.timeout(seconds):
+        deadline = settlement_deadline(lease) if settlement else None
+        if deadline is None:
+            window = asyncio.timeout(seconds)
+        else:
+            remaining = max(0, deadline - asyncio.get_running_loop().time())
+            attempts = math.ceil(remaining / 0.05) + 1
+            window = asyncio.timeout_at(deadline)
+        async with window:
             for retry in range(attempts - 1):
                 await asyncio.sleep(min(0.05 * 2 ** min(retry, 3), 0.25))
                 response = await self.client.post(self.prefix + path, content=content, headers=headers)
@@ -106,7 +122,60 @@ class WorkerTransport:
                     return response
         return response
 
+    async def context(self, lease: LeaseProof) -> TaskExecutionContext:
+        """Read the activation's pinned connection through current task authority."""
+        response = await self.client.post(self.prefix + "/tasks/context", json=lease.model_dump(mode="json"))
+        response.raise_for_status()
+        return TaskExecutionContext.model_validate_json(response.content)
+
     async def credentials(self, request: CredentialRequest) -> CredentialLease:
         response = await self.client.post(self.prefix + "/tasks/credentials", json=request.model_dump(mode="json"))
         response.raise_for_status()
         return CredentialLease.model_validate_json(response.content)
+
+    async def create_file(self, lease: LeaseProof, request_id: UUID, file: FileCreate) -> FileUpload:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/create",
+            json={
+                "lease": lease.model_dump(mode="json"),
+                "request_id": str(request_id),
+                "file": file.model_dump(mode="json", by_alias=True),
+            },
+        )
+        response.raise_for_status()
+        return FileUpload.model_validate_json(response.content)
+
+    async def put_file_chunk(self, lease: LeaseProof, file_id: UUID, chunk: FileChunk) -> FileUpload:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/chunk",
+            json={
+                "lease": lease.model_dump(mode="json"),
+                "file_id": str(file_id),
+                "chunk": chunk.model_dump(mode="json", by_alias=True),
+            },
+        )
+        response.raise_for_status()
+        return FileUpload.model_validate_json(response.content)
+
+    async def finish_file(self, lease: LeaseProof, file_id: UUID) -> FileUpload:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/finish", json={"lease": lease.model_dump(mode="json"), "file_id": str(file_id)}
+        )
+        response.raise_for_status()
+        return FileUpload.model_validate_json(response.content)
+
+    async def read_file(self, lease: LeaseProof, file_id: UUID) -> FileUpload:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/read",
+            json=WorkerFileAccess(lease=lease, file_id=file_id).model_dump(mode="json", by_alias=True),
+        )
+        response.raise_for_status()
+        return FileUpload.model_validate_json(response.content)
+
+    async def read_file_chunk(self, lease: LeaseProof, file_id: UUID, index: int) -> FileChunk:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/download",
+            json={"lease": lease.model_dump(mode="json"), "file_id": str(file_id), "chunk": {"index": index}},
+        )
+        response.raise_for_status()
+        return FileChunk.model_validate_json(response.content)

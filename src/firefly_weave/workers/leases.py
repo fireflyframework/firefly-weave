@@ -44,7 +44,9 @@ from firefly_weave.contracts.workers import (
     CredentialLease,
     CredentialRequest,
     LeaseProof,
+    TaskConnectionContext,
     TaskError,
+    TaskExecutionContext,
     TaskLease,
     UnavailableCompletionReceipt,
 )
@@ -355,6 +357,22 @@ class _TaskOperation:
             )
             return receipt
 
+    async def execution_context(self, tx: Transaction, proof: LeaseProof) -> TaskExecutionContext:
+        verified = await self.check(tx, proof, "task.claim")
+        connection = None
+        # Only the saved activation chooses the revision. A worker cannot use
+        # this endpoint to enumerate other connections or retrieve secret handles.
+        if verified.task["payload"].get("connection_slot"):
+            revision = await self.connections.lease_revision(verified)
+            connection = TaskConnectionContext(
+                revision_id=revision.id,
+                connector=revision.connector,
+                config=revision.config,
+                allowed_destinations=revision.allowed_destinations,
+                secret_slots=sorted(revision.secret_refs),
+            )
+        return TaskExecutionContext(connection=connection, expires_at=verified.attempt["expires_at"])
+
     async def invocation(self, tx: Transaction, proof: LeaseProof) -> tuple[str, ConnectorInvocation]:
         verified = await self.check(tx, proof, "task.claim")
         target = verified.task["payload"].get("connector_target")
@@ -518,6 +536,17 @@ class TaskService:
         self, request: CredentialRequest, *, actor: Principal, scope: Scope, context: AuditContext
     ) -> CredentialLease:
         return await self._operation(actor, scope, context).credentials(request)
+
+    async def context(
+        self, tx: Transaction, lease: LeaseProof, *, actor: Principal, scope: Scope, context: AuditContext
+    ) -> TaskExecutionContext:
+        return await self._operation(actor, scope, context).execution_context(tx, lease)
+
+    async def verify_file_task(
+        self, tx: Transaction, lease: LeaseProof, *, actor: Principal, scope: Scope, context: AuditContext
+    ) -> VerifiedTask:
+        """In-process authority for file access; never return this proof through the API."""
+        return await self._operation(actor, scope, context).check(tx, lease, "task.claim")
 
     async def credential_authority(
         self, request: CredentialRequest, *, actor: Principal, scope: Scope, context: AuditContext

@@ -151,7 +151,8 @@ the request before admitting it:
 | --- | --- |
 | Claim | Returns no leases; the worker polls again later without cancelling active handlers |
 | Heartbeat | At most 3 attempts in total, waiting 50 and then 100 ms, within one second of the first rejection |
-| Complete or fail | At most 48 attempts within ten seconds of the first rejection, waiting 50, 100, and 200 ms, then 250 ms each time |
+| Complete or fail through `Worker` | Retries within the task deadline while the owning worker's lease watchdog remains active, waiting 50, 100, and 200 ms, then 250 ms each time |
+| Direct `WorkerTransport.complete` or `.fail` | At most 48 attempts within ten seconds of the first rejection, using the same backoff; the initial request uses the caller's HTTP timeout |
 
 The lease and deadline watchdog can stop these retries sooner. Every retry
 sends identical bytes (proof, completion ID, and payload), and the handler never
@@ -159,6 +160,9 @@ runs again. Any other 429, authorization errors, server errors, disconnects,
 timeouts, and malformed successful answers fail without automatic retry.
 Credential requests are never retried. These retries cannot resolve an
 ambiguous outcome or renew expired authority.
+The extended settlement window belongs to the exact lease proof and execution
+task; child tasks and unrelated calls retain the direct transport limits. A
+successful heartbeat can extend the current lease, but never the task deadline.
 
 **Effects and incidents.** Only effects declared safe are retried, within the
 pinned attempt and deadline policy. An ambiguous non-idempotent effect raises an

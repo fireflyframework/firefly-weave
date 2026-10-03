@@ -1375,7 +1375,7 @@ test.describe("startup and saved platforms", () => {
       .click();
     await page.getByRole("button", { name: "Save draft" }).click();
     await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-      "Draft saved",
+      /Draft saved \d{2}:\d{2}/,
     );
     await page
       .locator(".palette-step")
@@ -1407,7 +1407,7 @@ test.describe("startup and saved platforms", () => {
     await expect(page.locator('[data-step="transform-1"]')).toBeVisible();
     await expect(page.locator('[data-step="transform-2"]')).toBeVisible();
     await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-      "Unsaved changes",
+      "Unsaved",
     );
     await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
       "Platform: Globex · Signed in · Workspace Core / Test",

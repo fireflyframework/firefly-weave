@@ -39,6 +39,7 @@ from firefly_weave.connectors.dispatcher import ExecutorConfig
 from firefly_weave.contracts.client_configuration import ClientConfiguration, SignInFlow, SignInOption
 from firefly_weave.contracts.operational_policy import OperationsPolicy
 from firefly_weave.contracts.telemetry import TelemetryOptions
+from firefly_weave.operations.lumi_gateway import LumiGatewaySettings
 
 
 def operations_from_env() -> OperationsPolicy:
@@ -109,6 +110,7 @@ def client_sign_in_from_env() -> tuple[ClientSignIn, ...]:
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
+    lumi: LumiGatewaySettings = Field(default_factory=LumiGatewaySettings)
     operations: OperationsPolicy = Field(default_factory=OperationsPolicy)
     telemetry: TelemetryOptions = Field(default_factory=TelemetryOptions)
     connector_packages: tuple[str, ...] = ()
@@ -252,6 +254,7 @@ class Settings(BaseModel):
             telemetry=telemetry,
             docs_enabled=docs_enabled == "true",
             operations=operations_from_env(),
+            lumi=LumiGatewaySettings.model_validate_json(os.environ.get("WEAVE_LUMI_GATEWAY", "{}")),
             connector_packages=TypeAdapter(tuple[str, ...]).validate_json(
                 os.environ.get("WEAVE_CONNECTOR_PACKAGES", "[]")
             ),

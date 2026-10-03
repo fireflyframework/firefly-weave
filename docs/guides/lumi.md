@@ -1,0 +1,172 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Lumi assistant
+
+Lumi is an optional Studio assistant for explaining and drafting Weave definitions.
+It returns text and source proposals for review. It cannot publish, activate, run,
+delete, upload, or modify resources. Proposals still need the normal compiler and
+permission checks before a person applies them.
+
+Lumi has its own configuration per environment. It never reads a workflow's
+`llmProfiles`, and changing an LLM step does not change the assistant.
+
+## Use Lumi in Studio
+
+Select **Ask Lumi** from the global toolbar after connecting to an environment
+where Lumi is enabled. Type a question. Context is opt-in: check **Include current
+source** to share the current local draft, including unsaved source edits, or
+select the available saved draft, run, or simulation attachment. The selected
+provider receives the included source and authorized context.
+
+A reply is plain text. Open a proposed draft to review and edit its source, then
+select **Validate proposal**. A valid workflow proposal can **Apply to local
+draft** only while the original local draft and source revision remain unchanged.
+If either changed, ask again against the current draft. Applying offers Undo;
+it does not save to the platform, publish, activate, or run the workflow.
+Other valid proposal kinds offer **Save reviewed draft file** for subsequent
+review in their normal authoring tools.
+
+**New conversation** clears the current exchange. Conversations remain in memory
+and clear when the workspace, identity, or sign-in session changes. They are not
+workflow history. Managers can open **Lumi settings** to configure the enabled
+flag, pinned connection revision, and model profile separately from workflow AI
+profiles. Studio supplies the fixed reply schema from the canonical contract;
+changing a workflow's AI profile does not configure Lumi.
+
+## Deploy the private gateway
+
+The Weave API remains on its existing Python runtime. The model gateway uses the
+independently built Python 3.13 Agentic worker image described in
+[AI workers](ai-workers.md), with the `weave-lumi-gateway` entry point. It reuses the
+same bounded FireflyAgent executor and tested provider adapters. It does not
+register a worker, create a workflow run, or store conversations.
+
+Set these gateway environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `WEAVE_LUMI_POLICY_FILE` | Mounted JSON file listing exact permitted provider/model pairs and provider endpoints; same shape as the AI worker policy. |
+| `WEAVE_LUMI_GATEWAY_TOKEN_FILE` | Mounted service token shared only with the API deployment. |
+| `WEAVE_LUMI_GATEWAY_PORT` | Internal listener port; defaults to `8090`. |
+
+Run the gateway behind a private TLS ingress. Its only route is `POST /v1/lumi`.
+Restrict ingress to the API service and configure ingress request/body limits and
+idle timeouts for the selected model budget. The container itself speaks HTTP on
+its private listener; never expose that listener directly to browsers or the
+public network. Disable request/response body capture at the ingress and APM
+layers. The process disables access and provider/framework content logs.
+
+Configure the API using operator-owned settings, not a browser-provided URL:
+
+```json
+{
+  "endpoint": "https://lumi-gateway.internal.example/v1/lumi",
+  "token_file": "/run/secrets/lumi-gateway-token",
+  "max_concurrency": 4
+}
+```
+
+Supply that JSON as `WEAVE_LUMI_GATEWAY`. The API requires HTTPS, does not follow
+redirects, ignores proxy environment variables, and performs no automatic retry.
+Both processes reread the mounted service token for every request, allowing
+rotation. Deploy overlapping rotation changes carefully: the token file contains
+one active token, so mismatched deployments fail closed.
+
+## Configure an environment
+
+Grant `lumi_manager` to the administrator and `lumi_user` to assistant users at
+the intended project or environment scope. Existing viewer/developer roles do not
+implicitly grant access to models. A manager also needs `connection.manage` to
+select a provider connection.
+
+Publish the Agentic provider connector and create a connection as described in
+[AI workers](ai-workers.md). Configure an operator-approved `apiKey` secret handle
+and exact provider origin. Lumi pins one immutable connection revision. This is
+an explicit delegation: users with `lumi.use` can spend that connection's model
+budget through Lumi, but do not gain `credential.lease`, connection management,
+or access to other resources.
+
+Use these API operations under the environment URL:
+
+| Method and path | Capability | Behavior |
+| --- | --- | --- |
+| `GET /lumi/configuration` | `lumi.manage` | Read the pinned connection, profile, enabled flag, and revision. |
+| `PUT /lumi/configuration` | `lumi.manage` | Create without `If-Match`; subsequent changes require the current revision. |
+| `GET /lumi/status` | `lumi.use` | Read availability, provider, model, and revision; no connection details. |
+| `POST /lumi/ask` | `lumi.use` | Await one private, bounded response. |
+
+Configuration contains `enabled`, `connection_revision_id`, and `profile`. The
+profile uses the same strictly bounded options as workflow LLM steps, but its
+`outputSchema` must equal the published `LUMI_REPLY_SCHEMA` from
+`firefly_weave.contracts.lumi`. The model returns only `answer`, `proposals`, and
+`followUps`. Each proposal contains `title`, `kind`, `format`, and `source`.
+
+An ask request contains a message, up to sixteen prior user/assistant messages,
+and up to four explicit attachments:
+
+```json
+{
+  "message": "Explain the failed step and suggest a draft fix.",
+  "history": [],
+  "attachments": [
+    {"kind": "run", "id": "00000000-0000-0000-0000-000000000001"}
+  ]
+}
+```
+
+To share an unsaved local definition, explicitly include `draft: {"format": "yaml",
+"source": "..."}` (or `format: "json"`). Source is untrusted text and may be
+syntactically incomplete. No URL or file path is fetched from it, and it grants
+no access to referenced resources. Its UTF-8 content is limited to 256 KiB; inline
+source and authorized resource attachments share the same 256 KiB context budget.
+
+Attachments name existing `draft`, `run`, or `simulation` resources. The server
+reads them with the caller's current permissions: catalog admission for drafts,
+redacted recorded history for runs (at most twenty events), and creator-scoped,
+unexpired simulation inspection. Simulation context contains status, active
+node identifiers, and diagnostics rather than variables. A Lumi grant alone
+cannot attach an unread resource. The gateway also receives the current public
+authoring schemas. It receives no general resource-query tool.
+
+## Privacy and bounds
+
+Conversation history exists only in the current UI identity/environment session
+and the in-flight request. The API and gateway do not persist prompts, replies,
+reasoning traces, or model calls in workflow history. Studio clears its temporary
+conversation when identity or environment changes. All replies and proposed
+source are untrusted text/code, never rendered as HTML or automatically executed.
+
+The API resolves only the pinned connection's scoped secret handle and forwards
+the credential to the trusted gateway over TLS. The gateway must therefore be
+operated as a credential-bearing service. It independently checks an exact
+provider/model/endpoint policy, rejects expired invocation envelopes, and owns
+no persistent conversation or model session. Provider account retention policies
+still apply; Responses API storage is explicitly disabled.
+
+Each process limits concurrent model requests. Model call count, reasoning steps,
+per-response output tokens, and total time use the AI worker's shared limits.
+The API body limit is 512 KiB, attached-resource and inline-source context is bounded to 256 KiB,
+and gateway requests/responses are capped at 1 MiB. The API rechecks the caller's
+Lumi and attachment permissions and configuration revision before returning a
+reply. Disabling or changing configuration discards an in-flight response.
+
+HTTP disconnects cancel and await owned model work. Cancellation or an ambiguous
+network failure can still incur provider cost; the API deliberately does not
+retry or replay a request. Operators should also apply provider-side quotas and
+network egress controls. No live-provider availability is implied by local tests.

@@ -357,6 +357,7 @@ def test_name_suggestions_are_valid_profile_names():
 def test_private_credential_folder_is_required(auth_env, tmp_path):
     shared = tmp_path / "shared"
     shared.mkdir(mode=0o755)
+    shared.chmod(0o755)
     result = auth_env.invoke(
         "auth", "setup", "weave.example", "--yes", "--credential-store", "file",
         "--credential-file", shared / "tokens.json", "--output", "json",

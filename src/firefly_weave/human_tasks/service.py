@@ -340,6 +340,9 @@ class HumanTaskService:
                         "output": output,
                     },
                 )
+                from firefly_weave.files.authority import admit_human_files
+
+                await admit_human_files(tx, row, output, actor, context=context)
                 view = view_of(run)
                 result = await transition_async(view.state, event, artifact)
                 await repository.execute(

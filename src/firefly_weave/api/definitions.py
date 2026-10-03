@@ -32,10 +32,11 @@ from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
 
 PREFIX = "/tenants/{tenant}/projects/{project}"
-KINDS: dict[str, Literal["Workflow", "Action", "Connector"]] = {
+KINDS: dict[str, Literal["Workflow", "Action", "Connector", "DecisionTable"]] = {
     "workflows": "Workflow",
     "actions": "Action",
     "connectors": "Connector",
+    "decision-tables": "DecisionTable",
 }
 
 

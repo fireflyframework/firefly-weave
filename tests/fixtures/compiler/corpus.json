@@ -316,5 +316,277 @@
     },
     "ok": true,
     "codes": []
+  },
+  {
+    "name": "comparison-contains-valid",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "comparison",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "boolean"
+        },
+        "steps": [],
+        "output": {
+          "op": {
+            "name": "contains",
+            "args": [
+              {
+                "literal": "payment approved"
+              },
+              {
+                "literal": "approved"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ok": true,
+    "codes": []
+  },
+  {
+    "name": "comparison-notContains-valid",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "comparison",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "boolean"
+        },
+        "steps": [],
+        "output": {
+          "op": {
+            "name": "notContains",
+            "args": [
+              {
+                "literal": [
+                  true
+                ]
+              },
+              {
+                "literal": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ok": true,
+    "codes": []
+  },
+  {
+    "name": "comparison-in-valid",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "comparison",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "boolean"
+        },
+        "steps": [],
+        "output": {
+          "op": {
+            "name": "in",
+            "args": [
+              {
+                "literal": null
+              },
+              {
+                "literal": [
+                  null
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ok": true,
+    "codes": []
+  },
+  {
+    "name": "comparison-notIn-valid",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "comparison",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "boolean"
+        },
+        "steps": [],
+        "output": {
+          "op": {
+            "name": "notIn",
+            "args": [
+              {
+                "literal": "x"
+              },
+              {
+                "literal": []
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ok": true,
+    "codes": []
+  },
+  {
+    "name": "comparison-startsWith-valid",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "comparison",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "boolean"
+        },
+        "steps": [],
+        "output": {
+          "op": {
+            "name": "startsWith",
+            "args": [
+              {
+                "literal": "invoice"
+              },
+              {
+                "literal": "inv"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ok": true,
+    "codes": []
+  },
+  {
+    "name": "comparison-endsWith-valid",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "comparison",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "boolean"
+        },
+        "steps": [],
+        "output": {
+          "op": {
+            "name": "endsWith",
+            "args": [
+              {
+                "literal": "invoice.pdf"
+              },
+              {
+                "literal": ".pdf"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ok": true,
+    "codes": []
+  },
+  {
+    "name": "comparison-in-invalid",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "comparison",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "boolean"
+        },
+        "steps": [],
+        "output": {
+          "op": {
+            "name": "in",
+            "args": [
+              {
+                "literal": "a"
+              },
+              {
+                "literal": "abc"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ok": false,
+    "codes": [
+      "WV-COMP-TYPE_MISMATCH"
+    ]
+  },
+  {
+    "name": "comparison-contains-invalid",
+    "definition": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "comparison",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {
+          "type": "boolean"
+        },
+        "steps": [],
+        "output": {
+          "op": {
+            "name": "contains",
+            "args": [
+              {
+                "literal": "abc"
+              },
+              {
+                "literal": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ok": false,
+    "codes": [
+      "WV-COMP-TYPE_MISMATCH"
+    ]
   }
 ]

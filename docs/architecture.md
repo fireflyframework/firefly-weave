@@ -58,6 +58,24 @@ Five terms appear throughout this page:
 | Lease fence | A generation number on a task claim. The API rejects a result from an attempt that is no longer current |
 | Unit of work | One PostgreSQL transaction that carries the tenant scope; row-level security (RLS) limits what it can read and write |
 
+## Workflow AI and the Studio assistant
+
+![Two separate AI paths: a leased workflow worker and the private Lumi assistant.](diagrams/ai-and-lumi.svg)
+
+Read each lane from left to right. The upper lane is part of a durable business
+process: the compiler pins the workflow's model profile, an Agentic worker claims
+a task, and the runtime checks its result before continuing. The lower lane helps
+a person author or understand a process. Lumi uses a separate environment
+configuration and an authenticated private gateway. It does not create an
+execution or publish a definition. The person reviews and applies a proposed
+change to a local draft.
+
+The [AI worker guide](guides/ai-workers.md) explains deployment and profile
+budgets; the [Lumi guide](guides/lumi.md) explains separate configuration and
+context sharing. [Files](guides/files.md) follow a third boundary: PostgreSQL
+stores their chunks separately, while workflows and workers pass verified file
+references with current scope and task authority checks.
+
 ## Follow one run through the system
 
 **The example.** A published `customer-check` workflow has one step that calls an

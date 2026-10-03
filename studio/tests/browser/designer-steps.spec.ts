@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // WP-14: steps can be renamed with their references, deleted safely, read at
 // a glance on the canvas, timed in natural units, and a human task can branch
 // on its decisions in one click.
+import { selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import { parse } from "yaml";
 import {
@@ -57,7 +58,9 @@ const node = (page: Page, id: string) =>
 async function insertStep(page: Page, label: string) {
   // A narrow-layout inspector is a modal sheet over the toolbar.
   await closeSheet(page);
-  const item = page.locator(".palette-step").filter({ hasText: label });
+  const item = page
+    .locator(".palette")
+    .getByRole("button", { name: label, exact: true });
   if (!(await item.isVisible()))
     await page.getByRole("button", { name: "Insert step" }).click();
   await item.click();
@@ -227,17 +230,16 @@ for (const viewport of [
       });
       await expect(amount).toHaveValue("1");
       await expect(unit).toHaveValue("min");
-      await unit.selectOption("s");
+      await selectChoice(unit, "s");
       await amount.fill("0.5");
+      await amount.press("Tab");
       await expect(designer.inspector.getByRole("alert")).toHaveText(
-        "Enter a positive duration in whole seconds.",
+        "Enter a positive number of seconds.",
       );
-      await unit.selectOption("s");
+      await selectChoice(unit, "s");
       await amount.fill("2");
-      await unit.selectOption("h");
-      await designer.inspector
-        .getByRole("button", { name: "Apply changes" })
-        .click();
+      await selectChoice(unit, "h");
+      await page.locator(".inspector-header h2").click();
       await expect(node(page, "wait-1")).toContainText("2 h");
       expect(await sourceText(page)).toContain("durationSeconds: 7200");
       // Workflow timeout uses the same control and stays optional.
@@ -247,12 +249,13 @@ for (const viewport of [
       await designer.inspector
         .getByRole("spinbutton", { name: "Workflow timeout", exact: true })
         .fill("3");
-      await designer.inspector
-        .getByRole("combobox", { name: "Workflow timeout unit" })
-        .selectOption("d");
-      await designer.inspector
-        .getByRole("button", { name: "Apply changes" })
-        .click();
+      await selectChoice(
+        designer.inspector.getByRole("combobox", {
+          name: "Workflow timeout unit",
+        }),
+        "d",
+      );
+      await page.locator(".inspector-header h2").click();
       expect(await sourceText(page)).toContain("timeoutSeconds: 259200");
     });
 
@@ -264,13 +267,10 @@ for (const viewport of [
       await insertStep(page, "Human task");
       const designer = new DesignerPage(page);
       await designer.selectStep("approval-1");
-      await stepControl(
-        designer,
-        "Add a path for each answer (approve, reject)",
-      ).click();
+      await stepControl(designer, "Create a path for each answer").click();
       await expect(page.locator('[data-step="decision-1"]')).toBeVisible();
       await expect(
-        designer.target("Add a step here, in Case 2 of decision-1"),
+        designer.target("Add a step here, in Reject of decision-1"),
       ).toHaveCount(1);
       const doc = parse(await sourceText(page)) as {
         spec: { steps: { id: string; cases?: { when: unknown }[] }[] };

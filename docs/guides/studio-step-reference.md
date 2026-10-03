@@ -31,13 +31,13 @@ Studio writes the same versioned definition language that you can edit as YAML
 or build with the CLI and the Python SDK, so every choice here is visible in
 the **Source** tab.
 
-**This page describes the Studio 0.1.0a7 editor.** The step kinds and native
+**This page describes the Studio 0.1.0a8 editor.** The step kinds and native
 human tasks are also part of alpha6, but several controls described here, such
 as the canvas step picker, the searchable action picker, the **Value** /
-**Data** / **Formula** input rows, the schema designer, the API action builder,
+typed input rows with **Use data** and **Calculate…**, the schema designer, the API action builder,
 and the simulation setup and panel, are new in 0.1.0a7. An alpha6 or earlier
 browser bundle does not have them; to see the same screens,
-[install the alpha7 browser application](studio.md#install-the-alpha7-browser-application).
+[install the alpha8 browser application](studio.md#install-the-alpha8-browser-application).
 
 **How to use this page:**
 
@@ -56,6 +56,8 @@ browser bundle does not have them; to see the same screens,
 | I need to… | Choose in the palette | Kind in Source | What happens during a run |
 | --- | --- | --- | --- |
 | Call a service, system, or connector | **Call an action** | `action` | Weave schedules a published Action and its admitted implementation |
+| Apply reusable business rules | **Decision table** | `decisionTable` | Weave evaluates a versioned table with a declared matching policy and result schema |
+| Ask a model for a typed result | **AI task** | `llm` | A durable worker uses an explicit workflow profile and authorized connection |
 | Build or select data | **Transform** | `transform` | Weave evaluates an expression without an external call |
 | Take one route based on data | **Decision** | `switch` | Weave evaluates cases in order and follows the first true case, or the **Otherwise** path |
 | Run independent branches | **Parallel** | `parallel` | Weave runs named branches within the configured concurrency |
@@ -118,12 +120,11 @@ Select a step to edit it. The inspector heading shows the kind's palette label.
   **Advanced JSON**, at the end, shows the same step as JSON, and **Properties
   table** switches back. Fields Studio does not edit are listed under
   **Additional properties preserved**; change those in the Source tab.
-- **Apply changes.** Inspector edits stay pending until you select **Apply
-  changes** or press Ctrl+Enter (Command-Enter on macOS); **Discard** drops them.
-  While edits are pending, the footer shows **Not applied yet** and the step's
-  card has a dashed outline. If you validate, simulate, save, publish, insert,
-  or select another step with edits pending, Studio asks **Apply your changes?**
-  and offers **Apply and continue**, **Discard changes**, and **Keep editing**.
+- **Automatic edits.** Valid fields update the local definition after a short
+  pause or on leaving the field, with one Undo for the edit. Invalid drafts stay
+  inline and preserve the last valid graph; valid sibling edits still save.
+  Leaving an invalid draft offers **Go back** to continue it. The Source editor
+  retains its separate **Apply changes** action.
 - **Workflow settings.** The link in the inspector header opens the workflow's
   own properties. Selecting empty canvas, selecting **Start**, or pressing
   Escape does the same.
@@ -148,9 +149,11 @@ duration in whole seconds." Leave an optional duration empty to remove it.
 | Palette label | Inspector fields | Why it matters |
 | --- | --- | --- |
 | Call an action | **Published action** (connected) or **Action version**, **Connection slot**, **Input** | Chooses the reusable operation and its per-call business data |
+| Decision table | **Published table**, **Table version**, **Table input**, **Create a reusable decision table** | Reuses a published rule set and maps the data it evaluates |
+| AI task | **AI action version**, **Workflow AI profile**, **AI connection slot**, **AI prompt**, **AI context** | Uses a bounded model configuration with explicit credentials and typed output |
 | Transform | **Value** | Its result becomes the step output available to later steps |
 | Decision | "Case 1 condition" and "Case 1 output", one pair per case, then **Otherwise output** | Every route has an explicit output, including an empty branch |
-| Parallel | **Concurrency**, then one output per branch, such as "first output" | Controls independent work and the shape of the combined result |
+| Parallel | **Run at most … branches at once**, then one output per branch, such as "first output" | Controls independent work and the shape of the combined result |
 | Wait for time | **Duration** | Sets a durable relative delay |
 | Wait for signal | **Signal name**, **Timeout**, **Payload schema** | Defines which event can resume the wait and what data is accepted |
 | Human task | **Assignment binding**, **Title**, **Context**, **Decisions**, **Due after**, **Expires after**, **Form schema** | Defines who may claim the work and what a valid decision contains |
@@ -160,6 +163,39 @@ Every step also has a unique ID. References to earlier step results use that ID;
 moving steps can change what they may read. The compiler checks those
 relationships, and [What each step can read](#what-each-step-can-read) lists the
 rules.
+
+### Decision table
+
+Choose **Decision table** from the Logic palette. Select a **Published table**
+when connected, or enter its immutable `name@version` in **Table version**.
+Map **Table input** from workflow data, a fixed value, or a formula. The table's
+declared output becomes available to later steps in the Data picker.
+
+**Create a reusable decision table** opens the table editor. Set the table name
+and version, define its input and result fields, and choose the matching policy:
+first matching rule, exactly one matching rule, or collect all matching rules.
+Rule cards provide typed conditions, results, reorder buttons and Remove. Use
+**Try an input** to check sample data without running a workflow. You can export
+the table as YAML, or publish and use it with the required project permissions.
+The [decision table reference](../reference/decision-tables.md) defines exact
+matching, no-match behavior, limits and API/SDK usage.
+
+### AI task
+
+Choose **AI task** from the Actions palette. The built-in action reference is
+`weave-agentic-generate@1.0.0`; Studio indicates whether that action is available
+in the connected catalog. Select a **Workflow AI profile** and an **AI connection
+slot**, then map **AI prompt** and **AI context** using Value, Data or Formula.
+
+Open **Configure workflow AI profiles** to create or edit a named profile.
+Choose its provider and model explicitly, configure time and token limits, and
+describe the expected result with the schema designer. Profile changes belong
+to the workflow; select the profile on each AI task that should use it. Provider
+credentials belong to an authorized connection, not the prompt or profile.
+Workflow AI profiles are separate from Studio's Lumi assistant settings.
+The [AI worker guide](ai-workers.md) covers deployment, supported providers,
+credential binding and execution limits. A configured inspector alone does not
+install the action or start a worker.
 
 ### Transform
 
@@ -187,19 +223,19 @@ condition rows** switches back when the rows can show it; a condition the rows
 can't show opens there directly. On the canvas, each path is labeled with a
 summary of its condition, such as "Amount > 1000".
 
-Each case and the default declare an output ("Case 1 output", **Otherwise
-output**). The decision step's output is the output of whichever route ran. Under
-**Order of paths**, reorder cases with the up and down arrows, delete one with
-**Remove**, and add one with **Add case**. Nested steps are edited on the canvas:
-an empty case or **Otherwise** path shows its dashed placeholder card. Studio
-removes only an empty case and keeps at least one, so move a case's steps out
-first.
+Each path has one card containing its rules, reorder and remove actions, and a
+collapsed **Path result**. Empty results read **Not set (optional)**; their
+stored literal empty objects remain unchanged until edited. **+ Add path** adds
+a card before **Otherwise**, which always stays last. The first matching path
+runs. Human-task answer checks use titles such as **Approve** and **Reject**.
+Nested steps stay on the canvas. Move them out before removing a path; a
+Decision keeps at least one non-default path.
 
 ### Parallel
 
-A new group has two branches, `first` and `second`, and a **Concurrency** of 2.
-**Concurrency** is a positive whole number: how many branches may run at the same
-time. Each branch declares an output, labeled with its name ("first output").
+A new group has two branches, `first` and `second`, and reads **Run at most 2
+branches at once**. This positive whole number limits how many branches may run
+at the same time. Each branch declares an output, labeled with its name ("first output").
 The group's output is an object with one field per branch name. Under **Parallel
 branches**, rename a branch in its text box, delete an empty one with **Remove**,
 or add one with **Add branch**. A group keeps at least one branch.
@@ -207,13 +243,15 @@ or add one with **Add branch**. A group keeps at least one branch.
 ### Wait for time
 
 **Duration** is required; a new step waits 1 minute. The run continues when the
-durable timer is due. The step's output is `null`, so later steps have nothing
+durable timer is due. The duration control explains the pause in your selected
+unit. The step's output is `null`, so later steps have nothing
 to read from it.
 
 ### Wait for signal
 
 - **Signal name** is the name a sender must use. It accepts letters, numbers,
-  dots, underscores, and hyphens; a new step uses `message-received`. The
+  dots, underscores, and hyphens. A new step starts empty; `message-received` is
+  a hint to replace with your own name. The
   compiler requires each signal name to be unique in the workflow.
 - **Timeout** is required; a new step waits up to 1 hour. If no matching signal
   arrives first, the run ends as timed out.
@@ -226,29 +264,32 @@ The step's output is the received payload, so later steps read
 
 ### Human task
 
+The inspector groups **Who**, **What they see**, **How they answer**,
+and **Deadlines**. Assignment suggestions use the connected environment; offline,
+enter the binding name directly. The title can be typed or bound with **Use
+data**. Context uses named Fields, and the reviewer form has a live inert preview.
+
 | Field | What to enter |
 | --- | --- |
 | **Assignment binding** | A name, `reviewers` by default. Each environment maps it to an assignment binding with exactly this name when you activate the version (**Human task assignments**). A task manager must first create an enabled binding with that name in the environment, with `weave human-groups put` and `weave human-assignments put`; see [human tasks, step 2](human-tasks.md#2-create-a-reviewer-group-and-assignment). Studio cannot create bindings |
 | **Title** | An expression that produces 1–512 characters, such as a literal "Review request" |
 | **Context** | An expression that produces an object; reviewers see it as business context |
-| **Decisions** | 1–32 unique identifiers, `approve` and `reject` by default. **Add item** adds one |
+| **Answers** | 1–32 unique identifiers, `approve` and `reject` by default. Add or edit an answer chip; renaming updates matching decision-path comparisons in one undoable edit |
 | **Due after** | Optional. Marks the task overdue; it does not decide anything |
 | **Expires after** | Optional. When it passes, the whole run times out |
 | **Form schema** | The fields a reviewer fills in, edited with the schema designer; the preview reads "What reviewers will see" |
 
-The task's output has two fields: `decision` (one of **Decisions**) and `data`
-(the submitted form). **Add a path for each answer**, at the top of the human
-task's inspector and in its **Step actions** menu, adds a decision right after
-the task with one case per decision, each testing
-`/steps/<task ID>/output/decision`; the button names the decisions, as in "Add a
-path for each answer (approve, reject)". Reviewers complete the task in
+The task's output has two fields: `decision` (one of **Answers**) and `data`
+(the submitted form). **Create a path for each answer** adds a decision right after
+the task with one case per answer, each testing
+`/steps/<task ID>/output/decision`. Reviewers complete the task in
 [My tasks](studio.md#complete-human-work); [human tasks](human-tasks.md) covers
 claims, eligibility, and audit history.
 
 ### Fail
 
 **Error code** accepts letters, numbers, dots, underscores, and hyphens.
-**Message** must not be empty. A Fail step ends its path, so no later step on
+**Message** starts empty and must contain your failure reason. A Fail step ends its path, so no later step on
 that path runs and nothing after it can read data from that path.
 
 ## Design forms and payloads with the schema designer
@@ -257,14 +298,14 @@ The schema designer edits **Input schema** and **Output schema** in the workflow
 settings, a signal's **Payload schema**, and a human task's **Form schema**.
 
 1. Select **Add field**. Enter a **Field name**, choose a **Type** (**Text**,
-   **Number**, **Whole number**, **Yes or no**, **Group of fields**, **List**,
-   **Any value**, or **Empty (null)**), and check **Required** if the value must
+   **Number**, **Whole number**, **Yes/No**, **Choice**, **Group**, **List**,
+   **File**, **Any value**, or **Empty**), and check **Required** if the value must
    be present.
 2. Select **Details** for **Label shown to people**, **Help text**, a **Text
    format** (such as **Date and time** or **Email address**), **Allowed values**,
    length or value limits, and **Can be empty (null)**. A list asks what
    **Each item is**; a group of fields gets a button that adds a field inside it.
-3. Check **Reject fields that are not listed** to refuse extra fields.
+3. Check **Only allow these fields** to refuse extra fields.
 4. Read the preview under the fields; it renders the form people will see.
 
 **Paste sample JSON** opens **Find fields from an example**. Paste a JSON
@@ -342,7 +383,7 @@ The section shows a different state when the catalog is unavailable:
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| **Working locally.** and **Open Settings** | Studio is not connected to a platform | Type the exact `name@version` in **Action version** under **Properties**, or connect in Settings to choose from the catalog |
+| **Working locally.** and **Open Settings** | Studio is not connected to a platform | Type the exact `name@version` in **Action version** at the top of the **Action** section, or connect in Settings to choose from the catalog |
 | "Studio could not confirm your account's permissions, so published actions are hidden." | The platform has not confirmed what your account may do | Check the platform connection in Settings |
 | "Your account cannot read the action catalog in this workspace." with "Needed permission: catalog.read" | Your grants lack `catalog.read` | Ask an administrator for a role that includes it, such as **Workflow editor**, or type the action version |
 | "Loading published actions…" | The catalog is loading | Wait for the list |
@@ -383,16 +424,23 @@ weave-http@2.0.0`. The empty option reads "Choose a connection slot" when the
 action requires a connection, and "No connection" otherwise. A slot that no
 longer fits is marked "(not compatible)".
 
-If no slot fits, the hint says so ("This workflow has no slot for … yet.") and
-**Add connection slot** opens:
+If no slot fits, select **Add a PostgreSQL connection slot** (the connector's
+name changes with the action). Studio creates and selects the slot in one step.
 
-1. Keep the suggested **Slot name**, which is based on the connector, or type
-   your own.
-2. When Studio does not know the action's contract, for example while working
-   locally, enter the **Connector** as `name@version`.
-3. Check **Required at activation** if every environment must bind the slot; this
-   option appears only when the action's connection is optional or unknown.
-4. Select **Add slot**, then **Apply changes**.
+The **Connection slots** list is shared with workflow settings. Each row shows
+**Slot name**, **Connector**, **Required**, and **Used by N steps**:
+
+1. Change **Slot name** and leave the field to rename it. Studio updates all
+   steps that use it, including steps in decision paths and parallel branches.
+2. Choose a connector reference, or enter `name@version` when working offline.
+   Invalid names and versions stay in the field with an explanation.
+3. Turn **Required** on if every environment must supply a connection at activation.
+4. **Remove** explains which steps will lose their slot before changing anything.
+   **Undo** restores the slot and its step assignments together.
+
+In workflow settings, **Add connection slot** also lets you declare a slot
+before adding an action. Enter **New slot name** and **New slot connector**, then
+select **Add slot**.
 
 **A slot is a name, not a credential.** Activation maps each slot to an
 authorized connection revision for the chosen environment, so passwords and
@@ -405,14 +453,12 @@ connection holds and who must grant it.
 ### 4. Map the input
 
 When the action's input schema lists fields, **Input** shows one row per field.
-Each row has three buttons for where the value comes from:
-
-- **Value** is typed directly, with an editor that matches the field: text,
-  numbers, yes/no, choices, dates, lists, and groups.
-- **Data** reads the workflow input or an earlier step's output. The suggestions
-  are the data this step may read.
-- **Formula** combines data with an operation, using the same modes as any
-  expression.
+Each row starts with the editor for its schema type: text, numbers, yes/no,
+choices, dates, lists, groups, or files. **Use data** opens the typed picker;
+a selected reference appears by name and **Remove data** restores the prior
+fixed value while editing that field. Choose **Calculate…** from the field's
+options menu to combine values with a formula. Formula operands have their own
+value or data control without another mode switch above the formula.
 
 Fields bound to **Data** or **Formula** count as filled in. Fields you do not
 touch keep their original expression. A secret field is locked and reads
@@ -444,7 +490,9 @@ When every field holds a typed **Value**, Studio stores the whole input as one
 ### 5. Use the output
 
 Later steps read the action's result at `/steps/<step ID>/output`. **Copy output
-reference** copies that path. **Use action output as workflow result** sets the
+reference** copies that path. **Use action output as workflow result** asks you
+to confirm replacing the workflow result and its schema, then offers **Undo**.
+After confirmation, it sets the
 workflow output to that reference and copies the action's output schema into the
 workflow's **Output schema**. It is available for steps in the main sequence;
 for a nested action, expose the value through the enclosing branch output first.
@@ -492,16 +540,24 @@ rules, and the operator's one-time setup.
 ## Decide where a value comes from
 
 Expression fields such as **Value**, **Title**, **Context**, **Input**, and
-outputs have a mode switch beside their label. A case condition uses the same
-switch after **Edit as formula**:
+outputs have a keyboard-operable mode switch beside their label. Typed action
+inputs start with their value control, **Use data**, and **Calculate…** in the
+field menu. Conditions keep rule rows, with **Edit as formula** for complex logic:
 
 | Mode | Writes | Use it for |
 | --- | --- | --- |
 | **Value** | `literal` | Fixed data of any JSON type |
 | **Data** | `ref` | Workflow input or an earlier step's output |
-| **Formula** | `op` | Comparing or combining values with an operation; it starts at "Choose a formula…", and "Add argument" adds an input |
+| **Formula** | `op` | Comparing or combining values with an operation; it starts at "Choose a formula…"; fixed-arity operations have labelled operands, while combining operations can add inputs |
 | **Fields** | `object` | An object whose fields are expressions (**Add field**) |
 | **List** | `array` | A list whose items are expressions |
+
+**Fields** is the object builder for Transform values, human-task context, and
+results. Each row has a name and a value. **Use data** reads another field;
+**Calculate…** in the row's ⋯ menu builds a formula. **+ Add field** focuses the
+new name. Move rows with the arrow buttons or choose **Remove**. Existing
+literal objects retain their original YAML shape until you edit them. Raw JSON
+is available only through **Advanced: JSON value** in the row menu.
 
 These are the same rules in the property editor and YAML:
 
@@ -536,8 +592,9 @@ when:
 ```
 
 Supported operations are `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `and`, `or`, `not`,
-`exists`, and `coalesce`; the **Formula** list names them in words, such as
-"Equals" for `eq` and "First available" for `coalesce`. This is a bounded
+`exists`, `coalesce`, `contains`, `notContains`, `in`, `notIn`, `startsWith`,
+and `endsWith`; the **Formula** list uses the same words as rule rows, such as
+"is" for `eq` and "first available" for `coalesce`. This is a bounded
 expression language, not JavaScript or arbitrary Python. The [schema and expression reference](../reference/schema-profile.md)
 explains type rules and JSON pointers. Validate after changing a reference or condition.
 
@@ -549,7 +606,10 @@ input** and under each earlier step's ID with its icon and kind, and a chosen
 reference shows as a readable token, such as "Input › Customer ID". Each
 suggestion shows its type, such as "Text" or "Whole number", and notes "may be
 absent" or "may not match this field" when that applies; mismatches are listed
-last.
+last. The picker starts empty, gives compatible leaf fields priority, and hides
+raw pointers until **Show path**. **Remove data** restores the prior fixed value
+while you are editing the same field. Rule comparisons can use another data
+reference on the right side as well as a typed value.
 
 The rules follow the compiler:
 
@@ -586,7 +646,12 @@ decides on **Validate**.
 ## Configure the whole workflow too
 
 Step properties are only part of a complete definition. Open **Workflow
-settings**, edit the fields, and select **Apply changes**:
+settings** and edit the fields; valid changes are kept automatically. **Inputs**,
+**Result**, **Connections**, and **Limits** group these settings:
+
+Schema fields start as compact rows showing the name, type, and whether they
+are required. Open a row to edit its details, or use its **⋯** menu to move or
+remove it. **Undo** restores a removed field.
 
 | Workflow setting | Purpose |
 | --- | --- |
@@ -612,13 +677,14 @@ are connected and your account has `compile`; otherwise it runs the same local
 check.
 
 The **Diagnostics** bar at the bottom of the designer shows one status line,
-with a check, warning, or error icon once a result exists:
+with a neutral local-check icon, or a project check, warning, or error icon:
 
 | Status line | Meaning |
 | --- | --- |
 | "Not validated yet." | No check has run since the workflow opened |
 | "Checking…" | A check is running |
-| "No problems found." followed by how actions and connections are checked | The local check passed. The rest of the line says when actions and connections are checked: "Actions and connections are checked when you connect.", "Validate to check actions and connections against the project.", or that your account can't check them |
+| "Checked locally — Validate to check against the project" | The local check passed. Project actions and connections still need validation. If the session expired or the account lacks compile access, the line explains that instead |
+| "1 item needs attention" | A published contract requires an input or connection. The same gap appears on the step; select it to open its field |
 | "No problems found." alone | After **Validate**, a complete project compile found no errors or warnings |
 | "No errors, 1 warning." | No errors, but at least one warning |
 | "No errors · 4 steps still need an action." | No errors, but some **Call an action** steps still have no action |
@@ -687,14 +753,15 @@ debugger, its commands, and virtual time.
 
 ## Check before running
 
-1. **Apply changes** to commit the property edits to the local definition.
+1. Resolve any inline invalid fields; valid inspector edits are kept automatically.
+   If you edited Source directly, select its **Apply changes** first.
 2. Fix every error in **Diagnostics**. When you are connected with `compile`,
    **Validate** until the status line reads "No problems found."
 3. **Simulate** the routes you care about with realistic action results.
 4. **Save draft** and **Publish…** the version. Then **Activate…** it: the
-   activation dialog maps each of the **Connection slots** and pins **Connector
-   releases**, **Worker releases**, and **Human task assignments** for the
-   environment.
+   activation dialog maps **Connections** and pins **Integration versions**,
+   **Task versions**, and **People and teams** for the environment. Single
+   compatible choices are picked automatically; use **Review** to inspect them.
 5. **Start run…** with schema-valid input and inspect its progress.
 
 The [Studio guide](studio.md#save-publish-activate-and-run) explains each lifecycle

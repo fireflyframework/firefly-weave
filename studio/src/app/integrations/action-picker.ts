@@ -16,8 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Searchable picker over published actions: an ARIA 1.2 editable combobox
-// (list autocomplete with automatic selection) whose listbox expands in the
-// page flow, so a scrolling inspector or palette never clips it. It only
+// (list autocomplete with automatic selection) with an anchored top-layer
+// listbox, so a scrolling inspector or palette never clips it. It only
 // emits choices; the host owns the catalog, its paging and the insert logic.
 import {
   Component,
@@ -30,6 +30,12 @@ import {
   signal,
 } from "@angular/core";
 import { Icon } from "../icon";
+import { RowMenu, type RowMenuItem } from "../row-menu";
+import {
+  AnchoredPopover,
+  pageOptionIndex,
+  revealPopoverOption,
+} from "../forms/ui/anchored-popover";
 
 /** One published action version, enriched from its contract when loaded. */
 export interface ActionPickerItem {
@@ -43,6 +49,7 @@ export interface ActionPickerItem {
   worker?: string;
   /** What it calls: "GET /v1/pets/{petId}", or the connector's action name. */
   operation?: string;
+  sideEffect?: "read_only" | "idempotent" | "non_idempotent";
 }
 export interface ActionPickerChoice {
   /** name@version, ready for the step's `uses`. */
@@ -97,6 +104,15 @@ export function actionPickerItem(
     const taskVersion = text(implementation["taskVersion"]);
     if (task) item.worker = taskVersion ? `${task}@${taskVersion}` : task;
   }
+  const sideEffect = spec["sideEffect"];
+  if (
+    sideEffect === "read_only" ||
+    sideEffect === "idempotent" ||
+    sideEffect === "non_idempotent"
+  )
+    item.sideEffect = sideEffect;
+  const bound = text(record(spec["connection"])["connector"]);
+  if (!item.connector && bound) item.connector = bound;
   return item;
 }
 
@@ -113,6 +129,63 @@ export function actionGroup(item: ActionPickerItem): {
   }
   if (item.worker) return { key: "worker", label: "Worker actions" };
   return { key: "other", label: "Other actions" };
+}
+
+/** Semantic version precedence; build labels do not make a release newer. */
+export function compareActionVersions(a: string, b: string): number {
+  const parts = (value: string) => {
+    const [core, ...suffix] = value.split("+")[0].split("-");
+    return {
+      core: core.split("."),
+      pre: suffix.join("-").split(".").filter(Boolean),
+    };
+  };
+  const left = parts(a),
+    right = parts(b);
+  const numeric = (x: string, y: string) =>
+    x.length - y.length || (x < y ? -1 : x > y ? 1 : 0);
+  for (let i = 0; i < 3; i++) {
+    const order = numeric(left.core[i] ?? "0", right.core[i] ?? "0");
+    if (order) return order;
+  }
+  if (!left.pre.length || !right.pre.length)
+    return left.pre.length ? -1 : right.pre.length ? 1 : 0;
+  for (let i = 0; i < Math.max(left.pre.length, right.pre.length); i++) {
+    const x = left.pre[i],
+      y = right.pre[i];
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    if (x === y) continue;
+    const xn = /^\d+$/.test(x),
+      yn = /^\d+$/.test(y);
+    return xn && yn
+      ? numeric(x, y)
+      : xn !== yn
+        ? xn
+          ? -1
+          : 1
+        : x < y
+          ? -1
+          : 1;
+  }
+  return 0;
+}
+
+function latestActions(items: readonly ActionPickerItem[]): ActionPickerItem[] {
+  const latest = new Map<string, ActionPickerItem>();
+  for (const item of items) {
+    const current = latest.get(item.name);
+    const stable = !item.version.split("+")[0].includes("-");
+    const currentStable =
+      current && !current.version.split("+")[0].includes("-");
+    if (
+      !current ||
+      (stable && !currentStable) ||
+      (stable === currentStable &&
+        compareActionVersions(item.version, current.version) > 0)
+    )
+      latest.set(item.name, item);
+  }
+  return [...latest.values()];
 }
 
 /** Most options rendered at once; the search narrows the rest. */
@@ -133,7 +206,8 @@ export function searchActions(
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const ranked: { item: ActionPickerItem; score: number; index: number }[] = [];
   const seen = new Set<string>();
-  items.forEach((item, index) => {
+  const candidates = /\d+\.\d+\.\d+/.test(query) ? items : latestActions(items);
+  candidates.forEach((item, index) => {
     const key = `${item.name}@${item.version}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -187,7 +261,7 @@ let sequence = 0;
 @Component({
   selector: "weave-action-picker",
   standalone: true,
-  imports: [Icon],
+  imports: [Icon, AnchoredPopover, RowMenu],
   host: { "(focusout)": "focusOut($event)" },
   template: `<div class="action-picker">
     @if (empty()) {
@@ -228,7 +302,7 @@ let sequence = 0;
       <label class="action-picker-label" [for]="prefix + '-input'">{{
         label()
       }}</label>
-      <div class="search-field action-picker-field">
+      <div #field class="search-field action-picker-field">
         <weave-icon name="search" />
         <input
           type="text"
@@ -264,11 +338,22 @@ let sequence = 0;
           <weave-icon name="chevron" />
         </button>
       </div>
+      @if (current() && versions().length > 1 && !disabled()) {
+        <weave-row-menu
+          [label]="'Choose version of ' + current()!.name"
+          [text]="'Version ' + current()!.version"
+          icon="chevron"
+          [items]="versionMenu()"
+        />
+      }
       <p class="sr-only" [id]="prefix + '-status'" aria-live="polite">
         {{ status() }}
       </p>
       <div
         class="action-picker-list"
+        [weaveAnchoredPopover]="open()"
+        [popoverAnchor]="field"
+        (popoverClosed)="close()"
         role="listbox"
         [id]="prefix + '-list'"
         [attr.aria-label]="label()"
@@ -309,6 +394,13 @@ let sequence = 0;
                       <weave-icon name="check" />
                     }
                   </span>
+                  @if (item.sideEffect) {
+                    <small>{{
+                      item.sideEffect === "read_only"
+                        ? "Reads data"
+                        : "Changes data"
+                    }}</small>
+                  }
                   @if (details(item)) {
                     <small>{{ details(item) }}</small>
                   }
@@ -417,8 +509,7 @@ let sequence = 0;
         transform: rotate(-90deg);
       }
       .action-picker-list {
-        margin-top: 6px;
-        max-height: 320px;
+        color: var(--text);
         overflow: auto;
         overscroll-behavior: contain;
         border: 1px solid var(--border);
@@ -540,6 +631,29 @@ export class ActionPicker {
       ? this.actions().find((a) => `${a.name}@${a.version}` === value)
       : undefined;
   });
+  versions = computed(() => {
+    const selected = this.current();
+    const seen = new Set<string>();
+    return selected
+      ? this.actions()
+          .filter(
+            (item) =>
+              item.name === selected.name &&
+              !seen.has(item.version) &&
+              !!seen.add(item.version),
+          )
+          .sort((a, b) => compareActionVersions(b.version, a.version))
+      : [];
+  });
+  versionMenu = computed((): RowMenuItem[] =>
+    this.versions().map((item) => ({
+      label: item.version,
+      detail: this.isCurrent(item)
+        ? "Selected version"
+        : "Use this published version",
+      run: () => this.pick(item),
+    })),
+  );
   results = computed(() => searchActions(this.query(), this.actions()));
   options = computed((): Option[] => {
     const list: Option[] = this.results().groups.flatMap((group) =>
@@ -569,7 +683,7 @@ export class ActionPicker {
     return count === 1 ? "1 action" : `${count} actions`;
   });
 
-  private host = inject(ElementRef<HTMLElement>);
+  private host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   constructor() {
     // Shows the chosen action whenever the list is closed.
@@ -578,7 +692,11 @@ export class ActionPicker {
       const current = this.current();
       if (!this.open())
         this.text.set(
-          current ? `${current.name}@${current.version}` : (value ?? ""),
+          current
+            ? `${current.name}@${current.version}`
+            : value === "your-action@1.0.0"
+              ? ""
+              : (value ?? ""),
         );
     });
   }
@@ -601,14 +719,8 @@ export class ActionPicker {
     if (this.disabled() || this.open()) return;
     this.query.set(query);
     this.open.set(true);
-    const current = this.current();
-    const options = this.options();
-    this.activeId.set(
-      (current &&
-        options.find((o) => o.kind === "action" && o.item === current)?.id) ??
-        options[0]?.id ??
-        null,
-    );
+    // Opening is exploratory. Typing or arrow navigation chooses an active row.
+    this.activeId.set(query ? (this.options()[0]?.id ?? null) : null);
     this.scrollActive();
   }
   close(restoreText = true) {
@@ -618,7 +730,11 @@ export class ActionPicker {
     if (restoreText) {
       const current = this.current();
       this.text.set(
-        current ? `${current.name}@${current.version}` : (this.value() ?? ""),
+        current
+          ? `${current.name}@${current.version}`
+          : this.value() === "your-action@1.0.0"
+            ? ""
+            : (this.value() ?? ""),
       );
     }
   }
@@ -664,8 +780,12 @@ export class ActionPicker {
         if (!this.open()) {
           this.openList();
           if (event.altKey) return;
-          if (event.key === "ArrowUp" && options.length)
-            this.activeId.set(this.options().at(-1)!.id);
+          if (options.length)
+            this.activeId.set(
+              event.key === "ArrowUp"
+                ? this.options().at(-1)!.id
+                : this.options()[0].id,
+            );
           this.scrollActive();
           return;
         }
@@ -689,6 +809,21 @@ export class ActionPicker {
         if (option.kind === "action") this.pick(option.item);
         else if (option.kind === "more") this.more();
         else this.create();
+        return;
+      }
+      case "PageDown":
+      case "PageUp": {
+        if (!this.open()) return;
+        event.preventDefault();
+        const list =
+          this.host.nativeElement.querySelector<HTMLElement>("[role=listbox]");
+        if (list)
+          this.activeId.set(
+            options[
+              pageOptionIndex(list, index, event.key === "PageDown" ? 1 : -1)
+            ]?.id ?? null,
+          );
+        this.scrollActive();
         return;
       }
       case "Escape":
@@ -722,7 +857,12 @@ export class ActionPicker {
     const id = this.activeId();
     if (!id) return;
     queueMicrotask(() =>
-      document.getElementById(id)?.scrollIntoView({ block: "nearest" }),
+      requestAnimationFrame(() => {
+        const list =
+          this.host.nativeElement.querySelector<HTMLElement>("[role=listbox]");
+        const option = document.getElementById(id);
+        if (list && option) revealPopoverOption(list, option);
+      }),
     );
   }
 }

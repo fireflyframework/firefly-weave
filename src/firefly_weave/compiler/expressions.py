@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -42,8 +43,8 @@ class ExpressionFailure(ValueError):
 class _ValueWork:
     remaining: int
 
-    def charge(self, path: str) -> None:
-        self.remaining -= 1
+    def charge(self, path: str, amount: int = 1) -> None:
+        self.remaining -= amount
         if self.remaining < 0:
             raise ExpressionFailure("RESOURCE_LIMIT", path)
 
@@ -55,7 +56,8 @@ class _Missing:
 _MISSING = _Missing()
 DEFAULT_LIMITS = Limits()
 _COMPARISONS = frozenset({"eq", "ne", "lt", "lte", "gt", "gte"})
-_OPERATORS = _COMPARISONS | {"and", "or", "not", "exists", "coalesce"}
+COLLECTION_COMPARISONS = frozenset({"contains", "notContains", "in", "notIn", "startsWith", "endsWith"})
+_OPERATORS = _COMPARISONS | COLLECTION_COMPARISONS | {"and", "or", "not", "exists", "coalesce"}
 
 
 def pointer_segments(pointer: str, *, path: str = "") -> tuple[str, ...]:
@@ -217,7 +219,7 @@ def _children(expression: object, path: str, limits: Limits, work: _ValueWork) -
         raise ExpressionFailure("RESOURCE_LIMIT", tag_path)
     count = len(operands)
     if (
-        (name in _COMPARISONS and count != 2)
+        (name in _COMPARISONS | COLLECTION_COMPARISONS and count != 2)
         or (name in {"not", "exists"} and count != 1)
         or (name in {"and", "or", "coalesce"} and count < 1)
         or (
@@ -266,14 +268,18 @@ def _copy(value: JsonValue) -> JsonValue:
     return value
 
 
-def json_equal(left: JsonValue, right: JsonValue) -> bool:
+def json_equal(
+    left: JsonValue, right: JsonValue, *, work: Callable[[JsonValue, JsonValue], None] | None = None
+) -> bool:
     """Structural equality over already validated, bounded JSON values."""
+    if work is not None:
+        work(left, right)
     if type(left) is bool or type(right) is bool:
         return type(left) is type(right) and left == right
     if type(left) is dict and type(right) is dict:
-        return left.keys() == right.keys() and all(json_equal(left[key], right[key]) for key in left)
+        return left.keys() == right.keys() and all(json_equal(left[key], right[key], work=work) for key in left)
     if type(left) is list and type(right) is list:
-        return len(left) == len(right) and all(json_equal(a, b) for a, b in zip(left, right, strict=True))
+        return len(left) == len(right) and all(json_equal(a, b, work=work) for a, b in zip(left, right, strict=True))
     return left == right
 
 
@@ -283,9 +289,41 @@ class _Evaluator:
     limits: Limits
     operations: int = 0
     value_work: _ValueWork = field(init=False)
+    string_work: _ValueWork = field(init=False)
 
     def __post_init__(self) -> None:
         self.value_work = _ValueWork(self.limits.max_document_nodes)
+        self.string_work = _ValueWork(self.limits.max_payload_bytes)
+
+    def comparison_work(self, left: JsonValue, right: JsonValue, path: str) -> None:
+        self.value_work.charge(path)
+        if type(left) is str and type(right) is str:
+            self.string_work.charge(path, len(left) + len(right))
+        elif type(left) is dict and type(right) is dict:
+            self.value_work.charge(path, len(left) + len(right))
+            self.string_work.charge(path, sum(map(len, left)) + sum(map(len, right)))
+
+    def collection_comparison(self, name: str, left: JsonValue, right: JsonValue, path: str) -> bool:
+        if name in {"in", "notIn"}:
+            container, needle = right, left
+        else:
+            container, needle = left, right
+        if name in {"startsWith", "endsWith"} or type(container) is str and name in {"contains", "notContains"}:
+            if type(container) is not str or type(needle) is not str:
+                raise ExpressionFailure("TYPE", path)
+            self.comparison_work(container, needle, path)
+            if name == "startsWith":
+                return container.startswith(needle)
+            if name == "endsWith":
+                return container.endswith(needle)
+            matched = needle in container
+        elif type(container) is list:
+            matched = any(
+                json_equal(item, needle, work=lambda a, b: self.comparison_work(a, b, path)) for item in container
+            )
+        else:
+            raise ExpressionFailure("TYPE", path)
+        return not matched if name in {"notContains", "notIn"} else matched
 
     def run(
         self, expression: JsonObject, path: str = "", *, allow_missing: bool = False, presence_only: bool = False
@@ -362,6 +400,8 @@ class _Evaluator:
                 if name in {"eq", "ne"}:
                     equal = json_equal(left, right)
                     result = equal if name == "eq" else not equal
+                elif name in COLLECTION_COMPARISONS:
+                    result = self.collection_comparison(name, left, right, path)
                 else:
                     if not (
                         (type(left) in {int, float} and type(right) in {int, float})
@@ -380,6 +420,28 @@ class _Evaluator:
                         result = a >= b  # type: ignore[operator]
         measure_value(result, limits=self.limits, path=path, work=self.value_work)
         return cast(JsonValue, result)
+
+
+class ExpressionSession:
+    """One budget across related expressions, with a context measured only once."""
+
+    def __init__(self, context: JsonObject, *, limits: Limits = DEFAULT_LIMITS) -> None:
+        if type(context) is not dict:
+            raise ExpressionFailure("INVALID_JSON")
+        measure_value(context, limits=limits, context=True)
+        self.limits = limits
+        self.expression_nodes = 0
+        self._evaluator = _Evaluator(context, limits)
+
+    def evaluate(self, expression: JsonObject, *, path: str = "") -> JsonValue:
+        self.expression_nodes = count_expression_nodes(
+            expression, limits=self.limits, initial_count=self.expression_nodes, path=path
+        )
+        result = cast(JsonValue, self._evaluator.run(expression, path))
+        return _copy(result)
+
+    def measure(self, value: JsonValue, *, path: str = "") -> int:
+        return measure_value(value, limits=self.limits, path=path, work=self._evaluator.value_work)
 
 
 def evaluate(expression: JsonObject, context: JsonObject, *, limits: Limits = DEFAULT_LIMITS) -> JsonValue:

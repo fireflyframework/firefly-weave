@@ -278,7 +278,7 @@ for (const viewport of [
   { width: 1280, height: 720 },
   { width: 1440, height: 900 },
 ])
-  test(`the editor bar never cuts the workflow name at ${viewport.width} (the status chip shortens)`, async ({
+  test(`the editor bar keeps the workflow name and status readable at ${viewport.width}`, async ({
     page,
   }) => {
     await page.setViewportSize(viewport);
@@ -287,12 +287,17 @@ for (const viewport of [
     for (const step of ["Decision", "Wait for time", "Human task"])
       await insertStep(page, step);
     await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-      "Kept on this computer",
+      /Draft saved \d{2}:\d{2}/,
     );
     const name = page.locator(".editor-identity h1");
     await expect(name).toHaveText("untitled-workflow");
     const cut = await name.evaluate((e) => e.scrollWidth > e.clientWidth);
     expect(cut).toBe(false);
+    expect(
+      await page
+        .locator(".editor-identity .status-chip")
+        .evaluate((e) => e.scrollWidth <= e.clientWidth),
+    ).toBe(true);
   });
 
 test.describe("600x500", () => {

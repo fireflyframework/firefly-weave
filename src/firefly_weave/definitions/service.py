@@ -33,14 +33,16 @@ from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
 from firefly_weave.compiler.api import CompileResult, compile_source, import_artifact, validate_source
 from firefly_weave.compiler.catalog import CatalogLock, CatalogSnapshot, FrozenDocument
-from firefly_weave.compiler.expressions import measure_value
+from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_decision_table
+from firefly_weave.compiler.expressions import ExpressionFailure, measure_value
+from firefly_weave.compiler.ir import DecisionTableIR
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation, ActivationRequest, DefinitionKind, Draft, PublishedVersion
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
-from firefly_weave.contracts.public import DraftRetirement, DraftView
+from firefly_weave.contracts.public import DecisionEvaluation, DecisionEvaluationRequest, DraftRetirement, DraftView
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.contracts.workers import ConnectorExecutionPin
 from firefly_weave.definitions.models import CatalogError
@@ -227,6 +229,40 @@ class DefinitionService:
                     action_validators=self.registry.action_validators(),
                 )
             )
+
+    async def evaluate_decision(
+        self, actor: Principal, scope: Scope, request: DecisionEvaluationRequest, *, context: AuditContext
+    ) -> DecisionEvaluation:
+        result = await self.compile(
+            actor,
+            scope,
+            request.source,
+            request.format,
+            catalog=request.catalog,
+            filename=request.filename,
+            strict=request.strict,
+            context=context,
+        )
+        if not result.ok or result.artifact is None:
+            raise CatalogError(422, "WV-COMPILE", "Decision compilation failed", result=json.loads(result.to_bytes()))
+        executable = result.artifact.executable
+        if executable["kind"] != "DecisionTable":
+            raise CatalogError(422, "WV-DECISION-CONTRACT", "A DecisionTable definition is required")
+        table = DecisionTableIR.model_validate(executable)
+        try:
+            decision = await execute_pure(
+                bind_call(
+                    evaluate_decision_table,
+                    table.spec.model_dump(by_alias=True),
+                    request.input,
+                    bundle={d.reference: d.document for d in table.dependencies if d.kind == "Schema"},
+                )
+            )
+        except (DecisionFailure, ExpressionFailure) as error:
+            raise CatalogError(422, error.code, "Decision evaluation failed", result={"path": error.path}) from None
+        return DecisionEvaluation(
+            output=decision.output, matched_rule_ids=list(decision.matched_rule_ids), used_default=decision.used_default
+        )
 
     async def publish(
         self,
@@ -610,7 +646,7 @@ class DefinitionService:
         async with self.transaction(scope, tx, mutation=False) as tx:
             self.require(await load_principal(tx.session, actor.id), scope, "catalog.read", context)
             repository = DefinitionRepository(tx)
-            if collection in {"Workflow", "Action", "Connector"}:
+            if collection in {"Workflow", "Action", "Connector", "DecisionTable"}:
                 row = await repository.version(identifier)
                 if row["kind"] != collection:
                     raise CatalogError(404, "WV-NOT-FOUND", "Catalog resource not found")
@@ -706,7 +742,7 @@ class DefinitionService:
         async with self.transaction(scope, tx, mutation=False) as tx:
             self.require(await load_principal(tx.session, actor.id), scope, "catalog.read", context)
             repository = DefinitionRepository(tx)
-            if collection in {"Workflow", "Action", "Connector"}:
+            if collection in {"Workflow", "Action", "Connector", "DecisionTable"}:
                 sql = (
                     "SELECT id,kind,name,version,digest,definition_digest,artifact FROM definition_versions "
                     "WHERE tenant_id=:tenant AND project_id=:project AND kind=:kind"

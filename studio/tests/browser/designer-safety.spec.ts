@@ -179,7 +179,7 @@ for (const viewport of [
       await expect(page.locator('[data-step="transform-1"]')).toHaveCount(0);
     });
 
-    test("unapplied inspector edits are applied, discarded or kept before Validate", async ({
+    test("Validate flushes valid fields and never opens an inspector confirmation", async ({
       page,
     }) => {
       await offline(page);
@@ -197,77 +197,56 @@ for (const viewport of [
       });
       await newWorkflow(page);
       await insertStep(page, "Fail");
-      // The designer checks each change on its own; count from that check.
-      await expect
-        .poll(() => bodies.some((b) => b.source.includes("id: fail-1")))
-        .toBe(true);
-      const live = bodies.length;
       const designer = new DesignerPage(page);
       await designer.selectStep("fail-1");
       await designer.inspectorField("Message").fill("Customer not found");
       await press(page, toolbar(page, "Validate"));
-      const dialog = page.getByRole("dialog", { name: "Apply your changes?" });
-      await expect(dialog).toBeVisible();
-      await expect(dialog).toContainText("fail-1");
-      // Keep editing: nothing is validated and the edit stays in the field.
-      await dialog.getByRole("button", { name: "Keep editing" }).click();
-      await expect(dialog).toHaveCount(0);
-      await page.waitForTimeout(900);
-      expect(bodies).toHaveLength(live);
-      await press(page, toolbar(page, "Validate"));
-      await dialog.getByRole("button", { name: "Apply and continue" }).click();
-      await expect.poll(() => bodies.length).toBe(live + 1);
-      expect(bodies[live].source).toContain("message: Customer not found");
-      // Discard: the stored value is validated and the field shows it again.
-      await designer.selectStep("fail-1");
-      await designer.inspectorField("Message").fill("Something else");
-      await press(page, toolbar(page, "Validate"));
-      await dialog.getByRole("button", { name: "Discard changes" }).click();
-      await expect.poll(() => bodies.length).toBe(live + 2);
-      expect(bodies[live + 1].source).toContain("message: Customer not found");
-      expect(bodies[live + 1].source).not.toContain("Something else");
+      await expect
+        .poll(() =>
+          bodies.some((body) =>
+            body.source.includes("message: Customer not found"),
+          ),
+        )
+        .toBe(true);
+      await expect(
+        page.getByRole("dialog", { name: "Apply your changes?" }),
+      ).toHaveCount(0);
     });
 
-    test("an invalid unapplied edit stops the command and focuses the field", async ({
+    test("Validate uses the last valid value while an invalid draft stays local", async ({
       page,
     }) => {
       await offline(page);
-      let validations = 0;
+      const bodies: { source: string }[] = [];
       await page.route("**/studio/local/validate", (r) => {
-        validations++;
+        bodies.push(r.request().postDataJSON());
         return r.fulfill({
           json: { validationOk: true, errorCount: 0, diagnostics: [] },
         });
       });
       await newWorkflow(page);
       await insertStep(page, "Fail");
-      // The automatic check of the new step comes first.
-      await expect.poll(() => validations).toBeGreaterThan(0);
-      await page.waitForTimeout(900);
-      const live = validations;
       const designer = new DesignerPage(page);
       await designer.selectStep("fail-1");
       await designer.inspectorField("Error code").fill("not valid!");
       await press(page, toolbar(page, "Validate"));
-      await page
-        .getByRole("dialog", { name: "Apply your changes?" })
-        .getByRole("button", { name: "Apply and continue" })
-        .click();
-      await expect(designer.inspectorField("Error code")).toBeFocused();
-      expect(validations).toBe(live);
+      await expect.poll(() => bodies.length).toBeGreaterThan(0);
+      expect(bodies.every((body) => !body.source.includes("not valid!"))).toBe(
+        true,
+      );
+      await expect(
+        page.getByRole("dialog", { name: "Apply your changes?" }),
+      ).toHaveCount(0);
+      await designer.selectStep("fail-1");
+      await expect(designer.inspectorField("Error code")).toHaveValue(
+        viewport.width < 768 ? "business-error" : "not valid!",
+      );
     });
 
-    test("a step stored with an invalid value has no unapplied edits until one is made", async ({
+    test("an existing invalid field does not prevent another valid field from updating", async ({
       page,
     }) => {
       await offline(page);
-      let validations = 0;
-      await page.route("**/studio/local/validate", (r) => {
-        validations++;
-        return r.fulfill({
-          json: { validationOk: true, errorCount: 0, diagnostics: [] },
-        });
-      });
       await newWorkflow(page);
       const designer = new DesignerPage(page);
       await designer.setSource(
@@ -281,38 +260,30 @@ for (const viewport of [
           },
         }),
       );
-      // The automatic check of the new source comes first.
-      await expect.poll(() => validations).toBeGreaterThan(0);
-      await page.waitForTimeout(900);
-      const live = validations;
       await designer.selectStep("stop");
+      await designer.inspectorField("Error code").focus();
+      await designer.inspectorField("Error code").press("Tab");
       await expect(designer.inspector).toContainText(
         "Use letters, numbers, dots, underscores or hyphens.",
       );
-      const dialog = page.getByRole("dialog", { name: "Apply your changes?" });
-      await press(page, toolbar(page, "Validate"));
-      await expect.poll(() => validations).toBe(live + 1);
-      await expect(dialog).toHaveCount(0);
-      // Once the person edits the step, the same invalid value is theirs.
-      await designer.selectStep("stop");
       await designer.inspectorField("Message").fill("Changed");
-      await press(page, toolbar(page, "Validate"));
-      await expect(dialog).toBeVisible();
-      await dialog.getByRole("button", { name: "Apply and continue" }).click();
-      await expect(designer.inspectorField("Error code")).toBeFocused();
-      expect(validations).toBe(live + 1);
+      const source = await sourceText(page);
+      expect(source).toContain("Changed");
+      expect(source).toContain("not valid!");
+      await expect(
+        page.getByRole("dialog", { name: "Apply your changes?" }),
+      ).toHaveCount(0);
     });
 
-    test("dropping a palette step settles unapplied edits first", async ({
+    test("dropping a palette step keeps the latest valid inspector fields", async ({
       page,
     }) => {
       await offline(page);
       await newWorkflow(page);
-      await insertStep(page, "Fail");
+      await insertStep(page, "Wait for time");
       const designer = new DesignerPage(page);
-      await designer.selectStep("fail-1");
-      await designer.inspectorField("Message").fill("Customer not found");
-      // A narrow-layout inspector covers the canvas; wide layouts keep it.
+      await designer.selectStep("wait-1");
+      await designer.inspectorField("Duration").fill("2");
       const close = page.getByRole("button", { name: "Close inspector" });
       if (await close.isVisible()) await close.click();
       await designer.fit();
@@ -321,47 +292,38 @@ for (const viewport of [
         .filter({ hasText: "Transform" });
       if (!(await item.isVisible()))
         await page.getByRole("button", { name: "Insert step" }).click();
-      await item.dragTo(designer.target("Add a step here, after fail-1"));
-      const dialog = page.getByRole("dialog", { name: "Apply your changes?" });
-      await expect(dialog).toBeVisible();
-      await dialog.getByRole("button", { name: "Apply and continue" }).click();
+      await item.dragTo(designer.target("Add a step here, after wait-1"));
       await expect(page.locator('[data-step="transform-1"]')).toHaveCount(1);
-      const text = await sourceText(page);
-      expect(text).toContain("message: Customer not found");
-      expect(text).toContain("id: transform-1");
+      const source = await sourceText(page);
+      expect(source).toContain("durationSeconds: 120");
+      await expect(
+        page.getByRole("dialog", { name: "Apply your changes?" }),
+      ).toHaveCount(0);
     });
 
-    test("Keep editing stops a publish, not only its validation", async ({
+    test("Publish opens its own review directly after a valid field edit", async ({
       page,
     }) => {
       await connected(page);
       const posts: Request[] = [];
-      await page.route(`${project}/workflows`, (r) => {
+      await page.route(project + "/workflows", (r) => {
         posts.push(r.request());
         return r.fulfill({ status: 201, json: { id: versionId } });
       });
       await newWorkflow(page);
       await insertStep(page, "Fail");
-      await press(page, toolbar(page, "Validate"));
-      await expect(
-        page.getByRole("region", { name: "Compiler diagnostics" }),
-      ).toContainText("No problems found");
       const designer = new DesignerPage(page);
       await designer.selectStep("fail-1");
-      await designer.inspectorField("Message").fill("Not published yet");
-      // Publish waits in More until the draft is saved.
+      await designer.inspectorField("Message").fill("Ready to review");
       await closeSheet(page);
       await command(page, "Publish…");
-      const dialog = page.getByRole("dialog", { name: "Apply your changes?" });
-      await dialog.getByRole("button", { name: "Keep editing" }).click();
-      await expect(dialog).toHaveCount(0);
-      await expect(page.getByRole("dialog", { name: /^Publish / })).toHaveCount(
-        0,
-      );
+      await expect(
+        page.getByRole("dialog", { name: "Apply your changes?" }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("dialog", { name: /^Publish / }),
+      ).toBeVisible();
       expect(posts).toHaveLength(0);
-      await expect(designer.inspectorField("Message")).toHaveValue(
-        "Not published yet",
-      );
     });
 
     test("a rejected publish shows the platform's diagnostics", async ({

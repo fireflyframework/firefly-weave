@@ -20,6 +20,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import runpy
 import secrets
 import shlex
 import socket
@@ -32,6 +33,7 @@ from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 ROOT = Path(__file__).resolve().parents[2]
+BACKENDS = runpy.run_path(str(ROOT / "scripts/release_backends.py"))
 
 
 def load_host():
@@ -175,8 +177,7 @@ class VerticalSlice:
         self.worker_image = os.environ.get("WEAVE_E2E_WORKER_IMAGE_ID", "")
         assert Path(self.python).is_file(), "Clean installed Python required: set WEAVE_E2E_PYTHON"
         assert self.image.startswith("sha256:"), "Fresh local image required: set WEAVE_E2E_IMAGE_ID"
-        keycloak = os.environ.get("WEAVE_KEYCLOAK_TEST_URL")
-        assert keycloak in {"http://localhost:18080", "http://localhost:18081"}, "Live local Keycloak required"
+        keycloak = BACKENDS["keycloak_endpoint"](legacy_ports=(18080, 18081))
         assert os.environ.get("WEAVE_TEST_DATABASE_URL"), "Guarded real PostgreSQL required: source .env.weave"
         assert all(
             os.environ.get(name) for name in ("WEAVE_HOST_SECRET", "WEAVE_WORKER_SECRET", "WEAVE_DENIED_SECRET")
@@ -203,6 +204,11 @@ class VerticalSlice:
             str(runtime_file),
             env={
                 **self.base_env,
+                **{
+                    key: os.environ[key]
+                    for key in ("WEAVE_RELEASE_BACKENDS", "WEAVE_TEST_DOCKER_CONTEXT", "WEAVE_TEST_POSTGRES_CONTAINER")
+                    if key in os.environ
+                },
                 "WEAVE_TEST_DATABASE_URL": os.environ["WEAVE_TEST_DATABASE_URL"],
                 "WEAVE_KEYCLOAK_TEST_URL": keycloak,
             },

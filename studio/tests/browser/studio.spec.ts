@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { selectChoice } from "./support";
 import { test, expect } from "@playwright/test";
 async function offline(page: any) {
   await page.route("**/studio/session", async (route: any) =>
@@ -42,7 +43,7 @@ async function offline(page: any) {
   await page.goto("/");
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
 }
-test("pointer movement changes layout only; keyboard undo and source preserve steps", async ({
+test("a drag outside insertion slots leaves source and undo history unchanged", async ({
   page,
 }) => {
   await offline(page);
@@ -71,14 +72,15 @@ test("pointer movement changes layout only; keyboard undo and source preserve st
   expect(source).toContain("durationSeconds: 60");
   await page.getByRole("tab", { name: "Designer", exact: true }).click();
   await page.keyboard.press("Control+z");
+  await expect(page.locator('[data-step="wait-1"]')).toHaveCount(0);
+  await page.keyboard.press("Control+Shift+z");
   await expect(page.locator('[data-step="wait-1"]')).toBeVisible();
   await page.getByRole("button", { name: "Validate", exact: true }).click();
   // A local check never claims the catalog passed; it says what it covered.
   await expect(
-    page.getByText(
-      "No problems found. Actions and connections are checked when you connect.",
-      { exact: true },
-    ),
+    page.getByText("Checked locally — Validate to check against the project", {
+      exact: true,
+    }),
   ).toBeVisible();
 });
 test("palette drag inserts and invalid source leaves graph intact", async ({
@@ -165,17 +167,17 @@ test("property table edits wait duration and rejects invalid values", async ({
     name: "Duration",
     exact: true,
   });
-  await page
-    .getByRole("combobox", { name: "Duration unit", exact: true })
-    .selectOption("s");
+  await selectChoice(
+    page.getByRole("combobox", { name: "Duration unit", exact: true }),
+    "s",
+  );
   await duration.fill("0");
-  await expect(
-    page.getByRole("button", { name: "Apply changes", exact: true }),
-  ).toBeDisabled();
+  await duration.press("Tab");
+  await expect(page.locator('[data-field="durationSeconds"]')).toContainText(
+    "Enter a positive number of seconds.",
+  );
   await duration.fill("90");
-  await page
-    .getByRole("button", { name: "Apply changes", exact: true })
-    .click();
+  await page.locator(".inspector-header h2").click();
   await page.getByRole("tab", { name: "Source", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Workflow source" }),
@@ -232,23 +234,20 @@ test("workflow properties and operation builder serialize supported options", as
       exact: true,
     })
     .fill("2");
-  await page
-    .getByRole("button", { name: "Apply changes", exact: true })
-    .click();
+  await page.locator(".inspector-header h2").click();
   await page.locator(".palette-step").filter({ hasText: "Transform" }).click();
   await page
-    .getByRole("group", { name: "Value expression mode", exact: true })
-    .getByRole("button", { name: "Formula" })
+    .getByRole("radiogroup", { name: "Value expression mode", exact: true })
+    .getByRole("radio", { name: "Formula" })
     .click();
-  await page
-    .getByLabel("Value operator", { exact: true })
-    .selectOption("exists");
+  await selectChoice(
+    page.getByLabel("Value operator", { exact: true }),
+    "exists",
+  );
   await page
     .getByLabel("Value 0 reference", { exact: true })
     .fill("/input/key");
-  await page
-    .getByRole("button", { name: "Apply changes", exact: true })
-    .click();
+  await page.locator(".inspector-header h2").click();
   await page.getByRole("tab", { name: "Source", exact: true }).click();
   const source = await page
     .getByRole("textbox", { name: "Workflow source" })

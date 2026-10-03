@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // Connections view's "New connection" button opens <weave-modal
 // heading="New API connection"> holding the lazily loaded
 // <weave-http-connection-form>.
+import { selectChoice } from "./support";
 import { test, expect, Page, Request } from "@playwright/test";
 import { allCapabilities, connected, profile } from "./support";
 
@@ -155,9 +156,10 @@ async function fillOauth(dialog: ReturnType<Page["getByRole"]>) {
   await dialog
     .getByLabel("API address", { exact: true })
     .fill("https://api.pets.example");
-  await dialog
-    .getByLabel("How the API checks who is calling", { exact: true })
-    .selectOption("machine-token");
+  await selectChoice(
+    dialog.getByLabel("How the API checks who is calling", { exact: true }),
+    "machine-token",
+  );
   await dialog.getByLabel("Client ID", { exact: true }).fill("studio-client");
   await dialog
     .getByLabel("Token endpoint", { exact: true })

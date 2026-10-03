@@ -90,6 +90,9 @@ class SignalService:
                 validate(ir, ir.schemas[node.schema_ref], payload)
             except ValueError as error:
                 raise CatalogError(422, "WV-SIGNAL-PAYLOAD", "Signal payload violates pinned schema") from error
+            from firefly_weave.files.authority import admit_files
+
+            await admit_files(tx, run_id, payload, actor, context=context)
             receipt = SignalReceipt(id=uuid4(), request_hash=fingerprint, accepted_at=await repository.now())
             await repository.execute(
                 "INSERT INTO signal_receipts "

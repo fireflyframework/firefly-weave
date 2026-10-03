@@ -37,6 +37,10 @@ Role = Literal[
     "email_sender",
     "email_manager",
     "execution_manager",
+    "lumi_user",
+    "lumi_manager",
+    "file_reader",
+    "file_manager",
 ]
 
 

@@ -30,6 +30,7 @@ from firefly_weave.contracts.definitions import (
     Step,
     WorkflowDefinition,
 )
+from firefly_weave.contracts.llm import LLMProfile
 from firefly_weave.contracts.values import JsonObject
 
 
@@ -87,6 +88,10 @@ class WorkflowBuilder:
     def with_connection(self, name: ResourceName, requirement: ConnectionRequirement) -> Self:
         """Set a named canonical connection requirement."""
         return self._with_spec(connections={**self._definition.spec.connections, name: requirement})
+
+    def with_llm_profile(self, name: ResourceName, profile: LLMProfile) -> Self:
+        """Pin provider, model, reasoning and budgets in the workflow version."""
+        return self._with_spec(llmProfiles={**(self._definition.spec.llm_profiles or {}), name: profile})
 
     def with_timeout(self, seconds: PositiveInt) -> Self:
         """Set a positive timeout; omission is the constructor's default."""

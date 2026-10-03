@@ -23,6 +23,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Discriminator, Field, Tag, TypeAdapter, model_validator
 from pydantic.json_schema import JsonSchemaValue, SkipJsonSchema
 
+from firefly_weave.contracts.llm import LLMProfile
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonData, JsonObject, JsonObjectData, UnicodeString
 
 SEMVER_PATTERN = (
@@ -40,7 +41,25 @@ type VersionedReference = Annotated[UnicodeString, Field(pattern=rf"^{NAME_PATTE
 type JsonPointer = Annotated[UnicodeString, Field(pattern=r"^(?:/(?:[^~/]|~[01])*)*$")]
 type PositiveInt = Annotated[int, Field(gt=0, le=MAX_SAFE_INTEGER)]
 type SideEffect = Literal["read_only", "idempotent", "idempotency_key", "non_idempotent"]
-type OperatorName = Literal["eq", "ne", "lt", "lte", "gt", "gte", "and", "or", "not", "exists", "coalesce"]
+type OperatorName = Literal[
+    "eq",
+    "ne",
+    "lt",
+    "lte",
+    "gt",
+    "gte",
+    "and",
+    "or",
+    "not",
+    "exists",
+    "coalesce",
+    "contains",
+    "notContains",
+    "in",
+    "notIn",
+    "startsWith",
+    "endsWith",
+]
 
 
 def _reject_explicit_null(value: object) -> object:
@@ -186,10 +205,58 @@ class ActionStep(ContractModel):
     )
 
 
+class LLMStep(ContractModel):
+    id: ResourceName
+    kind: Literal["llm"]
+    uses: VersionedReference
+    profile: ResourceName
+    prompt: Expression
+    context: Expression
+    connection: ResourceName
+
+
 class TransformStep(ContractModel):
     id: ResourceName
     kind: Literal["transform"]
     value: Expression
+
+
+class DecisionRule(ContractModel):
+    id: ResourceName
+    when: Expression
+    output: Expression
+
+
+class DecisionTableSpec(ContractModel):
+    input_schema: JsonObjectData = Field(alias="inputSchema")
+    output_schema: JsonObjectData = Field(alias="outputSchema")
+    hit_policy: Literal["first", "unique", "collect"] = Field(alias="hitPolicy")
+    rules: list[DecisionRule] = Field(min_length=1, max_length=1000)
+    default_output: OmissionOnly[Expression] = Field(
+        default=None, alias="defaultOutput", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def policy_contract(self) -> DecisionTableSpec:
+        if len({rule.id for rule in self.rules}) != len(self.rules):
+            raise ValueError("Decision rule IDs must be unique")
+        if self.hit_policy == "collect":
+            if self.default_output is not None:
+                raise ValueError("Collect returns an empty list when no rules match; omit defaultOutput")
+            if (
+                self.output_schema.get("type") != "array"
+                or not isinstance(self.output_schema.get("items"), dict)
+                or "prefixItems" in self.output_schema
+            ):
+                raise ValueError("Collect requires an array outputSchema with items and without prefixItems")
+        return self
+
+
+class DecisionTableStep(ContractModel):
+    id: ResourceName
+    kind: Literal["decisionTable"]
+    uses: VersionedReference
+    input: Expression = Field(alias="with")
 
 
 class Branch(ContractModel):
@@ -259,7 +326,16 @@ class FailStep(ContractModel):
 
 
 type Step = Annotated[
-    ActionStep | TransformStep | SwitchStep | ParallelStep | WaitStep | SignalStep | HumanTaskStep | FailStep,
+    ActionStep
+    | LLMStep
+    | TransformStep
+    | DecisionTableStep
+    | SwitchStep
+    | ParallelStep
+    | WaitStep
+    | SignalStep
+    | HumanTaskStep
+    | FailStep,
     Field(discriminator="kind"),
 ]
 
@@ -270,6 +346,9 @@ class WorkflowSpec(ContractModel):
     connections: dict[ResourceName, ConnectionRequirement] = Field(default_factory=dict)
     timeout_seconds: OmissionOnly[PositiveInt] = Field(
         default=None, alias="timeoutSeconds", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    llm_profiles: OmissionOnly[dict[ResourceName, LLMProfile]] = Field(
+        default=None, alias="llmProfiles", max_length=32, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
     steps: list[Step]
     output: Expression
@@ -328,7 +407,16 @@ class ConnectorDefinition(ContractModel):
     spec: ConnectorSpec
 
 
-type Definition = Annotated[WorkflowDefinition | ActionDefinition | ConnectorDefinition, Field(discriminator="kind")]
+class DecisionTableDefinition(ContractModel):
+    api_version: Literal["weave/v1alpha1"] = Field(alias="apiVersion")
+    kind: Literal["DecisionTable"]
+    metadata: Metadata
+    spec: DecisionTableSpec
+
+
+type Definition = Annotated[
+    WorkflowDefinition | ActionDefinition | ConnectorDefinition | DecisionTableDefinition, Field(discriminator="kind")
+]
 
 for _model in (
     ObjectExpression,
@@ -342,8 +430,12 @@ for _model in (
 ):
     _model.model_rebuild()
 
-_definition_adapter: TypeAdapter[WorkflowDefinition | ActionDefinition | ConnectorDefinition] = TypeAdapter(Definition)
+_definition_adapter: TypeAdapter[
+    WorkflowDefinition | ActionDefinition | ConnectorDefinition | DecisionTableDefinition
+] = TypeAdapter(Definition)
 
 
-def load_definition(value: JsonObject) -> WorkflowDefinition | ActionDefinition | ConnectorDefinition:
+def load_definition(
+    value: JsonObject,
+) -> WorkflowDefinition | ActionDefinition | ConnectorDefinition | DecisionTableDefinition:
     return _definition_adapter.validate_python(value)

@@ -25,6 +25,7 @@ SPDX-License-Identifier: Apache-2.0
 // for large text), and a visible focus indicator on Tab.
 // The platform and the local host are mocked; the local authoring endpoints
 // and the simulation artifact use the repository's real Python code.
+import { selectChoice } from "./support";
 import { test, expect, Page, Request, Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
@@ -800,19 +801,17 @@ async function closeInspector(page: Page) {
 }
 
 /**
- * Appends a palette step. On narrow layouts the palette is a popover that
- * closes after each insert, a moment after the click; a click that finds it
- * closing opens it again.
+ * Appends a palette step, opening the narrow-layout palette when needed.
  */
 async function addStep(page: Page, kind: StepKind) {
+  const toggle = page.getByRole("button", { name: "Insert step", exact: true });
+  const popup = await toggle.isVisible();
   const item = page
-    .locator(".palette-step")
-    .filter({ hasText: new RegExp(`^\\s*${stepLabels[kind]}`) });
-  await expect(async () => {
-    if (!(await item.isVisible()))
-      await page.getByRole("button", { name: "Insert step" }).click();
-    await item.click({ timeout: 2000 });
-  }).toPass({ timeout: 20_000 });
+    .locator(".palette")
+    .getByRole("button", { name: stepLabels[kind], exact: true });
+  if (!(await item.isVisible())) await toggle.click();
+  await item.click();
+  if (popup) await expect(item).toBeHidden();
 }
 
 /** Opens a main view from the navigation. */
@@ -1321,6 +1320,72 @@ const debugSession = (
 
 type Scene = (tour: Tour) => Promise<void>;
 const scenes: Record<string, Scene> = {
+  async lumi({ page, shot }) {
+    await connected(page, {
+      capabilities: [...allCapabilities, "lumi.use", "lumi.manage"],
+    });
+    const schema = JSON.parse(
+      execFileSync(
+        python,
+        [
+          "-c",
+          "import json; from firefly_weave.contracts.lumi import LumiConfigurationRequest; print(json.dumps(LumiConfigurationRequest.model_json_schema(by_alias=True)))",
+        ],
+        { cwd: repository, encoding: "utf8" },
+      ),
+    );
+    await page.route("**/studio/contracts/lumi-configuration", (r) =>
+      r.fulfill({ json: schema }),
+    );
+    await page.route("**/lumi/configuration", (r) =>
+      r.fulfill({ status: 404, json: { message: "Not configured" } }),
+    );
+    await page.route("**/lumi/status", (r) =>
+      r.fulfill({
+        json: { configured: true, provider: "openai", model: "team-assistant" },
+      }),
+    );
+    await page.route("**/lumi/ask", (r) =>
+      r.fulfill({
+        json: {
+          answer:
+            "The workflow can wait for a reviewer before continuing. Review the suggested draft and validate it before applying changes.",
+          proposals: [
+            {
+              title: "Review workflow draft",
+              kind: "workflow",
+              format: "yaml",
+              source:
+                "apiVersion: weave/v1alpha1\nkind: Workflow\nmetadata: {name: reviewed-draft, version: 1.0.0}\nspec: {steps: []}",
+            },
+          ],
+          followUps: ["Explain the reviewer deadline"],
+        },
+      }),
+    );
+    await newWorkflow(page);
+    await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
+    const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+    await panel
+      .getByLabel("Message to Lumi")
+      .fill("Help me add a review step.");
+    await panel.getByLabel("Include current source", { exact: true }).check();
+    await shot("lumi-context", { end: ".modal-panel" });
+    await panel
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect(panel).toContainText("The workflow can wait");
+    await shot("lumi-conversation", { end: ".modal-panel" });
+    await panel
+      .getByRole("button", { name: "Review workflow draft", exact: true })
+      .click();
+    await shot("lumi-review", { end: ".modal-panel" });
+    await panel
+      .getByRole("button", { name: "Lumi settings", exact: true })
+      .click();
+    await expect(panel.getByLabel("Model", { exact: true })).toBeVisible();
+    await shot("lumi-settings", { end: ".modal-panel" });
+  },
   async pairing({ page, shot }) {
     await page.route("**/studio/session", (r) =>
       r.fulfill({
@@ -1622,6 +1687,117 @@ const scenes: Record<string, Scene> = {
     await shot("33-settings-assign-role", { end: ".page-content" });
   },
 
+  async "designer-lanes"({ page, shot }) {
+    await offline(page);
+    await page
+      .getByLabel("Choose a workflow file")
+      .setInputFiles(resolve("tests/fixtures/vendor-payment-approval.yaml"));
+    await expect(page.locator(".editor-bar")).toBeVisible();
+    const canvas = page.getByRole("button", { name: "Show canvas" });
+    if (await canvas.isVisible()) await canvas.click();
+    await expect(page.locator('[data-step="record-result"]')).toBeAttached();
+    await closeInspector(page);
+    await page.getByRole("button", { name: "Fit all", exact: true }).click();
+    await expect(
+      page.locator('.lane-header[data-owner="pay-and-notify/ledger"]'),
+    ).toBeVisible();
+    await expect(
+      page.locator('.lane-header[data-owner="pay-and-notify/email"]'),
+    ).toBeVisible();
+    await expect(page.locator('[data-terminal="rejected"]')).toBeVisible();
+    await expect(page.locator('.edge[data-from="rejected"]')).toHaveCount(0);
+    await shot("38-designer-lanes");
+  },
+
+  async "inspector-fields"({ page, shot }) {
+    await offline(page);
+    await newWorkflow(page);
+    const designer = new DesignerPage(page);
+    await designer.append("transform");
+    await designer.selectStep("transform-1");
+    const fields = designer.inspector.locator('[data-field="value"]');
+    const name = fields.getByRole("textbox", {
+      name: "Field name",
+      exact: true,
+    });
+    await name.fill("customer");
+    await name.press("Tab");
+    await fields
+      .getByLabel("Property value", { exact: true })
+      .fill("Northwind");
+    await fields
+      .getByRole("button", { name: "+ Add field", exact: true })
+      .click();
+    await expect(name.nth(1)).toBeFocused();
+    await shot("39-inspector-fields", { end: ".inspector-body" });
+  },
+
+  async "inspector-paths-settings"({ page, shot }) {
+    await offline(page);
+    await page
+      .getByLabel("Choose a workflow file")
+      .setInputFiles(resolve("tests/fixtures/vendor-payment-approval.yaml"));
+    await expect(page.locator(".editor-bar")).toBeVisible();
+    const showCanvas = page.getByRole("button", {
+      name: "Show canvas",
+      exact: true,
+    });
+    if (await showCanvas.isVisible()) await showCanvas.click();
+    await closeInspector(page);
+    await page.getByRole("button", { name: "Fit all", exact: true }).click();
+    const designer = new DesignerPage(page);
+    await designer.selectStep("route");
+    await expect(designer.inspector.locator(".decision-path")).toHaveCount(3);
+    await shot("39-path-cards", { end: ".inspector-body" });
+    await designer.inspector
+      .getByRole("button", { name: "Workflow settings", exact: true })
+      .click();
+    await expect(
+      designer.inspector.getByRole("heading", { name: "Inputs", exact: true }),
+    ).toBeVisible();
+    const rows = designer.inspector.locator(
+      '[data-field="spec/inputSchema"] .sd-summary',
+    );
+    await expect(rows.first()).toBeVisible();
+    await shot("39-workflow-settings", { end: ".inspector-body" });
+  },
+
+  async "condition-operators"({ page, shot }) {
+    await offline(page);
+    await newWorkflow(page);
+    const designer = new DesignerPage(page);
+    await designer.setSource(`apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: region-rules, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    properties:
+      region: {type: string, title: Region, enum: [Europe, North America, Asia]}
+  outputSchema: {type: object}
+  steps:
+    - id: route
+      kind: switch
+      cases:
+        - when: {op: {name: in, args: [{ref: /input/region}, {literal: [Europe, North America]}]}}
+          steps: []
+          output: {literal: {}}
+      default: {steps: [], output: {literal: {}}}
+  output: {literal: {}}
+`);
+    await designer.selectStep("route");
+    const field = designer.inspector.locator('[data-field="cases/0/when"]');
+    await field.getByRole("button", { name: "Add item", exact: true }).click();
+    await expect(
+      field.getByLabel("Condition 1 item 3", { exact: true }),
+    ).toBeFocused();
+    await selectChoice(
+      field.getByLabel("Condition 1 item 3", { exact: true }),
+      '"Asia"',
+    );
+    await shot("39-condition-operators", { end: ".inspector-body" });
+  },
+
   async "designer-canvas"({ page, shot }) {
     await offline(page);
     await newWorkflow(page);
@@ -1634,7 +1810,7 @@ const scenes: Record<string, Scene> = {
     await closeInspector(page);
     await designer.fit();
     await expect(
-      designer.target("Add a step here, in Case 1 of decision-1"),
+      page.locator('.lane-header[data-owner="decision-1/case 1"]'),
     ).toBeVisible();
     await shot("41-designer-branches");
     const kinds: StepKind[] = [
@@ -1649,10 +1825,8 @@ const scenes: Record<string, Scene> = {
     await closeInspector(page);
     await designer.fit();
     await shot("42-designer-steps");
-    // Focus pans the "+" into view, as it does for keyboard users.
-    const start = designer.target("Add a step here, at the start");
-    await start.focus();
-    await start.click();
+    await page.locator('[data-step="decision-1"] .node-body').focus();
+    await page.keyboard.press("/");
     await expect(
       page.getByRole("combobox", { name: "Search steps and actions" }),
     ).toBeFocused();
@@ -1679,6 +1853,76 @@ const scenes: Record<string, Scene> = {
     await form.getByLabel("Field name").fill("comment");
     await expect(form.locator(".sd-preview")).toContainText("Comment");
     await shot("44-inspector-humanTask", { end: ".inspector-body" });
+  },
+
+  async "human-task-files"({ page, shot }) {
+    await connected(page, {
+      capabilities: [...allCapabilities, "human_task.complete"],
+    });
+    const file = {
+      kind: "weave/file",
+      id: "11111111-1111-4111-8111-111111111111",
+      filename: "vendor-payment-invoice-october.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 1250,
+      sha256: "0".repeat(64),
+    };
+    const task = {
+      id: "task-1",
+      run_id: "run",
+      node_id: "review",
+      revision: 1,
+      status: "claimed",
+      claimant_id: "human",
+      title: "Review invoice attachments",
+      decisions: ["approve", "reject"],
+      context: { invoice: file },
+      form_schema: {
+        type: "object",
+        properties: {
+          receipt: {
+            type: "object",
+            properties: {
+              kind: { const: "weave/file" },
+              id: { type: "string" },
+            },
+          },
+        },
+      },
+    };
+    await page.route("**/human-tasks?*", (route) =>
+      route.fulfill({ json: { items: [task], next_cursor: null } }),
+    );
+    await page.route("**/human-tasks/task-1", (route) =>
+      route.fulfill({ json: task }),
+    );
+    await page.getByRole("button", { name: "My tasks", exact: true }).click();
+    await page.locator(".resource-row").click();
+    await expect(
+      page.getByLabel("Upload Receipt", { exact: true }),
+    ).toBeVisible();
+    await shot("human-task-files", { end: ".record-detail, .page-content" });
+  },
+
+  async "human-task-inspector"({ page, shot }) {
+    await offline(page);
+    await newWorkflow(page);
+    const designer = new DesignerPage(page);
+    await designer.append("humanTask");
+    await designer.selectStep("approval-1");
+    await expect(designer.inspector.locator(".human-section > h3")).toHaveText([
+      "Who",
+      "What they see",
+      "How they answer",
+      "Deadlines",
+    ]);
+    await shot("human-task-who", { end: ".inspector-body" });
+    const answers = designer.inspector.getByRole("heading", {
+      name: "How they answer",
+      exact: true,
+    });
+    await answers.scrollIntoViewIfNeeded();
+    await shot("human-task-answers", { end: ".inspector-body" });
   },
 
   async "designer-schema"({ page, shot }) {
@@ -2091,9 +2335,10 @@ spec:
     await open(page, "Runs");
     await page.getByRole("button", { name: "Start run", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Start a run" });
-    await dialog
-      .getByLabel("Version to run", { exact: true })
-      .selectOption("act-1");
+    await selectChoice(
+      dialog.getByLabel("Version to run", { exact: true }),
+      "act-1",
+    );
     await expect(dialog.getByLabel("Customer ID")).toBeVisible();
     await dialog.getByRole("button", { name: "Start run" }).click();
     await expect(dialog.getByRole("alert")).toHaveText("Fill in Customer ID.");
@@ -2111,7 +2356,7 @@ spec:
       builder(page).getByLabel("Name", { exact: true }),
     ).toBeFocused();
     await expect(builder(page).locator(".readiness-line")).toContainText(
-      "Ready to publish",
+      "Platform ready for API actions",
     );
     await shot("60-api-builder", { end: ".modal-panel" });
     await builder(page).getByLabel("Name", { exact: true }).fill("get-record");
@@ -2121,9 +2366,10 @@ spec:
     await builder(page)
       .getByLabel("Path", { exact: true })
       .fill("/v1/records/{id}");
-    await builder(page)
-      .getByLabel("How the API checks who is calling")
-      .selectOption("api-key");
+    await selectChoice(
+      builder(page).getByLabel("How the API checks who is calling"),
+      "api-key",
+    );
     await builder(page)
       .getByLabel("Header that carries the key")
       .fill("X-API-Key");
@@ -2190,9 +2436,10 @@ spec:
     await dialog
       .getByLabel("API address", { exact: true })
       .fill("https://api.pets.example");
-    await dialog
-      .getByLabel("How the API checks who is calling", { exact: true })
-      .selectOption("machine-token");
+    await selectChoice(
+      dialog.getByLabel("How the API checks who is calling", { exact: true }),
+      "machine-token",
+    );
     await dialog.getByLabel("Client ID", { exact: true }).fill("studio-client");
     await dialog
       .getByLabel("Token endpoint", { exact: true })

@@ -42,6 +42,8 @@ from firefly_weave.contracts.catalog import (
 from firefly_weave.contracts.compatibility import CompatibilityReport
 from firefly_weave.contracts.connector_descriptors import ADAPTER, ConnectorDescriptorView
 from firefly_weave.contracts.connectors import ConnectionRequest, ConnectionRevision, ConnectionTestResult
+from firefly_weave.contracts.files import FileChunk, FileChunkRead, FileCommand, FileCreate, FileUpload
+from firefly_weave.contracts.human_files import HumanFileChunk, HumanFileCommand, HumanFileCreate, HumanFileRead
 from firefly_weave.contracts.human_tasks import (
     AssignmentBinding,
     AssignmentBindingList,
@@ -55,6 +57,13 @@ from firefly_weave.contracts.human_tasks import (
     TaskGroupRequest,
 )
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
+from firefly_weave.contracts.lumi import (
+    LumiAskRequest,
+    LumiConfiguration,
+    LumiConfigurationRequest,
+    LumiReply,
+    LumiStatus,
+)
 from firefly_weave.contracts.maintenance import RetentionApplication, RetentionPlan, RetentionRequest
 from firefly_weave.contracts.operations import (
     CancelRunRequest,
@@ -70,6 +79,8 @@ from firefly_weave.contracts.public import (
     Capabilities,
     CompileResponse,
     CompilerRequest,
+    DecisionEvaluation,
+    DecisionEvaluationRequest,
     Disabled,
     DraftExport,
     DraftRetirement,
@@ -124,7 +135,7 @@ from firefly_weave.triggers.models import Trigger, TriggerRequest
 if TYPE_CHECKING:
     import httpx
 
-Collection = Literal["workflows", "actions", "connectors"]
+Collection = Literal["workflows", "actions", "connectors", "decision-tables"]
 
 
 class AsyncTokenProvider(Protocol):
@@ -225,7 +236,13 @@ class WeaveClient:
             "collection": collection,
             "adapter": adapter,
         }
-        if collection is not None and collection not in {"drafts", "workflows", "actions", "connectors"}:
+        if collection is not None and collection not in {
+            "drafts",
+            "workflows",
+            "actions",
+            "connectors",
+            "decision-tables",
+        }:
             raise ValueError("Unknown catalog collection")
         if adapter is not None and not ADAPTER.fullmatch(adapter):
             raise ValueError("Invalid connector adapter name")
@@ -350,6 +367,9 @@ class WeaveClient:
 
     async def catalog(self) -> CatalogLock:
         return cast(CatalogLock, await self.invoke("catalog.read"))
+
+    async def evaluate_decision(self, request: DecisionEvaluationRequest) -> DecisionEvaluation:
+        return cast(DecisionEvaluation, await self.invoke("compiler.evaluate_decision", body=request))
 
     async def capabilities(self) -> Capabilities:
         return cast(Capabilities, await self.invoke("capabilities.read"))
@@ -912,3 +932,62 @@ class WeaveClient:
             RunView,
             await self.invoke("runs.resume", identifier=identifier, body=request, idempotency_key=idempotency_key),
         )
+
+    async def create_file(self, request: FileCreate, *, idempotency_key: str) -> FileUpload:
+        return cast(FileUpload, await self.invoke("files.create", body=request, idempotency_key=idempotency_key))
+
+    async def read_file(self, identifier: UUID) -> FileUpload:
+        return cast(FileUpload, await self.invoke("files.read", identifier=identifier))
+
+    async def put_file_chunk(self, identifier: UUID, chunk: FileChunk) -> FileUpload:
+        return cast(FileUpload, await self.invoke("files.chunk", identifier=identifier, body=chunk))
+
+    async def finish_file(self, identifier: UUID) -> FileUpload:
+        return cast(FileUpload, await self.invoke("files.finish", identifier=identifier, body=FileCommand()))
+
+    async def read_file_chunk(self, identifier: UUID, index: int) -> FileChunk:
+        return cast(
+            FileChunk, await self.invoke("files.download", identifier=identifier, body=FileChunkRead(index=index))
+        )
+
+    async def list_files(self, *, limit: int = 50, cursor: str | None = None) -> Page[FileUpload]:
+        return cast(Page[FileUpload], await self.invoke("files.list", query=self._page(limit, cursor)))
+
+    async def delete_file(self, identifier: UUID) -> Revoked:
+        return cast(Revoked, await self.invoke("files.delete", identifier=identifier))
+
+    async def lumi_status(self) -> LumiStatus:
+        return cast(LumiStatus, await self.invoke("lumi.status"))
+
+    async def lumi_configuration(self) -> LumiConfiguration:
+        return cast(LumiConfiguration, await self.invoke("lumi.configuration.read"))
+
+    async def configure_lumi(
+        self, request: LumiConfigurationRequest, *, revision: int | None = None
+    ) -> LumiConfiguration:
+        return cast(LumiConfiguration, await self.invoke("lumi.configuration.write", body=request, revision=revision))
+
+    async def ask_lumi(self, request: LumiAskRequest) -> LumiReply:
+        return cast(LumiReply, await self.invoke("lumi.ask", body=request))
+
+    async def create_human_file(
+        self, identifier: UUID, request: HumanFileCreate, *, idempotency_key: str
+    ) -> FileUpload:
+        return cast(
+            FileUpload,
+            await self.invoke(
+                "human_files.create", identifier=identifier, body=request, idempotency_key=idempotency_key
+            ),
+        )
+
+    async def put_human_file_chunk(self, identifier: UUID, request: HumanFileChunk) -> FileUpload:
+        return cast(FileUpload, await self.invoke("human_files.chunk", identifier=identifier, body=request))
+
+    async def finish_human_file(self, identifier: UUID, request: HumanFileCommand) -> FileUpload:
+        return cast(FileUpload, await self.invoke("human_files.finish", identifier=identifier, body=request))
+
+    async def read_human_file(self, identifier: UUID, request: HumanFileCommand) -> FileUpload:
+        return cast(FileUpload, await self.invoke("human_files.read", identifier=identifier, body=request))
+
+    async def read_human_file_chunk(self, identifier: UUID, request: HumanFileRead) -> FileChunk:
+        return cast(FileChunk, await self.invoke("human_files.download", identifier=identifier, body=request))

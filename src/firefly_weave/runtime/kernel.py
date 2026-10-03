@@ -26,10 +26,12 @@ from typing import cast
 from pydantic import Field
 
 from firefly_weave.compiler.api import CompiledArtifact
+from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_decision_table
 from firefly_weave.compiler.expressions import ExpressionFailure, evaluate, measure_value
 from firefly_weave.compiler.ir import (
     ActionNode,
     BranchOutputNode,
+    DecisionTableNode,
     EndNode,
     FailNode,
     HumanTaskNode,
@@ -119,7 +121,9 @@ def validate(ir: WorkflowIR, schema: JsonObject, value: JsonValue) -> None:
         raise KernelError(issues[0].code)
 
 
-def action_schemas(ir: WorkflowIR, definition: ActionDefinition, direction: str) -> list[JsonObject]:
+def action_schemas(
+    ir: WorkflowIR, definition: ActionDefinition, direction: str, *, node: ActionNode | None = None
+) -> list[JsonObject]:
     primary = definition.spec.input_schema if direction == "input" else definition.spec.output_schema
     implementation = definition.spec.implementation
     if isinstance(implementation, WorkerImplementation):
@@ -134,11 +138,23 @@ def action_schemas(ir: WorkflowIR, definition: ActionDefinition, direction: str)
             JsonObject, cast(JsonObject, cast(JsonObject, document["spec"])["actions"])[implementation.action]
         )
         secondary = cast(JsonObject, descriptor[direction + "Schema"])
-    return [primary, secondary]
+    schemas = [primary, secondary]
+    if direction == "output" and node is not None and node.llm_profile is not None:
+        from firefly_weave.compiler.llm import llm_output_schema
+
+        schemas.append(llm_output_schema(node.llm_profile.model_dump(mode="json", by_alias=True)))
+    return schemas
 
 
-def validate_action(ir: WorkflowIR, definition: ActionDefinition, direction: str, value: JsonValue) -> None:
-    for schema in action_schemas(ir, definition, direction):
+def validate_action(
+    ir: WorkflowIR,
+    definition: ActionDefinition,
+    direction: str,
+    value: JsonValue,
+    *,
+    node: ActionNode | None = None,
+) -> None:
+    for schema in action_schemas(ir, definition, direction, node=node):
         validate(ir, schema, value)
 
 
@@ -283,11 +299,11 @@ def _advance_owned(
         assert isinstance(definition, ActionDefinition)
         return dependency.reference, definition
 
-    def complete(node: Node, value: JsonValue) -> None:
+    def complete(node: Node, value: JsonValue, decision: JsonObject | None = None) -> None:
         branch = frame(current_state, node)
         target = current_state.steps if branch is None else branch.steps
         target[node.id] = {"output": value}
-        result.steps.append(StepChange(node_id=node.id, status="completed", output=value))
+        result.steps.append(StepChange(node_id=node.id, status="completed", output=value, decision=decision))
 
     def mapping(node: Node, expression: JsonObject) -> JsonValue:
         return evaluate(expression, {"input": current_state.input, "steps": bindings(current_state, node)})
@@ -354,6 +370,7 @@ def _advance_owned(
         if isinstance(node, ActionNode) and completion.type == "task_completed":
             definition = action(node)[1]
             validate_action(ir, definition, "output", completion.data["output"])
+            guard(node.path, "action_output", completion.data["output"])
             schema = definition.spec.output_schema
         elif isinstance(node, HumanTaskNode) and completion.type == "human_completed":
             schema = {
@@ -525,6 +542,24 @@ def _advance_owned(
                 guard(node.path + "/value", "transform_output", value)
                 complete(node, value)
                 queue.append(successors[current])
+            elif isinstance(node, DecisionTableNode):
+                dependency = next(
+                    d for d in ir.dependencies if d.digest == node.dependency and d.kind == "DecisionTable"
+                )
+                value = mapping(node, cast(JsonObject, node.input.model_dump(by_alias=True)))
+                guard(node.path + "/with", "decision_input", value)
+                decision = evaluate_decision_table(
+                    cast(JsonObject, dependency.document["spec"]),
+                    value,
+                    bundle={d.reference: d.document for d in ir.dependencies if d.kind == "Schema"},
+                )
+                guard(node.path, "decision_output", decision.output)
+                complete(
+                    node,
+                    decision.output,
+                    {"matched_rule_ids": list(decision.matched_rule_ids), "used_default": decision.used_default},
+                )
+                queue.append(successors[current])
             elif isinstance(node, FailNode):
                 terminate("failed", node.code)
                 current_state = current_state.model_copy(
@@ -669,8 +704,8 @@ def _advance_owned(
                 return checkpoint(result.model_copy(update={"state": current_state}), done=False)
         current_state = current_state.model_copy(update={"status": "waiting"})
         return checkpoint(result.model_copy(update={"state": current_state}))
-    except (ExpressionFailure, KernelError) as error:
-        code = error.code if isinstance(error, ExpressionFailure) else str(error)
+    except (ExpressionFailure, DecisionFailure, KernelError) as error:
+        code = error.code if isinstance(error, (ExpressionFailure, DecisionFailure)) else str(error)
         current_state = state.model_copy(deep=True)
         current_state = current_state.model_copy(update={"accepted_sequence": event.sequence})
         incident(current, code)

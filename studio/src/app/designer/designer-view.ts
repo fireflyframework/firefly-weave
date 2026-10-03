@@ -27,7 +27,12 @@ import { ModalSheet } from "../modal-sheet";
 import { RowMenu } from "../row-menu";
 import { StepPropertyGrid } from "../property-grid";
 import { PaletteIntegrations } from "../integrations/palette-integrations";
+import { ConnectionSlotList } from "../integrations/connection-slot-list";
 import { ActionInspector } from "./action-inspector";
+import { DecisionInspector } from "./decision-inspector";
+import { LlmInspector } from "./llm-inspector";
+import { HumanInspector } from "./human-inspector";
+import { PathInspector } from "./path-inspector";
 import { DiagnosticsList } from "./diagnostics-list";
 import { SimulationPanel } from "./simulation/simulation-panel";
 import type { App } from "../app";
@@ -45,6 +50,11 @@ import type { App } from "../app";
     StepPropertyGrid,
     PaletteIntegrations,
     ActionInspector,
+    DecisionInspector,
+    LlmInspector,
+    HumanInspector,
+    PathInspector,
+    ConnectionSlotList,
     DiagnosticsList,
     SimulationPanel,
   ],
@@ -55,28 +65,47 @@ import type { App } from "../app";
     <!-- One 52 px editor bar: where you are, the three views, and the
          commands, with one primary that follows the lifecycle. -->
     <div class="editor-bar">
-      <div class="editor-identity">
-        <button
-          type="button"
-          class="back-link"
-          (click)="h.navigate('workflows')"
-        >
-          Workflows /
-        </button>
-        <h1 [attr.title]="h.model.definition.metadata.name">
-          {{ h.model.definition.metadata.name }}
-        </h1>
-        <span class="tag version-badge">{{
-          h.model.definition.metadata.version
-        }}</span>
-        @if (h.statusChip; as chip) {
-          <span
-            class="pill status-chip"
-            [attr.data-tone]="chip.tone || null"
-            [attr.title]="chip.text"
-            ><span class="status-text">{{ chip.text }}</span></span
+      <div class="editor-heading">
+        <div class="editor-identity">
+          <button
+            type="button"
+            class="back-link"
+            (click)="h.navigate('workflows')"
           >
-        }
+            Workflows /
+          </button>
+          <h1 [attr.title]="h.model.definition.metadata.name">
+            {{ h.model.definition.metadata.name }}
+          </h1>
+          <span class="tag version-badge">{{
+            h.model.definition.metadata.version
+          }}</span>
+          @if (h.statusChip; as chip) {
+            <span
+              class="pill status-chip"
+              [attr.data-tone]="chip.tone || null"
+              [attr.title]="chip.text"
+              ><span class="status-text">{{ chip.text }}</span></span
+            >
+          }
+        </div>
+        <ol class="workflow-progress" aria-label="Workflow progress">
+          <li
+            [attr.aria-current]="
+              h.lifecycle !== 'published' && h.lifecycle !== 'active'
+                ? 'step'
+                : null
+            "
+          >
+            Draft
+          </li>
+          <li [attr.aria-current]="h.lifecycle === 'published' ? 'step' : null">
+            Published
+          </li>
+          <li [attr.aria-current]="h.lifecycle === 'active' ? 'step' : null">
+            Active
+          </li>
+        </ol>
       </div>
       <div
         class="editor-views"
@@ -187,7 +216,7 @@ import type { App } from "../app";
           </p>
         }
         @if (h.moreItems.length) {
-          <weave-row-menu label="More" [items]="h.moreItems" />
+          <weave-row-menu label="More" text="More" [items]="h.moreItems" />
         }
         <button
           type="button"
@@ -205,6 +234,7 @@ import type { App } from "../app";
         </button>
       </div>
     </div>
+
     <!-- Why a command the person pressed can't run. -->
     <span class="sr-only" id="simulate-blocked">{{
       h.blocker("simulate")
@@ -406,6 +436,7 @@ import type { App } from "../app";
             aria-describedby="canvas-help"
             tabindex="0"
             [class.overview]="h.overview"
+            [class.tiny-overview]="h.zoom < 0.4"
             [class.moving]="!!h.connectingNode"
             [class.simulating]="!!h.simulationSession"
             (wheel)="h.panCanvas($event)"
@@ -428,7 +459,11 @@ import type { App } from "../app";
                 >
               }
               @if (h.overview) {
-                <span class="canvas-chip">Zoom in to edit steps</span>
+                <span class="canvas-chip">{{
+                  h.zoom < 0.4
+                    ? "Overview · zoom in to insert"
+                    : "Overview · zoom in for details"
+                }}</span>
               }
               @if (h.connectingNode) {
                 <span class="canvas-chip info"
@@ -476,6 +511,7 @@ import type { App } from "../app";
                     @for (edge of h.edgePaths; track edge.key) {
                       <path
                         class="edge"
+                        [attr.data-from]="edge.key.split('>')[0]"
                         [class.edge-taken]="h.edgeTaken(edge.key)"
                         [attr.d]="edge.d"
                         fill="none"
@@ -487,6 +523,37 @@ import type { App } from "../app";
                       />
                     }
                   </svg>
+                  @for (group of h.laneGroups; track group.id) {
+                    <div
+                      class="lane-group"
+                      [style.left.px]="group.point.x"
+                      [style.top.px]="group.point.y"
+                      [style.width.px]="group.width"
+                      [style.height.px]="group.height"
+                      aria-hidden="true"
+                    ></div>
+                    @for (lane of group.lanes; track lane.owner) {
+                      <div
+                        class="lane-header"
+                        [attr.data-owner]="lane.owner"
+                        [style.left.px]="lane.point.x"
+                        [style.top.px]="lane.point.y"
+                        [style.width.px]="lane.width"
+                      >
+                        {{ lane.label }}
+                      </div>
+                    }
+                  }
+                  @for (terminal of h.laneTerminals; track terminal.step) {
+                    <span
+                      class="lane-terminal"
+                      [attr.data-terminal]="terminal.step"
+                      [style.left.px]="terminal.point.x - 6"
+                      [style.top.px]="terminal.point.y - 6"
+                      role="img"
+                      aria-label="This path ends here"
+                    ></span>
+                  }
                   <div
                     fNode
                     fNodeId="$start"
@@ -535,6 +602,10 @@ import type { App } from "../app";
                         h.simNodes.breakpoints.includes(node.step.id)
                       "
                       [attr.data-step]="node.step.id"
+                      [class.dragging]="h.dragNode?.id === node.step.id"
+                      (contextmenu)="
+                        $event.preventDefault(); nodeMenu.toggleMenu()
+                      "
                     >
                       <button
                         class="node-body"
@@ -564,18 +635,46 @@ import type { App } from "../app";
                           /></span>
                         }
                       </button>
+                      <weave-row-menu
+                        #nodeMenu
+                        class="node-actions"
+                        [class.menu-open]="nodeMenu.open()"
+                        [label]="'Actions for ' + node.step.id"
+                        [items]="h.nodeActions(node)"
+                      />
+                      @if (
+                        node.answerPrompt &&
+                        !h.editingLocked &&
+                        !h.model.readonly
+                      ) {
+                        <button
+                          type="button"
+                          class="answer-branch-prompt"
+                          (click)="h.branchOnDecision(node.step.id)"
+                        >
+                          <weave-icon name="switch" [size]="16" />{{
+                            node.answerPrompt
+                          }}
+                        </button>
+                      }
                       @if (info.chip) {
-                        <span
+                        <button
+                          type="button"
                           class="node-chip"
                           [attr.data-tone]="info.status"
-                          aria-hidden="true"
-                          ><weave-icon
+                          [attr.aria-label]="info.chip"
+                          [attr.title]="info.chip"
+                          (click)="h.openNodeIssue(node)"
+                        >
+                          <weave-icon
                             [name]="
                               info.status === 'error' ? 'failCircle' : 'warning'
                             "
                             [size]="16"
-                          />{{ info.chip }}</span
-                        >
+                          /><span class="node-chip-text" aria-hidden="true">{{
+                            info.chip
+                          }}</span>
+                        </button>
                       }
                       @if (h.connectingNode) {
                         <span class="port input-port" aria-hidden="true"></span
@@ -584,13 +683,6 @@ import type { App } from "../app";
                           [class.connecting]="h.connectingNode === node.step.id"
                           aria-hidden="true"
                         ></span>
-                      }
-                      @if (node.owner !== "root" && node.index === 0) {
-                        <span
-                          class="branch-label"
-                          [attr.title]="h.branchLabel(node.owner)"
-                          >{{ h.branchLabel(node.owner, true) }}</span
-                        >
                       }
                     </div>
                   }
@@ -630,14 +722,18 @@ import type { App } from "../app";
                     <button
                       class="insertion-target"
                       [class.branch-placeholder]="!!target.empty"
-                      [class.drop-active]="h.dragPreview || h.connectingNode"
+                      [class.drop-active]="
+                        h.dragPreview || h.validMoveTarget(target)
+                      "
+                      [class.drop-hover]="
+                        h.dragTarget?.owner === target.owner &&
+                        h.dragTarget.index === target.index
+                      "
                       [attr.data-owner]="target.owner"
                       [attr.data-index]="target.index"
                       (focus)="h.targetFocused(target)"
-                      [style.left.px]="
-                        target.point.x - (target.empty ? 104 : 10)
-                      "
-                      [style.top.px]="target.point.y - (target.empty ? 24 : 10)"
+                      [style.left.px]="target.point.x"
+                      [style.top.px]="target.point.y"
                       [attr.aria-label]="
                         h.connectingNode
                           ? target.label.replace(
@@ -667,10 +763,17 @@ import type { App } from "../app";
                         >
                       } @else {
                         <weave-icon name="plus" [size]="16" />
+                        @if (target.lane) {
+                          <span class="lane-add-label"
+                            >Add to {{ target.lane }}</span
+                          >
+                        }
                       }
                     </button>
-                  }</div></f-canvas
-            ></f-flow>
+                  }
+                </div></f-canvas
+              ></f-flow
+            >
             <div class="canvas-tools" role="toolbar" aria-label="Canvas view">
               <button
                 type="button"
@@ -752,7 +855,7 @@ import type { App } from "../app";
         [sheetWhen]="h.sheetWhen.inspector"
         sheetInitialFocus=".inspector-header h2"
         [sheetReturnFocus]="h.selectedNodeElement"
-        (sheetDismiss)="h.showInspector = false"
+        (sheetDismiss)="h.closeInspector()"
       >
         <button
           class="pane-resizer left"
@@ -783,12 +886,17 @@ import type { App } from "../app";
           <button
             class="icon-button inspector-close"
             aria-label="Close inspector"
-            (click)="h.showInspector = false"
+            (click)="h.closeInspector()"
           >
             <weave-icon name="close" />
           </button>
         </header>
-        <div class="inspector-body">
+        <div
+          class="inspector-body"
+          (change)="h.inspectorInteraction($event)"
+          (focusout)="h.inspectorInteraction($event)"
+          (click)="h.inspectorInteraction($event)"
+        >
           @if (h.selected) {
             <form
               class="rename-step"
@@ -801,7 +909,8 @@ import type { App } from "../app";
                 autocomplete="off"
                 spellcheck="false"
                 [attr.data-step-id]="h.selected.step.id"
-                [value]="h.selected.step.id"
+                [value]="h.renameDraft"
+                (input)="h.inputRename($event)"
                 [disabled]="h.model.readonly || h.editingLocked"
                 [attr.aria-invalid]="!!h.renameError"
                 [attr.aria-describedby]="
@@ -825,19 +934,6 @@ import type { App } from "../app";
                 </p>
               }
             </form>
-            @if (h.selected.step.kind === "humanTask") {
-              <div class="inspector-lead">
-                <button
-                  type="button"
-                  (click)="h.branchOnDecision()"
-                  [attr.aria-disabled]="
-                    h.model.readonly || h.editingLocked || null
-                  "
-                >
-                  Add a path for each answer ({{ h.decisionList() }})
-                </button>
-              </div>
-            }
             @if (h.selected.step.kind === "action") {
               @defer (on immediate) {
                 <weave-action-inspector [host]="h" />
@@ -861,21 +957,46 @@ import type { App } from "../app";
               </summary>
               @if (!h.advancedProperties) {
                 @for (stepId of [h.selected.step.id]; track stepId) {
-                  @defer (on immediate) {
-                    <weave-step-property-grid
-                      [step]="h.propertyStep || h.selected.step"
-                      [readOnly]="h.model.readonly || h.editingLocked"
-                      [hiddenFields]="h.inspectorHiddenFields"
-                      [scope]="h.referenceContext"
-                      [inferSchema]="h.inferSchema"
-                      (stepChange)="h.stepEdit($event)"
-                      (validityChange)="h.propertyValid.set($event)"
-                      (input)="h.touchInspector('step')"
-                      (change)="h.touchInspector('step')"
-                      (click)="h.touchInspector('step', $event)"
-                    />
-                  } @placeholder {
-                    <p class="hint">Loading the properties…</p>
+                  @if (h.selected.step.kind === "switch") {
+                    @defer (on immediate) {
+                      <weave-path-inspector [host]="h" />
+                    }
+                  } @else if (h.selected.step.kind === "humanTask") {
+                    @defer (on immediate) {
+                      <weave-human-inspector [host]="h" />
+                    } @placeholder {
+                      <p class="hint">Loading the human task…</p>
+                    }
+                  } @else if (h.selected.step.kind === "decisionTable") {
+                    @defer (on immediate) {
+                      <weave-decision-inspector [host]="h" />
+                    } @placeholder {
+                      <p class="hint">Loading the decision table…</p>
+                    }
+                  } @else if (h.selected.step.kind === "llm") {
+                    @defer (on immediate) {
+                      <weave-llm-inspector [host]="h" />
+                    } @placeholder {
+                      <p class="hint">Loading the AI task…</p>
+                    }
+                  } @else {
+                    @defer (on immediate) {
+                      <weave-step-property-grid
+                        [step]="h.propertyStep || h.selected.step"
+                        [readOnly]="h.model.readonly || h.editingLocked"
+                        [hiddenFields]="h.inspectorHiddenFields"
+                        [scope]="h.referenceContext"
+                        [inferSchema]="h.inferSchema"
+                        (fieldChange)="h.stepEdit($event.value, $event.path)"
+                        (fieldValidity)="h.inspectorFieldValidity($event)"
+                        (validityChange)="h.propertyValid.set($event)"
+                        (input)="h.touchInspector('step')"
+                        (change)="h.touchInspector('step')"
+                        (click)="h.touchInspector('step', $event)"
+                      />
+                    } @placeholder {
+                      <p class="hint">Loading the properties…</p>
+                    }
                   }
                 }
               } @else {
@@ -884,99 +1005,46 @@ import type { App } from "../app";
                     class="step-editor"
                     spellcheck="false"
                     [value]="h.inspectorBuffer"
-                    (input)="h.inspectorBuffer = h.value($event)"
+                    (input)="h.editInspectorJson($event)"
                     aria-label="Step configuration JSON"
                   ></textarea>
                 </label>
-              }
-              @if (
-                h.selected.step.kind === "switch" ||
-                h.selected.step.kind === "parallel"
-              ) {
-                <section class="branch-management">
-                  <h3>
-                    {{
-                      h.selected.step.kind === "switch"
-                        ? "Order of paths"
-                        : "Parallel branches"
-                    }}
-                  </h3>
-                  <p class="hint">
-                    {{
-                      h.selected.step.kind === "switch"
-                        ? "The first path whose condition holds runs; otherwise the Otherwise path does."
-                        : "Every branch runs."
-                    }}
-                    Move contained steps before removing a path.
+                @if (!h.propertyValid()) {
+                  <p class="field-error" role="alert">
+                    Enter valid step JSON, keeping the step name and kind
+                    unchanged.
                   </p>
-                  @if (h.selected.step.kind === "parallel") {
-                    @for (name of h.branchNames(); track name) {
-                      <div class="branch-row">
-                        <input
-                          [value]="name"
-                          [disabled]="h.model.readonly || !h.propertyValid()"
-                          [attr.aria-label]="'Rename branch ' + name"
-                          (change)="h.manageBranch('rename', name, $event)"
-                        /><button
-                          (click)="h.manageBranch('remove', name)"
-                          [disabled]="h.model.readonly || !h.propertyValid()"
-                          [attr.aria-label]="'Remove branch ' + name"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    }
-                  } @else {
-                    @for (index of h.caseIndexes(); track index) {
-                      <div class="branch-row">
-                        <span
-                          class="branch-case"
-                          [attr.title]="h.caseSummary(index)"
-                          ><strong>Case {{ index + 1 }}</strong>
-                          {{ h.shortLabel(h.caseSummary(index)) }}</span
-                        ><button
-                          class="icon-button"
-                          (click)="h.manageBranch('up', h.String(index))"
-                          [disabled]="
-                            h.model.readonly ||
-                            !h.propertyValid() ||
-                            index === 0
-                          "
-                          [attr.aria-label]="'Move case ' + (index + 1) + ' up'"
-                        >
-                          ↑</button
-                        ><button
-                          class="icon-button"
-                          (click)="h.manageBranch('down', h.String(index))"
-                          [disabled]="
-                            h.model.readonly ||
-                            !h.propertyValid() ||
-                            index === h.caseIndexes().length - 1
-                          "
-                          [attr.aria-label]="
-                            'Move case ' + (index + 1) + ' down'
-                          "
-                        >
-                          ↓</button
-                        ><button
-                          (click)="h.manageBranch('remove', h.String(index))"
-                          [disabled]="h.model.readonly || !h.propertyValid()"
-                          [attr.aria-label]="'Remove case ' + (index + 1)"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    }
+                }
+              }
+              @if (h.selected.step.kind === "parallel") {
+                <section class="branch-management">
+                  <h3>Parallel branches</h3>
+                  <p class="hint">
+                    Every branch runs. Move contained steps before removing a
+                    branch.
+                  </p>
+                  @for (name of h.branchNames(); track name) {
+                    <div class="branch-row">
+                      <input
+                        [value]="name"
+                        [disabled]="h.model.readonly || !h.propertyValid()"
+                        [attr.aria-label]="'Rename branch ' + name"
+                        (change)="h.manageBranch('rename', name, $event)"
+                      />
+                      <button
+                        (click)="h.manageBranch('remove', name)"
+                        [disabled]="h.model.readonly || !h.propertyValid()"
+                        [attr.aria-label]="'Remove branch ' + name"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   }
                   <button
                     (click)="h.manageBranch('add')"
                     [disabled]="h.model.readonly || !h.propertyValid()"
                   >
-                    {{
-                      h.selected.step.kind === "switch"
-                        ? "Add case"
-                        : "Add branch"
-                    }}
+                    Add branch
                   </button>
                 </section>
               }
@@ -995,72 +1063,24 @@ import type { App } from "../app";
                 [readOnly]="h.model.readonly || h.editingLocked"
                 [scope]="h.referenceContext"
                 [inferSchema]="h.inferSchema"
-                (stepChange)="h.workflowBuffer = h.serializeStep($event)"
+                (fieldChange)="h.workflowEdit($event)"
+                (fieldValidity)="h.inspectorFieldValidity($event)"
                 (validityChange)="h.workflowValid.set($event)"
                 (input)="h.touchInspector('workflow')"
                 (change)="h.touchInspector('workflow')"
                 (click)="h.touchInspector('workflow', $event)"
-              />
+                ><weave-connection-slots [host]="h"
+              /></weave-step-property-grid>
             } @placeholder {
               <p class="hint">Loading the workflow settings…</p>
             }
-            <p class="hint">
-              A connection slot is a named placeholder. When you activate a
-              version, you choose a real connection for each slot in that
-              environment.
-            </p>
           }
         </div>
-        <footer class="inspector-actions">
-          @if (h.selected) {
-            @if (h.editsPending === "step") {
-              <span class="pill apply-state" data-tone="warning"
-                >Not applied yet</span
-              >
-            }
-            <span class="sr-only" aria-live="polite">{{
-              h.editsPending === "step" ? "Not applied yet" : ""
-            }}</span>
+        @if (h.selected) {
+          <footer class="inspector-actions">
             <weave-row-menu label="Step actions" [items]="h.stepMenu" />
-            <button
-              type="button"
-              class="tertiary"
-              [disabled]="!h.editsPending"
-              (click)="h.discardInspector()"
-            >
-              Discard
-            </button>
-            <button
-              type="button"
-              class="primary"
-              title="Apply changes (⌘/Ctrl Enter)"
-              (click)="h.updateStep()"
-              [disabled]="!h.canApply || h.editingLocked"
-            >
-              Apply changes
-            </button>
-          } @else {
-            <button
-              type="button"
-              class="tertiary"
-              [disabled]="!h.editsPending"
-              (click)="h.discardInspector()"
-            >
-              Discard
-            </button>
-            <button
-              type="button"
-              class="primary"
-              title="Apply changes (⌘/Ctrl Enter)"
-              (click)="h.updateWorkflowOptions()"
-              [disabled]="
-                h.model.readonly || !h.workflowValid() || h.editingLocked
-              "
-            >
-              Apply changes
-            </button>
-          }
-        </footer>
+          </footer>
+        }
       </section>
       @if (h.simulation) {
         @defer (on immediate) {
@@ -1081,7 +1101,10 @@ import type { App } from "../app";
     <section
       class="diagnostics"
       aria-label="Compiler diagnostics"
-      [class.open]="h.diagnosticsOpen && !!h.diagnostics?.diagnostics?.length"
+      [class.open]="
+        h.diagnosticsOpen &&
+        (!!h.diagnostics?.diagnostics?.length || !!h.contractIssues.length)
+      "
     >
       <div class="diagnostics-title">
         @if (h.diagnosticsIcon; as icon) {
@@ -1092,7 +1115,7 @@ import type { App } from "../app";
             [size]="16"
           />
         }
-        @if (h.diagnostics?.diagnostics?.length) {
+        @if (h.diagnostics?.diagnostics?.length || h.contractIssues.length) {
           <button
             type="button"
             class="diagnostics-toggle"
@@ -1115,6 +1138,24 @@ import type { App } from "../app";
           >{{ h.statusLine }}</span
         >
       </div>
+      @if (h.contractIssues.length && h.diagnosticsOpen) {
+        <ul class="contract-gap-list" aria-label="Setup needed">
+          @for (
+            issue of h.contractIssues;
+            track issue.stepId + ":" + issue.label
+          ) {
+            <li>
+              <button
+                type="button"
+                class="text-link"
+                (click)="h.openContractIssue(issue)"
+              >
+                {{ issue.stepId }} · {{ issue.label }}
+              </button>
+            </li>
+          }
+        </ul>
+      }
       @if (h.diagnostics?.diagnostics?.length && h.diagnosticsOpen) {
         <div id="diagnostic-rows">
           @defer (on immediate) {

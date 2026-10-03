@@ -57,6 +57,7 @@ SPDX-License-Identifier: Apache-2.0
 // `weave platform --directory DIR integrations grant` from this source tree.
 // That command refuses to run once the source checkout differs from the one
 // the platform was set up from: set the platform up again after changing src/.
+import { selectChoice } from "./support";
 import { test, expect, Page, TestInfo } from "@playwright/test";
 import {
   ChildProcess,
@@ -827,7 +828,7 @@ test("5-6: silent refresh after expiry, then an ended session keeps local work",
     await expect(page.locator('[data-step="transform-1"]')).toBeVisible();
     await page.getByRole("button", { name: "Validate", exact: true }).click();
     const diagnostics = page.locator(".diagnostics");
-    await expect(diagnostics).toContainText("No problems found", {
+    await expect(diagnostics).toContainText("Checked locally", {
       timeout: 30_000,
     });
     await expect(diagnostics).toContainText(
@@ -985,7 +986,10 @@ test("10: quick integration from Studio runs against the real platform", async (
     .getByLabel("API address")
     .fill("https://jsonplaceholder.typicode.com");
   await builder.getByLabel("Path", { exact: true }).fill("/todos/{id}");
-  await builder.getByLabel("Type of id").selectOption("integer");
+  await selectChoice(
+    builder.getByLabel("Type of id", { exact: true }),
+    "integer",
+  );
   await builder
     .getByLabel("Example response")
     .fill(
@@ -993,7 +997,7 @@ test("10: quick integration from Studio runs against the real platform", async (
     );
   // Readiness is one line: ready, or how many things to set up.
   await expect(builder.locator(".readiness-line")).toContainText(
-    /Ready to publish|to set up|couldn't check/,
+    /Platform ready for API actions|to set up|couldn't check/,
   );
   await openYaml(page);
   const preview = page.getByRole("region", { name: /Action YAML for/ });
@@ -1026,11 +1030,12 @@ test("10: quick integration from Studio runs against the real platform", async (
   );
   await inputSchema.getByRole("button", { name: "Add field" }).click();
   await inputSchema.getByLabel("Field name").fill("id");
-  await inputSchema.getByLabel("Type of “id”").selectOption("integer");
+  await selectChoice(
+    inputSchema.getByLabel("Type of “id”", { exact: true }),
+    "integer",
+  );
   await inputSchema.getByRole("checkbox", { name: "Required: “id”" }).check();
-  await page
-    .getByRole("button", { name: "Apply changes", exact: true })
-    .click();
+  await page.locator(".inspector-header h2").click();
 
   // The action reads its path parameter from the workflow input, and its
   // answer becomes the workflow's result.
@@ -1038,14 +1043,16 @@ test("10: quick integration from Studio runs against the real platform", async (
   const form = page.locator(".action-input-form");
   await form
     .locator('[data-path="path"] .schema-field')
-    .getByRole("button", { name: "Data" })
+    .getByRole("button", { name: "Use data", exact: true })
     .click();
   await form.getByRole("combobox", { name: /^ID/ }).fill("/input/id");
-  await page
-    .getByRole("button", { name: "Apply changes", exact: true })
-    .click();
+  await page.locator(".inspector-header h2").click();
   await designer.inspector
     .getByRole("button", { name: "Use action output as workflow result" })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Replace the workflow result?" })
+    .getByRole("button", { name: "Replace result", exact: true })
     .click();
   await shot(page, "10-mapped");
   const source = await designer.source();
@@ -1121,6 +1128,8 @@ test("10: quick integration from Studio runs against the real platform", async (
   const integrations = JSON.parse(
     readFileSync(join(platformDir, "integrations.json"), "utf8"),
   ) as { release_id: string };
+  await expect(activate).toContainText("picked automatically");
+  await activate.getByRole("button", { name: "Review", exact: true }).click();
   await expect(activate.getByLabel(/^weave-http@2\.0\.0/)).toHaveValue(
     integrations.release_id,
     { timeout: 30_000 },

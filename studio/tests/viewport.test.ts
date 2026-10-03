@@ -25,6 +25,7 @@ import {
   fitAll,
   readableFit,
   reveal,
+  revealGroup,
   usableViewport,
   wheelFactor,
   zoomAt,
@@ -87,12 +88,34 @@ describe("readable fit", () => {
 });
 
 describe("fit all", () => {
-  it("shows the whole graph down to 40 %", () => {
+  it("includes End even when the whole graph needs less than 40 %", () => {
     const { bounds } = twelveSteps();
     const fit = fitAll(bounds, { width: 606, height: 520 });
-    expect(fit.zoom).toBeGreaterThanOrEqual(FIT_ALL_MIN);
+    expect(bounds.maxY * fit.zoom + fit.pan.y).toBeLessThanOrEqual(488);
     const tiny = fitAll(bounds, { width: 200, height: 150 });
-    expect(tiny.zoom).toBe(FIT_ALL_MIN);
+    expect(tiny.zoom).toBeLessThan(FIT_ALL_MIN);
+    expect(bounds.maxY * tiny.zoom + tiny.pan.y).toBeLessThanOrEqual(150);
+  });
+});
+
+describe("structural reveal", () => {
+  it("reveals all new lanes within the canvas without zooming in", () => {
+    const rect = { x: 700, y: 900, width: 1100, height: 450 };
+    for (const size of [
+      { width: 560, height: 520 },
+      { width: 720, height: 760 },
+    ]) {
+      const view = revealGroup({ zoom: 1, pan: { x: 0, y: 0 } }, rect, size);
+      expect(rect.x * view.zoom + view.pan.x).toBeGreaterThanOrEqual(24);
+      expect(rect.y * view.zoom + view.pan.y).toBeGreaterThanOrEqual(24);
+      expect(
+        (rect.x + rect.width) * view.zoom + view.pan.x,
+      ).toBeLessThanOrEqual(size.width - 24 + 0.001);
+      expect(
+        (rect.y + rect.height) * view.zoom + view.pan.y,
+      ).toBeLessThanOrEqual(size.height - 24);
+      expect(view.zoom).toBeLessThanOrEqual(1);
+    }
   });
 });
 

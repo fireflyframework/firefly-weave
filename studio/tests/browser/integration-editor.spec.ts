@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Reproductions of the "Call an action" editor defects, driven with real
 // pointer and keyboard input so hit-testing and focus behave as for a person.
+import { selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import {
   connected,
@@ -35,8 +36,11 @@ const desktopViewports = [
   { width: 1440, height: 900 },
   { width: 1600, height: 1000 },
 ];
-const apply = (page: Page) =>
-  page.getByRole("button", { name: "Apply changes", exact: true });
+const inspectorHeading = (page: Page) => page.locator(".inspector header h2");
+const draftErrors = (page: Page) =>
+  page.locator(
+    ".inspector .error:visible, .inspector .property-error:visible, .inspector .field-error:visible",
+  );
 const node = (page: Page, id: string) =>
   page.locator(`[data-step="${id}"] .node-body`);
 
@@ -65,12 +69,18 @@ for (const viewport of desktopViewports) {
         await resizer.evaluate((e) => e.getBoundingClientRect().width),
       ).toBeLessThanOrEqual(12);
     await expectHitTarget(page.getByLabel("Action version", { exact: true }));
-    await page.getByLabel("New property name").first().fill("customer");
-    const add = page.getByRole("button", { name: "Add property" }).first();
+    const add = page
+      .getByRole("button", { name: "+ Add field", exact: true })
+      .first();
     await expectHitTarget(add);
     await add.click({ timeout: 3000 });
+    await page
+      .getByLabel("Field name", { exact: true })
+      .first()
+      .fill("customer");
+    await page.getByLabel("Field name", { exact: true }).first().press("Tab");
     await expect(page.getByLabel("Property value").first()).toBeVisible();
-    await expectHitTarget(apply(page));
+    await expectHitTarget(inspectorHeading(page));
   });
 
   test(`H1 published action select is clickable at ${viewport.width}x${viewport.height}`, async ({
@@ -99,7 +109,7 @@ test("an action step added before the account check finishes still gets the cata
   expect(recorder.catalogPages).toBe(1);
 });
 
-test("H1 overlay inspector keeps Apply reachable at 600x500", async ({
+test("H1 overlay inspector keeps fields reachable at 600x500", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 600, height: 500 });
@@ -107,8 +117,9 @@ test("H1 overlay inspector keeps Apply reachable at 600x500", async ({
   await newWorkflow(page);
   await insertStep(page, "Call an action");
   await node(page, "call-action-1").click();
-  const button = apply(page);
+  const button = page.getByLabel("Action version", { exact: true });
   await expect(button).toBeVisible();
+  await button.scrollIntoViewIfNeeded();
   const box = await button.boundingBox();
   expect(box).not.toBeNull();
   expect(box!.y + box!.height).toBeLessThanOrEqual(500);
@@ -117,7 +128,7 @@ test("H1 overlay inspector keeps Apply reachable at 600x500", async ({
   await button.click({ timeout: 3000 });
 });
 
-test("H2 re-clicking the selected node keeps unapplied edits and loads the catalog once", async ({
+test("H2 re-clicking the selected node keeps live edits and loads the catalog once", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -139,7 +150,7 @@ test("H2 re-clicking the selected node keeps unapplied edits and loads the catal
   await expect(actionPicker(page)).toHaveValue("sql.lookup@1.0.0");
   expect(recorder.catalogPages).toBe(1);
   await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-    "Unsaved changes",
+    "Unsaved",
   );
   expect(await sourceText(page)).not.toContain("positions");
 });
@@ -153,18 +164,21 @@ test("H2 H4 reselecting an applied action shows its action and enum value", asyn
   await insertStep(page, "Call an action");
   await chooseLookup(page);
   await page.getByLabel(/^Customer ID/).fill("customer-104");
-  await page.getByLabel(/^Mode(\s*\(optional\))?$/).selectOption("safe");
-  await apply(page).click();
+  await selectChoice(page.getByLabel(/^Mode(\s*\(optional\))?$/), "safe");
+  await inspectorHeading(page).click();
   await insertStep(page, "Transform");
   await expect(page.locator(".inspector header h2")).toHaveText("Transform");
   await node(page, "call-action-1").click();
   await expect(actionPicker(page)).toHaveValue("sql.lookup@1.0.0");
-  await expect(page.getByLabel(/^Mode(\s*\(optional\))?$/)).toHaveValue("1");
+  await expect(page.getByLabel(/^Mode(\s*\(optional\))?$/)).toHaveAttribute(
+    "data-value",
+    "1",
+  );
   await expect(page.getByLabel(/^Customer ID/)).toHaveValue("customer-104");
   expect(recorder.catalogPages).toBe(1);
 });
 
-test("H4 value type and operator selects show the stored value", async ({
+test("H4 the Fields builder and operator select show the stored value", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -172,8 +186,9 @@ test("H4 value type and operator selects show the stored value", async ({
   await newWorkflow(page);
   await insertStep(page, "Call an action");
   await expect(
-    page.getByLabel("Value type", { exact: true }).first(),
-  ).toHaveValue("object");
+    page.getByRole("button", { name: "+ Add field", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Value type", { exact: true })).toHaveCount(0);
   await page.getByRole("tab", { name: "Source", exact: true }).click();
   await page.getByRole("textbox", { name: "Workflow source" }).fill(
     JSON.stringify({
@@ -204,9 +219,9 @@ test("H4 value type and operator selects show the stored value", async ({
     .click();
   await page.getByRole("tab", { name: "Designer", exact: true }).click();
   await node(page, "check").click();
-  await expect(page.getByLabel("Value operator", { exact: true })).toHaveValue(
-    "and",
-  );
+  await expect(
+    page.getByLabel("Value operator", { exact: true }),
+  ).toHaveAttribute("data-value", "and");
 });
 
 test("H3 typed JSON stays while invalid and numbers never coerce", async ({
@@ -226,7 +241,9 @@ test("H3 typed JSON stays while invalid and numbers never coerce", async ({
   const value = page.getByLabel("Options value 1", { exact: true });
   await value.fill('{"a":1');
   await expect(value).toHaveValue('{"a":1');
-  await expect(apply(page)).toBeDisabled();
+  await value.press("Tab");
+  await expect(draftErrors(page).first()).toBeVisible();
+  await value.focus();
   await value.press("End");
   await value.pressSequentially("}");
   const limit = page.getByLabel(/^Limit(\s*\(optional\))?$/);
@@ -235,8 +252,8 @@ test("H3 typed JSON stays while invalid and numbers never coerce", async ({
   await expect(limit).not.toHaveValue("0");
   await limit.fill("");
   await page.getByLabel(/^Customer ID/).fill("customer-104");
-  await expect(apply(page)).toBeEnabled();
-  await apply(page).click();
+  await expect(draftErrors(page)).toHaveCount(0);
+  await inspectorHeading(page).click();
   const source = await sourceText(page);
   expect(source).not.toContain("limit: 0");
   expect(source).toContain("customerId: customer-104");
@@ -251,7 +268,7 @@ test("H5 switching input editing keeps applied values", async ({ page }) => {
   await insertStep(page, "Call an action");
   await chooseAction(page, "crm.lookup@2.0.0");
   await page.getByLabel(/^Customer/).fill("edited");
-  await apply(page).click();
+  await inspectorHeading(page).click();
   await page
     .getByRole("button", { name: "Write one expression for the whole input" })
     .click();
@@ -259,7 +276,7 @@ test("H5 switching input editing keeps applied values", async ({ page }) => {
     .getByRole("button", { name: "Edit the input field by field" })
     .click();
   await expect(page.getByLabel(/^Customer/)).toHaveValue("edited");
-  await apply(page).click();
+  await inspectorHeading(page).click();
   expect(await sourceText(page)).toContain("customer: edited");
 });
 
@@ -271,7 +288,9 @@ test("H6 Delete and arrows from inspector focus never touch steps", async ({
   await newWorkflow(page);
   await insertStep(page, "Wait for time");
   await insertStep(page, "Call an action");
-  const add = page.getByRole("button", { name: "Add property" }).first();
+  const add = page
+    .getByRole("button", { name: "+ Add field", exact: true })
+    .first();
   await add.focus();
   await page.keyboard.press("Delete");
   await page.keyboard.press("ArrowUp");
@@ -279,7 +298,7 @@ test("H6 Delete and arrows from inspector focus never touch steps", async ({
   await expect(page.locator(".inspector header h2")).toHaveText(
     "Call an action",
   );
-  await apply(page).focus();
+  await inspectorHeading(page).focus();
   await page.keyboard.press("Delete");
   await expect(page.locator('[data-step="call-action-1"]')).toHaveCount(1);
   await page.locator(".pane-resizer.left").focus();
@@ -303,7 +322,7 @@ test("H7 overlapping catalog loads never restore a stale contract", async ({
   await insertStep(page, "Call an action");
   await chooseAction(page, "crm.lookup@2.0.0");
   await page.getByLabel(/^Customer/).fill("customer-104");
-  await apply(page).click();
+  await inspectorHeading(page).click();
   await insertStep(page, "Transform");
   await node(page, "call-action-1").click();
   const select = actionPicker(page);
@@ -321,31 +340,42 @@ test("H7 overlapping catalog loads never restore a stale contract", async ({
   await expect(contract.getByText("crm-lookup")).toHaveCount(0);
 });
 
-test("H8 a nested invalid value keeps Apply disabled after editing a sibling", async ({
+test("H8 a nested invalid value keeps an inline error after editing a sibling", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await offline(page);
   await newWorkflow(page);
   await insertStep(page, "Call an action");
-  const name = page.getByLabel("New property name").first();
-  await name.fill("a");
-  await page.getByRole("button", { name: "Add property" }).first().click();
-  await expect(page.getByLabel("Property value")).toHaveCount(1);
-  await name.fill("b");
-  await page.getByRole("button", { name: "Add property" }).first().click();
+  const names = page.getByLabel("Field name", { exact: true });
+  await page.getByRole("button", { name: "+ Add field", exact: true }).click();
+  await names.first().fill("a");
+  await names.first().press("Tab");
+  await page.getByRole("button", { name: "a options", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Advanced: JSON value", exact: true })
+    .click();
+  await page.getByLabel("Advanced JSON value", { exact: true }).fill("0");
+  await page
+    .getByRole("button", { name: "Done editing JSON", exact: true })
+    .click();
+  await page.getByRole("button", { name: "+ Add field", exact: true }).click();
+  await names.nth(1).fill("b");
+  await names.nth(1).press("Tab");
   await expect(page.getByLabel("Property value")).toHaveCount(2);
-  await page.getByLabel("Value type").nth(1).selectOption("number");
   await expect(page.getByLabel("Property value").first()).toHaveValue("0");
   await page.getByLabel("Property value").first().fill("");
   await expect(page.getByText("Enter a finite number.")).toBeVisible();
-  await expect(apply(page)).toBeDisabled();
+  await expect(draftErrors(page).first()).toBeVisible();
   await page.getByLabel("Property value").nth(1).pressSequentially("hello");
-  await expect(apply(page)).toBeDisabled();
+  await expect(draftErrors(page).first()).toBeVisible();
   await expect(page.getByText("Enter a finite number.")).toBeVisible();
+  const source = await sourceText(page);
+  expect(source).toContain("a: 0");
+  expect(source).toContain("b: hello");
 });
 
-test("J long action names fit and Apply stays reachable at 1280x720", async ({
+test("J long action names fit and fields stay reachable at 1280x720", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -367,32 +397,33 @@ test("J long action names fit and Apply stays reachable at 1280x720", async ({
   expect(
     await contract.evaluate((e) => getComputedStyle(e).borderTopStyle),
   ).not.toBe("none");
-  await expectHitTarget(apply(page));
+  await expectHitTarget(inspectorHeading(page));
 });
 
-test("H8 a duplicate mapped key keeps Apply disabled after editing a sibling", async ({
+test("H8 a duplicate mapped key keeps an inline error after editing a sibling", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await offline(page);
   await newWorkflow(page);
   await insertStep(page, "Transform");
-  await page
-    .getByRole("group", { name: "Value expression mode", exact: true })
-    .getByRole("button", { name: "Fields" })
-    .click();
-  await page.getByRole("button", { name: "Add field", exact: true }).click();
-  await expect(page.getByLabel("Key", { exact: true })).toHaveCount(1);
-  await page.getByRole("button", { name: "Add field", exact: true }).click();
-  await expect(page.getByLabel("Key", { exact: true })).toHaveCount(2);
-  const first = page.getByLabel("Key", { exact: true }).first();
-  await first.fill("field2");
-  await first.press("Tab");
-  await expect(page.getByText("Use a unique nonempty key.")).toBeVisible();
-  await expect(apply(page)).toBeDisabled();
-  await page.getByLabel("Value type").nth(1).selectOption("string");
-  await expect(apply(page)).toBeDisabled();
-  await expect(page.getByText("Use a unique nonempty key.")).toBeVisible();
+  const names = page.getByLabel("Field name", { exact: true });
+  await names.first().fill("field1");
+  await names.first().press("Tab");
+  await page.getByRole("button", { name: "+ Add field", exact: true }).click();
+  await names.nth(1).fill("field2");
+  await names.nth(1).press("Tab");
+  await names.first().fill("field2");
+  await names.first().press("Tab");
+  await expect(
+    page.getByText("Use a unique field name.").first(),
+  ).toBeVisible();
+  await expect(draftErrors(page).first()).toBeVisible();
+  await page.getByLabel("Property value").nth(1).fill("Keep");
+  await expect(draftErrors(page).first()).toBeVisible();
+  await expect(
+    page.getByText("Use a unique field name.").first(),
+  ).toBeVisible();
 });
 
 test("H7 a contract still loading is shown for the next step that uses it", async ({
@@ -495,10 +526,15 @@ test("the slot picker offers no slots to an action without a connection", async 
   await newWorkflow(page);
   await insertStep(page, "Call an action");
   await chooseLookup(page);
-  await page.getByRole("button", { name: "Add slot", exact: true }).click();
-  // Apply needs the required input; unapplied edits would otherwise be asked about.
-  await page.getByLabel("Customer ID").fill("C-1");
-  await apply(page).click();
+  await page
+    .getByRole("button", {
+      name: "Add a PostgreSQL connection slot",
+      exact: true,
+    })
+    .click();
+  // Fill the required input before leaving this step.
+  await page.getByLabel("Customer ID", { exact: true }).fill("C-1");
+  await inspectorHeading(page).click();
   await expect(page.getByText("Not applied yet")).toHaveCount(0);
   await insertStep(page, "Call an action");
   await chooseAction(page, "crm.lookup@2.0.0");
@@ -506,19 +542,31 @@ test("the slot picker offers no slots to an action without a connection", async 
     "No connection needed",
   );
   const slot = page.getByLabel("Connection slot", { exact: true });
-  await expect(slot.locator("option")).toHaveText(["No connection"]);
+  await slot.click();
+  await expect(page.getByRole("listbox").getByRole("option")).toHaveText([
+    "No connection",
+  ]);
+  await page.keyboard.press("Escape");
   await expect(page.locator(".integration-contract")).toContainText(
     "This action does not use a connection.",
   );
   await expect(page.getByText("Add connection slot")).toHaveCount(0);
 });
 
-test("the new slot name can be cleared and retyped", async ({ page }) => {
+test("a created slot can be renamed and updates its action", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await connected(page);
   await newWorkflow(page);
   await insertStep(page, "Call an action");
   await chooseLookup(page);
+  await page
+    .getByRole("button", {
+      name: "Add a PostgreSQL connection slot",
+      exact: true,
+    })
+    .click();
   const name = page.getByLabel("Slot name", { exact: true });
   await expect(name).toHaveValue("weave-postgresql");
   // A click after the text puts the caret at its end (End doesn't move the
@@ -531,10 +579,10 @@ test("the new slot name can be cleared and retyped", async ({ page }) => {
   await expect(name).toHaveValue("");
   await name.pressSequentially("orders");
   await expect(name).toHaveValue("orders");
-  await page.getByRole("button", { name: "Add slot", exact: true }).click();
-  await expect(page.getByLabel("Connection slot", { exact: true })).toHaveValue(
-    "orders",
-  );
+  await name.press("Tab");
+  await expect(
+    page.getByLabel("Connection slot", { exact: true }),
+  ).toHaveAttribute("data-value", "orders");
 });
 
 test("an optional object's required fields apply only once it is used", async ({
@@ -550,16 +598,16 @@ test("an optional object's required fields apply only once it is used", async ({
   const customer = page.getByLabel(/^Customer ID/);
   await expect(customer).not.toHaveAttribute("required");
   await page.getByLabel(/^Label(\s*\(optional\))?$/).fill("optional");
-  await apply(page).click();
+  await inspectorHeading(page).click();
   await expect(page.locator(".apply-state")).toHaveCount(0);
-  await page.getByLabel(/^Region(\s*\(optional\))?$/).selectOption("eu");
+  await selectChoice(page.getByLabel(/^Region(\s*\(optional\))?$/), "eu");
   await expect(customer).toHaveAttribute("required");
   await expect(page.locator(".integration-issues")).toContainText(
     "Parameters › Customer ID",
   );
-  await page.getByLabel(/^Region(\s*\(optional\))?$/).selectOption("");
+  await selectChoice(page.getByLabel(/^Region(\s*\(optional\))?$/), "");
   await expect(customer).not.toHaveAttribute("required");
-  await apply(page).click();
+  await inspectorHeading(page).click();
   await expect(page.locator(".apply-state")).toHaveCount(0);
   const source = await sourceText(page);
   expect(source).toContain("label: optional");

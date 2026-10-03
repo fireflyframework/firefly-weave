@@ -31,6 +31,17 @@ import {
 } from "@angular/core";
 import { NgTemplateOutlet } from "@angular/common";
 import { Icon } from "../icon";
+import {
+  placePopover,
+  type AnchorRect,
+  type PopoverPlacement,
+} from "./popover-placement";
+export {
+  placePopover,
+  type AnchorRect,
+  type Size,
+  type PopoverPlacement,
+} from "./popover-placement";
 import { kinds as allKinds, type Kind } from "../model";
 import {
   stepKindDescriptions,
@@ -65,28 +76,6 @@ export interface PickerOption {
   label: string;
   description: string;
   section: "steps" | "actions";
-}
-export interface AnchorRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-export interface Size {
-  width: number;
-  height: number;
-}
-/**
- * Viewport position for a fixed popover. Below the anchor it is pinned by its
- * top edge, above the anchor by its bottom edge, so filtering that shrinks the
- * list keeps it attached to the anchor.
- */
-export interface PopoverPlacement {
-  left: number;
-  top?: number;
-  bottom?: number;
-  maxHeight: number;
-  side: "below" | "above";
 }
 export type PickerDismissReason = "escape" | "outside" | "tab";
 
@@ -160,42 +149,6 @@ export function pickerOptions(
     }),
     hiddenActions: Math.max(0, found.length - limit),
   };
-}
-
-/**
- * Places a popover next to an anchor inside the viewport. It opens below the
- * anchor unless more room is available above, aligns with the anchor's left
- * edge and is clamped to the viewport margins. All values are viewport pixels.
- */
-export function placePopover(
-  anchor: AnchorRect,
-  size: Size,
-  viewport: Size,
-  gap = 6,
-  margin = 8,
-): PopoverPlacement {
-  const width = Math.min(size.width, Math.max(0, viewport.width - 2 * margin));
-  const below = viewport.height - (anchor.top + anchor.height) - gap - margin;
-  const above = anchor.top - gap - margin;
-  const side =
-    below >= Math.min(size.height, 240) || below >= above ? "below" : "above";
-  const left = Math.min(
-    Math.max(margin, anchor.left),
-    Math.max(margin, viewport.width - width - margin),
-  );
-  return side === "below"
-    ? {
-        left,
-        top: anchor.top + anchor.height + gap,
-        maxHeight: Math.max(0, below),
-        side,
-      }
-    : {
-        left,
-        bottom: viewport.height - anchor.top + gap,
-        maxHeight: Math.max(0, above),
-        side,
-      };
 }
 
 let sequence = 0;
