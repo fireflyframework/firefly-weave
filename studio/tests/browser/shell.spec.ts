@@ -47,7 +47,9 @@ test("reloading a paired window never flashes the pairing page", async ({
     });
   });
   await page.goto("/");
-  await expect(page.getByRole("status")).toContainText("Opening Studio");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Opening Studio" }),
+  ).toBeVisible();
   await expect(page.locator("weave-home-dashboard")).toBeVisible();
   expect(await page.evaluate(() => (window as any).pairSeen ?? false)).toBe(
     false,
@@ -104,9 +106,9 @@ test("an ended session returns the browser to pairing with an explanation", asyn
   );
   await page.getByRole("button", { name: "Workers", exact: true }).click();
   await expect(page.getByLabel("Pairing code")).toBeVisible();
-  await expect(page.getByRole("status")).toContainText(
-    "Your Studio session ended.",
-  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "Your Studio session ended." }),
+  ).toBeVisible();
   await expect(page.locator(".error-banner")).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
@@ -142,9 +144,11 @@ test("an ended session reloads the desktop shell so it can pair again", async ({
   // The desktop shell re-pairs on load, so Studio reloads once instead of asking
   // for a code; a second failure explains instead of reloading in a loop.
   await expect.poll(() => sessions).toBe(1);
-  await expect(page.getByRole("status")).toContainText(
-    "Quit and reopen Firefly Weave Studio.",
-  );
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Quit and reopen Firefly Weave Studio." }),
+  ).toBeVisible();
   await page.waitForTimeout(1000);
   expect(sessions).toBe(1);
 });
