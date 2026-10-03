@@ -64,17 +64,21 @@ test("pointer movement changes layout only; keyboard undo and source preserve st
   await page.mouse.down();
   await page.mouse.move(box!.x + 130, box!.y + 70, { steps: 10 });
   await page.mouse.up();
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
   const source = await page
     .getByRole("textbox", { name: "Workflow source" })
     .inputValue();
   expect(source).toContain("durationSeconds: 60");
-  await page.getByRole("button", { name: "Designer", exact: true }).click();
+  await page.getByRole("tab", { name: "Designer", exact: true }).click();
   await page.keyboard.press("Control+z");
   await expect(page.locator('[data-step="wait-1"]')).toBeVisible();
   await page.getByRole("button", { name: "Validate", exact: true }).click();
+  // A local check never claims the catalog passed; it says what it covered.
   await expect(
-    page.getByText("Catalog checks pending", { exact: true }),
+    page.getByText(
+      "No problems found. Actions and connections are checked when you connect.",
+      { exact: true },
+    ),
   ).toBeVisible();
 });
 test("palette drag inserts and invalid source leaves graph intact", async ({
@@ -84,25 +88,28 @@ test("palette drag inserts and invalid source leaves graph intact", async ({
   const palette = page
     .locator(".palette-step")
     .filter({ hasText: "Transform" });
+  // A new workflow's first "+" is the "Add your first step" card.
   await palette.dragTo(
     page.getByRole("button", {
-      name: "Insert in sequence at start",
+      name: "Add your first step",
       exact: true,
     }),
   );
   await expect(page.locator('[data-step="transform-1"]')).toBeVisible();
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Workflow source" })
     .fill("not: [valid");
-  await page.getByRole("button", { name: "Apply source", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Apply changes", exact: true })
+    .click();
   await expect(
     page.getByRole("textbox", { name: "Workflow source" }),
   ).toHaveValue("not: [valid");
-  await page.getByRole("button", { name: "Designer", exact: true }).click();
+  await page.getByRole("tab", { name: "Designer", exact: true }).click();
   await expect(page.locator('[data-step="transform-1"]')).toBeVisible();
   await expect(
-    page.getByText("Read-only · source needs attention"),
+    page.getByText("Read-only until the source is fixed"),
   ).toBeVisible();
 });
 for (const width of [1600, 1440, 1280, 1024, 768, 390])
@@ -115,7 +122,7 @@ for (const width of [1600, 1440, 1280, 1024, 768, 390])
       ),
     ).toBe(true);
     await page.screenshot({ path: `test-results/designer-${width}.png` });
-    await page.getByRole("button", { name: "My Tasks", exact: true }).click();
+    await page.getByRole("button", { name: "My tasks", exact: true }).click();
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -127,8 +134,9 @@ test("Start and End remain visual boundaries for empty and populated workflows",
   page,
 }) => {
   await offline(page);
+  // Start doubles as the way back to the workflow settings.
   await expect(
-    page.getByRole("img", { name: "Workflow start", exact: true }),
+    page.getByRole("button", { name: "Start — workflow settings" }),
   ).toBeVisible();
   await expect(
     page.getByRole("img", { name: "Workflow end", exact: true }),
@@ -136,7 +144,7 @@ test("Start and End remain visual boundaries for empty and populated workflows",
   await expect(page.locator(".edges > path")).toHaveCount(1);
   await page.locator(".palette-step").filter({ hasText: "Transform" }).click();
   await expect(page.locator(".edges > path")).toHaveCount(2);
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
   const source = await page
     .getByRole("textbox", { name: "Workflow source" })
     .inputValue();
@@ -154,24 +162,27 @@ test("property table edits wait duration and rejects invalid values", async ({
     .click();
   await expect(page.locator(".property-grid")).toBeVisible();
   const duration = page.getByRole("spinbutton", {
-    name: "Duration (seconds)",
+    name: "Duration",
     exact: true,
   });
+  await page
+    .getByRole("combobox", { name: "Duration unit", exact: true })
+    .selectOption("s");
   await duration.fill("0");
   await expect(
-    page.getByRole("button", { name: "Apply configuration", exact: true }),
+    page.getByRole("button", { name: "Apply changes", exact: true }),
   ).toBeDisabled();
   await duration.fill("90");
   await page
-    .getByRole("button", { name: "Apply configuration", exact: true })
+    .getByRole("button", { name: "Apply changes", exact: true })
     .click();
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Workflow source" }),
   ).toHaveValue(/durationSeconds: 90/);
 });
 
-test("Home import opens a fresh workflow centered within the canvas", async ({
+test("Home import opens a fresh workflow at a readable zoom, Start near the top", async ({
   page,
 }) => {
   await offline(page);
@@ -188,23 +199,17 @@ test("Home import opens a fresh workflow centered within the canvas", async ({
   await expect(
     page.getByRole("heading", { name: "imported", exact: true }),
   ).toBeVisible();
+  // Centered across, top-aligned: Start sits 32 px below the canvas top.
   await expect
     .poll(async () => {
       const canvas = await page.locator(".canvas").boundingBox();
       const start = await page
-        .getByRole("img", { name: "Workflow start", exact: true })
-        .boundingBox();
-      const end = await page
-        .getByRole("img", { name: "Workflow end", exact: true })
+        .getByRole("button", { name: "Start — workflow settings" })
         .boundingBox();
       return (
         Math.abs(
           start!.x + start!.width / 2 - (canvas!.x + canvas!.width / 2),
-        ) < 20 &&
-        Math.abs(
-          (start!.y + end!.y + end!.height) / 2 -
-            (canvas!.y + canvas!.height / 2),
-        ) < 20
+        ) < 20 && Math.abs(start!.y - (canvas!.y + 32)) < 6
       );
     })
     .toBe(true);
@@ -215,23 +220,26 @@ test("workflow properties and operation builder serialize supported options", as
   page,
 }) => {
   await offline(page);
-  await page.getByRole("button", { name: "Inspector", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Show inspector", exact: true })
+    .click();
   await page
     .getByRole("textbox", { name: "Name", exact: true })
     .fill("configured");
   await page
     .getByRole("spinbutton", {
-      name: "Workflow timeout (seconds)",
+      name: "Workflow timeout",
       exact: true,
     })
-    .fill("120");
+    .fill("2");
   await page
-    .getByRole("button", { name: "Apply workflow options", exact: true })
+    .getByRole("button", { name: "Apply changes", exact: true })
     .click();
   await page.locator(".palette-step").filter({ hasText: "Transform" }).click();
   await page
-    .getByLabel("Value expression mode", { exact: true })
-    .selectOption("op");
+    .getByRole("group", { name: "Value expression mode", exact: true })
+    .getByRole("button", { name: "Formula" })
+    .click();
   await page
     .getByLabel("Value operator", { exact: true })
     .selectOption("exists");
@@ -239,9 +247,9 @@ test("workflow properties and operation builder serialize supported options", as
     .getByLabel("Value 0 reference", { exact: true })
     .fill("/input/key");
   await page
-    .getByRole("button", { name: "Apply configuration", exact: true })
+    .getByRole("button", { name: "Apply changes", exact: true })
     .click();
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
   const source = await page
     .getByRole("textbox", { name: "Workflow source" })
     .inputValue();
@@ -270,7 +278,7 @@ test("parallel branches can be added and renamed while populated deletion is gua
   await expect(
     page.getByLabel("Rename branch audit", { exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Workflow source" }),
   ).not.toHaveValue(/audit:/);
@@ -285,9 +293,11 @@ test("Home disconnected badge remains light and visible with expanded and collap
   for (const width of [1454, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     const badge = page.locator(".dashboard-status");
-    await expect(badge).toHaveText("Not connected to a platform");
+    await expect(badge).toHaveText("Local authoring");
     await expect(badge).toBeVisible();
-    await expect(badge).toHaveCSS("background-color", "rgb(231, 240, 235)");
+    // The neutral status pill (--neutral-bg) with its tone border.
+    await expect(badge).toHaveCSS("background-color", "rgb(237, 241, 238)");
+    await expect(badge).toHaveCSS("border-top-color", "rgb(195, 208, 201)");
     await expect(badge).not.toHaveCSS("min-height", "64px");
     await page.screenshot({
       path: `test-results/home-${width}.png`,

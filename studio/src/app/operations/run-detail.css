@@ -1,0 +1,337 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+:host {
+  display: block;
+}
+h3 {
+  margin: 0 0 var(--space-3);
+}
+.run-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.run-heading {
+  min-width: 0;
+}
+.run-heading h2 {
+  margin: 0;
+  font: var(--type-title-md);
+  overflow-wrap: anywhere;
+}
+.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.meta-item strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.run-id .tag {
+  color: var(--text);
+}
+.run-id button {
+  min-height: 28px;
+}
+
+/* "Now": what the run waits for, and the way to it. */
+.run-now {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-5) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warning-bd);
+  border-left: 3px solid var(--live);
+  border-radius: var(--radius-md);
+  background: var(--gold-soft);
+}
+.now-label {
+  font: var(--type-caption);
+  color: var(--warning-ink);
+}
+.run-now p {
+  flex: 1 1 260px;
+  margin: 0;
+  font: var(--type-body);
+  color: var(--text);
+}
+.incident {
+  display: flex;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+}
+.incident p {
+  margin: 0;
+}
+.incident-text {
+  margin-top: var(--space-1) !important;
+  font: var(--type-body);
+  overflow-wrap: anywhere;
+}
+.run-controls:empty {
+  display: none;
+}
+
+/* The workflow at 100%, with the live thread: gold where the run is now,
+   gold edges for the path taken, a jade check on finished steps. */
+.run-workflow {
+  margin-top: var(--space-6);
+}
+.run-graph {
+  max-height: 460px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background-color: var(--canvas);
+  background-image: radial-gradient(var(--border) 0.8px, transparent 0.8px);
+  background-size: 20px 20px;
+}
+.run-graph:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+/* Centered while it fits; wider graphs scroll from their left edge. */
+.run-graph-world {
+  position: relative;
+  margin: 0 auto;
+}
+.run-graph f-flow {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.edges path {
+  stroke: var(--flow-line);
+}
+.edge-taken path {
+  stroke: var(--live);
+  stroke-width: 2px;
+}
+.run-node {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 208px;
+  height: 64px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--node-border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  line-height: normal;
+}
+.run-node.is-live {
+  border: 2px solid var(--live);
+  box-shadow: 0 0 0 6px var(--live-glow);
+}
+.run-node.is-unreached {
+  opacity: 0.5;
+}
+.step-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  background: var(--mist);
+  color: var(--jade-strong);
+}
+.node-text {
+  display: grid;
+  min-width: 0;
+}
+.node-text strong {
+  font: var(--type-label);
+  font-size: 14px;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-text small {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.run-active-label {
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid var(--warning-bd);
+  border-radius: var(--radius-xs);
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+  font: var(--type-caption);
+}
+.node-badge {
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--success-bg);
+  border: 1px solid var(--success-bd);
+  color: var(--success-ink);
+}
+.node-badge weave-icon {
+  width: 14px;
+  height: 14px;
+}
+.boundary-node {
+  width: 208px;
+  height: 48px;
+}
+
+/* Timeline: a tone dot on a rail, a sentence and when it happened. */
+.run-timeline {
+  margin-top: var(--space-6);
+}
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.timeline li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+}
+.timeline li::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 16px;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+.timeline li:last-child::before {
+  display: none;
+}
+.dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--neutral-ink);
+  box-shadow: 0 0 0 2px var(--surface);
+  position: relative;
+}
+.timeline li[data-tone="success"] .dot {
+  background: var(--jade);
+}
+.timeline li[data-tone="danger"] .dot {
+  background: var(--danger);
+}
+.timeline li[data-tone="warning"] .dot {
+  background: var(--live);
+}
+.timeline li[data-tone="info"] .dot {
+  background: var(--info);
+}
+.event p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-3);
+  margin: 0;
+  font: var(--type-body);
+}
+.event time {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.raw-toggle {
+  min-height: 24px;
+  padding: 0 6px;
+  font: var(--type-caption);
+  font-weight: 600;
+}
+.event pre {
+  max-height: 240px;
+  overflow: auto;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+.technical {
+  margin-top: var(--space-5);
+}
+.technical h4 {
+  margin: var(--space-3) 0 var(--space-2);
+  font: var(--type-label);
+}
+.technical pre {
+  max-height: 320px;
+  overflow: auto;
+}
+.run-archive {
+  margin-top: var(--space-6);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+}
+.archive-state {
+  margin: 0;
+  font: var(--type-small);
+}
+.run-archive .action-row {
+  margin: var(--space-3) 0 var(--space-2);
+}
+.run-archive .hint {
+  margin: 0;
+}
+.detail-refresh {
+  margin-top: var(--space-6);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+@media (forced-colors: active) {
+  .run-node.is-live {
+    border: 2px solid CanvasText;
+  }
+}

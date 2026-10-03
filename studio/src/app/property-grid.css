@@ -19,25 +19,107 @@ SPDX-License-Identifier: Apache-2.0
   display: block;
   min-width: 0;
 }
+/* Fields stack their label above the control in a narrow inspector and sit
+   beside it from 420 px; expressions and schemas always take the full width,
+   with the "where the value comes from" switch on their label row. */
+:host {
+  container: property-grid / inline-size;
+}
 .property-grid {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
+  display: grid;
+  font: var(--type-body);
 }
-th,
-td {
-  text-align: left;
-  padding: 0.65rem 0.4rem;
-  vertical-align: top;
-  border-bottom: 1px solid var(--border, #dce7df);
+.property-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
 }
-thead th {
-  color: var(--forest);
-  background: var(--mist);
+.property-field:last-child {
+  border-bottom: 0;
 }
-.property-grid th {
-  width: 34%;
+@container property-grid (min-width: 420px) {
+  .property-field:not(.wide) {
+    grid-template-columns: 128px minmax(0, 1fr);
+    align-items: start;
+  }
+  .property-field:not(.wide) > .property-label {
+    padding-top: 7px;
+  }
+}
+.property-label,
+.expression-label {
+  font: var(--type-label);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.property-control {
+  min-width: 0;
+}
+.expression-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+}
+.expression-head:not(:has(.expression-label)) {
+  justify-content: flex-end;
+}
+/* Value | Data | Formula | Fields | List: a 24 px segmented control. */
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex: none;
+}
+.mode-switch button {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: var(--type-caption);
+}
+.mode-switch button + button {
+  border-left: 1px solid var(--border);
+}
+.mode-switch button:hover:not(:disabled) {
+  background: var(--hover);
+}
+.mode-switch button[aria-pressed="true"] {
+  background: var(--forest);
+  color: var(--on-dark);
   font-weight: 600;
+}
+.mode-switch button:disabled[aria-pressed="true"] {
+  background: var(--disabled-ink);
+  color: var(--on-dark);
+}
+.expression-editor {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.expression-argument {
+  display: grid;
+  gap: var(--space-2);
+  border-left: 2px solid var(--line);
+  padding-left: var(--space-2);
+}
+.expression-argument > button {
+  justify-self: start;
+}
+.schema-property-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 .value-editor {
   display: grid;
@@ -51,18 +133,20 @@ textarea {
   width: 100%;
   min-width: 0;
   font: inherit;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid var(--border, #c8d9cf);
-  border-radius: 5px;
-  background: var(--surface, white);
+  min-height: var(--control-sm);
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   color: inherit;
 }
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-button:focus-visible {
-  outline: 2px solid var(--jade);
-  outline-offset: 2px;
+/* The global focus ring and error border, over this component's border. */
+:is(input, select, textarea):focus-visible {
+  border-color: var(--focus);
+}
+[aria-invalid="true"] {
+  border-color: var(--danger);
+  box-shadow: inset 3px 0 0 var(--danger);
 }
 .nested-properties {
   border-left: 2px solid var(--mist);
@@ -81,31 +165,48 @@ button:focus-visible {
 }
 .add-property {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.3rem;
   margin-top: 0.4rem;
+}
+/* In a narrow inspector the button moves below the name field instead of
+   squeezing it to a few characters. */
+.add-property input {
+  flex: 1 1 120px;
 }
 button {
   cursor: pointer;
   font: inherit;
   color: var(--forest);
-  border: 1px solid var(--border, #c8d9cf);
+  border: 1px solid var(--border);
   background: var(--mist);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0.3rem;
 }
 button:disabled {
-  cursor: default;
-  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--disabled-bg);
+  color: var(--disabled-ink);
+  border-color: transparent;
+}
+/* A text link stays a link here too (the global .text-link look). */
+button.text-link {
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  padding: 4px 0;
+  text-decoration: underline;
+  justify-self: start;
 }
 .property-error {
-  color: var(--danger, #a63731);
+  color: var(--danger-ink);
   display: block;
   margin-top: 0.35rem;
 }
 .property-hint {
   font-size: 0.8rem;
   line-height: 1.5;
-  color: var(--secondary, #4d655d);
+  color: var(--muted);
 }
 summary {
   cursor: pointer;
@@ -113,4 +214,9 @@ summary {
 }
 textarea {
   min-height: 120px;
+}
+/* An amount and its unit: the unit takes only the room it needs. */
+.duration-field select {
+  width: auto;
+  flex: none;
 }

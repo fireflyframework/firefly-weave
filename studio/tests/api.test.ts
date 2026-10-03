@@ -81,3 +81,86 @@ describe("same-origin credential boundary", () => {
     ).rejects.toBeInstanceOf(TypeError);
   });
 });
+describe("capacity rejections", () => {
+  const busy = (code = "WV-OPERATION-CAPACITY", retryAfter = "1") =>
+    new Response(JSON.stringify({ code, message: "Request unavailable" }), {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": retryAfter,
+      },
+    });
+  const ok = () =>
+    new Response(JSON.stringify({ items: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  const api = () => {
+    const client = new StudioApi();
+    client.session.csrfToken = "csrf";
+    client.wait = vi.fn(async () => undefined);
+    return client;
+  };
+  it("replays a read after the platform's Retry-After pause", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    const client = api();
+    await expect(client.request("/studio/api/runs")).resolves.toEqual({
+      items: [],
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(client.wait).toHaveBeenCalledWith(1000);
+  });
+  it("replays a change only when it carries an idempotency key", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      api().mutate("/studio/api/runs", "POST", {}, undefined, "same-key"),
+    ).resolves.toEqual({ items: [] });
+    const keys = fetch.mock.calls.map(
+      ([, init]) => (init as RequestInit).headers as Record<string, string>,
+    );
+    expect(keys.map((h) => h["Idempotency-Key"])).toEqual([
+      "same-key",
+      "same-key",
+    ]);
+    const once = vi.fn().mockResolvedValue(busy());
+    vi.stubGlobal("fetch", once);
+    await expect(
+      api().request("/studio/local/validate", "POST", {}),
+    ).rejects.toMatchObject({
+      status: 429,
+    });
+    expect(once).toHaveBeenCalledTimes(1);
+  });
+  it("gives up after a bounded number of attempts with the plain error", async () => {
+    const fetch = vi
+      .fn()
+      .mockImplementation(async () => busy("WV-OPERATION-CAPACITY", "30"));
+    vi.stubGlobal("fetch", fetch);
+    const client = api();
+    await expect(client.request("/studio/api/runs")).rejects.toMatchObject({
+      status: 429,
+      message:
+        "The platform is busy with other requests. Wait a moment and try again.",
+    });
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(client.wait).toHaveBeenCalledWith(5000);
+  });
+  it("does not replay other 429 answers", async () => {
+    const fetch = vi.fn().mockResolvedValue(busy("WV-PAGE-LIMIT"));
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      api().request("/studio/api/definitions"),
+    ).rejects.toMatchObject({
+      status: 429,
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});

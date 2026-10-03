@@ -16,7 +16,12 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, it, expect } from "vitest";
-import { StructuredCanvasAdapter } from "../src/app/model";
+import {
+  StructuredCanvasAdapter,
+  freshWorkflow,
+  ownerLabel,
+  type Kind,
+} from "../src/app/model";
 describe("structured workflow authoring", () => {
   it("branch management preserves nested steps and rejects unsafe removal", () => {
     const m = new StructuredCanvasAdapter();
@@ -38,10 +43,10 @@ describe("structured workflow authoring", () => {
       2,
     );
     m.insert("switch");
-    m.editBranches("switch-1", "add");
-    m.editBranches("switch-1", "up", "1");
+    m.editBranches("decision-1", "add");
+    m.editBranches("decision-1", "up", "1");
     expect(
-      m.nodes().find((n) => n.step.id === "switch-1")!.step[
+      m.nodes().find((n) => n.step.id === "decision-1")!.step[
         "cases"
       ] as unknown[],
     ).toHaveLength(2);
@@ -121,9 +126,9 @@ describe("structured workflow authoring", () => {
     m.setSource(source);
     expect(m.nodes().map((n) => n.owner)).toEqual([
       "root",
-      "switch-1/case 1",
+      "decision-1/case 1",
       "parallel-1/first",
-      "switch-1/default",
+      "decision-1/default",
     ]);
     expect(m.error).toBe("");
     m.setSource(JSON.stringify(m.definition), "json");
@@ -190,5 +195,397 @@ describe("structured workflow authoring", () => {
     m.setSource("# A workflow\n" + m.source);
     m.insert("wait");
     expect(m.source).toContain("# A workflow");
+  });
+});
+
+describe("designer safety and canvas reachability", () => {
+  it("opening another workflow starts a fresh undo history", () => {
+    const m = new StructuredCanvasAdapter();
+    m.insert("wait");
+    expect(m.canUndo).toBe(true);
+    const next = freshWorkflow();
+    next.metadata.name = "opened";
+    m.replace(next);
+    expect(m.canUndo).toBe(false);
+    expect(m.canRedo).toBe(false);
+    m.undo();
+    expect(m.definition.metadata.name).toBe("opened");
+    m.insert("transform");
+    m.clearHistory();
+    expect(m.canUndo).toBe(false);
+  });
+  it("anchors empty branches next to their group with unique labels", () => {
+    const m = new StructuredCanvasAdapter();
+    m.insert("wait");
+    const decision = m.insert("switch");
+    m.editBranches(decision.id, "add");
+    const group = m.insert("parallel");
+    const targets = m.targets();
+    const empty = targets.filter((t) => t.empty);
+    expect(empty.map((t) => t.label)).toEqual([
+      "Add a step here, in Case 1 of decision-1",
+      "Add a step here, in Case 2 of decision-1",
+      "Add a step here, in Otherwise of decision-1",
+      "Add a step here, in first of parallel-1",
+      "Add a step here, in second of parallel-1",
+    ]);
+    // The cards name each path by its condition, "Otherwise" for the rest.
+    expect(empty.map((t) => t.empty)).toEqual([
+      "Condition not set",
+      "Condition not set",
+      "Otherwise",
+      "first",
+      "second",
+    ]);
+    expect(new Set(targets.map((t) => t.label)).size).toBe(targets.length);
+    const points = targets.map((t) => `${t.point.x},${t.point.y}`);
+    expect(new Set(points).size).toBe(points.length);
+    const nodes = m.nodes();
+    for (const target of empty) {
+      const parent = nodes.find((n) =>
+        target.owner.startsWith(n.step.id + "/"),
+      )!;
+      const center = { x: parent.point.x + 104, y: parent.point.y + 32 };
+      expect(
+        Math.hypot(target.point.x - center.x, target.point.y - center.y),
+        target.label,
+      ).toBeLessThan(400);
+    }
+    // Placeholders never overlap a step card or another placeholder.
+    const cards = [
+      ...nodes.map((n) => ({ ...n.point, h: 64 })),
+      ...m.placeholders().map((p) => ({ ...p.point, h: 48 })),
+    ];
+    for (const a of cards)
+      for (const b of cards)
+        if (a !== b)
+          expect(
+            a.x + 208 <= b.x ||
+              b.x + 208 <= a.x ||
+              a.y + a.h <= b.y ||
+              b.y + b.h <= a.y,
+          ).toBe(true);
+    expect(m.boundaries().end.y).toBeGreaterThan(
+      Math.max(...m.placeholders().map((p) => p.point.y)),
+    );
+    // A round "+" never covers a placeholder card or another "+".
+    m.insert("wait", "decision-1/default");
+    const after = m.targets();
+    const boxes = after.map((t) =>
+      t.empty
+        ? { x: t.point.x - 104, y: t.point.y - 24, w: 208, h: 48 }
+        : { x: t.point.x - 18, y: t.point.y - 18, w: 36, h: 36 },
+    );
+    for (const a of boxes)
+      for (const b of boxes)
+        if (a !== b)
+          expect(
+            a.x + a.w <= b.x ||
+              b.x + b.w <= a.x ||
+              a.y + a.h <= b.y ||
+              b.y + b.h <= a.y,
+          ).toBe(true);
+    m.undo();
+    // Inserting through the empty-branch target lands in that branch.
+    const second = empty[1];
+    m.insert("transform", second.owner, second.index);
+    const cases = m.definition.spec.steps[1]["cases"] as {
+      steps: { id: string }[];
+    }[];
+    expect(cases[1].steps.map((s) => s.id)).toEqual(["transform-1"]);
+    expect(group.id).toBe("parallel-1");
+  });
+  it("draws empty branches through their placeholder only on the designer canvas", () => {
+    const m = new StructuredCanvasAdapter();
+    m.insert("parallel");
+    m.insert("wait", "parallel-1/first");
+    expect(m.visualConnections(true)).toEqual([
+      { from: "$start", to: "parallel-1" },
+      { from: "parallel-1", to: "wait-1" },
+      { from: "parallel-1", to: "$empty:parallel-1/second" },
+      { from: "$empty:parallel-1/second", to: "$end" },
+      { from: "wait-1", to: "$end" },
+    ]);
+    expect(m.visualConnections()).toContainEqual({
+      from: "parallel-1",
+      to: "$end",
+    });
+  });
+  it("labels non-empty branch targets in plain words", () => {
+    const m = new StructuredCanvasAdapter();
+    m.insert("switch");
+    m.insert("wait", "decision-1/case 1");
+    const labels = m.targets().map((t) => t.label);
+    expect(labels).toContain("Add a step here, at the start");
+    expect(labels).toContain(
+      "Add a step here, at the start of Case 1 of decision-1",
+    );
+    expect(labels).toContain("Add a step here, after wait-1");
+    expect(labels).toContain("Add a step here, after decision-1");
+  });
+  it("inserts a step with initial fields in one undo step", () => {
+    const m = new StructuredCanvasAdapter();
+    const step = m.insert("action", "root", 0, { uses: "crm.lookup@1.0.0" });
+    expect(step["uses"]).toBe("crm.lookup@1.0.0");
+    expect(m.source).toContain("uses: crm.lookup@1.0.0");
+    m.undo();
+    expect(m.definition.spec.steps).toHaveLength(0);
+  });
+});
+
+describe("step identity", () => {
+  const document = `# Onboarding
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: onboarding
+  version: 1.0.0
+spec:
+  inputSchema: { type: object }
+  outputSchema: { type: object }
+  steps:
+    - id: action-1 # looks up the customer
+      kind: action
+      uses: crm.lookup@1.0.0
+      with:
+        object:
+          customerId: { ref: /input/customerId }
+    - id: decide
+      kind: switch
+      cases:
+        - when:
+            op:
+              name: eq
+              args:
+                - ref: /steps/action-1/output/status # status from CRM
+                - literal: active
+          steps:
+            - id: note
+              kind: transform
+              value:
+                object:
+                  whole: { ref: /steps/action-1 }
+                  text: { literal: /steps/action-1/output/x }
+                  same: { literal: { ref: /steps/action-1/output } }
+          output: { ref: /steps/note/output }
+      default: { steps: [], output: { literal: {} } }
+  output:
+    object:
+      customer: { ref: /steps/action-1/output }
+      other: { ref: /steps/action-10/output }
+`;
+  it("renames a step and rewrites only real references, keeping comments", () => {
+    const m = new StructuredCanvasAdapter();
+    m.setSource(document);
+    m.position("action-1", { x: 400, y: 400 });
+    m.selected = "action-1";
+    expect(m.renameStep("action-1", "lookup")).toBe(3);
+    const text = m.source;
+    expect(text).toContain("# Onboarding");
+    expect(text).toContain("# looks up the customer");
+    expect(text).toContain("# status from CRM");
+    expect(text).toContain("id: lookup");
+    expect(text).toContain("ref: /steps/lookup/output/status");
+    expect(text).toContain("whole: { ref: /steps/lookup }");
+    expect(text).toContain("customer: { ref: /steps/lookup/output }");
+    // Literal text and similarly named steps are not references.
+    expect(text).toContain("text: { literal: /steps/action-1/output/x }");
+    expect(text).toContain(
+      "same: { literal: { ref: /steps/action-1/output } }",
+    );
+    expect(text).toContain("other: { ref: /steps/action-10/output }");
+    expect(m.layout.positions["lookup"]).toEqual({ x: 400, y: 400 });
+    expect(m.layout.positions["action-1"]).toBeUndefined();
+    expect(m.selected).toBe("lookup");
+    m.undo();
+    expect(m.source).toBe(document);
+  });
+  it("rejects invalid or duplicate step names", () => {
+    const m = new StructuredCanvasAdapter();
+    m.setSource(document);
+    expect(() => m.renameStep("action-1", "note")).toThrow("already");
+    expect(() => m.renameStep("action-1", "has space")).toThrow("letters");
+    expect(() => m.renameStep("action-1", "")).toThrow("letters");
+    expect(m.source).toBe(document);
+    m.setSource(JSON.stringify(m.definition, null, 2), "json");
+    m.renameStep("note", "summary");
+    expect(JSON.parse(m.source).spec.steps[1].cases[0].output).toEqual({
+      ref: "/steps/summary/output",
+    });
+  });
+  it("names the steps that still read a step before deleting it", () => {
+    const m = new StructuredCanvasAdapter();
+    m.setSource(document);
+    expect(() => m.remove("action-1")).toThrow(
+      "This step is referenced by decide, note and the workflow output.",
+    );
+    expect(() => m.remove("decide")).toThrow("contained");
+    expect(m.containedSteps("decide")).toBe(1);
+    // Removing the group with its contents is allowed: only its own steps read note.
+    m.remove("decide", { contents: true });
+    expect(m.nodes().map((n) => n.step.id)).toEqual(["action-1"]);
+  });
+  it("blocks deleting a group whose steps are read from outside it", () => {
+    const m = new StructuredCanvasAdapter();
+    m.insert("parallel");
+    m.insert("wait", "parallel-1/first");
+    const t = m.insert("transform");
+    m.update(
+      t.id,
+      JSON.stringify({ ...t, value: { ref: "/steps/wait-1/output" } }),
+    );
+    expect(() => m.remove("parallel-1", { contents: true })).toThrow(
+      "Steps in this group are referenced by transform-1.",
+    );
+  });
+  it("branches on a human task's decisions", () => {
+    const m = new StructuredCanvasAdapter();
+    m.insert("humanTask");
+    m.insert("wait");
+    const decision = m.branchOnDecision("approval-1");
+    expect(m.definition.spec.steps.map((s) => s.id)).toEqual([
+      "approval-1",
+      decision.id,
+      "wait-1",
+    ]);
+    expect(decision.kind).toBe("switch");
+    expect(decision["cases"]).toEqual([
+      {
+        when: {
+          op: {
+            name: "eq",
+            args: [
+              { ref: "/steps/approval-1/output/decision" },
+              { literal: "approve" },
+            ],
+          },
+        },
+        steps: [],
+        output: { literal: {} },
+      },
+      {
+        when: {
+          op: {
+            name: "eq",
+            args: [
+              { ref: "/steps/approval-1/output/decision" },
+              { literal: "reject" },
+            ],
+          },
+        },
+        steps: [],
+        output: { literal: {} },
+      },
+    ]);
+    expect(m.selected).toBe(decision.id);
+    m.undo();
+    expect(m.definition.spec.steps).toHaveLength(2);
+  });
+  it("branches on approve and reject when a human task lists no decisions", () => {
+    const m = new StructuredCanvasAdapter();
+    const task = m.insert("humanTask");
+    delete task["decisions"];
+    const decision = m.branchOnDecision("approval-1");
+    expect(
+      (decision["cases"] as { when: { op: { args: unknown[] } } }[]).map(
+        (c) => c.when.op.args[1],
+      ),
+    ).toEqual([{ literal: "approve" }, { literal: "reject" }]);
+  });
+});
+
+describe("designer naming and editing (W3-2, W3-6)", () => {
+  it("names new steps readably; existing IDs stay as they are", () => {
+    const m = new StructuredCanvasAdapter();
+    const ids = [
+      "action",
+      "transform",
+      "switch",
+      "parallel",
+      "wait",
+      "signal",
+      "humanTask",
+      "fail",
+    ].map((kind) => m.insert(kind as Kind).id);
+    expect(ids).toEqual([
+      "call-action-1",
+      "transform-1",
+      "decision-1",
+      "parallel-1",
+      "wait-1",
+      "signal-1",
+      "approval-1",
+      "fail-1",
+    ]);
+    expect(m.insert("switch").id).toBe("decision-2");
+    expect(ownerLabel("root")).toBe("Main sequence");
+    expect(ownerLabel("route/case 1")).toBe("Case 1 of route");
+    expect(ownerLabel("route/default")).toBe("Otherwise of route");
+    expect(ownerLabel("fulfil/first")).toBe("first of fulfil");
+  });
+  it("starts a new decision case without a condition", () => {
+    const m = new StructuredCanvasAdapter();
+    const decision = m.insert("switch");
+    m.editBranches(decision.id, "add");
+    const cases = m.nodes()[0].step["cases"] as { when?: unknown }[];
+    expect(cases).toHaveLength(2);
+    expect(cases.every((c) => c.when === undefined)).toBe(true);
+    expect(m.source).not.toContain("literal: true");
+  });
+  it("keeps the selection when another step is deleted", () => {
+    const m = new StructuredCanvasAdapter();
+    m.insert("wait");
+    m.insert("transform");
+    m.selected = "transform-1";
+    m.remove("wait-1");
+    expect(m.selected).toBe("transform-1");
+    m.remove("transform-1");
+    expect(m.selected).toBe("");
+  });
+  it("counts edits, so a late Undo knows the workflow changed since", () => {
+    const m = new StructuredCanvasAdapter();
+    const start = m.revision;
+    m.insert("wait");
+    expect(m.revision).toBe(start + 1);
+    m.undo();
+    expect(m.revision).toBe(start + 2);
+    m.redo();
+    expect(m.revision).toBe(start + 3);
+  });
+  it("duplicates a step with its contents under new names, as one undo step", () => {
+    const m = new StructuredCanvasAdapter();
+    m.insert("parallel");
+    m.insert("wait", "parallel-1/first");
+    const reader = m.insert("transform", "parallel-1/second");
+    m.update(
+      reader.id,
+      JSON.stringify({ ...reader, value: { ref: "/steps/wait-1/output" } }),
+    );
+    m.insert("transform");
+    const before = m.revision;
+    const copy = m.duplicate("parallel-1");
+    expect(m.revision).toBe(before + 1);
+    expect(copy).toBe("parallel-2");
+    expect(m.definition.spec.steps.map((s) => s.id)).toEqual([
+      "parallel-1",
+      "parallel-2",
+      "transform-2",
+    ]);
+    const branches = m.definition.spec.steps[1]["branches"] as Record<
+      string,
+      { steps: { id: string; value?: unknown }[] }
+    >;
+    expect(branches["first"].steps[0].id).toBe("wait-2");
+    // Inside the copy, a reference to a copied step follows the copy.
+    expect(branches["second"].steps[0]).toMatchObject({
+      id: "transform-3",
+      value: { ref: "/steps/wait-2/output" },
+    });
+    expect(m.selected).toBe("parallel-2");
+    m.undo();
+    expect(m.definition.spec.steps.map((s) => s.id)).toEqual([
+      "parallel-1",
+      "transform-2",
+    ]);
   });
 });

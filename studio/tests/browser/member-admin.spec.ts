@@ -131,18 +131,23 @@ async function administration(page: Page, mode: Mode = "platform-admin") {
   return commands;
 }
 
+const people = (page: Page) =>
+  page.getByRole("tab", { name: "People and access" }).click();
+
 test("member administration respects platform versus tenant delegation gates", async ({
   page,
 }) => {
   await administration(page, "tenant-admin");
+  await people(page);
   await expect(
-    page.getByRole("heading", { name: "Tenant role bindings" }),
+    page.getByRole("heading", { name: "People and access" }),
   ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Accounts" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Principal directory" }),
+    page.getByRole("button", { name: "Create account", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Create principal", exact: true }),
+    page.getByText("Advanced: link a sign-in to an account"),
   ).toHaveCount(0);
 });
 for (const mode of ["viewer", "project-admin"] as const)
@@ -151,30 +156,75 @@ for (const mode of ["viewer", "project-admin"] as const)
   }) => {
     await administration(page, mode);
     await expect(
+      page.getByRole("tab", { name: "People and access" }),
+    ).toHaveCount(0);
+    await expect(
       page.getByRole("heading", { name: "People and access" }),
     ).toHaveCount(0);
   });
 
-test("principal and membership forms send exact typed bodies through local CSRF", async ({
+test("People and access reads by account and role; tables share one look", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await administration(page);
+  await people(page);
+  const table = page.locator(".administration table").first();
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  const row = table.locator("tbody tr").first();
+  await expect(row).toContainText("Account 00000000");
+  await expect(row).toContainText("Person");
+  await expect(row).toContainText("Viewer");
+  await expect(row).not.toContainText(target);
+  await expect(row).not.toContainText("{");
+  // Table heads are 12px captions on the sunken surface; rows are 56px.
+  const head = await table
+    .locator("th")
+    .first()
+    .evaluate((e) => {
+      const s = getComputedStyle(e);
+      return [s.fontSize, s.backgroundColor, s.color];
+    });
+  expect(head).toEqual(["12px", "rgb(248, 250, 248)", "rgb(77, 101, 93)"]);
+  const cell = await table.locator("td").first().boundingBox();
+  expect(cell!.height).toBeGreaterThanOrEqual(56);
+  // Assign role opens a side panel; its fields stack with their labels.
+  await page
+    .locator(".administration .card-heading")
+    .getByRole("button", { name: "Assign role", exact: true })
+    .click();
+  const panel = page.getByRole("complementary", { name: "Assign a role" });
+  await expect(panel.getByLabel("Account ID")).toBeFocused();
+  const lefts = await panel
+    .locator("label")
+    .evaluateAll((labels) =>
+      labels.map((l) => Math.round(l.getBoundingClientRect().left)),
+    );
+  expect(new Set(lefts).size).toBe(1);
+});
+
+test("account and role forms send exact typed bodies through local CSRF", async ({
   page,
 }) => {
   const commands = await administration(page);
-  page.on("dialog", (dialog) => dialog.accept());
+  await people(page);
   await page
-    .getByRole("button", { name: "Create principal", exact: true })
+    .getByRole("button", { name: "Create account", exact: true })
     .click();
   await expect.poll(() => commands.length).toBe(1);
   expect(commands[0].body).toEqual({ kind: "human" });
+  await expect(page.locator(".toast")).toContainText(
+    "Created Account 00000000.",
+  );
+  await page.getByText("Advanced: link a sign-in to an account").click();
   const link = page.locator(".principal-link-form");
-  await link.getByLabel("Principal UUID").fill(target);
-  await link.getByLabel("Provider ID").fill("ciam-neutral");
+  await link.getByLabel("Account ID").fill(target);
+  await link.getByLabel("Identity provider ID").fill("ciam-neutral");
   await link
-    .getByLabel("Exact issuer URL")
+    .getByLabel("Issuer URL (exact)")
     .fill("https://ciam.example.invalid/issuer");
-  await link.getByLabel("Exact CIAM subject").fill("subject-from-ciam");
-  await link
-    .getByRole("button", { name: "Link identity", exact: true })
-    .click();
+  await link.getByLabel("Subject (exact)").fill("subject-from-ciam");
+  await link.getByRole("button", { name: "Link sign-in", exact: true }).click();
   await expect.poll(() => commands.length).toBe(2);
   expect(commands[1].path).toBe(
     `/studio/api/api/v1/admin/principals/${target}/identity-links`,
@@ -184,12 +234,16 @@ test("principal and membership forms send exact typed bodies through local CSRF"
     issuer: "https://ciam.example.invalid/issuer",
     subject: "subject-from-ciam",
   });
+  await page
+    .locator(".administration .card-heading")
+    .getByRole("button", { name: "Assign role", exact: true })
+    .click();
   const grant = page.locator(".member-grant-form");
-  await grant.getByLabel("Principal UUID").fill(target);
+  await grant.getByLabel("Account ID").fill(target);
   await grant.getByLabel("Role", { exact: true }).selectOption("developer");
-  await grant.getByLabel("Grant scope").selectOption("environment");
-  await grant.getByLabel("Restricted resource IDs").fill("action-a, action-b");
-  await grant.getByRole("button", { name: "Grant role", exact: true }).click();
+  await grant.getByLabel("Applies to").selectOption("environment");
+  await grant.getByLabel("Limit to resources").fill("action-a, action-b");
+  await grant.getByRole("button", { name: "Assign role", exact: true }).click();
   await expect.poll(() => commands.length).toBe(3);
   expect(commands[2].body).toEqual({
     principal_id: target,
@@ -207,26 +261,36 @@ test("principal and membership forms send exact typed bodies through local CSRF"
   ).toBe(true);
 });
 
-test("cancelling status and revoke confirmation sends no access change", async ({
+test("cancelling deactivate and remove confirmations sends no access change", async ({
   page,
 }) => {
   const commands = await administration(page);
-  await page.getByRole("button", { name: "Refresh access directory" }).click();
-  await expect(
-    page.getByRole("button", { name: "Deactivate", exact: true }),
-  ).toBeVisible();
-  page.on("dialog", (dialog) => dialog.dismiss());
-  await page.getByRole("button", { name: "Deactivate", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Revoke binding", exact: true })
-    .click();
+  await people(page);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  const actions = page.getByRole("button", {
+    name: "Actions for Account 00000000",
+  });
+  // Confirmation is an in-app dialog; Cancel must send nothing.
+  const dialog = page.getByRole("dialog");
+  await actions.click();
+  await page.getByRole("menuitem", { name: "Deactivate" }).click();
+  await expect(dialog).toContainText("Deactivate Account 00000000?");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await actions.click();
+  await page.getByRole("menuitem", { name: /^Remove Viewer/ }).click();
+  await expect(dialog).toContainText("Remove this role?");
+  await expect(dialog).toContainText("Account 00000000 loses the Viewer role");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
   expect(commands).toHaveLength(0);
 });
 
-test("lost principal creation is held for reconciliation and never auto retried", async ({
+test("lost account creation is held for checking and never retried by itself", async ({
   page,
 }) => {
   await administration(page);
+  await people(page);
   let creates = 0;
   await page.route("**/api/v1/admin/principals", async (r) => {
     if (r.request().method() === "POST") {
@@ -241,17 +305,20 @@ test("lost principal creation is held for reconciliation and never auto retried"
     });
   });
   await page
-    .getByRole("button", { name: "Create principal", exact: true })
+    .getByRole("button", { name: "Create account", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Create principal", exact: true }),
+    page.getByRole("button", { name: "Create account", exact: true }),
   ).toBeDisabled();
+  await expect(page.getByRole("alert")).toContainText(
+    "Studio couldn't confirm the account was created. Check the list before creating it again.",
+  );
   await expect(
-    page.getByRole("button", { name: "I reconciled the directory" }),
+    page.getByRole("button", { name: "I checked the list" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Refresh access directory" }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   expect(creates).toBe(1);
   await expect(
-    page.getByRole("button", { name: "Create principal", exact: true }),
+    page.getByRole("button", { name: "Create account", exact: true }),
   ).toBeDisabled();
 });

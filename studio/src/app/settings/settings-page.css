@@ -1,0 +1,251 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+:host {
+  display: block;
+}
+.page-heading {
+  margin-bottom: var(--space-4);
+}
+.settings-tabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--space-2);
+}
+.settings-tabs button {
+  position: relative;
+  border: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0 var(--space-4);
+}
+.settings-tabs button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.settings-tabs button[aria-selected="true"] {
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-tabs button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: -1px;
+  height: 3px;
+  border-radius: 2px 2px 0 0;
+  background: var(--jade);
+}
+.people-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.people-layout .settings-card {
+  max-width: none;
+  margin: var(--space-4) 0;
+}
+/* Beside the panel, not above it. */
+.people-layout .administration {
+  grid-column: auto;
+}
+/* A wide table scrolls inside its card; the card never widens the page. */
+.people-layout > * {
+  min-width: 0;
+}
+@media (min-width: 1025px) {
+  .people-layout.with-panel {
+    grid-template-columns: minmax(0, 1fr) var(--panel-w);
+  }
+}
+.card-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.card-heading h2 {
+  margin: 0;
+}
+.administration h3 {
+  margin: var(--space-6) 0 var(--space-2);
+}
+.principal-create-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+.principal-create-form .field {
+  min-width: 200px;
+}
+.principal-create-form select,
+.member-grant-form select {
+  margin: 0;
+}
+.administration .notice {
+  margin: var(--space-3) 0;
+}
+.administration .notice p {
+  margin: 0 0 var(--space-2);
+}
+.data-table td {
+  vertical-align: top;
+  padding-block: var(--space-3);
+  height: auto;
+}
+.account-name {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.account-name + .tag {
+  margin-top: var(--space-1);
+}
+.binding-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+.binding-list li {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+}
+.role-tag {
+  font-family: var(--font-sans);
+  font-weight: 500;
+}
+.muted {
+  color: var(--muted);
+}
+.cell-actions {
+  text-align: right;
+  width: 56px;
+}
+.link-sign-in {
+  margin-top: var(--space-6);
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-2);
+}
+.principal-link-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+.principal-link-form .action-row {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.assign-panel {
+  width: auto;
+  top: var(--space-4);
+  margin-top: var(--space-4);
+}
+.assign-panel header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.assign-panel h2 {
+  margin: 0;
+  font: var(--type-title-sm);
+  overflow-wrap: anywhere;
+}
+.member-grant-form {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+.member-grant-form select,
+.member-grant-form input {
+  width: 100%;
+}
+.panel-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 1024px) {
+  .assign-panel {
+    position: fixed;
+    right: 16px;
+    top: 88px;
+    bottom: 16px;
+    width: min(420px, calc(100% - 96px));
+    max-height: none;
+    z-index: 8;
+    box-shadow: var(--shadow-2);
+  }
+}
+@media (max-width: 767px) {
+  .assign-panel {
+    right: 12px;
+    width: calc(100% - 76px);
+  }
+}
+
+/* On a phone each account is a block: name and actions, then its type,
+   roles and where they apply. */
+@media (max-width: 767px) {
+  .data-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .data-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: var(--space-2);
+    padding: var(--space-3) 0;
+    border-top: 1px solid var(--line);
+  }
+  .data-table td {
+    display: block;
+    height: auto;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+  }
+  .data-table td:first-child {
+    white-space: normal;
+  }
+  .data-table td.cell-actions {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+    width: auto;
+  }
+  .data-table td:not(:first-child):not(.cell-actions) {
+    margin-top: var(--space-1);
+    color: var(--muted);
+  }
+}

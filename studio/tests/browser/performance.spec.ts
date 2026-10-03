@@ -44,7 +44,7 @@ test("records pointer frame latency for 50/250/1000 step workflows", async ({
     measurements: [],
   };
   for (const count of [50, 250, 1000]) {
-    await page.getByRole("button", { name: "Source", exact: true }).click();
+    await page.getByRole("tab", { name: "Source", exact: true }).click();
     await page.getByRole("textbox", { name: "Workflow source" }).fill(
       JSON.stringify({
         apiVersion: "weave/v1alpha1",
@@ -64,9 +64,9 @@ test("records pointer frame latency for 50/250/1000 step workflows", async ({
     );
     const start = Date.now();
     await page
-      .getByRole("button", { name: "Apply source", exact: true })
+      .getByRole("button", { name: "Apply changes", exact: true })
       .click();
-    await page.getByRole("button", { name: "Designer", exact: true }).click();
+    await page.getByRole("tab", { name: "Designer", exact: true }).click();
     await expect(page.locator("[data-step]")).toHaveCount(count);
     const sourceToGraphMs = Date.now() - start;
     const node = page.locator('[data-step="step-0"] .node-body');
