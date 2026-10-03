@@ -382,7 +382,10 @@ describe("canonical examples stay byte-identical when unedited", () => {
     });
     after.spec.steps[0].with = before.spec.steps[0].with;
     expect(after).toEqual(before);
-    expect(model.source.startsWith(text.split("apiVersion")[0])).toBe(true);
+    // The header comment survives. An edit rewrites the document with "\n"
+    // line endings, while a Windows checkout may hold "\r\n".
+    const header = text.split("apiVersion")[0].replace(/\r\n/g, "\n");
+    expect(model.source.startsWith(header)).toBe(true);
   });
 });
 
