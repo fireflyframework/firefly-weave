@@ -197,7 +197,8 @@ def test_kind_specific_image_proofs_are_private_and_never_overwritten(tmp_path, 
 
 
 @pytest.mark.parametrize("override", [None, "192.0.2.12"])
-async def test_sql_image_target_uses_bounded_exact_image_probe(override, monkeypatch):
+@pytest.mark.parametrize("port", [55433, 55541])
+async def test_sql_image_target_uses_bounded_exact_image_probe(override, port, monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / "tests/integration"))
     import native_image_support as module
     from native_image_support import native_postgres_host
@@ -216,7 +217,7 @@ async def test_sql_image_target_uses_bounded_exact_image_probe(override, monkeyp
         assert 0 < limits["timeout"] <= 15 and 0 < limits["limit"] <= 65536
         if argv[3] == "create":
             assert image in argv and not any(x in argv for x in ("--mount", "-v", "--rm", "--network"))
-            assert argv[-1] == (override or "host.docker.internal")
+            assert argv[-2:] == [override or "host.docker.internal", str(port)]
             return identifier.encode()
         if argv[3] == "start":
             assert argv[-1] == identifier
@@ -225,7 +226,7 @@ async def test_sql_image_target_uses_bounded_exact_image_probe(override, monkeyp
         return identifier.encode()
 
     monkeypatch.setattr(module, "run_command", command)
-    assert await native_postgres_host(image) == (override or "192.0.2.11")
+    assert await native_postgres_host(image, port=port) == (override or "192.0.2.11")
     assert [argv[3] for argv, _ in calls] == ["create", "start", "stop"]
 
 
