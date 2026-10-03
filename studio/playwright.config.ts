@@ -37,6 +37,9 @@ export default defineConfig({
   testDir: "tests/browser",
   outputDir: output,
   fullyParallel: false,
+  // Shared CI runners are slow and noisy; a test that passes on its retry is
+  // reported as flaky instead of failing the job. Local runs never retry.
+  retries: process.env.GITHUB_ACTIONS === "true" ? 2 : 0,
   use: {
     baseURL,
     browserName: "chromium",

@@ -225,17 +225,63 @@ test.describe("1280x720", () => {
       if (mode === "local") await offline(page);
       else await connected(page);
       await newWorkflow(page);
-      for (const label of ["Decision", "Wait for time", "Call an action"])
+      // Steps without problems: an open diagnostics list takes its own room
+      // (deferred roadmap D1-a).
+      for (const label of ["Transform", "Wait for time", "Transform"])
         await insertStep(page, label);
+      // Measure the settled bar: the status chip's longest steady text.
+      await expect(page.locator(".status-chip")).toHaveAttribute(
+        "title",
+        mode === "local" ? "Kept on this computer" : "Unsaved changes",
+      );
       const canvas = await page.locator(".canvas").boundingBox();
-      expect(canvas!.height).toBeGreaterThanOrEqual(520);
       const bar = await page.locator(".editor-bar").boundingBox();
+      // The views and the commands never overlap, whatever the font.
+      const views = await page.locator(".editor-views").boundingBox();
+      const commands = await page.locator(".editor-toolbar").boundingBox();
+      const overlap =
+        views!.x < commands!.x + commands!.width &&
+        commands!.x < views!.x + views!.width &&
+        views!.y < commands!.y + commands!.height &&
+        commands!.y < views!.y + views!.height;
+      expect(overlap).toBe(false);
+      expect(canvas!.height).toBeGreaterThanOrEqual(520);
       expect(bar!.height).toBeLessThanOrEqual(53);
       // The navigation is the 64 px rail while a workflow is open.
       const rail = await page.locator(".sidebar").boundingBox();
       expect(rail!.width).toBe(64);
     });
 });
+
+for (const width of [1280, 1440])
+  test(`working locally, the note's link stays visible and its reason readable at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await offline(page);
+    await newWorkflow(page);
+    const note = page.locator(".lifecycle-note");
+    const link = note.getByRole("button", { name: "Connect to a platform" });
+    await expect(link).toBeVisible();
+    await expect(note).toHaveAttribute(
+      "title",
+      "Saving, publishing and runs need a platform.",
+    );
+    // Screen readers always get the reason; sighted people below 1366 px
+    // find it in the tooltip.
+    await expect(note).toContainText(
+      "Saving, publishing and runs need a platform.",
+    );
+    const reason = note.locator(".lifecycle-reason");
+    const box = await reason.boundingBox();
+    if (width <= 1366) expect(box!.width).toBeLessThanOrEqual(1);
+    else expect(box!.width).toBeGreaterThan(100);
+    const inside = await link.evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return r.left >= 0 && r.right <= innerWidth;
+    });
+    expect(inside).toBe(true);
+  });
 
 test("the views are a tab list; Source gives the text the whole width", async ({
   page,

@@ -170,8 +170,13 @@ import type { App } from "../app";
           >
             <weave-icon name="download" />Save to file
           </button>
-          <p class="lifecycle-note">
-            Saving, publishing and runs need a platform.
+          <p
+            class="lifecycle-note"
+            title="Saving, publishing and runs need a platform."
+          >
+            <span class="lifecycle-reason"
+              >Saving, publishing and runs need a platform.</span
+            >
             <button
               type="button"
               class="text-link"

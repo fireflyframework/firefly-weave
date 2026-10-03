@@ -1109,6 +1109,27 @@ export class App {
     this.workflowValid.set(true);
     this.touched.workflow = false;
   }
+  private inspectorTopWatch: ResizeObserver | null = null;
+  /**
+   * Scrolls the inspector to its top. A hidden overlay inspector is scrolled
+   * once it shows again, because showing it restores its old position.
+   */
+  private inspectorToTop() {
+    this.inspectorTopWatch?.disconnect();
+    this.inspectorTopWatch = null;
+    const body = document.querySelector<HTMLElement>(".inspector-body");
+    if (!body) return;
+    body.scrollTo(0, 0);
+    if (body.clientHeight > 0 || typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(() => {
+      if (body.clientHeight === 0) return;
+      body.scrollTo(0, 0);
+      watch.disconnect();
+      if (this.inspectorTopWatch === watch) this.inspectorTopWatch = null;
+    });
+    this.inspectorTopWatch = watch;
+    watch.observe(body);
+  }
   /** Loads the inspector buffers from the selected model step. */
   loadInspector() {
     this.renameError = "";
@@ -1119,13 +1140,9 @@ export class App {
     // render: a narrow-layout inspector may still be hidden now, and the
     // browser restores a hidden pane's old scroll position when it shows.
     if ((step?.id ?? "") !== this.inspectorStepId)
-      afterNextRender(
-        () =>
-          document
-            .querySelector<HTMLElement>(".inspector-body")
-            ?.scrollTo(0, 0),
-        { injector: this.injector },
-      );
+      afterNextRender(() => this.inspectorToTop(), {
+        injector: this.injector,
+      });
     this.inspectorStepId = step?.id ?? "";
     this.inspectorBase = step ? JSON.stringify(step) : "";
     this.propertyStep = step ? structuredClone(step) : null;
