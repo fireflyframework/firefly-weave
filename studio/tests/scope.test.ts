@@ -540,6 +540,18 @@ documents = json.load(sys.stdin)
 # This oracle tests reference semantics, not production timing admission. Keep
 # structural/work limits and a bounded regex deadline, allowing runner contention.
 parity_limits = replace(DEFAULT_CONTRACT_LIMITS, regex_timeout_seconds=1, max_regex_seconds=5)
+# The public contracts do not change during this oracle process. Reuse their
+# canonical snapshot, while giving every full validation its own mutable copy.
+export_original = schemas.export_schemas
+schema_exports = 0
+schema_snapshot = None
+def export_snapshot():
+    global schema_exports, schema_snapshot
+    if schema_snapshot is None:
+        schema_exports += 1
+        schema_snapshot = json.dumps(export_original(), sort_keys=True, separators=(",", ":"))
+    return json.loads(schema_snapshot)
+schemas.export_schemas = export_snapshot
 results = []
 for document in documents:
     result = check(json.dumps(document), format="json", contract_limits=parity_limits)
@@ -561,7 +573,11 @@ def with_scheduling_pause(limits):
         return check(json.dumps(documents[0]), format="json", contract_limits=limits)
 paused_default = with_scheduling_pause(DEFAULT_CONTRACT_LIMITS)
 paused_parity = with_scheduling_pause(parity_limits)
-print(json.dumps({"mode": mode, "results": results, "budgetResult": {
+owned_copy = export_snapshot()
+owned_copy["workflow"].clear()
+snapshot_unchanged = export_snapshot()["workflow"] == json.loads(schema_snapshot)["workflow"]
+print(json.dumps({"mode": mode, "schemaExports": schema_exports,
+"schemaSnapshotUnchanged": snapshot_unchanged, "results": results, "budgetResult": {
     "validationOk": budget_result.validation_ok,
     "diagnostics": [d.model_dump(by_alias=True, exclude_none=True) for d in budget_result.diagnostics],
 }, "pausedDefaultCodes": [d.code for d in paused_default.diagnostics],
@@ -705,6 +721,8 @@ const compiled = available
       }),
     ) as {
       mode: "authoring" | "source";
+      schemaExports: number;
+      schemaSnapshotUnchanged: boolean;
       results: CompilerResult[];
       budgetResult: CompilerResult;
       pausedDefaultCodes: string[];
@@ -713,6 +731,10 @@ const compiled = available
   : null;
 
 describe.skipIf(!available)("scope parity with the Python compiler", () => {
+  it("exports immutable contracts once and isolates each validation's schema copy", () => {
+    expect(compiled!.schemaExports).toBe(1);
+    expect(compiled!.schemaSnapshotUnchanged).toBe(true);
+  });
   it("isolates scope parity from a bounded runner scheduling pause", () => {
     expect(compiled!.pausedDefaultCodes).toContain("WV-SCHEMA-RESOURCE_LIMIT");
     expect(compiled!.pausedParityDiagnostics).toEqual(
