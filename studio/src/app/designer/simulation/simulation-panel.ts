@@ -713,19 +713,25 @@ const noNodes = (): SimulationNodes => ({
         background: var(--disabled-bg);
         color: var(--disabled-ink);
       }
+      /* Both tabs share the width; on a narrow panel a label wraps rather
+         than scrolling the tab list sideways. */
       .sim-tabs {
         display: flex;
         gap: 4px;
         border-bottom: 1px solid var(--line);
         margin: 12px 0;
-        overflow-x: auto;
       }
       .sim-tabs button {
+        flex: 0 1 auto;
+        min-width: 0;
         border: 0;
         border-bottom: 3px solid transparent;
         border-radius: 0;
         background: transparent;
         min-height: 36px;
+        white-space: normal;
+        text-align: start;
+        line-height: 1.25;
       }
       .sim-tabs button.selected {
         border-bottom-color: var(--jade);
