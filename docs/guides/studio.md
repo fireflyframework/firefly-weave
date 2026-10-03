@@ -38,10 +38,10 @@ computer at `127.0.0.1`. That host keeps your saved platforms, which it shares
 with the `weave` command line, and keeps your sign-in in the operating system's
 credential store. The page never receives your tokens.
 
-**This page describes Studio 0.1.0a9.** An alpha6 or earlier browser bundle
+**This page describes Studio 0.1.0a10.** An alpha6 or earlier browser bundle
 shows an earlier connection assistant, which imports a login configuration file,
 and lacks the editor features and API actions described here. To follow this
-page, [install the alpha9 browser application](#install-the-alpha9-browser-application).
+page, [install the alpha10 browser application](#install-the-alpha10-browser-application).
 
 ![Studio and runtime boundaries](../diagrams/studio-and-runtime.svg)
 
@@ -55,7 +55,7 @@ happens on the platform and keeps running after you close Studio.
 | Your goal | What must be running | Start here |
 | --- | --- | --- |
 | Open Studio as a native desktop app | A matching desktop build for your operating system | [Install desktop](desktop.md) |
-| Draw, import, or validate a workflow on your computer | Studio's local host; no account | [Install Studio](#install-the-alpha9-browser-application), then [work locally](#work-locally-without-signing-in) |
+| Draw, import, or validate a workflow on your computer | Studio's local host; no account | [Install Studio](#install-the-alpha10-browser-application), then [work locally](#work-locally-without-signing-in) |
 | Learn the editor with a small example | Studio's local host | [Try it: draw your first workflow](#try-it-draw-your-first-workflow) |
 | Save and run workflows on your laptop | Studio plus a separate local Weave platform | [Start the platform](local-platform.md), then [connect Studio](#connect-to-a-platform) |
 | Work with your team's platform | Studio on your computer and the server address from your administrator | [Connect to a platform](#connect-to-a-platform) |
@@ -71,45 +71,45 @@ computer. You can create, import, edit, and validate workflow definitions.
 Connect when you want to save them to a shared platform, run processes, or handle
 tasks. This status does not mean your computer has lost its internet connection.
 
-## Install the alpha9 browser application
+## Install the alpha10 browser application
 
 Alpha7 includes the Studio host. Its browser assets are an optional, matching
 release bundle; the Python wheel does not embed the Angular application. Alpha4
 does not include Studio. Download all files from the same
-[v0.1.0a9 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a9).
+[v0.1.0a10 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a10).
 The CLI installer does not automatically fetch or install the Studio ZIP.
 
-Use Python 3.12 or newer. The alpha9 CLI installer includes the Studio host
+Use Python 3.12 or newer. The alpha10 CLI installer includes the Studio host
 and authentication dependencies, but downloads no browser ZIP automatically.
 These Bash/Zsh commands need neither Node nor a source checkout:
 
 ```sh
 # Install the pinned CLI into its isolated installation directory.
 # Review the installer first using the download-and-inspect alternative in Installation.
-curl --fail --location https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a9/install.sh \
-  | sh -s -- --version v0.1.0a9
+curl --fail --location https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a10/install.sh \
+  | sh -s -- --version v0.1.0a10
 # Make the installed command available in this terminal.
 export PATH="$HOME/.local/bin:$PATH"
 # Check that the host version matches the browser bundle you will install.
 weave --version
 
 # Keep the downloaded optional browser bundle and its digest together.
-mkdir weave-studio-alpha9
-cd weave-studio-alpha9
-curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a9/firefly-weave-studio-0.1.0a9.zip
-curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a9/firefly-weave-studio-0.1.0a9.zip.sha256
+mkdir weave-studio-alpha10
+cd weave-studio-alpha10
+curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a10/firefly-weave-studio-0.1.0a10.zip
+curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a10/firefly-weave-studio-0.1.0a10.zip.sha256
 # Verify the bundle on macOS. Stop if the check fails.
-shasum -a 256 --check firefly-weave-studio-0.1.0a9.zip.sha256
+shasum -a 256 --check firefly-weave-studio-0.1.0a10.zip.sha256
 # On Linux, use sha256sum --check in place of shasum -a 256 --check.
 
 # Install only the bundle whose version and verified digest match this host.
-weave studio install --bundle firefly-weave-studio-0.1.0a9.zip \
-  --sha256 "$(awk '{print $1}' firefly-weave-studio-0.1.0a9.zip.sha256)"
+weave studio install --bundle firefly-weave-studio-0.1.0a10.zip \
+  --sha256 "$(awk '{print $1}' firefly-weave-studio-0.1.0a10.zip.sha256)"
 # Start the local host without opening a browser automatically.
 weave studio --no-browser
 ```
 
-Expected: `weave --version` prints `Firefly Weave 0.1.0a9`, the checksum line
+Expected: `weave --version` prints `Firefly Weave 0.1.0a10`, the checksum line
 ends with `OK`, and the install prints `Studio installed at PATH. Start it with:
 weave studio`. The host then prints `Firefly Weave Studio · Local authoring (no
 platform selected)`, or `Firefly Weave Studio · Platform: NAME` when a saved
@@ -131,7 +131,7 @@ or the [remote deployment guide](../operations/remote-deployment.md).
 
 **This route is for contributors,** and for trying changes made after the
 latest release; the release bundle above already has everything this page
-describes. To reproduce the alpha9 release exactly, check out `v0.1.0a9`
+describes. To reproduce the alpha10 release exactly, check out `v0.1.0a10`
 instead; development `main` can differ from released assets.
 
 From the repository root, install the development dependencies first. Node 24
@@ -167,7 +167,7 @@ while you use Studio.
 
 **Already installed a release browser bundle?** Installed bundles are kept per
 version, and a checkout can report the same version as the latest release, for
-example `0.1.0a9`. A plain `weave studio` then keeps serving the installed
+example `0.1.0a10`. A plain `weave studio` then keeps serving the installed
 release screens, and `weave studio install` keeps that bundle instead of
 replacing it. Always start a source build with `--assets studio/dist/studio/browser`.
 

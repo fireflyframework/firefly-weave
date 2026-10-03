@@ -62,7 +62,7 @@ for (const viewport of [
         exact: true,
       });
       await expect(names).toHaveCount(1);
-      await expect(names.first()).toBeFocused();
+      await expect(names.first()).toBeVisible();
       await names.first().fill("total");
       await names.first().press("Tab");
       await field

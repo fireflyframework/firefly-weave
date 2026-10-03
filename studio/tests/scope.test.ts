@@ -524,27 +524,83 @@ const python = resolve(
     : ".venv/bin/python",
 );
 const COMPILER_PROBE = `
-import json, sys
+import json, sys, time
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import patch
+from firefly_weave.compiler import schemas
+from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS
 try:
     from firefly_weave.compiler.api import validate_authoring as check
     mode = "authoring"
 except ImportError:
     from firefly_weave.compiler.api import validate_source as check
     mode = "source"
+documents = json.load(sys.stdin)
+# This oracle tests reference semantics, not production timing admission. Keep
+# structural/work limits and a bounded regex deadline, allowing runner contention.
+parity_limits = replace(DEFAULT_CONTRACT_LIMITS, regex_timeout_seconds=1, max_regex_seconds=5)
 results = []
-for document in json.load(sys.stdin):
-    result = check(json.dumps(document), format="json")
+for document in documents:
+    result = check(json.dumps(document), format="json", contract_limits=parity_limits)
     results.append({
         "validationOk": result.validation_ok,
         "diagnostics": [d.model_dump(by_alias=True, exclude_none=True) for d in result.diagnostics],
     })
-print(json.dumps({"mode": mode, "results": results}))
+budget_result = check(json.dumps(documents[0]), format="json", contract_limits=replace(
+    DEFAULT_CONTRACT_LIMITS, max_regex_seconds=1e-12,
+))
+def with_scheduling_pause(limits):
+    calls = 0
+    def clock():
+        nonlocal calls
+        calls += 1
+        # One 200 ms descheduling interval inside the first regex measurement.
+        return time.monotonic() + (0.2 if calls > 1 else 0)
+    with patch.object(schemas, "time", SimpleNamespace(monotonic=clock)):
+        return check(json.dumps(documents[0]), format="json", contract_limits=limits)
+paused_default = with_scheduling_pause(DEFAULT_CONTRACT_LIMITS)
+paused_parity = with_scheduling_pause(parity_limits)
+print(json.dumps({"mode": mode, "results": results, "budgetResult": {
+    "validationOk": budget_result.validation_ok,
+    "diagnostics": [d.model_dump(by_alias=True, exclude_none=True) for d in budget_result.diagnostics],
+}, "pausedDefaultCodes": [d.code for d in paused_default.diagnostics],
+"pausedParityDiagnostics": [d.model_dump(by_alias=True, exclude_none=True) for d in paused_parity.diagnostics]}))
 `;
+interface CompilerResult {
+  validationOk: boolean;
+  diagnostics: { code: string; path: string; severity: string }[];
+}
 interface Position {
   fixture: string;
   stepId: string;
   fieldPath: string;
   pointer: string;
+}
+function rejectedCandidates(
+  result: CompilerResult,
+  position: Position,
+  candidates: string[],
+): Set<string> {
+  const blocking = result.diagnostics.filter((d) =>
+    /^WV-(PARSE|SCHEMA|EXPR)-/.test(d.code),
+  );
+  if (blocking.length)
+    throw new Error(
+      `Scope oracle did not reach reference analysis: ${blocking.map((d) => d.code).join(", ")} at ${JSON.stringify(position)}`,
+    );
+  const prefix = `${position.pointer}/array/`;
+  return new Set(
+    result.diagnostics
+      .filter(
+        (d) =>
+          d.code === "WV-COMP-UNAVAILABLE_REFERENCE" &&
+          d.path.startsWith(prefix),
+      )
+      .map(
+        (d) => candidates[Number(d.path.slice(prefix.length).split("/")[0])],
+      ),
+  );
 }
 function positions(name: string, definition: Json): Position[] {
   const out: Position[] = [];
@@ -649,14 +705,32 @@ const compiled = available
       }),
     ) as {
       mode: "authoring" | "source";
-      results: {
-        validationOk: boolean;
-        diagnostics: { code: string; path: string; severity: string }[];
-      }[];
+      results: CompilerResult[];
+      budgetResult: CompilerResult;
+      pausedDefaultCodes: string[];
+      pausedParityDiagnostics: CompilerResult["diagnostics"];
     })
   : null;
 
 describe.skipIf(!available)("scope parity with the Python compiler", () => {
+  it("isolates scope parity from a bounded runner scheduling pause", () => {
+    expect(compiled!.pausedDefaultCodes).toContain("WV-SCHEMA-RESOURCE_LIMIT");
+    expect(compiled!.pausedParityDiagnostics).toEqual(
+      compiled!.results[0].diagnostics,
+    );
+  });
+  it("never treats a compiler resource-budget rejection as accepted references", () => {
+    const result = compiled!.budgetResult;
+    expect(result.validationOk).toBe(false);
+    expect(result.diagnostics.map((d) => d.code)).toContain(
+      "WV-SCHEMA-RESOURCE_LIMIT",
+    );
+    expect(() =>
+      rejectedCandidates(result, probes[0].position, probes[0].candidates),
+    ).toThrow(
+      /Scope oracle did not reach reference analysis.*WV-SCHEMA-RESOURCE_LIMIT/,
+    );
+  });
   it("covers at least five fixtures and every expression position", () => {
     expect(Object.keys(fixtures).length).toBeGreaterThanOrEqual(5);
     expect(probes.length).toBeGreaterThan(40);
@@ -678,18 +752,10 @@ describe.skipIf(!available)("scope parity with the Python compiler", () => {
     let rejected = 0;
     probes.forEach((probe, i) => {
       const { position, candidates } = probe;
-      const prefix = `${position.pointer}/array/`;
-      const flagged = new Set(
-        compiled!.results[i].diagnostics
-          .filter(
-            (d) =>
-              d.code === "WV-COMP-UNAVAILABLE_REFERENCE" &&
-              d.path.startsWith(prefix),
-          )
-          .map(
-            (d) =>
-              candidates[Number(d.path.slice(prefix.length).split("/")[0])],
-          ),
+      const flagged = rejectedCandidates(
+        compiled!.results[i],
+        position,
+        candidates,
       );
       rejected += flagged.size;
       const scope = referenceScope(

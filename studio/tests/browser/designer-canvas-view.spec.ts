@@ -336,6 +336,9 @@ test.describe("1440x900", () => {
   }) => {
     await offline(page);
     await newWorkflow(page);
+    // Inspector rendering must not steal focus between consecutive real keys.
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 8 });
     await insertStep(page, "Wait for time");
     await insertStep(page, "Transform");
     const canvas = page.getByRole("group", { name: "Workflow canvas" });

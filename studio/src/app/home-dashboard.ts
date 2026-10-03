@@ -104,7 +104,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
       @if (!connected()) {
         <img
           class="lumi"
-          src="/assets/lumi.svg"
+          src="/assets/lumi.png"
           alt="Lumi, the Firefly guide"
           width="96"
           height="96"

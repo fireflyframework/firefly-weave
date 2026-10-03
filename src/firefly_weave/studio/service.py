@@ -71,6 +71,7 @@ STUDIO_FAMILIES = frozenset(
         "email_tokens",
         "connections",
         "files",
+        "lumi",
         "connector_descriptors",
         "workers",
         "environments",

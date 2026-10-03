@@ -118,7 +118,7 @@ each of these.
 ## Versions and what the document proves
 
 - The document's `info.version` is the API version, `1`. It is separate from
-  the package version (`0.1.0a9`) and from the workflow language version
+  the package version (`0.1.0a10`) and from the workflow language version
   (`weave/v1alpha1`).
 - The exporter uses PyFly 26.9.15. The exact URL, SHA-256, and upstream
   provenance are in [project metadata](../../pyproject.toml) and the lockfile.

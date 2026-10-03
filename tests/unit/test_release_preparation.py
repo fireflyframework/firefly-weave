@@ -20,9 +20,11 @@ import hashlib
 import importlib.util
 import json
 import tarfile
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
 
 
 def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch):
@@ -47,8 +49,8 @@ def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch)
             artifacts = Path(argv[argv.index("--out-dir") + 1])
             artifacts.mkdir()
             (artifacts / ".gitignore").write_text("*\n")
-            (artifacts / "firefly_weave-0.1.0a9-py3-none-any.whl").write_bytes(b"exact wheel bytes")
-            with tarfile.open(artifacts / "firefly_weave-0.1.0a9.tar.gz", "w:gz"):
+            (artifacts / f"firefly_weave-{VERSION}-py3-none-any.whl").write_bytes(b"exact wheel bytes")
+            with tarfile.open(artifacts / f"firefly_weave-{VERSION}.tar.gz", "w:gz"):
                 pass
             return b"built"
         return b"click==8.5.0 --hash=sha256:" + b"1" * 64 + b"\n"
@@ -61,7 +63,7 @@ def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch)
     context = destination / "images"
     assert not (context / "src").exists()
     assert not (context / "tests").exists()
-    assert (context / "firefly_weave-0.1.0a9-py3-none-any.whl").read_bytes() == b"exact wheel bytes"
+    assert (context / f"firefly_weave-{VERSION}-py3-none-any.whl").read_bytes() == b"exact wheel bytes"
     assert {p.name for p in context.glob("*-requirements.txt")} == {
         "base-requirements.txt",
         "worker-requirements.txt",
@@ -79,7 +81,7 @@ def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch)
     installer = json.loads((assets / "cli-install.json").read_text())
     assert installer == {
         "schema_version": 1,
-        "version": "0.1.0a9",
+        "version": VERSION,
         "wheel": value["wheel"],
         "wheel_sha256": value["wheel_sha256"],
         "requirements": "cli-requirements.txt",

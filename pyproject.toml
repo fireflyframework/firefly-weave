@@ -20,7 +20,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "firefly-weave"
-version = "0.1.0a9"
+version = "0.1.0a10"
 description = "API-first workflow orchestration and integration platform built on PyFly"
 readme = "README.md"
 license = "Apache-2.0"
