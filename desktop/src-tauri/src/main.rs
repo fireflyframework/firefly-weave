@@ -279,6 +279,11 @@ fn sanitize_download_name(suggested: &str) -> String {
 /// The first free `name`, `stem (1).ext`, `stem (2).ext`, … in `folder`. `None` when the folder cannot be
 /// inspected (for example when privacy settings deny access) or every candidate is taken.
 fn unique_destination(folder: &Path, name: &str) -> Option<PathBuf> {
+    // Windows reports a path below a regular file as missing rather than "not a directory", so check the
+    // folder itself first: every platform then refuses a destination that is not a directory.
+    if !folder.is_dir() {
+        return None;
+    }
     let (stem, extension) = name.rsplit_once('.').unwrap_or((name, "txt"));
     for attempt in 0..MAX_NAME_ATTEMPTS {
         let candidate = if attempt == 0 {
