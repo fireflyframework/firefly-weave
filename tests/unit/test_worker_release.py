@@ -153,3 +153,41 @@ def test_worker_sdist_rejects_private_or_escaping_content_before_extract(tmp_pat
     with pytest.raises(ValueError, match="Unsafe"):
         tooling().extract_sdist(data.getvalue(), tmp_path / "unpacked")
     assert not (tmp_path / "unpacked").exists()
+
+
+@pytest.mark.parametrize("inherited_python", [None, "3.12", "3.13"])
+def test_worker_preparation_selects_its_python_despite_parent_environment(tmp_path, monkeypatch, inherited_python):
+    module = tooling()
+    if inherited_python is None:
+        monkeypatch.delenv("UV_PYTHON", raising=False)
+    else:
+        monkeypatch.setenv("UV_PYTHON", inherited_python)
+    destination = tmp_path / "release"
+    artifacts = destination / "artifacts"
+    artifacts.mkdir(parents=True)
+    core = "firefly_weave-0.1.0a8-py3-none-any.whl"
+    (artifacts / core).write_bytes(b"core")
+    selected = []
+
+    def command(arguments, **kwargs):
+        name = Path(arguments[arguments.index("--project") + 1]).name
+        python = arguments[arguments.index("--python") + 1] if "--python" in arguments else inherited_python
+        assert python == module.WORKERS[name], "Worker preparation inherited the parent's Python selection"
+        selected.append((name, arguments[1], python))
+        if arguments[1] == "build":
+            output = Path(arguments[arguments.index("--out-dir") + 1])
+            output.mkdir()
+            (output / f"weave_{name}_worker-0.1.0-py3-none-any.whl").write_bytes(wheel(name))
+            (output / f"weave_{name}_worker-0.1.0.tar.gz").write_bytes(b"sdist")
+            return b"built"
+        return b"click==8.5.0 --hash=sha256:" + b"1" * 64 + b"\n"
+
+    monkeypatch.setattr(module, "run_command", command)
+    records = module.prepare(ROOT, destination, core)
+    assert selected == [
+        ("agentic", "build", "3.13"),
+        ("agentic", "export", "3.13"),
+        ("files", "build", "3.12"),
+        ("files", "export", "3.12"),
+    ]
+    assert {name: record["python"] for name, record in records.items()} == module.WORKERS

@@ -91,7 +91,7 @@ def prepare(root: Path, release: Path, core_wheel: str) -> dict:
         source = root / "workers" / name
         built = release / (name + "-build")
         run_command(
-            ["uv", "build", "--project", str(source), "--out-dir", str(built)],
+            ["uv", "build", "--project", str(source), "--python", python, "--out-dir", str(built)],
             timeout=180,
             log_path=release / (name + "-build.log"),
         )
@@ -109,6 +109,8 @@ def prepare(root: Path, release: Path, core_wheel: str) -> dict:
                     "--quiet",
                     "--project",
                     str(source),
+                    "--python",
+                    python,
                     "--locked",
                     "--no-dev",
                     "--no-emit-project",
