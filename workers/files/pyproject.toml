@@ -20,12 +20,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "weave-files-worker"
-version = "0.1.0"
+version = "0.1.1"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 description = "Lease-bound FTP, SFTP and cloud-drive transfers for Firefly Weave"
 requires-python = ">=3.12,<3.15"
-dependencies = ["firefly-weave[worker]==0.1.0a8", "httpx>=0.28.1,<1", "aioftp==0.28.0", "asyncssh==2.24.0"]
+dependencies = ["firefly-weave[worker]==0.1.0a9", "httpx>=0.28.1,<1", "aioftp==0.28.0", "asyncssh==2.24.0"]
 
 [project.scripts]
 weave-files-worker = "weave_files_worker.main:run"

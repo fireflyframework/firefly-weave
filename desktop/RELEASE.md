@@ -17,8 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 -->
 # Desktop release versions
 
-The alpha8 product version is `0.1.0-alpha.8` in npm, Cargo and Tauri. It corresponds
-to Python `0.1.0a8` and the repository prerelease tag `v0.1.0a8`.
+The alpha9 product version is `0.1.0-alpha.9` in npm, Cargo and Tauri. It corresponds
+to Python `0.1.0a9` and the repository prerelease tag `v0.1.0a9`.
 
 Windows MSI uses the explicit numeric version `0.1.8`. Tauri's pinned bundler rejects
 nonnumeric prerelease identifiers when deriving MSI versions; its `windows.wix.version`

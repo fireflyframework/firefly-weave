@@ -353,6 +353,7 @@ export class App {
     detail?: string;
   } | null = null;
   lumiOpen = false;
+  lumiSettingsRequested = false;
   platformMenuOpen = false;
   platformBusy = "";
   // Fences platform checks and status reads against later platform changes.
@@ -909,6 +910,7 @@ export class App {
   } | null = null;
   /** The open "New API connection" dialog and its prefill. */
   connectionDialog: {
+    kind?: "ai";
     fromBuilder: HttpActionUse["connection"] | null;
     fromWorkflow?: boolean;
   } | null = null;
@@ -4067,6 +4069,9 @@ export class App {
     this.cdr.markForCheck();
   }
   /** Opens "Connect to an API", prefilled from the builder's hand-off for this slot. */
+  openAiConnectionDialog() {
+    this.connectionDialog = { kind: "ai", fromBuilder: null };
+  }
   openConnectionDialog(slot = "") {
     const use = this.lastUse;
     this.connectionDialog = {

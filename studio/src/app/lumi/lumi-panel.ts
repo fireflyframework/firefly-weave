@@ -27,6 +27,13 @@ import {
 import type { App } from "../app";
 import { ApiError } from "../api";
 import { parse } from "yaml";
+import { Select } from "../forms/ui/select";
+import { AiProviderConnectionForm } from "../integrations/ai-provider-connection-form";
+import {
+  aiConnections,
+  aiSetupRows,
+  type AiConnection,
+} from "../integrations/ai-provider-connection";
 import { Modal } from "../dialog";
 import { TaskForm } from "../task-form";
 import type { Schema } from "../task-schema";
@@ -50,7 +57,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   selector: "weave-lumi-panel",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Modal, TaskForm],
+  imports: [Modal, TaskForm, Select, AiProviderConnectionForm],
   template: ` @if (host.lumiOpen) {
     <weave-modal
       heading="Ask Lumi"
@@ -83,8 +90,9 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           </p>
         } @else if (!status?.configured && !loading) {
           <p class="hint">
-            Lumi is not configured for this environment. Ask an administrator to
-            configure its model and connection.
+            Lumi is unavailable in this environment. An administrator configures
+            its model and connection; a platform operator enables the Lumi
+            gateway. Saving model settings alone does not deploy the gateway.
           </p>
         }
         @if (loading) {
@@ -97,6 +105,13 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
               These settings apply only to this assistant in this environment.
               Workflow AI profiles are configured separately.
             </p>
+            @if (!host.can("connection.manage")) {
+              <p role="status">
+                To select or save a provider connection, ask an administrator
+                for connection.manage in this environment as well as Lumi
+                manager.
+              </p>
+            }
             @if (configSchema) {
               <weave-task-form
                 [schema]="configSchema"
@@ -104,6 +119,54 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 (dataChange)="config = $event"
                 (validityChange)="configValid = $event"
               />
+              <weave-select
+                label="Provider connection"
+                [value]="configConnection"
+                [options]="connectionOptions"
+                [disabled]="configBusy || !host.can('connection.manage')"
+                (choose)="configConnection = $event"
+              />
+              <p class="hint">
+                Lumi pins this exact revision. Choose a connection with the same
+                provider as the profile; changing a workflow profile will not
+                change these settings.
+              </p>
+              @if (configConnection && !selectedConnection) {
+                <p class="field-error">
+                  Choose an available connection that matches this provider.
+                </p>
+              }
+              @if (host.can("connection.manage")) {
+                @if (!connectionOptions.length) {
+                  <p>
+                    No matching provider connections yet. Create one with an
+                    operator-approved secret handle, or change the provider.
+                  </p>
+                }
+                <div class="action-row">
+                  <button
+                    type="button"
+                    [disabled]="configBusy"
+                    (click)="newConnection = !newConnection"
+                  >
+                    New AI connection</button
+                  ><button
+                    type="button"
+                    [disabled]="configBusy"
+                    (click)="loadConnections()"
+                  >
+                    Refresh connections
+                  </button>
+                </div>
+                @if (newConnection) {
+                  <weave-ai-provider-connection-form
+                    [api]="host.api"
+                    [canManage]="host.can('connection.manage')"
+                    (created)="connectionCreated($event)"
+                    (finished)="newConnection = false"
+                  />
+                }
+              }
             }
             @if (configError) {
               <p class="field-error" role="alert">{{ configError }}</p>
@@ -400,6 +463,9 @@ export class LumiPanel implements DoCheck {
   config: Record<string, unknown> = {};
   configValid = true;
   configRevision: number | null = null;
+  configConnection = "";
+  connections: AiConnection[] = [];
+  newConnection = false;
   private replySchema: unknown;
   private wasOpen = false;
   ngDoCheck() {
@@ -415,6 +481,10 @@ export class LumiPanel implements DoCheck {
     }
     if (this.host.lumiOpen && !this.wasOpen) void this.loadStatus();
     this.wasOpen = this.host.lumiOpen;
+    if (this.host.lumiOpen && this.host.lumiSettingsRequested) {
+      this.host.lumiSettingsRequested = false;
+      void this.openSettings();
+    }
   }
   private reset() {
     this.message = "";
@@ -428,6 +498,9 @@ export class LumiPanel implements DoCheck {
     this.config = {};
     this.configInitial = {};
     this.configRevision = null;
+    this.configConnection = "";
+    this.connections = [];
+    this.newConnection = false;
     this.error = "";
     this.loading = false;
     this.configBusy = false;
@@ -653,8 +726,46 @@ export class LumiPanel implements DoCheck {
       item.source,
     );
   }
+  get connectionOptions() {
+    const provider = object(this.config["profile"])["provider"];
+    return this.connections
+      .filter((c) => c.config.provider === provider)
+      .map((c) => ({
+        value: c.id,
+        label: `${c.name} · revision ${c.revision}`,
+        description: c.config.endpoint,
+      }));
+  }
+  get selectedConnection() {
+    return this.connectionOptions.some(
+      (option) => option.value === this.configConnection,
+    );
+  }
+  async loadConnections() {
+    if (!this.host.can("connection.manage")) return;
+    const generation = this.conversation.generation;
+    try {
+      const rows = await aiSetupRows(this.host.api, "connections", true);
+      if (generation === this.conversation.generation)
+        this.connections = aiConnections(rows);
+    } catch (error) {
+      if (generation === this.conversation.generation)
+        this.configError = describeError(error).message;
+    } finally {
+      this.cdr.markForCheck();
+    }
+  }
+  connectionCreated(connection: AiConnection) {
+    this.connections = [
+      ...this.connections.filter((c) => c.id !== connection.id),
+      connection,
+    ];
+    this.configConnection = connection.id;
+  }
   get configComplete() {
     return (
+      this.host.can("connection.manage") &&
+      this.selectedConnection &&
       !!this.configSchema &&
       this.configValid &&
       !missingData(this.configSchema, this.config).length
@@ -681,8 +792,15 @@ export class LumiPanel implements DoCheck {
         throw Error("The host did not provide the fixed Lumi reply schema.");
       const properties = { ...object(profile["properties"]) };
       delete properties["outputSchema"];
+      const { connection_revision_id: _, ...configProperties } = object(
+        schema["properties"],
+      );
       const editable = {
         ...schema,
+        properties: configProperties,
+        required: (schema["required"] as string[]).filter(
+          (key) => key !== "connection_revision_id",
+        ),
         $defs: {
           ...defs,
           LumiProfile: {
@@ -712,12 +830,14 @@ export class LumiPanel implements DoCheck {
       }
       if (generation !== this.conversation.generation) return;
       this.configRevision = configuration["revision"] ?? null;
-      const { revision, ...data } = configuration;
+      const { revision, connection_revision_id, ...data } = configuration;
+      this.configConnection = connection_revision_id ?? "";
       const cleanProfile = { ...object(data["profile"]) };
       delete cleanProfile["outputSchema"];
       this.configInitial = { ...data, profile: cleanProfile };
       this.config = structuredClone(this.configInitial);
       this.configSchema = editable as Schema;
+      await this.loadConnections();
     } catch (error) {
       if (generation === this.conversation.generation)
         this.configError = describeError(error).message;
@@ -736,6 +856,7 @@ export class LumiPanel implements DoCheck {
     try {
       const body = {
         ...this.config,
+        connection_revision_id: this.configConnection,
         profile: {
           ...object(this.config["profile"]),
           outputSchema: this.replySchema,

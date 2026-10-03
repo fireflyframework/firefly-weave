@@ -54,7 +54,7 @@ def release(tmp_path):
     root = tmp_path / "release"
     artifacts = root / "artifacts"
     artifacts.mkdir(parents=True)
-    core = "firefly_weave-0.1.0a8-py3-none-any.whl"
+    core = "firefly_weave-0.1.0a9-py3-none-any.whl"
     records = {}
     for name, python in tooling().WORKERS.items():
         record = {
@@ -165,7 +165,7 @@ def test_worker_preparation_selects_its_python_despite_parent_environment(tmp_pa
     destination = tmp_path / "release"
     artifacts = destination / "artifacts"
     artifacts.mkdir(parents=True)
-    core = "firefly_weave-0.1.0a8-py3-none-any.whl"
+    core = "firefly_weave-0.1.0a9-py3-none-any.whl"
     (artifacts / core).write_bytes(b"core")
     selected = []
 

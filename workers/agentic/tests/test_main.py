@@ -60,3 +60,80 @@ def test_exported_catalog_lock_roundtrips_the_real_compiler(monkeypatch, capsys)
     run()
     catalog = CatalogSnapshot.from_lock(json.loads(capsys.readouterr().out))
     assert catalog.resolve("Action", "weave-agentic-generate@1.0.0") is not None
+
+
+@pytest.mark.parametrize("token,oauth", [(None, None), ("token", "config")])
+def test_worker_auth_requires_exactly_one_explicit_mode(monkeypatch, token, oauth):
+    import weave_agentic_worker.main as main
+
+    assert callable(getattr(main, "worker_auth", None)), "Worker OAuth mode is unavailable"
+    for key, value in (("WEAVE_WORKER_TOKEN_FILE", token), ("WEAVE_WORKER_OAUTH_CONFIG_FILE", oauth)):
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+    with pytest.raises(ValueError, match="exactly one"):
+        main.worker_auth("https://weave.example")
+
+
+async def test_worker_oauth_mode_renews_using_real_sdk_without_api_replay(tmp_path, monkeypatch):
+    import json
+
+    import weave_agentic_worker.main as main
+
+    assert callable(getattr(main, "worker_auth", None)), "Worker OAuth mode is unavailable"
+    from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider
+
+    secret = tmp_path / "client-secret"
+    secret.write_text("machine-secret")
+    config = tmp_path / "oauth.json"
+    config.write_text(
+        json.dumps(
+            {
+                "token_endpoint": "https://identity.example/token",
+                "client_id": "worker",
+                "scope": "api://weave/.default",
+                "client_secret_file": str(secret),
+            }
+        )
+    )
+    monkeypatch.delenv("WEAVE_WORKER_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("WEAVE_WORKER_OAUTH_CONFIG_FILE", str(config))
+    original = ClientCredentialsTokenProvider.from_file
+    now, requests = [100.0], []
+
+    async def token(request):
+        requests.append(request)
+        return httpx.Response(
+            200, json={"token_type": "Bearer", "access_token": f"token-{len(requests)}", "expires_in": 10}
+        )
+
+    monkeypatch.setattr(
+        ClientCredentialsTokenProvider,
+        "from_file",
+        lambda path, origin: original(
+            path, origin, clock=lambda: now[0], transport_factory=lambda: httpx.MockTransport(token)
+        ),
+    )
+    api_calls = []
+
+    async def receive(request):
+        api_calls.append(request.headers["authorization"])
+        return httpx.Response(401)
+
+    async with httpx.AsyncClient(
+        auth=main.worker_auth("https://weave.example"), transport=httpx.MockTransport(receive)
+    ) as client:
+        assert (await client.post("https://weave.example/tasks/claim")).status_code == 401
+        now[0] = 109.0
+        assert (await client.post("https://weave.example/tasks/claim")).status_code == 401
+    assert api_calls == ["Bearer token-1", "Bearer token-2"] and len(requests) == 2
+
+
+def test_worker_token_mode_remains_available(tmp_path, monkeypatch):
+    import weave_agentic_worker.main as main
+
+    assert callable(getattr(main, "worker_auth", None)), "Explicit worker authentication selection is unavailable"
+    monkeypatch.delenv("WEAVE_WORKER_OAUTH_CONFIG_FILE", raising=False)
+    monkeypatch.setenv("WEAVE_WORKER_TOKEN_FILE", str(tmp_path / "token"))
+    assert isinstance(main.worker_auth("https://weave.example"), TokenFileAuth)

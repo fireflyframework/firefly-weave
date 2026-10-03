@@ -80,7 +80,7 @@ directory, and keep any checkout you already use for development untouched:
 
 ```sh
 # Download the alpha7 release's operator files into a new directory.
-git clone --branch v0.1.0a8 --single-branch https://github.com/fireflyframework/firefly-weave.git firefly-weave-local
+git clone --branch v0.1.0a9 --single-branch https://github.com/fireflyframework/firefly-weave.git firefly-weave-local
 # Run the following steps from that matching checkout.
 cd firefly-weave-local
 ```
@@ -345,7 +345,7 @@ Studio opens already connected to the platform you saved in step 6.
 
 **First install Studio's browser application** if you have not yet: download
 the matching alpha7 bundle and install it as in
-[Install the alpha8 browser application](studio.md#install-the-alpha8-browser-application).
+[Install the alpha9 browser application](studio.md#install-the-alpha9-browser-application).
 Then start Studio:
 
 ```sh

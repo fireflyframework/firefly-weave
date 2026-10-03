@@ -18,15 +18,163 @@ SPDX-License-Identifier: Apache-2.0
 
 # Run AI steps with an Agentic worker
 
-A workflow AI step resolves its named `llmProfiles` entry at compilation and
-sends a pinned profile, prompt, and context to `weave-agentic.generate@1.0.0`.
-The Weave server never imports Agentic or contacts a model provider. An
-independently deployed Python 3.13 worker runs Firefly Agentic 26.9.0 through the
-normal task lease, heartbeat, credential, and completion APIs.
+Use an **AI task** when a business process needs a model's answer before it
+continues. For example, a workflow can summarize a support request, then give
+that summary to a person for review. You define the expected result; Weave
+accepts the answer only if it satisfies that contract.
 
-The worker source and locked environment are in `workers/agentic`. Agentic is
-pinned to the verified `v26.09.0` release wheel and its SHA-256. Weave retains
-its Python 3.12 server requirement.
+Use [Lumi](lumi.md) when *you*, the person using Studio, want an explanation or
+a proposed definition change. Lumi has separate configuration and does not
+execute workflow AI tasks.
+
+The Studio AI setup forms and renewable worker OAuth mode described here require
+Weave **0.1.0a9** and the **0.1.1 Agentic worker package**, whose core dependency is
+pinned to that Weave version. The catalog references below retain their own
+`1.0.0` definition and task versions.
+
+## Follow one AI task from authoring to completion
+
+![Six stages from an author's typed AI task through administrator binding, a durable task lease, an approved model call, validation, and accepted run evidence](../diagrams/ai-workflow-lifecycle.svg)
+
+[Open the workflow lifecycle diagram at full size](../diagrams/ai-workflow-lifecycle.svg).
+Read the numbered cards from top to bottom:
+
+1. **The author describes the work.** A step names a workflow AI profile and
+   supplies a prompt and context. The profile specifies the provider, model,
+   limits, and schema of the expected answer.
+2. **The administrator makes execution possible.** Published definitions,
+   an admitted worker release, an authorized connection revision, and the
+   appropriate grants must be available. Activation pins the execution resources.
+3. **Weave creates a durable task.** When the run reaches the AI step, it waits
+   for a worker to claim a lease. The worker receives the pinned task context and
+   requests credentials through the lease-scoped API.
+4. **The worker calls the provider.** An independently deployed Agentic process
+   checks its operator policy and applies the configured call and time limits.
+5. **Weave checks completion.** A current lease and a valid result are required.
+   A malformed answer cannot silently become successful workflow output.
+6. **The run continues with accepted evidence.** Later steps can use the answer.
+   Replay uses that accepted result; it does not ask the model to generate it again.
+
+The AI step resolves its named `spec.llmProfiles` entry at compilation. Its
+canonical Action is `weave-agentic-generate@1.0.0`; the Action delegates to the
+worker task capability `weave-agentic.generate@1.0.0`. These two identifiers serve
+different purposes: select the Action in the workflow and grant the task
+capability to the worker.
+
+The Weave server never imports Agentic or contacts a model provider. The worker
+source and locked environment are in `workers/agentic`. This independent Python
+3.13 process uses Firefly Agentic 26.9.0, pinned to the verified `v26.09.0` release
+wheel and its SHA-256. Weave retains its Python 3.12 server requirement.
+
+## Set up the responsibilities before authoring
+
+![Operator deploys services and scoped secrets, administrator approves connections and access, then the author configures a workflow or asks Lumi](../diagrams/ai-configuration-roles.svg)
+
+[Open the configuration roles diagram at full size](../diagrams/ai-configuration-roles.svg).
+One person can perform several roles, but each configuration still has a separate
+purpose and authorization boundary.
+
+| Person | What they configure | What it makes possible |
+| --- | --- | --- |
+| Deployment operator | Worker process, identity, exact model/endpoint policy, network access, and scoped secret grants | A trusted service can reach Weave and an approved model provider. |
+| Environment administrator | Published Connector and Action, provider connection, worker release, worker grants, and activation bindings | The chosen worker can execute the exact task using the chosen connection revision. |
+| Workflow author | Workflow AI profile, prompt, context, output schema, and connection slot | The definition describes what to ask and how later steps can use the answer. |
+
+**Secret provisioning is an operator step.** A connection stores an `apiKey`
+*handle*, not the API key itself. The operator maps that handle to a secret in
+`WEAVE_SECRET_GRANTS`, scoped to the tenant, project, and environment. The API
+loads that grant list at startup; adding or changing a grant requires an API
+restart or deployment rollout. Mounted secret-file contents are resolved when
+used, which is separate from changing the grant list. Follow
+[Give integrations their secrets](../operations/identity-and-secrets.md#give-integrations-their-secrets)
+for the supported file and environment providers. Saving a handle in Studio does
+not provision its secret or grant access to it.
+
+**Hosting Weave in Azure does not select an AI provider.** The Azure operator
+still deploys the worker, supplies its configuration and token file, permits its
+network traffic, and sets up the API's secret grants. An Azure model endpoint is
+one provider choice; an Azure-hosted Weave API can also use another supported,
+explicitly approved provider. Worker deployment and model choice are independent.
+See [deployment](../operations/deployment.md) for service identity and worker
+release provisioning.
+
+## Author your first AI task
+
+After the administrator has prepared the environment:
+
+1. Add an **AI task** in Studio and select the canonical AI Action from the
+   connected catalog. If it is missing, the administrator must publish it first.
+2. Create a named **workflow AI profile**. Choose an explicit provider and model,
+   set token and time limits, and describe the expected result with the schema
+   designer. Start with the `none` reasoning pattern for a single structured answer.
+3. Select that profile on the step. A name such as `summarizer` is local to this
+   workflow; it is not a provider credential or a Lumi setting.
+4. Supply the **prompt** (the instruction) and **context** (the data to use).
+   Map only the input or earlier step data needed for this task. The provider
+   receives these values, so omit credentials and unnecessary sensitive data.
+5. Choose the **connection slot**. The slot declares the provider Connector;
+   activation binds it to an authorized environment connection revision.
+6. Validate the workflow, resolve readiness problems, then publish and activate
+   through the normal workflow process. Starting a run is a separate action.
+
+The [AI task inspector reference](studio-step-reference.md#ai-task) explains the
+Studio controls. The following complete source example summarizes a supplied
+text into a typed string result. `gpt-4o` illustrates an explicit model ID; replace
+it with a model approved and available in your deployment, and update the
+worker policy to match.
+
+```yaml
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: summarize-request
+  version: 1.0.0
+spec:
+  inputSchema:
+    type: object
+    properties:
+      text: {type: string}
+    required: [text]
+    additionalProperties: false
+  outputSchema: {type: string}
+  connections:
+    ai-provider:
+      connector: weave-agentic-provider@1.0.0
+  llmProfiles:
+    summarizer:
+      provider: openai-chat
+      model: gpt-4o
+      options:
+        max_tokens: 256
+      reasoning:
+        pattern: none
+      maxCalls: 1
+      timeoutSeconds: 60
+      outputSchema: {type: string}
+  steps:
+    - id: summarize
+      kind: llm
+      uses: weave-agentic-generate@1.0.0
+      profile: summarizer
+      connection: ai-provider
+      prompt:
+        literal: Summarize the supplied text in one sentence.
+      context:
+        ref: /input/text
+  output:
+    ref: /steps/summarize/output/result
+```
+
+Here `summarizer` selects the profile, `ai-provider` selects the connection slot,
+and `/steps/summarize/output/result` selects the validated model answer. The
+step's full output also includes provider, model, and usage metadata. Compiling
+this example requires the canonical Connector, Action, and worker task catalog;
+a source-valid profile alone does not prove that a worker or credential is ready.
+The compiler may report `WV-COMP-UNKNOWN_COMPATIBILITY` for the generic AI Action
+input contract. Runtime validation of the pinned profile and answer still applies;
+the example does not disable that validation.
+
+The remaining sections walk the operator and administrator through that setup.
 
 ## Install and export the catalog
 
@@ -53,7 +201,26 @@ after an ambiguous network failure.
 
 ## Configure the provider connection
 
-Create a connection for the published provider Connector. Its configuration is:
+In Studio, open **Settings → AI setup → New AI connection**. The same action is
+available from **Connections** and the AI task inspector. You need
+`connection.manage` in the environment. If the provider Connector is not yet
+published, the form explains the prerequisite; an author cannot bypass it.
+
+1. Enter a **Connection name** that identifies the intended account or purpose.
+2. Choose **Provider** and enter its approved **Provider endpoint**. For an Azure
+   provider, also enter the explicit **Azure API version**. The model or Azure
+   deployment name belongs in the workflow profile, not this connection form.
+3. Enter the **API key secret handle** supplied by the operator. This field takes
+   a handle, never the raw API key.
+4. Select **Create AI connection**. Studio restricts allowed destinations to the
+   endpoint's exact HTTPS origin. The operator's worker policy must also permit
+   that endpoint.
+5. Record the created connection and revision. The platform checked its
+   configuration; no model request was sent. Complete the worker release and
+   credential grants before binding it to an executable workflow.
+
+For API clients, create a connection for the published provider Connector with
+this configuration:
 
 ```json
 {
@@ -107,10 +274,41 @@ Provide these explicit deployment settings:
 | `WEAVE_API_URL` | Weave API origin |
 | `WEAVE_ENVIRONMENT_URL` | Scoped `/api/v1/tenants/.../projects/.../environments/...` path |
 | `WEAVE_WORKER_RELEASE_ID` | Admitted worker release UUID |
-| `WEAVE_WORKER_TOKEN_FILE` | Mounted file containing the worker principal's access token |
+| `WEAVE_WORKER_TOKEN_FILE` | Mounted worker access-token file; use this or OAuth configuration, never both. |
+| `WEAVE_WORKER_OAUTH_CONFIG_FILE` | Mounted client-credentials configuration JSON; alternative to the access-token file. |
 | `WEAVE_AGENTIC_POLICY_FILE` | Mounted policy JSON file |
 
-The operator refreshes the token file; each HTTP request reads the current token.
+Choose exactly one authentication mode:
+
+- **Access-token file:** the operator refreshes `WEAVE_WORKER_TOKEN_FILE`; each
+  HTTP request reads the current token.
+- **OAuth client credentials:** set `WEAVE_WORKER_OAUTH_CONFIG_FILE` to an
+  operator-owned JSON file with the four fields below. The worker obtains and
+  renews its own short-lived access token from the configured identity provider.
+
+```json
+{
+  "token_endpoint": "https://login.microsoftonline.com/YOUR_TENANT_ID/oauth2/v2.0/token",
+  "client_id": "YOUR_WORKER_APPLICATION_ID",
+  "scope": "api://YOUR_WEAVE_API_APPLICATION_ID/.default",
+  "client_secret_file": "/run/secrets/worker-client-secret"
+}
+```
+
+This illustrates Microsoft Entra ID's client-credentials configuration. Use your
+actual tenant, registered worker application, API scope, and mounted secret file.
+The worker identity must already be trusted and linked to a Weave application
+principal with the required grants; acquiring a token does not create authority.
+This machine credential authenticates to **Weave**, while the provider
+connection's `apiKey` authenticates to the **model provider**.
+
+OAuth configuration is fixed when the worker starts. The client secret is read
+again on token acquisition, and a cached token is refreshed before its reported
+expiry. Acquisition is bounded to ten seconds, ignores environment proxies,
+does not follow redirects, and does not retry. Tokens are attached only to the
+configured HTTPS Weave API origin. A refused API request is not replayed after
+refresh, which avoids silently repeating a state-changing operation.
+
 The worker principal needs only its task/credential grants. The worker registers
 one instance with capacity one and drains on `SIGTERM` or `SIGINT`. Lease renewal
 failure cancels the running model call. No database or administrator credentials
@@ -126,7 +324,7 @@ Or build the independent image from the repository root:
 docker build -f workers/agentic/Dockerfile -t weave-agentic-worker:local .
 ```
 
-Run it with the environment settings and read-only mounted policy/token files.
+Run it with the environment settings and read-only mounted policy and authentication files.
 The image runs as UID 65532; make those files readable by that UID. It uses the
 separate locked Python 3.13 environment and does not change the server image.
 
@@ -199,3 +397,17 @@ checks do not establish live model availability or provider account permissions.
 The platform integration tests additionally activate the canonical catalog,
 claim a real database-backed task, enforce the pinned credential grant, and
 verify completion, output guards, replay, and classified-result rejection.
+
+## Check readiness one layer at a time
+
+| What you see | What to check next |
+| --- | --- |
+| The AI Action is missing from Studio | Publish the canonical Connector and Action in the connected catalog. |
+| The profile or connection slot is invalid | Check the named `llmProfiles` entry, provider match, required options, and connection requirement. |
+| A connection handle exists but credentials are unavailable | Ask the operator to check the exact environment-scoped secret grant and secret source; a new grant needs an API rollout. |
+| Activation cannot bind a worker or connection | Check the admitted release, task capability, worker authority, and exact connection-revision grant. |
+| The task waits without being claimed | Check that the independently deployed worker is running, authenticated, and has capacity for its admitted release. |
+| The call fails with a safe LLM error | Check the allowed model/endpoint, provider access, output contract, and configured budgets. A generic connection test does not validate remote provider credentials. |
+
+For assistance while editing, continue with [Lumi](lumi.md). Enabling Lumi is a
+separate setup; it neither starts this worker nor changes any workflow profile.

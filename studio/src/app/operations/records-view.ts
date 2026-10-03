@@ -170,6 +170,11 @@ const runStatusFilters: [string, string][] = [
             <button class="primary" (click)="h.openConnectionDialog()">
               <weave-icon name="plus" [size]="16" />New connection
             </button>
+            @if (h.can("connection.manage")) {
+              <button type="button" (click)="h.openAiConnectionDialog()">
+                New AI connection
+              </button>
+            }
           } @else if (v === "runs" && h.can("run.start")) {
             <button class="primary" (click)="h.startRun()">
               <weave-icon name="plus" [size]="16" />Start run

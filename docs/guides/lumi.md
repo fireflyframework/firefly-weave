@@ -26,21 +26,83 @@ permission checks before a person applies them.
 Lumi has its own configuration per environment. It never reads a workflow's
 `llmProfiles`, and changing an LLM step does not change the assistant.
 
+The Studio **AI setup** entry points and named provider-connection selection
+shown here require Weave **0.1.0a9**. Use the matching **0.1.1 Agentic worker
+package** for the independently deployed Lumi gateway.
+
+## Follow a question through review
+
+![Six stages from opt-in question and context through permission checks and a private model gateway to review, validation, and an undoable local draft change](../diagrams/lumi-review-lifecycle.svg)
+
+[Open the Lumi review diagram at full size](../diagrams/lumi-review-lifecycle.svg).
+The person stays in control of both what is shared and what changes:
+
+1. **Choose a question and context.** You can ask a general authoring question
+   without attaching a resource. Include source or a saved resource only when
+   the explanation needs it.
+2. **Weave checks access.** Lumi permission does not grant permission to read
+   another person's draft, run, or simulation. The API checks each attachment.
+3. **The private gateway calls the configured model.** The API uses the
+   environment's Lumi profile and pinned connection. The gateway independently
+   enforces the operator's provider, model, endpoint, and execution limits.
+4. **Read the reply.** It may contain an explanation, proposed source, and
+   follow-up questions. A proposal is a suggestion, not an executed command.
+5. **Review and validate.** Open the proposed source, edit it if needed, and use
+   the normal compiler validation before applying it.
+6. **Apply deliberately.** A valid workflow proposal can replace the original
+   unchanged local draft and offers Undo. Saving, publishing, activating, and
+   running remain separate actions with their normal permissions.
+
+For example, ask “Explain which path this decision takes when the amount is
+above the limit,” and include the current source. Inspect the explanation against
+your conditions. If Lumi proposes a change, review both the condition and its
+branch output before validating and applying it. Validation checks the definition;
+it does not prove that a suggested business rule is the one you intended.
+
+## Keep the three configurations separate
+
+![Separate responsibilities for deployment operators, environment administrators, and workflow authors or Lumi users](../diagrams/ai-configuration-roles.svg)
+
+[Open the configuration roles diagram at full size](../diagrams/ai-configuration-roles.svg).
+These settings may use the same approved provider, but they are not inherited
+from one another:
+
+| Configuration | Who maintains it | Purpose |
+| --- | --- | --- |
+| Workflow `spec.llmProfiles` | Workflow author | Defines a model task inside a durable workflow run. |
+| Environment Lumi configuration | Administrator with `lumi.manage` | Selects the assistant's model profile and pinned provider connection. |
+| Deployment policy and services | Deployment operator | Starts the worker or gateway, restricts destinations/models, and provisions secrets and service identity. |
+
+To enable Lumi from a new deployment, the operator deploys the private gateway
+and configures the API first. The administrator then prepares the provider
+connection, grants access, and saves the environment's Lumi configuration.
+Users can ask questions only after those layers are ready. Saving settings in
+Studio does not deploy a gateway, create an API key, or start a workflow worker.
+
+On Azure, the cloud operator is still responsible for these service settings,
+private connectivity, TLS, mounted secrets, and allowed provider egress. Hosting
+Weave in Azure does not automatically choose an Azure model or enable Lumi.
+The [AI worker guide](ai-workers.md#set-up-the-responsibilities-before-authoring)
+explains the shared operator/administrator handoff.
+
 ## Use Lumi in Studio
 
-Select **Ask Lumi** from the global toolbar after connecting to an environment
-where Lumi is enabled. Type a question. Context is opt-in: check **Include current
-source** to share the current local draft, including unsaved source edits, or
-select the available saved draft, run, or simulation attachment. The selected
-provider receives the included source and authorized context.
-
-A reply is plain text. Open a proposed draft to review and edit its source, then
-select **Validate proposal**. A valid workflow proposal can **Apply to local
-draft** only while the original local draft and source revision remain unchanged.
-If either changed, ask again against the current draft. Applying offers Undo;
-it does not save to the platform, publish, activate, or run the workflow.
-Other valid proposal kinds offer **Save reviewed draft file** for subsequent
-review in their normal authoring tools.
+1. Connect Studio to the intended environment and select **Ask Lumi** when
+   assistance is available there. Check the environment before sharing context.
+2. Type your question. Context is opt-in: check **Include current source** to
+   share the current local draft, including unsaved source edits, or select an
+   available saved draft, run, or simulation attachment. The selected provider
+   receives that included source and authorized context.
+3. Send the request and read the plain-text answer. If a proposed draft is
+   useful, open it, review its source, and make any corrections you need.
+4. Select **Validate proposal**. Address diagnostics before applying. A valid
+   workflow proposal offers **Apply to local draft** only while the original
+   local draft and source revision remain unchanged. If either changed, ask
+   again against the current draft.
+5. Apply the reviewed change, then inspect the local workflow. Use **Undo** if
+   you want to restore the previous draft. Applying does not save to the
+   platform, publish, activate, or run the workflow. Other valid proposal kinds
+   offer **Save reviewed draft file** for review in their normal authoring tools.
 
 **New conversation** clears the current exchange. Conversations remain in memory
 and clear when the workspace, identity, or sign-in session changes. They are not
@@ -101,6 +163,36 @@ and exact provider origin. Lumi pins one immutable connection revision. This is
 an explicit delegation: users with `lumi.use` can spend that connection's model
 budget through Lumi, but do not gain `credential.lease`, connection management,
 or access to other resources.
+
+The connection's handle must already have an operator-provisioned scoped
+secret grant. The API reads `WEAVE_SECRET_GRANTS` at startup; adding or changing
+that grant list requires an API restart or deployment rollout. A manager saving
+a connection or Lumi configuration cannot create that grant from the browser.
+See [Give integrations their secrets](../operations/identity-and-secrets.md#give-integrations-their-secrets).
+The operator also supplies `WEAVE_LUMI_GATEWAY` when starting the API. This is
+separate from the administrator's editable environment Lumi configuration.
+
+### Save the settings in Studio
+
+1. Open **Settings → AI setup → Configure Lumi**, or open **Lumi settings** from
+   the assistant. These settings belong to the current environment.
+2. Choose the provider and an explicit model in the Lumi profile. For Azure,
+   supply the Azure deployment name. Set the model's token, call, and time limits;
+   Studio supplies the fixed reply schema.
+3. Choose **Provider connection**. The list displays the connection name and
+   revision and filters for the selected provider. Lumi pins the exact revision,
+   so a later connection revision does not silently change the assistant.
+4. If needed, select **New AI connection** and follow the
+   [provider connection steps](ai-workers.md#configure-the-provider-connection).
+   Use **Refresh connections** to reload available choices.
+5. Enable the assistant and select **Save Lumi settings**. Use a simple request
+   without attachments to confirm the complete path, as described
+   [below](#confirm-setup-without-sharing-sensitive-source).
+
+A workflow AI profile never fills these fields automatically. Likewise, a saved
+Lumi profile does not change a workflow's model or authorize its worker.
+
+### Configure through the API
 
 Use these API operations under the environment URL:
 
@@ -170,3 +262,26 @@ HTTP disconnects cancel and await owned model work. Cancellation or an ambiguous
 network failure can still incur provider cost; the API deliberately does not
 retry or replay a request. Operators should also apply provider-side quotas and
 network egress controls. No live-provider availability is implied by local tests.
+
+## Confirm setup without sharing sensitive source
+
+First ask a simple authoring question with no source or attachments, such as
+“What is the difference between a workflow input and a step output?” A successful
+reply verifies that this user's current access, environment configuration,
+gateway, credential, policy, and provider can complete that request. It does not
+prove future model availability or the correctness of every proposed definition.
+Then try an explicitly selected, nonsensitive draft and practice reviewing,
+validating, applying, and undoing one proposed workflow change.
+
+| Problem | Responsible next step |
+| --- | --- |
+| Lumi is unavailable | The administrator checks the environment configuration and `lumi.use` grant; the operator checks that the API has a configured gateway. |
+| Configuration cannot use a connection | The administrator checks its immutable revision and provider; the operator checks the exact scoped secret grant. |
+| A request is refused or fails | Check current permissions, gateway connectivity/service token, exact model/endpoint policy, provider access, and configured limits. Do not copy keys into a prompt to work around it. |
+| A resource cannot be attached | Obtain ordinary read access to that resource; Lumi access alone is insufficient. |
+| A proposal cannot be applied | Resolve validation errors or ask again against the changed local draft. Applying to a different or newer draft is deliberately refused. |
+
+Lumi has no arbitrary tools, provider plug-ins, or resource-query access. Its
+supported adapters and bounded reasoning patterns are the ones documented in
+[AI workers](ai-workers.md#reasoning-limits-and-results). Extending a prompt does
+not grant the assistant new platform capabilities.
