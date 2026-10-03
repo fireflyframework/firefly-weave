@@ -19,18 +19,20 @@ SPDX-License-Identifier: Apache-2.0
 
 use serde::Deserialize;
 use std::{
-    path::PathBuf,
+    io::ErrorKind,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Mutex,
+        Arc, Mutex, MutexGuard,
     },
     time::Duration,
 };
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
-    Manager, WebviewUrl, WebviewWindowBuilder,
+    webview::DownloadEvent,
+    Manager, Url, WebviewUrl, WebviewWindowBuilder,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
@@ -97,6 +99,321 @@ fn report(app: &tauri::AppHandle, message: &str) {
         .title("Firefly Weave Studio")
         .show(|_| {});
 }
+fn report_error(app: &tauri::AppHandle, message: &str) {
+    app.dialog()
+        .message(message)
+        .title("Firefly Weave Studio")
+        .kind(MessageDialogKind::Error)
+        .show(|_| {});
+}
+
+/// Pairs a Studio window with its own host. It runs at document start in the main frame of every page load,
+/// so a reload after the host session ended pairs again whenever the host still accepts the desktop code.
+/// The code only travels in a same-origin POST body, never in a URL. A refused code (403) leaves the page to
+/// explain the next step, and at most three automatic re-pairing reloads a minute stop a session cookie that
+/// never sticks from turning into a reload loop. Session storage holds only those timestamps.
+///
+/// The code stays reusable for the host's lifetime, so page scripts must never reach it: the request body is
+/// encoded in Rust and held in this function's scope, so no global a page could replace (`JSON.stringify`,
+/// `fetch`) sees it, and the callbacks handed to promises (whose source text `Function.prototype.toString`
+/// reveals) only name it.
+const PAIRING_SCRIPT: &str = r#"(() => {
+  if (window.top !== window || location.origin !== __WEAVE_ORIGIN__) return;
+  const body = __WEAVE_BODY__;
+  const request = window.fetch.bind(window);
+  const key = 'weave-desktop-pairing';
+  const now = Date.now();
+  let recent = null;
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(key) || '[]');
+    recent = Array.isArray(stored)
+      ? stored.filter((t) => typeof t === 'number' && t <= now && now - t < 60000)
+      : [];
+  } catch (_) {
+    recent = null;
+  }
+  request('/studio/session', { credentials: 'same-origin', cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((s) => {
+      if (!s || s.paired !== false) return;
+      if (recent !== null && recent.length >= 3) return;
+      return request('/studio/session', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      }).then((r) => {
+        if (!r.ok) return;
+        if (recent === null) {
+          // Without session storage, allow one automatic reload per navigation the person started.
+          const entry = performance.getEntriesByType('navigation')[0];
+          if (entry && entry.type === 'reload') return;
+        } else {
+          try {
+            sessionStorage.setItem(key, JSON.stringify(recent.concat(now)));
+          } catch (_) {
+            return;
+          }
+        }
+        location.reload();
+      });
+    })
+    .catch(() => {});
+})();"#;
+
+fn pairing_script(origin: &str, code: &str) -> String {
+    // The body is the JSON request document, embedded as one JavaScript string literal.
+    let body = serde_json::json!({ "code": code }).to_string();
+    PAIRING_SCRIPT
+        .replacen(
+            "__WEAVE_ORIGIN__",
+            &serde_json::to_string(origin).expect("a string always encodes as JSON"),
+            1,
+        )
+        .replacen(
+            "__WEAVE_BODY__",
+            &serde_json::to_string(&body).expect("a string always encodes as JSON"),
+            1,
+        )
+}
+
+/// Plain-text formats Studio exports. Any other name gets a `.txt` suffix, so a download can never land as a
+/// file the system would execute or hand to another application.
+const SAFE_DOWNLOAD_EXTENSIONS: [&str; 5] = ["json", "yaml", "yml", "txt", "csv"];
+const MAX_DOWNLOAD_NAME_BYTES: usize = 128;
+const MAX_NAME_ATTEMPTS: u32 = 1000;
+const MAX_PENDING_DOWNLOADS: usize = 32;
+const FALLBACK_DOWNLOAD_STEM: &str = "studio-export";
+
+/// True when the Studio window may navigate to `url`: its own origin, without user info. On macOS only `http`
+/// pages qualify: WKWebView hands downloads to the download handler without asking this check, and where
+/// that API is missing (before macOS 11.3) an exported same-origin `blob:` file could otherwise replace
+/// Studio and every unsaved edit. WebKitGTK asks this check before it starts a `blob:` download, so other
+/// platforms keep accepting same-origin `blob:` URLs here.
+fn navigation_allowed(url: &Url, owned_origin: &str) -> bool {
+    (url.scheme() == "http" || !cfg!(target_os = "macos"))
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.origin().ascii_serialization() == owned_origin
+}
+
+/// True for a `blob:` URL minted by the owned origin, or an `http` URL on the owned origin itself.
+fn download_allowed(url: &Url, owned_origin: &str) -> bool {
+    let source = if url.scheme() == "blob" {
+        match Url::parse(url.path()) {
+            Ok(inner) => inner,
+            Err(_) => return false,
+        }
+    } else {
+        url.clone()
+    };
+    source.scheme() == "http"
+        && source.username().is_empty()
+        && source.password().is_none()
+        && source.origin().ascii_serialization() == owned_origin
+}
+
+fn is_unsafe_name_char(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*')
+        // Bidirectional controls can disguise an extension ("report\u{202E}nosj.exe").
+        || matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+fn trim_name(text: &str) -> &str {
+    text.trim_matches(|c: char| c.is_whitespace() || c == '.')
+}
+
+/// Reduces a suggested download name to a bounded base name with a safe extension: no path separators,
+/// no reserved or control characters, no leading dots, and never a Windows device name.
+fn sanitize_download_name(suggested: &str) -> String {
+    let base = suggested.rsplit(['/', '\\']).next().unwrap_or_default();
+    let cleaned: String = base
+        .chars()
+        .map(|c| if is_unsafe_name_char(c) { '_' } else { c })
+        .collect();
+    let cleaned = trim_name(&cleaned);
+    let (stem, extension) = match cleaned.rsplit_once('.') {
+        Some((stem, extension))
+            if !trim_name(stem).is_empty()
+                && SAFE_DOWNLOAD_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()) =>
+        {
+            (trim_name(stem), extension.to_ascii_lowercase())
+        }
+        _ => (cleaned, "txt".to_string()),
+    };
+    let mut stem = if stem.is_empty() {
+        FALLBACK_DOWNLOAD_STEM.to_string()
+    } else {
+        stem.to_string()
+    };
+    let device = stem
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase();
+    let reserved = matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((device.starts_with("COM") || device.starts_with("LPT"))
+            && device.len() == 4
+            && device.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        stem.insert(0, '_');
+    }
+    let budget = MAX_DOWNLOAD_NAME_BYTES - extension.len() - 1;
+    if stem.len() > budget {
+        let mut end = budget;
+        while !stem.is_char_boundary(end) {
+            end -= 1;
+        }
+        stem.truncate(end);
+        stem = trim_name(&stem).to_string();
+        if stem.is_empty() {
+            stem = FALLBACK_DOWNLOAD_STEM.to_string();
+        }
+    }
+    format!("{stem}.{extension}")
+}
+
+/// The first free `name`, `stem (1).ext`, `stem (2).ext`, … in `folder`. `None` when the folder cannot be
+/// inspected (for example when privacy settings deny access) or every candidate is taken.
+fn unique_destination(folder: &Path, name: &str) -> Option<PathBuf> {
+    let (stem, extension) = name.rsplit_once('.').unwrap_or((name, "txt"));
+    for attempt in 0..MAX_NAME_ATTEMPTS {
+        let candidate = if attempt == 0 {
+            folder.join(name)
+        } else {
+            folder.join(format!("{stem} ({attempt}).{extension}"))
+        };
+        match candidate.symlink_metadata() {
+            Err(error) if error.kind() == ErrorKind::NotFound => return Some(candidate),
+            Ok(_) => continue,
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+#[derive(Debug, PartialEq)]
+enum DownloadRefusal {
+    Foreign,
+    NoFolder,
+    Unavailable(String),
+}
+
+/// Decides where a requested download is saved, or why it is refused.
+fn plan_download(
+    url: &Url,
+    owned_origin: &str,
+    suggested: &Path,
+    folder: Option<PathBuf>,
+) -> Result<PathBuf, DownloadRefusal> {
+    if !download_allowed(url, owned_origin) {
+        return Err(DownloadRefusal::Foreign);
+    }
+    let name = sanitize_download_name(
+        &suggested
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    );
+    let folder = folder.ok_or(DownloadRefusal::NoFolder)?;
+    unique_destination(&folder, &name).ok_or(DownloadRefusal::Unavailable(name))
+}
+
+/// Saves Studio exports from one window to the Downloads folder. The webview reports where each download
+/// came from; only the window's own loopback origin may save files, and failures surface as native dialogs
+/// because the page cannot learn whether a save finished.
+struct Downloads {
+    origin: String,
+    pending: Mutex<Vec<(String, PathBuf)>>,
+    blocked_reported: AtomicBool,
+}
+
+/// Whether a finished download failed. wry 0.57 keeps a single failure flag per WebKitGTK web context, so after
+/// one failed or refused download every later one reports failure too; where that happens (`sticky_failures`), a
+/// file at the planned destination means the save worked. WebKitGTK only moves a download there once complete.
+fn save_failed(success: bool, destination: &Path, sticky_failures: bool) -> bool {
+    !(success || (sticky_failures && destination.is_file()))
+}
+
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+impl Downloads {
+    fn new(origin: String) -> Self {
+        Self {
+            origin,
+            pending: Mutex::new(Vec::new()),
+            blocked_reported: AtomicBool::new(false),
+        }
+    }
+    fn pending(&self) -> MutexGuard<'_, Vec<(String, PathBuf)>> {
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+    fn handle(&self, app: &tauri::AppHandle, event: DownloadEvent<'_>) -> bool {
+        match event {
+            DownloadEvent::Requested { url, destination } => {
+                let folder = app.path().download_dir().ok();
+                match plan_download(&url, &self.origin, destination, folder) {
+                    Ok(path) => {
+                        let mut pending = self.pending();
+                        // A download that never reports back must not grow this list without bound.
+                        if pending.len() >= MAX_PENDING_DOWNLOADS {
+                            pending.remove(0);
+                        }
+                        pending.push((url.to_string(), path.clone()));
+                        *destination = path;
+                        true
+                    }
+                    Err(DownloadRefusal::Foreign) => {
+                        if !self.blocked_reported.swap(true, Ordering::SeqCst) {
+                            report_error(
+                                app,
+                                "Studio blocked a download that did not come from this Studio window.",
+                            );
+                        }
+                        false
+                    }
+                    Err(DownloadRefusal::NoFolder) => {
+                        report_error(
+                            app,
+                            "Studio could not find your Downloads folder, so the export was not saved.",
+                        );
+                        false
+                    }
+                    Err(DownloadRefusal::Unavailable(name)) => {
+                        report_error(app, &format!("Studio could not save {name} to your Downloads folder. Check that Firefly Weave Studio may use that folder in your system privacy settings, then export again."));
+                        false
+                    }
+                }
+            }
+            DownloadEvent::Finished { url, success, .. } => {
+                let planned = {
+                    let mut pending = self.pending();
+                    pending
+                        .iter()
+                        .position(|(requested, _)| requested == url.as_str())
+                        .map(|index| pending.remove(index).1)
+                };
+                if let Some(path) = planned {
+                    if save_failed(success, &path, cfg!(target_os = "linux")) {
+                        let name = file_label(&path);
+                        report_error(app, &format!("Studio could not save {name} to your Downloads folder. Check that the folder is available, then export again."));
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+}
 async fn launch(app: tauri::AppHandle, profile: Option<PathBuf>) -> Result<(), String> {
     if let Some(child) = app.state::<HostState>().login.lock().unwrap().take() {
         let _ = child.kill();
@@ -144,18 +461,9 @@ async fn launch(app: tauri::AppHandle, profile: Option<PathBuf>) -> Result<(), S
         .origin
         .parse()
         .map_err(|_| "Invalid host origin")?;
-    let allowed_origin = origin.origin();
-    let script = format!(
-        r#"(() => {{
-      if (location.origin !== {origin}) return;
-      fetch('/studio/session', {{credentials:'same-origin'}}).then(r=>r.json()).then(s=>{{
-        if (s.paired) return;
-        return fetch('/studio/session', {{method:'POST', credentials:'same-origin',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{code:{code}}})}}).then(r=>{{if(r.ok) location.reload();}});
-      }}).catch(()=>{{}});
-    }})();"#,
-        origin = serde_json::to_string(&bootstrap.origin).unwrap(),
-        code = serde_json::to_string(&bootstrap.pairing_code).unwrap()
-    );
+    let allowed_origin = origin.origin().ascii_serialization();
+    let script = pairing_script(&bootstrap.origin, &bootstrap.pairing_code);
+    let downloads = Arc::new(Downloads::new(allowed_origin.clone()));
     let sequence = app
         .state::<HostState>()
         .sequence
@@ -168,10 +476,10 @@ async fn launch(app: tauri::AppHandle, profile: Option<PathBuf>) -> Result<(), S
         .initialization_script(script)
         .incognito(true)
         .disable_drag_drop_handler()
-        .on_navigation(move |url| {
-            url.origin() == allowed_origin && url.username().is_empty() && url.password().is_none()
-        })
+        .on_navigation(move |url| navigation_allowed(url, &allowed_origin))
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+        // Without a handler WKWebView cancels every download, so exports would silently do nothing.
+        .on_download(move |webview, event| downloads.handle(webview.app_handle(), event))
         .build();
     if built.is_err() {
         let _ = child.kill();
@@ -202,7 +510,10 @@ async fn launch(app: tauri::AppHandle, profile: Option<PathBuf>) -> Result<(), S
                 let state = app.state::<HostState>();
                 let active = state.active.lock().unwrap();
                 if active.as_ref().is_some_and(|h| h.label == label) {
-                    report(&app, "The local Studio host stopped. Use the Studio menu to reopen your workspace.");
+                    report(
+                        &app,
+                        "The local Studio host stopped. Choose Studio → Reopen Studio to continue.",
+                    );
                 }
                 break;
             }
@@ -227,14 +538,17 @@ fn request_launch(app: tauri::AppHandle, profile: Option<PathBuf>) {
             .store(false, Ordering::SeqCst);
     });
 }
-fn change_workspace(app: tauri::AppHandle, pick_profile: bool) {
+/// Restarts the host, either with the shared saved platforms or with one profile file the person picks.
+fn restart_studio(app: tauri::AppHandle, pick_profile: bool) {
     std::thread::spawn(move || {
         if !app
             .dialog()
-            .message(
-                "Changing workspace restarts Studio. Export unsaved workflows before continuing.",
-            )
-            .title("Change Studio workspace")
+            .message(if pick_profile {
+                "Studio restarts to open a profile file. Export unsaved workflows before continuing."
+            } else {
+                "Studio restarts with your saved platforms. Export unsaved workflows before continuing."
+            })
+            .title("Restart Studio")
             .buttons(MessageDialogButtons::OkCancel)
             .blocking_show()
         {
@@ -264,10 +578,7 @@ fn change_workspace(app: tauri::AppHandle, pick_profile: bool) {
 }
 fn sign_in(app: tauri::AppHandle) {
     if app.state::<HostState>().starting.load(Ordering::SeqCst) {
-        report(
-            &app,
-            "Wait for the workspace to finish opening before signing in.",
-        );
+        report(&app, "Wait for Studio to finish opening before signing in.");
         return;
     }
     let profile = app
@@ -280,7 +591,7 @@ fn sign_in(app: tauri::AppHandle) {
     let Some(profile) = profile else {
         report(
             &app,
-            "Choose a platform profile from the Studio menu before signing in.",
+            "Sign in from the platform menu at the top of the Studio window. This menu item signs in only after you open a profile file with Choose platform profile.",
         );
         return;
     };
@@ -324,7 +635,7 @@ fn sign_in(app: tauri::AppHandle) {
         match result {
             Ok(()) => report(
                 &app,
-                "Signed in. Refresh your Studio workspace to load current permissions.",
+                "Signed in. Choose View → Reload Studio to load your current permissions.",
             ),
             Err(message) => report(&app, message),
         }
@@ -354,8 +665,8 @@ fn main() {
                 true,
                 None::<&str>,
             )?;
-            let offline =
-                MenuItem::with_id(app, "offline", "Open offline authoring", true, None::<&str>)?;
+            let reopen =
+                MenuItem::with_id(app, "reopen", "Reopen Studio", true, None::<&str>)?;
             let submenu = Submenu::with_items(
                 app,
                 "Studio",
@@ -363,7 +674,7 @@ fn main() {
                 &[
                     &profile,
                     &signin,
-                    &offline,
+                    &reopen,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::quit(app, Some("Quit Studio"))?,
                 ],
@@ -385,7 +696,7 @@ fn main() {
             let refresh = MenuItem::with_id(
                 app,
                 "refresh",
-                "Refresh workspace…",
+                "Reload Studio…",
                 true,
                 Some("CmdOrCtrl+R"),
             )?;
@@ -395,15 +706,16 @@ fn main() {
             Ok(())
         })
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "profile" => change_workspace(app.clone(), true),
+            "profile" => restart_studio(app.clone(), true),
             "signin" => sign_in(app.clone()),
-            "offline" => change_workspace(app.clone(), false),
+            "reopen" => restart_studio(app.clone(), false),
             "refresh" => {
                 let app = app.clone();
                 std::thread::spawn(move || {
                     if app
                         .dialog()
-                        .message("Refresh reloads this workspace. Export any unsaved drafts first.")
+                        .message("Reloading Studio discards edits you have not exported. Export unsaved workflows first.")
+                        .title("Reload Studio")
                         .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel)
                         .blocking_show()
                     {
@@ -458,5 +770,210 @@ mod tests {
             assert!(validate_bootstrap(&sample(origin)).is_err());
         }
         assert!(validate_bootstrap(&vec![b'x'; 1025]).is_err());
+    }
+
+    const ORIGIN: &str = "http://127.0.0.1:32199";
+    const CODE: &str = "a23456789012345678901234567890123";
+    fn url(text: &str) -> Url {
+        text.parse().unwrap()
+    }
+    struct TempFolder(PathBuf);
+    impl TempFolder {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "weave-downloads-{tag}-{}-{nanos}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for TempFolder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn downloads_are_accepted_only_from_the_owned_origin() {
+        for allowed in [
+            "blob:http://127.0.0.1:32199/9b1c3c5e-1f0a-4c55-9a43-1f2d8e2a7f10",
+            "http://127.0.0.1:32199/studio/export",
+        ] {
+            assert!(download_allowed(&url(allowed), ORIGIN), "{allowed}");
+        }
+        for refused in [
+            "blob:http://127.0.0.1:32198/9b1c3c5e",
+            "blob:http://localhost:32199/9b1c3c5e",
+            "blob:https://127.0.0.1:32199/9b1c3c5e",
+            "blob:null/9b1c3c5e",
+            "blob:blob:http://127.0.0.1:32199/9b1c3c5e",
+            "blob:http://user@127.0.0.1:32199/9b1c3c5e",
+            "data:application/json,%7B%7D",
+            "file:///etc/passwd",
+            "https://evil.example/orders.json",
+            "http://127.0.0.1:32198/orders.json",
+            "http://user:secret@127.0.0.1:32199/orders.json",
+            "about:blank",
+        ] {
+            assert!(!download_allowed(&url(refused), ORIGIN), "{refused}");
+        }
+    }
+
+    #[test]
+    fn the_window_navigates_only_within_its_own_origin() {
+        for allowed in [
+            "http://127.0.0.1:32199/",
+            "http://127.0.0.1:32199/studio?view=home#top",
+        ] {
+            assert!(navigation_allowed(&url(allowed), ORIGIN), "{allowed}");
+        }
+        for refused in [
+            "http://127.0.0.1:32198/",
+            "http://localhost:32199/",
+            "https://127.0.0.1:32199/",
+            "http://user@127.0.0.1:32199/",
+            "http://user:secret@127.0.0.1:32199/",
+            "https://evil.example/",
+            "blob:http://127.0.0.1:32198/1d7f",
+            "data:text/html,studio",
+            "about:blank",
+            "file:///etc/passwd",
+        ] {
+            assert!(!navigation_allowed(&url(refused), ORIGIN), "{refused}");
+        }
+        // An exported file never replaces Studio on macOS; WebKitGTK must still be allowed to start the download.
+        assert_eq!(
+            navigation_allowed(&url("blob:http://127.0.0.1:32199/1d7f"), ORIGIN),
+            !cfg!(target_os = "macos")
+        );
+    }
+
+    #[test]
+    fn only_a_missing_file_counts_as_a_failed_save_where_failures_stick() {
+        let folder = TempFolder::new("finished");
+        let saved = folder.0.join("orders.yaml");
+        std::fs::write(&saved, "name: orders\n").unwrap();
+        let missing = folder.0.join("missing.yaml");
+        assert!(!save_failed(true, &missing, true));
+        assert!(!save_failed(true, &missing, false));
+        assert!(save_failed(false, &missing, true));
+        assert!(save_failed(false, &saved, false));
+        assert!(!save_failed(false, &saved, true));
+        assert!(save_failed(false, &folder.0, true));
+        assert_eq!(file_label(&saved), "orders.yaml");
+    }
+
+    #[test]
+    fn download_names_are_bounded_base_names_with_safe_extensions() {
+        for (suggested, expected) in [
+            ("orders.yaml", "orders.yaml"),
+            ("orders.layout.json", "orders.layout.json"),
+            ("orders.yml", "orders.yml"),
+            ("Orders.JSON", "Orders.json"),
+            ("../../.ssh/authorized_keys", "authorized_keys.txt"),
+            ("..\\..\\evil.json", "evil.json"),
+            ("_evil_.hidden_name.json", "_evil_.hidden_name.json"),
+            (".bashrc", "bashrc.txt"),
+            (".json", "json.txt"),
+            ("...", "studio-export.txt"),
+            ("", "studio-export.txt"),
+            ("run.command", "run.command.txt"),
+            ("payload.exe", "payload.exe.txt"),
+            ("report\u{202E}nosj.exe", "report_nosj.exe.txt"),
+            ("a:b|c?.json", "a_b_c_.json"),
+            ("line\nbreak.yaml", "line_break.yaml"),
+            ("trailing. .json", "trailing.json"),
+            ("CON.json", "_CON.json"),
+            ("lpt1.yaml", "_lpt1.yaml"),
+            ("con.exe", "_con.exe.txt"),
+            ("console.json", "console.json"),
+        ] {
+            assert_eq!(sanitize_download_name(suggested), expected, "{suggested:?}");
+        }
+        let wide = sanitize_download_name(&format!("{}.json", "é".repeat(200)));
+        assert!(wide.len() <= MAX_DOWNLOAD_NAME_BYTES && wide.ends_with("é.json"));
+        let plain = sanitize_download_name(&"x".repeat(300));
+        assert_eq!(plain.len(), MAX_DOWNLOAD_NAME_BYTES);
+        assert!(plain.ends_with("x.txt"));
+    }
+
+    #[test]
+    fn downloads_never_overwrite_and_stay_in_the_downloads_folder() {
+        let folder = TempFolder::new("plan");
+        let blob = url("blob:http://127.0.0.1:32199/1d7f");
+        let plan = |suggested: &str| {
+            plan_download(&blob, ORIGIN, Path::new(suggested), Some(folder.0.clone()))
+        };
+        let first = plan("/Users/someone/Downloads/orders.layout.json").unwrap();
+        assert_eq!(first, folder.0.join("orders.layout.json"));
+        std::fs::write(&first, "{}").unwrap();
+        let second = plan("orders.layout.json").unwrap();
+        assert_eq!(second, folder.0.join("orders.layout (1).json"));
+        std::fs::write(&second, "{}").unwrap();
+        assert_eq!(
+            plan("orders.layout.json").unwrap(),
+            folder.0.join("orders.layout (2).json")
+        );
+        assert_eq!(
+            plan("../../escape.json").unwrap(),
+            folder.0.join("escape.json")
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/nonexistent/weave-target", folder.0.join("link.json"))
+                .unwrap();
+            assert_eq!(plan("link.json").unwrap(), folder.0.join("link (1).json"));
+        }
+        assert_eq!(
+            plan_download(
+                &url("https://evil.example/orders.json"),
+                ORIGIN,
+                Path::new("orders.json"),
+                Some(folder.0.clone())
+            ),
+            Err(DownloadRefusal::Foreign)
+        );
+        assert_eq!(
+            plan_download(&blob, ORIGIN, Path::new("orders.json"), None),
+            Err(DownloadRefusal::NoFolder)
+        );
+        // A folder that cannot be inspected refuses instead of guessing a free name.
+        assert_eq!(
+            plan_download(&blob, ORIGIN, Path::new("orders.json"), Some(first)),
+            Err(DownloadRefusal::Unavailable("orders.json".into()))
+        );
+    }
+
+    #[test]
+    fn pairing_script_keeps_the_code_out_of_urls_and_bounds_reloads() {
+        let script = pairing_script(ORIGIN, CODE);
+        assert!(!script.contains("__WEAVE_"));
+        assert_eq!(script.matches(CODE).count(), 1);
+        // The code lives in one scope-level constant: no page-replaceable encoder, and no callback whose
+        // source text would reveal it. studio/tests/desktop-pairing.test.ts runs the script itself.
+        let body_line = format!("  const body = \"{{\\\"code\\\":\\\"{CODE}\\\"}}\";\n");
+        assert!(script.contains(&body_line), "{script}");
+        assert!(script.contains("        body,\n"));
+        assert!(!script.contains("code:"));
+        assert!(script.contains(&format!("location.origin !== \"{ORIGIN}\"")));
+        assert!(script.contains("window.top !== window"));
+        assert_eq!(script.matches("request('/studio/session'").count(), 2);
+        for navigation in [
+            "location.href",
+            "location.assign",
+            "location.replace",
+            "history.",
+        ] {
+            assert!(!script.contains(navigation), "{navigation}");
+        }
+        // A refused code never reloads, and automatic re-pairing reloads are bounded.
+        assert!(script.contains("if (!r.ok) return;"));
+        assert!(script.contains("recent.length >= 3"));
+        assert_eq!(script.matches("location.reload()").count(), 1);
     }
 }
