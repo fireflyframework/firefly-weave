@@ -30,6 +30,8 @@ import httpx
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from firefly_weave.persistence.migrations import SCHEMA_VERSION
+
 SUPPORT = Path(__file__).resolve().parent
 ROOT = SUPPORT.parents[2]
 
@@ -472,7 +474,7 @@ async def event_history(trial):
 
 
 async def exercise(tmp_path, *, predecessor):
-    assert os.environ.get("WEAVE_KEYCLOAK_TEST_URL") == "http://localhost:18081"
+    matrix.base.BACKENDS["keycloak_endpoint"]()
     current = {
         "python": os.environ["WEAVE_E2E_PYTHON"],
         "worker_python": os.environ["WEAVE_E2E_WORKER_PYTHON"],
@@ -506,7 +508,7 @@ async def exercise(tmp_path, *, predecessor):
             await trial.bootstrap()
         finally:
             os.environ["WEAVE_E2E_PYTHON"] = original_python
-        assert trial.migration_head == ("0012_secret_admission" if predecessor else "0021_operations")
+        assert trial.migration_head == (predecessor_access.HEAD if predecessor else SCHEMA_VERSION)
         await providers.set_scheduler(trial, False)
         seeded = await seed_core(trial)
         provider_state = []
@@ -600,7 +602,7 @@ async def exercise(tmp_path, *, predecessor):
             assert outbox_receiver.snapshot()["effects"]
             continuation["outbox"] = deliveries
         async with trial.observer.connect() as connection:
-            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0021_operations"
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == SCHEMA_VERSION
         result = {
             **result,
             **continuation,

@@ -33,12 +33,22 @@ def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch)
 
     def command(argv, **kwargs):
         calls.append(argv)
+        if any(str(arg).endswith("release_workers.py") for arg in argv):
+            release = Path(argv[argv.index("--release") + 1])
+            records = {}
+            for name in ("agentic", "files"):
+                record = {"wheel": name + ".whl", "sdist": name + ".tar.gz", "requirements": name + ".txt"}
+                for filename in record.values():
+                    (release / "artifacts" / filename).write_bytes(b"independent worker artifact")
+                records[name] = record
+            (release / "workers.json").write_text(json.dumps(records))
+            return b"prepared workers"
         if "build" in argv:
             artifacts = Path(argv[argv.index("--out-dir") + 1])
             artifacts.mkdir()
             (artifacts / ".gitignore").write_text("*\n")
-            (artifacts / "firefly_weave-0.1.0a7-py3-none-any.whl").write_bytes(b"exact wheel bytes")
-            with tarfile.open(artifacts / "firefly_weave-0.1.0a7.tar.gz", "w:gz"):
+            (artifacts / "firefly_weave-0.1.0a8-py3-none-any.whl").write_bytes(b"exact wheel bytes")
+            with tarfile.open(artifacts / "firefly_weave-0.1.0a8.tar.gz", "w:gz"):
                 pass
             return b"built"
         return b"click==8.5.0 --hash=sha256:" + b"1" * 64 + b"\n"
@@ -47,10 +57,11 @@ def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch)
     destination = tmp_path / "release"
     value = module.prepare(ROOT, destination)
     assert value["complete"] is True
+    assert set(value["workers"]) == {"agentic", "files"}
     context = destination / "images"
     assert not (context / "src").exists()
     assert not (context / "tests").exists()
-    assert (context / "firefly_weave-0.1.0a7-py3-none-any.whl").read_bytes() == b"exact wheel bytes"
+    assert (context / "firefly_weave-0.1.0a8-py3-none-any.whl").read_bytes() == b"exact wheel bytes"
     assert {p.name for p in context.glob("*-requirements.txt")} == {
         "base-requirements.txt",
         "worker-requirements.txt",
@@ -68,14 +79,21 @@ def test_release_context_preparation_uses_one_exact_wheel(tmp_path, monkeypatch)
     installer = json.loads((assets / "cli-install.json").read_text())
     assert installer == {
         "schema_version": 1,
-        "version": "0.1.0a7",
+        "version": "0.1.0a8",
         "wheel": value["wheel"],
         "wheel_sha256": value["wheel_sha256"],
         "requirements": "cli-requirements.txt",
         "requirements_sha256": hashlib.sha256((assets / "cli-requirements.txt").read_bytes()).hexdigest(),
     }
     checksums = dict(line.split("  ")[::-1] for line in (assets / "SHA256SUMS").read_text().splitlines())
-    assert set(checksums) == {value["wheel"], value["sdist"], "cli-install.json", "cli-requirements.txt", "install.sh"}
+    assert set(checksums) == {
+        value["wheel"],
+        value["sdist"],
+        "cli-install.json",
+        "cli-requirements.txt",
+        "install.sh",
+        *(filename for record in value["workers"].values() for filename in record.values()),
+    }
     for name, digest in checksums.items():
         assert hashlib.sha256((assets / name).read_bytes()).hexdigest() == digest
     assert (assets / "install.sh").read_bytes() == (ROOT / "install.sh").read_bytes()

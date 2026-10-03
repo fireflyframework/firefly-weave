@@ -17,12 +17,26 @@
 """Explicitly guarded, real PostgreSQL fixtures. Databases are retained, never dropped."""
 
 import os
+import runpy
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from pydantic import SecretStr
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+
+@pytest.fixture(scope="session")
+def release_backends():
+    return runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/release_backends.py"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def validate_release_receipt(release_backends):
+    if os.environ.get("WEAVE_RELEASE_BACKENDS"):
+        release_backends["postgres_endpoint"](os.environ.get("WEAVE_TEST_DATABASE_URL", ""))
+        release_backends["keycloak_endpoint"]()
 
 
 def retain_resource(kind: str, name: str) -> None:
@@ -414,7 +428,7 @@ async def task_service(worker_setup):
             name: partial(
                 getattr(worker_setup[0], name), actor=worker_setup[3], scope=worker_setup[4], context=AuditContext()
             )
-            for name in ("claim", "heartbeat", "complete", "fail", "credentials")
+            for name in ("claim", "heartbeat", "complete", "fail", "credentials", "context")
         }
     )
 

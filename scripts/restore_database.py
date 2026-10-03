@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import shlex
 import time
 from pathlib import Path
@@ -72,16 +73,8 @@ CATALOG = {
 
 
 def guard_control(value: str):
-    url = make_url(value)
-    if (
-        url.drivername != "postgresql+asyncpg"
-        or url.host not in {"localhost", "127.0.0.1"}
-        or url.port not in {55433, 55434}
-        or url.database != "weave_b1_control"
-        or url.username != "weave_b1_owner"
-    ):
-        raise ValueError("An explicitly owned local PostgreSQL control database is required")
-    return url
+    backends = runpy.run_path(str(Path(__file__).resolve().with_name("release_backends.py")))
+    return backends["postgres_endpoint"](value)
 
 
 def identifier(value: str) -> str:
@@ -155,6 +148,11 @@ async def manifest(url) -> dict:
 
 async def restore(runtime_file: Path, output: Path, context: str, container: str) -> dict:
     control_url = guard_control(os.environ.get("WEAVE_TEST_DATABASE_URL", ""))
+    if os.environ.get("WEAVE_RELEASE_BACKENDS") and (
+        context != os.environ.get("WEAVE_TEST_DOCKER_CONTEXT")
+        or container != os.environ.get("WEAVE_TEST_POSTGRES_CONTAINER")
+    ):
+        raise ValueError("Restore arguments must match the approved fixture receipt")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,100}", context + container):
         raise ValueError("Explicit local context and container required")
     if control_url.port == 55433 and context != "colima-weave-tests":

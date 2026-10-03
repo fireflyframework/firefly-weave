@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import runpy
 import signal
 import sys
 import time
@@ -37,6 +38,30 @@ RELEASE_TESTS = (
     "tests/e2e/test_worker_shutdown.py",
     "tests/benchmarks/test_queue_load.py",
 )
+
+
+def worker_stages() -> list[tuple[str, list[str], int]]:
+    stages = []
+    for worker, version in (("agentic", "3.13"), ("files", "3.12")):
+        project = f"workers/{worker}"
+        command = ["uv", "run", "--locked", "--project", project, "--python", version]
+        for gate, arguments in (
+            ("tests", ["pytest", f"{project}/tests", "-q", "--tb=short", "--show-capture=no"]),
+            ("lint", ["ruff", "check", f"{project}/src", f"{project}/tests"]),
+            (
+                "format",
+                [
+                    "ruff",
+                    "format",
+                    "--check",
+                    f"{project}/src",
+                    f"{project}/tests",
+                ],
+            ),
+            ("types", ["mypy", "--config-file", f"{project}/pyproject.toml", f"{project}/src"]),
+        ):
+            stages.append((f"worker-{worker}-{gate}", [*command, *arguments], 600))
+    return stages
 
 
 def release_prerequisites(root: Path, context: str | None) -> None:
@@ -56,17 +81,9 @@ def release_prerequisites(root: Path, context: str | None) -> None:
     )
     if any(not os.environ.get(name) for name in required):
         raise ValueError("Required real release dependencies are not configured")
-    if os.environ.get("WEAVE_KEYCLOAK_TEST_URL") != "http://localhost:18081":
-        raise ValueError("Owned Keycloak endpoint required")
-    from urllib.parse import urlsplit
-
-    database = urlsplit(os.environ["WEAVE_TEST_DATABASE_URL"])
-    if (
-        database.hostname not in {"localhost", "127.0.0.1"}
-        or database.port != 55433
-        or database.path != "/weave_b1_control"
-    ):
-        raise ValueError("Owned PostgreSQL control database required")
+    backends = runpy.run_path(str(root / "scripts/release_backends.py"))
+    backends["keycloak_endpoint"]()
+    backends["postgres_endpoint"](os.environ["WEAVE_TEST_DATABASE_URL"], legacy_ports=(55433,))
     if any(not (root / path).is_file() for path in RELEASE_TESTS):
         raise ValueError("Every required release gate must exist")
 
@@ -112,6 +129,7 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
                 # More than 3,000 tests: about 4 minutes locally, up to 10 on a shared CI runner.
                 1800,
             ),
+            *worker_stages(),
             ("prepare", [python, "scripts/prepare_release.py", "--output", str(evidence / "release")], 300),
             (
                 "installed-artifacts",
@@ -164,9 +182,10 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
     results = {name: {"status": "not_run"} for name, _, _ in stages}
     failed = False
     try:
+        if release or integration:
+            os.environ["WEAVE_IMAGE_PROOF_PATH"] = str(evidence / "native-image.json")
         if release:
             release_prerequisites(root, context)
-            os.environ["WEAVE_IMAGE_PROOF_PATH"] = str(evidence / "native-image.json")
             os.environ["WEAVE_D5_EVIDENCE"] = str(evidence)
         for name, command, timeout in stages:
             print("Running " + name, flush=True)

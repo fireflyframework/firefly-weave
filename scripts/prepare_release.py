@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 import tomllib
 from pathlib import Path
 
@@ -124,9 +125,27 @@ def prepare(root: Path, destination: Path) -> dict:
     }.items():
         with (artifacts / name).open("xb") as stream:
             stream.write(data)
+    run_command(
+        [
+            sys.executable,
+            str(root / "scripts/release_workers.py"),
+            "prepare",
+            "--root",
+            str(root),
+            "--release",
+            str(destination),
+            "--core-wheel",
+            wheels[0].name,
+        ],
+        timeout=300,
+        limit=4 * 1024 * 1024,
+        log_path=destination / "workers-prepare.log",
+    )
+    workers = json.loads(read_file(destination / "workers.json", 1024 * 1024))
     with (artifacts / "SHA256SUMS").open("x") as stream:
         # uv adds a private .gitignore to its output; publish only named release assets.
-        names = (wheels[0].name, sdists[0].name, "cli-install.json", "cli-requirements.txt", "install.sh")
+        names = [wheels[0].name, sdists[0].name, "cli-install.json", "cli-requirements.txt", "install.sh"]
+        names.extend(record[key] for record in workers.values() for key in ("wheel", "sdist", "requirements"))
         for name in sorted(names):
             digest = hashlib.sha256(read_file(artifacts / name, 64 * 1024 * 1024)).hexdigest()
             stream.write(f"{digest}  {name}\n")
@@ -137,6 +156,7 @@ def prepare(root: Path, destination: Path) -> dict:
         "sdist": sdists[0].name,
         "sdist_sha256": hashlib.sha256(read_file(sdists[0], 64 * 1024 * 1024)).hexdigest(),
         "inputs": {name: hashlib.sha256(data).hexdigest() for name, data in inputs.items()},
+        "workers": workers,
     }
     for name, data in inputs.items():
         with (context / name).open("xb") as stream:

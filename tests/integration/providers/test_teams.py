@@ -113,7 +113,7 @@ async def teams(worker_setup, access_db, provisioned, monkeypatch, signed_activi
                 name="teams",
                 provider="teams",
                 package="firefly-weave",
-                package_version="0.1.0a7",
+                package_version="0.1.0a8",
                 adapter_version="1.0.0",
                 schema_digest=provider_schema_digest(
                     package.metadata.model.event_schemas, package.metadata.model.dispatch_event_kinds
@@ -215,14 +215,16 @@ async def test_teams_commit_failure_has_no_ack_or_reference(teams, access_db):
 
 
 def test_teams_reference_migration_is_forward_only():
-    from importlib.resources import files
+    from pathlib import Path
 
     from alembic.script import ScriptDirectory
 
-    from firefly_weave.persistence.migrations import SCHEMA_VERSION
+    from firefly_weave.persistence import migrations
 
-    scripts = ScriptDirectory(str(files("firefly_weave.persistence").joinpath("alembic")))
-    assert scripts.get_current_head() == SCHEMA_VERSION
+    module = Path(migrations.__file__).resolve()
+    source = module.parents[3] / "migrations"
+    scripts = ScriptDirectory(str(source if source.is_dir() else module.with_name("alembic")))
+    assert scripts.get_current_head() == migrations.SCHEMA_VERSION
     teams_revision = scripts.get_revision("0019_teams_references")
     assert teams_revision is not None
     assert teams_revision.down_revision == "0018_provider_inbox"

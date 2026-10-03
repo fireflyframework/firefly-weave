@@ -53,7 +53,19 @@ PRUNED = {
     "test-results",
     "playwright-report",
 }
-HASH_SUFFIXES = {".py", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".Dockerfile"}
+HASH_SUFFIXES = {
+    ".py",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".Dockerfile",
+    ".dockerignore",
+}
 HASH_NAMES = {"Dockerfile", "Makefile", ".gitignore", ".dockerignore"}
 XML_SUFFIXES = {".svg", ".md", ".html", ".xml", ".plist"}
 LEGAL_NAMES = {"LICENSE", "NOTICE"}

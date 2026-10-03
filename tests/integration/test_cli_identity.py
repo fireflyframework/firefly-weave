@@ -46,10 +46,10 @@ class Form(HTMLParser):
 
 
 @pytest.fixture
-async def live_cli():
-    root = os.environ.get("WEAVE_KEYCLOAK_TEST_URL")
+async def live_cli(release_backends):
+    root = release_backends["keycloak_endpoint"]()
     secret = os.environ.get("WEAVE_KC_ADMIN_SECRET")
-    if root != "http://localhost:18081" or not secret:
+    if not secret:
         pytest.fail("Identity gate requires owned Keycloak on localhost:18081 and WEAVE_KC_ADMIN_SECRET")
     async with httpx.AsyncClient(timeout=15, trust_env=False, follow_redirects=False) as client:
         response = await client.post(

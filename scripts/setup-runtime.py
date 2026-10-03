@@ -21,6 +21,7 @@ import asyncio
 import json
 import os
 import re
+import runpy
 import secrets
 from pathlib import Path
 from uuid import uuid4
@@ -29,12 +30,22 @@ from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from firefly_weave.persistence.migrations import migrate
-from firefly_weave.sdk.platform import local_client_sign_in
 from firefly_weave.settings import Settings
+
+try:
+    from firefly_weave.sdk.platform import local_client_sign_in
+except ModuleNotFoundError as error:
+    if error.name != "firefly_weave.sdk.platform":
+        raise
+    local_client_sign_in = None
 
 
 async def setup(output: Path) -> None:
     value = os.environ.get("WEAVE_TEST_DATABASE_URL", "")
+    if os.environ.get("WEAVE_RELEASE_BACKENDS"):
+        backends = runpy.run_path(str(Path(__file__).resolve().with_name("release_backends.py")))
+        backends["postgres_endpoint"](value)
+        backends["keycloak_endpoint"]()
     url = make_url(value)
     if (
         url.drivername != "postgresql+asyncpg"
@@ -89,7 +100,8 @@ async def setup(output: Path) -> None:
             stream.write("WEAVE_MIGRATION_DATABASE_URL=" + migration.render_as_string(hide_password=False) + "\n")
             stream.write("WEAVE_OIDC_PROVIDERS='" + json.dumps(providers, separators=(",", ":")) + "'\n")
             # Public sign-in settings for people (weave-cli); the API publishes them without secrets.
-            stream.write("WEAVE_CLIENT_SIGN_IN='" + local_client_sign_in() + "'\n")
+            if local_client_sign_in is not None:
+                stream.write("WEAVE_CLIENT_SIGN_IN='" + local_client_sign_in() + "'\n")
         finally:
             await control.dispose()
 

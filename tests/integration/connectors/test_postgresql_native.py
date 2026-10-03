@@ -95,7 +95,8 @@ async def sql_native_setup(services, access_db, provisioned, external_database, 
         ),
         context=AuditContext(),
     )
-    host = await native_postgres_host(image) if mode == "image" else "127.0.0.1"
+    port = external_database["kwargs"]["port"]
+    host = await native_postgres_host(image, port=port) if mode == "image" else "127.0.0.1"
     revision = await graph.resolve(ConnectionService).create_revision(
         actor,
         scope,
@@ -105,14 +106,14 @@ async def sql_native_setup(services, access_db, provisioned, external_database, 
             config={
                 "dialect": "postgresql",
                 "host": host,
-                "port": 55433,
+                "port": port,
                 "database": external_database["name"],
                 "user": external_database["roles"]["read" if action_name == "read" else "write"],
                 "role": "read" if action_name == "read" else "command",
                 "tls": "disable",
             },
             secretRef={"password": "sql-password"},
-            allowed_destinations=(f"postgresql://{host}:55433",),
+            allowed_destinations=(f"postgresql://{host}:{port}",),
         ),
         context=AuditContext(),
     )
@@ -275,7 +276,7 @@ async def test_real_commit_loss_creates_ambiguity_incident(sql_native_setup, ext
     )
     adapter = graph.resolve(PostgresConnector)
     connect = adapter._connect
-    async with commit_ack_loss_proxy() as (port, evidence):
+    async with commit_ack_loss_proxy(backend_port=external_database["kwargs"]["port"]) as (port, evidence):
 
         async def through_proxy(revision, password):
             changed = revision.model_copy(

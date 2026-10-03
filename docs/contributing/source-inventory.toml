@@ -331,3 +331,57 @@ reason = "Strict JSON corpus of shipped connector and example schemas for Studio
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"
+
+[[exceptions]]
+path = "workers/agentic/uv.lock"
+kind = "generated"
+source = "workers/agentic/pyproject.toml"
+reason = "UV-generated reproducible worker dependency lock; regenerate with uv lock in that project."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "workers/files/uv.lock"
+kind = "generated"
+source = "workers/files/pyproject.toml"
+reason = "UV-generated reproducible worker dependency lock; regenerate with uv lock in that project."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "workers/agentic/LICENSE"
+kind = "commentless"
+source = "LICENSE"
+reason = "Byte-identical copy of the repository LICENSE for this independently distributed worker."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "workers/agentic/NOTICE"
+kind = "commentless"
+source = "NOTICE"
+reason = "Byte-identical copy of the repository NOTICE for this independently distributed worker."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "workers/files/LICENSE"
+kind = "commentless"
+source = "LICENSE"
+reason = "Byte-identical copy of the repository LICENSE for this independently distributed worker."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "workers/files/NOTICE"
+kind = "commentless"
+source = "NOTICE"
+reason = "Byte-identical copy of the repository NOTICE for this independently distributed worker."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"

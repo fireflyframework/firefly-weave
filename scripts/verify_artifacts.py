@@ -314,6 +314,21 @@ def verify(release: Path, output: Path) -> dict:
         if actual_members != expected_members:
             raise ValueError("Sdist-derived package members differ")
     cli_installer = verify_cli_installer(release, output, metadata)
+    run_command(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("release_workers.py")),
+            "verify",
+            "--release",
+            str(release),
+            "--output",
+            str(output / "independent-workers"),
+        ],
+        timeout=600,
+        limit=4 * 1024 * 1024,
+        log_path=output / "independent-workers.log",
+    )
+    workers = json.loads(read_file(output / "independent-workers/verification.json", 1024 * 1024))
     value = {
         "complete": True,
         "cli_installer": cli_installer,
@@ -322,6 +337,7 @@ def verify(release: Path, output: Path) -> dict:
         "closures": results,
         "closure_sha256": closure_hashes,
         "sdist_package_members_equal": True,
+        "workers": workers,
     }
     with os.fdopen(os.open(output / "verification.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
         json.dump(value, stream, indent=2, sort_keys=True)

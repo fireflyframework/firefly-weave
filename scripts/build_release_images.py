@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 from firefly_weave.sdk.deployment import read_file, real_path, run_command, wheel_licenses
@@ -95,6 +96,23 @@ def build(release: Path, output: Path, context: str) -> dict:
         if details["Id"] != image or details["Config"]["User"] != "65532:65532":
             raise ValueError("Image identity or nonroot policy mismatch")
         images[name] = image
+    run_command(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("release_workers.py")),
+            "build",
+            "--release",
+            str(release),
+            "--output",
+            str(output / "independent-workers"),
+            "--context",
+            context,
+        ],
+        timeout=2400,
+        limit=4 * 1024 * 1024,
+        log_path=output / "independent-workers.log",
+    )
+    images.update(json.loads(read_file(output / "independent-workers/images.json", 1024 * 1024)))
     result = {"complete": True, "wheel_sha256": metadata["wheel_sha256"], "images": images}
     with os.fdopen(os.open(output / "images.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
         json.dump(result, stream, indent=2, sort_keys=True)

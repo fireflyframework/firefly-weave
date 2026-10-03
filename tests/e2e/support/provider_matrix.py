@@ -154,7 +154,7 @@ async def prepare(trial, provider, matrix):
                 "name": "matrix-" + provider,
                 "provider": provider,
                 "package": "firefly-weave",
-                "package_version": "0.1.0a7",
+                "package_version": "0.1.0a8",
                 "schema_digest": provider_schema_digest(
                     package.metadata.model.event_schemas, package.metadata.model.dispatch_event_kinds
                 ),
