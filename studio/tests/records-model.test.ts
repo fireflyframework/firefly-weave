@@ -64,7 +64,7 @@ describe("list columns and rows", () => {
       "Revision",
     ]);
     expect(columns.email).toEqual(["Conversation", "Last message", "Status"]);
-    expect(columns.workers).toEqual(["Worker", "Status", "Capacity"]);
+    expect(columns.workers).toEqual(["Worker", "Status", "Registered limit"]);
   });
 
   it("counts in words", () => {
@@ -125,6 +125,21 @@ describe("list columns and rows", () => {
     expect(rowStatus("tasks", { status: "ready" })!.label).toBe(
       "Ready to claim",
     );
+  });
+
+  it("does not infer worker liveness from registration", () => {
+    expect(rowStatus("workers", { revoked: false, capacity: 8 })).toEqual({
+      label: "Registered",
+      tone: "neutral",
+    });
+    expect(rowStatus("workers", { revoked: true, capacity: 8 })).toEqual({
+      label: "Revoked",
+      tone: "danger",
+    });
+    expect(rowStatus("workers", { unavailable: true })).toEqual({
+      label: "Unavailable",
+      tone: "danger",
+    });
   });
 
   it("reads connectors and workers in words", () => {

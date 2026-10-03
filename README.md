@@ -53,7 +53,7 @@ maps service tasks, user tasks, gateways, and timers to Weave steps.
 
 ## What you get
 
-The **v0.1.0a11 alpha** release provides the **API, CLI, Python SDK, and Studio**
+The **v0.1.0a12 alpha** release provides the **API, CLI, Python SDK, and Studio**
 visual workspace, with human-task inboxes, email conversations, execution
 management, and administration of people and access. Run Weave as a standalone
 service or embed it in another product.
@@ -81,7 +81,7 @@ See the illustrated [AI workflow guide](docs/guides/ai-workers.md) and
 Read the [capability matrix](docs/capabilities.md) for tested boundaries and
 live-provider checks that remain environment-specific.
 
-Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha11-browser-application)
+Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha12-browser-application)
 or as a [desktop app](docs/guides/desktop.md). The macOS desktop bundles
 are ad-hoc signed, not Developer ID signed or notarized, so macOS may ask you to
 approve them; do not use the alpha5 macOS installers, which were damaged. The
@@ -119,7 +119,7 @@ integration code. Each has its own guide, so you can stop at the result you need
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a11 alpha**
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a12 alpha**
 into your user account without `sudo`, Git, or Docker:
 
 ```sh
@@ -127,12 +127,12 @@ into your user account without `sudo`, Git, or Docker:
   # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a11/install.sh \
-    | sh -s -- --version v0.1.0a11
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a12/install.sh \
+    | sh -s -- --version v0.1.0a12
 )
 ```
 
-Expected: `Installed Firefly Weave 0.1.0a11:` followed by the command's path. Then
+Expected: `Installed Firefly Weave 0.1.0a12:` followed by the command's path. Then
 make the default command directory available in this terminal and look around:
 
 ```sh
@@ -146,7 +146,7 @@ weave help workflow
 weave docs platform
 ```
 
-Expected: `Firefly Weave 0.1.0a11`, the command overview, the `workflow`
+Expected: `Firefly Weave 0.1.0a12`, the command overview, the `workflow`
 commands, and the address of the platform guide. You do not need to learn every
 command first: help explains each family and its next steps. The
 [installation guide](docs/installation.md) covers choosing Python, a permanent
@@ -179,7 +179,7 @@ Compose files and setup helpers. Clone the tag that matches the CLI:
 
 ```sh
 # Keep the platform files at the same version as the CLI.
-git clone --branch v0.1.0a11 --single-branch https://github.com/fireflyframework/firefly-weave.git
+git clone --branch v0.1.0a12 --single-branch https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 
 # Check prerequisites, then prepare private settings and dependencies once.
@@ -265,7 +265,7 @@ path, and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a11**, an **alpha** release. Download
+The recommended installation is **v0.1.0a12**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The documentation on a branch describes the source on that branch; a release tag

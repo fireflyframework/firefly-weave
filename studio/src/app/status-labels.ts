@@ -59,7 +59,7 @@ const statuses: Record<StatusKind, Record<string, [string, Tone]>> = {
     unavailable: ["Unavailable", "danger"],
   },
   worker: {
-    active: ["Active", "success"],
+    registered: ["Registered", "neutral"],
     revoked: ["Revoked", "danger"],
     unavailable: ["Unavailable", "danger"],
   },

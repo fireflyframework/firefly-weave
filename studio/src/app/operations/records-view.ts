@@ -45,6 +45,7 @@ import {
   toneAttribute,
   type Tone,
 } from "../status-labels";
+import { WorkerControls } from "./worker-controls";
 import { RunDetail } from "./run-detail";
 import {
   columns,
@@ -132,6 +133,7 @@ const runStatusFilters: [string, string][] = [
     ConnectionDetail,
     NewMenu,
     RunDetail,
+    WorkerControls,
     NgTemplateOutlet,
   ],
   styleUrl: "./records-view.css",
@@ -659,14 +661,13 @@ const runStatusFilters: [string, string][] = [
                     @if (record["unavailable"]) {
                       <p class="notice">Studio can't show this worker.</p>
                     } @else {
-                      <dl class="task-metadata">
-                        <dt>Task types</dt>
-                        <dd>
-                          {{ $any(record["task_types"])?.join(", ") || "—" }}
-                        </dd>
-                        <dt>Capacity</dt>
-                        <dd>{{ record["capacity"] ?? "—" }}</dd>
-                      </dl>
+                      <weave-worker-controls [host]="h" [record]="record" />
+                      <p>
+                        Task types:
+                        {{
+                          $any(record["task_types"])?.join(", ") || "Unknown"
+                        }}
+                      </p>
                       <details class="disclosure">
                         <summary>Technical details</summary>
                         <dl class="task-metadata">

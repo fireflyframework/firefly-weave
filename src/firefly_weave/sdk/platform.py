@@ -84,6 +84,11 @@ _DISPLAY_NAME = "Local Weave platform"
 # runs, and works on human tasks in the demo workspace; administrators choose others explicitly.
 DEFAULT_PERSON_ROLES = ("developer", "deployer", "operator", "viewer", "task_participant")
 PERSON_ROLES = (
+    "deployment_reader",
+    "deployment_planner",
+    "deployment_approver",
+    "deployment_operator",
+    "worker_operator",
     "file_reader",
     "file_manager",
     "lumi_user",

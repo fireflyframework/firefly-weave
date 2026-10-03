@@ -150,6 +150,8 @@ nav:
       - Set up a local platform manually: guides/standalone.md
       - Deploy a worker locally: operations/deployment.md
       - Troubleshoot a platform: operations/troubleshooting.md
+      - Manage clusters and deployments: operations/cluster-management.md
+      - Install an Operations runner: operations/operations-runner.md
       - Export metrics and traces: operations/observability.md
       - Upgrade a platform: operations/upgrades.md
       - Back up and restore: operations/backup-restore.md

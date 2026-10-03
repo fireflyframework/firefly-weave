@@ -29,7 +29,7 @@ Lumi has its own configuration per environment. It never reads a workflow's
 `llmProfiles`, and changing an LLM step does not change the assistant.
 
 The Studio **AI setup** examples and named provider-connection selection
-shown here use Weave **0.1.0a11**. Use the matching **0.1.3 Agentic worker
+shown here use Weave **0.1.0a12**. Use the matching **0.1.4 Agentic worker
 package** for the independently deployed Lumi gateway.
 
 ## Follow a question through review
