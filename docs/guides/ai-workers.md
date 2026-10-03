@@ -187,12 +187,19 @@ workers/agentic/.venv/bin/weave-agentic-worker --release-manifest > agentic-rele
 ```
 
 The catalog contains `weave-agentic-provider@1.0.0`, the worker Action
-`weave-agentic-generate@1.0.0`, and the exact task capability. Publish the
-Connector and Action through the normal definition APIs. Register the worker
-release with its image digest and the exported task and credential capabilities.
-Use the normal worker connection grant API to authorize that release and task
-capability for the selected connection revision. Activation pins the worker
-release and connection revision.
+`weave-agentic-generate@1.0.0`, and the exact task capability. Complete these
+operations in order:
+
+1. Register the worker release with its image digest and the exported task and
+   credential capabilities. This makes the task available to the compiler.
+2. Publish the Connector and then the Action through the normal definition APIs.
+   Publishing the Action before admitting its task returns `WV-COMP-UNKNOWN_TASK`.
+3. Create the provider connection described below, then use the worker connection
+   grant API to authorize the release and task capability for that exact revision.
+4. Activate the workflow with explicit worker-release and connection-revision pins.
+
+A published definition, an admitted worker release, and a running worker are
+separate prerequisites. Completing one does not automatically complete the others.
 
 The Action is `non_idempotent` and allows one attempt. A provider request can
 incur charges even when its result is lost. Weave fences completion and preserves
