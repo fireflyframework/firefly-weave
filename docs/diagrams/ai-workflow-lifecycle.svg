@@ -1,0 +1,79 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1174" role="img" aria-labelledby="title description">
+<title id="title">From an AI task to a recorded result</title>
+<desc id="description">Six stages: an author defines a typed AI task; an administrator binds approved connections and a worker release; Weave leases a durable task; the Agentic worker calls an allowlisted provider; Weave validates and accepts the result; later steps and replay use accepted evidence. Operators deploy the worker and secret grants before execution.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
+<rect width="800" height="1174" rx="24" fill="#EEF4F0"/>
+<g font-family="Inter,Arial,sans-serif">
+<text x="32" y="42" font-size="13" font-weight="700" letter-spacing="1.7" fill="#367D68">FIREFLY WEAVE · AI GUIDE</text>
+<text x="32" y="82" font-size="28" font-weight="700" fill="#173D34">From an AI task to a recorded result</text>
+<text x="32" y="116" font-size="18" fill="#4D655D">A model call becomes a durable workflow task.</text>
+<text x="32" y="141" font-size="18" fill="#4D655D">Setup and authorization must be complete before a run can use it.</text>
+<rect x="32" y="166" width="736" height="126" rx="16" fill="white"/>
+<circle cx="66" cy="200" r="18" fill="#173D34"/>
+<text x="66" y="206" text-anchor="middle" font-size="18" font-weight="700" fill="white">1</text>
+<text x="99" y="195" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">AUTHOR · WORKFLOW DEFINITION</text>
+<text x="99" y="223" font-size="22" font-weight="700" fill="#173D34">Describe the job and its result</text>
+<text x="99" y="250" font-size="18" fill="#4D655D">Choose a named profile, prompt, and context.</text>
+<text x="99" y="275" font-size="18" fill="#4D655D">Declare the result schema; keep credentials out of source.</text>
+<path d="M66 295v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="32" y="316" width="736" height="126" rx="16" fill="white"/>
+<circle cx="66" cy="350" r="18" fill="#173D34"/>
+<text x="66" y="356" text-anchor="middle" font-size="18" font-weight="700" fill="white">2</text>
+<text x="99" y="345" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">ADMINISTRATOR · ACTIVATION</text>
+<text x="99" y="373" font-size="22" font-weight="700" fill="#173D34">Bind approved execution resources</text>
+<text x="99" y="400" font-size="18" fill="#4D655D">Bind a connection revision and admitted worker release.</text>
+<text x="99" y="425" font-size="18" fill="#4D655D">Authorize the exact task capability to use that connection.</text>
+<path d="M66 445v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="32" y="466" width="736" height="126" rx="16" fill="white"/>
+<circle cx="66" cy="500" r="18" fill="#173D34"/>
+<text x="66" y="506" text-anchor="middle" font-size="18" font-weight="700" fill="white">3</text>
+<text x="99" y="495" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">WEAVE API · DURABLE RUN</text>
+<text x="99" y="523" font-size="22" font-weight="700" fill="#173D34">Schedule and lease the AI task</text>
+<text x="99" y="550" font-size="18" fill="#4D655D">The run waits for the task; a live lease identifies its worker.</text>
+<text x="99" y="575" font-size="18" fill="#4D655D">Pinned task context and scoped credentials are checked.</text>
+<path d="M66 595v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="32" y="616" width="736" height="126" rx="16" fill="white"/>
+<circle cx="66" cy="650" r="18" fill="#173D34"/>
+<text x="66" y="656" text-anchor="middle" font-size="18" font-weight="700" fill="white">4</text>
+<text x="99" y="645" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">AGENTIC WORKER → MODEL PROVIDER</text>
+<text x="99" y="673" font-size="22" font-weight="700" fill="#173D34">Call within the approved limits</text>
+<text x="99" y="700" font-size="18" fill="#4D655D">An independently deployed worker calls the model.</text>
+<text x="99" y="725" font-size="18" fill="#4D655D">Exact provider, model, endpoint, call and time limits apply.</text>
+<path d="M66 745v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="32" y="766" width="736" height="126" rx="16" fill="white"/>
+<circle cx="66" cy="800" r="18" fill="#173D34"/>
+<text x="66" y="806" text-anchor="middle" font-size="18" font-weight="700" fill="white">5</text>
+<text x="99" y="795" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">WEAVE API · COMPLETION</text>
+<text x="99" y="823" font-size="22" font-weight="700" fill="#173D34">Validate before accepting the answer</text>
+<text x="99" y="850" font-size="18" fill="#4D655D">Check the lease and the declared result contract.</text>
+<text x="99" y="875" font-size="18" fill="#4D655D">Rejected or classified-secret output is not accepted history.</text>
+<path d="M66 895v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="32" y="916" width="736" height="126" rx="16" fill="white"/>
+<circle cx="66" cy="950" r="18" fill="#173D34"/>
+<text x="66" y="956" text-anchor="middle" font-size="18" font-weight="700" fill="white">6</text>
+<text x="99" y="945" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">WORKFLOW · NEXT STEPS AND REPLAY</text>
+<text x="99" y="973" font-size="22" font-weight="700" fill="#173D34">Use the accepted result</text>
+<text x="99" y="1000" font-size="18" fill="#4D655D">Later steps read the typed result from this step’s output.</text>
+<text x="99" y="1025" font-size="18" fill="#4D655D">Replay uses accepted evidence without repeating this call.</text>
+<rect x="32" y="1066" width="736" height="78" rx="16" fill="#173D34"/>
+<text x="52" y="1096" font-size="18" fill="white">Deployment prerequisite: worker, policy, identity, and secret grants.</text>
+<text x="52" y="1121" font-size="18" fill="white">A workflow profile alone does not start or authorize a worker.</text>
+</g></svg>

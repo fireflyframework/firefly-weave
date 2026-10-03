@@ -33,6 +33,7 @@ from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, action_definitio
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.sdk.transport import WorkerTransport
 from firefly_weave.sdk.worker import Worker
+from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, WorkerTokenAuth
 from pydantic import BaseModel, ConfigDict, Field
 
 from weave_agentic_worker.handler import AgenticTaskHandler, WorkerPolicy
@@ -79,9 +80,20 @@ class TokenFileAuth(httpx.Auth):
         yield request
 
 
+def worker_auth(api_origin: str) -> httpx.Auth:
+    token_file = os.environ.get("WEAVE_WORKER_TOKEN_FILE")
+    oauth_file = os.environ.get("WEAVE_WORKER_OAUTH_CONFIG_FILE")
+    if bool(token_file) == bool(oauth_file):
+        raise ValueError("Configure exactly one worker authentication mode")
+    if oauth_file:
+        return WorkerTokenAuth(ClientCredentialsTokenProvider.from_file(Path(oauth_file), api_origin))
+    assert token_file
+    return TokenFileAuth(Path(token_file))
+
+
 async def main() -> None:
     policy = read_policy(Path(os.environ["WEAVE_AGENTIC_POLICY_FILE"]))
-    auth = TokenFileAuth(Path(os.environ["WEAVE_WORKER_TOKEN_FILE"]))
+    auth = worker_auth(os.environ["WEAVE_API_URL"])
     prefix = os.environ["WEAVE_ENVIRONMENT_URL"].rstrip("/")
     async with httpx.AsyncClient(
         base_url=os.environ["WEAVE_API_URL"], auth=auth, timeout=10, trust_env=False, follow_redirects=False

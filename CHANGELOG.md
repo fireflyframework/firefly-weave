@@ -18,6 +18,20 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a9
+
+- Add guided Studio setup for AI provider connections, named connection selection
+  for Lumi, and independent workflow model profiles. Keep model credentials in
+  operator-managed secret storage and show scoped setup permissions explicitly.
+- Keep incomplete LLM profile edits open until required properties are present.
+- Add renewable OAuth2 client credentials for independently deployed Agentic
+  workers, with bounded token acquisition, expiration-aware caching, scoped API
+  origins, cancellation cleanup, and mounted-secret rotation.
+- Explain AI workflow execution, Lumi proposal review, and configuration roles
+  with step-by-step guides and accessible SVG diagrams.
+- Publish worker packages 0.1.1 pinned to core 0.1.0a9. No database migration is
+  added; the server still requires schema `0028_files`.
+
 ## 0.1.0a8
 
 - Add verified file references, resumable bounded transfers, scoped file roles,

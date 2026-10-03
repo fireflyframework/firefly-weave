@@ -27,11 +27,15 @@ import {
 } from "@angular/core";
 import type { App } from "../app";
 import { ExpressionEditor } from "../property-grid";
+import { aiConnector } from "../integrations/ai-provider-connection";
+import { compatibleSlots, slotName } from "../integrations/slot-binding";
+import { Select } from "../forms/ui/select";
 import { TaskForm } from "../task-form";
 import { SchemaDesigner } from "../forms/ui/schema-designer";
 import { referencesAt } from "../forms/core/reference-context";
 import { describeError } from "../errors";
 import type { Schema } from "../task-schema";
+import { missingData } from "../forms/core/form-model";
 import { validVersion } from "../forms/core/identifiers";
 import type { Step } from "../model";
 
@@ -45,7 +49,7 @@ const object = (value: unknown): RecordValue =>
   selector: "weave-llm-inspector",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ExpressionEditor, TaskForm, SchemaDesigner],
+  imports: [ExpressionEditor, TaskForm, SchemaDesigner, Select],
   template: `
     <fieldset
       [disabled]="host.model.readonly || host.editingLocked"
@@ -69,40 +73,48 @@ const object = (value: unknown): RecordValue =>
           Agentic worker action before activating this workflow.
         </p>
       }
-      <label data-field="profile"
-        >Workflow AI profile
-        <select
-          aria-label="Workflow AI profile"
-          [value]="step['profile']"
-          (change)="selectProfile($event)"
-        >
-          <option value="">Choose a profile…</option>
-          @for (name of profileNames; track name) {
-            <option [value]="name">{{ name }}</option>
-          }
-        </select></label
-      >
+      <div data-field="profile">
+        <weave-select
+          label="Workflow AI profile"
+          [options]="profileOptions"
+          [value]="String(step['profile'] ?? '')"
+          [disabled]="host.model.readonly || host.editingLocked"
+          (choose)="selectProfile($event)"
+        />
+      </div>
       @if (!profileNames.includes(String(step["profile"]))) {
         <p class="hint">
           Configure a profile below to choose its provider, model and result
           fields.
         </p>
       }
-      <label data-field="connection"
-        >AI connection slot
-        <select
-          aria-label="AI connection slot"
-          [value]="step['connection']"
-          (change)="edit('connection', value($event))"
-        >
-          <option value="">Choose a slot…</option>
-          @for (slot of host.workflowSlots; track slot.name) {
-            <option [value]="slot.name">
-              {{ slot.name }} · {{ slot.connector }}
-            </option>
-          }
-        </select></label
-      >
+      <div data-field="connection">
+        <weave-select
+          label="AI connection slot"
+          [options]="slotOptions"
+          [value]="String(step['connection'] ?? '')"
+          [disabled]="host.model.readonly || host.editingLocked"
+          (choose)="edit('connection', $event)"
+        />
+      </div>
+      @if (!aiSlots.length) {
+        <p class="hint">
+          Add an AI connection slot for this workflow. Activation binds it to an
+          approved provider connection in the environment.
+        </p>
+      }
+      <button type="button" (click)="addAiSlot()">
+        Add AI connection slot
+      </button>
+      @if (host.profile && host.can("connection.manage")) {
+        <button type="button" (click)="host.openAiConnectionDialog()">
+          New AI connection
+        </button>
+      }
+      <p class="hint">
+        Workflow profiles do not change Lumi. A platform operator must install
+        and authorize the Agentic worker before these tasks can run.
+      </p>
       <button type="button" (click)="host.openWorkflowSettings()">
         Manage workflow connections
       </button>
@@ -127,25 +139,24 @@ const object = (value: unknown): RecordValue =>
         />
       </div>
       <p class="hint">Typed result: /steps/{{ step.id }}/output/result</p>
-      <details [open]="!profileNames.length">
+      <details
+        [open]="profilesOpen"
+        (toggle)="profilesOpen = $any($event.target).open"
+      >
         <summary>Configure workflow AI profiles</summary>
         <p class="hint">
           All steps that choose a profile share its model, reasoning and
-          generation limits.
+          generation limits. For Azure, Model is the deployment name. The
+          endpoint, API version and approved secret handle belong to the
+          environment connection.
         </p>
-        <label
-          >Profile to edit
-          <select
-            aria-label="Profile to edit"
-            [value]="profileName"
-            (change)="loadProfile(value($event))"
-          >
-            <option value="">New profile…</option>
-            @for (name of profileNames; track name) {
-              <option [value]="name">{{ name }}</option>
-            }
-          </select></label
-        >
+        <weave-select
+          label="Profile to edit"
+          [options]="profileOptions"
+          [value]="profileName"
+          [disabled]="host.model.readonly || host.editingLocked"
+          (choose)="loadProfile($event)"
+        />
         <button type="button" (click)="newProfile()">Add AI profile</button>
         <label data-field="spec/llmProfiles"
           >Profile name
@@ -240,11 +251,35 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
   initialProfile: RecordValue = {};
   profile: RecordValue = {};
   resultSchema: RecordValue = { type: "object", properties: {} };
+  profilesOpen = false;
   profileValid = false;
   resultValid = true;
   private invalid = new Set<string>();
   get step() {
     return JSON.parse(this.host.inspectorBuffer) as Step;
+  }
+  get profileOptions() {
+    return this.profileNames.map((name) => ({ value: name, label: name }));
+  }
+  get slotOptions() {
+    return this.aiSlots.map((slot) => ({
+      value: slot.name,
+      label: slot.name,
+      description: slot.connector,
+    }));
+  }
+  get aiSlots() {
+    return compatibleSlots({ connector: aiConnector }, this.host.workflowSlots);
+  }
+  addAiSlot() {
+    this.host.newSlotName = slotName(
+      "ai",
+      this.host.workflowSlots.map((slot) => slot.name),
+    );
+    this.host.newSlotNameEdited = true;
+    this.host.newSlotConnector = aiConnector;
+    this.host.newSlotRequired = true;
+    this.host.addConnectionSlot();
   }
   get profiles() {
     return object(this.host.model.definition.spec["llmProfiles"]);
@@ -298,8 +333,7 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     this.validity(key, valid);
     if (valid) this.edit(key, text);
   }
-  selectProfile(event: Event) {
-    const name = this.value(event);
+  selectProfile(name: string) {
     if (!name) return;
     this.edit("profile", name);
     this.loadProfile(name);
@@ -307,6 +341,7 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
   loadProfile(name: string) {
     this.profileName = name;
     this.existingProfile = !!this.profiles[name];
+    if (!this.existingProfile) this.profilesOpen = true;
     const loaded = object(this.profiles[name]);
     this.resultSchema = object(loaded["outputSchema"]);
     if (!Object.keys(this.resultSchema).length)
@@ -337,6 +372,8 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
   saveProfile() {
     if (
       !this.profileValid ||
+      !this.schema ||
+      missingData(this.schema, this.profile).length > 0 ||
       !this.resultValid ||
       !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(this.profileName)
     )

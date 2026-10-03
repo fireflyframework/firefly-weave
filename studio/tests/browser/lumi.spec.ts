@@ -210,6 +210,25 @@ test("Lumi settings use the canonical profile, fixed reply schema, and configura
     },
     revision: 7,
   };
+  await page.route("**/environments/development/connections?*", (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          {
+            id: original.connection_revision_id,
+            name: "lumi-provider",
+            revision: 1,
+            connector: "weave-agentic-provider@1.0.0",
+            config: {
+              provider: "openai-responses",
+              endpoint: "https://api.openai.com",
+            },
+          },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
   let saved: any;
   let etag: string | undefined;
   await page.route("**/lumi/configuration", (r) => {

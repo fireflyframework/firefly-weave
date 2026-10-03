@@ -51,7 +51,7 @@ permissions, and real delivery still need checking in your deployment.
 ## Which release this page describes
 
 Weave is an alpha workflow and integration platform. This branch prepares release
-**`0.1.0a8`**, with PyFly 26.9.15 and database schema revision
+**`0.1.0a9`**, with PyFly 26.9.15 and database schema revision
 `0028_files`; published packages are on
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 It includes [Studio](guides/studio.md), [human tasks and operator

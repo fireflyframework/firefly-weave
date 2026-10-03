@@ -53,6 +53,39 @@ interface AccountRow {
         </p>
       </div>
     </div>
+    @if (h.profile) {
+      <section class="settings-card" aria-label="AI setup">
+        <h2>AI setup</h2>
+        <p>
+          Provider connections are shared environment resources. Lumi uses its
+          own model settings; workflow AI profiles stay in each workflow.
+        </p>
+        @if (h.can("connection.manage")) {
+          <button type="button" (click)="h.openAiConnectionDialog()">
+            New AI connection
+          </button>
+        }
+        @if (h.can("lumi.manage")) {
+          <button
+            type="button"
+            (click)="h.lumiSettingsRequested = true; h.lumiOpen = true"
+          >
+            Configure Lumi
+          </button>
+        }
+        @if (!h.can("lumi.manage") || !h.can("connection.manage")) {
+          <p>
+            Ask an administrator for Lumi manager and connection.manage grants
+            in this environment to configure Lumi and its provider connection.
+          </p>
+        }
+        <p>
+          For a workflow model, add an AI task and open Configure workflow AI
+          profiles. A platform operator installs the Agentic worker and Lumi
+          gateway and provisions approved secret handles.
+        </p>
+      </section>
+    }
     @if (showPeople()) {
       <div
         class="settings-tabs"
