@@ -14,25 +14,37 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Exercise a frozen sidecar without an installed Python package or exposed bootstrap."""
+"""Exercise a frozen sidecar without an installed Python package or exposed bootstrap.
+
+The sidecar reads saved platforms from `WEAVE_CONFIG_HOME`, so the smoke points
+it at a fresh private directory: it never reads (or prompts for) the saved
+platforms or credentials of whoever runs it, and must start offline.
+"""
 
 import argparse
 import asyncio
 import http.cookiejar
 import json
 import os
+import tempfile
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
 
 async def check(binary: Path, expected_version: str | None = None) -> None:
+    with tempfile.TemporaryDirectory(prefix="weave-smoke-") as private:
+        Path(private).chmod(0o700)
+        await _check(binary, expected_version, Path(private) / "config")
+
+
+async def _check(binary: Path, expected_version: str | None, config_home: Path) -> None:
     child = await asyncio.create_subprocess_exec(
         str(binary.resolve()),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "PYTHONPATH": ""},
+        env={**os.environ, "PYTHONPATH": "", "WEAVE_CONFIG_HOME": str(config_home)},
     )
     try:
         assert child.stdout is not None
@@ -69,7 +81,9 @@ async def check(binary: Path, expected_version: str | None = None) -> None:
         assert pair["paired"] and pair["mode"] == "offline"
         if expected_version is not None:
             assert pair["version"] == expected_version, "Frozen host version does not match the release"
-        assert not json.loads(request("/studio/connection"))["configured"]
+        connection = json.loads(request("/studio/connection"))
+        assert not connection["configured"] and connection["profile"] is None
+        assert connection["store"]["location"] == str(config_home / "profiles.json"), "Saved platforms not isolated"
         assert (
             json.loads(
                 request("/studio/local/validate", {"format": "yaml", "source": "not: [valid"}, pair["csrfToken"])
