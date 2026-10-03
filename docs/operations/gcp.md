@@ -18,32 +18,46 @@ SPDX-License-Identifier: Apache-2.0
 
 # Prepare Google GKE and Artifact Registry
 
-Use an **existing operator-provisioned GKE cluster** and an existing Docker-format
-Artifact Registry repository. Install Google Cloud CLI, kubectl, Docker, Python 3,
-and `gke-gcloud-auth-plugin`. Authenticate gcloud with your approved operator
-identity. Cluster access and repository push access must already be granted.
-This chapter configures clients without creating cloud infrastructure.
+This guide connects your terminal to an **existing GKE cluster** and an existing
+Docker-format **Artifact Registry** repository, so that the shared guides can
+build, push, and deploy Weave. It configures client tools only; it creates no
+cloud infrastructure.
+
+**Who this is for:** an operator signed in to `gcloud` with an approved identity
+that already has cluster access and push access to the repository.
+
+**What you need first:** Google Cloud CLI, `kubectl`, Docker, Python 3, and
+`gke-gcloud-auth-plugin`. In the same terminal, load your local installation's
+`session.env` as described in the
+[cloud deployment overview](cloud-deployment.md#1-choose-the-infrastructure-route),
+so that `WEAVE_DOCKER_CONTEXT` is set.
+
+**What you will have at the end:** `KUBECONFIG`, `WEAVE_KUBE_CONTEXT`,
+`WEAVE_KUBE_NAMESPACE`, and `WEAVE_REGISTRY_PREFIX` set in this terminal.
 
 ![Registry, Kubernetes, database, identity, and Weave deployment boundaries](../diagrams/cloud-deployment.svg)
 
-Locate Artifact Registry at the image boundary and GKE at the runtime boundary.
-The image-pull identity belongs to the cluster; your local login and Weave's
-application identity have different jobs.
-[Open the diagram at full size](../diagrams/cloud-deployment.svg).
+Artifact Registry sits at the image boundary (step 2 in the diagram) and GKE runs
+the green panel. The image-pull identity belongs to the cluster; your own sign-in
+and Weave's application identities have different jobs.
+[Open diagram at full size](../diagrams/cloud-deployment.svg)
 
 ## If you do not have infrastructure yet
 
-Use the provider's [GKE cluster creation guide](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/creating-an-autopilot-cluster) to prepare an approved cluster and its network,
-node capacity, and access controls. Provision the registry and intended namespace
-through the same infrastructure process. Then return to step 1 with the actual
-resource names. These resources incur charges; a provider quickstart is a learning
-baseline, not a production availability or security design for Weave.
+Use the provider's [GKE cluster creation guide](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/creating-an-autopilot-cluster)
+to prepare an approved cluster with its network, node capacity, and access
+controls. Provision the registry and the intended namespace through the same
+infrastructure process, then return to step 1 with the real resource names. These
+resources cost money, and a provider quickstart is a learning baseline, not a
+production availability or security design for Weave.
 
 ## 1. Select the project and actual resource locations
 
-Replace placeholders with your operator's resource inventory. The cluster location
-is a region for a regional cluster or a zone for a zonal cluster. The Artifact
-Registry location can differ; obtain it from the repository record.
+**Why:** every later command depends on the right project, cluster, and
+repository. Replace the placeholders with your operator's resource inventory. The
+cluster location is a region for a regional cluster or a zone for a zonal
+cluster. The Artifact Registry location can differ; take it from the repository
+record.
 
 ```sh
 # Inspect the authenticated account, target project, existing cluster, and Docker repository.
@@ -62,16 +76,18 @@ gcloud artifacts repositories describe "$WEAVE_AR_REPOSITORY" \
   --format='yaml(name,format)'
 ```
 
-Expect the intended active account, project ID, a `RUNNING` cluster, and repository
-format `DOCKER`. Stop if the repository is missing or uses another format. All
-resource commands name the project explicitly instead of changing a global
-default. See [repository inspection](https://docs.cloud.google.com/sdk/gcloud/reference/artifacts/repositories/describe).
+Expected: the intended active account, the project ID, a cluster with status
+`RUNNING`, and a repository with format `DOCKER`. Stop if the repository is
+missing or uses another format. Every resource command names the project
+explicitly instead of changing a global default. See
+[repository inspection](https://docs.cloud.google.com/sdk/gcloud/reference/artifacts/repositories/describe).
 
 ## 2. Configure and explicitly select kubectl
 
-The GKE credential command needs `container.clusters.get`; applying workloads
-also requires the appropriate Kubernetes permissions. Confirm the required auth
-plugin is installed, then use a new private kubeconfig. See
+**Why:** a separate, private kubeconfig keeps your other cluster connections
+untouched. The GKE credential command needs `container.clusters.get`; applying
+workloads also needs Kubernetes permissions. Confirm that the authentication
+plugin is installed, then create the kubeconfig. See
 [GKE client configuration](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl).
 
 ```sh
@@ -86,27 +102,33 @@ gcloud container clusters get-credentials "$WEAVE_GKE_CLUSTER" \
 kubectl config get-contexts
 ```
 
-Expect a context generated for the selected project, location, and cluster.
-Inspect the list and copy that exact name:
+Expected: the plugin's version, then a context generated for the selected
+project, location, and cluster. Copy that exact name into `WEAVE_KUBE_CONTEXT`
+below. Credential retrieval can change the current context; the remaining
+commands always name the selected one. Then name the namespace reserved for Weave
+and check what you may do there:
 
 ```sh
-# Confirm access to the intended namespace and identify the target CPU architecture.
+# Select the exact context and namespace, then confirm access and the node CPU architecture.
 export WEAVE_KUBE_CONTEXT='your-exact-context-name-from-the-list'
-kubectl --context "$WEAVE_KUBE_CONTEXT" get namespaces
+export WEAVE_KUBE_NAMESPACE='your-existing-namespace'
+kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" auth can-i create deployments
+kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" auth can-i create jobs
+kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" auth can-i create secrets
 kubectl --context "$WEAVE_KUBE_CONTEXT" get nodes -L kubernetes.io/arch
 ```
 
-Expect the intended namespaces and `amd64` or `arm64` node labels. Build for the
-scheduled node architecture; ask the operator for the pool and placement rules
-if your role cannot list nodes. Private endpoints require an approved network
-path from this terminal. Credential acquisition can change the current context;
-the remaining instructions always use the explicit selected name.
+Expected: `yes` three times, then `amd64` or `arm64` node labels. Build for the
+architecture of the nodes that will run Weave; ask the operator for the pool and
+placement rules if your role cannot list nodes. A private endpoint needs an
+approved network path from this terminal.
 
 ## 3. Configure the Docker credential helper
 
-Authorize Docker for the exact Artifact Registry host. The command updates local
-Docker credential-helper configuration; it does not create the repository or
-change its permissions. See [Artifact Registry Docker authentication](https://docs.cloud.google.com/artifact-registry/docs/docker/authentication).
+**Why:** Docker needs credentials for the exact Artifact Registry host before the
+shared guide can push. The command updates your local Docker credential-helper
+configuration; it neither creates the repository nor changes its permissions. See
+[Artifact Registry Docker authentication](https://docs.cloud.google.com/artifact-registry/docs/docker/authentication).
 
 ```sh
 # Register the credential helper for this exact registry host so Docker can push later.
@@ -115,40 +137,57 @@ gcloud auth configure-docker "$WEAVE_AR_HOST"
 export WEAVE_REGISTRY_PREFIX="$WEAVE_AR_HOST/$WEAVE_GCP_PROJECT/$WEAVE_AR_REPOSITORY"
 ```
 
-Review the prompt and accept the named host. Expect confirmation that Docker
-configuration was updated, or that the entry already exists. The prefix is the
-existing Docker repository; the common guide appends `/server` and `/worker` as
-image names. Use the same OS user for authentication and subsequent Docker calls.
-Keep `WEAVE_DOCKER_CONTEXT` from the common guide's explicit local build selection.
+Review the prompt and accept the named host. Expected: a confirmation that the
+Docker configuration was updated, or that the entry already exists. The prefix is
+the existing Docker repository; the shared guide appends `/server` and `/worker`
+as image names. Run Docker as the same operating-system user that ran this
+command, and keep `WEAVE_DOCKER_CONTEXT` from your local session.
 
-The build operator needs repository writer access, such as
-`roles/artifactregistry.writer`. The GKE node service account separately needs
-`roles/artifactregistry.reader` on the repository; local authentication does not
-grant it. For cross-project registries, grant read access in the registry's
-project. See [Artifact Registry permissions](https://docs.cloud.google.com/artifact-registry/docs/access-control)
+**Pushing and pulling are separate permissions.** The build operator needs
+repository writer access, such as `roles/artifactregistry.writer`. The GKE node
+service account separately needs `roles/artifactregistry.reader` on the
+repository; your own sign-in does not give it. For a registry in another project,
+grant the read access in the registry's project. See
+[Artifact Registry permissions](https://docs.cloud.google.com/artifact-registry/docs/access-control)
 and [GKE node image-pull identity](https://docs.cloud.google.com/kubernetes-engine/security/configure-node-service-accounts).
 
 ## 4. Choose supporting services deliberately
 
 | Requirement | Google Cloud option | Weave boundary |
 | --- | --- | --- |
-| PostgreSQL | Cloud SQL for PostgreSQL or separately operated PostgreSQL | Qualify exact migrations, role attributes and function ownership; local PostgreSQL tests do not certify Cloud SQL |
-| Secret storage | Secret Manager through an operator-managed delivery mechanism | Configuring a delivery controller does not implement a Weave secret-provider port; this guide adds no native Secret Manager provider |
-| Token issuer | Your compatible HTTPS OIDC/CIAM provider ([configuration](identity-and-secrets.md#use-your-own-identity-provider)) | Verify issuer/audience/JWKS and create Weave local identity links/grants; Google Cloud IAM permissions are separate |
+| PostgreSQL | Cloud SQL for PostgreSQL or separately operated PostgreSQL | Qualify the exact migrations, role attributes, and function ownership; local PostgreSQL tests do not certify Cloud SQL |
+| Secret storage | Secret Manager through an operator-managed delivery mechanism | Delivering values into processes is not a Weave secret-provider implementation; this guide adds no native Secret Manager provider |
+| Token issuer | Your compatible HTTPS OIDC/CIAM provider ([configuration](identity-and-secrets.md#use-your-own-identity-provider)) | Verify issuer, audience, and JWKS, and create Weave identity links and grants; Google Cloud IAM permissions are separate |
 
-Cloud SQL's administrative users do not have unrestricted PostgreSQL superuser
-powers. Rehearse the selected artifact against the intended service/version using
-the [database qualification gate](kubernetes.md#2-prove-the-database-authority-model).
-Keep migration ownership separate from runtime logins and do not run the local
+**Cloud SQL's administrative users are not unrestricted PostgreSQL superusers.**
+Rehearse the selected package against the intended service and version with the
+[database qualification gate](kubernetes.md#2-prove-the-database-authority-model).
+Keep migration ownership separate from runtime logins, and never run the local
 fixture setup script against Cloud SQL. See
 [Cloud SQL users and roles](https://docs.cloud.google.com/sql/docs/postgres/users).
 
+## If something goes wrong
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| `gke-gcloud-auth-plugin --version` fails, or `kubectl` cannot find the plugin | The authentication plugin is not installed | Install it, for example with `gcloud components install gke-gcloud-auth-plugin`, and retry |
+| `get-credentials` is denied | Your identity lacks `container.clusters.get` in the project | Ask for the permission, or check `WEAVE_GCP_PROJECT` |
+| `kubectl` reports `Forbidden` or `auth can-i` prints `no` | Your identity has no Kubernetes role for that object in the namespace | Ask the cluster administrator for the namespace permissions |
+| `kubectl` times out | The cluster endpoint is private and this terminal has no route to it | Use the approved network path |
+| The repository format is not `DOCKER` | The repository stores another artifact format | Use a Docker-format repository |
+| `docker push` is denied | Your identity lacks writer access on the repository | Ask for `roles/artifactregistry.writer` on that repository |
+| Pods later stay in `ImagePullBackOff` | The node service account cannot read the repository | Grant it `roles/artifactregistry.reader` |
+
 ## Continue with the shared deployment
 
-Keep `KUBECONFIG`, `WEAVE_KUBE_CONTEXT`, and `WEAVE_REGISTRY_PREFIX` in this
-terminal. Return to the [cloud deployment overview](cloud-deployment.md) to build,
-push, and record exact registry digests. Then use the
-[Kubernetes recipe](kubernetes.md) for database qualification, the migration Job,
-API rollout, and a verified public run. These provider setup commands do not
-publish a workflow or admit a worker release; the [CLI tutorial](../guides/cli-tutorial.md)
-performs that separate application lifecycle.
+Keep `KUBECONFIG`, `WEAVE_KUBE_CONTEXT`, `WEAVE_KUBE_NAMESPACE`, and
+`WEAVE_REGISTRY_PREFIX` in this terminal, then:
+
+1. Return to the [cloud deployment overview](cloud-deployment.md#2-pass-the-infrastructure-readiness-gate)
+   to pass the readiness gate, then build, push, and record the registry digests.
+2. Use the [Kubernetes walkthrough](kubernetes.md) for database qualification, the
+   migration Job, the API rollout, and a verified run.
+
+These provider commands neither publish a workflow nor admit a worker release.
+The [CLI tutorial](../guides/cli-tutorial.md) covers that separate application
+lifecycle.

@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1150" viewBox="0 0 960 1150" role="img" aria-labelledby="title desc">
 <title id="title">What runs when you use Firefly Weave?</title>
-<desc id="desc">Your product, CLI, or Python SDK sends a request to the Weave API. The API checks identity and permissions, saves progress in PostgreSQL, and gives integration tasks to workers. Workers contact external systems and report their result. Local simulation uses files without these services.</desc>
+<desc id="desc">Your product, Studio, the CLI, or the Python SDK sends a request to the Weave API, and the client can exit after it receives the run ID. The API checks identity and permissions, saves progress in PostgreSQL, and queues integration tasks. Integration code, a built-in connector run by a native executor or your own remote worker, claims the task, contacts the external system, and reports the result. An internal transform needs no worker, and a human task waits for a person in My tasks with no worker involved. Local simulation uses files and mocks without these services.</desc>
 <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.p{font-size:20px}.note{font-size:18px}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
 <rect width="960" height="1050" rx="24" fill="#EEF4F0"/>
@@ -26,7 +26,7 @@ SPDX-License-Identifier: Apache-2.0
 <rect x="40" y="125" width="880" height="130" rx="16" fill="white"/>
 <g class="icon" transform="translate(65 157)"><rect width="56" height="40" rx="4"/><path d="M10 50h36M28 40v10M10 13l8 7-8 7M27 27h15"/></g>
 <text class="h" x="145" y="166">1. Your product asks Weave to start</text>
-<text class="p" x="145" y="204">The CLI, Python SDK, or HTTP client sends order 123.</text>
+<text class="p" x="145" y="204">Studio, the CLI, the SDK, or any HTTP client sends order 123.</text>
 <text class="note" x="145" y="234">The client can exit after receiving the run ID.</text>
 <path class="arrow" d="M480 255v65"/><text class="note" x="500" y="295">HTTP request + access token</text>
 <rect x="40" y="325" width="880" height="160" rx="16" fill="#173D34"/>
@@ -36,7 +36,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="145" y="447" style="fill:#CEE4D8" class="note">Your identity provider identifies callers. Weave grants authorize actions.</text>
 <path class="arrow" d="M270 485v65"/><text class="note" x="65" y="525">Save progress</text>
 <path class="arrow" d="M690 485v65"/><text class="note" x="710" y="525">Queue a task</text>
-<rect x="40" y="555" width="425" height="190" rx="16" fill="#E2EEF6"/>
+<rect x="40" y="555" width="425" height="190" rx="16" fill="#DCEBE3"/>
 <g class="icon" transform="translate(65 580)"><ellipse cx="22" cy="8" rx="22" ry="8"/><path d="M0 8v37c0 11 44 11 44 0V8M0 27c0 11 44 11 44 0"/></g>
 <text class="h" x="128" y="609">3. PostgreSQL remembers</text>
 <text class="p" x="65" y="657">Definitions, runs, waits, and history</text>
@@ -44,18 +44,19 @@ SPDX-License-Identifier: Apache-2.0
 <text class="note" x="65" y="725">the stored progress of order 123.</text>
 <rect x="495" y="555" width="425" height="190" rx="16" fill="white"/>
 <g class="icon" transform="translate(520 580)"><rect width="44" height="44" rx="8"/><path d="M-8 13H0M-8 31H0M44 13h8M44 31h8M13-8v8M31-8v8M13 44v8M31 44v8M12 15l8 7-8 7M27 29h7"/></g>
-<text class="h" x="583" y="609">4. Workers do the action</text>
-<text class="p" x="520" y="657">Call your warehouse or CRM.</text>
-<text class="note" x="520" y="699">They claim tasks through the API</text>
-<text class="note" x="520" y="725">and send back a result.</text>
+<text class="h" x="583" y="609">4. Integration code acts</text>
+<text class="p" x="520" y="657">It calls your warehouse or CRM.</text>
+<text class="note" x="520" y="699">A built-in connector or a worker</text>
+<text class="note" x="520" y="725">claims the task and reports back.</text>
 <path class="arrow" d="M710 745v60"/><text class="note" x="510" y="785">Integration request</text>
-<rect x="495" y="815" width="425" height="100" rx="16" fill="#FFF3D6"/>
+<rect x="495" y="815" width="425" height="100" rx="16" fill="#FFF7E5"/>
 <g class="icon" transform="translate(520 840)"><path d="M0 40V0h44v40M-5 40h54M10 10h6M28 10h6M10 22h6M28 22h6M18 40V30h9v10"/></g>
 <text class="h" x="583" y="853">Your external system</text>
-<text class="note" x="583" y="884">Its response returns to the worker.</text>
+<text class="note" x="583" y="884">Its response returns to that code.</text>
 <text class="note" x="65" y="830">An internal transform needs no worker.</text>
 <text class="note" x="65" y="860">A native executor runs built-in connectors.</text>
 <text class="note" x="65" y="890">A remote worker runs your Python handler.</text>
+<text class="note" x="65" y="920">A human task waits for a person, not a worker.</text>
 <path d="M40 947H920" stroke="#B7CFC1"/>
 <text class="h" x="40" y="983">Just learning? Start with local simulation.</text>
 <text class="note" x="40" y="1017">YAML + sample input + mocks → a result, without API, database, or external calls.</text>
@@ -108,6 +109,6 @@ SPDX-License-Identifier: Apache-2.0
   </g>
 </g></g>
 <text x="110" y="1085" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
-<text x="110" y="1116" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">The API coordinates, the database remembers, and workers call other systems.</text>
+<text x="110" y="1116" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">The API coordinates, the database remembers, and integration code calls other systems.</text>
 </g>
 </svg>

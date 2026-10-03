@@ -18,172 +18,416 @@ SPDX-License-Identifier: Apache-2.0
 
 # Use the HTTP API
 
-The API lets your application publish workflows, start executions, read their
-progress, and respond to waiting work. The CLI and Python client use this same
-HTTP interface. An application written in another language can call it directly.
+The HTTP API is how every client talks to a Weave platform: your application
+publishes workflows, starts runs, reads their progress, and answers waiting work
+through it. The CLI, Studio's local host, and the Python SDK use this same API,
+so an application written in any language can do what they do.
+
+This page is for integration developers. In about 15 minutes you make two
+read-only requests and one compile request with `curl`, and you learn the rules
+every request follows: scope IDs, errors, revisions, and retry keys. You need:
+
+- a running platform: one your team operates, or the
+  [local platform](../guides/local-platform.md) on your computer;
+- a current access token for that platform and a person or application that
+  holds grants in a workspace (see [Get an access token](#get-an-access-token));
+- `curl` and Python 3 in a terminal.
 
 ## Choose how to learn the API
 
 | You want to… | Open | What you will get |
 | --- | --- | --- |
-| Inspect every request and response | [Full API reference](api-explorer.md) | Searchable operations and schemas, with a downloadable OpenAPI contract |
-| Send a request from your browser | [API playground](../guides/api-playground.md) | Steps to open your server's Swagger UI, authorize, and compile a workflow |
-| Call the API from a terminal | [First HTTP request below](#make-a-read-only-request-first) | A small `curl` request that checks project access |
-| Call it from Python | [Python SDK tutorial](../guides/sdk-tutorial.md) | A complete script that publishes, activates, starts, and reads a run |
-| Add workflows to your product | [Host integration](../guides/host-integration.md) | Which responsibilities belong to your application and which belong to Weave |
+| Make a first request from a terminal | [Make a read-only request first](#make-a-read-only-request-first) | Two `curl` requests that check your identity and project access |
+| Look up one operation's exact contract | [Full API reference](api-explorer.md) | Every operation and schema, with a downloadable OpenAPI document |
+| Send requests from your browser | [API playground](../guides/api-playground.md) | Your server's Swagger UI, how to authorize it, and a compiler request |
+| Call the API from Python | [Python SDK tutorial](../guides/sdk-tutorial.md) | A script that publishes, activates, starts, and reads a run |
+| Add workflows to your own product | [Host integration](../guides/host-integration.md) | Which responsibilities belong to your application and which to Weave |
 
-The published website's API reference is **read-only documentation**. The
-interactive Swagger UI is at `/docs` on your own running API when its operator
-enables `WEAVE_DOCS_ENABLED`. Its **Try it out** buttons send real requests to
-that installation. Use [the playground instructions](../guides/api-playground.md)
-for token entry, scope IDs, expected results, and error recovery.
+**The published API reference is documentation only.** The interactive
+Swagger UI lives at `/docs` on your own platform when its operator sets
+`WEAVE_DOCS_ENABLED=true`. Its **Try it out** buttons send real requests to that
+platform.
 
 ## Understand the three IDs in a request
 
-A **tenant** selects an organization or workspace. A **project** groups its
-definitions. An **environment** selects where versions are activated and runs
-execute, such as development or production. All three are provisioned UUIDs;
-their display names cannot be used in the path.
+Every workspace has three levels, and each one is a UUID in the request path:
+
+- A **tenant** is an organization or team.
+- A **project** inside it groups definitions: workflows, Actions, and Connectors.
+- An **environment** inside the project, such as development or production, is
+  where versions are activated and runs execute.
+
+Display names cannot replace the UUIDs. The first request below lists the ones
+you can use.
 
 | Resource | Path after the API origin | Why it lives there |
 | --- | --- | --- |
-| Catalog and workflow definitions | `/api/v1/tenants/{tenant}/projects/{project}` | Definitions belong to a project and can be used in its environments |
-| Activations, connections, and runs | The project path plus `/environments/{environment}` | Execution uses an environment's prepared bindings and permissions |
-| Your identity and authorized workspaces | `/api/v1/identity` | Discover your own scopes and grants without entering someone else's IDs |
-| Health | `/health/live` and `/health/ready` | Operators check whether the API is running and ready |
+| Catalog, definitions, drafts, compiler | `/api/v1/tenants/{tenant}/projects/{project}` | Definitions belong to a project and can be used in all its environments |
+| Activations, connections, runs, human tasks | The project path plus `/environments/{environment}` | Execution uses one environment's bindings and permissions |
+| Your identity and the workspaces you can use | `/api/v1/identity` | Discover your own scopes without knowing any ID in advance |
+| Published sign-in settings | `/api/v1/client-configuration` | Public, new in 0.1.0a7: how people sign in; `weave auth setup` and Studio read it |
+| Health | `/health/live` and `/health/ready` | Public: operators check that the API runs and is ready |
 
-For example, append `/catalog` to the project path to read its available
-definitions. Append `/runs/{run_id}` to the environment path to inspect one
-execution. The [full reference](api-explorer.md) supplies each operation's exact
-path, body, headers, and permission requirements.
+For example, append `/catalog` to the project path to read the definitions you
+can use, or `/runs/{run_id}` to the environment path to read one run. The
+[full reference](api-explorer.md) gives each operation's exact path, body,
+headers, and required capability.
 
-Every resource request needs a verified bearer **access token** and current local
-Weave grants. The token comes from your installation's configured compatible
-OIDC/CIAM provider; Keycloak is supplied for the local development recipe only.
-The IDs choose resources, while grants determine what you may do with them. A
-successful login alone does not grant access to a project.
+**A token proves who you are; grants decide what you may do.** Every request
+except the public ones needs a verified bearer access token from your
+platform's identity provider. The platform then looks up the Weave person or
+application linked to that sign-in and checks its current grants for the
+requested scope. A successful sign-in alone grants nothing. See
+[Give people the right access](../guides/people-and-access.md) and
+[roles and lifecycle](../guides/roles-and-lifecycle.md).
+
+## Get an access token
+
+The CLI, Studio, and the desktop app never print the tokens they keep, so a
+`curl` session needs a token from another source:
+
+| Your platform | Where the token comes from |
+| --- | --- |
+| Operated by your team | Your operator's approved method, such as a CI secret or your identity provider's tooling. Follow [Use a supplied access token](../guides/connect-to-api.md#use-a-supplied-access-token) |
+| The [local platform](../guides/local-platform.md) | `weave platform token` refreshes the local host token in the private file `.local/platform/host-token.json` (it prints the path, never the token) |
+| A Python application | The [Python SDK](sdk.md#start-with-an-existing-api) can reuse your saved platform's sign-in (new in 0.1.0a7) or call your own token logic; no copying needed |
+
+Keep the values in the same terminal. The API origin has no `/api/v1` suffix; on
+the local platform, `weave platform status` shows it as `Api url`:
+
+```sh
+# Ask for the API origin without a path, such as https://weave.example.com.
+printf 'Weave API origin: '; read -r WEAVE_BASE_URL
+export WEAVE_BASE_URL
+# Prompt for the token without echoing it or keeping it in shell history.
+export WEAVE_ACCESS_TOKEN="$(python3 -c 'import getpass; print(getpass.getpass("Access token: "))')"
+```
+
+On the local platform, read the token file instead of typing the token:
+
+```sh
+# Refresh the local host token; the command prints only the file's path.
+weave platform token
+# Read the token from that private file without printing it.
+export WEAVE_ACCESS_TOKEN="$(python3 -c 'import json; print(json.load(open(".local/platform/host-token.json"))["access_token"])')"
+```
+
+Expected: `Token file: …/host-token.json` from the first command and no output
+from the second. Run both from the folder that holds `.local/platform`; with
+`weave platform --directory PATH`, read `PATH/host-token.json` instead. Tokens
+expire: when a request returns HTTP 401, get a new one the same way.
 
 ## Make a read-only request first
 
-Complete [Connect to an API](../guides/connect-to-api.md) using its **supplied-token
-option**. Keep `WEAVE_BASE_URL`, `WEAVE_TENANT_ID`, `WEAVE_PROJECT_ID`, and a current
-`WEAVE_ACCESS_TOKEN` in the same terminal. The API origin has no `/api/v1` suffix.
-Your identity needs `catalog.read` for this project.
+Start with requests that change nothing, so that a failure can only mean an
+identity, scope, or network problem.
 
-```sh
-# Read available definitions before attempting to change or execute anything.
-# The token proves identity; the server checks your project's catalog.read grant.
-curl --fail-with-body --silent --show-error \
-  "$WEAVE_BASE_URL/api/v1/tenants/$WEAVE_TENANT_ID/projects/$WEAVE_PROJECT_ID/catalog" \
-  -H "Authorization: Bearer $WEAVE_ACCESS_TOKEN"
-```
+1. **Ask who you are.** This request needs no IDs, and its answer lists the
+    workspaces you can use:
 
-Expected: HTTP 200 and the project's catalog as JSON. A new project's catalog may
-be empty. This request does not publish a workflow or create a run. If it fails,
-resolve the identity, scope, or connectivity issue before adding write operations.
-The browser and SDK do not automatically read the CLI's saved credentials; each
-client needs its own configured token source.
+    ```sh
+    # Read your identity, your grants, and the tenants, projects, and environments you can use.
+    curl --fail-with-body --silent --show-error \
+      "$WEAVE_BASE_URL/api/v1/identity" \
+      -H "Authorization: Bearer $WEAVE_ACCESS_TOKEN"
+    ```
+
+    Expected: HTTP 200 and a JSON object with `principal_id`, `kind` (`human`,
+    `application`, or `worker`), `grants`, and `workspaces`. Each workspace is a
+    tenant with its `projects`, and each project lists its `environments`, all
+    with `id` and `name`. HTTP 401 means the token is invalid or expired, or the
+    platform does not know this sign-in yet; see
+    [When a request fails](#when-a-request-fails).
+
+2. **Keep the IDs of one workspace.** Copy the tenant, project, and
+    environment `id` values from that answer:
+
+    ```sh
+    # Paste the UUIDs from the identity answer; display names do not work in paths.
+    printf 'Tenant UUID: '; read -r WEAVE_TENANT_ID
+    printf 'Project UUID: '; read -r WEAVE_PROJECT_ID
+    printf 'Environment UUID: '; read -r WEAVE_ENVIRONMENT_ID
+    export WEAVE_TENANT_ID WEAVE_PROJECT_ID WEAVE_ENVIRONMENT_ID
+    ```
+
+3. **Read the project catalog.** Your identity needs the `catalog.read`
+    capability in that project:
+
+    ```sh
+    # Read the definitions this project can use before changing or running anything.
+    curl --fail-with-body --silent --show-error \
+      "$WEAVE_BASE_URL/api/v1/tenants/$WEAVE_TENANT_ID/projects/$WEAVE_PROJECT_ID/catalog" \
+      -H "Authorization: Bearer $WEAVE_ACCESS_TOKEN"
+    ```
+
+    Expected: HTTP 200 and the catalog as JSON with `definitions`, `tasks`,
+    `adapters`, and `schemas`; a new project's lists can be empty. HTTP 403 with
+    `WV-FORBIDDEN` means you are known but hold no grant for this project.
 
 <a id="make-one-request-before-reading-the-inventory"></a>
 
 ## Compile a workflow without publishing it
 
-Keep the same connection variables from the previous step. Create
-`.local/tutorial/echo.workflow.yaml` using the
-[quickstart's definition step](../quickstart.md#create-the-definition), then return
-to that same working directory. Your identity also needs the project `compile`
-capability. Create a JSON request that embeds the YAML file as a string:
+Compiling checks a workflow against the project's catalog and returns the
+compiled artifact. It saves nothing, publishes nothing, and starts no run. Your
+identity needs the `compile` capability in the project.
 
-```sh
-# JSON-encode the YAML so quotes and newlines survive the HTTP request intact.
-python3 - <<'PYTHON'
-import json
-from pathlib import Path
-request = {
-    "source": Path(".local/tutorial/echo.workflow.yaml").read_text(),
-    "format": "yaml",
-    "filename": "echo.workflow.yaml",
-    "strict": True,
-}
-Path(".local/tutorial/compiler-request.json").write_text(json.dumps(request))
-PYTHON
-# Compile checks the source against the project's authorized dependency catalog.
-curl --fail-with-body --silent --show-error \
-  "$WEAVE_BASE_URL/api/v1/tenants/$WEAVE_TENANT_ID/projects/$WEAVE_PROJECT_ID/compiler/compile" \
-  -H "Authorization: Bearer $WEAVE_ACCESS_TOKEN" \
-  -H 'Content-Type: application/json' \
-  --data-binary @.local/tutorial/compiler-request.json
-```
+1. **Create a workflow file.** Write `.local/tutorial/echo.workflow.yaml` as in
+    the [quickstart's definition step](../quickstart.md#create-the-definition),
+    then return to the folder that contains `.local`.
 
-This requires the project `compile` capability. The server uses its authorized
-catalog because the body omits `catalog`. Expect a compiler result with `ok: true`,
-`partial: false`, and an `artifact`. `filename` is only a diagnostic label: the
-server does not open a file with that name. No publication or run is created.
+2. **Wrap the YAML in a JSON request.** The API takes the source as a string,
+    so encode it rather than pasting it:
 
-An HTTP success and a successful compilation are separate checks: read the
-compiler result's diagnostics and `ok` field as well as the HTTP status. For
-publication, send `{"source": "<the YAML text>", "format": "yaml"}` to the
-project's `/workflows` collection with an `Idempotency-Key`. The
-[SDK lifecycle example](sdk.md#extend-the-host-to-publish-activate-and-run) shows
-how its returned version ID and digest feed activation and run creation.
+    ```sh
+    # JSON-encode the YAML so its quotes and newlines survive the HTTP request intact.
+    python3 - <<'PYTHON'
+    import json
+    from pathlib import Path
+    request = {
+        "source": Path(".local/tutorial/echo.workflow.yaml").read_text(),
+        "format": "yaml",
+        "filename": "echo.workflow.yaml",
+        "strict": True,
+    }
+    Path(".local/tutorial/compiler-request.json").write_text(json.dumps(request))
+    PYTHON
+    ```
 
-| Request fails with | Check first |
-| --- | --- |
-| Authentication error | Token expiry, issuer, audience, and the configured API origin |
-| Authorization error | Local identity link and current grant for this operation and scope |
-| Revision conflict | Read the current revision; reconcile edits before submitting again |
-| Invalid request or compiler diagnostic | Exact field spelling, schema, and diagnostic path |
-| Timeout or lost response during a mutation | Outcome is unknown; retain the original body and idempotency key |
+3. **Send it to the compiler.** Leaving out `catalog` makes the server use the
+    project's current authorized catalog:
 
-![HTTP lifecycle requests, response identities, and authorization checks](../diagrams/authoring-host-sequence.svg)
+    ```sh
+    # Compile against the project's catalog; nothing is saved or executed.
+    curl --fail-with-body --silent --show-error \
+      "$WEAVE_BASE_URL/api/v1/tenants/$WEAVE_TENANT_ID/projects/$WEAVE_PROJECT_ID/compiler/compile" \
+      -H "Authorization: Bearer $WEAVE_ACCESS_TOKEN" \
+      -H 'Content-Type: application/json' \
+      --data-binary @.local/tutorial/compiler-request.json
+    ```
 
-Read down through the lifecycle. Solid arrows send requests and dashed arrows return identities; the API checks each operation separately. Expected revisions protect edits, while idempotency keys identify exact retries of keyed mutations. [Open the diagram at full size](../diagrams/authoring-host-sequence.svg).
+    Expected: a compiler result with `ok: true`, `partial: false`, and an
+    `artifact`. `filename` is only a label for diagnostics; the server never
+    opens a file with that name.
 
-## Requests, errors and revisions
+**HTTP success and compiler success are separate checks.** A 200 response can
+still carry `ok: false` with diagnostics: read `ok` and `diagnostics` as well as
+the status.
 
-New integrations should use the versioned `/api/v1/tenants/...` paths. The older
-`/tenants/...` paths remain compatibility routes to the same native endpoints,
-service graph, authorization, and application lifespan; they do not redirect.
-Administrative `/admin/tenants` and `/admin/grants` keep their separately
-authorized paths. Health probes and signed `POST /webhooks/{identifier}` remain
-at the root. Signed webhooks verify the exact timestamp and raw request bytes
-against their immutable trigger revision; ordinary bearer authentication does
-not substitute for the webhook signature.
+**To publish instead,** send `{"source": "<the YAML text>", "format": "yaml"}`
+to the project's `/workflows` collection with an `Idempotency-Key` header. The
+[SDK lifecycle example](sdk.md#extend-the-host-to-publish-activate-and-run)
+shows how the returned version ID and digest feed activation and the first run.
 
-Provider roles, caller-supplied catalog locks, and compiled artifacts do not grant
-execution or publication authority. Scope and identity are checked for each
-operation. See [identity and secrets](../operations/identity-and-secrets.md) to
-configure the installation's provider and local grants.
+## When a request fails
 
-Canonical responses include `X-Weave-Wire-Version: weave/api-v1` and `X-Weave-Request-ID`, including early authentication failures. Errors use `application/problem+json` with `status`, stable `code`, safe `message`, `request_id` and `diagnostics`. Where an existing operation has a safe compiler or unavailable result, `result` preserves it. No framework traceback, token or resolved connection credential appears in ordinary resource errors. Worker credential leasing is a separately authorized secret boundary with `Cache-Control: no-store` and `Pragma: no-cache`; its schema describes the actual deliberate `value` field.
+Errors arrive as `application/problem+json` with `status`, a stable `code`, a
+safe `message`, a `request_id`, and `diagnostics`. Quote the `request_id`
+(also in the `X-Weave-Request-ID` header) when you ask an operator for help.
 
-Revision responses on canonical paths use quoted positive ETags such as `"2"`. `If-Match` accepts that syntax and the existing bare positive integer syntax. Weak, wildcard, multiple, zero, signed and padded revisions are invalid. Draft stale writes use HTTP 412; debug and incident conflict codes retain their existing operation semantics. The SDK preserves the actual status and code rather than converting every revision conflict to a fabricated status.
+| What you see | Why | What to do |
+| --- | --- | --- |
+| HTTP 401, `WV-UNAUTHENTICATED` | The token is missing, malformed, or expired, was issued for another API, or its sign-in is not linked to a Weave person or application | Get a new token. If it still fails, ask an administrator to link your identity ([People and access](../guides/people-and-access.md)) |
+| HTTP 403, `WV-FORBIDDEN` | You are known but hold no current grant with the required capability in that scope | Check the IDs in the path, then ask for the role you need |
+| HTTP 404, `WV-NOT-FOUND` | No resource with that ID exists in the scope of the path | Check every ID in the path, including the environment |
+| HTTP 409, `WV-IDEMPOTENCY-CONFLICT` | You reused an `Idempotency-Key` with a different request body | Use a new key for a new request; reuse a key only for an exact retry |
+| HTTP 412, `WV-ETAG` | Your `If-Match` revision is no longer the current one | Read the resource again, merge your change, and resend with the new revision |
+| HTTP 422, `WV-VALIDATION`, `WV-IDEMPOTENCY`, or `WV-ETAG` | The body does not match the contract, a required `Idempotency-Key` is missing, or `If-Match` is not a positive revision | Compare field names and types with the [full reference](api-explorer.md); send the revision as `"2"` or `2` |
+| A timeout or lost connection during a change | The outcome is unknown: the change may or may not have happened | Keep the original body and key; read the resource, and retry only with the same key |
 
-Publish, activation and run-start/retry operations require `Idempotency-Key`. A matching key, principal scope and exact request recover the committed result; changed content conflicts. Clients do not automatically retry unsafe requests, including timeouts with an unknown outcome. Caller-chosen retries must preserve the exact body and applicable key. Connection revision creation and debug commands have no fabricated idempotency guarantee.
+## Request rules: paths, errors, revisions, and retries
+
+These rules hold for every operation. Read them before you send your first
+change.
+
+### Paths
+
+- New code uses the versioned `/api/v1/tenants/...` paths. The older
+  `/tenants/...` paths remain as compatibility routes to the same handlers,
+  authorization, and data; they do not redirect.
+- `/admin/tenants` and `/admin/grants` keep their own, separately authorized
+  paths.
+- Health probes, signed webhooks (`POST /webhooks/{identifier}`), and provider
+  ingress (`/provider-ingress/{identifier}`) stay at the root. A webhook is
+  checked against its trigger's signature over the exact timestamp and raw
+  bytes; a bearer token never replaces that signature.
+- Nothing in a request can raise your authority: identity-provider roles, a
+  catalog lock you send, or a compiled artifact grant no execution or
+  publication right. Each operation checks your identity and scope again.
+
+### Headers and errors
+
+- Canonical responses carry `X-Weave-Wire-Version: weave/api-v1` and
+  `X-Weave-Request-ID`, even when authentication fails early.
+- Errors use `application/problem+json` with `status`, `code`, `message`,
+  `request_id`, and `diagnostics`. When an operation has a safe compiler result
+  or an "unavailable" result, `result` keeps it.
+- Errors never contain a framework traceback, a token, or a resolved
+  connection credential.
+- Worker credential leasing is the one deliberate secret boundary: it answers
+  with `Cache-Control: no-store` and `Pragma: no-cache`, and its schema declares
+  the secret `value` field. See the [worker protocol](worker-protocol.md).
+
+### Revisions (ETags)
+
+Resources that change, such as drafts, carry a **revision**: a positive number
+that grows with each change.
+
+- Responses send it as a quoted ETag, such as `"2"`.
+- Send it back in `If-Match` to say "change this only if it is still revision
+  2". Both `"2"` and the bare `2` are accepted. Weak (`W/"2"`), wildcard,
+  multiple, zero, signed, and zero-padded values are invalid.
+- A stale draft write answers HTTP 412 (`WV-ETAG`). Debug sessions and
+  incidents keep their own conflict codes.
+- The SDK reports the real status and code instead of converting every
+  revision conflict to one error.
+
+### Idempotency keys
+
+An **idempotency key** is a name you choose for one intended change, so that a
+retry cannot apply it twice. These changes require an `Idempotency-Key` header
+of 1 to 200 characters:
+
+- publishing and retiring definitions, and creating and retiring activations;
+- starting, retrying, pausing, resuming, archiving, restoring, and purging
+  runs;
+- claiming, releasing, reassigning, and completing human tasks, and saving
+  human assignments and groups.
+
+The [full reference](api-explorer.md) shows the header on every operation that
+accepts it. The rules for using a key:
+
+- Sending the same key, from the same principal and scope, with the exact same
+  body returns the result that was already committed. The same key with a
+  different body fails with HTTP 409.
+- Clients never retry a change on their own after a timeout or another
+  outcome they cannot know. If you retry, send the exact same body and key. The
+  one exception is a capacity rejection: HTTP 429 with `WV-OPERATION-CAPACITY`
+  or `WV-REQUEST-CAPACITY` means the platform did not admit the request, so
+  Studio sends a read, or a change that carries a key, again with the same key,
+  honoring `Retry-After`, for at most four attempts in all.
+- Creating a connection revision accepts an optional key since 0.1.0a7: with
+  one, a retry returns the revision already created; without one, every request
+  creates a new revision. Debug commands
+  have no idempotency guarantee.
+
+### Health probes
+
+`GET /health/live` answers `{"status":"up"}` while the process runs, and
+`GET /health/ready` answers `{"status":"ready"}` when it can serve requests.
+When the API is not ready, `/health/ready` answers HTTP 503 with the same safe
+problem envelope as other errors, so check the HTTP status or the `status`
+field. Failure details, database URLs, and credentials are never included, and
+the request ID is generated by the server. Only these exact paths are public.
 
 ## Authoring and lifecycle
 
-`compiler/compile` and `compiler/validate` accept `source`, `format`, optional `filename`, optional canonical `catalog`, and `strict`. An explicit lock gives the same diagnostics, source locations, source map and artifact digest as offline compilation. Omitted compile catalog uses the currently authorized server catalog. Omitted validate catalog performs partial validation: `partial`, `validationOk`, `ok`, `artifact` and canonical diagnostics retain their distinct meanings. Without a catalog, `strict=true` is inapplicable and returns the same partial validation result as offline `workflow validate --strict`; it does not promote partial warnings, reject the request or substitute an empty catalog. Partial validation does not establish deployability. Publication always applies current server authority/catalog checks.
+![HTTP lifecycle requests, response identities, and authorization checks](../diagrams/authoring-host-sequence.svg)
 
-Saving a draft creates an append-only document revision. `DELETE drafts/{identifier}` logically retires the draft under `definition.write`, current project grants, a scoped lock and the required latest revision. Its acknowledgment has a new lifecycle revision and the retained document revision. Missing drafts return HTTP 404; stale retirement returns HTTP 412; a matching repeated retirement conflicts instead of claiming new idempotent work. Read/export retain every document revision with retirement metadata, default lists omit retired drafts, and later saves cannot resurrect the ID. Published versions are immutable: changes publish a new version; retirement preserves historical evidence. Connection updates create new immutable IDs/revisions.
+Read down: solid arrows are your requests and dashed arrows return the IDs that
+the next request needs. The API checks your grant at every step; revisions
+protect edits, and idempotency keys make retries safe.
+[Open diagram at full size](../diagrams/authoring-host-sequence.svg).
 
-Each trigger ID is an immutable configuration revision and has its own signed webhook URL/receipts. Replacement creates a new ID and explicitly disables the previous route. Cutover can have overlap or a gap; no atomic family retargeting is promised. The same event sent to two trigger revisions can start two runs. Coordinate cutover or deduplicate upstream when necessary.
+**Compile and validate.** `compiler/compile` and `compiler/validate` accept
+`source`, `format`, an optional `filename`, an optional canonical `catalog`, and
+`strict`.
 
-## Discovery, debugging and history
+- With an explicit catalog lock, the diagnostics, source locations, source map,
+  and artifact digest are the same as in [local compilation](cli.md#local-workflow-commands).
+- Without `catalog`, **compile** uses the project's current authorized catalog.
+- Without `catalog`, **validate** performs partial validation: `partial`,
+  `validationOk`, `ok`, `artifact`, and the diagnostics keep their separate
+  meanings. `strict=true` then has no effect, exactly like
+  `weave workflow validate --strict` without a catalog: it neither promotes
+  warnings, rejects the request, nor substitutes an empty catalog.
+- Partial validation does not prove a workflow can be deployed. Publication
+  always repeats the server's authority and catalog checks.
 
-Canonical lists return `{ "items": [...], "next_cursor": null | "opaque" }`, with limits 1–100 and stable ID ordering. Cursors bind tenant/project/environment, resource collection and any run/schedule filter. A cursor from another scope/filter fails validation. Initial pagination includes a valid zero UUID. Compatibility array endpoints retain their prior wire shape. Cursors describe traversal, not a database snapshot; concurrent creation/retirement can change subsequent pages.
+**Drafts.** Saving a draft appends a new document revision.
+`DELETE drafts/{identifier}` retires a draft; it needs `definition.write`, the
+current grants, and the latest revision.
 
-Aggregate discovery requires the existing scope-wide capability: connections `connection.manage`, runs `run.read`, workers `status.read`, releases/catalog `catalog.read`, triggers `trigger.manage`, incidents `incident.read`, schedules `run.read`. Current grants are reloaded in the operation transaction. Classification-unavailable resources stay explicit safe placeholders; discovery never expands access by returning unfiltered internal rows.
+- The answer carries a new lifecycle revision and the retained document
+  revision.
+- A missing draft answers HTTP 404, a stale revision HTTP 412, and repeating a
+  retirement that already happened is a conflict rather than new work.
+- Reads and exports keep every revision with its retirement metadata. Lists
+  leave retired drafts out by default, and a later save cannot bring the ID
+  back.
 
-Debug sessions are project-owned and creator-controlled, with real-time expiration, revision fencing, mock-only actions, breakpoints and virtual time. Their response is a `DebugSession` envelope containing `view`, not the inner view alone. Filenames in source maps are opaque labels. No connector or secret provider executes during simulation. Run history keeps its bounded high-water cursor, pinned source/receipt/version facts and safe omissions. Replay reports `consistent`, `inconsistent` or `incomplete`; prefixes and unavailable/redacted histories cannot be reported as success. Cancellation and task completion can return an unavailable acknowledgment when historical classification or payload comparison cannot be established; task completion includes `payload_match: unavailable` in that case.
+**Published versions and connections never change.** A change publishes a new
+version; retiring a version keeps its history. Updating a connection creates a
+new connection revision with a new ID.
 
-Cancellation of a supported historical run whose state exceeds the current processing budget can instead return `CapacityRunAcknowledgment`: `id`, terminal `status`, `accepted_sequence`, `capacity_limited: true`, an explicit `/state` omission with reason `resource_limit`, and `external_effects_may_continue`. The terminal change and complete durable history remain committed; the response does not include the large state or label the run unavailable. Clients must handle this response union rather than assuming every successful cancellation contains a full `RunView`. Cancellation fences further orchestration work but cannot undo an external effect already in progress.
+**Triggers.** Each trigger ID is one immutable configuration revision with its
+own signed webhook URL and receipts. Replacing a trigger creates a new ID and
+disables the previous route. The switch is not atomic: there can be an overlap
+or a gap, and one event sent to both revisions can start two runs. Coordinate
+the switch with the sender, or deduplicate upstream.
 
-## Native schema export
+**Installed connectors.** Since 0.1.0a7,
+`GET …/projects/{project}/connector-descriptors` lists the connectors installed
+on the platform, and `…/connector-descriptors/{adapter}` reads one. Each
+descriptor holds the exact Connector manifest to publish (`source`), its
+capabilities, bindings, Actions, and connection settings, plus
+`published_version_id` once it is published in the project. Both need
+`catalog.read`. `weave connector descriptor ADAPTER` prints the same view.
 
-`firefly_weave.contracts.openapi.export_openapi()` lazily uses the public PyFly `OpenAPIOperation`, `RouteMetadata` and `OpenAPIGenerator` APIs with Weave's canonical schema policy. It needs the optional `openapi` extra and does not start an app, open sockets, acquire services or read secrets. Pure definition/schema export and the builder remain PyFly-free. The operation registry supplies product request/response/auth/header metadata for manual Request/JSONResponse handlers; native PyFly owns schema generation. Security declarations document runtime enforcement and do not replace it.
+## Discovery, debugging, and history
 
-The following operation inventory is generated from the same explicit product metadata. The contract test in `tests/contracts/test_api_documentation.py` checks every operation, canonical path, and authority label against that registry. GET route HEAD support follows the native HTTP router; HEAD has no response body.
+**Lists.** Canonical lists return `{ "items": [...], "next_cursor": null | "opaque" }`.
+
+- `limit` is 1 to 100 (50 by default), and items come in stable ID order.
+- Pass `next_cursor` back as `cursor` for the next page. A cursor is bound to
+  its tenant, project, environment, collection, and any run or schedule filter;
+  a cursor from another scope or filter is rejected.
+- A cursor describes a position, not a snapshot: items created or retired
+  meanwhile can change later pages.
+- Compatibility endpoints that return plain arrays keep that shape.
+
+**Who may list what.** Listing a whole collection needs the scope-wide
+capability: connections `connection.manage`, runs and schedules `run.read`,
+workers `status.read`, releases and the catalog `catalog.read`, triggers
+`trigger.manage`, incidents `incident.read`. Grants are reloaded in the same
+transaction. A resource whose classification cannot be checked appears as an
+explicit safe placeholder; a list never widens access.
+
+**Debug sessions** belong to a project and to the person who created them.
+They expire in real time, use revisions, run Actions only against mocks, and
+support breakpoints and virtual time. The response is a `DebugSession` envelope
+that contains a `view`. Source-map file names are labels only. No connector or
+secret provider runs during a simulation.
+
+**History and replay.** Run history pages use a bounded high-water cursor and
+keep the pinned source, receipt, and version facts, with explicit omissions.
+Replay reports `consistent`, `inconsistent`, or `incomplete`: a history prefix,
+or a history with unavailable or redacted parts, is never reported as success.
+See [history and replay](history-and-replay.md).
+
+**Answers that say "unavailable".** Cancellation and task completion can return
+an unavailable acknowledgment when the platform cannot classify the historical
+data or compare payloads; task completion then includes
+`payload_match: unavailable`.
+
+**Large runs.** Cancelling a supported historical run whose state is larger than
+the current processing budget can return `CapacityRunAcknowledgment` instead of
+a full `RunView`. It holds `id`, the terminal `status`, `accepted_sequence`,
+`capacity_limited: true`, an explicit omission of `/state` with reason
+`resource_limit`, and `external_effects_may_continue`. The cancellation and its
+complete history are committed; only the large state is left out of the
+answer. Handle both shapes. Cancellation stops further orchestration, but it
+cannot undo an external call that is already in progress.
+
+## Operation inventory
+
+The table lists every operation with its canonical path and the capability it
+requires. "Public probe" marks the endpoints that need no token. The contract
+test in `tests/contracts/test_api_documentation.py` checks every row against the
+platform's operation registry, so the table matches the code. GET routes also
+answer HEAD, without a body. For request and response schemas, open the
+operation in the [full API reference](api-explorer.md); to generate a client,
+[export the OpenAPI document](native-openapi.md).
 
 | Operation | Method and canonical path | Required authority |
 | --- | --- | --- |
@@ -244,6 +488,7 @@ The following operation inventory is generated from the same explicit product me
 | `members.grant` | `POST /api/v1/tenants/{tenant}/members` | grant.manage or grant.admin |
 | `members.revoke` | `POST /api/v1/tenants/{tenant}/members/{identifier}/revoke` | grant.manage or grant.admin |
 | `identity.read` | `GET /api/v1/identity` | authenticated identity |
+| `client_configuration.read` | `GET /api/v1/client-configuration` | Public probe |
 | `health.live` | `GET /health/live` | Public probe |
 | `health.ready` | `GET /health/ready` | Public probe |
 | `admin.tenant` | `POST /admin/tenants` | tenant.create |
@@ -256,6 +501,8 @@ The following operation inventory is generated from the same explicit product me
 | `catalog.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/catalog` | catalog.read |
 | `capabilities.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/capabilities` | catalog.read |
 | `schemas.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/schemas` | catalog.read |
+| `connector_descriptors.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/connector-descriptors` | catalog.read |
+| `connector_descriptors.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/connector-descriptors/{adapter}` | catalog.read |
 | `definitions.publish` | `POST /api/v1/tenants/{tenant}/projects/{project}/{collection}` | definition.publish |
 | `definitions.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/{collection}` | catalog.read |
 | `definitions.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/{collection}/{identifier}` | catalog.read |
@@ -330,23 +577,31 @@ The following operation inventory is generated from the same explicit product me
 | `debug.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/debug/sessions/{identifier}` | simulate |
 | `debug.command` | `POST /api/v1/tenants/{tenant}/projects/{project}/debug/sessions/{identifier}/commands` | simulate |
 
-
-Readiness failure keeps HTTP 503 at the exact root `/health/ready`, and now uses
-the same safe Problem envelope as other API errors. Clients should inspect
-HTTP 503 or `Problem.status` for unavailability.
-Healthy readiness remains `{"status":"ready"}` and liveness remains
-`{"status":"up"}`. Failure details, database URLs and credentials are omitted;
-request IDs are server-generated UUIDs. No health prefix exemption is added.
-
 ## Compatibility and retention authority
 
-A project viewer can read the scoped compatibility report with `status.read`.
-Starting a fresh compatibility check requires `compatibility.check`. Reports omit
-other projects' findings. Both operations reload current local grants.
+**Compatibility.** A project viewer with `status.read` can read the project's
+compatibility report; starting a fresh check needs `compatibility.check`.
+Reports leave out other projects' findings, and both operations reload your
+current grants.
 
-Retention plans are immutable server-selected sets. Reading or applying a plan
-requires its creator and the corresponding current project capability. An
-environment-only or resource-constrained grant does not grant project maintenance
-authority. Another creator's plan returns the same not-found response as an
-unknown plan. Applying a plan rechecks current authorization and server-owned
-eligibility; the client cannot replace its candidate IDs.
+**Retention.** A retention plan is an immutable set of items chosen by the
+server.
+
+- Only the plan's creator, with the matching current project capability, can
+  read or apply it. An environment-only or resource-limited grant is not enough.
+- Another person's plan answers exactly like an unknown plan (not found).
+- Applying a plan checks authorization and eligibility again; a client cannot
+  replace the items in it.
+
+The [CLI retention commands](cli.md#compatibility-and-retention) show the
+complete plan-then-apply sequence.
+
+## Next steps
+
+- Look up any operation's full contract in the [full API reference](api-explorer.md).
+- Publish, activate, and start a run from Python with the
+  [SDK tutorial](../guides/sdk-tutorial.md) and the [SDK reference](sdk.md).
+- Run the same requests from a terminal with the [CLI](cli.md#remote-authoring-and-operations),
+  which signs in for you and remembers your workspace.
+- Generate a client in another language from the
+  [native OpenAPI export](native-openapi.md).

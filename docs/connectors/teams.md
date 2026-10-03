@@ -16,55 +16,127 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# Teams personal bot
+# Receive and reply to Microsoft Teams messages
 
-Use this guide to receive text from a Teams personal bot and send a reply from a
-workflow. Your operator must register the bot and configure its identity, HTTPS
-endpoint, and personal installation. Follow the checkpoints below before testing
-with an actual account; a local fixture is not evidence of Teams delivery.
+Use this guide to start a workflow from a text message sent to a Teams personal
+bot, and to reply from that workflow. The optional `weave-teams@1.0.0` connector
+receives authenticated Bot Framework activities, stores a conversation
+**reference**, and sends text back through that stored reference.
+
+- **Who it is for:** the operator who registers the bot and enables the package,
+  and the author who builds the reply workflow.
+- **What you need:** an Azure Bot registration with a personal Teams installation,
+  a deployed platform with the `teams` extra (the
+  [local platform](../guides/local-platform.md) never enables connector packages),
+  a public HTTPS ingress, and a CLI [connected to the platform](../guides/connect-to-api.md).
+- **How long:** plan for the Azure and Teams provisioning first; the Weave steps
+  take about 30 minutes once the installation facts are known.
+
+A local fixture is not evidence of Teams delivery: follow the checkpoints below
+before testing with an actual account.
 
 ![Provider comparison highlighting the Teams reference-generation lifecycle](../diagrams/integrations-messaging.svg)
 
 **How to read this diagram:** Follow the top Teams row from storing an authenticated address to replying through that reference. The reference ID and generation are server-owned authority facts; the other rows show why WhatsApp or Telegram identifiers cannot substitute for them.
 
-## Build an inbound message and reply flow
+[Open diagram at full size](../diagrams/integrations-messaging.svg)
 
-The inbound **provider source** authenticates a Bot Framework activity and stores
-a conversation reference. The outbound **reply Action** uses that stored reference
-to address a message. A reference is a server-issued UUID plus a generation; it
-is not the provider's conversation ID, and callers cannot invent one to send.
+## How the message and the reply connect
 
-Use an [existing API](../guides/connect-to-api.md) or create one with
-[standalone setup](../guides/standalone.md), then arrange
-[native worker admission](../guides/workers.md). The
-[publication sequence](authoring.md#from-package-to-an-executable-workflow) explains
-Connector version, connection revision, release and activation IDs. Teams also
-requires provider assets and an existing personal installation, described below.
+| Part | What it does |
+| --- | --- |
+| **Provider source** (inbound) | Authenticates a Bot Framework activity, stores a conversation reference, and starts the pinned workflow |
+| **Reference** | A server-issued UUID plus a **generation** number. It is not the provider's conversation ID, and callers cannot invent one to send |
+| **Reply Action** (outbound) | Uses a stored reference to address one text message |
 
-Use these checkpoints in order:
+The connector supports reply and proactive text to a stored, authenticated
+reference for one explicitly configured personal installation per immutable
+connection and source. It does not create conversations, provision accounts,
+send Graph messages, or implement channels or groups, SSO, skills, invoke,
+streaming, attachments, or cards.
 
-1. Gather the bot client/registration tenant UUIDs from the operator's app
-   registration and the customer tenant UUID from the intended installation.
-   Obtain conversation, bot, user and service URL facts from a separately
-   authenticated installation record. This profile cannot discover an installation
-   from an email address or bootstrap unknown conversation IDs.
-2. Enable the package, publish its Connector, and create the connection using the
-   exact policy fields below and a scoped `client_secret` handle. Save the returned
-   connection revision `id`; confirm operator-approved service/token origins.
-3. Publish a `teams-reply@1.0.0` Action as described below, then
-   [`reply.workflow.yaml`](../../examples/teams/reply.workflow.yaml). Admit the
-   native worker release and credential grants, bind the connection slot `teams`,
-   and save the activation `id`.
-4. Create a Teams provider source with that connection revision and activation;
-   [the source recipe](../reference/provider-sources.md#create-one-inbound-route)
-   shows all request fields. Use the Teams declaration, provider `teams`, and
-   copy every connection config field into `policy`.
-5. Set the bot messaging endpoint to the returned source's public
-   `/provider-ingress/SOURCE_ID` URL. After an authorized real message, inspect the
-   provider receipt and its linked run. A 202 response confirms inbound commit,
-   not that the reply Action succeeded.
+## Before you start
 
-A reply Action's complete input shape is:
+**Provision the bot (operator, outside Weave).** Provision an Azure Bot resource
+with a supported single-tenant Entra registration, enable the Teams channel, set
+its HTTPS messaging endpoint to `/provider-ingress/{source_id}` (you get the ID in
+step 4), publish a Teams app manifest with personal scope and the bot app ID, and
+install it under tenant policy. See Microsoft's
+[manual Bot provisioning](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/provision-azure-bot-service-manually)
+and [proactive messaging requirements](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/conversations/send-proactive-messages).
+No automation here creates those resources.
+
+**Enable the package (operator).** Install the exact reviewed Weave wheel with the
+`server,teams` extras, and select
+`firefly-weave:weave-teams:firefly_weave.connectors.teams:package` in
+`WEAVE_CONNECTOR_PACKAGES`. Installing the optional SDK alone does not enable it,
+and missing extras fail startup when the package is selected. The package's
+distribution version is the installed `firefly-weave` version; the adapter and
+task behavior is pinned separately at `1.0.0`. Native services share the
+application's existing PyFly container.
+
+**Collect the installation facts.** Gather the bot client and registration tenant
+UUIDs from the operator's app registration, and the customer tenant UUID from the
+intended installation. Obtain the conversation, bot, user, and service URL facts
+from a separately authenticated installation record. This profile cannot discover
+an installation from an email address or bootstrap unknown conversation IDs.
+
+## Build the message-and-reply flow
+
+The [publication sequence](authoring.md#from-package-to-an-executable-workflow)
+explains the Connector version, connection revision, release, and activation IDs
+each step returns.
+
+1. **Publish the Connector and create the connection.** Publish the installed
+    `package.descriptor.manifest`, then create a connection with the exact policy
+    fields in [Connection fields](#connection-fields) and a scoped `client_secret`
+    handle:
+
+    ```sh
+    # Create the connection revision from the reviewed request file.
+    weave connections create --request teams-personal.json --output json
+    ```
+
+    Expected: a connection revision; save its `id`. Confirm the operator-approved
+    service and token origins in its `allowed_destinations`.
+
+2. **Publish the reply Action and the workflow.** Publish a connector Action
+    named `teams-reply@1.0.0` for `weave-teams@1.0.0` action `reply`, with the
+    installed descriptor's input and output schemas, `config: {}`, `sideEffect:
+    non_idempotent`, and a 30-second timeout. Then publish
+    [`reply.workflow.yaml`](../../examples/teams/reply.workflow.yaml), which calls
+    `teams-reply@1.0.0` through the slot `teams` and shows the input mapping.
+
+3. **Admit, grant, and activate.** Register a native worker release with the
+    descriptor's exact capabilities and bindings, explicitly grant its credential
+    capability against the connection revision (`weave workers grant`), bind the
+    connection slot `teams` at activation, and save the activation `id`. No chat
+    user's identity supplies execution authority.
+
+4. **Create the provider source.** Use that connection revision and activation;
+    [the source recipe](../reference/provider-sources.md#create-one-inbound-route)
+    shows every request field. Use the Teams declaration, provider `teams`, package
+    `firefly-weave`, the actual package and adapter versions, and the schema digest
+    from `provider_schema_digest`, and copy every connection config field into
+    `policy`.
+
+    ```sh
+    # Create the inbound route from the generated request file.
+    weave provider-sources create --request teams-source.json
+    ```
+
+    Expected: a source with its `id`.
+
+5. **Point the bot at Weave and test.** Set the bot messaging endpoint to the
+    source's public `/provider-ingress/SOURCE_ID` URL. After an authorized real
+    message, inspect the provider receipt and its linked run with `weave
+    provider-receipts list` and `weave runs read`. A 202 response confirms the
+    inbound commit, not that the reply Action succeeded.
+
+### The reply Action's input
+
+A verified message produces `reference_id`, `generation`, `activity_id`, `text`,
+and bounded protocol facts. The reply receives only the first four:
 
 ```json
 {
@@ -75,40 +147,41 @@ A reply Action's complete input shape is:
 }
 ```
 
-Use `reference_id`, `generation`, and `activity_id` from the authenticated
-normalized event; the UUID above is only a shape example. For `send`, omit
-`activity_id` and use a still-authorized stored reference. Success returns
-`{"id":"PROVIDER_ACTIVITY_ID","status":"accepted"}`. If the reference is revoked
-or its generation is stale, use the explicit reference lifecycle below; resending
-the same input cannot recreate authority. For other failures, inspect
+Take `reference_id`, `generation`, and `activity_id` from the authenticated
+normalized event; the UUID above is only a shape example. For the proactive
+`send` action, omit `activity_id` and use a still-authorized stored reference.
+
+Expected: `{"id":"PROVIDER_ACTIVITY_ID","status":"accepted"}`. If the reference is
+revoked or its generation is stale, use the explicit
+[reference lifecycle](#revocation-and-explicit-reactivation); resending the same
+input cannot recreate authority. For other failures, inspect
 [provider receipts](../reference/provider-sources.md#inspect-admission-separately-from-execution)
 and [run incidents](../reference/incident-operations.md).
 
+Both actions restore the scoped reference and check the current lease, connection,
+source, and reference authority before token acquisition and again before the
+single POST. No workflow input can choose a service URL, token endpoint, tenant,
+audience, scope, or credential handle.
 
-The optional `teams` extra implements public-cloud Bot Connector text messages for one explicitly configured personal installation per immutable connection/source. It supports reply and proactive text to a stored authenticated reference. It does not create conversations, provision accounts, send Graph messages, or implement channels/groups, SSO, skills, invoke, streaming, attachments or cards. Fixture and local PostgreSQL verification is separate from live Azure/Teams certification.
+## Connection fields
 
-Install the exact reviewed Weave wheel with `server,teams` extras. Operator configuration must select `firefly-weave:weave-teams:firefly_weave.connectors.teams:package` in `connector_packages`; installing the optional SDK alone does not enable it. Missing extras fail startup when selected. The installed distribution version is `0.1.0a6`; adapter/task behavior is separately pinned at `1.0.0`. Native services share the application's existing PyFly container.
-
-## Provision and configure
-
-An operator must provision an Azure Bot resource with a supported single-tenant Entra registration, enable the Teams channel, set its HTTPS messaging endpoint to `/provider-ingress/{source_id}`, publish a Teams app manifest with personal scope and the bot app ID, and install it under tenant policy. See Microsoft's [manual Bot provisioning](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/provision-azure-bot-service-manually) and [proactive messaging requirements](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/conversations/send-proactive-messages). No automation here creates those resources.
-
-Publish the installed `package.descriptor.manifest`, then create a connection with the following exact policy fields. IDs are external installation facts obtained by the operator; they never become Weave principal grants.
+The IDs are external installation facts obtained by the operator; they never
+become Weave principal grants.
 
 | Field | Meaning |
 | --- | --- |
 | `cloud` | `public` (default) |
-| `account_id` | Canonical bot app/client UUID |
+| `account_id` | Canonical bot app (client) UUID |
 | `registration_tenant` | Canonical Entra registration tenant UUID |
-| `tenant_id`, `allowed_tenants` | Exact Teams customer tenant and explicit permitted tenant UUID list |
+| `tenant_id`, `allowed_tenants` | The exact Teams customer tenant, and the explicit list of permitted tenant UUIDs |
 | `conversation_id` | One installed personal conversation ID |
-| `bot_id`, `user_id` | Exact bot and personal-user channel account IDs |
+| `bot_id`, `user_id` | The exact bot and personal-user channel account IDs |
 | `installation_generation` | Positive integer, initially 1 |
 
-A complete connection creation request has this shape. All UUIDs and channel IDs
-below are illustrative. Replace them with the published Connector version ID and
-authenticated installation facts before submission; replace the service origin
-with the one approved for that installation.
+A complete connection request has this shape. All UUIDs and channel IDs are
+illustrative: replace them with the published Connector version ID and the
+authenticated installation facts, and replace the service origin with the one
+approved for that installation.
 
 ```json
 {
@@ -130,38 +203,110 @@ with the one approved for that installation.
 }
 ```
 
-`connector.example.test` is a non-routable documentation placeholder, not a
-Microsoft service recommendation. The complete authenticated service URL is later
-stored in the reference; this connection allowlist contains its origin only.
+- `connector.example.test` is a non-routable documentation placeholder, not a
+  Microsoft service recommendation. The complete authenticated service URL is
+  stored later in the reference; the connection allowlist contains its origin
+  only.
+- `secretRef.client_secret` names an operator-granted secret handle.
+  `allowed_destinations` contains literal HTTPS origins for
+  `login.microsoftonline.com` and the selected Bot Connector service. Do not
+  place secrets in config, source policy, Action input, or workflow output.
+- `weave connections test` validates the configuration only; success does not
+  certify credentials, the installation, or delivery.
 
-Connection `secretRef.client_secret` names an operator-granted secret handle. `allowed_destinations` contains literal HTTPS origins for `login.microsoftonline.com` and the selected Bot Connector service. Do not place secrets in config, source policy, action input or workflow output. `test_connection` validates configuration only; success does not certify credentials, installation, or delivery.
+**The provider source** copies all policy fields exactly from that immutable
+connection revision, and pins
+`provider_schema_digest(package.metadata.model.event_schemas, package.metadata.model.dispatch_event_kinds)`.
+Only `message` is dispatchable. Lifecycle events are durably ignored by workflow
+dispatch while updating references transactionally. The mapping is checked
+against every dispatchable schema. A source requires current source-owner,
+connection-binding, and target authority.
 
-The provider source copies all policy fields exactly from that immutable connection revision, selects provider `teams`, package `firefly-weave`, actual package version and adapter version, and pins `provider_schema_digest(package.metadata.model.event_schemas, package.metadata.model.dispatch_event_kinds)`. Only `message` is dispatchable. Lifecycle events are durably ignored by workflow dispatch while updating references transactionally. Mapping is checked against every dispatchable schema. A source requires current source-owner, connection-binding and target authority.
-
-## Message to workflow to reply
-
-`examples/teams/reply.workflow.yaml` demonstrates the input mapping. Publish a connector Action for `weave-teams@1.0.0` action `reply` using the installed descriptor's input/output schema, `config: {}`, `sideEffect: non_idempotent`, and a 30-second timeout. Register a native worker release containing the exact descriptor capabilities/bindings, explicitly grant its credential capability against the selected connection revision, bind that revision at workflow activation, then bind the provider source to that activation. No chat-user identity supplies execution authority.
-
-A verified message produces `reference_id`, `generation`, `activity_id`, `text`, and bounded protocol facts. The native reply receives only those first four fields. A proactive `send` accepts `reference_id`, `generation`, and `text` without `activity_id`. Both restore the scoped reference and check current lease, connection, source and reference authority before token acquisition and again before the single POST. No workflow input can choose a service URL, token endpoint, tenant, audience, scope or credential handle.
-
-The authenticated `serviceurl` claim must exactly match the activity `serviceUrl`, including its base path. IDs are encoded as individual URL components. Ingress uses fixed Microsoft JWKS metadata and public PyFly async validation; it makes no OAuth grant or send. HTTP 202 acknowledgment follows the reference/receipt transaction commit, and commit failure is not acknowledged.
+**Ingress.** The authenticated `serviceurl` claim must exactly match the activity
+`serviceUrl`, including its base path. IDs are encoded as individual URL
+components. Ingress uses fixed Microsoft JWKS metadata and public PyFly async
+validation; it makes no OAuth grant or send. The HTTP 202 acknowledgment follows
+the reference and receipt transaction commit, and a commit failure is not
+acknowledged.
 
 ## Revocation and explicit reactivation
 
-References remain fenced across source replacements and connection revisions. A bot removal/uninstall revokes the current generation. Late message/add events cannot reactivate it and receive a typed denial; exact already committed duplicates may safely ACK. Provider timestamps do not establish ordering. A delayed previously unseen removal may conservatively revoke a reactivated generation.
+References stay fenced across source replacements and connection revisions.
 
-Use the native API, typed SDK methods `read_teams_reference`, `list_teams_references`, `revoke_teams_reference`, `reactivate_teams_reference`, or CLI `weave teams-references read|list|revoke|reactivate`. Canonical API paths are `/api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/teams-references` and `/{identifier}` with `/revoke` or `/reactivate` for POST transitions. Core routes remain documented when Teams is disabled and return unavailable (409). Optional Teams implementation modules and SDKs are loaded only for the exact selected entry point.
+- **Removal revokes.** A bot removal or uninstall revokes the current generation.
+  Late message or add events cannot reactivate it and receive a typed denial;
+  exact already committed duplicates may safely acknowledge. Provider timestamps
+  do not establish ordering, so a delayed, previously unseen removal may
+  conservatively revoke a reactivated generation.
+- **Manage references** with `weave teams-references read|list|revoke|reactivate`,
+  the typed SDK methods `read_teams_reference`, `list_teams_references`,
+  `revoke_teams_reference`, and `reactivate_teams_reference`, or the API at
+  `/api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/teams-references`
+  and `/{identifier}`, with `/revoke` or `/reactivate` for POST transitions. The
+  core routes stay documented when Teams is disabled and return unavailable
+  (409). Optional Teams modules and SDKs load only for the exact selected entry
+  point.
+- **Requests.** Revoke takes `expected_generation`. Reactivate takes
+  `expected_generation`, `source_id`, and `request_id` (a UUID idempotency
+  identity). Both require current `trigger.manage`, `connection.manage`, and
+  `connection.bind`.
+- **Rules.** Revoke reduces authority and stays possible after disabling the old
+  source. Reactivation requires a separately created immutable connection and
+  source pinning exactly the next generation, full current owner, binding, and
+  target authority, and the unchanged previously authenticated address. A
+  conflicting expected generation or idempotency content fails closed.
+  Reactivation neither installs a bot nor verifies a new provider account.
 
-Revoke request: `expected_generation`. Reactivate request: `expected_generation`, `source_id`, `request_id` (UUID idempotency identity). Both require current `trigger.manage`, `connection.manage`, and `connection.bind`. Revoke reduces authority and remains possible after disabling the old source. Reactivation requires a separately created immutable connection/source pinning exactly the next generation, full current owner/binding/target authority, and the unchanged previously authenticated address. Conflicting expected generation or idempotency content fails closed. Reactivation neither installs a bot nor verifies a new provider account.
-
-Once a final reference check authorizes transmission, a concurrent revocation cannot recall already authorized/in-flight bytes. No cross-system atomic revocation guarantee is made. Connection/source disablement and grant revocation also deny new sends.
+Once a final reference check authorizes transmission, a concurrent revocation
+cannot recall already authorized or in-flight bytes. No cross-system atomic
+revocation guarantee is made. Connection or source disablement and grant
+revocation also deny new sends.
 
 ## Authentication and outcome limits
 
-The single-tenant client-secret profile uses one public `OAuth2Client.client_credentials` acquisition per invocation, tenant-fixed token endpoint, explicit POST client authentication and scope `https://api.botframework.com/.default`. There is no cross-invocation token cache or refresh-token grant. Each OAuth client owns and closes its transport; JWKS uses application-owned borrowed async fetchers with bounded per-audience validators (maximum 128), exact endpoint equality and deadlines. Both use bounded egress without ambient proxies or redirects.
+- **Tokens.** The single-tenant client-secret profile uses one public
+  `OAuth2Client.client_credentials` acquisition per invocation, a tenant-fixed
+  token endpoint, explicit POST client authentication, and the scope
+  `https://api.botframework.com/.default`. There is no cross-invocation token
+  cache or refresh-token grant.
+- **Transport.** Each OAuth client owns and closes its transport; JWKS uses
+  application-owned borrowed async fetchers with bounded per-audience validators
+  (at most 128), exact endpoint equality, and deadlines. Both use bounded egress
+  without ambient proxies or redirects.
+- **Outcomes.** The send result is only `{id, status: accepted}`: provider
+  acceptance and correlation, not delivery. A timeout or disconnect after a POST
+  may be `unknown` and is not retried automatically. HTTP 429 is a rejected
+  outcome; there are no hidden retries. SDK errors, token responses, and provider
+  bodies are never copied into task errors or output.
+- **Workers.** Remote worker credentials alone do not grant Teams reference
+  access; the connector requires the native lease-bound reference callback.
 
-The send result is only `{id, status: accepted}`; it is provider acceptance/correlation, not delivery. Timeout/disconnect after a POST may be unknown and is not automatically retried. HTTP 429 is a rejected outcome; this implementation performs no hidden retries. SDK errors, token responses and provider bodies are never copied into task errors/output. Remote worker credentials alone do not grant Teams reference access; the initial connector requires the native lease-bound reference callback.
+**Pins and backups.** PyFly is pinned to the published `26.9.15` wheel, SHA-256
+`c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b`. The Microsoft
+Agents hosting core and activity packages are pinned to `1.7.0`. Migration
+`0019_teams_references` follows `0018_provider_inbox`; backups must preserve the
+reference fence, lifecycle evidence, administrative receipts, and provider inbox
+together.
 
-PyFly is pinned to published `26.9.15`, wheel SHA256 `c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b`. Microsoft Agents hosting core/activity are pinned to `1.7.0`. Migration `0019_teams_references` follows `0018_provider_inbox`; backups must preserve the reference fence, lifecycle evidence, administrative receipts and provider inbox together.
+## What has been verified
 
-Live acceptance still requires an explicitly authorized test tenant, bot, personal installation and destination. Local wire fixtures do not establish Azure provisioning, tenant policy, real service URL/token shapes, delivery, throttle timing or production restart behavior.
+Fixture and local PostgreSQL verification is separate from live Azure and Teams
+certification. Live acceptance still requires an explicitly authorized test
+tenant, bot, personal installation, and destination. Local wire fixtures do not
+establish Azure provisioning, tenant policy, real service URL and token shapes,
+delivery, throttle timing, or production restart behavior.
+
+## Troubleshoot
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| The bot endpoint gets no 202 | The activity failed authentication, the `serviceurl` claim did not match, or the commit failed | Check the source ID in the endpoint, the bot registration, and the provider receipts |
+| A 202, but no reply | The inbound commit succeeded; the run or the reply Action did not | Read the receipt's linked run and its incidents |
+| The reply is denied for the reference | The reference was revoked or its generation is stale | Follow [revocation and reactivation](#revocation-and-explicit-reactivation); resending the same input does not help |
+| A send ends `unknown` | The POST may have reached Teams | Check the conversation before sending again; see [incident operations](../reference/incident-operations.md) |
+
+## Next steps
+
+- Wait for an approval before replying: [Human tasks and approvals](../guides/human-tasks.md).
+- Understand receipts and dispatch: [Authenticated provider sources](../reference/provider-sources.md).
+- Compare with the other messaging connectors: [WhatsApp](whatsapp.md) and [Telegram](telegram.md).

@@ -18,13 +18,23 @@ SPDX-License-Identifier: Apache-2.0
 
 # Use Weave from Python, one step at a time
 
-You will create the same small workflow in YAML and Python, check it without a
-server, and then use the Python client to publish, activate, and run it. The
-workflow receives `{"message": "Hello from Python"}` and returns that object.
+This tutorial is for Python developers who want their application to create and
+run workflows. You write the same small workflow in YAML and in Python, check
+that both compile to the same result without a server, and then use the Python
+client to publish, activate, and run it on a platform. The workflow receives
+`{"message": "Hello from Python"}` and returns that object.
 
-The first five steps run locally. Step 6 needs a running Weave API, a scoped
-identity, and permission to publish and run definitions. You do not need a worker
-for this example: a `transform` executes inside Weave.
+**Before you start, you need:**
+
+- Python 3.12 or later, and either a Weave source checkout with
+  [uv](https://docs.astral.sh/uv/getting-started/installation/), or an
+  application environment where Weave is installed with its `client` extra.
+- For steps 1 to 5, nothing else: they run on your computer.
+- For step 6, a running platform and an identity allowed to publish definitions
+  and start runs: your team's API with an access token, or a
+  [local platform](local-platform.md) where you ran `weave platform demo`.
+
+You do not need a worker: a `transform` step runs inside Weave.
 
 ## 1. Choose the Python tool for the job
 
@@ -63,7 +73,7 @@ python_sdk --version
 ```
 
 Expected: Python 3.12 or later. Keep this terminal and repository directory for
-the chapter. If using an already installed application environment, define
+the whole tutorial. If using an already installed application environment, define
 `python_sdk() { python "$@"; }` and `weave_sdk() { weave "$@"; }` there instead,
 then create `.local/sdk-tutorial`. The two functions must select the same install.
 
@@ -190,6 +200,7 @@ request = {
 ```
 
 ```sh
+# Write the simulation request next to the compiled artifact.
 python_sdk .local/sdk-tutorial/make_simulation.py
 # The simulator applies one input to the compiled artifact.
 weave_sdk workflow simulate .local/sdk-tutorial/simulation.json --output json
@@ -201,10 +212,23 @@ in-memory simulation. The next step creates a durable API run.
 
 ## 6. Connect your Python application to an API
 
-For a team-operated API, complete [connect to an existing API](connect-to-api.md)
-using its supplied-token option. For your own laptop, complete
-[the local platform tutorial](local-platform.md) through `weave platform demo`;
-use the private-file option below. A team-operated API uses these variables:
+Your script needs three things: the API address, a scope (the tenant, project,
+and environment it works in), and an access token. Choose the source that
+matches your platform:
+
+- **A team-operated API:** your operator supplies the address, the three scope
+  IDs, and a way to obtain a current access token, as in the connect guide's
+  [explicit mode](connect-to-api.md#scripts-and-ci-explicit-mode). Set the
+  variables in the table below.
+- **A local platform:** complete [the local platform guide](local-platform.md)
+  through `weave platform demo`, then use the
+  [local-platform adaptation](#use-the-local-platform-instead) after the script.
+- **A platform you saved with `weave auth setup`:** since 0.1.0a7, the SDK can
+  reuse its server, sign-in, and workspace instead of these variables.
+  Build the client from it as shown in
+  [Reuse your saved platform](../reference/sdk.md#reuse-your-saved-platform).
+
+A team-operated API uses these variables:
 
 | Variable | Meaning |
 | --- | --- |
@@ -217,8 +241,9 @@ use the private-file option below. A team-operated API uses these variables:
 Remote origins use HTTPS; loopback HTTP is accepted for local development. Your
 identity needs `catalog.read`, `compile`, `definition.publish`,
 `release.activate`, `run.start`, and `run.read`. It cannot grant these to itself.
-The SDK does not automatically read the CLI's saved login. For browser/device
-credentials, use the [OAuth session integration](../reference/sdk.md#device-login-pkce-and-stores).
+The SDK reads a saved platform only when your code asks for it, as in the
+saved-platform option above. To let a person sign in from your own application,
+with a browser or a code, use the [OAuth session integration](../reference/sdk.md#device-login-pkce-and-stores).
 
 Save `.local/sdk-tutorial/run_message.py`. The complete script below uses the
 supplied-token option. Local-platform users replace the scope/token block using
@@ -288,18 +313,31 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**Using the local platform instead?** In terminal 2, restore its nonsecret
-session paths and refresh its private token:
+### Use the local platform instead
+
+Run these commands in the tutorial terminal from step 2, not in the terminal
+that runs the API. They restore the installation's non-secret session paths and
+renew its private host token, which the script reads when you run it. The
+commands assume the platform was set up from this same checkout:
 
 ```sh
-# The API remains running in terminal 1; these commands reuse its installation.
+# The API keeps running in its own terminal; restore this installation's paths and ports.
 source .local/platform/session.env
+# Renew the verified host token in its private file.
 weave platform token
+# The script reads the API address from WEAVE_BASE_URL.
 export WEAVE_BASE_URL="$WEAVE_API_URL"
 ```
 
-If you chose a custom installation directory, source its `session.env` and pass
-that same directory to `weave platform --directory /absolute/private/path token`.
+Expected: `Token file:` with the path of `host-token.json`. If the installation
+is in another checkout or a custom directory, source that directory's
+`session.env` by its absolute path and pass the same directory to
+`weave platform --directory /absolute/private/path token`. With a
+[manual installation](standalone.md), restore its session and renew its token as
+in its [resume procedure](standalone.md#resume-this-installation-later), then
+run `export WEAVE_BASE_URL="$WEAVE_API_URL"`; its `first-run.json` and
+`host-token.json` have the same shape.
+
 In `run_message.py`, replace the `scope = ...` assignment and `access_token`
 function with this block. Keep the rest of `main` unchanged:
 
@@ -316,7 +354,11 @@ def access_token():
 ```
 
 The local option needs no `WEAVE_ACCESS_TOKEN` environment variable. The
-callback reads credentials but does not refresh them itself. Now run the script:
+callback reads credentials but does not refresh them itself.
+
+### Run the script
+
+Whichever source you chose, run the script once:
 
 ```sh
 # This step publishes, activates, and starts one durable run in your chosen scope.
@@ -325,7 +367,7 @@ python_sdk .local/sdk-tutorial/run_message.py
 
 Expected: two UUIDs and `output: {'message': 'Hello from Python'}`. Keep the
 activation ID if you want to try the inbound webhook in the
-[custom connector tutorial](custom-connectors-tutorial.md#7-bring-events-in-with-a-signed-webhook).
+[Build a custom integration](custom-connectors-tutorial.md#7-bring-events-in-with-a-signed-webhook) tutorial.
 
 Read the three mutations as separate decisions:
 
@@ -406,3 +448,15 @@ completion around the handler.
 The build and simulation steps can be verified offline. Publication, activation,
 and worker registration require a live, authorized installation; passing the
 local examples does not establish that your installation has the necessary grants.
+
+## What you learned
+
+- `WorkflowBuilder` produces definition data; YAML and Python definitions compile
+  to the same executable digest.
+- `WeaveClient` calls the platform: `publish`, `activate`, and `start_run` each
+  return the ID the next call needs, and idempotency keys make retries safe.
+- Custom Python runs in an admitted worker, never inside a workflow definition.
+
+Next, add your own business code with [workers](workers.md), call a REST API
+without code with the [built-in HTTP connector](../connectors/http-without-code.md),
+or plan your product's integration with [host integration](host-integration.md).

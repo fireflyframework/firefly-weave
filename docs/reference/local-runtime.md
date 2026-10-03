@@ -16,274 +16,428 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Local PostgreSQL and Keycloak runtime
+# Understand the local runtime: PostgreSQL, Keycloak, and the API
 
-The API uses native PyFly controllers, a native request filter and Starlette.
-Keycloak access tokens resolve through explicit local identity links. No static
-service-key authentication, provider passwords, auto-mounted IdP endpoints or
-implicit startup migrations are enabled.
+A local Weave installation runs three things on your computer: **PostgreSQL**,
+which stores every workflow, run, and grant; **Keycloak**, the development
+identity provider people and processes sign in with; and the **Weave API**, which
+verifies tokens, checks grants, and runs workflows. This page explains how those
+pieces fit together: which process may do what, how people sign in, how
+connector actions run locally, and how to stop and restart without losing data.
 
-For the complete setup sequence, follow the [standalone quickstart](../guides/standalone.md).
-It covers dependency installation, PostgreSQL and Keycloak readiness, generated
-private configuration, identity bootstrap, grants, and the first workflow. Use
-[deployment](../operations/deployment.md) to launch API and worker containers.
-This page explains runtime authority and lifecycle behavior.
+**Who it is for.** Administrators and operators who run a local or standalone
+platform and need to know why it behaves as it does. **Set it up first** with one
+of two guides; this page explains, it does not repeat their commands:
+
+| Guide | Use it when |
+| --- | --- |
+| [Start a local platform in small steps](../guides/local-platform.md) | You want the quickest route: `weave platform` runs each stage with one command |
+| [Set up a local platform manually](../guides/standalone.md) | You operate Weave and want to run and control every underlying command |
+
+For containers and workers, continue with [deployment](../operations/deployment.md).
+Reading this page takes about 15 minutes.
 
 ![Local process topology and the retained restart path](../diagrams/operations-topology.svg)
 
-Locate PostgreSQL and Keycloak in the top process row, then follow their connections to the API and the execution path your workflow requires. On restart, reuse existing files and receipts; provisioning a new database is a different operation. The sections below explain each process boundary.
-
+PostgreSQL, the API, and Keycloak form the top row: the API reads and writes
+PostgreSQL and trusts tokens that Keycloak issues (dashed line). The bottom row
+adds optional processes: the native executor, a remote worker, and the example
+receiver. To restart, reuse the existing files and receipts; provisioning a new
+database is a different operation.
 [Open diagram at full size](../diagrams/operations-topology.svg)
 
 ## Components and startup order
 
-Start with PostgreSQL, Keycloak, and the API application process.
-PostgreSQL stores Weave's durable state. Keycloak authenticates callers and uses
-its own PostgreSQL service (`keycloak-db`) to retain identities. The Weave API
-verifies tokens, resolves local grants, and schedules work against its runtime
-database. Remote workers and native executors are added only when the workflow
-needs their execution capabilities.
+- **PostgreSQL** stores Weave's durable state.
+- **Keycloak** authenticates callers and keeps identities in its own PostgreSQL
+  service (`keycloak-db`).
+- **The Weave API** verifies tokens, resolves local grants, and schedules work
+  against its runtime database. Starting it never migrates the database.
+- **Workers and native executors** are added only when a workflow needs to call
+  something outside the API's built-in behavior.
 
-The standalone sequence is deliberate:
+Both guides follow the same order, and each stage depends on the one before:
 
-1. Reserve one Docker context/project, private work directory, and set of ports.
+1. Reserve one Docker context and project, a private work directory, and a set
+   of ports.
 2. Generate local PostgreSQL and identity secrets, start those services, and
-   verify PostgreSQL health and Keycloak discovery.
-3. Provision a fresh runtime database with separate application/scheduler logins
-   and apply its packaged schema.
-4. Verify and bootstrap the host identity, then launch the API in a second terminal.
-5. Check readiness, grant business scope, and publish/activate/run a workflow.
-6. Add an admitted worker through the [deployment guide](../operations/deployment.md)
-   if the workflow performs a task outside the API's built-in runtime behavior.
+   check PostgreSQL health and Keycloak discovery.
+3. Provision a fresh runtime database with separate application and scheduler
+   logins, and apply its schema.
+4. Verify and bootstrap the host identity, then launch the API.
+5. Check readiness, grant business scope, and publish, activate, and run a
+   workflow.
+6. Add an admitted worker when a workflow needs one; see
+   [deployment](../operations/deployment.md).
 
-A missing earlier stage often explains a later failure: token acquisition needs
-a ready realm, authorization needs an identity link plus grants, and API readiness
-needs both current schema and catalog compatibility authority.
+**A failure usually points at an earlier stage.** Getting a token needs a ready
+realm, authorization needs an identity link plus grants, and API readiness needs
+the current schema and catalog compatibility authority.
 
 ## Private configuration and database authorities
 
-The walkthrough also saves `session.env`, which contains nonsecret paths,
-context/project, and selected ports. Its printed `cd` and `source` commands let a
-new terminal return to the same installation. This file does not load runtime or
-identity secrets; load only the additional configuration needed by that terminal.
+**Files.** The setup writes private files that belong in protected local storage,
+never in source control. The manual guide also saves `session.env`, which holds
+only non-secret paths, the Docker context and project, and the selected ports;
+its printed `cd` and `source` commands bring a new terminal back to the same
+installation. It loads no runtime or identity secrets. The setup scripts refuse
+to replace an existing secret file, so reuse the configuration you already have.
 
-The setup scripts refuse to replace existing secret files. Reuse the intended
-configuration when a file already exists. Generated environment files and
-bootstrap receipts belong in protected local storage, outside source control.
-The development services bind their published ports to loopback. Container JWKS
-routing and the token's issuer are separate settings; use the documented Compose
-configuration rather than changing the issuer to match a container hostname.
+**Network.** The development services publish their ports on loopback only.
+Container JWKS routing and the token issuer are separate settings: use the
+documented Compose configuration instead of changing the issuer to match a
+container hostname.
 
-`setup-runtime.py` guards the task-owned control backend before creating a fresh
-retained database and a generated login inheriting the nonowner `weave_app`
-role plus an execute-only scheduler login. The selected private output file
-(`$WEAVE_WORK_DIR/runtime.env` in the standalone guide) contains separate application,
-scheduler and migration URLs. Runtime
-startup rejects superuser, BYPASSRLS and public-table owner identities. Production
-must provide external secrets and HTTPS issuer/JWKS endpoints; development
-HTTP is accepted only for explicitly configured localhost endpoints.
+**Database identities.** `setup-runtime.py` checks the task-owned control backend,
+then creates a fresh runtime database with a generated login that inherits the
+non-owner `weave_app` role, and an execute-only scheduler login. Its private
+output (`$WEAVE_WORK_DIR/runtime.env` in the manual guide) holds separate
+application, scheduler, and migration URLs. The API refuses to start as a
+superuser, a role that bypasses row-level security, or the owner of public
+tables.
 
-| Authority | Intended use | Local source |
+| Authority | Used for | Local source |
 | --- | --- | --- |
-| Provisioning administrator | Creates the owned runtime database/logins | `postgres.env` control URL |
-| Migration owner | Applies schema and performs explicit bootstrap | `WEAVE_MIGRATION_DATABASE_URL` in `runtime.env` |
-| Application login | Executes authorized API/business operations under RLS | `WEAVE_DATABASE_URL` in `runtime.env` |
-| Catalog/scheduler login | Executes bounded scheduler/compatibility functions | `WEAVE_SCHEDULER_DATABASE_URL` in `runtime.env` |
-| Worker principal | Claims only granted task/release work through the API | Verified identity link and scoped grants; no database login |
+| Provisioning administrator | Creating the runtime database and its logins | The control URL in `postgres.env` |
+| Migration owner | Applying the schema and the explicit bootstrap | `WEAVE_MIGRATION_DATABASE_URL` in `runtime.env` |
+| Application login | Authorized API and business operations under row-level security | `WEAVE_DATABASE_URL` in `runtime.env` |
+| Catalog and scheduler login | Bounded scheduler and compatibility functions | `WEAVE_SCHEDULER_DATABASE_URL` in `runtime.env` |
+| Worker principal | Claiming only granted task and release work, through the API | A verified identity link and scoped grants; no database login |
 
-Source the runtime file after any provisioning file in an operator shell; both
-may define a database URL, but only the runtime application URL belongs in an API
-process. The standalone startup command removes migration credentials from that
-process explicitly.
+In an operator shell, load `runtime.env` after any provisioning file: both may
+define a database URL, but only the runtime application URL belongs to the API
+process. The manual guide's launch command removes the migration credentials
+from the API process explicitly.
+
+**Production is different.** Production must use external secrets and HTTPS
+issuer and JWKS endpoints. Development HTTP is accepted only for explicitly
+configured localhost endpoints.
 
 ## Explicit migrations
 
-Use the selected installed interpreter and private configuration from the
-standalone guide for an explicit migration:
+Migrations run only when you ask. With the installed interpreter and private
+configuration from the manual guide:
 
 ```sh
+# Load the runtime authorities, then apply forward migrations with the migration owner.
 set -a
 source "$WEAVE_WORK_DIR/runtime.env"
 set +a
 "$WEAVE_PYTHON" -I -m firefly_weave.cli.main admin migrate
 ```
 
-Alembic is the migration authority: `0001_boot` adopts a compatible initial database,
-then `0002_access` creates identity/access state and `0003_access_audit` adds
-structured audit payloads without backfilling historical provenance. The legacy version row is a
-compatibility sentinel updated by the revision; startup checks it and Alembic's
-revision together. Startup never migrates. The migration command requires
-`WEAVE_MIGRATION_DATABASE_URL`; no destructive downgrade/reset is implemented.
-Migration assets are included in installed wheels. Published alpha4 expects
-`0021_operations`; alpha5 and alpha6 expect `0025_run_lifecycle`.
-See [upgrades](../operations/upgrades.md) for compatibility
-checks and the forward-migration procedure.
+Expected: the database reaches the schema version this build expects. The
+command requires `WEAVE_MIGRATION_DATABASE_URL`.
+
+Alembic is the migration authority. `0001_boot` adopts a compatible initial
+database, `0002_access` creates identity and access state, and
+`0003_access_audit` adds structured audit payloads without backfilling history.
+A legacy version row is kept as a compatibility sentinel; startup checks it
+together with Alembic's revision. There is no destructive downgrade or reset, and
+migration files ship inside the installed wheel. Published alpha4 expects
+`0021_operations`; alpha5, alpha6, and alpha7 expect `0025_run_lifecycle`. See
+[upgrades](../operations/upgrades.md) for compatibility checks and the
+forward-migration procedure.
 
 ## Identity bootstrap and scope grants
 
-Follow [verified identity bootstrap](../guides/standalone.md#3-verify-and-bootstrap-one-local-identity)
-to link an existing provider identity with explicit migration credentials.
+A fresh installation has no Weave identities. **Bootstrap** links one existing
+identity-provider account as platform administrator; follow
+[verified identity bootstrap](../guides/standalone.md#3-verify-and-bootstrap-one-local-identity)
+in the manual guide (`weave platform setup` does this for you).
 
-The administrator supplies the exact trusted provider subject, never an email,
-username or client ID. Keycloak service-account subjects are user UUIDs; obtain
-one from the trusted administrative interface or a verified access token. This
-command links it as platform administrator and writes a private receipt. It
-does not mint a Weave password/key/token. It requires the migration table-owner
-identity, audits bootstrap, and rejects application-role sessions. Platform administration does not imply
-business-data read or workflow authoring; provision those grants explicitly.
+- The administrator supplies the exact trusted provider **subject**, never an
+  email, username, or client ID. Keycloak service-account subjects are user
+  UUIDs; take one from the trusted administration interface or a verified access
+  token.
+- Bootstrap writes a private receipt and an audit record. It mints no Weave
+  password, key, or token, needs the migration table-owner identity, and refuses
+  application-role sessions.
+- **Platform administration is not business access.** It does not include
+  reading business data or authoring workflows; grant those explicitly.
 
 Provisioning routes are `POST /admin/tenants`, `POST /admin/grants`,
-`POST /api/v1/tenants/{tenant}/projects` and
-`POST /api/v1/tenants/{tenant}/projects/{project}/environments`. The corresponding GET
-environment route requires `status.read`. Requests use `Authorization: Bearer`
-with the Keycloak token. All routes except exact health probes require a linked
-active principal; an authenticated unknown route returns 404. Role checks also
-run inside services. `weave-host` is an application actor, `weave-worker` resolves
-to its separately provisioned worker principal. Neither is inferred to be human.
+`POST /api/v1/tenants/{tenant}/projects`, and
+`POST /api/v1/tenants/{tenant}/projects/{project}/environments`; reading an
+environment needs `status.read`. Requests send `Authorization: Bearer` with a
+Keycloak token. Every route except the exact health probes needs a linked,
+active principal, and an authenticated request for an unknown route returns 404.
+Services check roles again internally. `weave-host` is an application actor and
+`weave-worker` resolves to its separately provisioned worker principal; neither
+is treated as a person.
 
-The realm template disables password and implicit grants. The CLI client enables
-PKCE S256 and device authorization; token acquisition/storage use the [CLI login commands](cli.md#login-and-secure-persistence).
-Audience and subject mappers are explicit, and the API-client role mapper is
-restricted to `weave-api`. External roles describe claims only; local scope
-bindings grant capabilities. The template begins with no provider role assignment
-and no Weave scope grant. Grant service methods prevent tenant administrators
-from delegating outside their administered tenant/project/environment/resource
-ceiling. Host products can receive developer/deployer/operator grants; workers
-cannot acquire authoring behavior even from an erroneous developer grant.
+Grants cannot escalate. Tenant administrators cannot delegate outside the
+tenant, project, environment, or resource they administer. Host products can
+receive `developer`, `deployer`, and `operator` grants; workers cannot gain
+authoring behavior, even from a mistaken `developer` grant. See
+[Give people the right access](../guides/people-and-access.md) for the roles.
 
-Startup realm import skips existing realms. Editing the template does not update
-retained realms or rotate secrets. Inspect existing client flows, subject/audience
-and role mappers before acceptance; reconcile intentional additions through the
-explicit Keycloak administrator API. Never run overriding import or reset a realm
-as setup. The generated temporary bootstrap admin service account remains local
-and retained; remove or replace it only through an explicitly authorized lifecycle
-operation. Its secret is not passed to the Weave runtime or request verifier.
+## The development Keycloak realm
+
+The realm template configures Keycloak for local development:
+
+- **No password or implicit grants.** The public `weave-cli` sign-in client allows
+  PKCE (S256) and device authorization.
+- **Redirect addresses.** `http://127.0.0.1:18555/callback`, plus the port-free
+  loopback callbacks `http://127.0.0.1/callback` and `http://[::1]/callback`.
+  Browser sign-in listens on a random loopback port, and Keycloak 26.7.4 accepts
+  any port only for loopback entries registered without one; an entry with an
+  explicit `:80` matches port 80 only.
+- **Claims.** A `preferred_username` mapper on the ID token and userinfo lets
+  clients show the account's username; access tokens are unchanged. Audience and
+  subject mappers are explicit, and the API-client role mapper is restricted to
+  `weave-api`. Provider roles describe claims only: local scope grants decide
+  what someone may do.
+- **Empty at start.** The template begins with no users, no provider role
+  assignments, and no Weave scope grants.
+
+**Existing realms are not updated.** Startup import skips a realm that already
+exists, so editing the template changes neither a retained realm nor its secrets.
+Inspect the existing client flows, subject, audience, and role mappers before
+accepting a realm, and make intentional changes through the Keycloak
+administrator API. Never run an overriding import or reset a realm as setup.
+
+The one automatic change is additive and only on `weave platform`
+installations: `weave platform start` reads the retained `weave-cli` client and
+appends the two port-free loopback callbacks when they are missing, without
+removing or rewriting other entries. For a manual installation, make the same
+change through the administrator API. The generated temporary bootstrap
+administrator service account stays local and retained; remove or replace it only
+through an explicitly authorized lifecycle operation. Its secret is never passed
+to the Weave runtime or the request verifier.
+
+## Sign-in settings for people
+
+**Published sign-in settings are new in 0.1.0a7,** as are the `weave auth setup`
+and Studio connection steps that read them. An alpha6 or earlier API publishes
+none, so its clients sign in with a
+[connection file](../guides/connect-to-api.md#use-a-connection-file).
+
+`setup-runtime.py` writes `WEAVE_CLIENT_SIGN_IN` to `runtime.env`. It tells the
+API which public sign-in client people use:
+
+```json
+[{"provider_id": "local-keycloak", "display_name": "Local Keycloak (development)", "client_id": "weave-cli", "scopes": ["openid"]}]
+```
+
+The API publishes these settings, without secrets and without requiring
+authentication, at `GET /api/v1/client-configuration`. `weave auth setup`,
+Studio, and other clients read them to offer sign-in, so a person types only the
+server address.
+
+- **Validation.** Each entry must name a configured identity provider and one of
+  that provider's `human` clients, or startup fails with "Invalid
+  WEAVE_CLIENT_SIGN_IN configuration". No field can hold a client secret.
+- **Trust comes from the server's provider.** The issuer and loopback trust come
+  from the matching provider configuration, never from this setting.
+- **Flows.** Browser sign-in and device codes are both offered by default.
+- **Display name.** `weave platform start` passes `WEAVE_CLIENT_SIGN_IN` from
+  `runtime.env` and sets `WEAVE_DISPLAY_NAME="Local Weave platform"`, the name
+  clients show for the server. The manual launch command loads `runtime.env` too,
+  so it publishes the same sign-in option without a display name.
+
+**The realm starts with no people.** On a `weave platform` installation,
+`weave platform user --username NAME` creates one development account in the
+owned Keycloak with a generated password printed once, creates and links a person
+(a human principal), and grants roles in the demo workspace; see
+[Create a person who can sign in](../guides/local-platform.md#5-create-a-person-who-can-sign-in).
+It never resets an existing account. On a manual installation, create the account
+through Keycloak administration and link it with the
+[people and access commands](../guides/people-and-access.md).
+
+Signing in with the local Keycloak was verified against the real Keycloak 26.7.4
+sign-in pages, with PKCE and with the device code flow. Other identity providers,
+such as Microsoft Entra ID, need their own configuration and are not verified;
+see [Use your own identity provider](../operations/identity-and-secrets.md#use-your-own-identity-provider).
+
+## Connector actions on a local platform
+
+**New in 0.1.0a7.** A `weave platform` installation can run the built-in
+`weave-http@2.0.0` connector in the demo environment without a container image:
+
+1. `weave platform integrations enable` publishes the connector's manifest,
+   registers the installed runtime's content identity as the release, and grants
+   a dedicated native principal.
+2. `weave platform secret set --handle NAME` stores a development secret value in
+   the installation's private `secrets/` directory, granted by handle to the demo
+   environment only.
+3. `weave platform start` configures one executor with the `local-development`
+   build and grants the stored handles.
+4. `weave platform integrations grant` lets the local release read one
+   integration connection's secret handles.
+
+The rules for that build are in
+[Local development build](http-and-webhooks.md#local-development-build), and the
+commands in
+[Run built-in HTTP connector actions](../guides/local-platform.md#8-run-built-in-http-connector-actions).
 
 ## Token verification and key rotation
 
-JWKS fetches use only configured URLs, no redirects, ambient proxies or token-
-selected discovery. Defaults: 5-second timeout, 300-second freshness, 5-second
-refresh cooldown, at most 64 accepted keys, 256-KiB response and 32-KiB token.
-Known keys work during an outage only until their original deadline; failures
-never extend freshness. Unknown kids share a single coordinated refresh and
-cooldown, so rotation inside the cooldown may temporarily deny until retry.
-Keycloak requires signed payload `typ=Bearer`, configured issuer/audience/client,
-nonempty subject and expiry, and RS256 by default. JOSE `typ=JWT` alone is not an
-access-token discriminator. Generic/Entra-style profiles are configurable claim
-normalizers; live Entra provisioning and verification are not claimed.
+The API verifies every bearer token itself, offline, against the provider's
+published keys (JWKS).
 
-Local disable/grant removal applies on the next resolution, independent of JWT
-expiry. Offline verification does not detect external provider revocation before
-expiry; configure a future explicit introspection/revocation integration if that
-is required. Principals supplied to a direct service are immutable request-time
-snapshots; resolve again for a new operation instead of retaining them indefinitely.
+- **Fetching keys.** Only configured URLs are used, with no redirects, ambient
+  proxies, or token-selected discovery. Defaults: 5-second timeout, 300-second
+  freshness, 5-second refresh cooldown, at most 64 accepted keys, a 256 KiB
+  response, and a 32 KiB token.
+- **Outages.** Known keys keep working only until their original freshness
+  deadline; failures never extend it. Unknown key IDs share one coordinated
+  refresh and cooldown, so a key rotated inside the cooldown may be denied until
+  the next refresh.
+- **What a Keycloak token must carry.** The signed payload claim `typ=Bearer`, the
+  configured issuer, audience, and client, a nonempty subject, and an expiry,
+  signed with RS256 by default. The JOSE header `typ=JWT` alone does not mark an
+  access token.
+- **Revocation.** Disabling a principal or removing a grant applies on the next
+  request, regardless of the token's expiry. Offline verification cannot see a
+  revocation at the provider before the token expires; that would need a future
+  introspection integration. Principals passed to a service are request-time
+  snapshots; resolve again for a new operation.
+
+Other providers need a matching trust profile;
+[Microsoft Entra ID](../operations/identity-and-secrets.md#microsoft-entra-id-not-verified)
+is described there and is not verified.
 
 ## Tenant isolation and compatibility inventory
 
-RLS means row-level security: PostgreSQL evaluates policies that restrict which
-rows a transaction may access. Weave also checks scope in its services and uses
-scoped foreign keys to keep related records in the same boundary.
+**Row-level security (RLS)** means PostgreSQL itself filters which rows a
+transaction may read or change. Weave also checks scope in its services and uses
+scoped foreign keys so related records stay in the same tenant, project, and
+environment.
 
-PostgreSQL tenant tables use FORCE RLS and composite scoped foreign keys. UoW
-binds `weave.tenant_id` transaction-locally with parameterized `set_config`;
-commit, error and cancellation reset context. Authentication separately binds
-`weave.principal_id` to enumerate only that linked principal's role bindings.
-Identity/platform tables are global authorization state, never business data.
-`weave_app` can read/update that state through checked application services;
-audit is insert-only. The scheduler login has schema usage and execute permission
-on explicitly granted catalog functions, with no direct business-table read.
-Bounded scheduler functions use a dedicated `weave_catalog_reader` owner;
-compatibility inventory functions use `weave_retention_owner`. Function ownership,
-fixed search paths, explicit grants, and dedicated RLS policies are part of the
-migration contract. The runtime does not use the migration owner's credentials.
-New business migrations must add FORCE RLS, scoped foreign keys, and explicit
-application grants.
+- Tenant tables use forced RLS and composite scoped foreign keys. Each unit of
+  work sets `weave.tenant_id` for its transaction with a parameterized
+  `set_config`; commit, error, and cancellation reset it. Authentication
+  separately sets `weave.principal_id` so it can list only that principal's role
+  bindings.
+- Identity and platform tables are global authorization state, never business
+  data. `weave_app` reads and updates them only through checked application
+  services, and the audit table is insert-only.
+- The scheduler login can use the schema and execute explicitly granted catalog
+  functions, with no direct business-table reads. Scheduler functions are owned by
+  `weave_catalog_reader`, and compatibility inventory functions by
+  `weave_retention_owner`. Function ownership, fixed search paths, explicit
+  grants, and dedicated RLS policies are part of the migration contract. The
+  runtime never uses the migration owner's credentials.
+- New business migrations must add forced RLS, scoped foreign keys, and explicit
+  application grants.
 
-Startup requires scheduler catalog authority for compatibility inventory even
-when `WEAVE_SCHEDULER_ENABLED=false`. Disabling background scheduling does not
-bypass compatibility checks. Missing authority, an incomplete inventory, or an
-incompatible persisted requirement keeps readiness restricted and blocks new
-effect-producing work. Inspect the scoped compatibility report and follow the
-[upgrade guide](../operations/upgrades.md) before admitting work.
+**Compatibility checks always run.** Startup needs scheduler catalog authority for
+the compatibility inventory even when `WEAVE_SCHEDULER_ENABLED=false`. Missing
+authority, an incomplete inventory, or an incompatible stored requirement keeps
+readiness restricted and blocks new work with effects. Read the scoped
+compatibility report and follow the [upgrade guide](../operations/upgrades.md)
+before admitting work.
 
-For contributor-only backend checks and fixture prerequisites, see
-[contributing](../../CONTRIBUTING.md#backend-and-end-to-end-checks). Those tests use
-fresh guarded databases and separate application/migration identities. They are
-separate from the public startup journey and do not certify external provider
-accounts or production infrastructure.
+Contributor-only backend checks and their fixtures are in
+[contributing](../../CONTRIBUTING.md#backend-and-end-to-end-checks). Those tests
+use fresh guarded databases and separate application and migration identities,
+and they certify no external provider account or production infrastructure.
 
 ## Stop and restart the same installation
 
-Stop foreground workers and the API with Ctrl-C in their respective terminals.
-If you added runtime containers, stop the exact worker and API/native services
-using [deployment](../operations/deployment.md#stop-the-intended-scope) first.
-Only then stop the supporting services below from the original operator terminal,
-with the same context/project and selected volume/port variables still loaded.
-All databases, roles, and volumes remain retained:
+**On a `weave platform` installation,** press Ctrl-C in the API's terminal, then
+run `weave platform stop` to stop only this installation's dependencies. Later,
+`weave platform start` resumes them and runs the API again without migrating or
+provisioning anything. See
+[Stop and come back later](../guides/local-platform.md#10-stop-and-come-back-later).
+
+**On a manual installation,** stop in this order:
+
+1. Stop foreground workers and the API with Ctrl-C in their terminals.
+2. If you added runtime containers, stop the exact worker, API, and native
+   services first; see [Stop the intended scope](../operations/deployment.md#stop-the-intended-scope).
+3. From the original operator terminal, with the same context, project, and
+   variables loaded, stop the supporting services:
 
 ```sh
+# Stop this installation's PostgreSQL and Keycloak services; all data and volumes are kept.
 docker --context "$WEAVE_DOCKER_CONTEXT" compose --project-name "$WEAVE_LAUNCH_ID" \
   --env-file "$WEAVE_WORK_DIR/postgres.env" --env-file "$WEAVE_WORK_DIR/identity.env" \
   -f compose.yaml -f compose.identity.yaml stop --timeout 30
 ```
 
-Stop only the services belonging to your deployment. Stopping services preserves
-stored workflow state; deleting databases or volumes is a separate destructive
-operation. Application-owned telemetry shutdown and database pool cleanup are
-independently attempted after failed startup or shutdown; this cleanup does not delete stored
-databases or workflow data.
+Expected: the services stop; every database, role, and volume is retained.
+Deleting databases or volumes is a separate, destructive operation. After a
+failed startup or shutdown, telemetry and connection-pool cleanup are attempted
+independently and never delete stored data.
 
-To resume unchanged local services, reuse the standalone
-`up --detach --no-recreate --wait` command with the same project and files, check PostgreSQL
-and Keycloak readiness again, then relaunch the API from its existing runtime
-configuration. Do not rerun `setup-runtime.py`: that creates a different fresh
-runtime database rather than reopening the one you were using. Do not rerun
-bootstrap or first-run provisioning merely to restart a process.
+**To resume,** reuse the manual guide's `up --detach --no-recreate --wait` command
+with the same project and files, check PostgreSQL and Keycloak readiness again,
+then relaunch the API with its existing runtime configuration (see
+[Resume this installation later](../guides/standalone.md#resume-this-installation-later)).
+**Do not rerun `setup-runtime.py`**: it creates a different, fresh runtime
+database instead of reopening yours. Do not rerun bootstrap or first-run
+provisioning just to restart a process.
 
-After [backup/restore](../operations/backup-restore.md), the original source may
-be fenced. In that case follow the restore procedure's selected target
-configuration instead of restarting the original `runtime.env` blindly.
+After a [backup and restore](../operations/backup-restore.md), the original
+database may be fenced; follow the restore procedure's selected target
+configuration instead of restarting with the original `runtime.env`.
 
 ## Telemetry and authorization audit
 
-Weave supplies native PyFly beans for its OpenTelemetry providers. Export is
-disabled by default and is enabled only through explicit `WEAVE_TELEMETRY`
-configuration. Providers remain local to the application; ambient OTLP endpoints
-do not enable export. See [metrics and tracing](../operations/observability.md)
-for collector setup, data limits, and troubleshooting.
+**Telemetry.** Weave registers native PyFly beans for its OpenTelemetry
+providers. Export is off by default and turns on only through explicit
+`WEAVE_TELEMETRY` configuration; ambient OTLP endpoint variables do not enable
+it. See [observability](../operations/observability.md) for collector setup,
+limits, and troubleshooting.
 
-Authorization audit decisions are JSON messages on the explicitly INFO-enabled
-`weave.authorization` logger while root remains WARNING. `AuditContext` carries
-immutable UUID operation/request/run correlation. Native requests create a server
-request ID, return `X-Weave-Request-ID`, and pass `request.state.audit_context` as
-`context=` to services; arbitrary incoming request-ID values are not copied.
-Background callers should construct their own context and pass any known run UUID.
-Administrative success rows store scope, verified actor reference (or null when
-unavailable), capability, correlation and relevant binding/identity details in
-`access_audit.event`. Old rows remain null; no historical identity is invented.
-Decision-log shipping and retention must be configured by the deployment owner.
+**Authorization audit.** Decisions are JSON messages on the `weave.authorization`
+logger, which is explicitly enabled at INFO while the root logger stays at
+WARNING.
+
+- `AuditContext` carries immutable UUID operation, request, and run correlation.
+  Each request gets a server-generated request ID, returned in
+  `X-Weave-Request-ID` and passed to services as `context=`; incoming request-ID
+  values are never copied. Background callers build their own context and pass
+  any known run UUID.
+- Successful administrative changes store the scope, the verified actor reference
+  (or `null` when unavailable), the capability, the correlation, and the relevant
+  binding or identity details in `access_audit.event`. Older rows stay `null`;
+  no historical identity is invented.
+- Shipping and retaining decision logs is the deployment owner's job.
 
 ## Runtime version and lifecycle
 
-The checked-in Compose services use local development identity/network settings.
-They demonstrate the public startup journey; production requires explicit HTTPS
-identity, managed secrets, network exposure, backups, and process supervision
-appropriate to that environment. The local setup scripts do not provision those
-production facilities.
+The checked-in Compose services use local development identity and network
+settings. They demonstrate the startup journey only; production needs explicit
+HTTPS identity, managed secrets, deliberate network exposure, backups, and process
+supervision, none of which the local setup scripts provision.
 
-The locked framework is published PyFly 26.9.15. Read the exact wheel hash and
-upstream commit from [project metadata](../../pyproject.toml). The API source
-version is `0.1.0a6`. Validate readiness, an authorized workflow, and your
-[backup and restore procedure](../operations/backup-restore.md) in the environment
-you intend to operate.
+The locked framework is the published **PyFly 26.9.15**; the exact wheel hash and
+upstream commit are in the [project metadata](../../pyproject.toml). The API
+package version is `0.1.0a7`; a checkout of `main` can carry unreleased changes
+on top of it. Validate readiness, an authorized workflow, and your
+[backup and restore procedure](../operations/backup-restore.md) in the
+environment you intend to operate.
 
-The setup helper deliberately supports a guarded local test control database and
-localhost Keycloak profiles; it is not a general production provisioning tool.
-Wait for the owned PostgreSQL/Keycloak services to be healthy before running it.
-It creates and migrates a new retained runtime database with separate identities.
-For existing runtime databases, apply forward migration explicitly and retain
-backup/recovery planning; startup never performs that operation implicitly.
+The setup helper supports only a guarded local test control database and
+localhost Keycloak profiles; it is not a production provisioning tool. Wait for
+the owned PostgreSQL and Keycloak services to be healthy before running it. It
+creates and migrates a new, retained runtime database with separate identities.
+For an existing runtime database, apply forward migrations explicitly and plan
+backups; startup never does it for you.
 
-See [configuration](../operations/configuration.md), [identity and secrets](../operations/identity-and-secrets.md),
-[workers](../guides/workers.md), [capabilities](../capabilities.md) and
-[troubleshooting](../operations/troubleshooting.md).
+## Next steps
+
+- [Configuration](../operations/configuration.md): every server variable.
+- [Set up identity, sign-in, and secrets](../operations/identity-and-secrets.md):
+  your own identity provider and secret handles.
+- [Give people the right access](../guides/people-and-access.md): roles and
+  identity links.
+- [Implement and operate a worker](../guides/workers.md) and
+  [capabilities and limits](../capabilities.md).
+
+## Troubleshooting
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| No token can be obtained | The realm is not ready, or the client is wrong | Check Keycloak discovery, then the `weave-cli` client |
+| Requests are denied although sign-in succeeded | The identity is not linked to a Weave person, or has no grants | Link the subject and grant a role; see [people and access](../guides/people-and-access.md) |
+| Startup fails with "Invalid WEAVE_CLIENT_SIGN_IN configuration" | An entry names an unknown provider or a client that is not `human` | Match `provider_id` and `client_id` to the configured provider |
+| Browser sign-in is refused by Keycloak | A retained realm lacks the port-free loopback callbacks | Restart with `weave platform start`, or add them through the administrator API; see [Browser sign-in is refused](../guides/local-platform.md#browser-sign-in-is-refused) |
+| Readiness stays restricted | Missing scheduler catalog authority, or an incompatible stored requirement | Read the compatibility report and follow the [upgrade guide](../operations/upgrades.md) |
+| Startup fails with "Weave schema check failed; verify database and run explicit migrations" | The database is unreachable, its schema is not migrated, or the API was given a superuser, row-security bypass, or table-owner login | Check the database, run `admin migrate` with the migration owner, and give the API only the application URL from `runtime.env` |
+| A rerun of `setup-runtime.py` shows an empty platform | It created a new runtime database | Point the API back at your original `runtime.env`; never rerun setup to restart |
+
+See [troubleshooting](../operations/troubleshooting.md) for the full symptom map.

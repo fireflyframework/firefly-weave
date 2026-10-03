@@ -16,24 +16,36 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Author and deploy a workflow
+# Author, check, and simulate a workflow
 
-A workflow definition describes input, ordered steps, and output. This guide builds
-an **echo** workflow: given `{"message": "Hello, Weave"}`, it returns that same
-object. You will validate the file, compile it into an executable artifact, and
-simulate it locally before deciding to deploy it.
+A *workflow* is a versioned process definition: the data it accepts, the steps
+it runs, and the result it returns. This lab writes a small **echo** workflow in
+YAML, then teaches the authoring loop you will use for every workflow: validate
+the document, compile it against a catalog, read a diagnostic, repair it, and
+simulate a run, all on your own computer. Given `{"message": "Hello, Weave"}`,
+echo returns that same object.
 
-**First workflow?** Follow the [quickstart](../quickstart.md) first. This lab adds
-partial validation, a deliberate type error, and repair to the same echo example.
-Its offline steps need only the [installed CLI](../installation.md) and Python
-3.12 or later. Use the working directory from the quickstart, or create
-`.local/tutorial/` in your chosen directory. No API, database, token, or worker is
-needed until the publication step.
+It is for anyone who writes workflow definitions as files: developers, and
+analysts who prefer text to drawing. If you prefer to draw, the same checks run
+in [Studio](studio.md#draw-and-validate-a-workflow-locally). Coming from a BPM
+suite? [Coming from BPM/BPMN](../concepts.md#coming-from-bpmbpmn) maps its
+ideas to Weave.
 
-If you use a source checkout, select its CLI using the quickstart's shell function.
-Only the optional external Action fixture at the end requires repository files.
-The Python request-building snippet below uses the standard library, so it does
-not need to import packages from the CLI's isolated environment.
+**New to Weave?** The [quickstart](../quickstart.md) builds the same echo
+workflow more briefly. This lab adds partial validation, a deliberate type
+error, and its repair.
+
+**Before you start, you need:**
+
+- The [installed CLI](../installation.md) and Python 3.12 or later.
+- A working directory. Reuse the one from the [quickstart](../quickstart.md), or
+  create `.local/tutorial/` in a directory of your choice.
+
+No API, database, token, or worker is needed: every step below runs offline.
+If you use a source checkout, select its CLI with the quickstart's shell
+function. Only the optional external Action example at the end needs repository
+files. The Python snippet below uses only the standard library, so it does not
+import packages from the CLI's isolated environment.
 
 ![Authoring feedback loop showing partial validation, full compilation, diagnostics, and simulation](../diagrams/authoring-diagnostic-loop.svg)
 
@@ -86,9 +98,31 @@ produce a fixed string. Neither expression reads environment variables or files.
 See [compiler expression forms](../reference/compiler.md#cli-and-published-catalog-contract)
 and [schema rules](../reference/schema-profile.md) before adding more complex values.
 
+### Other kinds of steps
+
+Echo uses only a `transform`. A workflow can combine these step kinds; Studio
+shows each one under the label in the first column:
+
+| Studio label | YAML `kind` | What it does |
+| --- | --- | --- |
+| **Call an action** | `action` | Calls a published Action, run by a connector or a worker |
+| **Transform** | `transform` | Computes a value from workflow data, with no external call |
+| **Decision** | `switch` | Follows the first case whose condition is true, or the default path (**Otherwise**) |
+| **Parallel** | `parallel` | Runs named branches, up to a set concurrency |
+| **Wait for time** | `wait` | Continues after a fixed duration, on a durable timer |
+| **Wait for signal** | `signal` | Waits, up to a timeout, for a named external message |
+| **Human task** | `humanTask` | Asks an assigned person to choose a decision and fill in a form |
+| **Fail** | `fail` | Stops with a business error code and a message |
+
+The [Studio step reference](studio-step-reference.md) describes every field.
+
 ## 2. Validate the document
 
+Validation checks the document's shape and schemas before you invest in
+dependencies:
+
 ```sh
+# Check the language shape only; no catalog is given, so no artifact is produced.
 weave workflow validate .local/tutorial/echo.workflow.yaml --output json
 ```
 
@@ -107,6 +141,7 @@ Echo calls no Actions, so save an explicitly empty catalog as `.local/tutorial/e
 ```
 
 ```sh
+# Compile against the empty catalog and export the artifact, then show the execution plan.
 weave workflow compile .local/tutorial/echo.workflow.yaml --catalog .local/tutorial/empty-catalog.json \
   --strict --directory .local/tutorial/compiled --output json
 weave workflow explain .local/tutorial/echo.workflow.yaml --catalog .local/tutorial/empty-catalog.json
@@ -130,6 +165,7 @@ Change the transform's `value` from `{ref: /input}` to
 `{ref: /input/message}` and compile again without exporting:
 
 ```sh
+# Compile without --directory, so the earlier export stays untouched.
 weave workflow compile .local/tutorial/echo.workflow.yaml \
   --catalog .local/tutorial/empty-catalog.json --strict --output json
 ```
@@ -160,6 +196,7 @@ Path(".local/tutorial/simulation-request.json").write_text(json.dumps(request))
 ```
 
 ```sh
+# Write the simulation request, then run it in memory with no external effects.
 python3 .local/tutorial/make-simulation.py
 weave workflow simulate .local/tutorial/simulation-request.json --output json
 ```
@@ -170,16 +207,19 @@ external result. `now` initializes the simulator's virtual clock; simulation
 never calls a live worker or provider. To explore breakpoints, signals, and
 mocked Actions, continue with [simulation](../reference/simulation.md).
 
-Try changing the request's `message` to a number. Simulation rejects it because
-it violates `inputSchema`. Restore the string before continuing. This check
-protects the workflow's contract independently of whether the source compiled.
+Try changing `input` in `make-simulation.py` to `{"message": 5}`, then run both
+commands again.
+Expect exit code `1` and `WV-DEBUG-REQUEST` with the message `Invalid or
+over-budget simulation request.`: the simulator refuses input that does not
+satisfy `inputSchema` before it runs any step. The message does not name the
+field, so check the input against the schema first. Restore the string and
+regenerate the request before continuing. This check protects the workflow's contract independently of
+whether the source compiled.
 
 ## 5. Publish and activate for durable execution
 
-Use [the CLI lifecycle tutorial](cli-tutorial.md) to perform these operations
-one at a time. It supports an [existing API](connect-to-api.md) or the local API
-created by the [standalone tutorial](standalone.md). You need permission to publish
-in your project and activate/run in your environment. The lifecycle is:
+Simulation runs in memory and leaves nothing behind. To create a durable run
+that the platform remembers, your workflow goes through these stages:
 
 | Stage | What you create | Why it is separate |
 | --- | --- | --- |
@@ -188,30 +228,55 @@ in your project and activate/run in your environment. The lifecycle is:
 | Activate | An environment-specific version and dependency binding | Future runs pin this selected artifact and its dependencies |
 | Start | A durable run with schema-valid input | History records execution of the pinned activation |
 
-The echo workflow needs no connection or worker release. When you add an Action
-that calls external code, its worker release must be admitted, its instance
-running, and any required connection revisions bound before execution can work.
-Follow [workers](workers.md) or [host integration](host-integration.md) for that
-next layer.
+The [CLI tutorial](cli-tutorial.md) performs these operations one at a time
+against your team's platform or a [local platform](local-platform.md). You need
+permission to publish in your project and to activate and run in your
+environment.
 
-Publish a new version to change behavior and activate it for new runs. Existing
-runs retain their original pins. Retiring authoring state preserves historical
-revisions; it does not delete runtime evidence.
+The echo workflow needs no connection or worker release. When you add an Action
+that calls an external system, the activation must pin what runs it and bind
+any required connection revisions before a run can use it. What runs it is
+either a worker release, admitted and with a running instance, or, for a
+connector Action such as one on the built-in HTTP connector, an executor release
+listed in `connector_release_ids`.
+[Workers](workers.md), [Call a REST API without code](../connectors/http-without-code.md),
+and [host integration](host-integration.md) cover that next layer.
+
+To change behavior, publish a new version and activate it for new runs.
+Existing runs keep their original pins. Retiring authoring state keeps
+historical revisions; it does not delete runtime evidence.
 
 ## Read an external Action example next
 
 The [customer onboarding definition](../../examples/definitions/customer-onboarding.workflow.yaml)
 calls `onboarding.check-customer@1.0.0`, waits for a `customer-approved` signal,
 and combines their Boolean results. Its [Action](../../examples/definitions/check-customer.action.yaml)
-and catalog lock are teaching fixtures for dependency resolution:
+and catalog lock are teaching fixtures for dependency resolution. Run this from
+the repository root:
 
 ```sh
+# Compile against a catalog lock that declares the Action the workflow calls.
 weave workflow compile examples/definitions/customer-onboarding.workflow.yaml \
   --catalog tests/fixtures/catalog/onboarding.lock.json --strict --output json
 ```
 
-Run this command from the repository root. A successful result proves the
-fixture contracts compile. It does not install the external implementation,
-create an activation, or make this a runnable deployment. Use explicit mocks to
-explore it offline. Credentials belong in authorized connection secret references,
-never ordinary workflow input, literals, or output.
+Expected: `ok: true` and no diagnostics. A successful result proves the fixture
+contracts compile. It does not install the external implementation, create an
+activation, or make this a runnable deployment. Use explicit mocks to explore it
+offline with the [simulator](../reference/simulation.md). Credentials belong in
+authorized connection secret references, never in ordinary workflow input,
+literals, or output.
+
+## What you learned
+
+- **Validation** checks the document's shape; **compilation** also resolves
+  dependencies and data types against an explicit catalog and produces an
+  artifact.
+- A diagnostic names a `code` and a `path`; fix the source at that path and
+  compile again.
+- **Simulation** runs the compiled artifact in memory with mocked results, so you
+  can test behavior before publishing.
+
+Next, publish and run the workflow with the [CLI tutorial](cli-tutorial.md),
+draw one in [Studio](studio.md), or read the [compiler reference](../reference/compiler.md)
+for every expression form and diagnostic.

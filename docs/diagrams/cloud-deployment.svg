@@ -18,28 +18,28 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="990" viewBox="0 0 960 990" role="img" aria-labelledby="title desc">
-<title id="title">From a build to a running cloud service</title><desc id="desc">AWS EKS / ECR · Azure AKS / ACR · Google GKE / Artifact Registry</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
-<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<title id="title">From a build to a running cloud service</title><desc id="desc">Three delivery steps run left to right: build images from the prepared wheel and worker context for the cluster CPU architecture; publish them to a private registry with pull access and record repository@digest; select an owned cluster and namespace with a qualified database and identity provider (AWS EKS with ECR, Azure AKS with ACR, or Google GKE with Artifact Registry). Inside Kubernetes, a migration Job runs first with owner credentials and keeps its attempt receipt; the API and Service then start with a nonowner database login, the OIDC verification profile, scheduler ownership, and readiness checks before traffic; an optional worker uses a separate image and identity, an admitted release and grants, and calls the API without any database login. Provision PostgreSQL roles, HTTPS identity, DNS, TLS, egress, and secret delivery separately, then prove the deployed path by running a scoped workflow, checking a worker effect and its receipt, and rehearsing recovery. Pushing an image grants no Weave authority.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
 <rect width="960" height="890" rx="16" fill="#f7faf8"/>
 <path d="M36 99H924" stroke="#c9dacf"/>
 <text x="36" y="46" class="title">From a build to a running cloud service</text>
 <text x="36" y="79" class="body muted">AWS EKS / ECR · Azure AKS / ACR · Google GKE / Artifact Registry</text>
-<circle cx="60" cy="144" r="19" fill="#2d7257"/>
+<circle cx="60" cy="144" r="19" fill="#367D68"/>
 <text x="60" y="151" class="body white" text-anchor="middle">1</text>
-<g transform="translate(114,126) scale(1.3846153846153846)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
+<g transform="translate(114,126) scale(1.3846153846153846)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
 <text x="40" y="218" class="head">Build images</text>
 <text x="40" y="253" class="small">Prepared wheel + worker context</text>
 <text x="40" y="281" class="small">Match cluster CPU architecture</text>
-<circle cx="373" cy="144" r="19" fill="#2d7257"/>
+<circle cx="373" cy="144" r="19" fill="#367D68"/>
 <text x="373" y="151" class="body white" text-anchor="middle">2</text>
-<g transform="translate(427,126) scale(1.3846153846153846)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
+<g transform="translate(427,126) scale(1.3846153846153846)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
 <text x="353" y="218" class="head">Publish to a registry</text>
 <text x="353" y="253" class="small">Private registry + pull access</text>
 <text x="353" y="281" class="small">Record repository@digest</text>
-<circle cx="686" cy="144" r="19" fill="#2d7257"/>
+<circle cx="686" cy="144" r="19" fill="#367D68"/>
 <text x="686" y="151" class="body white" text-anchor="middle">3</text>
-<g transform="translate(740,126) scale(1.3846153846153846)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
+<g transform="translate(740,126) scale(1.3846153846153846)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
 <text x="666" y="218" class="head">Select your environment</text>
 <text x="666" y="253" class="small">Owned cluster + namespace</text>
 <text x="666" y="281" class="small">Qualified database + identity</text>
@@ -47,38 +47,37 @@ SPDX-License-Identifier: Apache-2.0
 <path class="edge" d="M610 144H640"/>
 <rect x="36" y="334" width="888" height="282" rx="12" fill="#eaf4ed" stroke="#a8bdb1"/>
 <text x="58" y="372" class="head">Kubernetes runs the application processes</text>
-<g transform="translate(58,398) scale(1.2692307692307692)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(58,398) scale(1.2692307692307692)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="58" y="459" class="head">Migration Job</text>
 <text x="58" y="494" class="small">Run before API startup</text>
 <text x="58" y="520" class="small">Use owner credentials</text>
 <text x="58" y="546" class="small">Wait for schema success</text>
 <text x="58" y="572" class="small">Keep the attempt receipt</text>
-<g transform="translate(368,398) scale(1.2692307692307692)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1L23 12L5 23Z"/></g>
+<g transform="translate(368,398) scale(1.2692307692307692)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1L23 12L5 23Z"/></g>
 <text x="368" y="459" class="head">API + Service</text>
 <text x="368" y="494" class="small">Nonowner application login</text>
 <text x="368" y="520" class="small">OIDC verification profile</text>
 <text x="368" y="546" class="small">Scheduler ownership here</text>
 <text x="368" y="572" class="small">Readiness before traffic</text>
-<g transform="translate(676,398) scale(1.2692307692307692)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6H19V20H5Z M9 1V6 M15 1V6 M9 20V25 M15 20V25 M0 10H5 M0 16H5 M19 10H24 M19 16H24 M9 10H15V16H9Z"/></g>
+<g transform="translate(676,398) scale(1.2692307692307692)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6H19V20H5Z M9 1V6 M15 1V6 M9 20V25 M15 20V25 M0 10H5 M0 16H5 M19 10H24 M19 16H24 M9 10H15V16H9Z"/></g>
 <text x="676" y="459" class="head">Optional worker</text>
 <text x="676" y="494" class="small">Separate image + identity</text>
 <text x="676" y="520" class="small">Admitted release + grants</text>
-<text x="676" y="546" class="small">No orchestration DB login</text>
+<text x="676" y="546" class="small">Calls the API; no DB login</text>
 <text x="676" y="572" class="small">Scale after admission</text>
 <path class="edge" d="M284 414H345"/>
 <path class="edge" d="M669 414H622"/>
-<text x="691" y="595" class="small muted">Workers call the API.</text>
 <text x="36" y="665" class="head">Provision separately</text>
 <text x="36" y="704" class="small">PostgreSQL roles and ownership</text>
-<text x="36" y="733" class="small">HTTPS identity, DNS, TLS and egress</text>
+<text x="36" y="733" class="small">HTTPS identity, DNS, TLS, and egress</text>
 <text x="36" y="762" class="small">Process-specific secret delivery</text>
 <text x="510" y="665" class="head">Prove the deployed path</text>
 <text x="510" y="704" class="small">Run a scoped workflow through the API</text>
 <text x="510" y="733" class="small">Check a worker effect and its receipt</text>
 <text x="510" y="762" class="small">Rehearse recovery and compatibility</text>
 <rect x="36" y="806" width="888" height="54" rx="12" fill="#eaf4ed"/>
-<g transform="translate(54,826) scale(1.1538461538461537)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
-<text x="98" y="840" class="head">Image delivery, database migration and Weave admission are separate.</text>
+<g transform="translate(54,826) scale(1.1538461538461537)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<text x="98" y="840" class="head">Pushing an image grants no Weave authority.</text>
 <g id="lumi-takeaway">
 <rect x="0" y="896" width="960" height="90" rx="16" fill="#EAF4ED"/>
 <g transform="translate(22 907) scale(.25)"><defs>
@@ -128,6 +127,6 @@ SPDX-License-Identifier: Apache-2.0
   </g>
 </g></g>
 <text x="110" y="925" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
-<text x="110" y="956" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Image delivery, database migration and worker admission are separate jobs.</text>
+<text x="110" y="956" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Image delivery, database migration, and worker admission are separate jobs.</text>
 </g>
 </svg>

@@ -15,48 +15,90 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="990" viewBox="0 0 1120 990" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1330" viewBox="0 0 1120 1330" role="img" aria-labelledby="title desc">
 <title id="title">Studio edits the process. The platform remembers and runs it.</title>
-<desc id="desc">On your computer, the browser connects only to the paired local Studio host. The host holds API credentials and connects to the selected local or remote Weave API. The API checks permissions and saves progress in PostgreSQL. Workers execute integration actions; people complete assigned tasks. Email replies preserve conversation context and do not approve a task.</desc>
+<desc id="desc">Two parts. On your computer, the Studio page in a browser tab or the desktop window is paired with the Studio host on 127.0.0.1, using a one-time code in a browser; the desktop app pairs itself, so you type no code. Pairing is not a sign-in and grants nothing on a platform. The host validates and imports workflows locally and works without a platform; saving, publishing, simulating, and running need a platform. It shares the saved platforms file, profiles.json, with the weave CLI and the desktop app; that file holds each server address, its sign-in settings, and the chosen workspace, never passwords or tokens. Tokens stay in the credential store: Keychain, Credential Locker, Secret Service, or KWallet, or a private file you chose. You sign in at your identity provider in a browser or with a code; Weave never sees your password. The host calls the active platform over HTTPS with your access token, or plain HTTP only to a platform on the same computer. On the platform, the Weave API verifies the token and its own grants decide what you may do; it saves drafts, publishes versions, activates them, and starts runs. PostgreSQL remembers progress, workers and built-in connectors call external systems, and an assigned person submits task decisions. Sending an email reply and approving a task are separate actions, and closing Studio does not stop a running workflow.</desc>
 <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
-<rect width="1120" height="990" rx="24" fill="#EEF4F0"/>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.b{font-size:20px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.trust{fill:none;stroke:#367D68;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="1120" height="1330" rx="24" fill="#EEF4F0"/>
 <text class="title" x="40" y="55">Draw locally. Run on your platform.</text>
-<text class="p" x="40" y="90">Studio is another client of the same API your products and SDKs use.</text>
-<rect x="30" y="120" width="1060" height="245" rx="18" fill="none" stroke="#A8C8B9" stroke-dasharray="8 6"/>
-<text class="small" x="50" y="150">YOUR COMPUTER</text>
-<rect x="50" y="170" width="440" height="170" rx="14" fill="white"/>
-<g class="icon" transform="translate(72 193)"><rect width="44" height="32" rx="4"/><path d="M0 10h44M13 40h18M22 32v8"/></g>
-<text class="h" x="136" y="221">1. Studio in your browser</text>
-<text class="p" x="72" y="267">Draw, edit YAML, inspect a run.</text>
-<text class="small" x="72" y="307">API tokens never enter browser storage.</text>
-<path class="arrow" d="M490 240H610"/><text class="small" x="511" y="216">Paired</text><text class="small" x="503" y="274">session</text>
-<rect x="620" y="170" width="450" height="170" rx="14" fill="white"/>
-<g class="icon" transform="translate(644 192)"><path d="M3 2l20-7 20 7v20c0 14-20 24-20 24S3 36 3 22Z"/><path d="M14 18l7 7 13-16"/></g>
-<text class="h" x="706" y="221">2. Local Python host</text>
-<text class="p" x="644" y="267">Holds your selected login profile.</text>
-<text class="small" x="644" y="307">Local validation works without a platform.</text>
-<path class="arrow" d="M845 365V431"/><text class="small" x="590" y="405">HTTPS to your selected API</text>
-<rect x="50" y="440" width="1020" height="165" rx="16" fill="#173D34"/>
-<text class="h" x="78" y="482" style="fill:white">3. The Weave API checks and coordinates</text>
-<text class="p" x="78" y="524" style="fill:white">Save a draft → publish a version → activate it → start a run.</text>
-<text class="small" x="78" y="568" style="fill:#CEE4D8">Your CIAM verifies identity. Scoped Weave grants decide which actions are allowed.</text>
-<path class="arrow" d="M210 605V661"/><path class="arrow" d="M560 605V661"/><path class="arrow" d="M905 605V661"/>
-<rect x="50" y="670" width="315" height="212" rx="14" fill="white"/>
-<g class="icon" transform="translate(74 694)"><ellipse cx="21" cy="7" rx="21" ry="7"/><path d="M0 7v29c0 10 42 10 42 0V7M0 22c0 10 42 10 42 0"/></g>
-<text class="h" x="136" y="723">Remember</text>
-<text class="p" x="74" y="768">PostgreSQL stores</text><text class="p" x="74" y="797">progress and decisions.</text>
-<text class="small" x="74" y="847">A wait survives a restart.</text>
-<rect x="400" y="670" width="315" height="212" rx="14" fill="white"/>
-<g class="icon" transform="translate(424 694)"><rect x="3" y="3" width="34" height="34" rx="6"/><path d="M-3 12h6M-3 27h6M37 12h6M37 27h6M12-3v6M27-3v6M12 37v6M27 37v6"/></g>
-<text class="h" x="486" y="723">Execute</text>
-<text class="p" x="424" y="768">Workers call external</text><text class="p" x="424" y="797">systems and report back.</text>
-<text class="small" x="424" y="847">Email keeps its thread.</text>
-<rect x="750" y="670" width="320" height="212" rx="14" fill="#FFF7E5"/>
-<g class="icon" transform="translate(774 694)"><circle cx="20" cy="10" r="9"/><path d="M2 43V31c0-15 36-15 36 0v12"/></g>
-<text class="h" x="836" y="723">Decide</text>
-<text class="p" x="774" y="768">An assigned person</text><text class="p" x="774" y="797">submits a decision.</text>
-<text class="small" x="774" y="847">No worker sits idle waiting.</text>
-<text class="p" x="50" y="930">Sending an email reply and approving a task are separate, authorized actions.</text>
-<text class="small" x="50" y="963">Closing Studio does not stop a workflow running on the platform.</text>
+<text class="p" x="40" y="90">Studio is another client of the same API that the CLI, the SDK, and your products use.</text>
+<rect x="30" y="115" width="1060" height="495" rx="18" fill="none" stroke="#A8C8B9" stroke-width="2" stroke-dasharray="8 6"/>
+<text class="small" x="50" y="145">YOUR COMPUTER</text>
+<rect x="50" y="165" width="370" height="165" rx="14" fill="white"/>
+<g class="icon" transform="translate(72 188)"><rect width="44" height="32" rx="4"/><path d="M0 10h44M13 40h18M22 32v8"/></g>
+<text class="h" x="136" y="214">1. Studio page</text>
+<text class="p" x="72" y="258">Browser tab or desktop window.</text>
+<text class="p" x="72" y="286">Draw, edit YAML, inspect runs.</text>
+<text class="small" x="72" y="314">It never receives a token.</text>
+<path class="arrow" d="M420 247H556"/>
+<text class="small" x="488" y="234" text-anchor="middle">Paired</text>
+<text class="small" x="488" y="276" text-anchor="middle">one-time</text>
+<text class="small" x="488" y="298" text-anchor="middle">code</text>
+<rect x="560" y="165" width="510" height="165" rx="14" fill="white"/>
+<g class="icon" transform="translate(584 190)"><path d="M3 2l20-7 20 7v20c0 14-20 24-20 24S3 36 3 22Z"/><path d="M14 18l7 7 13-16"/></g>
+<text class="h" x="646" y="214">2. Studio host on 127.0.0.1</text>
+<text class="p" x="584" y="258">Validates and imports on this computer.</text>
+<text class="p" x="584" y="286">Calls the active platform for you.</text>
+<text class="small" x="584" y="314">Works without a platform: local authoring.</text>
+<path class="arrow" d="M680 330V371"/><path class="arrow" d="M950 330V371"/>
+<rect x="50" y="375" width="280" height="165" rx="14" fill="white"/>
+<g class="icon" transform="translate(72 396)"><rect width="34" height="30" rx="5"/><path d="M8 9l6 6-6 6M18 22h8"/></g>
+<text class="b" x="122" y="418">weave CLI</text>
+<text class="small" x="72" y="456">weave auth setup saves</text>
+<text class="small" x="72" y="482">a platform; Studio and the</text>
+<text class="small" x="72" y="508">desktop app reuse it, and</text>
+<text class="small" x="72" y="534">the CLI reuses theirs.</text>
+<path class="arrow" d="M330 457H366"/>
+<rect x="370" y="375" width="330" height="165" rx="14" fill="white"/>
+<g class="icon" transform="translate(392 394)"><path d="M2 0h18l10 10v26H2Z"/><path d="M20 0v10h10M8 19h16M8 27h16"/></g>
+<text class="b" x="438" y="418">Saved platforms</text>
+<text class="small" x="392" y="456">profiles.json: each server</text>
+<text class="small" x="392" y="482">address, its sign-in settings,</text>
+<text class="small" x="392" y="508">and your workspace.</text>
+<text class="small" x="392" y="534">No passwords or tokens.</text>
+<rect x="720" y="375" width="350" height="165" rx="14" fill="#FFF7E5"/>
+<g class="icon" transform="translate(742 396)"><circle cx="10" cy="10" r="9"/><path d="M16 16l16 16M24 24l5-5M29 29l5-5"/></g>
+<text class="b" x="790" y="418">Credential store</text>
+<text class="small" x="742" y="456">Holds your tokens: Keychain,</text>
+<text class="small" x="742" y="482">Credential Locker, Secret Service,</text>
+<text class="small" x="742" y="508">or KWallet, or a private file</text>
+<text class="small" x="742" y="534">you chose with the CLI.</text>
+<text class="small" x="50" y="572">Pairing links the page to its own host; the desktop app pairs itself, so you type no code.</text>
+<text class="small" x="50" y="598">Pairing is not a sign-in. It grants nothing on any platform.</text>
+<path class="arrow" d="M300 610V826"/>
+<text class="small" x="320" y="690">HTTPS with your access token</text>
+<text class="small" x="320" y="718">(plain HTTP only to a platform</text>
+<text class="small" x="320" y="746">on this computer)</text>
+<path class="arrow" d="M855 610V646"/>
+<text class="small" x="870" y="634">You sign in here</text>
+<rect x="640" y="650" width="430" height="122" rx="14" fill="white"/>
+<g class="icon" transform="translate(664 670)"><rect width="44" height="32" rx="4"/><circle cx="14" cy="13" r="5"/><path d="M6 26c2-6 14-6 16 0M27 11h11M27 19h11"/></g>
+<text class="h" x="726" y="694">Identity provider</text>
+<text class="p" x="664" y="730">In your browser, or with a code.</text>
+<text class="small" x="664" y="758">Weave never sees your password.</text>
+<path class="trust" d="M855 772V826"/>
+<text class="small" x="870" y="806">Its keys verify your token</text>
+<rect x="50" y="830" width="1020" height="150" rx="16" fill="#173D34"/>
+<text class="h" x="78" y="872" style="fill:white">3. The Weave API checks and coordinates</text>
+<text class="p" x="78" y="914" style="fill:white">Save a draft → publish a version → activate it → start a run.</text>
+<text class="small" x="78" y="956" style="fill:#CEE4D8">It verifies your token. Its own grants then decide what you may do in each workspace.</text>
+<path class="arrow" d="M210 980V1036"/><path class="arrow" d="M560 980V1036"/><path class="arrow" d="M905 980V1036"/>
+<rect x="50" y="1045" width="315" height="190" rx="14" fill="white"/>
+<g class="icon" transform="translate(74 1069)"><ellipse cx="21" cy="7" rx="21" ry="7"/><path d="M0 7v29c0 10 42 10 42 0V7M0 22c0 10 42 10 42 0"/></g>
+<text class="h" x="136" y="1098">Remember</text>
+<text class="p" x="74" y="1143">PostgreSQL stores</text><text class="p" x="74" y="1171">progress and decisions.</text>
+<text class="small" x="74" y="1211">A wait survives a restart.</text>
+<rect x="400" y="1045" width="315" height="190" rx="14" fill="white"/>
+<g class="icon" transform="translate(424 1069)"><rect x="3" y="3" width="34" height="34" rx="6"/><path d="M-3 12h6M-3 27h6M37 12h6M37 27h6M12-3v6M27-3v6M12 37v6M27 37v6"/></g>
+<text class="h" x="486" y="1098">Execute</text>
+<text class="p" x="424" y="1143">Workers and connectors</text><text class="p" x="424" y="1171">call your other systems.</text>
+<text class="small" x="424" y="1211">Email keeps its thread.</text>
+<rect x="750" y="1045" width="320" height="190" rx="14" fill="#FFF7E5"/>
+<g class="icon" transform="translate(774 1069)"><circle cx="20" cy="10" r="9"/><path d="M2 43V31c0-15 36-15 36 0v12"/></g>
+<text class="h" x="836" y="1098">Decide</text>
+<text class="p" x="774" y="1143">An assigned person</text><text class="p" x="774" y="1171">submits a decision.</text>
+<text class="small" x="774" y="1211">No worker sits idle waiting.</text>
+<text class="p" x="50" y="1275">Sending an email reply and approving a task are separate, authorized actions.</text>
+<text class="small" x="50" y="1306">Closing Studio does not stop a workflow running on the platform.</text>
 </svg>

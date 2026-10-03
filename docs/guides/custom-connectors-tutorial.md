@@ -23,18 +23,33 @@ the equivalent workflow in Python, and prepare it for a native executor. Then
 you will add an inbound webhook that starts a workflow. The connector echoes an
 object, so learning the extension contract does not require a vendor account.
 
-Begin with the [offline workflow tutorial](../quickstart.md). Use the environment
-and `python_sdk` / `weave_sdk` shell functions from
-[Python SDK step 2](sdk-tutorial.md#2-prepare-an-application-environment). The local
-steps need no server. Build and installed tests need the existing authoring tools
-`build`, PyFly, and pytest; the source checkout's development group and `client`
-extra provide them. Live activation and ingress require an authorized API.
+- **Who it is for:** integration developers who extend Weave with Python, and the
+  operator who will install and enable the result.
+- **What you need:** the [offline workflow tutorial](../quickstart.md) completed,
+  a source checkout that matches your CLI, such as the release clone in
+  [Start a local platform](local-platform.md#1-check-your-tools),
+  and the environment and `python_sdk` / `weave_sdk` shell functions from
+  [Python SDK step 2](sdk-tutorial.md#2-prepare-an-application-environment).
+  Steps 6 and 7 reuse the SDK tutorial's `client`, `scope`, `sdk-message`
+  activation, and `run_message.py`, so finish the
+  [Python SDK tutorial](sdk-tutorial.md) first. Building and the installed tests
+  need the authoring tools `build`, PyFly, and pytest; the source checkout's
+  development group and `client` extra provide them.
+- **Where each part runs:** steps 1 to 5 run on your computer with no server.
+  Step 6 needs a deployed platform with a native executor image, because the
+  [local platform](local-platform.md) runs only the built-in HTTP connector.
+  Live events in steps 7 and 8 need a platform you can [connect to](connect-to-api.md).
+- **How long:** about 30 minutes for the local steps.
+
+**Only calling a JSON API over HTTPS?** You may not need code at all: see
+[Call a REST API without code](../connectors/http-without-code.md).
 
 ## 1. Pick the direction before writing code
 
 | Situation | Extension point | What it does |
 | --- | --- | --- |
-| A workflow calls a service | Outbound connector adapter | Implements a named Connector operation |
+| A workflow calls a JSON API over HTTPS | The built-in HTTP connector, no code | [Call a REST API without code](../connectors/http-without-code.md) |
+| A workflow calls a service the HTTP profile cannot express | Outbound connector adapter | Implements a named Connector operation |
 | Your application sends events and can sign Weave's envelope | Signed webhook trigger | Starts an activation or signals a run |
 | A vendor defines its own signature and event format | Provider verifier and provider source | Authenticates and normalizes events into the durable inbox |
 | A workflow needs your Python business logic | Remote worker task | Executes an admitted task capability in your process |
@@ -50,6 +65,8 @@ bottom row sends lifecycle notifications outward. Calling an outbound connector
 Action is a separate workflow step, introduced below. One integration may support
 both inbound events and outbound Actions, with separate contracts and authority.
 
+[Open diagram at full size](../diagrams/integrations-directions.svg)
+
 ## 2. Generate your first outbound connector
 
 From the repository root, run:
@@ -61,9 +78,11 @@ weave_sdk connector init .local/connector-tutorial/acme-echo --name acme-echo --
 weave_sdk connector validate .local/connector-tutorial/acme-echo/connector.json --output json
 ```
 
-Expected: successful JSON results and exit code 0. The name `acme-echo` identifies
-your example; `weave-` package names are reserved. On a second attempt, keep your
-existing directory or choose a new name. The scaffolder refuses a nonempty target.
+Expected: `{"directory": ..., "mode": "scaffold"}`, then a validation result with
+`"mode": "offline-data"` and the manifest and package digests; both exit 0. The
+name `acme-echo` identifies your example; `weave-` package names are reserved. On
+a second attempt, keep your existing directory or choose a new name: the
+scaffolder refuses a nonempty target with `WV-CONNECTOR-INVALID`.
 
 Open the generated files before changing anything:
 
@@ -76,6 +95,7 @@ Open the generated files before changing anything:
 | `src/acme_echo/conformance.py` | Offline checks for success, bounds, deadline, cancellation, and classified data |
 | `tests/test_conformance.py` | Pytest entry point for those checks |
 | `pyproject.toml` | Distribution identity, dependencies, wheel contents, and discovery entry point |
+| `README.md` | Short notes on reviewing, building, and testing the package |
 | `examples/provider_verifier.py` | A deliberately unregistered, fail-closed design example |
 
 Validation reads the declaration as data. It does not import your service, install
@@ -243,13 +263,18 @@ You do not call `Echo.execute` directly to create a durable workflow run.
 
 ## 6. Package, discover, and admit it
 
-There are three gates between compiled YAML and live execution:
+There are three gates between compiled YAML and live execution: the installed
+package, the published contracts, and the environment's execution permissions.
+This step needs a deployed platform and an operator; the local platform cannot
+run connector packages.
 
 ![Package installation, publication, and execution admission](../diagrams/integrations-admission.svg)
 
 Read the top row from installed package to published contracts, then the bottom
 row from environment authority to activation. The stages carry different exact
 identities; completing one does not replace the others.
+
+[Open diagram at full size](../diagrams/integrations-admission.svg)
 
 ### Build and test the installed Python
 
@@ -312,12 +337,12 @@ Before the publication snippet below, the operator must:
 
 1. Build the immutable native executor image containing the reviewed package.
 2. Admit its actual image digest with the package's exact `capabilities` and
-   `bindings` as the release's `connector_bindings`. Retain the returned release ID.
+    `bindings` as the release's `connector_bindings`. Retain the returned release ID.
 3. Grant the executor identity registration/claim/heartbeat/completion authority
-   for that release and the exact task reference
-   `weave-connector-acme-echo-echo@1.0.0`.
+    for that release and the exact task reference
+    `weave-connector-acme-echo-echo@1.0.0`.
 4. Configure the matching native executor scope, principal, release, image digest,
-   task types, and capacity. Keep a scheduler-enabled runtime for recovery.
+    task types, and capacity. Keep a scheduler-enabled runtime for recovery.
 
 Use the [native admission example](../../examples/admit_native.py) and
 [native dispatcher configuration](../reference/http-and-webhooks.md#built-native-dispatcher-setup)
@@ -333,10 +358,13 @@ installation nor release admission grants arbitrary secret access.
 
 ### Publish and bind from your Python application
 
+**Prefer the CLI?** [From package to an executable workflow](../connectors/authoring.md#from-package-to-an-executable-workflow)
+runs the same publication, connection, and activation with `weave` commands.
+
 This is an excerpt inside an authenticated `async with WeaveClient(...) as client`
-from [SDK step 6](sdk-tutorial.md#6-connect-your-python-application-to-an-api).
-It needs definition publication, connection management/binding, activation, and
-run-start authority. Set `WEAVE_CONNECTOR_RELEASE_ID` to the operator's returned
+from [SDK step 6](sdk-tutorial.md#6-connect-your-python-application-to-an-api),
+which also defines `scope`. It needs definition publication, connection
+management and binding, activation, and run-start authority. Set `WEAVE_CONNECTOR_RELEASE_ID` to the operator's returned
 release UUID. Run the excerpt once, save the printed connection ID, and reconcile
 existing resources before repeating after an interrupted request.
 
@@ -388,6 +416,12 @@ print("run_id:", run.id)
 Read the run as in the SDK polling example. Expected final status: `succeeded`,
 with `{"message": "Hello, connector"}` as the output. If it waits for a task,
 check the executor and exact release pins before editing YAML.
+
+The published Connector must equal the installed one byte for byte, so publish
+the same `connector.json` the operator built. A 0.1.0a7 or later CLI can
+also read the installed descriptor from the platform with `weave connector
+descriptor acme-echo --output json`; its `source` field is the exact publication
+source.
 
 ## 7. Bring events in with a signed webhook
 
@@ -535,18 +569,18 @@ ID, not a freshly generated UUID on each retry. Lifecycle events can use
 Connect the verifier to your package in this order:
 
 1. Add `provider`, `verifier_service` (for example `acme_echo:InboundVerifier`),
-   `event_schemas`, and optionally `dispatch_event_kinds` to both metadata copies.
-   Each event kind maps to its normalized **payload** schema.
+    `event_schemas`, and optionally `dispatch_event_kinds` to both metadata copies.
+    Each event kind maps to its normalized **payload** schema.
 2. Pass the exact class as `verifier_service_type=InboundVerifier` in
-   `ConnectorPackage(...)`. A metadata string alone does not register a service.
+    `ConnectorPackage(...)`. A metadata string alone does not register a service.
 3. Extend the connection config/auth schemas for the provider's installation
-   policy and secret handles. Recalculate affected manifest bindings, validate,
-   package, install, and allowlist the reviewed build.
+    policy and secret handles. Recalculate affected manifest bindings, validate,
+    package, install, and allowlist the reviewed build.
 4. Test signature rejection, account mismatch, challenge authentication, replay,
-   conflicting identity, schema/secret rejection, cancellation, and batch limits.
+    conflicting identity, schema/secret rejection, cancellation, and batch limits.
 5. Create an environment connection and a compatible Workflow activation. Create
-   a `ProviderSourceRequest` that pins the installed distribution version, adapter
-   version, connection revision, policy, target, and schema digest.
+    a `ProviderSourceRequest` that pins the installed distribution version, adapter
+    version, connection revision, policy, target, and schema digest.
 
 The [provider-source creation example](../reference/provider-sources.md#create-one-inbound-route)
 shows the complete Python DTO generator. Replace its built-in package import
@@ -572,20 +606,32 @@ are test machinery; implement your provider's real protocol before deployment.
 
 ## Troubleshoot at the boundary that failed
 
-| Symptom | Check next |
-| --- | --- |
-| `connector validate` fails | Root/package metadata parity, manifest digest, operation/capability schemas |
-| Installed test cannot find the package | Correct interpreter, installed distribution, exact four-part identity |
-| Service fails during startup | `@service`, exact class declaration, and host-provided constructor dependencies |
-| Workflow compilation cannot find the Action | Include generated Action, Connector, adapter, and capabilities in the catalog |
-| Activation rejects bindings | Connection revision UUID, Connector version UUID, and admitted release UUID are different IDs |
-| Task never gets claimed | Native executor scope, current grants, capacity, image digest, and exact task reference |
-| Webhook returns 401 | Matching key, timestamp, exact bytes, and header names |
-| Provider source creation rejects mapping | Every dispatchable event payload schema must fit the target input schema |
-| Provider receipt stays `pending` | A healthy scheduler-enabled dispatcher and current source-owner authority |
-| External write times out | Inspect evidence and provider state; delivery may be unknown |
+| What you see | Why | What to do |
+| --- | --- | --- |
+| `connector validate` fails | The two metadata copies differ, the manifest digest drifted, or a schema is invalid | Keep `connector.json` and its packaged copy identical; check operations, capabilities, and schemas |
+| The installed test cannot find the package | Another interpreter, a missing distribution, or a wrong identity | Use the interpreter the wheel was installed into and the exact four-part identity |
+| The service fails during startup | The class is not a native `@service`, the declaration names another class, or a constructor dependency is missing | Check `@service`, the exact class in `ConnectorPackage`, and host-provided dependencies |
+| Workflow compilation cannot find the Action | The catalog lacks a definition | Include the generated Action, Connector, adapter, and capabilities in the catalog |
+| Activation rejects the bindings | Different kinds of IDs were mixed | Use the connection revision UUID, the Connector version UUID, and the admitted release UUID each in its own place |
+| The task is never claimed | The executor cannot run it | Check the native executor scope, current grants, capacity, image digest, and exact task reference |
+| The webhook returns 401 | The signature does not verify | Check the key, the timestamp, the exact bytes, and the header names |
+| Provider source creation rejects the mapping | A dispatchable event does not fit the target | Make every dispatchable event payload schema fit the target input schema |
+| A provider receipt stays `pending` | Nothing dispatches it | Run a healthy scheduler-enabled dispatcher with current source-owner authority |
+| An external write times out | Delivery may be unknown | Inspect the evidence and the provider state before any retry |
 
-Keep the [connector authoring reference](../connectors/authoring.md) for complete
-package rules and the [provider-source reference](../reference/provider-sources.md)
-for admission and delivery semantics. Offline compilation and local fixture
-success do not establish live provider verification.
+Offline compilation and local fixture success do not establish live provider
+verification.
+
+## What you learned and next steps
+
+You separated the four extension points, scaffolded and changed a connector,
+proved that YAML and Python select the same call, walked the three gates to live
+execution, and received events through a signed webhook and a provider verifier.
+Next:
+
+- Keep the [connector authoring reference](../connectors/authoring.md) for
+  complete package rules.
+- Read the [provider-source reference](../reference/provider-sources.md) for
+  admission and delivery semantics.
+- Run custom business logic in your own process with a
+  [worker](workers.md) instead of a connector.

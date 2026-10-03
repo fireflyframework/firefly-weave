@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Firefly Weave
 
-**Define a business process, connect its steps to other systems, and follow every execution.**
+**Define a business process, connect its steps to other systems and to people, and follow every case.**
 
 [![Release](https://img.shields.io/github/v/release/fireflyframework/firefly-weave?include_prereleases&label=release&color=367D68)](https://github.com/fireflyframework/firefly-weave/releases)
 [![Checks](https://github.com/fireflyframework/firefly-weave/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fireflyframework/firefly-weave/actions/workflows/ci.yml)
@@ -35,97 +35,147 @@ SPDX-License-Identifier: Apache-2.0
 [CLI reference](https://fireflyframework.github.io/firefly-weave/reference/cli/) ·
 [Meet Lumi](#meet-lumi)
 
-Weave is an API-first workflow and integration platform built on
-[PyFly](https://github.com/fireflyframework/fireflyframework-pyfly). Use YAML, JSON,
-or the Python SDK to describe a process. Weave checks its definition, stores each
-execution in PostgreSQL, and assigns integration work to workers.
+Weave is a durable workflow orchestration and integration platform with human
+tasks, built on [PyFly](https://github.com/fireflyframework/fireflyframework-pyfly).
+You describe a business process once, as a **workflow**: draw it in Studio, or
+write it in YAML, JSON, or the Python SDK. Weave checks the definition, runs each
+case of it, stores its progress in PostgreSQL, and keeps the history of every
+step.
 
-For example, your product could accept an order, ask another system to check the
-customer, wait for an approval, and send a notification. Your product starts the
-workflow and reads its status through an API. A worker performs the external
-calls. The workflow definition determines what happens next.
+For example, your product accepts an order. Weave asks another system to check
+the customer, waits for a manager's approval, and sends a notification. It
+remembers where each order is, even when an approval takes days or the server
+restarts. Your product starts the process and reads its status through an API.
 
-You can run Weave as a standalone service or integrate it into another product.
-Alpha6 provides the **API, CLI, Python SDK, and Studio** visual workspace,
-including human-task inboxes, email conversations, execution management, and scoped
-people/access administration. [Install Studio](docs/guides/studio.md#install-the-alpha6-browser-application)
-with its matching optional browser bundle, or use the verified macOS ARM desktop
-asset described in the [desktop guide](docs/guides/desktop.md). Alpha5 macOS
-installers have a damaged-bundle packaging defect; use alpha6 instead. Alpha6
-macOS bundles are ad-hoc signed, not Developer ID signed or notarized, and may
-still require policy-approved manual approval. The browser installation is the
-fallback.
+**Coming from a BPM suite?** Weave covers the core of business process
+management, but it is not a BPMN engine. [Coming from BPM/BPMN](docs/concepts.md#coming-from-bpmbpmn)
+maps service tasks, user tasks, gateways, and timers to Weave steps.
 
-![From offline authoring to an API, worker, and host product](docs/diagrams/tutorial-route.svg)
+## What you get
 
-Start with the top row. After the API is running, follow the worker branch for
-external Actions or the host-client branch to integrate your product.
+The **v0.1.0a7 alpha** release provides the **API, CLI, Python SDK, and Studio**
+visual workspace, with human-task inboxes, email conversations, execution
+management, and administration of people and access. Run Weave as a standalone
+service or embed it in another product.
+
+**New in 0.1.0a7:**
+
+- **Sign-in by server address.** `weave auth setup` and Studio's connection steps
+  read the platform's published sign-in settings, sign you in, and save the
+  platform and your workspace. The CLI, Studio, and the desktop app share these
+  saved platforms; tokens stay in your operating system's credential store.
+- **REST calls without code.** Describe a request, or import operations from an
+  OpenAPI document, and publish it as an Action on the built-in `weave-http@2.0.0`
+  connector, from the CLI or from Studio's API action builder.
+- **A more guided Studio editor.** Templates, a step picker on the canvas,
+  workflow settings, a schema designer, live validation, simulation controls,
+  and a form for starting runs.
+- **A more complete local platform.** `weave platform user` creates a person who
+  can sign in, and `weave platform integrations` and `secret` let it run REST
+  calls.
+
+Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha7-browser-application)
+or as a [desktop app](docs/guides/desktop.md). The macOS desktop bundles
+are ad-hoc signed, not Developer ID signed or notarized, so macOS may ask you to
+approve them; do not use the alpha5 macOS installers, which were damaged. The
+browser installation is the fallback on every system.
+
+![From a first local workflow to a running platform, then an integration or your product](docs/diagrams/tutorial-route.svg)
+
+Start at step 1 and keep each working checkpoint before you add the next part.
+After the platform runs (step 2) and you have signed in once, choose step 3 to
+call another system, without code or with your own connector or worker, or step 4
+to connect your product. **Your team already runs a platform?** Skip step 2 and
+connect with `weave auth setup` and its server address.
 
 [Open diagram at full size](docs/diagrams/tutorial-route.svg)
 
 ## Choose your starting point
 
-You do not need to deploy the platform to try the workflow language.
-Choose the row that matches what you want to do today:
+You do not need a platform to try the workflow language. Choose the row that
+matches what you want to do today:
 
 | I want to… | Start here | What I will have at the end |
 | --- | --- | --- |
-| **Try a workflow on my laptop** | [Install the CLI](docs/installation.md), then [run the quickstart](docs/quickstart.md) | A validated YAML workflow and a successful local simulation; no server or Docker required |
-| **Use an existing Weave API** | [Install the CLI](docs/installation.md), then [connect to an existing API](docs/guides/connect-to-api.md) | A verified connection; continue to the CLI tutorial to publish and run |
-| **Run the platform myself** | [Local platform in small steps](docs/guides/local-platform.md) | PostgreSQL, local development identity, a running API, and a successful saved run |
-| **Draw a process and work on approvals** | [Install and use Studio](docs/guides/studio.md), then [human tasks](docs/guides/human-tasks.md) | A visual definition and, with an authorized API, assigned tasks and recorded decisions |
+| **Try a workflow on my laptop** | [Install the CLI](docs/installation.md), then [write your first workflow](docs/quickstart.md) | A validated workflow and a successful local simulation; no server or Docker |
+| **Draw a process and work on approvals** | [Studio](docs/guides/studio.md), then [human tasks](docs/guides/human-tasks.md) | A visual workflow and, once connected, assigned tasks and recorded decisions |
+| **Use my team's Weave platform** | [Install the CLI](docs/installation.md), then [connect the CLI](docs/guides/connect-to-api.md) or [Studio](docs/guides/studio.md#connect-to-a-platform) with its server address | A saved platform, your own sign-in, and a workspace that the CLI and Studio share |
+| **Run the platform myself** | [Start a local platform](docs/guides/local-platform.md) | PostgreSQL, a local identity provider, a running API, and a saved run |
+| **Call a REST API from a workflow** | [Call a REST API without code](docs/connectors/http-without-code.md) | A published Action on the built-in HTTP connector, run from a workflow |
+| **Give people access** | [People and access](docs/guides/people-and-access.md) | People linked to their sign-in accounts, with scoped Weave roles |
 
-Installing the CLI gives you a terminal client. Running the platform adds the
-services that store and execute workflows. Deploying a worker adds a process that
-performs external work. Each has its own guide so you can stop at the result you need.
+Installing the CLI gives you a client. Running a platform adds the services that
+store and execute workflows. A worker adds a process that runs your own
+integration code. Each has its own guide, so you can stop at the result you need.
+[Start here](docs/guides/learning-path.md) gives an ordered path for each role.
 
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a6 alpha** into
-your user account without `sudo`, Git, or Docker:
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a7 alpha**
+into your user account without `sudo`, Git, or Docker:
 
 ```sh
 (
+  # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a6/install.sh \
-    | sh -s -- --version v0.1.0a6
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a7/install.sh \
+    | sh -s -- --version v0.1.0a7
 )
 ```
 
-After the installer finishes, make the default command directory available in
-this terminal and check the result:
+Expected: `Installed Firefly Weave 0.1.0a7:` followed by the command's path. Then
+make the default command directory available in this terminal and look around:
 
 ```sh
+# Make the installed command available in this terminal.
 export PATH="$HOME/.local/bin:$PATH"
+# Show the version and the command overview.
 weave --version
 weave
+# Read the help of one command family, and find the platform guide.
 weave help workflow
 weave docs platform
 ```
 
-Expected: version `0.1.0a6` and a command overview. The
-[installation guide](docs/installation.md) explains Python selection, persistent
-PATH setup, upgrades, removal, and troubleshooting. Installation includes the API
-client, OpenAPI import, and Studio host dependencies; it does not start the
-platform or install the optional browser ZIP.
+Expected: `Firefly Weave 0.1.0a7`, the command overview, the `workflow`
+commands, and the address of the platform guide. You do not need to learn every
+command first: help explains each family and its next steps. The
+[installation guide](docs/installation.md) covers choosing Python, a permanent
+`PATH`, upgrades, removal, and troubleshooting. The installation includes the API
+client, OpenAPI import, and the Studio host; it starts no platform and does not
+download Studio's browser application.
 
-`weave` displays the command overview. Help explains each command family and its
-next steps. The [quickstart](docs/quickstart.md) walks through a complete example;
-you do not need to learn every command first.
+### Create a working example
+
+Choose a new directory and run:
+
+```sh
+# Create an offline starter project, then simulate its workflow.
+weave init hello-weave
+cd hello-weave
+weave workflow simulate simulation.json --output json
+```
+
+Expected: `status: "succeeded"` and the output `{"message": "Hello from Firefly
+Weave!"}`. The generated `README.md` explains each file and how to validate,
+compile, and simulate again after you edit. `weave init` never overwrites
+existing files and starts no services. The
+[first-workflow tutorial](docs/quickstart.md) explains a definition line by line.
 
 ### Start your own local platform
 
-After installing the CLI, obtain the matching source checkout for its operator
-assets. You also need `uv` and a running local Docker engine with Compose 2.30+:
+You also need `uv`, a running local Docker engine with Compose 2.30 or newer, and
+a source checkout that matches your CLI, because it holds the platform's
+Compose files and setup helpers. Clone the tag that matches the CLI:
 
 ```sh
-# Keep the operator files at the same version as the CLI.
-git clone --branch v0.1.0a6 --single-branch https://github.com/fireflyframework/firefly-weave.git
+# Keep the platform files at the same version as the CLI.
+git clone --branch v0.1.0a7 --single-branch https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 
-# Check prerequisites, then prepare private settings and owned dependencies once.
+# Check prerequisites, then prepare private settings and dependencies once.
 weave platform doctor
 weave platform setup
 
@@ -133,97 +183,102 @@ weave platform setup
 weave platform start
 ```
 
+Expected: `doctor` reports your CLI version, the checkout, and the Docker
+context; `setup` finishes without errors; and `start` keeps printing API logs.
 In a second terminal at that checkout, run `weave platform status`, then
-`weave platform demo`. Open the printed `/docs` URL to explore the API.
-Follow [the local guide](docs/guides/local-platform.md) for expected output,
-stop/resume, and token handling. For remote operation, start with
+`weave platform demo` to save a first real run, and open the printed `/docs`
+address to explore the API.
+
+To sign in as a person, open Studio against it, and run REST calls, follow
+steps 5 to 8 of [the local platform guide](docs/guides/local-platform.md). For a
+shared installation, start with
 [the deployment map](docs/operations/remote-deployment.md).
-
-### Create a working example
-
-Choose a new directory and run:
-
-```sh
-weave init hello-weave
-cd hello-weave
-weave workflow simulate simulation.json --output json
-```
-
-Expected: `status: "succeeded"` and output `{"message": "Hello from Firefly Weave!"}`.
-Open the generated `README.md` to learn what each file does and how to validate,
-compile, and refresh the simulation after editing. Initialization preserves existing
-files and refuses conflicting filenames. It starts no services.
-
-To make executions durable and callable by your product, continue with
-[platform startup](docs/guides/platform-overview.md). The longer
-[first-workflow tutorial](docs/quickstart.md) explains the definition line by line.
 
 ## Continue when you need more
 
-- **Call another system:** [run an integration worker](docs/operations/deployment.md)
-  after your local API works.
+- **Call another system:** [call a REST API without code](docs/connectors/http-without-code.md),
+  [build a custom integration](docs/guides/custom-connectors-tutorial.md), or
+  [run an integration worker](docs/operations/deployment.md) for your own code.
 - **Add workflows to your product:** follow the [host integration guide](docs/guides/host-integration.md).
 - **Deploy beyond your laptop:** follow [cloud deployment](docs/operations/cloud-deployment.md),
   then the setup for [AWS](docs/operations/aws.md), [Azure](docs/operations/azure.md),
   or [Google Cloud](docs/operations/gcp.md), and the shared [Kubernetes walkthrough](docs/operations/kubernetes.md).
 - **Find a specific task or diagram:** open the [documentation home](docs/README.md)
-  or [visual guide](docs/visual-guide.md).
+  or the [visual guide](docs/visual-guide.md).
 
 ## What can I build with it?
 
 - **Business processes:** versioned workflows with typed inputs and outputs,
-  branches, parallel work, waits, signals, and schedules.
-- **Integrations:** HTTP/webhooks, PostgreSQL, Kafka, and packaged connectors.
-  The [OpenAPI importer](docs/connectors/metadata-import.md) generates supported
-  HTTP connector definitions that you can review and publish.
-- **Messaging workflows:** Teams personal-bot text, WhatsApp Cloud API
-  text/templates/statuses, and Telegram webhook text.
-- **Product features:** expose workflow authoring through your own product and
-  call Weave's API or SDK to manage definitions and executions.
-- **Operations:** inspect run history, simulate with mocks, investigate incidents,
+  decisions, parallel branches, timers, signals, schedules, and human approvals.
+- **Integrations:** REST calls without code on the built-in HTTP connector,
+  webhooks, PostgreSQL, Kafka, and packaged connectors. The
+  [OpenAPI importer](docs/connectors/metadata-import.md) turns supported
+  operations into Actions or connector packages that you review and publish.
+- **Messaging and email workflows:** Teams personal-bot text, WhatsApp Cloud API
+  text, templates, and statuses, Telegram webhook text, and email conversations.
+- **Product features:** manage definitions and runs from your own product
+  through Weave's API or Python SDK.
+- **Operations:** inspect run history, simulate with mocks, resolve incidents,
   and manage workers, identity, retention, backup, and restore.
 
-See the [capability matrix](docs/capabilities.md) for precise scope. Salesforce,
-SAP, and Oracle do not have bundled named adapters; supported HTTP interfaces can
-be integrated through reviewed HTTP profiles or connector packages.
+The [capability matrix](docs/capabilities.md) gives the precise scope. Salesforce,
+SAP, and Oracle have no bundled named adapters; you can call their supported HTTP
+interfaces through reviewed HTTP Actions or connector packages.
 
 ## How the pieces fit together
 
 ![Weave API, compiler, PostgreSQL, identity provider, and workers](docs/diagrams/system-context.svg)
 
-Your application sends requests to the **Weave API**. Your configured **identity
-provider** issues access tokens; Weave verifies them and uses its own grants to
-decide what each caller may do. **PostgreSQL** keeps
-workflow versions, runs, and task state. A **worker** asks Weave for a task,
-performs the work, and reports its result. Remote workers can run in separate processes
-or containers and do not need database credentials.
+Read the top row first: your product or tool sends requests, the offline compiler
+checks workflows, and the identity provider issues the tokens the API verifies.
+Everything then passes through the Weave API, which stores state in PostgreSQL
+and reaches external systems through connectors or remote workers.
 
-Use your organization's compatible OIDC/CIAM provider by configuring its issuer,
-signing keys, audience, and access-token claims. **Keycloak is included for local
-development; it is not a production requirement.** Follow
+[Open diagram at full size](docs/diagrams/system-context.svg)
+
+Your application sends requests to the **Weave API**. Your **identity provider**
+signs people and applications in; Weave verifies their tokens and uses its own
+grants to decide what each caller may do. **PostgreSQL** keeps workflow versions,
+runs, and task state. Built-in connectors run inside the platform's executor;
+your own integration code runs in **workers**, separate processes that ask Weave
+for a task, perform it, and report the result without database credentials.
+
+Use your organization's compatible OIDC or CIAM provider by configuring its
+issuer, signing keys, audience, and access-token claims. **Keycloak is included
+for local development; it is not a production requirement.** Your platform can
+publish its non-secret sign-in settings, so people connect the CLI, Studio, or the
+desktop app by typing only the server address; their tokens stay in each
+computer's credential store. Follow
 [identity provider setup](docs/operations/identity-and-secrets.md#use-your-own-identity-provider)
-for configuration, identity linking, and scoped roles.
+for configuration, published sign-in settings, identity linking, and scoped roles.
 
-Native PyFly controllers and services implement the API, and workers can be
-deployed independently. See [architecture](docs/architecture.md) for the current
-components, a narrated execution path, and the detailed diagrams.
+Native PyFly controllers and services implement the API. See
+[architecture](docs/architecture.md) for the components, a narrated execution
+path, and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a6**, an **alpha** release. Download
+The recommended installation is **v0.1.0a7**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
-The checked-in documentation describes the source on its branch; a release tag
-preserves the documentation and code for that release.
+The documentation on a branch describes the source on that branch; a release tag
+preserves the documentation and code of that release.
 
 External work is delivered at least once. If a worker crashes after another
-system accepts a request, that effect may already have happened. Use that system's
-idempotency support or an explicit reconciliation process. The
+system accepted a request, that effect may already have happened. Use that
+system's idempotency support or an explicit reconciliation process; the
 [worker guide](docs/guides/workers.md) explains this with an example.
 
 Messaging integrations have local protocol and backend verification; live account
-setup and delivery still need validation in your environment. Generic OIDC and
-Entra claim profiles do not imply live certification for every identity provider.
+setup and delivery still need validation in your environment. Sign-in from the
+CLI, and from Studio in an opt-in browser test, has been verified end to end only
+against the local platform's Keycloak 26.7.4, and sign-in with a code from a
+locally built macOS desktop app against the same platform; browser sign-in from
+the desktop app and the DMG have not been verified. Microsoft Entra ID and other
+OIDC providers have configuration guidance, not verification: the built-in token
+verifier accepts Entra's signing keys, which omit `alg`, but only unit tests
+cover them, and no Entra token has been verified yet. Credential storage on
+Windows and Linux is not verified.
 
 ## Meet Lumi
 

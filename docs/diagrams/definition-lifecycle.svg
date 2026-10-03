@@ -17,50 +17,53 @@ SPDX-License-Identifier: Apache-2.0
 -->
 
 
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="860" viewBox="0 0 960 860" role="img" aria-labelledby="title desc">
-<title id="title">Write once, run with many inputs</title><desc id="desc">An edit never rewrites the behavior of a run already in progress.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
-<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
-<rect width="960" height="760" rx="16" fill="#f7faf8"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="899" viewBox="0 0 960 899" role="img" aria-labelledby="title desc">
+<title id="title">Write once, run with many inputs</title><desc id="desc">Read down. 1, write the source in Studio, YAML, JSON, or the SDK builder; optional drafts keep revisions. 2, publish a version: the server recompiles the source, and the version ID and digest are immutable. 3, activate it in an environment: the activation pins the version, connections, connector and worker releases, and human-task assignments, and checks authority and resource readiness. Then start a run for each input: run A with customer A’s input and run B with customer B’s input each keep their own accepted state and history. An edit never rewrites the behavior of a run already in progress.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="799" rx="16" fill="#f7faf8"/>
 <path d="M36 99H924" stroke="#c9dacf"/>
 <text x="36" y="46" class="title">Write once, run with many inputs</text>
 <text x="36" y="79" class="body muted">An edit never rewrites the behavior of a run already in progress.</text>
-<circle cx="62" cy="150" r="19" fill="#2d7257"/>
+<circle cx="62" cy="150" r="19" fill="#367D68"/>
 <text x="62" y="157" class="body white" text-anchor="middle">1</text>
-<g transform="translate(104,132) scale(1.3461538461538463)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1H15L21 7V23H5Z M15 1V7H21 M9 12H17 M9 17H17"/></g>
+<g transform="translate(104,132) scale(1.3461538461538463)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1H15L21 7V23H5Z M15 1V7H21 M9 12H17 M9 17H17"/></g>
 <text x="154" y="158" class="head">Write the source</text>
-<text x="104" y="200" class="body">YAML, JSON or the SDK builder</text>
-<text x="104" y="229" class="body">Optional drafts keep revisions.</text>
+<text x="104" y="200" class="body">Studio, YAML, JSON, or the SDK</text>
+<text x="104" y="229" class="body">builder. Drafts keep revisions.</text>
 <path class="edge" d="M448 182H507"/>
 <text x="451" y="160" class="small muted">publish</text>
-<circle cx="534" cy="150" r="19" fill="#2d7257"/>
+<circle cx="534" cy="150" r="19" fill="#367D68"/>
 <text x="534" y="157" class="body white" text-anchor="middle">2</text>
-<g transform="translate(576,132) scale(1.3461538461538463)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
+<g transform="translate(576,132) scale(1.3461538461538463)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
 <text x="626" y="158" class="head">Publish a version</text>
 <text x="576" y="200" class="body">The server recompiles the source.</text>
 <text x="576" y="229" class="body">Version ID + digest are immutable.</text>
 <path class="edge" d="M756 263V320H483V363"/>
-<text x="512" y="308" class="small muted">activate in an environment</text>
-<rect x="150" y="364" width="660" height="158" rx="12" fill="#eaf4ed" stroke="#a8bdb1"/>
-<g transform="translate(177,389) scale(1.6153846153846154)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
-<text x="241" y="420" class="head">Choose a deployment: activation</text>
-<text x="180" y="459" class="body">Pin the version, connections and worker releases.</text>
-<text x="180" y="488" class="body">Check authority and resource readiness.</text>
-<path class="edge" d="M480 522V552H234V585"/>
-<path class="edge" d="M480 552H723V585"/>
-<rect x="36" y="588" width="402" height="127" rx="12" fill="white" stroke="#a8bdb1"/>
-<g transform="translate(56,610) scale(1.3461538461538463)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1L23 12L5 23Z"/></g>
-<text x="109" y="637" class="head">Run A</text>
-<text x="109" y="670" class="small">Customer A’s input</text>
-<text x="109" y="695" class="small">Its own accepted state + history</text>
-<rect x="522" y="588" width="402" height="127" rx="12" fill="white" stroke="#a8bdb1"/>
-<g transform="translate(542,610) scale(1.3461538461538463)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1L23 12L5 23Z"/></g>
-<text x="595" y="637" class="head">Run B</text>
-<text x="595" y="670" class="small">Customer B’s input</text>
-<text x="595" y="695" class="small">Its own accepted state + history</text>
+<text x="496" y="308" class="small muted">activate with the version ID</text>
+<rect x="150" y="364" width="660" height="187" rx="12" fill="#eaf4ed" stroke="#a8bdb1"/>
+<circle cx="196" cy="413" r="19" fill="#367D68"/>
+<text x="196" y="420" class="body white" text-anchor="middle">3</text>
+<text x="241" y="420" class="head">Activate it in an environment</text>
+<text x="180" y="459" class="body">Pin the version, connections, connector and worker</text>
+<text x="180" y="488" class="body">releases, and human-task assignments.</text>
+<text x="180" y="517" class="body">Check authority and resource readiness.</text>
+<path class="edge" d="M480 551V591H234V624"/>
+<path class="edge" d="M480 591H723V624"/>
+<text x="494" y="578" class="small muted">start a run with the activation ID</text>
+<rect x="36" y="627" width="402" height="127" rx="12" fill="white" stroke="#a8bdb1"/>
+<g transform="translate(56,649) scale(1.3461538461538463)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1L23 12L5 23Z"/></g>
+<text x="109" y="676" class="head">Run A</text>
+<text x="109" y="709" class="small">Customer A’s input</text>
+<text x="109" y="734" class="small">Its own accepted state + history</text>
+<rect x="522" y="627" width="402" height="127" rx="12" fill="white" stroke="#a8bdb1"/>
+<g transform="translate(542,649) scale(1.3461538461538463)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1L23 12L5 23Z"/></g>
+<text x="595" y="676" class="head">Run B</text>
+<text x="595" y="709" class="small">Customer B’s input</text>
+<text x="595" y="734" class="small">Its own accepted state + history</text>
 <g id="lumi-takeaway">
-<rect x="0" y="766" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<g transform="translate(22 777) scale(.25)"><defs>
+<rect x="0" y="805" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 816) scale(.25)"><defs>
   <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
     <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
     <stop offset="1" stop-color="#102E28"/>
@@ -106,7 +109,7 @@ SPDX-License-Identifier: Apache-2.0
     <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
   </g>
 </g></g>
-<text x="110" y="795" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
-<text x="110" y="826" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">New inputs create new runs; source edits do not rewrite existing runs.</text>
+<text x="110" y="834" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="865" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">New inputs create new runs; source edits do not rewrite existing runs.</text>
 </g>
 </svg>

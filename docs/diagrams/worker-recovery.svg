@@ -18,43 +18,43 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="950" viewBox="0 0 960 950" role="img" aria-labelledby="title desc">
-<title id="title">A worker can crash after the remote action</title><desc id="desc">The lease protects accepted state. It cannot undo an external effect.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
-<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<title id="title">A worker can crash after the remote action</title><desc id="desc">Four steps of a worker task. 1, claim an admitted task: worker identity, release and scope must match, and the lease records its generation and deadline. 2, work while the lease is current: heartbeats keep ownership while allowed, with bounded calls and granted credentials. 3, the external system accepts the call: the side effect may now exist outside Weave, and a crash here leaves completion uncertain. 4, report completion: Weave checks generation, owner and deadline and commits the accepted result and receipt. Without an accepted completion, recover according to the effect: safe retries may get a new lease while late results stay fenced, ambiguous non-idempotent effects need reconciliation, and cancellation is not proof that no effect happened.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
 <rect width="960" height="850" rx="16" fill="#f7faf8"/>
 <path d="M36 99H924" stroke="#c9dacf"/>
 <text x="36" y="46" class="title">A worker can crash after the remote action</text>
 <text x="36" y="79" class="body muted">The lease protects accepted state. It cannot undo an external effect.</text>
-<circle cx="58" cy="148" r="19" fill="#2d7257"/>
+<circle cx="58" cy="148" r="19" fill="#367D68"/>
 <text x="58" y="155" class="body white" text-anchor="middle">1</text>
-<g transform="translate(111,130) scale(1.4230769230769231)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
+<g transform="translate(111,130) scale(1.4230769230769231)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
 <text x="170" y="158" class="head">Claim an admitted task</text>
 <text x="111" y="199" class="body">Worker identity, release and scope must match.</text>
 <text x="111" y="227" class="body">The lease records its generation and deadline.</text>
 <path class="edge" d="M58 174V239"/>
-<circle cx="58" cy="285" r="19" fill="#2d7257"/>
+<circle cx="58" cy="285" r="19" fill="#367D68"/>
 <text x="58" y="292" class="body white" text-anchor="middle">2</text>
-<g transform="translate(111,267) scale(1.4230769230769231)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 12A11 11 0 1 1 1 12A11 11 0 1 1 23 12 M12 5V12L17 15"/></g>
+<g transform="translate(111,267) scale(1.4230769230769231)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 12A11 11 0 1 1 1 12A11 11 0 1 1 23 12 M12 5V12L17 15"/></g>
 <text x="170" y="295" class="head">Work while the lease is current</text>
 <text x="111" y="336" class="body">Heartbeat preserves ownership while allowed.</text>
 <text x="111" y="364" class="body">Use bounded calls and granted credentials.</text>
 <path class="edge" d="M58 311V376"/>
-<rect x="94" y="394" width="830" height="126" rx="12" fill="#fff3df"/>
-<circle cx="58" cy="422" r="19" fill="#2d7257"/>
+<rect x="94" y="394" width="830" height="126" rx="12" fill="#FFF7E5"/>
+<circle cx="58" cy="422" r="19" fill="#367D68"/>
 <text x="58" y="429" class="body white" text-anchor="middle">3</text>
-<g transform="translate(111,404) scale(1.4230769230769231)" fill="none" stroke="#94601b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
+<g transform="translate(111,404) scale(1.4230769230769231)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
 <text x="170" y="432" class="head">The external system accepts the call</text>
 <text x="111" y="473" class="body">The side effect may now exist outside Weave.</text>
 <text x="111" y="501" class="body">A crash here leaves completion uncertain.</text>
 <path class="edge" d="M58 448V513"/>
-<circle cx="58" cy="559" r="19" fill="#2d7257"/>
+<circle cx="58" cy="559" r="19" fill="#367D68"/>
 <text x="58" y="566" class="body white" text-anchor="middle">4</text>
-<g transform="translate(111,541) scale(1.4230769230769231)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<g transform="translate(111,541) scale(1.4230769230769231)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
 <text x="170" y="569" class="head">Report completion to Weave</text>
 <text x="111" y="610" class="body">Check generation, owner and deadline.</text>
 <text x="111" y="638" class="body">Commit the accepted result and receipt.</text>
-<rect x="36" y="687" width="888" height="108" rx="12" fill="#fff3df"/>
-<g transform="translate(54,707) scale(1.1538461538461537)" fill="none" stroke="#94601b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
+<rect x="36" y="687" width="888" height="108" rx="12" fill="#FFF7E5"/>
+<g transform="translate(54,707) scale(1.1538461538461537)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
 <text x="98" y="721" class="head">No accepted completion? Recover according to the effect.</text>
 <text x="98" y="752" class="small">Safe retries may get a new lease; late results stay fenced.</text>
 <text x="98" y="779" class="small">Ambiguous non-idempotent effects need reconciliation. Cancellation is not proof of no effect.</text>

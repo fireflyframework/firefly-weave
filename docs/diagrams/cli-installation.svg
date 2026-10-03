@@ -18,40 +18,40 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="610" viewBox="0 0 960 610" role="img" aria-labelledby="title desc">
-<title id="title">Install the CLI without disturbing your apps</title><desc id="desc">Verify a release, prepare its environment, then select the new command.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
-<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<title id="title">Install the CLI without disturbing your apps</title><desc id="desc">Three steps from left to right. 1, verify the release: the wheel and its hash-locked requirements file must match SHA256SUMS, from a GitHub release or a trusted local release directory. 2, install and check: a new isolated Python environment gets the hash-locked dependencies, pip check runs, and a weave version smoke test must report the expected version. 3, activate the CLI: the managed weave link is switched to the new environment; put the link’s directory (by default ~/.local/bin) on PATH and run weave --help. The command changes only after the checks pass; a failed check leaves your previous CLI selected, and older versions stay for rollback.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
 <rect width="960" height="510" rx="16" fill="#f7faf8"/>
 <path d="M36 99H924" stroke="#c9dacf"/>
 <text x="36" y="46" class="title">Install the CLI without disturbing your apps</text>
 <text x="36" y="79" class="body muted">Verify a release, prepare its environment, then select the new command.</text>
-<circle cx="60" cy="146" r="19" fill="#2d7257"/>
+<circle cx="60" cy="146" r="19" fill="#367D68"/>
 <text x="60" y="153" class="body white" text-anchor="middle">1</text>
-<g transform="translate(119,127) scale(1.6538461538461537)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
+<g transform="translate(119,127) scale(1.6538461538461537)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
 <text x="40" y="225" class="head">Verify the release</text>
-<text x="40" y="267" class="small">Wheel + checksums</text>
-<text x="40" y="298" class="small">Locked dependencies</text>
-<text x="40" y="329" class="small">GitHub or prepared build</text>
-<circle cx="373" cy="146" r="19" fill="#2d7257"/>
+<text x="40" y="267" class="small">Wheel + SHA256SUMS</text>
+<text x="40" y="298" class="small">Hash-locked requirements</text>
+<text x="40" y="329" class="small">GitHub release or local release</text>
+<circle cx="373" cy="146" r="19" fill="#367D68"/>
 <text x="373" y="153" class="body white" text-anchor="middle">2</text>
-<g transform="translate(432,127) scale(1.6538461538461537)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<g transform="translate(432,127) scale(1.6538461538461537)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
 <text x="353" y="225" class="head">Install and check</text>
 <text x="353" y="267" class="small">Isolated Python environment</text>
-<text x="353" y="298" class="small">Dependency validation</text>
-<text x="353" y="329" class="small">CLI version smoke test</text>
-<circle cx="686" cy="146" r="19" fill="#2d7257"/>
+<text x="353" y="298" class="small">Dependencies + pip check</text>
+<text x="353" y="329" class="small">weave version smoke test</text>
+<circle cx="686" cy="146" r="19" fill="#367D68"/>
 <text x="686" y="153" class="body white" text-anchor="middle">3</text>
-<g transform="translate(745,127) scale(1.6538461538461537)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2H25V22H1Z M5 7L10 12L5 17 M13 17H20"/></g>
+<g transform="translate(745,127) scale(1.6538461538461537)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2H25V22H1Z M5 7L10 12L5 17 M13 17H20"/></g>
 <text x="666" y="225" class="head">Activate the CLI</text>
-<text x="666" y="267" class="small">Select the managed command</text>
-<text x="666" y="298" class="small">Add its bin directory to PATH</text>
+<text x="666" y="267" class="small">Point the weave link at it</text>
+<text x="666" y="298" class="small">Put the link’s directory on PATH</text>
 <text x="666" y="329" class="small">Run weave --help</text>
 <path class="edge" d="M296 146H326"/>
 <path class="edge" d="M607 146H640"/>
 <rect x="36" y="374" width="888" height="81" rx="12" fill="#eaf4ed"/>
-<g transform="translate(54,394) scale(1.1538461538461537)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<g transform="translate(54,394) scale(1.1538461538461537)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
 <text x="98" y="408" class="head">The command changes only after the checks pass.</text>
-<text x="98" y="439" class="small">A failed verification or installation leaves your previous CLI selected.</text>
+<text x="98" y="439" class="small">A failed check leaves your previous CLI selected; older versions stay for rollback.</text>
 <g id="lumi-takeaway">
 <rect x="0" y="516" width="960" height="90" rx="16" fill="#EAF4ED"/>
 <g transform="translate(22 527) scale(.25)"><defs>

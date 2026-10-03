@@ -22,12 +22,16 @@ A **host product** is your application: for example, a customer portal that lets
 users author workflows and start runs. Weave stores and executes the workflows;
 your host supplies the user experience and a verified identity for each request.
 
-For a first integration, [connect to your team's API](connect-to-api.md).
-If you need a development server, [start the local platform](local-platform.md)
-and run its demo. Then follow the [complete Python SDK tutorial](sdk-tutorial.md)
-to publish a workflow, activate it, and retrieve a real execution result. That
-tutorial includes separate instructions for a team-operated API and the local
-platform, so you can use the installation you already have.
+This guide is for architects and developers who plan how a product uses Weave.
+It helps you choose where your product calls Weave, how identity and scope work,
+and which integration to add next. It contains no new commands: the runnable
+path is the [Python SDK tutorial](sdk-tutorial.md), which publishes a workflow,
+activates it, and reads a real execution result.
+
+**Before you start, you need** a platform to call: your team's API, or a
+development server from [the local platform guide](local-platform.md) with its
+demo run. The SDK tutorial covers both. To try requests by hand first, use the
+[API playground](api-playground.md).
 
 ## What your first integration should accomplish
 
@@ -42,7 +46,7 @@ works, add business steps without changing who owns the workflow's durable state
 | Sign-in and token acquisition | Your configured identity provider and host | Obtain an access token intended for this Weave API |
 | Workflow versions and execution history | Weave | Keep the exact version used by each run and record its progress |
 | Custom business code | Your admitted worker | Perform the task named by an Action and return its result |
-| Reusable calls to another system | A connector in the native executor | Apply a connection's approved configuration to a request |
+| Reusable calls to another system | A connector in the native executor, such as the built-in HTTP connector | Apply a connection's approved configuration to a request |
 | Deployment, permissions, and recovery | Your platform operator | Configure the CIAM, grant scope access, deploy workers, and investigate incidents |
 
 The **operator** is the person or automation responsible for the installation.
@@ -146,7 +150,9 @@ After the echo run succeeds, choose the next boundary by what the step does:
 | --- | --- | --- |
 | Compute with workflow data | A built-in transform or control-flow step | [Workflow authoring](workflow-authoring.md) |
 | Run application-specific Python code | An Action contract and admitted worker handler | [Workers](workers.md) |
-| Call an external system through a reusable adapter | A Connector contract, implementation, and environment connection | [Custom connector tutorial](custom-connectors-tutorial.md) |
+| Call one JSON-over-HTTPS operation of another system | An Action on the built-in `weave-http@2.0.0` connector and a connection | [Call a REST API without code](../connectors/http-without-code.md) |
+| Ask a person to approve or decide | A human task with a form and decisions | [Human tasks](human-tasks.md) |
+| Call an external system through a reusable adapter | A Connector contract, implementation, and environment connection | [Build a custom integration](custom-connectors-tutorial.md) |
 | Start when an external event arrives | An authenticated ingress route targeting an activation | [Signed webhook walkthrough](custom-connectors-tutorial.md#7-bring-events-in-with-a-signed-webhook) |
 | Pause for a decision from your product | A signal wait and an authorized `signal` request | [Schedules, timers, and waits](../reference/schedules-and-timers.md) |
 
@@ -158,7 +164,7 @@ The product should not infer success merely because a start request was accepted
 
 ## Optional: read a larger integration fixture
 
-The chapter's runnable path is the SDK echo example above. After it works, read
+This guide's runnable path is the SDK echo example above. After it works, read
 [the host fixture](../../examples/host_product/client.py) to see how a larger
 application could read customer data through HTTP, invoke `example-record@1.0.0`
 on a remote worker, wait for approval, and inspect the result. This is an optional
@@ -170,7 +176,8 @@ Those mutations require deployer authority. The fixture's state JSON initially
 needs `scope` containing `tenant_id`, `project_id`, and `environment_id`; `prepare`
 replaces that file with resource IDs used by later operations.
 
-Chapter 3 does **not** provision everything this fixture requires. In particular,
+[Deploy your first worker](../operations/deployment.md) does **not** provision
+everything this fixture requires. In particular,
 its receiver implements `/health` and `/effect`, while this fixture needs a
 customer service exposing `/customer`. Running the fixture would additionally
 require an operator to supply:
@@ -183,11 +190,11 @@ require an operator to supply:
   `WEAVE_WORKER_IMAGE_DIGEST`, plus executor/worker authority for the new release
   IDs created by `prepare` and the required connection credential grants.
 - A current `WEAVE_ACCESS_TOKEN`, the host-facing `WEAVE_API_URL`, and a private
-  state file. Existing chapter 3 release grants do not automatically cover newly
-  admitted releases.
+  state file. The release grants from the worker deployment guide do not
+  automatically cover newly admitted releases.
 
-There is no complete provisioning recipe for those additional fixture dependencies
-in this chapter. Use the [worker deployment](../operations/deployment.md) and
+There is no complete provisioning recipe for those additional fixture
+dependencies in this guide. Use the [worker deployment](../operations/deployment.md) and
 [identity/secret contracts](../operations/identity-and-secrets.md) as background
 when designing your own integration. The table below is a reading map for the
 fixture's operations, not a ready-to-run command sequence.
@@ -202,3 +209,11 @@ fixture's operations, not a ready-to-run command sequence.
 The compiler's `customer-onboarding` YAML is a separate teaching example. Its
 catalog lock does not provision the implementations used by this host fixture.
 For worker handler behavior and restart semantics, continue with [workers](workers.md).
+
+## Next steps
+
+- Run the echo lifecycle from Python with the [SDK tutorial](sdk-tutorial.md).
+- Give your product's service identity, and its users, the smallest roles they
+  need with [People and access](people-and-access.md).
+- Inspect and repair runs your product started with
+  [execution management](execution-management.md).

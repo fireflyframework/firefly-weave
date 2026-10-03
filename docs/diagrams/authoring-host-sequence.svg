@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1576" viewBox="0 0 960 1576" role="img" aria-labelledby="title desc">
-<title id="title">Carry each returned ID into the next call</title><desc id="desc">Your application sends requests. Weave returns the identities required by later requests. READ DOWN  •  Solid arrow: request   Dashed arrow: returned result</desc>
+<title id="title">Carry each returned ID into the next call</title><desc id="desc">Read down; solid arrows are requests from your host or SDK to the Weave API, dashed arrows are returned results. 1. Optionally save an editable draft: the API checks the current grant and the expected revision and returns the draft ID and a new revision. 2. Publish the source with an idempotency key: the API checks the current grant and the server catalog and returns the version ID and executable digest. 3. Activate that version and digest with a new key: the API checks the current grant, environment scope, and pinned bindings and returns the activation ID and revision. 4. Start a run with the activation ID and input and a new key: the API checks the current grant and the input schema and returns the run ID and current state. The workspace scope selects resources; your token and grants supply authority. If a mutation response is lost, retry with the exact request and the same key.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
 <rect width="960" height="1476" rx="24" fill="#FAFCFB"/>
@@ -29,7 +29,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Your application sends requests. Weave returns the identities required by</text>
 <text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">later requests.</text>
 <rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Solid arrow: request   Dashed arrow: returned result</text>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Solid arrow: request  •  Dashed arrow: returned result</text>
 <g transform="translate(78 232) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
 <text x="151" y="268" font-size="25" font-weight="700" fill="#173D34">Your host / SDK</text>
 <g transform="translate(621 232) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
@@ -41,19 +41,19 @@ SPDX-License-Identifier: Apache-2.0
 <path class="edge" stroke-dasharray="8 6" d="M850 457H100"/>
 <text x="62" y="505" font-size="20" font-weight="400" fill="#173D34">API checks: Current grant and expected revision</text>
 <rect x="40" y="556" width="880" height="212" rx="18" fill="white" stroke="#BFD2C8"/>
-<text x="62" y="591" font-size="24" font-weight="700" fill="#173D34">2. Publish source with an idempotency key</text>
+<text x="62" y="591" font-size="24" font-weight="700" fill="#173D34">2. Publish the source with an idempotency key</text>
 <path class="edge" d="M100 627H850"/>
 <text x="133" y="670" font-size="24" font-weight="700" fill="#326B88">Version ID + executable digest</text>
 <path class="edge" stroke-dasharray="8 6" d="M850 694H100"/>
 <text x="62" y="742" font-size="20" font-weight="400" fill="#173D34">API checks: Current grant and server catalog</text>
 <rect x="40" y="793" width="880" height="212" rx="18" fill="white" stroke="#BFD2C8"/>
-<text x="62" y="828" font-size="24" font-weight="700" fill="#173D34">3. Activate that version and digest</text>
+<text x="62" y="828" font-size="24" font-weight="700" fill="#173D34">3. Activate that version and digest (new key)</text>
 <path class="edge" d="M100 864H850"/>
 <text x="133" y="907" font-size="24" font-weight="700" fill="#326B88">Activation ID + revision</text>
 <path class="edge" stroke-dasharray="8 6" d="M850 931H100"/>
-<text x="62" y="979" font-size="20" font-weight="400" fill="#173D34">API checks: Current grant and pinned bindings</text>
+<text x="62" y="979" font-size="20" font-weight="400" fill="#173D34">API checks: Current grant, environment scope, and pinned bindings</text>
 <rect x="40" y="1030" width="880" height="212" rx="18" fill="white" stroke="#BFD2C8"/>
-<text x="62" y="1065" font-size="24" font-weight="700" fill="#173D34">4. Start a run with activation ID and input</text>
+<text x="62" y="1065" font-size="24" font-weight="700" fill="#173D34">4. Start a run: activation ID and input (new key)</text>
 <path class="edge" d="M100 1101H850"/>
 <text x="133" y="1144" font-size="24" font-weight="700" fill="#326B88">Run ID + current state</text>
 <path class="edge" stroke-dasharray="8 6" d="M850 1168H100"/>
@@ -61,9 +61,9 @@ SPDX-License-Identifier: Apache-2.0
 <rect x="40" y="1267" width="880" height="165" rx="16" fill="#E8F0F6"/>
 <g transform="translate(59 1287) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
 <text x="113" y="1311" font-size="23" font-weight="700" fill="#326B88">Keep IDs and retry keys with the request</text>
-<text x="60" y="1350" font-size="21" font-weight="400" fill="#173D34">Scope selects resources; token and local grants supply authority. A lost</text>
-<text x="60" y="1379" font-size="21" font-weight="400" fill="#173D34">mutation response leaves the outcome unknown: preserve the exact request and</text>
-<text x="60" y="1408" font-size="21" font-weight="400" fill="#173D34">its key.</text><g id="lumi-takeaway">
+<text x="60" y="1350" font-size="21" font-weight="400" fill="#173D34">The workspace scope selects resources; your token and grants supply authority.</text>
+<text x="60" y="1379" font-size="21" font-weight="400" fill="#173D34">A lost mutation response leaves the outcome unknown: retry with the exact</text>
+<text x="60" y="1408" font-size="21" font-weight="400" fill="#173D34">request and the same key.</text><g id="lumi-takeaway">
 <rect x="0" y="1482" width="960" height="90" rx="16" fill="#EAF4ED"/>
 <g transform="translate(22 1493) scale(.25)"><defs>
   <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">

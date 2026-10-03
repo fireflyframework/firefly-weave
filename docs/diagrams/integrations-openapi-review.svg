@@ -19,67 +19,69 @@ SPDX-License-Identifier: Apache-2.0
 
 
 
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1650" viewBox="0 0 960 1650" role="img" aria-labelledby="title desc">
-<title id="title">Review an imported API before you deploy it</title><desc id="desc">Import transforms local contract data. Build, publication, credentials, and runtime admission come later. READ DOWN  •  Each arrow carries the result into the next step</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1679" viewBox="0 0 960 1679" role="img" aria-labelledby="title desc">
+<title id="title">Review an imported API before you deploy it</title><desc id="desc">Five steps read top to bottom. 1, take an inventory of a local OpenAPI 3.1 document in JSON or YAML: --list shows every operation with a verdict and its reasons, and no remote call is made. 2, review an explicit policy that --init-policy scaffolds with the origin, authentication, effects, statuses and limits; relaxations are named and reported, and the importer guesses none of these decisions. 3, every selected operation is checked: if one is unsupported the import is rejected with a code and source pointer and nothing is written, and generated Actions must compile before any file is written; otherwise revise the document or policy, or write a custom adapter. 4, review the generated files: with --target builtin, Actions on weave-http@2.0.0, a connection example with secret-handle placeholders, and provenance; with --target package, the default, a connector package to build. 5, deploy through the normal gates: built-in Actions are published, then a connection is created and the workflow activated; a package is built, installed, allowlisted, published and activated; release admission, grants and connection pins still apply. Import stays offline and allocates no live IDs.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1550" rx="24" fill="#FAFCFB"/>
+<rect width="960" height="1579" rx="24" fill="#FAFCFB"/>
 <rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
 <text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Review an imported API before you deploy it</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Import transforms local contract data. Build, publication, credentials, and</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">runtime admission come later.</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Import only shapes local files. Publication, credentials, and runtime</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">admission come later, through the usual gates.</text>
 <rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
 <text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
 <rect x="40" y="232" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
 <g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
-<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Choose the contract and operations</text>
-<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Use local OpenAPI 3.1 JSON with self-contained references.</text>
-<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">Select operation IDs within the supported schema subset.</text>
-<text x="168" y="372" font-size="18" font-weight="600" fill="#326B88">INPUT • No remote API call is made</text>
+<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Take an inventory of the document</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Use a local OpenAPI 3.1 document in JSON or YAML.</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">--list shows every operation with a verdict and its reasons.</text>
+<text x="168" y="372" font-size="18" font-weight="600" fill="#367D68">INPUT • No remote API call is made</text>
 <path class="edge" d="M480 394v35"/>
 <rect x="40" y="442" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="459" width="90" height="90" rx="20" fill="#EEF4F0"/>
 <g transform="translate(73 474) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
-<text x="168" y="485" font-size="25" font-weight="700" fill="#173D34">2. Provide explicit operation policy</text>
-<text x="168" y="524" font-size="22" font-weight="400" fill="#173D34">Review fixed origin, authentication, effect, success statuses,</text>
-<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">and request/response/time limits.</text>
-<text x="168" y="582" font-size="18" font-weight="600" fill="#326B88">POLICY • The importer does not guess these decisions</text>
+<text x="168" y="485" font-size="25" font-weight="700" fill="#173D34">2. Review an explicit policy</text>
+<text x="168" y="524" font-size="22" font-weight="400" fill="#173D34">--init-policy scaffolds the origin, authentication, effects,</text>
+<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">statuses, and limits. Relaxations are named and reported.</text>
+<text x="168" y="582" font-size="18" font-weight="600" fill="#367D68">POLICY • The importer does not guess these decisions</text>
 <path class="edge" d="M480 604v35"/>
 <rect x="40" y="652" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="669" width="90" height="90" rx="20" fill="#EEF4F0"/>
 <g transform="translate(73 684) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 18c0-17 24-17 24 0 0 10-13 9-13 20 M29 46v2"/><circle cx="28" cy="28" r="25"/></g>
 <text x="168" y="695" font-size="25" font-weight="700" fill="#173D34">3. Check every selected operation</text>
-<text x="168" y="734" font-size="22" font-weight="400" fill="#173D34">If any selection is unsupported, import rejects with a safe</text>
-<text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">code and source pointer.</text>
-<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">Revise the contract or write a custom adapter. No partial</text>
-<text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">deployable result is produced.</text>
-<text x="168" y="850" font-size="18" font-weight="600" fill="#326B88">NO → Revise and repeat • YES → Review generated output</text>
+<text x="168" y="734" font-size="22" font-weight="400" fill="#173D34">If any selected operation is unsupported, the import is</text>
+<text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">rejected with a code and source pointer; nothing is written.</text>
+<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">Generated Actions must compile before any file is written.</text>
+<text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">Revise the document or policy, or write a custom adapter.</text>
+<text x="168" y="850" font-size="18" font-weight="600" fill="#367D68">NO → Revise and repeat • YES → Review generated output</text>
 <path class="edge" d="M480 872v35"/>
-<rect x="40" y="920" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="40" y="920" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="937" width="90" height="90" rx="20" fill="#EEF4F0"/>
 <g transform="translate(73 952) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="168" y="963" font-size="25" font-weight="700" fill="#173D34">4. Inspect the generated package</text>
-<text x="168" y="1002" font-size="22" font-weight="400" fill="#173D34">Read Connector, Actions, package metadata, provenance, and</text>
-<text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">generated-to-source pointer map.</text>
-<text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">Compare configuration, schemas, authentication, and effects.</text>
-<text x="168" y="1089" font-size="18" font-weight="600" fill="#326B88">REVIEW • Generated does not mean approved</text>
-<path class="edge" d="M480 1111v35"/>
-<rect x="40" y="1159" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="1176" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1191) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
-<text x="168" y="1202" font-size="25" font-weight="700" fill="#173D34">5. Deploy through normal operator gates</text>
-<text x="168" y="1241" font-size="22" font-weight="400" fill="#173D34">Build → install → allowlist → publish → activate.</text>
-<text x="168" y="1270" font-size="22" font-weight="400" fill="#173D34">Release admission, grants, and connection pins are still</text>
-<text x="168" y="1299" font-size="22" font-weight="400" fill="#173D34">required.</text>
-<text x="168" y="1328" font-size="18" font-weight="600" fill="#326B88">DEPLOY • Provider onboarding remains separate</text>
-<rect x="40" y="1370" width="880" height="136" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1390) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1414" font-size="23" font-weight="700" fill="#326B88">Import remains an offline operation</text>
-<text x="60" y="1453" font-size="21" font-weight="400" fill="#173D34">It allocates no live resource IDs and makes no provider request. Treat the</text>
-<text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">generated files as reviewable starting material.</text><g id="lumi-takeaway">
-<rect x="0" y="1556" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<g transform="translate(22 1567) scale(.25)"><defs>
+<text x="168" y="963" font-size="25" font-weight="700" fill="#173D34">4. Review the generated files</text>
+<text x="168" y="1002" font-size="22" font-weight="400" fill="#173D34">--target builtin: Actions on weave-http@2.0.0, a connection</text>
+<text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">example with handle placeholders, and provenance.</text>
+<text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">--target package (default): a connector package to build.</text>
+<text x="168" y="1089" font-size="22" font-weight="400" fill="#173D34">Compare configuration, schemas, authentication, and effects.</text>
+<text x="168" y="1118" font-size="18" font-weight="600" fill="#367D68">REVIEW • Generated does not mean approved</text>
+<path class="edge" d="M480 1140v35"/>
+<rect x="40" y="1188" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="1205" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 1220) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
+<text x="168" y="1231" font-size="25" font-weight="700" fill="#173D34">5. Deploy through the normal gates</text>
+<text x="168" y="1270" font-size="22" font-weight="400" fill="#173D34">Built-in: publish the Actions → create a connection → activate.</text>
+<text x="168" y="1299" font-size="22" font-weight="400" fill="#173D34">Package: build → install → allowlist → publish → activate.</text>
+<text x="168" y="1328" font-size="22" font-weight="400" fill="#173D34">Release admission, grants, and connection pins still apply.</text>
+<text x="168" y="1357" font-size="18" font-weight="600" fill="#367D68">DEPLOY • Provider onboarding remains separate</text>
+<rect x="40" y="1399" width="880" height="136" rx="16" fill="#FFF7E5"/>
+<g transform="translate(59 1419) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1443" font-size="23" font-weight="700" fill="#367D68">Import remains an offline operation</text>
+<text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">It allocates no live resource IDs and makes no provider request. Treat the</text>
+<text x="60" y="1511" font-size="21" font-weight="400" fill="#173D34">generated files as reviewable starting material.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="1585" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1596) scale(.25)"><defs>
   <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
     <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
     <stop offset="1" stop-color="#102E28"/>
@@ -125,7 +127,7 @@ SPDX-License-Identifier: Apache-2.0
     <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
   </g>
 </g></g>
-<text x="110" y="1585" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
-<text x="110" y="1616" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Imported metadata is a starting point for review, not permission to run.</text>
+<text x="110" y="1614" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1645" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Imported metadata is a starting point for review, not permission to run.</text>
 </g>
 </svg>

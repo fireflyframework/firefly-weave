@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1650" viewBox="0 0 960 1650" role="img" aria-labelledby="title desc">
-<title id="title">Restore to a new target; keep the source fenced</title><desc id="desc">This guarded local PostgreSQL 17 exercise stops every writer before capture. READ DOWN  •  Each arrow carries the result into the next step</desc>
+<title id="title">Restore to a new target; keep the source fenced</title><desc id="desc">Five steps read top to bottom for a guarded local PostgreSQL 17 exercise. 1, quiesce and fence the source: stop all writers, wait for no sessions, fence logins and set the connection limit to zero, and never reopen it automatically. 2, capture protected recovery evidence: the catalog and data manifest, a custom dump, its SHA, owners, ACLs and RLS, plus independent receipts for external effects. 3, restore into a unique empty database in one transaction, keeping source and target identities distinct. 4, confirm the source is unchanged and compare the target catalog and data before producing restore.json. 5, load target.env only, run an explicit schema check, read an original run and reconcile ambiguous effects before selecting one active deployment; reopening writers is a separate decision. Restored leases keep their original proofs and deadlines, so do not run both deployments against the same external effects.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
 <rect width="960" height="1550" rx="24" fill="#FAFCFB"/>
@@ -36,7 +36,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="168" y="285" font-size="22" font-weight="400" fill="#173D34">Stop all source writers and wait for no remaining sessions.</text>
 <text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Fence logins and set connection limit to zero. Keep the source</text>
 <text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">fenced.</text>
-<text x="168" y="372" font-size="18" font-weight="600" fill="#326B88">SOURCE • Never automatically reopen it</text>
+<text x="168" y="372" font-size="18" font-weight="600" fill="#367D68">SOURCE • Never automatically reopen it</text>
 <path class="edge" d="M480 394v35"/>
 <rect x="40" y="442" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="459" width="90" height="90" rx="20" fill="#EEF4F0"/>
@@ -45,7 +45,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="168" y="524" font-size="22" font-weight="400" fill="#173D34">Retain catalog/data manifest, custom dump, SHA, owners, ACLs,</text>
 <text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">and RLS.</text>
 <text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">Preserve independent receipts for external effects.</text>
-<text x="168" y="611" font-size="18" font-weight="600" fill="#326B88">EVIDENCE • A database copy does not reverse outside effects</text>
+<text x="168" y="611" font-size="18" font-weight="600" fill="#367D68">EVIDENCE • A database copy does not reverse outside effects</text>
 <path class="edge" d="M480 633v35"/>
 <rect x="40" y="681" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="698" width="90" height="90" rx="20" fill="#EEF4F0"/>
@@ -53,7 +53,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="168" y="724" font-size="25" font-weight="700" fill="#173D34">3. Restore into a unique empty database</text>
 <text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">Use one restore transaction for the new target.</text>
 <text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">Keep source and target identities distinct.</text>
-<text x="168" y="821" font-size="18" font-weight="600" fill="#326B88">NEW TARGET • Do not overwrite the source</text>
+<text x="168" y="821" font-size="18" font-weight="600" fill="#367D68">NEW TARGET • Do not overwrite the source</text>
 <path class="edge" d="M480 843v35"/>
 <rect x="40" y="891" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="908" width="90" height="90" rx="20" fill="#EEF4F0"/>
@@ -62,7 +62,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="168" y="973" font-size="22" font-weight="400" fill="#173D34">Confirm the source is still unchanged.</text>
 <text x="168" y="1002" font-size="22" font-weight="400" fill="#173D34">Compare target catalog and data; only then produce</text>
 <text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">restore.json.</text>
-<text x="168" y="1060" font-size="18" font-weight="600" fill="#326B88">COMPARE • Success needs more than a completed restore command</text>
+<text x="168" y="1060" font-size="18" font-weight="600" fill="#367D68">COMPARE • Success needs more than a completed restore command</text>
 <path class="edge" d="M480 1082v35"/>
 <rect x="40" y="1130" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="1147" width="90" height="90" rx="20" fill="#EEF4F0"/>
@@ -71,10 +71,10 @@ SPDX-License-Identifier: Apache-2.0
 <text x="168" y="1212" font-size="22" font-weight="400" fill="#173D34">Load target.env only; run an explicit schema check.</text>
 <text x="168" y="1241" font-size="22" font-weight="400" fill="#173D34">Read an original public run and reconcile ambiguous effects</text>
 <text x="168" y="1270" font-size="22" font-weight="400" fill="#173D34">before selecting one active deployment.</text>
-<text x="168" y="1299" font-size="18" font-weight="600" fill="#326B88">RESUME • Reopening writers is a separate decision</text>
-<rect x="40" y="1341" width="880" height="165" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1361) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1385" font-size="23" font-weight="700" fill="#326B88">Restored leases are not newly fenced attempts</text>
+<text x="168" y="1299" font-size="18" font-weight="600" fill="#367D68">RESUME • Reopening writers is a separate decision</text>
+<rect x="40" y="1341" width="880" height="165" rx="16" fill="#FFF7E5"/>
+<g transform="translate(59 1361) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1385" font-size="23" font-weight="700" fill="#367D68">Restored leases are not newly fenced attempts</text>
 <text x="60" y="1424" font-size="21" font-weight="400" fill="#173D34">Their original proofs and deadlines remain. A restore does not create a new</text>
 <text x="60" y="1453" font-size="21" font-weight="400" fill="#173D34">fencing epoch; avoid running both deployments against the same external</text>
 <text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">effects.</text><g id="lumi-takeaway">

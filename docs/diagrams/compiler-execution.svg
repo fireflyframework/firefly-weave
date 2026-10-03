@@ -18,29 +18,29 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="920" viewBox="0 0 960 920" role="img" aria-labelledby="title desc">
-<title id="title">From a written workflow to durable work</title><desc id="desc">Checking a definition and running it are different operations.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
-<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<title id="title">From a written workflow to durable work</title><desc id="desc">Two stages. First, compile without services or secrets: read and validate (parse YAML or JSON within limits and check schemas), resolve meaning against the catalog lock (types and links), build the graph (lower to canonical IR and pin dependencies), and emit an artifact (digest, source map, and a versioned envelope); without a catalog only partial validation runs and no executable artifact is produced. Then use authorized server operations: 1 publish (the server recompiles the source and stores an immutable version), 2 activate (pin the version and bindings and check current authority), 3 start a run (evaluate the pinned graph and persist tasks and waits), and 4 execute tasks through a connector or a worker with a fenced lease and receipt. PostgreSQL commits state, task receipts, deadlines, and recovery decisions. An external call can happen before completion is recorded, so use provider idempotency or reconciliation; simulation and recorded replay do not call providers.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
 <rect width="960" height="820" rx="16" fill="#f7faf8"/>
 <path d="M36 99H924" stroke="#c9dacf"/>
 <text x="36" y="46" class="title">From a written workflow to durable work</text>
 <text x="36" y="79" class="body muted">Checking a definition and running it are different operations.</text>
 <rect x="36" y="121" width="888" height="252" rx="12" fill="#eaf4ed"/>
-<g transform="translate(55,140) scale(1.1923076923076923)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1H15L21 7V23H5Z M15 1V7H21 M9 12H17 M9 17H17"/></g>
+<g transform="translate(55,140) scale(1.1923076923076923)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1H15L21 7V23H5Z M15 1V7H21 M9 12H17 M9 17H17"/></g>
 <text x="103" y="163" class="head">First, compile without services or secrets</text>
-<g transform="translate(56,195) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<g transform="translate(56,195) scale(1.2307692307692308)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
 <text x="56" y="254" class="head">Read + validate</text>
-<text x="56" y="289" class="small">Bound YAML / JSON</text>
+<text x="56" y="289" class="small">Parse YAML or JSON</text>
 <text x="56" y="315" class="small">Check schemas</text>
-<g transform="translate(280,195) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 8L13 5A5 5 0 0 1 20 12L17 15 M14 16L11 19A5 5 0 0 1 4 12L7 9 M8 16L16 8"/></g>
+<g transform="translate(280,195) scale(1.2307692307692308)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 8L13 5A5 5 0 0 1 20 12L17 15 M14 16L11 19A5 5 0 0 1 4 12L7 9 M8 16L16 8"/></g>
 <text x="280" y="254" class="head">Resolve meaning</text>
 <text x="280" y="289" class="small">Use the catalog lock</text>
 <text x="280" y="315" class="small">Check types + links</text>
-<g transform="translate(503,195) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
+<g transform="translate(503,195) scale(1.2307692307692308)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
 <text x="503" y="254" class="head">Build the graph</text>
 <text x="503" y="289" class="small">Lower to canonical IR</text>
 <text x="503" y="315" class="small">Pin dependencies</text>
-<g transform="translate(730,195) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
+<g transform="translate(730,195) scale(1.2307692307692308)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6L12 0L23 6L12 12Z M1 6V20L12 26L23 20V6 M12 12V26"/></g>
 <text x="730" y="254" class="head">Emit an artifact</text>
 <text x="730" y="289" class="small">Digest + source map</text>
 <text x="730" y="315" class="small">Versioned envelope</text>
@@ -49,33 +49,33 @@ SPDX-License-Identifier: Apache-2.0
 <path class="edge" d="M675 211H712"/>
 <text x="56" y="351" class="small muted">No catalog → partial validation only; no executable artifact.</text>
 <rect x="36" y="405" width="888" height="252" rx="12" fill="white" stroke="#a8bdb1"/>
-<g transform="translate(56,424) scale(1.1923076923076923)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
+<g transform="translate(56,424) scale(1.1923076923076923)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10V6A6 6 0 0 1 12 0A6 6 0 0 1 18 6V10 M3 10H21V24H3Z M12 15V19"/></g>
 <text x="103" y="448" class="head">Then, use authorized server operations</text>
-<circle cx="75" cy="489" r="19" fill="#2d7257"/>
+<circle cx="75" cy="489" r="19" fill="#367D68"/>
 <text x="75" y="496" class="body white" text-anchor="middle">1</text>
 <text x="56" y="541" class="head">Publish</text>
 <text x="56" y="574" class="small">Recompile source</text>
 <text x="56" y="600" class="small">Store immutable version</text>
-<circle cx="299" cy="489" r="19" fill="#2d7257"/>
+<circle cx="299" cy="489" r="19" fill="#367D68"/>
 <text x="299" y="496" class="body white" text-anchor="middle">2</text>
 <text x="280" y="541" class="head">Activate</text>
 <text x="280" y="574" class="small">Pin version + bindings</text>
 <text x="280" y="600" class="small">Check current authority</text>
-<circle cx="522" cy="489" r="19" fill="#2d7257"/>
+<circle cx="522" cy="489" r="19" fill="#367D68"/>
 <text x="522" y="496" class="body white" text-anchor="middle">3</text>
 <text x="503" y="541" class="head">Start a run</text>
 <text x="503" y="574" class="small">Evaluate pinned graph</text>
 <text x="503" y="600" class="small">Persist tasks and waits</text>
-<circle cx="749" cy="489" r="19" fill="#2d7257"/>
+<circle cx="749" cy="489" r="19" fill="#367D68"/>
 <text x="749" y="496" class="body white" text-anchor="middle">4</text>
 <text x="730" y="541" class="head">Execute tasks</text>
-<text x="730" y="574" class="small">Native or remote worker</text>
+<text x="730" y="574" class="small">Connector or worker</text>
 <text x="730" y="600" class="small">Fenced lease + receipt</text>
 <path class="edge" d="M225 489H262"/>
 <path class="edge" d="M448 489H485"/>
 <path class="edge" d="M675 489H712"/>
-<text x="56" y="635" class="small muted">PostgreSQL commits state, task receipts, deadlines and recovery decisions.</text>
-<rect x="36" y="684" width="888" height="81" rx="12" fill="#fff3df"/>
+<text x="56" y="635" class="small muted">PostgreSQL commits state, task receipts, deadlines, and recovery decisions.</text>
+<rect x="36" y="684" width="888" height="81" rx="12" fill="#FFF7E5"/>
 <g transform="translate(54,704) scale(1.1538461538461537)" fill="none" stroke="#94601b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
 <text x="98" y="718" class="head">An external call can happen before completion is recorded.</text>
 <text x="98" y="749" class="small">Use provider idempotency or reconciliation. Simulation and recorded replay do not call providers.</text>

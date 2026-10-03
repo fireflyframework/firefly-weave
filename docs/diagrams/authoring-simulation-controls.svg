@@ -19,59 +19,64 @@ SPDX-License-Identifier: Apache-2.0
 
 
 
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1534" viewBox="0 0 960 1534" role="img" aria-labelledby="title desc">
-<title id="title">Move execution and time separately</title><desc id="desc">The simulator uses a pinned artifact, input, explicit mocks, and a timezone-aware starting clock. READ AS A CONTROL PANEL  •  Choose the command for the change you want</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1679" viewBox="0 0 960 1679" role="img" aria-labelledby="title desc">
+<title id="title">Move execution and time separately</title><desc id="desc">A control panel of five simulator commands, not a required sequence. The simulator uses a pinned artifact, input, explicit Action mocks, and a timezone-aware starting clock, and never calls a provider. 1. Inspect without advancing: inspect() reads the current view and set_breakpoints() marks where Continue should pause (Studio: Breakpoints, then check the steps; CLI: breakpoints). 2. Take one execution step: next() processes one admitted event or one IR node, including start, end, branch-output, and join nodes (Studio: Step; CLI: next). 3. Continue to a stopping point: continue_until_breakpoint() runs until a breakpoint, wait, suspension, termination, or the command work ceiling (Studio: Continue; CLI: continue). 4. Queue a signal or a human decision: signal(name, payload) and human_decision(node_id, payload) validate the payload and queue it at virtual now; use Step or Continue to let the graph consume it (Studio: Send, Submit decision; CLI: signal, human_decision). 5. Move virtual time: advance_time(seconds) changes virtual now only; use Step or Continue to process newly due timers (Studio: under Advance time, a preset, or an Amount and Advance; CLI: advance_time). Virtual time governs timers; server debug sessions expire after one real hour, and saving progress or virtual time does not extend that lifetime.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1434" rx="24" fill="#FAFCFB"/>
+<rect width="960" height="1579" rx="24" fill="#FAFCFB"/>
 <rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
 <text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Move execution and time separately</text>
 <text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">The simulator uses a pinned artifact, input, explicit mocks, and a</text>
 <text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">timezone-aware starting clock.</text>
 <rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
 <text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ AS A CONTROL PANEL  •  Choose the command for the change you want</text>
-<rect x="40" y="232" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="40" y="232" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
 <g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
 <text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Inspect without advancing</text>
 <text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">inspect() reads the current view.</text>
-<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">set_breakpoints() marks where execution should pause.</text>
-<text x="168" y="372" font-size="18" font-weight="600" fill="#326B88">OBSERVE • No provider calls are made</text>
-<rect x="40" y="442" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="459" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 474) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
-<text x="168" y="485" font-size="25" font-weight="700" fill="#173D34">2. Take one execution step</text>
-<text x="168" y="524" font-size="22" font-weight="400" fill="#173D34">next() processes one admitted event OR one IR node.</text>
-<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">Start, end, branch-output, and join nodes also count.</text>
-<text x="168" y="582" font-size="18" font-weight="600" fill="#326B88">STEP • One boundary is not necessarily one visible Action</text>
-<rect x="40" y="652" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="669" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 684) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
-<text x="168" y="695" font-size="25" font-weight="700" fill="#173D34">3. Continue to a stopping point</text>
-<text x="168" y="734" font-size="22" font-weight="400" fill="#173D34">continue_until_breakpoint() runs until a breakpoint, wait,</text>
-<text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">suspension, termination, or command work ceiling.</text>
-<text x="168" y="792" font-size="18" font-weight="600" fill="#326B88">CONTINUE • Work remains bounded</text>
-<rect x="40" y="862" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="879" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 894) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M28 29v24 M15 39a18 18 0 1 1 26 0 M7 46a29 29 0 1 1 42 0"/><circle cx="28" cy="27" r="4"/></g>
-<text x="168" y="905" font-size="25" font-weight="700" fill="#173D34">4. Queue a signal, then advance execution</text>
-<text x="168" y="944" font-size="22" font-weight="400" fill="#173D34">signal(name, payload) validates and queues at virtual now.</text>
-<text x="168" y="973" font-size="22" font-weight="400" fill="#173D34">Use next() or continue to let the graph consume it.</text>
-<text x="168" y="1002" font-size="18" font-weight="600" fill="#326B88">SIGNAL • Queuing does not itself move the graph</text>
-<rect x="40" y="1072" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="1089" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1104) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="M28 13v16l11 7 M28 5v4 M5 28h4 M47 28h4"/></g>
-<text x="168" y="1115" font-size="25" font-weight="700" fill="#173D34">5. Move virtual time, then process due work</text>
-<text x="168" y="1154" font-size="22" font-weight="400" fill="#173D34">advance_time(seconds) changes virtual now only.</text>
-<text x="168" y="1183" font-size="22" font-weight="400" fill="#173D34">Use next() or continue to process newly due timers.</text>
-<text x="168" y="1212" font-size="18" font-weight="600" fill="#326B88">TIME • Advancing the clock does not reduce the graph</text>
-<rect x="40" y="1254" width="880" height="136" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1274) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1298" font-size="23" font-weight="700" fill="#326B88">Two clocks have different jobs</text>
-<text x="60" y="1337" font-size="21" font-weight="400" fill="#173D34">Virtual time governs timers. Server debug sessions expire after one real</text>
-<text x="60" y="1366" font-size="21" font-weight="400" fill="#173D34">hour; saving progress and virtual time does not extend that lifetime.</text><g id="lumi-takeaway">
-<rect x="0" y="1440" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<g transform="translate(22 1451) scale(.25)"><defs>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">set_breakpoints() marks where Continue should pause.</text>
+<text x="168" y="373" font-size="19" font-weight="400" fill="#173D34"><tspan font-weight="700">Studio:</tspan> Breakpoints, then check the steps • <tspan font-weight="700">CLI:</tspan> breakpoints</text>
+<text x="168" y="402" font-size="18" font-weight="600" fill="#326B88">OBSERVE • No provider calls are made</text>
+<rect x="40" y="471" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="488" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 503) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m20 17 14 11-14 11z M38 17v22"/></g>
+<text x="168" y="514" font-size="25" font-weight="700" fill="#173D34">2. Take one execution step</text>
+<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">next() processes one admitted event OR one IR node.</text>
+<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">Start, end, branch-output, and join nodes also count.</text>
+<text x="168" y="612" font-size="19" font-weight="400" fill="#173D34"><tspan font-weight="700">Studio:</tspan> Step • <tspan font-weight="700">CLI:</tspan> next</text>
+<text x="168" y="641" font-size="18" font-weight="600" fill="#326B88">STEP • One boundary is not necessarily one visible Action</text>
+<rect x="40" y="710" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="727" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 742) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
+<text x="168" y="753" font-size="25" font-weight="700" fill="#173D34">3. Continue to a stopping point</text>
+<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">continue_until_breakpoint() runs until a breakpoint, wait,</text>
+<text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">suspension, termination, or command work ceiling.</text>
+<text x="168" y="851" font-size="19" font-weight="400" fill="#173D34"><tspan font-weight="700">Studio:</tspan> Continue • <tspan font-weight="700">CLI:</tspan> continue</text>
+<text x="168" y="880" font-size="18" font-weight="600" fill="#326B88">CONTINUE • Work remains bounded</text>
+<rect x="40" y="949" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="966" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 981) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M28 29v24 M15 39a18 18 0 1 1 26 0 M7 46a29 29 0 1 1 42 0"/><circle cx="28" cy="27" r="4"/></g>
+<text x="168" y="992" font-size="25" font-weight="700" fill="#173D34">4. Queue a signal or a human decision</text>
+<text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">signal(name, payload) and human_decision(node_id, payload)</text>
+<text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">validate the payload and queue it at virtual now.</text>
+<text x="168" y="1090" font-size="19" font-weight="400" fill="#173D34"><tspan font-weight="700">Studio:</tspan> Send (signal name), Submit decision • <tspan font-weight="700">CLI:</tspan> signal, human_decision</text>
+<text x="168" y="1119" font-size="18" font-weight="600" fill="#326B88">QUEUE • Then step or continue to let the graph consume it</text>
+<rect x="40" y="1188" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="1205" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 1220) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="M28 13v16l11 7 M28 5v4 M5 28h4 M47 28h4"/></g>
+<text x="168" y="1231" font-size="25" font-weight="700" fill="#173D34">5. Move virtual time, then process due work</text>
+<text x="168" y="1270" font-size="22" font-weight="400" fill="#173D34">advance_time(seconds) changes virtual now only.</text>
+<text x="168" y="1299" font-size="22" font-weight="400" fill="#173D34">Then step or continue to process newly due timers.</text>
+<text x="168" y="1329" font-size="19" font-weight="400" fill="#173D34"><tspan font-weight="700">Studio:</tspan> Advance time (a preset, or Amount and Advance) • <tspan font-weight="700">CLI:</tspan> advance_time</text>
+<text x="168" y="1358" font-size="18" font-weight="600" fill="#326B88">TIME • Advancing the clock does not reduce the graph</text>
+<rect x="40" y="1399" width="880" height="136" rx="16" fill="#E8F0F6"/>
+<g transform="translate(59 1419) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1443" font-size="23" font-weight="700" fill="#326B88">Two clocks have different jobs</text>
+<text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">Virtual time governs timers. Server debug sessions expire after one real</text>
+<text x="60" y="1511" font-size="21" font-weight="400" fill="#173D34">hour; saving progress and virtual time does not extend that lifetime.</text><g id="lumi-takeaway">
+<rect x="0" y="1585" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1596) scale(.25)"><defs>
   <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
     <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
     <stop offset="1" stop-color="#102E28"/>
@@ -117,7 +122,7 @@ SPDX-License-Identifier: Apache-2.0
     <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
   </g>
 </g></g>
-<text x="110" y="1469" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
-<text x="110" y="1500" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Move virtual time explicitly; simulations never call live providers.</text>
+<text x="110" y="1614" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1645" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Move virtual time explicitly; simulations never call live providers.</text>
 </g>
 </svg>

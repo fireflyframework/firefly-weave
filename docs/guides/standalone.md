@@ -16,39 +16,44 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Manual local platform setup
+# Set up a local platform manually
 
-**For the simplest first run, use [the platform CLI walkthrough](local-platform.md).**
-The commands below explain each underlying operation for operators who need the
-manual route. You do not need to complete both guides.
+This guide runs Weave on your own computer one operation at a time: you build
+the server package, start PostgreSQL and Keycloak, link the first identity,
+start the API, and save one real workflow run. The API, SDK, and CLI then read
+that same run, whose output is `{"message": "Hello, Weave"}`.
 
-Use this guide when you want to operate Weave on your own laptop. You will start
-the API and its dependencies, create permission to use them, and save one real
-workflow execution. The API, SDK, and CLI will read the same run with output
-`{"message": "Hello, Weave"}`.
+**Most people should use [Start a local platform in small steps](local-platform.md)
+instead.** `weave platform` performs every operation below with one command per
+step and also creates a person who can sign in to the CLI and Studio. Use
+this manual route when you operate Weave and want to see, and control, each
+underlying command. You do not need to complete both guides.
 
 **Only want to try a workflow?** Start with the [offline quickstart](../quickstart.md).
-**Already have an API?** Use [the CLI client tutorial](connect-to-api.md)
-instead. Installing the CLI alone does not require any of the services below.
+**Already have a platform?** [Connect the CLI to it](connect-to-api.md) instead.
+Installing the CLI alone does not need any of the services below.
 
-This is a **local development** installation. It creates fresh resources and
-retains their data when stopped. Production needs its own TLS, identity,
-secret management, capacity, and backup configuration.
+**This is a local development installation.** It creates fresh resources and
+keeps their data when stopped. Production needs its own TLS, identity, secret
+management, capacity, and backup configuration. Plan for a longer session than
+the `weave platform` route: you run each block yourself and check its result
+before continuing.
 
 ![Terminal ownership and runtime dependencies](../diagrams/operations-topology.svg)
 
 Use this process map while opening terminals. Setup and client commands belong
-to terminal 1; the API remains running in terminal 2. Chapter 3 adds the receiver
-and worker shown in the extended topology.
-
+to terminal 1; the API keeps running in terminal 2. The receiver, native
+executor, and worker in the extended topology come later, in
+[Deploy your first worker](../operations/deployment.md).
 [Open diagram at full size](../diagrams/operations-topology.svg)
 
-If you are deciding what to install, read [deploy, start, and use the platform](platform-overview.md)
-first. This chapter is the complete command sequence for its local deployment path.
+If you are still deciding what to install, read
+[Deploy, start, and use the platform](platform-overview.md) first. This guide is
+the complete command sequence for its manual local path.
 
 ## Follow the setup in order
 
-This chapter has two parts: set up the installation once, then use or resume it.
+This guide has two parts: set up the installation once, then use or resume it.
 Keep each terminal open as directed, and run one block at a time. Continue only
 when its expected result appears.
 
@@ -74,9 +79,9 @@ On a later visit, go directly to [resume this installation](#resume-this-install
 | Weave API | Checks permissions and coordinates workflow execution | Python process in terminal 2 |
 | Host client | Calls the API as an application | Commands in terminal 1 |
 
-There is no remote worker yet. Our first workflow only copies input to output,
-which Weave can do internally. [Chapter 3](../operations/deployment.md) adds a
-worker and an HTTP integration using this installation.
+There is no remote worker yet. The first workflow only copies its input to its
+output, which Weave does internally. [Deploy your first worker](../operations/deployment.md)
+adds a worker and an HTTP integration to this installation.
 
 ## Before you start
 
@@ -90,29 +95,31 @@ setup helpers, and examples. A user-local CLI installation does not contain that
 checkout. If you do not already have it, run:
 
 ```sh
-git clone --branch v0.1.0a6 --single-branch \
+# Clone the alpha7 release that matches the CLI, then install its locked dependencies.
+git clone --branch v0.1.0a7 --single-branch \
   https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 uv sync --locked --python 3.12
 ```
 
-The clone selects the same **v0.1.0a6** release as the CLI installation guide.
+The clone selects the same **v0.1.0a7** release as the CLI installation guide.
 A detached-HEAD message is expected when Git opens a release tag; this tutorial
 does not require creating a branch or editing application source.
 
 If you already have a checkout, enter its root and run `git describe --tags --exact-match`.
-For this released walkthrough, the result must be `v0.1.0a6`. If the checkout has
+For this released walkthrough, the result must be `v0.1.0a7`. If the checkout has
 another version or local development work, preserve it and clone the release into
 a separate directory by adding a new directory name to the clone command above.
 Contributors intentionally using unreleased source should use that checkout's
 matching CLI and documentation; do not mix it with a pinned released client.
 
-This chapter creates its own echo workflow through the API; it does not require
+This guide creates its own echo workflow through the API; it does not require
 copying the offline quickstart's files into the checkout.
 
 Open **terminal 1** at the checkout root and check the prerequisites:
 
 ```sh
+# Confirm the checkout root and that uv, Docker Compose, and a Docker context are available.
 pwd
 test -f pyproject.toml && test -f compose.yaml
 uv --version
@@ -122,7 +129,8 @@ docker context ls
 
 `test` prints nothing when both files exist. If it fails, enter the `firefly-weave`
 directory. Keep terminal 1 open for setup and client commands. Terminal 2 will
-hold the API process; chapter 3 adds terminal 3 for the integration receiver.
+hold the API process; the worker guide adds terminal 3 for its integration
+receiver.
 
 You do not need to run the project's acceptance tests to follow this tutorial.
 The setup scripts prepare a local development installation for you.
@@ -135,6 +143,7 @@ current context. Inspect its endpoint: it must start with `unix://` and belong
 to the local engine intended for this tutorial. Later commands select it explicitly.
 
 ```sh
+# Select the local Docker engine, then build and install this installation's own server environment.
 export WEAVE_DOCKER_CONTEXT="${WEAVE_DOCKER_CONTEXT:-$(docker context show)}"
 export WEAVE_REPO_DIR="$PWD"
 docker context inspect "$WEAVE_DOCKER_CONTEXT"
@@ -201,6 +210,7 @@ another installation. The runtime setup helper accepts only canonical
 `http://localhost:<port>` origins with ports 1024 through 65535.
 
 ```sh
+# Choose distinct local ports (preset a variable to override it), then check that each one is free.
 export WEAVE_POSTGRES_PORT="${WEAVE_POSTGRES_PORT:-55434}"
 export WEAVE_KEYCLOAK_PORT="${WEAVE_KEYCLOAK_PORT:-18080}"
 export WEAVE_API_PORT="${WEAVE_API_PORT:-8080}"
@@ -230,6 +240,7 @@ separate from initialization.
 Now save the selected paths and ports and create the private configuration:
 
 ```sh
+# Save paths and ports to session.env, create the private configuration, then start PostgreSQL and Keycloak.
 python3 - <<'PYSESSION'
 import os, shlex
 from pathlib import Path
@@ -276,6 +287,7 @@ is reserved for the later API container; it has no readiness endpoint until that
 before creating a runtime database:
 
 ```sh
+# Wait until Keycloak publishes its OIDC discovery document.
 "$WEAVE_PYTHON" - <<'PY'
 import os, time, httpx
 url = os.environ["WEAVE_KEYCLOAK_TEST_URL"] + "/realms/weave/.well-known/openid-configuration"
@@ -301,6 +313,7 @@ also the check to reuse when resuming an existing installation.
 For this new installation, provision the runtime database next:
 
 ```sh
+# Create the runtime database and its logins, load them, then apply the schema migrations.
 "$WEAVE_PYTHON" scripts/setup-runtime.py --output "$WEAVE_WORK_DIR/runtime.env"
 set -a
 source "$WEAVE_WORK_DIR/runtime.env"
@@ -327,8 +340,11 @@ changing a secret file does not update a retained realm.
 This step tells Weave which verified identity may perform the initial setup.
 For the local exercise, that identity is Keycloak's `weave-host` service account.
 Step 5 will give it permission to work in one new tenant, project, and environment.
-In a shared deployment, use a separate identity for initial administration and
-for application requests. A Keycloak role alone does not grant a Weave permission.
+One application identity is enough on your own computer. On a shared platform,
+the people who administer it should use their own accounts instead:
+[Kubernetes](../operations/kubernetes.md#make-your-own-account-a-platform-administrator)
+shows how the bootstrapped identity makes a person's account a platform
+administrator. A Keycloak role alone does not grant a Weave permission.
 
 A **token** proves the caller's identity. A **principal** is Weave's local record
 for it. An **identity link** maps the verified token subject to that principal.
@@ -339,6 +355,7 @@ A human-paced tutorial can outlast a token. Create this helper once so you can
 request a fresh verified token whenever needed, without repeating bootstrap:
 
 ```sh
+# Create the token helper, renew the host token, then link that identity as the initial administrator.
 cat > "$WEAVE_WORK_DIR/refresh-token.py" <<'PYTOKEN'
 """Renew the verified tutorial host token without printing credentials."""
 import asyncio, json, os, tempfile
@@ -385,6 +402,7 @@ installation rather than repeating initialization. After a pause, refresh only
 the token by running this in terminal 1:
 
 ```sh
+# Renew only the host token; grants and principals stay unchanged.
 "$WEAVE_PYTHON" "$WEAVE_WORK_DIR/refresh-token.py"
 ```
 
@@ -400,6 +418,7 @@ created `session.env` in step 2. They restore the exact repository path, work
 directory, and selected port. Then run this block in terminal 2:
 
 ```sh
+# Terminal 2: load the runtime settings, then run the API without the migration credential.
 set -a
 source "$WEAVE_WORK_DIR/runtime.env"
 set +a
@@ -418,6 +437,7 @@ The API stays running and prints logs; it does not return a shell prompt.
 Leave terminal 2 running. In **terminal 1**, wait for readiness:
 
 ```sh
+# Terminal 1: wait until the API reports that it is ready.
 export WEAVE_API_URL="http://127.0.0.1:$WEAVE_API_PORT"
 "$WEAVE_PYTHON" - <<'PY'
 import os, time, httpx
@@ -459,22 +479,24 @@ Before running the helper, understand the resources it creates:
 | Tenant | A new organization boundary with a unique generated name |
 | Project | `first-project`, where the workflow version is published |
 | Environment | `local`, where its activation and run live |
-| Grants | Permission for this host to author, deploy, operate, and view this scope |
+| Grants | Permission for this host to author, deploy, operate, and view this workspace |
 | Published workflow | `first-run@1.0.0`, with one transform copying its input |
 | Activation | The selected workflow version in the local environment |
 | Run | One invocation with `{"message": "Hello, Weave"}` |
 
-The workflow has the same typed-message shape and transform as chapter 1. The
+The workflow has the same typed-message shape and transform as the
+[quickstart](../quickstart.md). The
 helper calls it `first-run` so your `echo` authoring example can be published
 independently later. Read [`examples/first_run.py`](../../examples/first_run.py)
 to follow each real HTTP request. It is not a special demo endpoint. After this
-scope exists, [the SDK walkthrough](../reference/sdk.md) shows the individual
+workspace exists, [the SDK tutorial](sdk-tutorial.md) shows the individual
 publish, activate, and start calls using your own YAML file.
 
 Refresh the host token immediately before provisioning. The `&&` runs the
 provisioning command only if token refresh succeeds:
 
 ```sh
+# Renew the token, then create the workspace, publish, activate, and save one real run.
 "$WEAVE_PYTHON" "$WEAVE_WORK_DIR/refresh-token.py" &&
 "$WEAVE_PYTHON" examples/first_run.py --api-url "$WEAVE_API_URL" \
   --token-file "$WEAVE_WORK_DIR/host-token.json" \
@@ -492,13 +514,14 @@ use that exact path everywhere the remaining tutorial and deployment guide refer
 to `first-run.json`, including each `--scope-receipt` argument. Do not read the
 failed attempt's receipt or overwrite it to hide the failure.
 
-`first-run.json` is a **receipt**: a file containing the actual scope, activation,
+`first-run.json` is a **receipt**: a file containing the actual workspace, activation,
 version, and run IDs. Subsequent steps read these values instead of inventing
 UUIDs. The API, SDK, and CLI below inspect one saved run, not three executions.
 
 Read that same run through the typed SDK:
 
 ```sh
+# Read the saved run through the typed Python SDK.
 "$WEAVE_PYTHON" - <<'PY'
 import asyncio, json, os
 from pathlib import Path
@@ -521,6 +544,7 @@ Expected: `succeeded {'message': 'Hello, Weave'}`. Read the same run through the
 CLI using IDs from the receipt and the private access token:
 
 ```sh
+# Read the same run through the CLI in explicit mode, then forget the token.
 export WEAVE_BASE_URL="$WEAVE_API_URL"
 export WEAVE_ACCESS_TOKEN="$(python3 -c 'import json,os; print(json.load(open(os.environ["WEAVE_WORK_DIR"]+"/host-token.json"))["access_token"])')"
 export WEAVE_TENANT_ID="$(python3 -c 'import json,os; print(json.load(open(os.environ["WEAVE_WORK_DIR"]+"/first-run.json"))["scope"]["tenant_id"])')"
@@ -537,10 +561,18 @@ schema and shared API/SDK/CLI surface.
 
 ## Continue with the CLI
 
-The saved first run proves that setup works. Next, follow
-[operate a workflow from the CLI](cli-tutorial.md) to submit your own YAML, capture
-the publication and activation IDs, start a run, and inspect its history. Every
-request body and command is shown; this path does not require a Python SDK script.
+The saved first run proves that setup works. Next, follow the
+[CLI tutorial](cli-tutorial.md#use-a-manual-installation) to publish your own
+YAML, capture the publication and activation IDs, start a run, and inspect its
+history. Every request body and command is shown; this path needs no Python SDK
+script.
+
+**This installation acts as an application, not as a person.** Every request
+above uses the `weave-host` service account's token. Signing in as a person,
+with `weave auth setup` or Studio, also needs a Keycloak account linked to a
+Weave person with roles. The [`weave platform` route](local-platform.md#5-create-a-person-who-can-sign-in)
+creates one with `weave platform user`; this manual route does not include that
+step.
 
 When moving beyond local Compose, use the
 [cloud deployment guide](../operations/cloud-deployment.md) for AWS, Azure, or GCP
@@ -551,8 +583,8 @@ and the shared Kubernetes manifests. Local setup helpers are not cloud provision
 **Checkpoint:** you have a running API, a verified host identity, scoped grants,
 and one saved successful workflow. You have not yet called an external system.
 Leave terminals 1 and 2 open to continue directly to
-[chapter 3 — run an integration worker](../operations/deployment.md).
-That chapter reuses `first-run.json`, provisions a worker identity, builds a worker
+[Deploy your first worker](../operations/deployment.md).
+That guide reuses `first-run.json`, provisions a worker identity, builds a worker
 image, starts an HTTP receiver, and runs a workflow through the worker.
 
 
@@ -568,8 +600,8 @@ defines lease fencing, finite token drain and ambiguous external effects.
 
 ## 7. Stop safely and retain data
 
-If you continued through chapter 3, stop its worker and any native executor first
-using [that chapter’s shutdown sequence](../operations/deployment.md#stop-the-intended-scope).
+If you continued with the worker guide, stop its worker and any native executor
+first using [its shutdown sequence](../operations/deployment.md#stop-the-intended-scope).
 Then stop the API and dependencies below.
 
 Press **Ctrl-C in the API terminal** and wait for the process to exit. This stops
@@ -578,6 +610,7 @@ bounds. It does not undo an external effect. Then stop only this installation's
 Compose services:
 
 ```sh
+# Stop only this installation's containers; volumes and data are kept.
 docker --context "$WEAVE_DOCKER_CONTEXT" compose --project-name "$WEAVE_LAUNCH_ID" \
   --env-file "$WEAVE_WORK_DIR/postgres.env" --env-file "$WEAVE_WORK_DIR/identity.env" \
   -f compose.yaml -f compose.identity.yaml stop --timeout 30
@@ -597,29 +630,31 @@ bootstrap, or the first-run resource-creation helper to restart an installation.
 1. In terminal 1, use the saved `cd` and `source .../session.env` commands from step 2.
 2. Load the original private files and start only this installation's dependencies:
 
-```sh
-set -a
-source "$WEAVE_WORK_DIR/postgres.env"
-source "$WEAVE_WORK_DIR/identity.env"
-source "$WEAVE_WORK_DIR/runtime.env"
-set +a
-docker --context "$WEAVE_DOCKER_CONTEXT" compose --project-name "$WEAVE_LAUNCH_ID" \
-  --env-file "$WEAVE_WORK_DIR/postgres.env" --env-file "$WEAVE_WORK_DIR/identity.env" \
-  -f compose.yaml -f compose.identity.yaml up --detach --no-recreate --wait \
-  --wait-timeout 180 postgres keycloak
-```
+    ```sh
+    # Load the original private files, then start only this installation's PostgreSQL and Keycloak.
+    set -a
+    source "$WEAVE_WORK_DIR/postgres.env"
+    source "$WEAVE_WORK_DIR/identity.env"
+    source "$WEAVE_WORK_DIR/runtime.env"
+    set +a
+    docker --context "$WEAVE_DOCKER_CONTEXT" compose --project-name "$WEAVE_LAUNCH_ID" \
+      --env-file "$WEAVE_WORK_DIR/postgres.env" --env-file "$WEAVE_WORK_DIR/identity.env" \
+      -f compose.yaml -f compose.identity.yaml up --detach --no-recreate --wait \
+      --wait-timeout 180 postgres keycloak
+    ```
 
 3. Run the Keycloak discovery check from step 2, then launch terminal 2 as in step 4.
 4. In terminal 1, restore the API URL and refresh the token with the block below.
-   Then repeat the readiness-check block from step 4 before making API requests:
+    Then repeat the readiness-check block from step 4 before making API requests:
 
-```sh
-export WEAVE_API_URL="http://127.0.0.1:$WEAVE_API_PORT"
-"$WEAVE_PYTHON" "$WEAVE_WORK_DIR/refresh-token.py"
-```
+    ```sh
+    # Restore the API URL and renew the host token.
+    export WEAVE_API_URL="http://127.0.0.1:$WEAVE_API_PORT"
+    "$WEAVE_PYTHON" "$WEAVE_WORK_DIR/refresh-token.py"
+    ```
 
 5. Repeat the SDK or CLI **read** from step 5 using the existing `first-run.json`.
-   The saved run ID and successful output should be unchanged.
+    The saved run ID and successful output should be unchanged.
 
 If you also deployed a worker, follow its
 [restart instructions](../operations/deployment.md#restart-a-stopped-local-deployment).
