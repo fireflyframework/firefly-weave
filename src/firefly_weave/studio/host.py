@@ -347,6 +347,26 @@ class StudioController:
         ).selection()
         return await self.connection.apply_scope(generation, selection)
 
+    @get_mapping("/studio/contracts/llm-profile")
+    async def llm_profile_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.llm import LLMProfile
+
+        return JSONResponse(LLMProfile.model_json_schema(by_alias=True), headers={"Cache-Control": "no-store"})
+
+    @get_mapping("/studio/contracts/file-reference")
+    async def file_reference_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.files import file_reference_schema
+
+        return JSONResponse(file_reference_schema(), headers={"Cache-Control": "no-store"})
+
+    @get_mapping("/studio/contracts/lumi-configuration")
+    async def lumi_configuration_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.lumi import LumiConfigurationRequest
+
+        return JSONResponse(
+            LumiConfigurationRequest.model_json_schema(by_alias=True), headers={"Cache-Control": "no-store"}
+        )
+
     @post_mapping("/studio/local/validate")
     async def validate(self, request: Request) -> Response:
         try:

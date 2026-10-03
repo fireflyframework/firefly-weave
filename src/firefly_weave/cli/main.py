@@ -34,6 +34,7 @@ from firefly_weave.cli.debug import simulate
 from firefly_weave.cli.definitions import definitions
 from firefly_weave.cli.deploy import worker
 from firefly_weave.cli.email import email
+from firefly_weave.cli.files import files
 from firefly_weave.cli.human_tasks import human_assignments, human_groups, human_tasks
 from firefly_weave.cli.onboarding import DOCS_URL, docs, init
 from firefly_weave.cli.operations import incident, run
@@ -145,6 +146,7 @@ class OfflineGroup(click.Group):
             "auth": "Connect to a platform, sign in, and choose a workspace.",
             "definitions": "Publish and activate workflows and actions.",
             "connections": "Configure and test integration connections.",
+            "files": "Upload, download and inspect workflow files.",
             "run": "Cancel or retry runs; replay exported history.",
             "runs": "Start and inspect workflow runs.",
             "incident": "Inspect and resolve workflow incidents.",
@@ -294,6 +296,7 @@ cli.add_command(human_tasks)
 cli.add_command(human_assignments)
 cli.add_command(human_groups)
 cli.add_command(email)
+cli.add_command(files)
 workflow.add_command(simulate)
 cli.add_command(workflow)
 cli.add_command(schema)

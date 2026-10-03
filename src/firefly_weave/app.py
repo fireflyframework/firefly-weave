@@ -46,7 +46,10 @@ from firefly_weave.api.connections import ConnectionController
 from firefly_weave.api.connector_descriptors import ConnectorDescriptorController
 from firefly_weave.api.debug import DebugController
 from firefly_weave.api.definitions import DefinitionController
+from firefly_weave.api.files import FileController
 from firefly_weave.api.health import HealthController
+from firefly_weave.api.human_files import HumanFileController
+from firefly_weave.api.lumi import LumiController
 from firefly_weave.api.operations import OperationsController
 from firefly_weave.api.providers import ProviderController
 from firefly_weave.api.runs import RunController
@@ -72,17 +75,24 @@ from firefly_weave.connectors.kafka import KafkaConnector
 from firefly_weave.connectors.kafka_transport import BrokerClients, require_driver
 from firefly_weave.connectors.manifest import HTTP_DESCRIPTOR, KAFKA_DESCRIPTOR, POSTGRES_DESCRIPTOR
 from firefly_weave.connectors.postgresql import PostgresConnector, PostgresPolicy
+from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, AgenticConnectionAdapter
+from firefly_weave.contracts.file_connectors import FILE_DESCRIPTORS, FileConnectionAdapter
 from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
 from firefly_weave.definitions.ports import ConnectionBindingPort, WorkerAdmissionPort
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.email.source import EmailSourceService
 from firefly_weave.email.transport import MailPolicy
+from firefly_weave.files.human import HumanFileService
+from firefly_weave.files.service import FileService
+from firefly_weave.files.worker_service import WorkerFileService
 from firefly_weave.observability import OwnedMeterConfiguration, OwnedTracingConfiguration, TelemetryDrops
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.event_delivery import OutboxDispatcher
 from firefly_weave.operations.history import HistoryService
 from firefly_weave.operations.incidents import IncidentService
+from firefly_weave.operations.lumi import LumiService
+from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.operations.outbox_loop import OutboxLoop
 from firefly_weave.operations.telemetry import TelemetryService
 from firefly_weave.persistence.resources import DatabaseResources
@@ -110,6 +120,7 @@ SERVICE_PACKAGES = (
     "firefly_weave.access.discovery",
     "firefly_weave.access.members",
     "firefly_weave.human_tasks",
+    "firefly_weave.files",
     "firefly_weave.email",
     "firefly_weave.access.authorization",
     "firefly_weave.access.authentication",
@@ -174,6 +185,7 @@ def make_app(
     pyfly = PyFlyApplication(WeaveApplication, config_path=Path(__file__).with_name("pyfly.yaml"))
     resources = DatabaseResources(settings)
     pyfly.context.container.register_instance(Settings, settings)
+    pyfly.context.container.register_instance(LumiGatewayClient, LumiGatewayClient(settings.lumi))
     pyfly.context.container.register_instance(DatabaseResources, resources)
     registry = registry if registry is not None else ConnectorRegistry(settings.connector_packages)
     pyfly.context.container.register_instance(ConnectorRegistry, registry)
@@ -235,6 +247,9 @@ def make_app(
             await pyfly.startup()
             registry.resolve_services(pyfly.context)
             registry.register_descriptor(HTTP_PROFILE_DESCRIPTOR, pyfly.context.get_bean(HttpProfileConnector))
+            registry.register_descriptor(AGENTIC_DESCRIPTOR, AgenticConnectionAdapter())
+            for name, descriptor in FILE_DESCRIPTORS.items():
+                registry.register_descriptor(descriptor, FileConnectionAdapter(name))
             pyfly.context.get_bean(ConnectorRegistry).register_descriptor(
                 HTTP_DESCRIPTOR, pyfly.context.get_bean(HttpConnector)
             )
@@ -261,6 +276,8 @@ def make_app(
                 RuntimeService,
                 IncidentService,
                 HistoryService,
+                LumiService,
+                LumiController,
                 DebugService,
                 DebugController,
                 OperationsController,
@@ -284,6 +301,11 @@ def make_app(
                 DefinitionController,
                 ConnectionController,
                 ConnectorDescriptorController,
+                FileService,
+                HumanFileService,
+                HumanFileController,
+                WorkerFileService,
+                FileController,
                 RunController,
                 WorkerController,
             ):

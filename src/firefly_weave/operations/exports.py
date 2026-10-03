@@ -105,7 +105,7 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
         schemas: list[JsonObject] = []
         if isinstance(node, ActionNode) and event.type in {"task_completed", "incident_resolved"}:
             definition = load_definition(next(d.document for d in ir.dependencies if d.digest == node.dependency))
-            schemas = action_schemas(ir, cast(ActionDefinition, definition), "output")
+            schemas = action_schemas(ir, cast(ActionDefinition, definition), "output", node=node)
         elif isinstance(node, HumanTaskNode) and event.type == "human_completed":
             schemas = [{"type": "object", "properties": {"data": node.form_schema, "decision": {"type": "string"}}}]
         elif isinstance(node, SignalNode) and event.type == "signal_received":

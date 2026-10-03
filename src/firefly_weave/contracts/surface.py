@@ -54,6 +54,9 @@ from firefly_weave.contracts.email import (
     EmailSubmission,
     EmailTokenRequest,
 )
+from firefly_weave.contracts.file_workers import WorkerFileAccess, WorkerFileChunk, WorkerFileCreate, WorkerFileRead
+from firefly_weave.contracts.files import FileChunk, FileChunkRead, FileCommand, FileCreate, FileUpload
+from firefly_weave.contracts.human_files import HumanFileChunk, HumanFileCommand, HumanFileCreate, HumanFileRead
 from firefly_weave.contracts.human_tasks import (
     AssignmentBinding,
     AssignmentBindingList,
@@ -68,6 +71,13 @@ from firefly_weave.contracts.human_tasks import (
 )
 from firefly_weave.contracts.identity import IdentityView
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
+from firefly_weave.contracts.lumi import (
+    LumiAskRequest,
+    LumiConfiguration,
+    LumiConfigurationRequest,
+    LumiReply,
+    LumiStatus,
+)
 from firefly_weave.contracts.maintenance import RetentionApplication, RetentionPlan, RetentionRequest
 from firefly_weave.contracts.members import (
     MemberBinding,
@@ -97,6 +107,8 @@ from firefly_weave.contracts.public import (
     Capabilities,
     CompileResponse,
     CompilerRequest,
+    DecisionEvaluation,
+    DecisionEvaluationRequest,
     Disabled,
     DraftExport,
     DraftRetirement,
@@ -140,6 +152,7 @@ from firefly_weave.contracts.workers import (
     InstanceRequest,
     LeaseProof,
     ReleaseRequest,
+    TaskExecutionContext,
     TaskLease,
     WorkerInstance,
     WorkerRelease,
@@ -199,9 +212,9 @@ class Operation:
             OpenAPIParameter(
                 name,
                 "path",
-                Literal["workflows", "actions", "connectors", "drafts"]
+                Literal["workflows", "actions", "connectors", "decision-tables", "drafts"]
                 if name == "collection" and self.method == "GET"
-                else Literal["workflows", "actions", "connectors"]
+                else Literal["workflows", "actions", "connectors", "decision-tables"]
                 if name == "collection"
                 else AdapterName
                 if name == "adapter"
@@ -352,6 +365,114 @@ class Operation:
 OPERATIONS = {
     item.id: item
     for item in (
+        Operation(
+            "human_files.create",
+            ENVIRONMENT + "/human-tasks/{identifier}/files/create",
+            "POST",
+            FileUpload,
+            "human_task.complete",
+            request=HumanFileCreate,
+            idempotency=True,
+        ),
+        Operation(
+            "human_files.chunk",
+            ENVIRONMENT + "/human-tasks/{identifier}/files/chunk",
+            "POST",
+            FileUpload,
+            "human_task.complete",
+            request=HumanFileChunk,
+        ),
+        Operation(
+            "human_files.finish",
+            ENVIRONMENT + "/human-tasks/{identifier}/files/finish",
+            "POST",
+            FileUpload,
+            "human_task.complete",
+            request=HumanFileCommand,
+        ),
+        Operation(
+            "human_files.read",
+            ENVIRONMENT + "/human-tasks/{identifier}/files/read",
+            "POST",
+            FileUpload,
+            "human_task.read",
+            request=HumanFileCommand,
+        ),
+        Operation(
+            "human_files.download",
+            ENVIRONMENT + "/human-tasks/{identifier}/files/download",
+            "POST",
+            FileChunk,
+            "human_task.read",
+            request=HumanFileRead,
+        ),
+        Operation(
+            "files.create",
+            ENVIRONMENT + "/files",
+            "POST",
+            FileUpload,
+            "file.manage",
+            FileCreate,
+            (201,),
+            idempotency=True,
+        ),
+        Operation("files.list", ENVIRONMENT + "/files", "GET", Page[FileUpload], "file.read", page=True),
+        Operation("files.read", ENVIRONMENT + "/files/{identifier}", "GET", FileUpload, "file.read"),
+        Operation(
+            "files.chunk", ENVIRONMENT + "/files/{identifier}/chunks", "POST", FileUpload, "file.manage", FileChunk
+        ),
+        Operation(
+            "files.finish", ENVIRONMENT + "/files/{identifier}/finish", "POST", FileUpload, "file.manage", FileCommand
+        ),
+        Operation(
+            "files.download",
+            ENVIRONMENT + "/files/{identifier}/download",
+            "POST",
+            FileChunk,
+            "file.read",
+            FileChunkRead,
+        ),
+        Operation("files.delete", ENVIRONMENT + "/files/{identifier}", "DELETE", Revoked, "file.manage"),
+        Operation(
+            "task_files.create",
+            ENVIRONMENT + "/tasks/files/create",
+            "POST",
+            FileUpload,
+            "task.claim",
+            WorkerFileCreate,
+            (201,),
+        ),
+        Operation(
+            "task_files.chunk", ENVIRONMENT + "/tasks/files/chunk", "POST", FileUpload, "task.claim", WorkerFileChunk
+        ),
+        Operation(
+            "task_files.finish", ENVIRONMENT + "/tasks/files/finish", "POST", FileUpload, "task.claim", WorkerFileAccess
+        ),
+        Operation(
+            "task_files.read", ENVIRONMENT + "/tasks/files/read", "POST", FileUpload, "task.claim", WorkerFileAccess
+        ),
+        Operation(
+            "task_files.download",
+            ENVIRONMENT + "/tasks/files/download",
+            "POST",
+            FileChunk,
+            "task.claim",
+            WorkerFileRead,
+        ),
+        Operation(
+            "lumi.configuration.read", ENVIRONMENT + "/lumi/configuration", "GET", LumiConfiguration, "lumi.manage"
+        ),
+        Operation(
+            "lumi.configuration.write",
+            ENVIRONMENT + "/lumi/configuration",
+            "PUT",
+            LumiConfiguration,
+            "lumi.manage",
+            request=LumiConfigurationRequest,
+            revision="optional",
+        ),
+        Operation("lumi.status", ENVIRONMENT + "/lumi/status", "GET", LumiStatus, "lumi.use"),
+        Operation("lumi.ask", ENVIRONMENT + "/lumi/ask", "POST", LumiReply, "lumi.use", request=LumiAskRequest),
         Operation(
             "compatibility.read",
             PROJECT + "/operations/compatibility",
@@ -792,6 +913,14 @@ OPERATIONS = {
         Operation(
             "compiler.validate", PROJECT + "/compiler/validate", "POST", CompileResponse, "compile", CompilerRequest
         ),
+        Operation(
+            "compiler.evaluate_decision",
+            PROJECT + "/compiler/evaluate-decision",
+            "POST",
+            DecisionEvaluation,
+            "compile",
+            DecisionEvaluationRequest,
+        ),
         Operation("catalog.read", PROJECT + "/catalog", "GET", CatalogLock, "catalog.read"),
         Operation("capabilities.read", PROJECT + "/capabilities", "GET", Capabilities, "catalog.read"),
         Operation("schemas.read", PROJECT + "/schemas", "GET", dict[str, JsonObjectData], "catalog.read"),
@@ -1041,6 +1170,9 @@ OPERATIONS = {
             (201,),
         ),
         Operation("tasks.claim", ENVIRONMENT + "/tasks/claim", "POST", list[TaskLease], "task.claim", ClaimRequest),
+        Operation(
+            "tasks.context", ENVIRONMENT + "/tasks/context", "POST", TaskExecutionContext, "task.claim", LeaseProof
+        ),
         Operation("tasks.heartbeat", ENVIRONMENT + "/tasks/heartbeat", "POST", TaskLease, "task.heartbeat", LeaseProof),
         Operation(
             "tasks.complete",

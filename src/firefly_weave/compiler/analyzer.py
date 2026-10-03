@@ -31,16 +31,19 @@ from firefly_weave.compiler.action_config import (
     ActionConfigValidator,
 )
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot, FrozenDocument, ResourceKind
+from firefly_weave.compiler.decision_tables import DecisionFailure, expression_roots, validate_decision_expressions
 from firefly_weave.compiler.expression_types import InferredType, infer_expression
 from firefly_weave.compiler.expressions import (
+    COLLECTION_COMPARISONS,
     ExpressionFailure,
     count_expression_nodes,
     measure_value,
     pointer_segments,
 )
+from firefly_weave.compiler.llm import llm_action_valid, llm_input, llm_output_schema
 from firefly_weave.compiler.parser import ParsedSource
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
-from firefly_weave.compiler.schemas import validate_contract_payload, validate_schema
+from firefly_weave.compiler.schemas import validate_contract_payload, validate_payload, validate_schema
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.compiler.typecheck import TypeCheckLimit, check_compatibility, schema_types
 from firefly_weave.contracts.definitions import load_definition
@@ -103,7 +106,7 @@ class AnalyzedStep:
 
 @dataclass(frozen=True)
 class AnalysisResult:
-    kind: Literal["Workflow", "Action", "Connector"] | None
+    kind: Literal["Workflow", "Action", "Connector", "DecisionTable"] | None
     definition: FrozenDocument | None
     resolved_resources: tuple[CatalogResource, ...]
     typed_graph: tuple[AnalyzedStep, ...]
@@ -186,7 +189,8 @@ class _Analyzer:
         self.expression_count = self.step_count = 0
         self.input_schema: JsonObject = {}
         self.connections: JsonObject = {}
-        self.kind: Literal["Workflow", "Action", "Connector"] | None = None
+        self.llm_profiles: JsonObject = {}
+        self.kind: Literal["Workflow", "Action", "Connector", "DecisionTable"] | None = None
         self.definition: FrozenDocument | None = None
 
     def location(self, path: str) -> SourceRange | None:
@@ -311,7 +315,7 @@ class _Analyzer:
         self.checked[key] = False
         before = self.error_count
         value = resource.definition.value
-        if kind in {"Action", "Connector"}:
+        if kind in {"Action", "Connector", "DecisionTable"}:
             self.manifest(value, path, dependency=True)
         elif kind == "TaskCapability":
             self.schema(cast(JsonObject, value["inputSchema"]), path)
@@ -327,6 +331,37 @@ class _Analyzer:
         valid = True
         for name in schema_names:
             valid = self.schema(cast(JsonObject, spec[name]), base + "/" + name) and valid
+        if kind == "DecisionTable":
+            previous_input = self.input_schema
+            self.input_schema = cast(JsonObject, spec["inputSchema"])
+            try:
+                validate_decision_expressions(spec, limits=self.limits)
+                output_schema = cast(JsonObject, spec["outputSchema"])
+                if spec["hitPolicy"] == "collect" and validate_payload(
+                    output_schema, [], self.bundle, limits=self.schema_limits
+                ):
+                    self.issue("DECISION_EMPTY_OUTPUT", base + "/outputSchema")
+                row_schema = (
+                    cast(JsonObject, output_schema["items"]) if spec["hitPolicy"] == "collect" else output_schema
+                )
+                for expression, location in expression_roots(spec):
+                    location = base + location.removeprefix("/spec")
+                    self.count(expression, location)
+                    target: JsonObject = {"type": "boolean"} if location.endswith("/when") else row_schema
+                    self.expression(expression, location, {}, target)
+            except (DecisionFailure, ExpressionFailure) as failure:
+                self.add(
+                    Diagnostic(
+                        code=failure.code,
+                        severity="error",
+                        stage="semantic",
+                        path=base + failure.path.removeprefix("/spec"),
+                        message="Decision rule violates its expression contract.",
+                    )
+                )
+            finally:
+                self.input_schema = previous_input
+            return
         if kind == "Connector":
             if not partial:
                 self.resolve("Adapter", cast(str, spec["adapter"]), base + "/adapter")
@@ -365,8 +400,6 @@ class _Analyzer:
                 if descriptor is None:
                     self.issue("UNKNOWN_CONNECTOR_ACTION", base + "/implementation/action", stage="resolution")
                 elif isinstance(descriptor, dict):
-                    from firefly_weave.compiler.schemas import validate_payload
-
                     config_schema = cast(
                         JsonObject, descriptor.get("configSchema", {"type": "object", "maxProperties": 0})
                     )
@@ -448,8 +481,11 @@ class _Analyzer:
                 self.schema(cast(JsonObject, step["formSchema"]), step_path + "/formSchema")
                 self.count(cast(JsonObject, step["title"]), step_path + "/title")
                 self.count(cast(JsonObject, step["context"]), step_path + "/context")
-            if kind in {"action", "transform"}:
-                key = "with" if kind == "action" else "value"
+            if kind == "llm":
+                self.count(cast(JsonObject, step["prompt"]), step_path + "/prompt")
+                self.count(cast(JsonObject, step["context"]), step_path + "/context")
+            if kind in {"action", "decisionTable", "transform"}:
+                key = "value" if kind == "transform" else "with"
                 self.count(cast(JsonObject, step[key]), step_path + "/" + key)
             for _, child, child_path in self.branch_values(step, step_path):
                 if "when" in child:
@@ -601,6 +637,25 @@ class _Analyzer:
                     self.issue("TYPE_MISMATCH" if definite else "UNKNOWN_COMPATIBILITY", path, unknown=not definite)
                 if not definite:
                     self.guard(path, "operator_operands", {})
+        elif name in COLLECTION_COMPARISONS:
+            # Membership accepts every JSON needle; only the container's type constrains it.
+            domain = frozenset({"string", "array", "object", "number", "integer", "boolean", "null"})
+            kinds = [schema_types(item.schema) or domain for item in inferred]
+            allowed = [
+                right == "array"
+                if name in {"in", "notIn"}
+                else left == "array" or left == right == "string"
+                if name in {"contains", "notContains"}
+                else left == right == "string"
+                for left in kinds[0]
+                for right in kinds[1]
+            ]
+            if not all(allowed):
+                definite = not any(allowed)
+                if definite or not any(self.reads_pending(child) for child, _ in children):
+                    self.issue("TYPE_MISMATCH" if definite else "UNKNOWN_COMPATIBILITY", path, unknown=not definite)
+                if not definite:
+                    self.guard(path, "operator_operands", {})
 
     def connection(self, step: JsonObject, action: JsonObject, path: str) -> None:
         requirement = cast(JsonObject | None, action.get("connection"))
@@ -635,6 +690,31 @@ class _Analyzer:
                 self.guard(location + "/value", "transform_output", output)
                 if self.reads_pending(cast(JsonObject, step["value"])):
                     self.pending_outputs.add(identifier)
+            elif kind == "llm":
+                profile = cast(JsonObject | None, self.llm_profiles.get(cast(str, step["profile"])))
+                if profile is None:
+                    self.issue("LLM_PROFILE", location + "/profile")
+                self.expression(
+                    cast(JsonObject, step["prompt"]), location + "/prompt", visible, {"type": "string", "minLength": 1}
+                )
+                self.expression(cast(JsonObject, step["context"]), location + "/context", visible)
+                resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
+                action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+                if profile is not None:
+                    output = llm_output_schema(profile)
+                    self.guard(location, "action_output", output)
+                    if action_spec is not None:
+                        if not llm_action_valid(action_spec, profile):
+                            self.issue("LLM_ACTION", location + "/uses")
+                        self.connection(step, action_spec, location + "/connection")
+                        self.expression(
+                            llm_input(step, profile),
+                            location + "/with",
+                            visible,
+                            cast(JsonObject, action_spec["inputSchema"]),
+                        )
+                if action_spec is None and step["connection"] not in self.connections:
+                    self.issue("CONNECTION", location + "/connection")
             elif kind == "action":
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
@@ -653,6 +733,17 @@ class _Analyzer:
                         if slot is not None and slot not in self.connections:
                             # An undeclared slot fails complete compilation whatever the Action requires.
                             self.issue("CONNECTION", location + "/connection")
+            elif kind == "decisionTable":
+                resource = self.resolve("DecisionTable", cast(str, step["uses"]), location + "/uses")
+                table_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+                target = cast(JsonObject, table_spec["inputSchema"]) if table_spec else None
+                self.expression(cast(JsonObject, step["with"]), location + "/with", visible, target)
+                output = cast(JsonObject, table_spec["outputSchema"]) if table_spec else {}
+                if table_spec is not None:
+                    self.guard(location + "/with", "decision_input", cast(JsonObject, target))
+                    self.guard(location, "decision_output", output)
+                elif self.catalog_absent:
+                    self.pending_outputs.add(identifier)
             elif kind == "humanTask":
                 self.expression(
                     cast(JsonObject, step["title"]),
@@ -762,7 +853,7 @@ class _Analyzer:
 
     def finish(
         self,
-        kind: Literal["Workflow", "Action", "Connector"] | None,
+        kind: Literal["Workflow", "Action", "Connector", "DecisionTable"] | None,
         definition: FrozenDocument | None,
         graph: tuple[AnalyzedStep, ...] = (),
     ) -> AnalysisResult:
@@ -791,7 +882,9 @@ class _Analyzer:
     def run(self, *, partial: bool = False) -> AnalysisResult:
         kind = self.source.value.get("kind")
         contract = (
-            kind.lower() if isinstance(kind, str) and kind in {"Workflow", "Action", "Connector"} else "definition"
+            kind.lower()
+            if isinstance(kind, str) and kind in {"Workflow", "Action", "Connector", "DecisionTable"}
+            else "definition"
         )
         issues = validate_contract_payload(contract, self.source.value, limits=self.contract_limits)
         for issue in issues:
@@ -816,6 +909,12 @@ class _Analyzer:
         spec = cast(JsonObject, value["spec"])
         self.input_schema = cast(JsonObject, spec["inputSchema"])
         self.connections = cast(JsonObject, spec["connections"])
+        self.llm_profiles = cast(JsonObject, spec.get("llmProfiles", {}))
+        for name, profile in self.llm_profiles.items():
+            self.schema(
+                cast(JsonObject, cast(JsonObject, profile)["outputSchema"]),
+                pointer_child("/spec/llmProfiles", name) + "/outputSchema",
+            )
         self.schema(self.input_schema, "/spec/inputSchema")
         self.schema(cast(JsonObject, spec["outputSchema"]), "/spec/outputSchema")
         try:

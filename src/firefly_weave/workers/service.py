@@ -211,6 +211,7 @@ class WorkerService(WorkerAdmissionPort):
         self.definitions.require(actor, scope, capability, context)
         executable: dict[str, Any] = dict(artifact.executable)
         supported = {
+            "decisionTable",
             "start",
             "end",
             "transform",

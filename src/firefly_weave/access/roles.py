@@ -54,6 +54,10 @@ ROLE_CAPABILITIES = MappingProxyType(
         "email_sender": frozenset({"email.read", "email.send"}),
         "email_manager": frozenset({"email.read", "email.send", "email.manage"}),
         "execution_manager": frozenset({"run.read", "run.archive", "run.purge"}),
+        "lumi_user": frozenset({"lumi.use"}),
+        "lumi_manager": frozenset({"lumi.use", "lumi.manage"}),
+        "file_reader": frozenset({"file.read"}),
+        "file_manager": frozenset({"file.read", "file.manage"}),
         "worker": frozenset({"worker.register", "task.claim", "task.heartbeat", "task.complete", "credential.lease"}),
     }
 )

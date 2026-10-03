@@ -219,6 +219,10 @@ class RuntimeService:
                 business_key=request.business_key,
             )
             await repository.insert(view, envelope, request, actor.id)
+            from firefly_weave.files.authority import admit_files
+
+            await admit_files(enlisted, view.id, request.input, actor, context=context)
+            await admit_files(enlisted, view.id, envelope, actor, context=context)
             await repository.persist(view, event, result, event_hash(event))
             await replay.save(view.model_dump(mode="json"))
             await audit(
@@ -350,6 +354,9 @@ class RuntimeService:
             sequence=previous.state.accepted_sequence + 1,
         )
         if not failed and rejection_code is None:
+            from firefly_weave.files.authority import require_task_output_files
+
+            await require_task_output_files(verified, output)
             ir = workflow(artifact)
             action = next(
                 d
@@ -385,6 +392,7 @@ class RuntimeService:
             await settle(repository, await repository.run(verified.run["id"]))
 
     def classify_task_output(self, verified: "VerifiedTask", output: "JsonValue") -> str | None:
+        from firefly_weave.compiler.ir import ActionNode
         from firefly_weave.compiler.schemas import _Failure
         from firefly_weave.operations.redaction import classify
 
@@ -392,11 +400,15 @@ class RuntimeService:
         action = next(
             d for d in ir.dependencies if d.kind == "Action" and d.digest == verified.task["payload"]["action_digest"]
         )
+        node = next(n for n in ir.graph.nodes if n.id == verified.task["node_id"])
+        assert isinstance(node, ActionNode)
         bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
         try:
             from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 
-            for schema in action_schemas(ir, cast(ActionDefinition, load_definition(action.document)), "output"):
+            for schema in action_schemas(
+                ir, cast(ActionDefinition, load_definition(action.document)), "output", node=node
+            ):
                 classify(schema, output, bundle)
         except _Failure as error:
             return "WV-SCHEMA-SECRET_VALUE" if error.code == "SECRET_VALUE" else "WV-SCHEMA-CLASSIFICATION"

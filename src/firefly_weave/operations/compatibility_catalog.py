@@ -27,7 +27,7 @@ from uuid import UUID
 
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.catalog import CatalogSnapshot
-from firefly_weave.compiler.ir import HUMAN_IR_VERSION, IR_VERSION
+from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, HUMAN_IR_VERSION, IR_VERSION
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.contracts.catalog import Activation
 from firefly_weave.contracts.compatibility import FindingCode
@@ -144,7 +144,7 @@ def classify_requirement(kind: str, payload: dict[str, Any], registry: Connector
         if not isinstance(envelope, dict) or not isinstance(executable, dict):
             return "artifact_invalid"
         if (
-            executable.get("irVersion") not in {IR_VERSION, HUMAN_IR_VERSION}
+            executable.get("irVersion") not in {IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION}
             or executable.get("apiVersion") != "weave/v1alpha1"
         ):
             return "ir_unsupported"

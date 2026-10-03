@@ -32,6 +32,7 @@ from pydantic_core import core_schema
 from firefly_weave.contracts.definitions import (
     ActionDefinition,
     ConnectorDefinition,
+    DecisionTableDefinition,
     Definition,
     WorkerImplementation,
     WorkerRouting,
@@ -105,7 +106,10 @@ def contract_models() -> dict[str, SchemaModel]:
         EmailTokenRequest,
         MailProfile,
     )
+    from firefly_weave.contracts.file_workers import WorkerFileAccess, WorkerFileChunk, WorkerFileCreate, WorkerFileRead
+    from firefly_weave.contracts.files import FileChunk, FileChunkRead, FileCreate, FileReference, FileUpload
     from firefly_weave.contracts.http_profiles import AuthProfile, HttpOperation, ProfileConnection
+    from firefly_weave.contracts.human_files import HumanFileChunk, HumanFileCommand, HumanFileCreate, HumanFileRead
     from firefly_weave.contracts.human_tasks import (
         AssignmentBinding,
         AssignmentBindingList,
@@ -120,6 +124,13 @@ def contract_models() -> dict[str, SchemaModel]:
         TaskGroupRequest,
     )
     from firefly_weave.contracts.identity import IdentityView
+    from firefly_weave.contracts.lumi import (
+        LumiAskRequest,
+        LumiConfiguration,
+        LumiConfigurationRequest,
+        LumiReply,
+        LumiStatus,
+    )
     from firefly_weave.contracts.members import (
         MemberBinding,
         MemberGrantRequest,
@@ -141,6 +152,8 @@ def contract_models() -> dict[str, SchemaModel]:
         Capabilities,
         CompileResponse,
         CompilerRequest,
+        DecisionEvaluation,
+        DecisionEvaluationRequest,
         DraftExport,
         DraftRetirement,
         DraftView,
@@ -182,6 +195,19 @@ def contract_models() -> dict[str, SchemaModel]:
     from firefly_weave.triggers.models import Trigger, TriggerReceipt, TriggerRequest
 
     return {
+        "human-file-create": HumanFileCreate,
+        "human-file-command": HumanFileCommand,
+        "human-file-chunk": HumanFileChunk,
+        "human-file-read": HumanFileRead,
+        "file-create": FileCreate,
+        "file-reference": FileReference,
+        "file-upload": FileUpload,
+        "file-chunk": FileChunk,
+        "file-chunk-read": FileChunkRead,
+        "worker-file-create": WorkerFileCreate,
+        "worker-file-access": WorkerFileAccess,
+        "worker-file-chunk": WorkerFileChunk,
+        "worker-file-read": WorkerFileRead,
         "teams-reference": TeamsReference,
         "teams-reactivate-request": TeamsReactivateRequest,
         "teams-revoke-request": TeamsRevokeRequest,
@@ -236,6 +262,8 @@ def contract_models() -> dict[str, SchemaModel]:
         "source-binding": SourceBinding,
         "compiler-request": CompilerRequest,
         "compile-response": CompileResponse,
+        "decision-evaluation-request": DecisionEvaluationRequest,
+        "decision-evaluation": DecisionEvaluation,
         "problem": Problem,
         "capabilities": Capabilities,
         "draft-view": DraftView,
@@ -298,9 +326,15 @@ def contract_models() -> dict[str, SchemaModel]:
         "executable": TypeAdapter(Executable),
         "compiled-artifact": ArtifactEnvelope,
         "definition": TypeAdapter(Definition),
+        "lumi-ask-request": LumiAskRequest,
+        "lumi-reply": LumiReply,
+        "lumi-configuration-request": LumiConfigurationRequest,
+        "lumi-configuration": LumiConfiguration,
+        "lumi-status": LumiStatus,
         "workflow": WorkflowDefinition,
         "action": ActionDefinition,
         "connector": ConnectorDefinition,
+        "decisiontable": DecisionTableDefinition,
         "diagnostic": Diagnostic,
         "worker-implementation": WorkerImplementation,
         "worker-routing": WorkerRouting,

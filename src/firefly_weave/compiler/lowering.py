@@ -25,7 +25,8 @@ from pydantic import Field, TypeAdapter
 from firefly_weave.compiler.analyzer import AnalysisResult, AnalyzedStep
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.compiler.expressions import measure_value
-from firefly_weave.compiler.ir import HUMAN_IR_VERSION, IR_VERSION, Executable
+from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, IR_VERSION, Executable, IRGraph, workflow_ir_version
+from firefly_weave.compiler.llm import llm_input
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -87,6 +88,7 @@ class _Lowerer:
         self.nodes: list[JsonValue] = []
         self.edges: list[JsonValue] = []
         self.actions = {r.reference: r.digest for r in result.resolved_resources if r.kind == "Action"}
+        self.tables = {r.reference: r.digest for r in result.resolved_resources if r.kind == "DecisionTable"}
 
     def schema(self, document: FrozenDocument) -> str:
         digest = document.digest
@@ -168,7 +170,20 @@ class _Lowerer:
                 if step.completes:
                     self.edge(join_id, following)
             else:
-                if step.kind == "action":
+                if step.kind == "llm":
+                    assert self.result.definition is not None
+                    spec = cast(JsonObject, self.result.definition.value["spec"])
+                    profile = cast(JsonObject, cast(JsonObject, spec["llmProfiles"])[cast(str, value["profile"])])
+                    base.update(
+                        {
+                            "kind": "action",
+                            "dependency": self.actions[cast(str, value["uses"])],
+                            "with": llm_input(value, profile),
+                            "connection": value["connection"],
+                            "llmProfile": profile,
+                        }
+                    )
+                elif step.kind == "action":
                     base.update(
                         {
                             "dependency": self.actions[cast(str, value["uses"])],
@@ -176,6 +191,8 @@ class _Lowerer:
                             "connection": value.get("connection"),
                         }
                     )
+                elif step.kind == "decisionTable":
+                    base.update({"dependency": self.tables[cast(str, value["uses"])], "with": value["with"]})
                 elif step.kind == "signal":
                     base.update(
                         {
@@ -241,8 +258,10 @@ class _Lowerer:
         else:
             self.budget.charge(spec)
             value["spec"] = spec
-        if any(isinstance(node, dict) and node.get("kind") == "humanTask" for node in self.nodes):
-            value["irVersion"] = HUMAN_IR_VERSION
+        if self.result.kind == "Workflow":
+            value["irVersion"] = workflow_ir_version(IRGraph.model_validate(value["graph"]))
+        elif self.result.kind == "DecisionTable":
+            value["irVersion"] = COMPARISON_IR_VERSION
         measure_value(value, limits=self.budget.limits.value_limits())
         return cast(JsonObject, _EXECUTABLE.validate_python(value).model_dump(by_alias=True))
 

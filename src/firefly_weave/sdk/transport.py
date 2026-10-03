@@ -23,6 +23,8 @@ from uuid import UUID
 from httpx import AsyncClient, Response
 from pydantic import TypeAdapter
 
+from firefly_weave.contracts.file_workers import WorkerFileAccess
+from firefly_weave.contracts.files import FileChunk, FileCreate, FileUpload
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.contracts.workers import (
     CompletionAcknowledgment,
@@ -30,6 +32,7 @@ from firefly_weave.contracts.workers import (
     CredentialRequest,
     LeaseProof,
     TaskError,
+    TaskExecutionContext,
     TaskLease,
 )
 
@@ -106,7 +109,60 @@ class WorkerTransport:
                     return response
         return response
 
+    async def context(self, lease: LeaseProof) -> TaskExecutionContext:
+        """Read the activation's pinned connection through current task authority."""
+        response = await self.client.post(self.prefix + "/tasks/context", json=lease.model_dump(mode="json"))
+        response.raise_for_status()
+        return TaskExecutionContext.model_validate_json(response.content)
+
     async def credentials(self, request: CredentialRequest) -> CredentialLease:
         response = await self.client.post(self.prefix + "/tasks/credentials", json=request.model_dump(mode="json"))
         response.raise_for_status()
         return CredentialLease.model_validate_json(response.content)
+
+    async def create_file(self, lease: LeaseProof, request_id: UUID, file: FileCreate) -> FileUpload:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/create",
+            json={
+                "lease": lease.model_dump(mode="json"),
+                "request_id": str(request_id),
+                "file": file.model_dump(mode="json", by_alias=True),
+            },
+        )
+        response.raise_for_status()
+        return FileUpload.model_validate_json(response.content)
+
+    async def put_file_chunk(self, lease: LeaseProof, file_id: UUID, chunk: FileChunk) -> FileUpload:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/chunk",
+            json={
+                "lease": lease.model_dump(mode="json"),
+                "file_id": str(file_id),
+                "chunk": chunk.model_dump(mode="json", by_alias=True),
+            },
+        )
+        response.raise_for_status()
+        return FileUpload.model_validate_json(response.content)
+
+    async def finish_file(self, lease: LeaseProof, file_id: UUID) -> FileUpload:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/finish", json={"lease": lease.model_dump(mode="json"), "file_id": str(file_id)}
+        )
+        response.raise_for_status()
+        return FileUpload.model_validate_json(response.content)
+
+    async def read_file(self, lease: LeaseProof, file_id: UUID) -> FileUpload:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/read",
+            json=WorkerFileAccess(lease=lease, file_id=file_id).model_dump(mode="json", by_alias=True),
+        )
+        response.raise_for_status()
+        return FileUpload.model_validate_json(response.content)
+
+    async def read_file_chunk(self, lease: LeaseProof, file_id: UUID, index: int) -> FileChunk:
+        response = await self.client.post(
+            self.prefix + "/tasks/files/download",
+            json={"lease": lease.model_dump(mode="json"), "file_id": str(file_id), "chunk": {"index": index}},
+        )
+        response.raise_for_status()
+        return FileChunk.model_validate_json(response.content)

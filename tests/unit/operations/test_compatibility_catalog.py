@@ -346,3 +346,27 @@ def test_corrupt_release_metadata_and_duplicates_fail_closed(worker_runtime_fixt
     payload["releases"].pop()
     payload["releases"][0]["credential_capabilities"] = ["unoffered@1.0.0"]
     assert classify_requirement("run", payload, ConnectorRegistry()) == "action_unavailable"
+
+
+def test_comparison_ir_is_advertised_and_classified_without_a_worker():
+    from firefly_weave.contracts.public import Capabilities
+
+    source = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "comparison", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "steps": [],
+            "output": {
+                "op": {"name": "contains", "args": [{"literal": [1]}, {"literal": 1}]},
+            },
+        },
+    }
+    compiled = compile_source(source, format="object", catalog=CatalogSnapshot.empty())
+    assert compiled.ok
+    assert compiled.artifact.executable["irVersion"] == "weave/ir-v1alpha3"
+    capabilities = Capabilities(limits={}, schemas=[], connectors=[])
+    assert compiled.artifact.executable["irVersion"] in capabilities.ir_versions
+    assert classify_requirement("run", requirement(compiled.artifact), ConnectorRegistry()) is None

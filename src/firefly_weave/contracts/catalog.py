@@ -27,7 +27,7 @@ from firefly_weave.contracts.human_tasks import AssignmentPin
 from firefly_weave.contracts.values import JsonObjectData
 from firefly_weave.contracts.workers import ConnectorExecutionPin
 
-type DefinitionKind = Literal["Workflow", "Action", "Connector"]
+type DefinitionKind = Literal["Workflow", "Action", "Connector", "DecisionTable"]
 type Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 

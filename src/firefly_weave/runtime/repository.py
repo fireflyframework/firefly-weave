@@ -159,6 +159,9 @@ class RuntimeRepository:
             or any(not isinstance(command, ControlCommand) for command in result.commands)
         ):
             raise ValueError("Unavailable terminal control required")
+        from firefly_weave.files.authority import require_run_files
+
+        await require_run_files(self.tx, view.id, result.model_dump(mode="json"))
         await self.execute(
             "INSERT INTO run_events VALUES(:tenant,:project,:environment,:run,:id,:sequence,:type,"
             "cast(:data AS jsonb),:created,:hash,cast(:transition AS jsonb),cast(:response AS jsonb))",
