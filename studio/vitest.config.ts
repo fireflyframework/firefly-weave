@@ -23,6 +23,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["tests/*.test.ts"],
+    // Each worker can also run a Python oracle; bound both layers on CI hosts.
+    maxWorkers: 2,
     testTimeout: 240_000,
     hookTimeout: 240_000,
   },
