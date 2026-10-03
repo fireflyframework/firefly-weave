@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1440" viewBox="0 0 960 1440" role="img" aria-labelledby="title desc">
 <title id="title">Who decides, who coordinates, and who does the work?</title>
-<desc id="desc">Authors define the process, deployers authorize releases, and operators manage runs. The workflow engine records progress. A remote worker claims tasks through the API; a native executor runs configured connectors within the platform runtime. Both return task outcomes so the engine can continue.</desc>
+<desc id="desc">Authors define the process, deployers authorize releases, and operators manage runs. The workflow engine records progress. A remote worker claims tasks through the API; a native executor runs a built-in connector, such as weave-http@2.0.0, or an installed one within the platform runtime, using its authorized database and connector configuration. Both return task outcomes so the engine can continue; a crash can repeat an attempt, so external effects use a stable operation key.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}.small{font-size:19px}.body{font-size:21px}.heading{font-size:25px;font-weight:700}</style>
 <rect width="960" height="1440" rx="24" fill="#FAFCFB"/>
@@ -70,11 +70,11 @@ SPDX-License-Identifier: Apache-2.0
 <rect x="500" y="810" width="420" height="295" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <g transform="translate(520 831) scale(.7)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 14h39v15H8z M8 36h39v15H8z M15 21h2 M15 43h2 M28 21h12 M28 43h12"/></g>
 <text x="570" y="861" class="heading">2b. Native executor</text>
-<text x="520" y="916" class="small">The platform runtime runs an</text>
-<text x="520" y="950" class="small">installed connector adapter.</text>
+<text x="520" y="916" class="small">The platform runtime runs a</text>
+<text x="520" y="950" class="small">built-in or installed connector.</text>
 <text x="520" y="984" class="small">Uses its authorized database</text>
 <text x="520" y="1018" class="small">and connector configuration.</text>
-<text x="520" y="1052" class="small">Example: use the HTTP adapter.</text>
+<text x="520" y="1052" class="small">Example: built-in weave-http@2.0.0.</text>
 <path d="M250 1109v51h460v-51" stroke="#367D68" stroke-width="3" fill="none"/><path class="edge" d="M480 1160v22"/>
 <rect x="40" y="1200" width="880" height="100" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <text x="60" y="1237" class="heading">3. An accepted result lets the engine continue</text>

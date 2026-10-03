@@ -16,221 +16,358 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Definition contracts
+# Read and write definition contracts
+
+A **definition** is a versioned YAML or JSON document that describes a workflow,
+an action, or a connector. Its **contract** is the set of rules that say which
+fields it may contain and what they mean. This page is the precise lookup for
+those rules: document shape, expressions, step kinds, actions, connectors, value
+limits, and diagnostics.
+
+**Who it is for.** Integration developers who write definitions by hand and
+tool builders who generate them. Process designers who draw in
+[Studio](guides/studio.md) do not need it: Studio writes these documents for you,
+and its **Source** tab shows the result.
+
+**What you need.** Nothing to read the reference. To run the 5-minute example,
+the project's Python environment from a source checkout (see
+[Install the current source](installation.md#install-the-current-source)). For a
+guided first workflow, start with the [quickstart](quickstart.md) and
+[workflow authoring](guides/workflow-authoring.md) instead.
+
+## How a definition is checked
+
+A definition passes four separate checks before it does real work. Each answers a
+different question, and passing one never implies the next:
+
+| Question | Who checks it | Example of a failure |
+| --- | --- | --- |
+| Is the document well shaped? | `load_definition`: required fields, step kinds, strict types | `durationSeconds: "10"` is a string where an integer is required |
+| Is the source valid so far? | `validate_source`: parsing plus checks that need no catalog | An unsupported schema keyword or expression shape |
+| Can this exact set of dependencies become executable? | `compile_source`: resolves an explicit catalog, checks expressions and types | A missing action version, or a reference to an unavailable step output |
+| May it run here, now? | Publication, activation, and the runtime: scoped grants, ready resources, run input | A revoked grant, an unavailable integration connection, or invalid run input |
+
+A **catalog** is the explicit, immutable set of definitions and capabilities the
+compiler resolves references against. A workflow with no external dependencies
+compiles against an empty catalog. A successful compilation does not establish a
+worker, connection, credential, or permission; partial validation never returns
+an artifact, even when its checks pass.
 
 ![Definition contract, expression, and runtime value boundaries](diagrams/authoring-schema-boundaries.svg)
 
-Compare the pairs from top to bottom: accepted and rejected input, whole-object
-and string selection, then data and schema references. Keep the definition’s
-shape separate from the values its schemas accept. The examples below exercise
-these checks independently.
-
+Read the three rows from top to bottom: accepted and rejected input, reading the
+whole object versus one string, and data references (`ref`) versus schema
+references (`$ref`). The definition's shape and the values its schemas accept are
+separate checks.
 [Open diagram at full size](diagrams/authoring-schema-boundaries.svg)
 
-## What a definition promises
+## Try the checks locally
 
-A **definition** describes a Workflow, an Action, or a Connector in versioned
-JSON/YAML. A **contract** describes the allowed shape and meaning of that data.
-It is useful to distinguish four questions before reading the field reference:
+This example shows that the three offline checks give three different answers
+for the same document. It needs no server, provider, or network.
 
-| Question | Check | Example of a failure |
-| --- | --- | --- |
-| Is this a well-shaped definition? | `load_definition` checks required fields, tags and strict model types | `durationSeconds: "10"` is a string where an integer is required |
-| Is the authoring source valid so far? | `validate_source` parses and performs checks available without a catalog | Unsupported schema keyword or expression shape |
-| Can this exact dependency set become executable? | `compile_source` resolves an explicit catalog and checks expression/schema compatibility | Missing Action version or a reference to an unavailable step output |
-| May it execute here, now? | Publication, activation and runtime services enforce scoped authority, resource readiness and runtime input validation | Revoked grant, unavailable connection, or invalid run input |
+1. **Save the script.** It builds a workflow that returns its string input
+   unchanged, then loads, validates, and compiles it. Save it as
+   `contract_checks.py`:
 
-Successful model loading does not imply successful compilation. Successful
-compilation does not establish a worker, connection, credential, or permission.
-Partial validation deliberately returns no artifact, even when its available
-checks pass. A **catalog** is the explicit immutable set of available definitions,
-capabilities and adapters against which complete compilation resolves references.
-An empty catalog is enough for a Workflow with no external dependencies.
+    ```python
+    from firefly_weave.compiler.api import compile_source, validate_source
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.contracts.definitions import load_definition
 
-## Compare the checks locally
+    document = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "echo", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {"type": "string"},
+            "outputSchema": {"type": "string"},
+            "steps": [],
+            "output": {"ref": "/input"},
+        },
+    }
+    model = load_definition(document)
+    partial = validate_source(document, format="object")
+    compiled = compile_source(
+        document, format="object", catalog=CatalogSnapshot.from_definitions([])
+    )
+    print(model.kind)
+    print(partial.validation_ok, partial.partial, partial.artifact is None)
+    print(compiled.ok, compiled.artifact is not None)
+    ```
 
-With the project Python environment installed, run this complete example. It has
-no provider or server prerequisites and produces an executable that returns its
-string input unchanged:
+2. **Run it from the checkout root.** Use the project environment so the import
+   resolves to this source tree:
 
-```python
-from firefly_weave.compiler.api import compile_source, validate_source
-from firefly_weave.compiler.catalog import CatalogSnapshot
-from firefly_weave.contracts.definitions import load_definition
+    ```sh
+    # Run the example with the checkout's locked Python environment.
+    uv run python contract_checks.py
+    ```
 
-document = {
-    "apiVersion": "weave/v1alpha1",
-    "kind": "Workflow",
-    "metadata": {"name": "echo", "version": "1.0.0"},
-    "spec": {
-        "inputSchema": {"type": "string"},
-        "outputSchema": {"type": "string"},
-        "steps": [],
-        "output": {"ref": "/input"},
-    },
-}
-model = load_definition(document)
-partial = validate_source(document, format="object")
-compiled = compile_source(
-    document, format="object", catalog=CatalogSnapshot.from_definitions([])
-)
-print(model.kind)
-print(partial.validation_ok, partial.partial, partial.artifact is None)
-print(compiled.ok, compiled.artifact is not None)
-```
+    Expected:
 
-Expected output:
+    ```text
+    Workflow
+    True True True
+    True True
+    ```
 
-```text
-Workflow
-True True True
-True True
-```
+    The first line comes from shape validation, the second from partial
+    validation (passed, partial, no artifact), and the third from complete
+    compilation (passed, artifact present).
 
-`{"ref":"/input"}` is an expression that reads run input, not the literal string
-`/input`; `{"literal":"/input"}` would return that string. The Workflow's
-`spec.output` field is required even though `steps` is empty. The schema describes
-permitted business input; it is not itself the business input. A run of this
-Workflow accepts `"hello"`, while an object such as `{"text":"hello"}` fails
-runtime input validation.
+3. **Read what the document says.** `{"ref": "/input"}` is an expression that
+   reads the run input; `{"literal": "/input"}` would return that string instead.
+   `spec.output` is required even when `steps` is empty. The schema describes
+   permitted input; it is not the input. A run of this workflow accepts
+   `"hello"`, while `{"text": "hello"}` fails runtime input validation.
 
-Next read [workflow authoring](guides/workflow-authoring.md) to add steps or
-[standalone setup](guides/standalone.md) to publish and run it. Use
-[compiler diagnostics](reference/compiler.md) when compilation fails. The
-remaining sections are the precise lookup for wire fields, expressions and limits.
+If the import fails, run `uv sync --locked` from the checkout root, then try
+again. If the output differs, compare your document with the one above field by
+field: every field name is case-sensitive.
 
+## Document shape
 
-Definitions use `apiVersion: weave/v1alpha1`, `kind: Workflow | Action | Connector`,
-`metadata: {name, version}`, and `spec`. Names permit letters, digits, dots,
-underscores, and hyphens. Versions follow SemVer 2.0, including prerelease and
-build identifiers. Dependency references are exact `name@version` strings.
-Unknown fields and unpublished snake_case wire aliases are rejected. Python
-attributes are snake_case; input dictionaries and aliased constructors use the
-published camelCase fields. Serialize with `model_dump(by_alias=True)` or
-`model_dump_json(by_alias=True)`. Workflow `timeoutSeconds`, Action `connection`
-and `routing`, and action-step `connection` may be omitted. When supplied they
-must match their declared types; explicit null is rejected. Both serializers
-preserve omission for these fields automatically, and their generated schemas
-permit omission while excluding null. An omitted field is represented by None
-on the Python model.
+Every definition has four top-level fields:
 
-`load_definition` performs strict model/shape validation only. It does not parse
-source, validate the JSON Schema dialect, resolve dependencies, compile, or
-authorize deployment. These are subsequent compiler tasks. Contracts import no
-PyFly application, provider, network, database, or secret implementation.
-
-## Expressions and steps
-
-Every expression has exactly one tag: `{literal: <JSON value>}`, `{ref:
-<JSON Pointer>}`, `{object: {field: expression}}`, `{array: [expression]}`, or
-`{op: {name, args: [expression]}}`. Operators are `eq`, `ne`, `lt`, `lte`, `gt`,
-`gte`, `and`, `or`, `not`, `exists`, and `coalesce`. Arity/type/scope checks and
-evaluation are checked by the compiler and expression evaluator. Pointers use RFC 6901 escaping; the empty root
-pointer is accepted.
-
-Every step has `id` and a discriminating `kind`:
-
-| Kind | Other wire fields |
+| Field | Value |
 | --- | --- |
-| `action` | Required `uses`, `with` expression; optional `connection` slot name |
-| `transform` | Required `value` expression |
-| `switch` | Nonempty `cases: [{when, steps, output}]`; required `default: {steps, output}` |
-| `parallel` | Nonempty `branches: {name: {steps, output}}`; required positive integer `concurrency` |
-| `wait` | Required positive integer `durationSeconds` |
-| `signal` | Required `name`, positive integer `timeoutSeconds`, `payloadSchema` object |
-| `humanTask` | Required `assignment`, `title` and `context` expressions, `formSchema`; `decisions` defaults to `approve`, `reject`; optional positive `dueSeconds` and `expirySeconds` |
-| `fail` | Required business-error `code` and nonempty safe `message` |
+| `apiVersion` | Always `weave/v1alpha1`, the workflow language version |
+| `kind` | `Workflow`, `Action`, or `Connector` |
+| `metadata` | `{name, version}`. Names allow letters, digits, dots, underscores, and hyphens. Versions follow SemVer 2.0, including prerelease and build identifiers |
+| `spec` | The kind-specific fields described below |
 
-Branches may contain zero steps but must declare output. The enclosing
-workflow requires `inputSchema`, `outputSchema`, `steps`, and `output`;
-`timeoutSeconds` is optional and positive when supplied. `connections` defaults
-to `{}` and maps slot names to `{connector: <exact ref>, required: <bool>}`;
-`required` defaults to `true`. Global ID uniqueness, signal-name uniqueness,
-branch scope, output compatibility, and concurrency budgets are compiler checks.
+References to other definitions are exact `name@version` strings, such as
+`onboarding.check-customer@1.0.0`. Unknown fields are rejected.
 
-Native `humanTask` support is included in alpha6. It compiles to
-`weave/ir-v1alpha2`; definitions without human work retain the established IR
-version. A human task needs an environment assignment binding, and completing it
-requires the current claim and task permission. See the
-[complete human-task walkthrough](guides/human-tasks.md) before activating one.
+**Wire names are camelCase.** Documents use the published camelCase field names
+(`inputSchema`, `timeoutSeconds`). Python model attributes are snake_case, but
+snake_case keys in a document are rejected. Serialize Python models with
+`model_dump(by_alias=True)` or `model_dump_json(by_alias=True)`.
 
-In [Studio](guides/studio.md), **Call an integration** creates an `action` step.
-Its version reference selects a published Action, whose implementation selects
-the worker task or connector operation. Retry policy and action timeout belong
-to that Action definition; they are not legal extra fields on a workflow step.
-Workflow-wide timeout is the separate `spec.timeoutSeconds` field.
+**Some fields may be omitted but never set to null.** These are the workflow's
+`timeoutSeconds`, an action's `connection` and `routing`, and an action step's
+`connection`. When present they must have their declared type; an explicit `null`
+is rejected. Both serializers preserve the omission, and the Python model shows
+an omitted field as `None`.
 
-## Actions and connectors
+`load_definition` checks shape only. It does not parse source text, validate the
+embedded JSON Schemas, resolve dependencies, compile, or authorize anything. The
+contracts package imports no PyFly application, provider, network, database, or
+secret code.
 
-Action implementations are `{kind: worker, taskType, taskVersion}` or
-`{kind: connector, uses: <exact connector ref>, action: <descriptor name>}`.
-The Action spec requires `sideEffect`, positive `timeoutSeconds`,
-`inputSchema`, and `outputSchema`. Optional `connection` uses the same
-connection-requirement shape as workflow slots. Optional `routing: {queue}`
-selects a named worker queue. `retry` defaults to `maxAttempts: 1`,
-`initialDelaySeconds: 1`, `maxDelaySeconds: 30`; attempts include the initial
-attempt, and the maximum delay cannot be smaller than the initial delay.
-Side effects are `read_only`, `idempotent`, `idempotency_key`, or
-`non_idempotent`. The declared side effect governs retry admission; it does not
-prove that an external system implements idempotency.
+## Expressions
 
-A Connector spec requires an installed `adapter` identity, `configSchema`,
-`authSchema`, `compatibility: {apiVersion: weave/v1alpha1}`, nonempty `actions`,
-and adapter `limits`. Each named action descriptor requires `inputSchema`,
-`outputSchema`, `sideEffect`, and `timeoutSeconds`, with the same retry defaults.
-Adapter limits are positive integer `maxRequestBytes`, `maxResponseBytes`, and
-`maxTimeoutSeconds`. These published I/O bounds are distinct from operator
-compiler budgets. Manifests contain no Python source or executable import paths.
+An **expression** computes a value from workflow data. Every expression is an
+object with exactly one of these keys:
 
-## Values, budgets, and diagnostics
+| Form | Meaning | Example |
+| --- | --- | --- |
+| `literal` | A fixed JSON value | `{literal: "Ready for review"}` |
+| `ref` | A JSON Pointer (RFC 6901) into workflow data; the empty pointer reads the root | `{ref: /input/customerId}` |
+| `object` | An object whose fields are expressions | `{object: {customerId: {ref: /input/customerId}}}` |
+| `array` | A list whose items are expressions | `{array: [{ref: /input/a}, {literal: 1}]}` |
+| `op` | An operator with expression arguments: `{op: {name, args}}` | `{op: {name: eq, args: [{ref: /input/urgent}, {literal: true}]}}` |
 
-The JSON domain preserves null, bool, int, float, string, list, and string-keyed
-object values. Models reject nonfinite floats, integers outside
-`[-9007199254740991, 9007199254740991]`, lone Unicode surrogates, bytes, and
-Python-only objects. This applies to schema/literal JSON fields and numeric
-definition fields. Models are frozen Pydantic models; nested lists/dictionaries
-remain ordinary JSON containers, so immutability is shallow.
+Operators are `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `and`, `or`, `not`, `exists`,
+and `coalesce`. There are no function calls, scripts, environment variables, or
+file access. The compiler checks arity, types, and scope; the
+[compiler reference](reference/compiler.md#cli-and-published-catalog-contract)
+explains evaluation rules.
 
-Operator `Limits()` defaults are source/payload 1,048,576 bytes, 1,000 steps,
-depth 32, 100,000 document nodes, 10,000 expression nodes, and 100 diagnostics.
-`max_document_nodes` bounds structural parsing of all value nodes (root,
-containers, and scalars; mapping keys are excluded). `max_expression_nodes`
-bounds expression semantics in the owning compiler stage and is not consumed by
-parsing metadata, schemas, or steps. These operator budgets cannot be set through
-workflow/action definitions. Model construction alone does not apply compilation
-budgets.
+In Studio, the property editor writes these same forms, which it calls **Value**
+(`literal`), **Data** (`ref`), **Fields** (`object`), **List** (`array`), and
+**Formula** (`op`). See
+[Decide where a value comes from](guides/studio-step-reference.md#decide-where-a-value-comes-from).
+An action input whose schema lists fields is edited field by field instead, with
+**Value**, **Data**, or **Formula** on each row; Studio still stores the result
+as one of these expressions (see
+[Map the input](guides/studio-step-reference.md#4-map-the-input)).
 
-Diagnostics carry `code`, `severity`, `stage`, `message`, JSON Pointer `path`,
-optional `source`, `related` locations, optional `hint`, and optional
-`suggestedEdit: {path, value}`. Severities are `error`, `warning`, `info`;
-stages are `parse`, `schema`, `resolution`, `semantic`, `lowering`, `evaluation`.
-Source ranges use optional `file`, required 1-based `line`/`column`, and optional
-paired `endLine`/`endColumn`; the end cannot precede the start. Related locations
-carry `path`, optional `source`, and optional `message`. The canonical models define the shape;
-sorting, truncation, source mapping, and redaction are compiler responsibilities.
-Parser failures expose `diagnostics` as a capped tuple, `omitted_count` as the
-number of encountered issues excluded by that cap, and derived `truncated` as
-`omitted_count > 0`. Compiler/CLI result envelopes preserve this
-omission metadata. YAML source spans recognize CR/LF/CRLF, NEL, line separator,
-and paragraph separator; JSON spans use CR/LF/CRLF only.
+## Steps
 
-## Package and verification
+Every step has an `id` and a `kind`. The `kind` decides which other fields are
+allowed. The Studio column shows the name the step picker uses; the BPMN column
+helps if you know process modeling from another tool:
 
-`uv run` uses this project's `.venv`. Base dependencies support the offline
-compiler. `server` adds PyFly web/security/relational/OIDC; `worker` adds HTTP and
-telemetry; `integration` adds PostgreSQL, HTTP and Kafka clients. Server/worker
-metadata pins the published **PyFly 26.9.15** GitHub wheel by verified direct URL
-and SHA-256. `uv.lock` retains the artifact and transitive dependencies; no temporary
-local source override or editable framework installation remains. See the
-[release installation instructions](reference/local-runtime.md#runtime-version-and-lifecycle).
-The optional `openapi` extra adds only PyFly base for offline native documentation.
-`contracts.openapi.create_openapi_generator` lazily returns the public native
-generator with the existing Weave constraint policy; base compiler and definition
-schema exports remain PyFly-free. See [native OpenAPI](reference/native-openapi.md).
-Provider specifics remain outside contracts.
+| `kind` | Studio name | Closest BPMN idea | Other fields |
+| --- | --- | --- | --- |
+| `action` | **Call an action** | Service task | Required `uses` (exact action reference) and `with` (input expression); optional `connection` slot name |
+| `transform` | **Transform** | Script or business rule task (expressions only) | Required `value` expression |
+| `switch` | **Decision** | Exclusive gateway | Nonempty `cases: [{when, steps, output}]` and required `default: {steps, output}` (the **Otherwise** path in Studio); the first true case wins |
+| `parallel` | **Parallel** | Parallel gateway (split and join) | Nonempty `branches: {name: {steps, output}}` and a positive integer `concurrency`; every branch completes before the step continues |
+| `wait` | **Wait for time** | Timer intermediate event | Required positive integer `durationSeconds` |
+| `signal` | **Wait for signal** | Message intermediate event | Required `name`, positive integer `timeoutSeconds`, and a `payloadSchema` object |
+| `humanTask` | **Human task** | User task | Required `assignment` (the name of an assignment bound at activation), `title` and `context` expressions, and `formSchema`; `decisions` defaults to `approve`, `reject` (1 to 32 unique names); optional positive `dueSeconds` and `expirySeconds` |
+| `fail` | **Fail** | Error end event | Required business-error `code` (a name such as `customer-not-found`) and a nonempty `message` |
 
-`make check` runs strict source coverage, documentation navigation/SVG checks,
-unit/contract tests, Ruff lint/format checks, strict mypy, and package builds. Pytest has no implicit integration deselection: explicitly named real
-backend tests must run and fail clearly if a required backend is absent. The
-`integration` and `e2e` markers are registered. The current CLI and delivery
-boundaries are described in the [documentation index](README.md).
+Weave is not a BPMN engine and does not import BPMN files. Subprocesses (call
+activities), loops, and compensation are not part of the language.
+
+Branches may contain zero steps, but each must declare its `output`. The compiler,
+not the shape check, enforces unique step IDs, unique signal names, branch scope,
+output compatibility, and concurrency budgets.
+
+**Human tasks** need an environment assignment binding at activation, and
+completing one requires the current claim and task permission. A workflow with a
+human task compiles to IR version `weave/ir-v1alpha2`; other workflows keep
+`weave/ir-v1alpha1`. Follow the [human-task walkthrough](guides/human-tasks.md)
+before activating one.
+
+**Retry and timeout belong to the action, not the step.** In Studio,
+**Call an action** creates an `action` step whose `uses` selects a published
+action version. That action's implementation selects the worker task or
+connector operation. Retry policy and action timeout are fields of the action
+definition; they are not legal on a workflow step.
+
+## Workflow spec
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `inputSchema` | Yes | JSON Schema for the run input ([schema profile](reference/schema-profile.md)) |
+| `outputSchema` | Yes | JSON Schema for the run output |
+| `steps` | Yes | The ordered list of steps; may be empty |
+| `output` | Yes | Expression that computes the run output |
+| `timeoutSeconds` | No | Positive whole-run timeout; omit it for no workflow-wide timeout |
+| `connections` | No (default `{}`) | **Connection slots**: named requirements `{connector: <exact ref>, required: <bool>}`; `required` defaults to `true`. Each slot is bound to an integration connection at activation |
+
+## Actions
+
+An **action** is a published, versioned definition of one external call. Its
+`spec` contains:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `implementation` | Yes | Either `{kind: worker, taskType, taskVersion}` or `{kind: connector, uses: <exact connector ref>, action: <descriptor action name>, config: {...}}`; `config` is optional and is checked against that connector action's `configSchema` |
+| `sideEffect` | Yes | `read_only`, `idempotent`, `idempotency_key`, or `non_idempotent` |
+| `timeoutSeconds` | Yes | Positive timeout for one attempt |
+| `inputSchema`, `outputSchema` | Yes | JSON Schemas for the action's input and output |
+| `retry` | No | Defaults to `maxAttempts: 1`, `initialDelaySeconds: 1`, `maxDelaySeconds: 30`; attempts include the first one, and the maximum delay cannot be smaller than the initial delay |
+| `connection` | No | The connection requirement, same shape as a workflow slot |
+| `routing` | No | `{queue}` selects a named worker queue |
+
+**The declared side effect governs retries.** It decides whether automatic and
+operator retries are allowed. It does not prove that the external system really
+is idempotent.
+
+## Connectors
+
+A **connector** is trusted code that knows a protocol, such as the built-in
+`weave-http@2.0.0`. Its published manifest is a `Connector` definition whose
+`spec` requires:
+
+- `adapter`: the installed adapter identity.
+- `configSchema` and `authSchema`: what an integration connection supplies.
+- `compatibility: {apiVersion: weave/v1alpha1}`.
+- `actions`: a nonempty map of named action descriptors. Each requires
+  `inputSchema`, `outputSchema`, `sideEffect`, and `timeoutSeconds`, may declare a
+  `configSchema` for the action's `config`, and uses the same retry defaults as an
+  action.
+- `limits`: positive integers `maxRequestBytes`, `maxResponseBytes`, and
+  `maxTimeoutSeconds`. These published I/O bounds are separate from the operator's
+  compiler budgets.
+
+Manifests contain no Python source or import paths. To build one, see
+[Author a connector](connectors/authoring.md); to call a REST API without
+writing one, see [Call a REST API without code](connectors/http-without-code.md).
+
+## Values and budgets
+
+Definitions and payloads use plain JSON values: null, Boolean, integer, float,
+string, list, and object with string keys. Models reject:
+
+- Infinite or NaN floats.
+- Integers outside `[-9007199254740991, 9007199254740991]`.
+- Lone Unicode surrogates, bytes, and Python-only objects.
+
+This applies to schema and literal fields and to numeric definition fields.
+Models are frozen Pydantic models, but nested lists and dictionaries remain
+ordinary JSON containers, so immutability is shallow.
+
+The operator's `Limits()` defaults bound compilation:
+
+| Limit | Default | What it measures |
+| --- | ---: | --- |
+| `max_source_bytes` / `max_payload_bytes` | 1,048,576 | Source and payload size in bytes |
+| `max_steps` | 1,000 | Steps in one definition |
+| `max_depth` | 32 | Nesting depth |
+| `max_document_nodes` | 100,000 | Parsed values, including the root, containers, and scalars (mapping keys excluded) |
+| `max_expression_nodes` | 10,000 | Expression nodes, counted by the compiler stage that owns expressions |
+| `max_diagnostics` | 100 | Diagnostics returned per result |
+
+Definitions cannot change these budgets. Building a model alone does not apply
+them; the compiler does.
+
+## Diagnostics
+
+Every problem the compiler reports is a **diagnostic** with these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `code` | Stable identifier, such as `WV-COMP-TYPE_MISMATCH` |
+| `severity` | `error`, `warning`, or `info` |
+| `stage` | `parse`, `schema`, `resolution`, `semantic`, `lowering`, or `evaluation` |
+| `message` | Safe, plain-language explanation; never contains submitted values |
+| `path` | JSON Pointer into the parsed definition, such as `/spec/output` |
+| `source` | Optional source range: optional `file`, required 1-based `line` and `column`, optional paired `endLine` and `endColumn` (the end never precedes the start) |
+| `related` | Other locations, each with `path`, optional `source`, and optional `message` |
+| `hint` | Optional next step |
+| `suggestedEdit` | Optional `{path, value}` fix; since 0.1.0a7, Studio's **Apply suggested edit** applies it |
+
+The compiler sorts, truncates, maps sources, and redacts diagnostics; the models
+only define their shape. When the parser stops early, its result keeps the capped
+`diagnostics`, an `omitted_count` of issues left out, and `truncated` (true when
+`omitted_count` is greater than zero). Compiler and CLI results keep this
+metadata. YAML source ranges recognize CR, LF, CRLF, NEL, line separator, and
+paragraph separator as line breaks; JSON recognizes CR, LF, and CRLF only.
+
+## Packages and project checks
+
+The base package contains the offline compiler and depends on no PyFly code.
+Optional extras add the rest:
+
+| Extra | Adds |
+| --- | --- |
+| `client` | Authenticated remote CLI and SDK operations (HTTP client, credential store) |
+| `studio` | The Studio local host |
+| `server` | The API: PyFly web, security, relational data, PostgreSQL, OIDC, scheduling, migrations |
+| `worker` | Remote workers: PyFly client and telemetry |
+| `integration` | PostgreSQL, HTTP, and Kafka clients for integration tests |
+| `kafka` | The Kafka client for broker triggers and the Kafka connector |
+| `teams` | The Microsoft Teams provider |
+| `openapi` | PyFly base only, for offline native OpenAPI generation |
+
+Every extra that needs PyFly pins the published **PyFly 26.9.15** wheel by direct
+URL and SHA-256, and `uv.lock` records the artifact and its dependencies. See
+[runtime version and lifecycle](reference/local-runtime.md#runtime-version-and-lifecycle).
+`contracts.openapi.create_openapi_generator` returns the native OpenAPI generator
+with Weave's constraint policy; base compiler and schema exports remain PyFly-free.
+See [native OpenAPI](reference/native-openapi.md). Provider specifics stay outside
+the contracts package.
+
+For contributors, `make check` runs strict source coverage, the documentation
+link and SVG checks, a strict documentation build, Ruff lint and format checks,
+strict mypy, unit and contract tests, and release packaging checks. Integration
+tests never skip silently: a named real-backend test fails clearly when its
+backend is absent. The `integration` and `e2e` pytest markers are registered.
+
+## Next steps
+
+- [Author a workflow](guides/workflow-authoring.md): validate, compile, and
+  simulate the echo workflow step by step.
+- [Schema profile](reference/schema-profile.md): the JSON Schema rules for
+  `inputSchema`, `outputSchema`, `payloadSchema`, and `formSchema`.
+- [Compiler](reference/compiler.md): results, artifacts, and how to read a
+  diagnostic.
+- [Choose and configure a workflow step](guides/studio-step-reference.md): the
+  same steps as Studio presents them.
+
+## Troubleshooting
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| A field is rejected although it looks right | Field names are camelCase and case-sensitive; snake_case keys are rejected | Use the published name, such as `timeoutSeconds` |
+| `null` is rejected for an optional field | Optional fields may be omitted but not set to null | Remove the field |
+| A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
+| Partial validation passes, but there is no artifact | Partial validation never produces one | Compile with an explicit catalog |
+| Compilation passes, but the run fails to start | Compilation proves no worker, connection, or permission | Check the activation's bindings and your grants |

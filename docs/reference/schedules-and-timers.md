@@ -16,162 +16,267 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# UTC schedules and duration waits
+# Start runs on a schedule and pause with timers
+
+Weave has two time-based features that are easy to confuse:
+
+- A **schedule** starts a **new run** of an activation at future UTC calendar
+  times, like a cron job.
+- A **Wait for time** step (`wait`) pauses an **existing run** until a stored
+  deadline, then continues. **Wait for signal** steps and human tasks have
+  deadlines too.
+
+Both rely on the platform's scheduler, not on a timer in your worker or your
+computer.
+
+**Who it is for.** Process designers who add waits, and developers and operators
+who create schedules. Schedules are managed with the CLI or the API; Studio does
+not create them. **What you need.** A platform from the
+[local platform guide](../guides/local-platform.md) or the
+[standalone setup](../guides/standalone.md), an activated workflow, and, if the
+workflow calls actions, [admitted workers](../guides/workers.md). Allow 15
+minutes.
 
 ![UTC schedule starts compared with duration and signal waits on an existing run](../diagrams/integrations-time-and-signals.svg)
 
-**How to read this diagram:** Read each timeline left to right. Calendar instants create separate runs; duration and signal waits continue the same run. A signal receipt must be accepted strictly before its deadline to win that timeout.
+Read each timeline left to right. Calendar instants create separate runs, while
+duration and signal waits continue the same run. A signal must be accepted
+strictly before its deadline to win; arriving exactly at the deadline is too
+late.
+[Open diagram at full size](../diagrams/integrations-time-and-signals.svg)
 
-## Start periodically or pause an existing run
+## Create a schedule
 
-A **schedule** creates a new run at future UTC calendar times. A Workflow **wait**
-pauses the same run until a persisted duration deadline. Both need a running
-scheduler/recovery replica; neither requires an in-memory timer in your worker.
+Run the commands with a saved platform and workspace from `weave auth setup`
+(see [how remote commands choose a platform](../guides/connect-to-api.md#how-remote-commands-choose-a-platform)).
+Saved platforms are new in 0.1.0a7; with an alpha6 or earlier CLI, these
+commands use [explicit mode](../guides/connect-to-api.md#scripts-and-ci-explicit-mode).
+To save a schedule you need `trigger.manage` and `run.start` (the `deployer` and
+`operator` roles); to read it and its history, `run.read` (the `viewer` role).
 
-For a first schedule, complete [standalone setup](../guides/standalone.md) and
-activate a Workflow through the authoring/deployment flow. If it contains Actions,
-complete [worker admission](../guides/workers.md) too. Obtain `activation_id` from
-the activation response; it is not the Workflow definition version UUID.
+1. **Find the activation ID.** Use the `id` from the activation response, not the
+   workflow version ID.
 
-1. Save the complete create body below as `schedule.json`, replacing the activation
-   UUID and `input` with input accepted by that Workflow's schema. `*/5 * * * *`
-   means every five minutes on the UTC clock.
-2. Run `weave triggers schedules save --request schedule.json` with the scoped CLI
-   configuration described below. Save the returned `id` and `revision`. A
-   `ScheduleView` also exposes `status`, `next_due_at`, `principal_id`, and
-   `blocked_reason`; inspect these before expecting a firing.
-3. After the next due time, inspect `history`. A `started` occurrence includes
-   `run_id`; read that run separately to see completion. A `skipped` range means
-   missed work was recorded without creating catch-up runs.
-4. Before editing/disabling, read the current revision and send it as `If-Match`
-   (or CLI `--revision`). After a conflict, reread and reassess the change; do not
-   guess the next revision.
+2. **Write the request.** Save this as `schedule.json`, replacing the activation
+   UUID and `input` with input that the workflow's `inputSchema` accepts.
+   `*/5 * * * *` means every five minutes on the UTC clock:
 
-If a schedule is `blocked`, inspect `blocked_reason`, its pinned activation's
-readiness and the current owner's grants. An authorized save/enable creates a
-fresh future cursor; it does not replay the missed interval. If a run remains
-waiting after its duration, check the scheduler and any run-wide incident barrier.
-A cron schedule is not a promise of exactly-once external effects or catch-up.
+    ```json
+    {"cron":"*/5 * * * *","timezone":"UTC","missed_policy":"skip","activation_id":"00000000-0000-4000-8000-000000000001","input":{}}
+    ```
 
-## Calendar and request contract
+3. **Save the schedule:**
 
+    ```sh
+    # Create the schedule; the server checks the calendar, the input, and your grants.
+    weave triggers schedules save --request schedule.json --output json
+    ```
 
-Schedules use the current database UTC clock. `skip` starts at most the occurrence
-in the current minute, in the half-open interval `[instant, instant + 60 seconds)`.
-A final database-time admission check prevents stale starts after readiness waits.
-Older occurrences become one immutable skipped range per observed revision/span;
-there is no backlog enumeration. The pinned cron expression determines exact
-instants within the range. A backward clock never moves the cursor backward.
+    Expected: a schedule with `id`, `revision` (1), `status`, `next_due_at`,
+    `principal_id`, and `blocked_reason`. Check `status` and `next_due_at` before
+    expecting a run. Save `id` as `SCHEDULE_ID`.
 
-The grammar has exactly five numeric minute/hour/day-of-month/month/day-of-week
-fields, Sunday 0, with `*`, numbers, nonwrapping ranges, lists (at most 32 terms per
-field), and positive steps on `*` or ranges. Expressions are at most 256 characters.
-Numeric components/steps have at most two digits. At least one of DOM/DOW must be
-literal `*`. Names, macros, seconds/year fields, `?`, `L`, `W`, `#`, random/hash
-syntax and non-UTC zones are rejected. Impossible dates are rejected. The pure
-`contracts.schedules.validate_calendar` owns this grammar and realizability check;
-both ScheduleRequest and the runtime calendar constructor call it. The pure
-module imports no PyFly. Calendar math uses public PyFly 26.9.15 `CronExpression`, backed by pinned croniter 6.2.4
-and its 50-year search bound. Date-range exhaustion blocks a schedule safely.
+4. **Check its history after the next due time:**
 
-Create/update with `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/schedules`:
+    ```sh
+    # Show occurrences: each started run, or each skipped range.
+    weave triggers schedules history "$SCHEDULE_ID" --limit 100 --output json
+    ```
 
-```json
-{"cron":"*/5 * * * *","timezone":"UTC","missed_policy":"skip","activation_id":"00000000-0000-4000-8000-000000000001","input":{}}
-```
+    Expected: a `started` occurrence with its `run_id`, or a `skipped` range when
+    work was missed. Read the run separately to see whether it finished; a
+    started occurrence means only that the run was created.
 
-An optional `id` selects an existing schedule; updates require its positive
-revision in `If-Match`. Canonical `GET /schedules` accepts `cursor` and
-`limit=1..100`, returning `items` and an opaque `next_cursor`.
-`GET /schedules/{id}` returns the head. `POST /schedules/{id}/disable`, `/enable`
-and `/delete` require `If-Match`. Delete is a tombstone retaining revisions and
-history. Enable creates a new revision with a fresh future cursor. Occurrences
-are at `GET /schedules/{id}/occurrences?limit=100`, including
-skipped ranges, observation time and run identity. Pass the returned `next_cursor`
-as `cursor` to continue either canonical list. Cursors bind the caller scope and
-collection. Lists include tombstones. Unversioned compatibility routes retain
-their older `after` parameters and response shapes.
+## Change, disable, or delete a schedule
 
-All mutations require current `trigger.manage`; save/enable also require current
-`run.start`, current execution readiness and valid input. The authenticated
-modifier becomes the new revision's execution principal. No arbitrary principal
-selector exists. Detail/list/history require `run.read`. Every firing reloads
-owner status/grants. Revoked/disabled owners block without consuming an occurrence;
-authorized save/enable can rebind and restore a fresh future cursor. Run creation,
-occurrence receipt, skipped ranges and cursor advancement commit atomically.
-
-For the canonical CLI, configure `WEAVE_BASE_URL`, `WEAVE_TENANT_ID`,
-`WEAVE_PROJECT_ID`, `WEAVE_ENVIRONMENT_ID`, and protected authentication as described
-in [remote operations](cli.md#remote-authoring-and-operations). Save the returned
-schedule UUID as `SCHEDULE_ID`. Before each mutation, read the current schedule
-and set `SCHEDULE_REVISION` to its returned revision. The mutation examples below
-are separate operations; do not reuse a stale revision after a successful change.
+Every change needs the schedule's current revision, so two people cannot
+overwrite each other. Read the schedule first, use the returned `revision`, and
+after a conflict read it again and reconsider the change; never guess the next
+revision.
 
 ```sh
-weave triggers schedules save --request schedule.json
-weave triggers schedules list --limit 100
-weave triggers schedules read "$SCHEDULE_ID"
-weave triggers schedules history "$SCHEDULE_ID" --limit 100
-weave triggers schedules save --request schedule-edit.json --revision "$SCHEDULE_REVISION"
-weave triggers schedules disable "$SCHEDULE_ID" --revision "$SCHEDULE_REVISION"
-weave triggers schedules enable "$SCHEDULE_ID" --revision "$SCHEDULE_REVISION"
-weave triggers schedules delete "$SCHEDULE_ID" --revision "$SCHEDULE_REVISION"
+# Read the current schedule and note its revision.
+weave triggers schedules read "$SCHEDULE_ID" --output json
+# Replace the schedule with an edited request that includes "id": SCHEDULE_ID.
+weave triggers schedules save --request schedule-edit.json --revision "$SCHEDULE_REVISION" --output json
+# Stop future firings; the schedule and its history are kept.
+weave triggers schedules disable "$SCHEDULE_ID" --revision "$SCHEDULE_REVISION" --output json
+# Resume from a fresh future time; missed occurrences are not replayed.
+weave triggers schedules enable "$SCHEDULE_ID" --revision "$SCHEDULE_REVISION" --output json
+# Delete the schedule; its revisions and history remain readable.
+weave triggers schedules delete "$SCHEDULE_ID" --revision "$SCHEDULE_REVISION" --output json
 ```
 
-Use `--cursor` with list/history to request subsequent pages. The older singular
-`weave schedule` family remains available for unversioned compatibility URLs.
+These are separate operations, not a script: each successful change returns a
+new revision, so read it again before the next one. List every schedule,
+including deleted ones, with `weave triggers schedules list --limit 100`; pass
+`--cursor` with the returned `next_cursor` for more.
 
-The single lifespan-owned recovery loop visits at most 16 tenants per cycle,
-reserving one environment per tenant using durable rotating cursors. Each turn
-reserves recovery pages of 10 deadlines, 10 expired ready tasks and 10 recoverable
-leases before a separate page of at most 10 due schedules. These are separate
-work classes, not a claim that ten total rows change. Independent transaction/time
-budgets (at most five seconds per phase including pool acquisition), four-second
-statement timeout and one-second lock timeout isolate failures. Tenant and
-environment traversal resumes after failures/restarts. A failed turn consumes no
-business occurrence; the traversal cursor simply allows other tenants to progress.
-The actual latency bound depends on tenant/environment count and configured poll
-interval; overloaded schedules may skip minutes by policy. This is not a promise
-that unlimited tenants all execute within one minute.
+## Calendar rules
 
-Ordinary `wait` persists a deadline and continues with null step output when due.
-It uses the same kernel and deadline scanner as signals, including nested branch
-capacity, cancellation, restart and the incident suspension barrier. Elapsed waits
-are counted separately from terminal timeouts in recovery reports. An elapsed
-fact behind suspension consumes its deadline once and defers continuation until
-resolution; branch capacity is not released early.
+Schedules use a strict five-field cron grammar, always in UTC:
 
-The persisted `wait_elapsed` event records `node_id`, issued `deadline`, durable
-`wait_id`, database observation timestamp, event ID and accepted sequence. Replay
-uses those facts, never a live clock. The pure kernel checks the active WaitNode,
-its exact issued due instant and no-early-wakeup rule. When several deadlines are
-due at observation, overall-run timeout is authoritative, then terminal signal
-timeouts, then elapsed duration waits ordered by due instant and node ID. A signal
-receipt strictly before its signal deadline wins that signal's timeout; equal time
-does not. Signal events also record receipt acceptance time and issued due instant.
-The [history and replay](history-and-replay.md) and [simulation](simulation.md)
-APIs use recorded transition facts without contacting external providers.
+| Field | Range | Notes |
+| --- | --- | --- |
+| Minute | 0–59 | |
+| Hour | 0–23 | UTC |
+| Day of month | 1–31 | At least one of day of month or day of week must be `*` |
+| Month | 1–12 | |
+| Day of week | 0–6 | Sunday is 0 |
+
+**Allowed in each field:** `*`, numbers of at most two digits, ranges such as
+`9-17` that do not wrap around, lists of at most 32 terms, and positive steps on
+`*` or on a range (`*/15`, `9-17/2`). The whole expression has at most 256
+characters.
+
+**Rejected:** names (`MON`, `JAN`), macros (`@daily`), seconds or year fields,
+`?`, `L`, `W`, `#`, random or hash syntax, time zones other than UTC, and
+calendars that can never occur, such as `0 0 31 2 *`.
+
+The pure `contracts.schedules.validate_calendar` function owns this grammar, and
+both the request model and the runtime calendar call it. Calendar math uses
+PyFly 26.9.15's `CronExpression`, backed by croniter 6.2.4 and its 50-year search
+limit; a schedule whose date range runs out is blocked safely.
+
+## Missed occurrences
+
+The only `missed_policy` is `skip`. Schedules use the database's UTC clock. When
+the scheduler looks at a schedule, it starts at most the occurrence in the current
+minute, the half-open interval `[instant, instant + 60 seconds)`, and a final
+database-time check prevents a stale start after a readiness wait.
+
+Older occurrences become one immutable `skipped` range per observed revision and
+span; Weave never builds a backlog of catch-up runs. A clock that moves backward
+never moves the schedule backward. An overloaded platform may skip minutes by
+policy: a schedule is not a promise of exactly-once external effects or of
+catch-up.
+
+## Request, routes, and permissions
+
+Save with `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/schedules`.
+
+| Field | Meaning |
+| --- | --- |
+| `cron` | The five-field UTC expression |
+| `timezone` | Always `UTC` (the default) |
+| `missed_policy` | Always `skip` (the default) |
+| `activation_id` | The activation each run uses |
+| `input` | The run input; checked against the workflow's input schema and secret rules |
+| `id` | Optional; names the schedule to replace. When omitted, a new schedule is created |
+
+| Route | Purpose | Needs |
+| --- | --- | --- |
+| `POST /schedules` | Create, or update with `If-Match: REVISION` | `trigger.manage`, `run.start`, a ready activation, valid input |
+| `GET /schedules?cursor=…&limit=1..100` | List, including deleted ones | `run.read` |
+| `GET /schedules/{id}` | Read one | `run.read` |
+| `GET /schedules/{id}/occurrences?limit=100` | Started runs and skipped ranges, with observation times | `run.read` |
+| `POST /schedules/{id}/disable`, `/enable`, `/delete` | Change state; each needs `If-Match` | `trigger.manage`; enable also `run.start` |
+
+Lists return `items` and an opaque `next_cursor`; pass it back as `cursor`.
+Cursors are bound to your scope and the collection. Delete keeps revisions and
+history (a tombstone). Enable creates a new revision with a fresh future cursor.
+
+**Whose authority runs the schedule.** The person who saves or enables a revision
+becomes its execution principal; there is no principal selector. Every firing
+reloads that person's status and grants. A revoked or disabled owner blocks the
+schedule without consuming an occurrence; an authorized save or enable rebinds it
+with a fresh future cursor. Run creation, the occurrence record, skipped ranges,
+and cursor advancement commit together.
+
+**Older commands.** The singular `weave schedule` family (`save`, `list`, `show`,
+`occurrences`, `disable`, `enable`, `delete`) remains for the older unversioned
+routes. It needs `--environment-url` (or `WEAVE_ENVIRONMENT_URL`) and
+`WEAVE_ACCESS_TOKEN`, and uses `--after` instead of `--cursor`.
+
+## How the scheduler finds due work
+
+A single loop owned by the API process handles recovery and schedules. Each cycle
+visits at most 16 tenants and one environment per tenant, using durable rotating
+cursors. Each turn takes separate pages of up to 10 due deadlines, 10 expired
+ready tasks, and 10 recoverable leases, then up to 10 due schedules. Each phase
+has at most five seconds, including connection acquisition, plus a four-second
+statement timeout and a one-second lock timeout, so one failure does not block the
+others. After a failure or restart, traversal resumes, and a failed turn consumes
+no occurrence.
+
+How quickly a schedule fires depends on the number of tenants and environments
+and the poll interval. Weave does not promise that every tenant runs within one
+minute.
+
+## Waits and deadlines inside a run
+
+**Wait for time** (`wait`) stores a deadline and continues with a `null` step
+output when it is due. It uses the same kernel and deadline scanner as signals,
+including nested branch capacity, cancellation, restarts, and the incident
+barrier. If a wait elapses while the run is suspended by an incident, its deadline
+is consumed once and the continuation waits until the incident is resolved;
+branch capacity is not released early. Recovery reports count elapsed waits
+separately from timeouts.
+
+**Order when several deadlines are due at once:**
+
+1. The overall run timeout (`spec.timeoutSeconds`) wins.
+2. Then signal timeouts.
+3. Then elapsed duration waits, ordered by due time and node ID.
+
+A signal accepted strictly before its deadline wins over that signal's timeout;
+one accepted at exactly the deadline does not. Durations never wake early.
+
+**What history records.** The `wait_elapsed` event records `node_id`, the issued
+`deadline`, the durable `wait_id`, the database observation time, the event ID,
+and the accepted sequence. Signal events record their acceptance time and issued
+deadline. Replay uses these recorded facts, never a live clock, and the
+[history and replay](history-and-replay.md) and [simulation](simulation.md)
+APIs never contact external providers.
+
+Delivery is at least once; external effects are not exactly once.
+[Secret classification](schema-profile.md#durable-secret-classification) applies
+to stored schedule input and to workflow data.
 
 ## Forward migration privileges
 
-Revision `0011_schedules` follows `0010_incidents`; forward migrations preserve
-prior migration history.
-Besides ordinary DDL/REFERENCES and schema-version permissions, this migration
-requires ownership (or inherited ownership) of `wait_wakeups`, permission to
-`SET ROLE weave_catalog_reader`, and schema `CREATE WITH GRANT OPTION`. Deployment
-administrators must grant these deliberately; `weave_tenant_ids()` EXECUTE alone
-is insufficient. The migration checks before any schema mutation and never grants
-role membership. A database owner/superuser deployment identity is another option.
-Do not give these deployment privileges to API or scheduler login roles.
+This section is for administrators who apply database migrations.
 
-The new `weave_scheduler_tenants(integer)` is owned by the existing non-superuser,
-non-BYPASSRLS catalog reader, has fixed search path and accepts pages 1..16. It
-returns tenant IDs and advances only its catalog cursor. Only `weave_scheduler`
-has runtime EXECUTE; its login retains no direct tenant/schedule/run table access.
-The migration temporarily gives the function owner schema CREATE solely for the
-ownership transfer, then revokes it. Business tables retain FORCE RLS; environment
-rotation and all starts use ordinary tenant-bound application transactions.
+Revision `0011_schedules` follows `0010_incidents`; forward migrations keep
+earlier history. Besides ordinary DDL, `REFERENCES`, and schema-version
+permissions, this migration needs:
 
-Delivery remains at least once; external effects are not exactly once.
-[Secret classification](schema-profile.md#durable-secret-classification) applies
-to persisted schedule input and workflow execution data.
+- Ownership, direct or inherited, of `wait_wakeups`.
+- Permission to `SET ROLE weave_catalog_reader`.
+- Schema `CREATE WITH GRANT OPTION`.
+
+Grant these deliberately; `EXECUTE` on `weave_tenant_ids()` alone is not enough.
+A database owner or superuser deployment identity also works. Never give these
+privileges to the API or scheduler login roles. The migration checks them before
+changing anything and never grants role membership.
+
+It adds `weave_scheduler_tenants(integer)`, owned by the existing catalog reader
+(not a superuser, no row-security bypass), with a fixed search path and pages 1 to
+16. It returns tenant IDs and advances only its catalog cursor. Only
+`weave_scheduler` can execute it, and that login has no direct access to tenant,
+schedule, or run tables. The migration gives the function owner schema `CREATE`
+only for the ownership transfer, then revokes it. Business tables keep forced
+row-level security; environment rotation and every start use ordinary
+tenant-bound transactions.
+
+## Next steps
+
+- [Choose and configure a workflow step](../guides/studio-step-reference.md#wait-for-time):
+  add **Wait for time** and **Wait for signal** in Studio.
+- [Simulate a workflow run](simulation.md): advance virtual time to test waits
+  and timeouts without waiting.
+- [Recorded history and offline replay](history-and-replay.md): read the facts a
+  wait or schedule recorded.
+- [Upgrades](../operations/upgrades.md): apply forward migrations safely.
+
+## Troubleshooting
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| `schedules save` rejects the calendar | The expression uses names, macros, a sixth field, `?`/`L`/`W`/`#`, sets both day fields, or can never occur | Rewrite it with numbers, ranges, lists, and steps; keep one day field `*` |
+| Status `blocked` | The activation is not ready, the owner lost a grant, or the calendar ran out | Read `blocked_reason`, fix the cause, then save or enable again |
+| A `skipped` range instead of a run | The scheduler did not observe the minute in time | Expected under the `skip` policy; missed runs are never replayed |
+| HTTP 409 `WV-SCHEDULE-REVISION` | Another change happened since you read the revision, you saved an existing `id` without `--revision` (or a new one with it), or the schedule is deleted | Read the schedule again, then decide whether your change still applies |
+| HTTP 422 `WV-SCHEDULE-RANGE` | The calendar has no future occurrence the calendar library can represent | Choose a calendar that occurs again in the future |
+| A run stays waiting after its duration | No scheduler-enabled replica, or an incident barrier | Check that a scheduler is running, then the run's incidents |
+| A signal arriving at the deadline is ignored | Signals must arrive strictly before the deadline | Send it earlier, or lengthen `timeoutSeconds` |

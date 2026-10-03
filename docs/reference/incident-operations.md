@@ -16,191 +16,324 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Incident operations
+# Resolve incidents, cancel runs, and retry them
+
+An **incident** records a condition that needs a person's decision, most often
+because Weave cannot tell whether an external action completed. While an incident
+is active, the run is **suspended**: normal continuation waits for the decision.
+This page shows how to make that decision safely, how to cancel a run, and how to
+start a new run from a finished one.
+
+**Who it is for.** Operators who keep runs healthy. **What you need.** The CLI
+connected to a platform ([connect the CLI](../guides/connect-to-api.md)); the
+`operator` role in the run's
+environment (it grants `incident.read`, `incident.resolve`, `run.cancel`, and
+`run.retry`), plus `viewer` to read runs and their history; and the run's `id`,
+from its start response or a trigger or provider receipt. Allow 15 minutes, plus
+the time to check the external system.
 
 ![Read-only replay separated from reconciliation, incident resolution, and whole-run retry](../diagrams/integrations-incidents-replay.svg)
 
-**How to read this diagram:** Follow the lower row left to right when changing execution. Reconciliation supplies external evidence; the current revision and receipt protect the decision. The upper replay row is useful inspection but cannot retry an Action or clear an incident.
+Follow the lower row left to right when you change execution: check the external
+system first, then submit a decision protected by the current revision and a
+stable receipt ID. The upper replay row is useful inspection, but it cannot retry
+an action or clear an incident.
+[Open diagram at full size](../diagrams/integrations-incidents-replay.svg)
 
-## Resolve an uncertain run deliberately
+**Three actions, three meanings:**
 
-An **incident** records a condition that needs a decision, often because Weave
-cannot determine whether an external Action completed. **Suspended** means normal
-continuation is blocked while that decision is outstanding. A retry of the whole
-run is different: it creates a new execution with new operation keys.
-
-Start with [standalone setup](../guides/standalone.md) and the scoped operator
-credential. Obtain `RUN_UUID` from the run-start response or trigger/provider
-receipt. Use [history](history-and-replay.md) and [worker recovery](../guides/workers.md)
-to understand which Action and attempt are involved.
-
-1. Run `weave incident list RUN_UUID` with the environment URL configured below.
-   Record the active incident `id`, `revision`, `node_id`, `generation`, and `code`.
-2. Consult the external system using its own authorized reconciliation procedure.
-   Weave does not look up a payment, message, or database change for you.
-3. Choose `retry_safe` only for an eligible declared effect, or
-   `accept_reconciled_result` when independent evidence establishes the result.
-   Use `terminate` when the execution should stop. The exact requirements follow.
-4. Save the complete resolution body below as `resolution.json`; replace its
-   receipt UUID with a newly generated UUID, evidence reference, and output with
-   your verified result. The sample `42` is valid only for a pinned schema that
-   accepts that number. Submit with the revision you just read.
-5. Read the incident and run again. The resolution is audited, but another active
-   incident or deadline may still prevent continuation. On a lost response, retry
-   the same receipt/body/revision; on a competing revision conflict, reread first.
-
-For a terminal run that needs a new business execution, `new-run.json` has this
-complete shape (replace the activation UUID and use valid Workflow input):
-
-```json
-{"activation_id":"00000000-0000-4000-8000-000000000001","input":{}}
-```
-
-Send it with `weave run retry RUN_UUID --idempotency-key retry-123 --request new-run.json`.
-The response is a new run whose `parent_run_id` points to the original. Reuse the
-same idempotency key only for retrying that same start request. Inspect
-`external_effects_may_continue` on cancellation: stopping Weave cannot retract
-already-issued external work.
-
-## Endpoint and decision contract
-
-
-All paths below are under
-`/api/v1/tenants/{tenant}/projects/{project}/environments/{environment}`. Authorization
-uses current scoped capabilities, including on duplicate receipts. Scoped
-operators are allowed; platform administration alone grants no execution rights.
-
-| Request | Capability | Result |
+| Action | Changes | Use it when |
 | --- | --- | --- |
-| `GET /runs/{run}/incidents` | `incident.read` | Read-only incident projections, including recorded closed history |
-| `POST /incidents/{incident}/resolve` | `incident.resolve` | Revision-fenced immutable resolution receipt |
-| `POST /runs/{run}/cancel` | `run.cancel` | Terminal cancellation and explicit external-effect caveat |
-| `POST /runs/{run}/retry` | `run.retry` and normal start admission | A new execution linked by `parent_run_id` |
+| Resolve an incident | The same run continues, or stops | One step's outcome is uncertain and you can decide it |
+| Cancel a run | The run stops; work already sent elsewhere may continue | The execution should not go on |
+| Retry a run | A **new** run starts, linked to the finished one | A finished run must be done again; it may repeat external effects |
 
-Resolve requires an `If-Match` header containing the positive numeric revision
-returned by GET, and a JSON request with a stable UUID `receipt_id`, `kind`, and
-nonblank `reason`. Only `accept_reconciled_result` consumes an `output` field;
-`retry_safe` and `terminate` reject any explicitly supplied output, including null.
-Reconciled output is checked against the 1 MiB JSON payload limit before request
-fingerprinting or persistence. An exact same-actor retry with the original revision returns
-the original receipt. A different request using that receipt conflicts. Two
-competing receipts using the same revision cannot both resolve the incident.
-Authority is checked before replay; removing a grant disables replay too.
+## Resolve an incident
 
-```json
-{
-  "receipt_id": "8947c9df-8766-4df1-963f-87acf8627edf",
-  "kind": "accept_reconciled_result",
-  "reason": "Provider lookup confirmed completion",
-  "evidence_reference": "provider:receipt:123",
-  "output": 42
-}
-```
+Run the commands with a saved platform and workspace from `weave auth setup` (see
+[how remote commands choose a platform](../guides/connect-to-api.md#how-remote-commands-choose-a-platform)).
+Saved platforms are new in 0.1.0a7; with an alpha6 or earlier CLI, these
+commands use [explicit mode](../guides/connect-to-api.md#scripts-and-ci-explicit-mode).
 
-- `retry_safe` permits only declared `read_only`, `idempotent`, or
-  `idempotency_key` Actions. It may authorize one attempt beyond the exhausted
-  automatic budget, with the original operation key and remaining original
-  Action/run deadlines. It does not reset the automatic budget or extend a
-  deadline. Unsafe retry returns `WV-RUNTIME-RECONCILIATION_REQUIRED` (409).
-- `accept_reconciled_result` requires explicit `output` and a nonblank evidence
-  reference. An explicitly supplied JSON null is valid only if the pinned output
-  schema allows it. The exact pinned schema and dependency bundle are validated;
-  the service performs no external reconciliation or external effect itself.
-- `terminate` cancels the execution. Cancellation stops scheduling and revokes
-  leases atomically. Responses set `external_effects_may_continue=true`: work
-  already issued to an external system may continue. Authentic late completions
-  for explicitly control-revoked generations can receive an immutable `ignored`
-  receipt; they do not advance the run.
+1. **Spot the blocked run.** In Studio, **Runs** shows the status "On hold" for
+   it, and its detail shows "This run stopped at STEP." with the incident's
+   code, where STEP is the step's ID. Studio shows this state but has no
+   controls to resolve an incident, cancel a run, or retry it; use the CLI
+   commands below or the API. From the CLI, list the run's incidents:
 
-Each resolution persists actor, reason, kind, evidence, timestamp and receipt.
-Independent node/generation incidents preserve a run-wide suspension barrier.
-Outstanding authenticated results are durable facts, and continuations advance
-once only after the last blocking incident clears. An expired overall/wait deadline
-can terminate a suspended run; reconciliation cannot bypass it.
+    ```sh
+    # List the incidents of one run, active and closed.
+    weave runs incidents run-list RUN_ID --output json
+    ```
 
-Cancel takes `{"reason":"operator decision"}`. Repeated cancellation returns the
-cancelled snapshot without another event; another terminal state cannot be
-rewritten. Retry takes the normal `StartRunRequest` JSON and a required
-`Idempotency-Key`. The parent must be terminal. Current definition/release/connection
-admission is rechecked for the new execution. The parent's state, outputs and
-accepted events are unchanged. A linked retry is a new business execution; it
-uses new operation keys and may cause additional external effects.
+    Expected: a page whose `items` include the active incident with `id`,
+    `revision`, `node_id`, `generation`, `code`, and `"status": "active"`. Record
+    them. `weave runs incidents list` shows every incident in the environment.
 
-## CLI
+    The `code` says what happened:
 
-Provide `WEAVE_ENVIRONMENT_URL` with the full scoped environment URL and
-`WEAVE_ACCESS_TOKEN` through the environment. TLS is required outside loopback;
-HTTP redirects are rejected. Commands print JSON without printing bearer tokens.
-Use the [CLI login commands](cli.md#login-and-secure-persistence) for the current
-delegated authentication and secure persistence surface.
+    | `code` | What happened | Decisions that fit |
+    | --- | --- | --- |
+    | `WV-TASK-AMBIGUOUS` | An attempt of an Action that is not safe to repeat ended without a usable result, so its outcome is unknown | Check the other system, then `accept_reconciled_result` or `terminate` |
+    | `WV-TASK-RETRIES-EXHAUSTED` | A safe-to-repeat Action used every automatic attempt, or no time was left for another | Fix the cause, then `retry_safe` before the Action's deadline, or `terminate` |
+    | `WV-TASK-DEADLINE` | Nobody claimed the task before its deadline | Its time budget is spent, so another attempt cannot run: usually `terminate`, then check that an executor or worker is running and [start a linked retry](#start-a-new-run-from-a-finished-one) |
+    | `WV-TASK-FAILED` | The executor or worker reported a failure | `retry_safe` only when the side effect is safe to repeat; otherwise reconcile or `terminate` |
+
+    The Action's side effect decides what is safe. Studio shows it as **Side
+    effect**, under **What this action needs** in the **Call an action** step's
+    inspector, when connected; from the CLI, read
+    `spec.sideEffect` in `weave definitions export ACTION_VERSION_ID
+    --collection actions --output json`.
+
+2. **Understand which attempt is involved.** Read the run's
+   [history](history-and-replay.md) and the [worker recovery](../guides/workers.md)
+   rules to see which action and attempt are uncertain.
+
+3. **Check the external system.** Use that system's own authorized procedure.
+   Weave does not look up a payment, message, or database change for you.
+
+4. **Choose a decision:**
+
+    | Decision | Choose it when | Requirements |
+    | --- | --- | --- |
+    | `retry_safe` | The action is safe to repeat | Only for actions declared `read_only`, `idempotent`, or `idempotency_key` |
+    | `accept_reconciled_result` | Independent evidence shows the result | An `output` valid for the action's pinned output schema, and an `evidence_reference` |
+    | `terminate` | The run should stop | Nothing else |
+
+5. **Write the decision.** Generate a new UUID for `receipt_id`; reusing one
+   from another decision conflicts:
+
+    ```sh
+    # Generate a new receipt ID for this decision.
+    python3 -c 'import uuid; print(uuid.uuid4())'
+    ```
+
+    Save this as `resolution.json` with that UUID, your real evidence reference,
+    and the verified result in place of the output (`42` only fits an output
+    schema that accepts that number):
+
+    ```json
+    {
+      "receipt_id": "8947c9df-8766-4df1-963f-87acf8627edf",
+      "kind": "accept_reconciled_result",
+      "reason": "Provider lookup confirmed completion",
+      "evidence_reference": "provider:receipt:123",
+      "output": 42
+    }
+    ```
+
+6. **Submit it with the revision you just read:**
+
+    ```sh
+    # Resolve the incident; the revision guards against a concurrent decision.
+    weave runs incidents resolve INCIDENT_ID --revision REVISION --request resolution.json --output json
+    ```
+
+    Replace `REVISION` with the incident's `revision` from step 1.
+
+    Expected: the incident with `"status": "resolved"` and your `resolution`.
+
+7. **Read the incident and the run again.** The decision is audited, but another
+   active incident or a deadline may still block the run. If the response was
+   lost, resend the same receipt, body, and revision; if another decision won
+   (HTTP 409), read the incident again before deciding anything.
+
+## Cancel a run
+
+Cancellation stops scheduling and revokes leases at once. It cannot recall work
+already sent to an external system.
 
 ```sh
-weave incident list RUN_UUID
-weave incident resolve INCIDENT_UUID --revision 2 --request resolution.json
-weave run cancel RUN_UUID --reason 'operator decision'
-weave run retry RUN_UUID --idempotency-key retry-123 --request new-run.json
+# Write the audited reason, then cancel the run.
+printf '%s\n' '{"reason":"operator decision"}' > cancel.json
+weave runs cancel RUN_ID --request cancel.json --output json
 ```
+
+Expected: the cancelled run. Check `external_effects_may_continue` in the
+response: when `true`, work already issued may still finish elsewhere. Cancelling
+again returns the same cancelled snapshot without a new event; a run that already
+ended in another state cannot be rewritten.
+
+## Start a new run from a finished one
+
+A **retry** of a whole run creates a new execution with new operation keys. The
+original run, its outputs, and its history are unchanged.
+
+1. **Check that the original run has finished.** Retry needs a terminal parent.
+2. **Find the activation and the input.** Read the original run with
+   `weave runs read RUN_ID --output json`. Copy its `activation.id`, or a newer
+   activation's ID from `weave definitions activations list --output json`, and,
+   to repeat the same data, its `state.input`.
+3. **Write the start request.** Save this as `new-run.json`, replacing the
+   activation UUID and the input:
+
+    ```json
+    {"activation_id":"00000000-0000-4000-8000-000000000001","input":{}}
+    ```
+
+4. **Start it with an idempotency key:**
+
+    ```sh
+    # Start a new run linked to the finished one; the key makes a resend safe.
+    weave runs retry RUN_ID --idempotency-key retry-123 --request new-run.json --output json
+    ```
+
+    Expected: a new run whose `parent_run_id` is the original run. Reuse the same
+    key only to resend this exact request.
+
+The new run is checked against the current definition, release, and connection
+bindings, and **it may cause external effects again**.
+
+## Decisions and endpoints in detail
+
+All paths are under
+`/api/v1/tenants/{tenant}/projects/{project}/environments/{environment}`.
+Authorization uses your current scoped capabilities, even when a receipt is
+repeated. Platform administration alone grants no execution rights.
+
+| Request | CLI | Capability | Result |
+| --- | --- | --- | --- |
+| `GET /runs/{run}/incidents` | `weave runs incidents run-list` | `incident.read` | Incident views, including closed history |
+| `GET /incidents` | `weave runs incidents list` | `incident.read` | Incidents across the environment |
+| `POST /incidents/{incident}/resolve` | `weave runs incidents resolve` | `incident.resolve` | An immutable, revision-fenced resolution |
+| `POST /runs/{run}/cancel` | `weave runs cancel` | `run.cancel` | Terminal cancellation with the external-effects flag |
+| `POST /runs/{run}/retry` | `weave runs retry` | `run.retry` and normal start admission | A new run linked by `parent_run_id` |
+
+**Resolve requests.** Send `If-Match` with the positive revision from the read,
+and a JSON body with a UUID `receipt_id`, a `kind`, and a nonblank `reason` (at
+most 2,000 characters). Only `accept_reconciled_result` takes an `output`;
+`retry_safe` and `terminate` reject any `output`, even `null`. A reconciled output
+is checked against the 1 MiB payload limit before anything is stored. The same
+person resending the same request with the original revision gets the original
+receipt; a different request with that receipt ID conflicts; two competing
+receipts for one revision cannot both win. Authority is checked before a resend
+is honored, so removing a grant also stops resends.
+
+**`retry_safe`** may allow one attempt beyond the exhausted automatic budget, with
+the original operation key and the remaining original action and run deadlines.
+It neither resets the automatic budget nor extends a deadline. For an action whose
+side effect is not safe to repeat, it fails with HTTP 409
+`WV-RUNTIME-RECONCILIATION_REQUIRED`.
+
+**`accept_reconciled_result`** needs an explicit `output` and a nonblank evidence
+reference. An explicit `null` is valid only when the pinned output schema allows
+it. The output is validated against the exact pinned schema and dependency bundle;
+Weave performs no external lookup or effect itself.
+
+**`terminate`** cancels the run: scheduling stops and leases are revoked
+atomically. The response sets `external_effects_may_continue: true`. Authentic
+late completions for revoked generations may receive an immutable `ignored`
+receipt; they never advance the run.
+
+**Several incidents.** Each resolution stores the actor, reason, kind, evidence,
+time, and receipt. Independent incidents on different nodes or generations share a
+run-wide suspension barrier: authenticated results that arrive meanwhile are kept,
+and the run continues once, after the last blocking incident clears. An expired
+overall or wait deadline can still end a suspended run; reconciliation cannot
+bypass it.
+
+**Cancel and retry requests.** Cancel takes `{"reason": "..."}` (nonblank, at most
+2,000 characters). Retry takes a normal start request, `{activation_id, input}`
+with optional `correlation_key` and `business_key`, and requires an
+`Idempotency-Key` header.
+
+**Older operator commands.** `weave incident list RUN_ID`,
+`weave incident resolve INCIDENT_ID --revision N --request FILE`,
+`weave run cancel RUN_ID --reason TEXT`, and
+`weave run retry RUN_ID --idempotency-key KEY --request FILE` remain available.
+They do not use saved platforms: they need `--environment-url` (or
+`WEAVE_ENVIRONMENT_URL`) set to the full scoped environment URL and a
+`WEAVE_ACCESS_TOKEN`. They require TLS outside loopback, refuse redirects, and
+print JSON without the token.
 
 ## Forward migration and compatibility
 
-Revision `0010_incidents` adds scoped `incidents`, `incident_resolution_receipts`, and
-`run_retry_links` tables. The kernel and accepted events remain authoritative;
-projections synchronize in the same transaction. No public GET performs repair.
-Existing active incident map entries are backfilled with deterministic run/key identities and
-revision 1, preserving node/generation/code without fabricated actor/evidence.
-Legacy suspended summaries lacking that map become `@legacy`, with unknown
-node/generation, and support termination only. Previously closed incident history
-remains in immutable `run_events`; it is not falsely reconstructed as audited
-resolution rows. Existing run JSON and accepted event JSON are unchanged.
+This section is for administrators who apply database migrations.
 
-The migration identity must have its normal DDL/table privileges plus explicit
-catalog-only enumeration authority. Before the forward migration, the function
-owner or an administrator able to grant its privileges must execute:
+Revision `0010_incidents` adds the scoped `incidents`,
+`incident_resolution_receipts`, and `run_retry_links` tables. The kernel and its
+accepted events stay authoritative; the new tables are projections kept in sync
+in the same transaction, and no read repairs them.
+
+- Existing active incidents are backfilled with deterministic run and key
+  identities and revision 1, keeping node, generation, and code, with no invented
+  actor or evidence.
+- Older suspended runs without that information become `@legacy`, with unknown
+  node and generation, and support only termination.
+- Previously closed incidents stay in the immutable `run_events`; they are not
+  reconstructed as audited resolution rows. Existing run and event JSON is
+  unchanged.
+
+The migration identity needs its normal DDL and table privileges plus explicit
+catalog-only enumeration authority. Before migrating, the function owner, or an
+administrator who can grant its privileges, must run:
 
 ```sql
 GRANT EXECUTE ON FUNCTION public.weave_tenant_ids() TO your_migration_role;
 ```
 
-Do not grant this to the application role. The migration fails clearly without
-it, enumerates tenant IDs through the existing fixed-search-path SECURITY DEFINER
-function, and performs backfill under each tenant's forced RLS scope. It never
-changes role membership, membership options, RLS policies on business tables or
-the function's owner/PUBLIC privileges. The migration and backfill are transactional;
-no destructive downgrade or startup repair is provided. The new schema requires
-a server build compatible with the migrated schema. Follow the
-[upgrade procedure](../operations/upgrades.md) before changing the running version.
+Never grant this to the application role. Without it, the migration fails
+clearly. It lists tenant IDs through the existing fixed-search-path
+`SECURITY DEFINER` function and backfills under each tenant's forced row-level
+security. It never changes role membership, membership options, business-table
+policies, or the function's owner or `PUBLIC` privileges. Migration and backfill
+are transactional; there is no destructive downgrade or startup repair. Follow
+the [upgrade procedure](../operations/upgrades.md) before changing the running
+version.
 
-## Unavailable legacy evidence
+## Runs with unavailable legacy evidence
 
-Normal reads and mutation replay of uncertain legacy runs return HTTP409
-`WV-LEGACY-UNAVAILABLE`, safe run ID/status and omission metadata for `/state`.
-No fabricated redacted `RunState` is returned. New runs carry server-owned
-`admission_policy: classified-v1`; this is policy provenance, never caller
-identity or authorization. Pre-policy unmarked artifacts retain compatibility.
+Some runs created before the current admission policy cannot be shown safely.
 
-Current authorized cancellation remains possible: it replaces only the mutable
-execution snapshot with an explicitly `unavailable` terminal control state and
-uses the kernel's existing cancellation/revocation commands. The acknowledgment
-contains ID, cancelled status, accepted sequence, unavailable/omissions and
-`external_effects_may_continue`; it contains no activation/request/source/payload.
-Repeating cancellation returns that same safe acknowledgment. Terminal control
-does not parse or reconstruct legacy activation, request or artifact digest, so
-malformed retained metadata cannot prevent authorized cancellation. Immutable earlier
-history stays untouched, so replay reports incomplete evidence when its required
-facts are unavailable.
-An unavailable state cannot process any ordinary continuation or mappings.
+- **Reads.** Normal reads of such uncertain legacy runs return HTTP 409
+  `WV-LEGACY-UNAVAILABLE` with a safe run ID, status, and omission metadata for
+  `/state`; no fake redacted state is returned. New runs carry the server-owned
+  `admission_policy: classified-v1`, which records policy provenance, never caller
+  identity or authorization. Older unmarked artifacts stay compatible.
+- **Cancellation still works.** It replaces only the mutable execution snapshot
+  with an explicit `unavailable` terminal state, using the kernel's existing
+  cancellation and revocation. The acknowledgment contains the ID, the cancelled
+  status, the accepted sequence, the unavailable omissions, and
+  `external_effects_may_continue`, and no activation, request, source, or
+  payload. Repeating it returns the same acknowledgment. Cancellation never parses
+  legacy activation, request, or artifact metadata, so malformed data cannot block
+  it. Earlier history stays untouched, so replay reports incomplete evidence. An
+  unavailable state cannot continue normally.
+- **Deadlines still apply.** Persisted overall timeouts stay enforceable using
+  database time and their issued deadline. Structurally verified signal deadlines
+  can also end the run when no receipt was accepted strictly before them; an
+  earlier receipt never causes unsafe continuation. A bounded structural check
+  records `terminal_signals_verified`. Unverifiable artifacts support only overall
+  timeout and cancellation. External effects may continue after these controls,
+  and no historical payload is migrated or deleted.
+- **Every access re-checks the artifact.** The pinned artifact is validated
+  against the current structural and classification policy before the provenance
+  marker is trusted, so the marker cannot bypass corrected admission rules.
+  Invalid retained artifacts follow the unavailable, policy-block, and safe
+  terminal-control paths even when an earlier build marked them.
 
-Persisted overall timeouts remain enforceable using DB time and their issued
-deadline. Structurally verified pinned signal deadlines can also terminate when
-no receipt was accepted strictly before the deadline; an earlier receipt never
-causes unsafe continuation. A bounded structural check supplies immutable
-`terminal_signals_verified` metadata. Unverifiable artifacts support overall
-timeout and cancellation only. Existing external effects may continue after
-these cooperative controls. No historic payload migration/deletion is performed.
+## Next steps
 
-Every availability gate revalidates the pinned artifact against the current
-bounded structural and classification policy before trusting the server-owned
-provenance marker. The marker cannot bypass corrected literal-admission rules.
-This adds bounded artifact validation per access; no cache or history rewrite is
-introduced. Invalid retained artifacts follow the existing unavailable, policy
-block and safe terminal-control paths even when an earlier build stamped them.
+- [Recorded history and offline replay](history-and-replay.md): read what
+  happened before you decide.
+- [Implement and operate a worker](../guides/workers.md): leases, attempts, and
+  why an outcome can be uncertain.
+- [Manage executions and business cases](../guides/execution-management.md):
+  pause, resume, archive, and purge runs.
+- [Troubleshooting](../operations/troubleshooting.md): locate the failing stage
+  first.
+
+## Troubleshooting
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` was used for an action that is not safe to repeat, the incident is not tied to an action (only `terminate` works), or a reconciled result lacks `output` or `evidence_reference` | Reconcile externally and use `accept_reconciled_result` with both fields, or `terminate` |
+| HTTP 409 `WV-INCIDENT-REVISION` | Another decision changed the incident since you read it | Read the incident again; decide only if it is still active |
+| HTTP 409 `WV-RUNTIME-STATE` | The incident is no longer active, or no failed task matches it | Read the run and its incidents again |
+| HTTP 409 `WV-RUNTIME-DEADLINE` on `retry_safe` | The action's original deadline has passed | Use `terminate`, then start a linked retry of the whole run |
+| HTTP 422 `WV-RUNTIME-OUTPUT` | The reconciled `output` does not match the action's pinned output schema or exceeds the payload limit, or an `output` was sent with `retry_safe` or `terminate` | Fix the output to match that schema; leave `output` out for the other decisions |
+| HTTP 409 `WV-INCIDENT-RECEIPT-CONFLICT` | You reused a `receipt_id` with a different body or revision, or another person used it | Resend the original request unchanged, or generate a new `receipt_id` for a new decision |
+| The run stays suspended after a resolution | Another incident is still active, or a deadline applies | List the run's incidents again and resolve each active one |
+| `retry` is rejected, for example with HTTP 409 `WV-RUNTIME-STATE` | The parent run has not finished, or the start request is invalid | Wait for the run to finish, or cancel it first; check the input |
+| `external_effects_may_continue: true` after cancel | Work was already sent to another system | Check that system and compensate there if needed |
+| HTTP 409 `WV-LEGACY-UNAVAILABLE` | An older run's state cannot be shown safely | Cancel it if needed; replay reports its evidence as incomplete |

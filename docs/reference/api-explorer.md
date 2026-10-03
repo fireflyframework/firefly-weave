@@ -18,15 +18,31 @@ SPDX-License-Identifier: Apache-2.0
 
 # Full API reference
 
-Browse every operation and its request, response, error, header, authentication,
-and schema contract. This page is read-only. Use the
-[API playground](../guides/api-playground.md) to try a request against your own
-running Weave installation.
+Look up any HTTP operation of the Weave platform: its path, parameters,
+security, request body, responses, headers, and the schemas they use. This page
+is for integration developers who already know which operation they need. It is
+read-only: nothing here sends a request.
 
-The published documentation expands the complete reference below during its build.
-If you are reading this Markdown on GitHub, open the
+**New to the API?** Start with [Use the HTTP API](api.md). It explains the
+tenant, project, and environment IDs in every path, how to get an access token,
+and walks you through a first read-only request. To send requests from your
+browser, use your installation's [API playground](../guides/api-playground.md).
+
+**How to find what you need.** Operations are grouped by area, such as
+**Compiler**, **Runs**, or **Human Tasks**. Open one to see:
+
+- its method, path, and operation ID, such as `compiler.compile`; the same IDs
+  appear in the [operation inventory](api.md#operation-inventory), the
+  [CLI](cli.md) help, and the [native OpenAPI export](native-openapi.md);
+- a **Required capability** line: the grant your identity needs in that scope
+  (public endpoints, such as health and published sign-in settings, need none);
+- the complete contract as JSON, with every schema reference linked to its
+  definition under **Schemas** at the end of the page.
+
+The published documentation builds this reference from the same contract as the
+running API, so it matches the release the site describes. If you are reading
+this Markdown on GitHub, the list below is empty: open the
 [published API reference](https://fireflyframework.github.io/firefly-weave/reference/api-explorer/)
 or [export the same OpenAPI document locally](native-openapi.md).
-The [operation inventory](api.md) gives a compact overview of required capabilities.
 
 <!-- WEAVE_API_REFERENCE -->

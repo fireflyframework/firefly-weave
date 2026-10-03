@@ -19,70 +19,72 @@ SPDX-License-Identifier: Apache-2.0
 
 
 
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1737" viewBox="0 0 960 1737" role="img" aria-labelledby="title desc">
-<title id="title">Keep the HTTP operation fixed; fill in values</title><desc id="desc">HTTP profile v2 separates deployment policy, reusable operation contracts, and per-run input. READ DOWN  •  Each arrow carries the result into the next step</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1766" viewBox="0 0 960 1766" role="img" aria-labelledby="title desc">
+<title id="title">Keep the HTTP operation fixed; fill in values</title><desc id="desc">Five steps read top to bottom for an Action on the built-in weave-http@2.0.0 connector. 1, the connection fixes the HTTPS origin, the authentication kind, secret handles by slot and the allowed destinations; the operator controls network policy, and endpoint and credentials stay outside input. 2, the published Action fixes the method, path template, parameters and statuses; the method sets the side effect and a write is never retried; schemas, byte limits and timeout are pinned; Studio and the CLI check it offline and publishing runs the checks again. 3, input fills only the declared path, query, header and JSON body values and cannot replace the origin, authentication or accepted statuses. 4, the native executor validates the input, checks authority, resolves scoped credentials, checks authority again, validates DNS, peer and TLS, and applies one deadline, with no redirects or hidden retries. 5, success returns only the status and the JSON body, or null for a declared empty status; a write whose answer is lost has an unknown outcome to inspect and reconcile before acting again.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1637" rx="24" fill="#FAFCFB"/>
+<rect width="960" height="1666" rx="24" fill="#FAFCFB"/>
 <rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
 <text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Keep the HTTP operation fixed; fill in values</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">HTTP profile v2 separates deployment policy, reusable operation contracts,</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">and per-run input.</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">The built-in weave-http@2.0.0 connector keeps connection policy, the</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">reviewed Action, and per-run input separate.</text>
 <rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
 <text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
 <rect x="40" y="232" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
 <g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="19" r="12"/><path d="m27 28 22 22 M36 37l7-7 M43 44l7-7"/></g>
 <text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Bind the connection</text>
-<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Pin HTTPS origin, authentication kind, exact secret slots, and</text>
-<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">allowed destinations.</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Fix the HTTPS origin, the authentication kind, secret handles</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">by slot, and the allowed destinations.</text>
 <text x="168" y="372" font-size="22" font-weight="400" fill="#173D34">The operator controls network policy.</text>
-<text x="168" y="401" font-size="18" font-weight="600" fill="#326B88">CONNECTION • Endpoint and credentials stay outside input</text>
+<text x="168" y="401" font-size="18" font-weight="600" fill="#367D68">CONNECTION • Endpoint and credentials stay outside input</text>
 <path class="edge" d="M480 423v35"/>
-<rect x="40" y="471" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="40" y="471" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="488" width="90" height="90" rx="20" fill="#EEF4F0"/>
 <g transform="translate(73 503) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
 <text x="168" y="514" font-size="25" font-weight="700" fill="#173D34">2. Publish the reviewed Action</text>
-<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">Fix method, relative path template, parameter declarations,</text>
-<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">effect policy, and success/empty statuses.</text>
+<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">Fix the method, path template, parameters, and statuses.</text>
+<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">The method sets the side effect; a write is never retried.</text>
 <text x="168" y="611" font-size="22" font-weight="400" fill="#173D34">Pin schemas, byte limits, and timeout.</text>
-<text x="168" y="640" font-size="18" font-weight="600" fill="#326B88">ACTION • The workflow cannot change this policy</text>
-<path class="edge" d="M480 662v35"/>
-<rect x="40" y="710" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="727" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 742) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
-<text x="168" y="753" font-size="25" font-weight="700" fill="#173D34">3. Supply only declared values</text>
-<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">Input may fill declared path, query, headers, and JSON body.</text>
-<text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">It cannot replace the origin, authentication, or</text>
-<text x="168" y="850" font-size="22" font-weight="400" fill="#173D34">accepted-status policy.</text>
-<text x="168" y="879" font-size="18" font-weight="600" fill="#326B88">INPUT • Values fit the published contract</text>
-<path class="edge" d="M480 901v35"/>
-<rect x="40" y="949" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="966" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 981) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
-<text x="168" y="992" font-size="25" font-weight="700" fill="#173D34">4. Make one bounded native request</text>
-<text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">Validate; check authority; resolve scoped credentials; check</text>
-<text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">authority again.</text>
-<text x="168" y="1089" font-size="22" font-weight="400" fill="#173D34">Validate DNS, peer, and TLS. The deadline includes</text>
-<text x="168" y="1118" font-size="22" font-weight="400" fill="#173D34">acquisition, I/O, and response processing.</text>
-<text x="168" y="1147" font-size="18" font-weight="600" fill="#326B88">TRANSPORT • No redirects or hidden retries in v2</text>
-<path class="edge" d="M480 1169v35"/>
-<rect x="40" y="1217" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="1234" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1249) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
-<text x="168" y="1260" font-size="25" font-weight="700" fill="#173D34">5. Validate success or record uncertainty</text>
-<text x="168" y="1299" font-size="22" font-weight="400" fill="#173D34">Success contains only status and JSON body, or declared empty</text>
-<text x="168" y="1328" font-size="22" font-weight="400" fill="#173D34">null.</text>
-<text x="168" y="1357" font-size="22" font-weight="400" fill="#173D34">A write with an uncertain acknowledgment needs incident</text>
-<text x="168" y="1386" font-size="22" font-weight="400" fill="#173D34">inspection and reconciliation.</text>
-<text x="168" y="1415" font-size="18" font-weight="600" fill="#326B88">OUTCOME • Do not treat unknown delivery as safe retry</text>
-<rect x="40" y="1457" width="880" height="136" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1477) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1501" font-size="23" font-weight="700" fill="#326B88">Keep policy and data separate</text>
-<text x="60" y="1540" font-size="21" font-weight="400" fill="#173D34">The native executor enforces the pinned operation. A workflow supplies</text>
-<text x="60" y="1569" font-size="21" font-weight="400" fill="#173D34">declared values within that boundary.</text><g id="lumi-takeaway">
-<rect x="0" y="1643" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<g transform="translate(22 1654) scale(.25)"><defs>
+<text x="168" y="640" font-size="22" font-weight="400" fill="#173D34">Studio and the CLI check it offline; publishing checks again.</text>
+<text x="168" y="669" font-size="18" font-weight="600" fill="#367D68">ACTION • The workflow cannot change this policy</text>
+<path class="edge" d="M480 691v35"/>
+<rect x="40" y="739" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="756" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 771) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
+<text x="168" y="782" font-size="25" font-weight="700" fill="#173D34">3. Supply only declared values</text>
+<text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">Input may fill declared path, query, headers, and JSON body.</text>
+<text x="168" y="850" font-size="22" font-weight="400" fill="#173D34">It cannot replace the origin, authentication, or</text>
+<text x="168" y="879" font-size="22" font-weight="400" fill="#173D34">accepted-status policy.</text>
+<text x="168" y="908" font-size="18" font-weight="600" fill="#367D68">INPUT • Values fit the published contract</text>
+<path class="edge" d="M480 930v35"/>
+<rect x="40" y="978" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="995" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 1010) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="168" y="1021" font-size="25" font-weight="700" fill="#173D34">4. Make one bounded native request</text>
+<text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">Validate the input, check authority, resolve scoped</text>
+<text x="168" y="1089" font-size="22" font-weight="400" fill="#173D34">credentials, then check authority again.</text>
+<text x="168" y="1118" font-size="22" font-weight="400" fill="#173D34">Validate DNS, peer, and TLS. One deadline covers</text>
+<text x="168" y="1147" font-size="22" font-weight="400" fill="#173D34">connecting, sending, and processing the response.</text>
+<text x="168" y="1176" font-size="18" font-weight="600" fill="#367D68">TRANSPORT • No redirects or hidden retries in v2</text>
+<path class="edge" d="M480 1198v35"/>
+<rect x="40" y="1246" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<rect x="56" y="1263" width="90" height="90" rx="20" fill="#EEF4F0"/>
+<g transform="translate(73 1278) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
+<text x="168" y="1289" font-size="25" font-weight="700" fill="#173D34">5. Validate success or record uncertainty</text>
+<text x="168" y="1328" font-size="22" font-weight="400" fill="#173D34">Success returns only the status and the JSON body,</text>
+<text x="168" y="1357" font-size="22" font-weight="400" fill="#173D34">or null for a declared empty status.</text>
+<text x="168" y="1386" font-size="22" font-weight="400" fill="#173D34">A write whose answer is lost has an unknown outcome:</text>
+<text x="168" y="1415" font-size="22" font-weight="400" fill="#173D34">inspect the incident and reconcile before acting again.</text>
+<text x="168" y="1444" font-size="18" font-weight="600" fill="#367D68">OUTCOME • Do not treat unknown delivery as safe retry</text>
+<rect x="40" y="1486" width="880" height="136" rx="16" fill="#FFF7E5"/>
+<g transform="translate(59 1506) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1530" font-size="23" font-weight="700" fill="#367D68">Keep policy and data separate</text>
+<text x="60" y="1569" font-size="21" font-weight="400" fill="#173D34">The native executor enforces the pinned operation. A workflow supplies</text>
+<text x="60" y="1598" font-size="21" font-weight="400" fill="#173D34">declared values within that boundary.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="1672" width="960" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1683) scale(.25)"><defs>
   <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
     <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
     <stop offset="1" stop-color="#102E28"/>
@@ -128,7 +130,7 @@ SPDX-License-Identifier: Apache-2.0
     <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
   </g>
 </g></g>
-<text x="110" y="1672" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
-<text x="110" y="1703" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Keep deployment policy fixed and pass only the permitted per-run values.</text>
+<text x="110" y="1701" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1732" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Keep deployment policy fixed and pass only the permitted per-run values.</text>
 </g>
 </svg>

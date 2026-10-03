@@ -1,0 +1,139 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1436" viewBox="0 0 1120 1436" role="img" aria-labelledby="title desc">
+<title id="title">Connect, sign in, and choose a workspace</title>
+<desc id="desc">A sequence between your computer, the Weave API, and the identity provider. 1: you enter the server address, which becomes an exact HTTPS origin. 2: the CLI or Studio host reads GET /api/v1/client-configuration, a public document with the issuer, login client, scopes, and allowed sign-in flows (browser, device) but no secrets. 3: OIDC discovery runs at the exact issuer and every endpoint must stay on a reviewed origin. 4: you review the identity provider once and the saved platform pins it. 5: you sign in with a browser using PKCE and a loopback callback on a free port, or with a code on another device, and receive access and refresh tokens. 6: tokens go to the system credential store (or a private file you choose), never to profiles.json. 7: GET /api/v1/identity returns your identity and authorized workspaces; the CLI or Studio reports WV-AUTH-NOT-LINKED when the platform does not know your account yet, and WV-AUTH-NO-ACCESS when no workspace is granted. 8: you pick a workspace and the platform is saved in profiles.json, shared by the CLI, Studio, and the desktop app. Access tokens renew with a rotated refresh token, and an unreachable provider leaves the stored sign-in in place (WV-AUTH-OFFLINE); signing out deletes local tokens and asks the provider to revoke them, and the saved platform stays until you remove it.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.b{font-size:20px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.lbl{font-size:17px}.w{fill:#FFFFFF}.wm{fill:#CEE4D8}.n{font-size:17px;font-weight:700;fill:#FFFFFF}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.ret{fill:none;stroke:#367D68;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.life{fill:none;stroke:#A8C8B9;stroke-width:2;stroke-dasharray:6 6}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.iconw{fill:none;stroke:#FFFFFF;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.halo{paint-order:stroke;stroke:#EEF4F0;stroke-width:7px;stroke-linejoin:round}</style>
+<rect width="1120" height="1326" rx="24" fill="#EEF4F0"/>
+<text class="title" x="40" y="55">Connect, sign in, and choose a workspace</text>
+<text class="p" x="40" y="90">The same steps run for weave auth setup and for Studio’s Connect to a platform.</text>
+<rect x="40" y="118" width="360" height="72" rx="14" fill="#173D34"/>
+<text class="h w" x="62" y="150">Your computer</text>
+<text class="small wm" x="62" y="177">The CLI, or the local Studio host</text>
+<rect x="455" y="118" width="290" height="72" rx="14" fill="white"/>
+<text class="h" x="477" y="150">Weave API</text>
+<text class="small" x="477" y="177">The address you enter</text>
+<rect x="790" y="118" width="290" height="72" rx="14" fill="white"/>
+<text class="h" x="812" y="150">Identity provider</text>
+<text class="small" x="812" y="177">The issuer you review</text>
+<path class="life" d="M600 190V422M600 448V474M600 500V628M600 654V672M600 736V994"/><path class="life" d="M930 190V752"/>
+<rect x="40" y="210" width="500" height="92" rx="14" fill="white"/>
+<circle cx="68" cy="239" r="15" fill="#367D68"/><text class="n" x="68" y="245" text-anchor="middle">1</text>
+<text class="b" x="96" y="246">Enter the server address</text>
+<text class="small" x="62" y="276">weave.example.com becomes https://weave.example.com</text>
+<path class="arrow" d="M220 356H596"/><circle cx="246" cy="330" r="15" fill="#367D68"/><text class="n" x="246" y="336" text-anchor="middle">2</text><text class="lbl halo" x="270" y="336">GET /api/v1/client-configuration</text>
+<path class="ret" d="M600 398H224"/><text class="lbl halo" x="240" y="388">Public sign-in settings</text>
+<rect x="622" y="318" width="290" height="92" rx="12" fill="#FFF7E5"/>
+<text class="lbl" x="640" y="346">Issuer, login client, scopes,</text>
+<text class="lbl" x="640" y="372">and sign-in flows. No token</text>
+<text class="lbl" x="640" y="398">needed; no secrets inside.</text>
+<path class="arrow" d="M220 458H926"/><circle cx="246" cy="432" r="15" fill="#367D68"/><text class="n" x="246" y="438" text-anchor="middle">3</text><text class="lbl halo" x="270" y="438">OIDC discovery at {issuer}/.well-known/openid-configuration</text>
+<path class="ret" d="M930 500H224"/><text class="lbl halo" x="240" y="490">The issuer must match exactly; endpoints stay on reviewed origins</text>
+<rect x="40" y="520" width="500" height="92" rx="14" fill="white"/>
+<circle cx="68" cy="549" r="15" fill="#367D68"/><text class="n" x="68" y="555" text-anchor="middle">4</text>
+<text class="b" x="96" y="556">Review and trust once</text>
+<text class="small" x="62" y="586">Confirm the issuer; the saved platform pins it.</text>
+<path class="arrow" d="M220 672H926"/><circle cx="246" cy="646" r="15" fill="#367D68"/><text class="n" x="246" y="652" text-anchor="middle">5</text><text class="lbl halo" x="270" y="652">Sign in: a browser with PKCE (S256), or a code on another device</text>
+<text class="small halo" x="270" y="698">Browser callback: http://127.0.0.1:&lt;free port&gt;/callback</text>
+<path class="ret" d="M930 742H224"/><text class="lbl halo" x="240" y="732">Access token and refresh token</text>
+<rect x="40" y="766" width="500" height="118" rx="14" fill="white"/>
+<circle cx="68" cy="795" r="15" fill="#367D68"/><text class="n" x="68" y="801" text-anchor="middle">6</text>
+<text class="b" x="96" y="802">Store the tokens securely</text>
+<text class="small" x="62" y="832">System credential store by default, or a private</text>
+<text class="small" x="62" y="858">file you choose. Never in profiles.json.</text>
+<rect x="622" y="766" width="458" height="118" rx="12" fill="#FFF7E5"/>
+<text class="b" x="642" y="798">System credential stores</text>
+<text class="lbl" x="642" y="826">macOS Keychain · Windows Credential Locker</text>
+<text class="lbl" x="642" y="852">Linux Secret Service or KWallet</text>
+<text class="lbl" x="642" y="876">Service name: firefly-weave</text>
+<path class="arrow" d="M220 940H596"/><circle cx="246" cy="914" r="15" fill="#367D68"/><text class="n" x="246" y="920" text-anchor="middle">7</text><text class="lbl halo" x="270" y="920">GET /api/v1/identity (bearer token)</text>
+<path class="ret" d="M600 982H224"/><text class="lbl halo" x="240" y="972">Identity and authorized workspaces</text>
+<rect x="622" y="908" width="458" height="94" rx="12" fill="white"/>
+<text class="b" x="642" y="938">When the platform says no</text>
+<text class="lbl" x="642" y="964">Not linked yet: WV-AUTH-NOT-LINKED</text>
+<text class="lbl" x="642" y="990">No workspace granted: WV-AUTH-NO-ACCESS</text>
+<rect x="40" y="1004" width="500" height="118" rx="14" fill="white"/>
+<circle cx="68" cy="1033" r="15" fill="#367D68"/><text class="n" x="68" y="1039" text-anchor="middle">8</text>
+<text class="b" x="96" y="1040">Pick a workspace and save</text>
+<text class="small" x="62" y="1070">profiles.json: server, pinned sign-in, workspace.</text>
+<text class="small" x="62" y="1096">Shared by the CLI, Studio, and the desktop app.</text>
+<rect x="40" y="1146" width="510" height="160" rx="16" fill="white"/>
+<text class="h" x="64" y="1182">Stay signed in</text>
+<text class="small" x="64" y="1212">The access token renews with the refresh token</text>
+<text class="small" x="64" y="1238">shortly before it expires; rotation is required</text>
+<text class="small" x="64" y="1264">by default. If the provider cannot be reached,</text>
+<text class="small" x="64" y="1290">you stay signed in and see WV-AUTH-OFFLINE.</text>
+<rect x="570" y="1146" width="510" height="160" rx="16" fill="#173D34"/>
+<text class="h w" x="594" y="1182">Sign out</text>
+<text class="small wm" x="594" y="1212">weave auth logout or Studio’s Sign out deletes</text>
+<text class="small wm" x="594" y="1238">the local tokens and asks the provider to revoke</text>
+<text class="small wm" x="594" y="1264">the sign-in. The saved platform stays until you</text>
+<text class="small wm" x="594" y="1290">remove it in Studio or with weave auth remove.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="1338" width="1120" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1349) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1367" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1398" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">The saved platform holds no secrets. Tokens stay in the credential store you chose.</text>
+</g>
+</svg>

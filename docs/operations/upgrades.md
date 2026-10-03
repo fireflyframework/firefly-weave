@@ -16,191 +16,282 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Upgrades and compatibility
+# Upgrade a platform safely
 
-Weave uses explicit forward migrations and checks persisted requirements before
-admitting effect-producing work. Starting an API never migrates its database.
-The published alpha4 package expects `0021_operations`. Alpha5 introduced
-`0025_run_lifecycle`, adding human tasks, email, run filters, and execution
-lifecycle state. Alpha6 retains that same schema revision; its macOS packaging
-correction introduces no new database migration. Both Alembic's revision and Weave's schema sentinel
-must match the installed artifact. Installing Studio does not migrate a platform.
+Use this page to move a running Weave platform to a new server artifact: migrate
+its database, check that retained work is still supported, and reopen traffic
+only after a real run succeeds. It is written for operators. You need a
+maintenance window, a verified recovery copy of the database, explicit migration
+credentials, and the exact new artifact. Plan for the downtime of your slowest
+step, usually the backup.
+
+**Starting an API never migrates its database.** Weave uses explicit forward
+migrations, and it checks persisted requirements before it admits
+effect-producing work. Both Alembic's revision and Weave's own schema marker
+must match the installed artifact. Installing or upgrading the CLI, Studio, or
+the desktop app never migrates a platform.
+
+| Version | Schema revision | What the upgrade involves |
+| --- | --- | --- |
+| alpha4 | `0021_operations` | Earlier baseline |
+| alpha5 | `0025_run_lifecycle` | New migrations for human tasks, email, run filters, and execution lifecycle state |
+| alpha6 | `0025_run_lifecycle` | macOS packaging correction; no new migration |
+| alpha7 | `0025_run_lifecycle` | No new migration; adds optional server settings for [published sign-in](#after-the-upgrade-clients-and-sign-in) and the executor `build` field, whose default `image` keeps existing executor configuration valid |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
-Read the three gates from top to bottom. Each left card states what to verify; its right card explains what to do on failure. A completed migration passes only the first gate. Retained requirements and an actual authorized run still need evidence before writers are deliberately reenabled.
+Read the three gates from top to bottom. Each left card says what to verify; the
+card on its right says what to do when it fails. A completed migration passes
+only the first gate: retained requirements and a real authorized run still need
+evidence before you reopen writers.
 
 [Open diagram at full size](../diagrams/operations-upgrade.svg)
 
+### A local platform has no in-place upgrade
+
+**A local platform from `weave platform` has no in-place upgrade.** It records
+the CLI version and the checkout that created it. Every `weave platform`
+command refuses another version with `Use this installation's original
+directory and matching CLI version.`, and a modified checkout with `The source
+checkout has changed. Restore its original content before resuming this
+installation.` Keep using the CLI and checkout that created it, or clone the new
+release into a new directory and run `weave platform setup` there. That creates
+a separate installation with its own data. The rest of this page applies to the
+[manual local installation](../guides/standalone.md) and to deployments.
+
 ## Understand the upgrade boundary
 
-An upgrade has three independent checks: the new artifact can read the database
-schema, its installed capabilities satisfy retained execution requirements, and
-real work can run successfully after restart. A completed migration proves only
-the first of these. Workflows may still reference an older admitted worker release
-or connector version that the new deployment must continue to support.
+An upgrade has three independent checks:
 
-Use a maintenance window for this procedure. The local walkthrough can rehearse
-these steps, but its guarded restore helper is not a production backup system.
-For production, use a verified environment-specific backup/restore procedure and
-account for external effects that happened after the backup.
+1. **Schema.** The new artifact can read the database schema.
+2. **Retained requirements.** Its installed capabilities satisfy every retained
+   execution requirement. Workflows may still reference an older admitted worker
+   release or connector version that the new deployment must keep supporting.
+3. **Execution.** Real work runs successfully after the restart.
+
+A completed migration proves only the first. Use a maintenance window for the
+whole procedure. The local walkthrough can rehearse these steps, but its guarded
+restore helper is not a production backup system. For production, use a verified
+environment-specific backup and restore procedure, and account for external
+effects that happened after the backup.
 
 ## Prepare the upgrade
 
-1. Record the running wheel hash, dependency lock, image identities, schema
-   revision, and private configuration locations. Keep the previous artifact.
-2. Inventory every writer: APIs with schedulers, native executors, remote workers,
-   provider dispatchers, broker consumers, and outbox dispatchers. Stop admission
-   and fence those writers before database maintenance.
-3. For the owned local installation, follow [backup and restore](backup-restore.md)
-   to create and verify a recoverable copy. For other deployments, use the
+1. **Record what runs today.** Note the running wheel hash, dependency lock,
+   image identities, schema revision, and private configuration locations. Keep
+   the previous artifact.
+2. **Stop every writer.** Inventory APIs with schedulers, native executors,
+   remote workers, provider dispatchers, broker consumers, and outbox
+   dispatchers. Stop admission and fence them before database maintenance. For
+   the manual local installation, follow
+   [step 1 of backup and restore](backup-restore.md#1-stop-and-fence-all-source-writers);
+   on Kubernetes, [maintain the deployment deliberately](kubernetes.md#8-maintain-the-deployment-deliberately).
+3. **Make a recoverable copy.** For the owned standalone installation, follow
+   [backup and restore](backup-restore.md). For other deployments, use the
    environment-specific verified recovery procedure. Preserve the source database
    and external effect receipts.
-4. Install the selected exact artifact in a separate environment and rehearse the
-   migration against a restored copy. Use the same connector packages and
-   operational policy intended for the target deployment.
-5. Provide explicit migration authority. Runtime application and scheduler
-   credentials are separate nonowner identities; they cannot replace migration
-   authority. The operations migration provisions narrowly privileged function
-   ownership and rejects an unrecognized or privileged existing owner role.
+4. **Rehearse.** Install the exact new artifact in a separate environment and
+   rehearse the migration against a restored copy, with the same connector
+   packages and operational policy as the target deployment.
+5. **Provide explicit migration authority.** Runtime application and scheduler
+   credentials are separate nonowner identities and cannot replace it. The
+   operations migration provisions narrowly privileged function ownership and
+   rejects an unrecognized or privileged existing owner role.
 
-Do not run mixed schema versions against the same mutable database during this
-procedure. The server performs exact schema checks, not rolling schema negotiation.
+Never run mixed schema versions against the same mutable database. The server
+performs exact schema checks, not rolling schema negotiation.
 
 ## Apply packaged migrations
 
-Run this stage in the operator terminal while writers are stopped. Select the
-new installed interpreter, not whichever `python` or source checkout happens to
-be on `PATH`. On a restored local rehearsal, the target URLs are in that attempt's
+Run this stage in the operator terminal while writers are stopped. Select the new
+installed interpreter, not whichever `python` or source checkout happens to be on
+`PATH`. On a restored local rehearsal, the target URLs are in that attempt's
 `target.env`; the original `runtime.env` still refers to the fenced source.
-Confirm which database you selected before invoking the migration.
+Confirm which database you selected before you migrate.
 
-Load the migration URL from protected deployment configuration. Do not print it or
-pass it to runtime containers. Invoke the selected installed environment:
+Load `WEAVE_MIGRATION_DATABASE_URL` from protected deployment configuration;
+never print it or pass it to runtime containers. Then run:
 
 ```sh
+# Apply the packaged migrations with the new artifact's own interpreter.
 "$WEAVE_PYTHON" -I -m firefly_weave.persistence.migrations
 ```
 
-`WEAVE_PYTHON` is the Python executable in that installed environment.
-`WEAVE_MIGRATION_DATABASE_URL` must be present for this command. If you lower
-operational quotas at initial migration, supply the same
-`WEAVE_OPERATIONS_POLICY` JSON to migration and runtime processes. The command
-prints `Weave schema is current` only after checking both schema markers.
+Expected: `Weave schema is current`, printed only after both schema markers were
+checked. `WEAVE_PYTHON` is the Python executable of the new installed
+environment; `"$WEAVE_PYTHON" -I -m firefly_weave.cli.main admin migrate` runs
+the same migration. Without `WEAVE_MIGRATION_DATABASE_URL`, or on any failure,
+the command stops with `Migration failed; verify PostgreSQL connectivity and
+schema compatibility`.
 
-Migrations use a transaction and serialize explicit migration invocations.
-Failure must be investigated against the retained database and protected logs;
-do not change version rows to bypass a failed migration. Destructive downgrades
-are unsupported. Returning to an older runtime requires a compatible separately
-restored database and reconciliation of any external effects since its backup.
+If you lower operational quotas at the initial migration, supply the same
+`WEAVE_OPERATIONS_POLICY` JSON to the migration and to every runtime process.
 
-Operational policy has a persisted fingerprint. Every replica must use the same
-policy as the database. Rerunning an already-current migration is not a policy
-update command. This release does not expose an in-place policy-change operation;
-a configuration mismatch leaves the runtime restricted. Do not manually rewrite
-the fingerprint or counters to force readiness.
+**Migrations are transactional and serialized.** Investigate a failure against
+the retained database and protected logs; never change version rows to bypass
+it. Destructive downgrades are unsupported. Returning to an older runtime needs a
+compatible, separately restored database and reconciliation of any external
+effects since its backup.
+
+**The operational policy has a persisted fingerprint.** Every replica must use
+the same policy as the database. Rerunning an already-current migration is not a
+policy update, and this release has no in-place policy-change operation: a
+mismatch leaves the runtime restricted. Never rewrite the fingerprint or counters
+by hand to force readiness.
 
 ## Start and inspect compatibility
 
-Remove migration credentials from the runtime environment and start the selected
-artifact with its application and execute-only catalog/scheduler identities.
-Startup inventory still requires catalog authority when
+Remove the migration credentials from the runtime environment, then start the
+new artifact with its application and execute-only catalog and scheduler
+identities. The startup inventory needs catalog authority even when
 `WEAVE_SCHEDULER_ENABLED=false`.
-The two URLs must name the same driver, host, port, database, and query options;
-only their credentials differ. Use the same host spelling for both URLs, even
-when multiple DNS aliases resolve to the same server. The catalog login must
-retain its execute-only scheduler authority, without business-table or column
-grants.
+
+**The application and catalog URLs must name the same database.** They need the
+same driver, host, port, database, and query options; only their credentials
+differ. Use the same host spelling in both, even when several DNS aliases reach
+the same server. The catalog login keeps its execute-only scheduler authority,
+without business-table or column grants.
 
 Compatibility checks examine retained runs, activations, worker releases,
-connector requirements, provider requirements, and operational policy. Exact
-persisted versions and pins matter; an online worker is not a substitute for a
-compatible admitted release. Missing authority or an incomplete inventory does
-not count as a successful check.
+connector requirements, provider requirements, and the operational policy. Exact
+persisted versions and pins matter: an online worker is not a substitute for a
+compatible admitted release. Missing authority or an incomplete inventory never
+counts as a successful check.
 
-Reading the report requires project-scoped `status.read` authority. Requesting a
-new scan additionally requires `compatibility.check`:
+**Read the report from the CLI.** Compatibility is a project-level operation, so
+it uses the tenant and project of your [saved platform's](../guides/connect-to-api.md)
+workspace and ignores the environment. Reading needs `status.read` (the `viewer`
+role) and a fresh scan needs `compatibility.check` (the `operator` role), granted
+on the project or tenant; an environment-level grant does not cover them. The
+`viewer` and `operator` grants that `weave platform user` and the first-run
+helper create are on the environment, so ask a
+[tenant administrator](../guides/people-and-access.md) for a project grant
+first.
 
 ```sh
-env -u WEAVE_ENVIRONMENT_ID "$WEAVE_PYTHON" -I -m firefly_weave.cli.main \
-  compatibility read --output json
-env -u WEAVE_ENVIRONMENT_ID "$WEAVE_PYTHON" -I -m firefly_weave.cli.main \
-  compatibility check --output json
+# Read the current report for the project of your saved workspace.
+weave compatibility read --output json
+# Ask the server for a fresh scan of the same project.
+weave compatibility check --output json
 ```
 
-Before these commands, configure `WEAVE_BASE_URL` to the restarted API origin,
-`WEAVE_TENANT_ID` and `WEAVE_PROJECT_ID` to the project being checked, and a current
-`WEAVE_ACCESS_TOKEN` or the [CLI login configuration](../reference/cli.md#login-and-secure-persistence).
-For a local rehearsal, obtain scope IDs from `first-run.json`; do not invent new
-IDs or reuse an expired token receipt. The `env -u WEAVE_ENVIRONMENT_ID` prefix
-removes environment scope because compatibility is a project-level operation. `read`
-returns the current report; `check` requests a fresh scan. Findings are filtered
-to the authorized project, with safe global inventory conditions retained. The
-report includes `mode`, `complete`, `checked_at`, and `findings_truncated`; a
-truncated or incomplete report is not evidence of full compatibility. No foreign
-project's resource identifiers should appear in your scoped report.
+Expected: one JSON report with `policy`, `mode`, `complete`, `inspected`,
+`checked_at`, `findings`, and `findings_truncated`. A healthy upgrade reports
+`"mode": "ready"`, `"complete": true`, and no findings. In a script, use
+[explicit mode](../guides/connect-to-api.md#scripts-and-ci-explicit-mode)
+instead: `--base-url` with the restarted API origin, `--tenant` and `--project`,
+and a current `WEAVE_ACCESS_TOKEN`. For a standalone rehearsal, take the scope
+IDs from `first-run.json`; never invent IDs or reuse an expired token.
 
-The process also requests a compatibility rescan every 60 seconds. Automatic and
-explicit scans share one reservation; overlapping automatic scans are skipped
-instead of queued. A failed scan leaves the process restricted, and the next
-periodic scan retries. Catalog cleanup must succeed before readiness is restored.
+Findings are filtered to the authorized project, with safe global inventory
+conditions retained; no other project's resource identifiers appear. A
+truncated or incomplete report is not evidence of full compatibility.
 
-The capabilities response also reports effective policy, fixed server ceilings,
-the supported worker convention, and a small readiness projection. An older
-server may omit this declaration; omission does not imply readiness.
+**The server also rescans by itself.** Each process requests a compatibility
+rescan every 60 seconds. Automatic and explicit scans share one reservation, so
+an automatic scan that would overlap is skipped instead of queued. A failed scan
+leaves the process restricted until a later scan succeeds, and catalog cleanup
+must succeed before readiness returns.
 
-| Finding | Operator action |
+The capabilities response also reports the effective policy, fixed server
+ceilings, the supported worker convention, and a small readiness projection. An
+older server may omit this declaration; omission does not imply readiness.
+
+| Finding | What to do |
 | --- | --- |
-| `authority_missing`, `inventory_incomplete` | Repair catalog connectivity/authority and rerun the scan |
-| `policy_mismatch` | Restore the policy matching the database; do not edit counters or fingerprints |
+| `authority_missing`, `inventory_incomplete` | Repair catalog connectivity or authority and rerun the scan |
+| `policy_mismatch` | Restore the policy matching the database; never edit counters or fingerprints |
 | `ir_unsupported`, `artifact_invalid` | Inspect the pinned definition and select a compatible artifact; preserve historical bytes |
-| `action_unavailable`, `connector_unsupported`, `provider_requirement_unsupported` | Restore the exact required release/package or use an explicit supported migration |
-| `worker_protocol_unsupported` | Use a compatible worker/server convention; do not relabel an existing release |
-| `legacy_policy_blocked` | Inspect historical classification limits; preserve withheld evidence rather than bypassing policy |
+| `action_unavailable`, `connector_unsupported`, `provider_requirement_unsupported` | Restore the exact required release or package, or use an explicit supported migration |
+| `worker_protocol_unsupported` | Use a compatible worker and server convention; never relabel an existing release |
+| `legacy_policy_blocked` | Inspect historical classification limits; preserve withheld evidence instead of bypassing policy |
 | `operational_capacity_blocked`, `capacity_absent` | Inspect retained usage and admission requirements; use authorized maintenance where supported |
 
-Restricted mode keeps health and authorized inspection available while blocking
-new effect-producing work. Issued terminal controls remain available within their
-reserved authority and capacity. It does not permit arbitrary execution or
-rewriting retained definitions to silence findings. See
+**Restricted mode keeps the platform inspectable.** Health and authorized
+inspection stay available while new effect-producing work is blocked. Issued
+terminal controls remain available within their reserved authority and capacity.
+Restricted mode never permits arbitrary execution, and you must not rewrite
+retained definitions to silence findings. See
 [incident operations](../reference/incident-operations.md) and
-[retention](retention.md) for supported controls.
+[retention](retention.md) for the supported controls.
 
 ## Verify before admitting traffic
 
-Perform these checks in order for each project and intended execution path:
+Perform these checks in order for each project and execution path:
 
-1. Check `/health/ready` for the replica receiving traffic. If it fails, leave
-   effect-producing admission stopped and inspect the compatibility findings.
-2. Read a complete compatibility report with `mode=ready`, and confirm its policy
-   matches the intended deployment. A report truncated for response size cannot
-   establish that all requirements were inspected by your review.
-3. Read a known historical run and its durable output to check retained access.
-4. Start the required admitted executor/worker and run a small authorized workflow.
-   The [deployment exercises](deployment.md) show concrete remote and native checks
-   for the local installation.
-5. Verify external receiver/provider receipts and telemetry through their own
-   interfaces, then deliberately reenable the remaining writers.
+1. **Readiness.** `/health/ready` answers HTTP 200 on the replica that receives
+   traffic. If it fails, keep effect-producing admission stopped and read the
+   compatibility findings.
+2. **Compatibility.** A complete report with `"mode": "ready"`, and a policy in
+   the capabilities response that matches the intended deployment. A report
+   truncated for response size cannot prove that every requirement was reviewed.
+3. **History.** A known historical run and its durable output can still be read.
+4. **Execution.** Start the required admitted executor or worker and run a small
+   authorized workflow. The [deployment exercises](deployment.md) show concrete
+   remote and native checks for the local installation.
+5. **External effects.** Verify receiver or provider receipts and telemetry
+   through their own interfaces, then reenable the remaining writers deliberately
+   and watch recovery.
 
-Confirm `/health/ready` succeeds, compatibility is complete and ready, and the
-reported policy matches the intended deployment. Run an authorized workflow
-through the installed API and an admitted worker, verify its durable outcome, and
-inspect telemetry independently. Reenable writers deliberately and monitor
-recovery; do not infer provider delivery from API readiness alone.
+Do not infer provider delivery from API readiness alone. Keep the prior artifact,
+the source database, the backup, and protected migration evidence until the
+upgraded deployment and its recovery procedure have been verified.
 
-Keep the prior artifact, source database, backup, and protected migration evidence
-until the upgraded deployment and its recovery procedure have been verified.
+## After the upgrade: clients and sign-in
+
+Saved platforms, `weave auth setup`, and published sign-in settings arrived in
+0.1.0a7. Upgrading a server from alpha5 or alpha6 to 0.1.0a7 adds no migration:
+the schema stays at `0025_run_lifecycle`. After the upgrade, check these points:
+
+- **Publish sign-in settings** with `WEAVE_CLIENT_SIGN_IN` and, optionally,
+  `WEAVE_DISPLAY_NAME`, so people can connect by typing the server address; see
+  [publish sign-in settings](identity-and-secrets.md#3-publish-sign-in-settings-for-people).
+  Without them, clients report `WV-CONNECT-NO-SIGN-IN`.
+- **Older connection files keep working.** `--auth-config FILE` still works for
+  sign-in and remote commands, and `weave auth setup --auth-config FILE` turns a
+  file into a saved platform; see
+  [older connection files](configuration.md#older-connection-files).
+- **A server that predates published sign-in settings** is reported to current
+  clients as `WV-CONNECT-INCOMPATIBLE` when someone connects by address; people
+  can still use a connection file until you upgrade it.
+- **Saved platforms keep what each person reviewed.** If you change the issuer
+  or login client, people review the platform again, as described in
+  [What clients read from the server](identity-and-secrets.md#what-clients-read-from-the-server).
+- **Signing keys without `alg` are now accepted by key type.** The built-in
+  verifier uses a JWKS key that omits `alg`, as Microsoft Entra ID publishes
+  them, only for the allowed algorithm of its key type: an RSA key for `RS256`,
+  a P-256 key for `ES256`. Keys that declare `alg` are checked as before. Unit
+  tests cover Entra-shaped keys; no Entra token has been verified, as
+  [Microsoft Entra ID (not verified)](identity-and-secrets.md#microsoft-entra-id-not-verified)
+  explains.
+- **Local Keycloak realms accept any loopback port.** A local platform still has
+  [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade), so set up
+  alpha7 from its own checkout. Its realm registers the port-free loopback
+  callbacks, and `weave platform start` adds them to a retained realm that lacks
+  them, printing `Updated the local Keycloak login client so browser sign-in
+  accepts any loopback port.`; see
+  [Browser sign-in is refused](../guides/local-platform.md#browser-sign-in-is-refused).
+
+Upgrading the CLI or Studio never rewrites saved platforms it cannot read; such a
+file is reported as `WV-PROFILE-STORE`.
 
 ## If the upgrade fails
 
-Keep the failed deployment's evidence and stop its writers before selecting a
+Keep the failed deployment's evidence and stop its writers before you choose a
 recovery path. A schema failure belongs to migration diagnosis; a compatibility
-finding belongs to the missing authority, policy, or pinned capability listed in
-the report. Neither is repaired by editing version rows or weakening grants.
+finding belongs to the missing authority, policy, or pinned capability that the
+report names. Neither is repaired by editing version rows or weakening grants.
 
-Starting the old wheel against a newly migrated database is not a supported
-rollback. Recover the old artifact with a separately restored compatible database,
-choose one active deployment, and reconcile effects that occurred after that
-backup before resuming work. See [incident operations](../reference/incident-operations.md)
-for ambiguous effects and [backup/restore](backup-restore.md) for the local source
-fencing behavior.
+**Starting the old wheel against a newly migrated database is not a supported
+rollback.** Recover the old artifact with a separately restored compatible
+database, choose one active deployment, and reconcile effects that occurred after
+that backup before you resume work. See
+[incident operations](../reference/incident-operations.md) for ambiguous effects
+and [backup and restore](backup-restore.md) for the local source fencing
+behavior.
+
+## Next steps
+
+- Make the recovery copy first with [backup and restore](backup-restore.md).
+- Check the server variables in [configuration](configuration.md).
+- Watch the upgraded platform with [observability](observability.md).

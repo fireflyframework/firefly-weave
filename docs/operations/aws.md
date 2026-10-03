@@ -18,31 +18,45 @@ SPDX-License-Identifier: Apache-2.0
 
 # Prepare AWS EKS and ECR
 
-Use this chapter with an **existing operator-provisioned EKS cluster** and private
-ECR repositories. Install AWS CLI v2, kubectl, Docker, and Python 3; authenticate
-the AWS CLI through your organization's approved profile. You need cluster
-access, ECR push permission, and network access to the Kubernetes endpoint.
-This chapter configures your client; it creates no cloud infrastructure.
+This guide connects your terminal to an **existing EKS cluster** and to private
+**ECR** repositories, so that the shared guides can build, push, and deploy Weave.
+It configures your client tools only; it creates no cloud infrastructure.
+
+**Who this is for:** an operator with an approved AWS profile, access to the
+cluster, permission to push to ECR, and a network path to the Kubernetes API
+endpoint.
+
+**What you need first:** AWS CLI v2, `kubectl`, Docker, and Python 3, with the AWS
+CLI signed in through your organization's approved profile. In the same terminal,
+load your local installation's `session.env` as described in the
+[cloud deployment overview](cloud-deployment.md#1-choose-the-infrastructure-route),
+so that `WEAVE_DOCKER_CONTEXT` is set.
+
+**What you will have at the end:** `KUBECONFIG`, `WEAVE_KUBE_CONTEXT`,
+`WEAVE_KUBE_NAMESPACE`, and `WEAVE_REGISTRY_PREFIX` set in this terminal.
 
 ![Registry, Kubernetes, database, identity, and Weave deployment boundaries](../diagrams/cloud-deployment.svg)
 
-Locate ECR at the image boundary and EKS at the runtime boundary. AWS access to
-those services is separate from the local Weave principal and grants checked by
-the API. [Open the diagram at full size](../diagrams/cloud-deployment.svg).
+ECR sits at the image boundary (step 2 in the diagram) and EKS runs the green
+panel. Your AWS access to those services is separate from the Weave principal and
+grants that the API checks.
+[Open diagram at full size](../diagrams/cloud-deployment.svg)
 
 ## If you do not have infrastructure yet
 
-Use the provider's [AWS cluster creation guide](https://docs.aws.amazon.com/eks/latest/userguide/create-cluster.html) to prepare an approved cluster and its network,
-node capacity, and access controls. Provision the registry and intended namespace
-through the same infrastructure process. Then return to step 1 with the actual
-resource names. These resources incur charges; a provider quickstart is a learning
-baseline, not a production availability or security design for Weave.
+Use the provider's [AWS cluster creation guide](https://docs.aws.amazon.com/eks/latest/userguide/create-cluster.html)
+to prepare an approved cluster with its network, node capacity, and access
+controls. Provision the registry and the intended namespace through the same
+infrastructure process, then return to step 1 with the real resource names. These
+resources cost money, and a provider quickstart is a learning baseline, not a
+production availability or security design for Weave.
 
 ## 1. Select the account and actual resources
 
-Replace every `your-*` value with the existing resource information supplied by
-your operator. This example uses the standard AWS commercial partition and an
-ECR registry in the same account as the authenticated operator.
+**Why:** every later command depends on the right account, region, and cluster.
+Replace every `your-*` value with the existing resource names from your operator.
+This example uses the standard AWS commercial partition and an ECR registry in the
+same account as the signed-in operator.
 
 ```sh
 # Select the AWS account and region, then inspect the existing cluster before changing local configuration.
@@ -54,17 +68,18 @@ aws eks describe-cluster --region "$AWS_REGION" --name "$WEAVE_EKS_CLUSTER" \
   --query 'cluster.{name:name,arn:arn,status:status,endpoint:endpoint}' --output json
 ```
 
-Check that the returned account and cluster ARN match the intended environment;
-expect cluster status `ACTIVE`. Retrieving configuration requires
-`eks:DescribeCluster`; Kubernetes access also requires the configured cluster
-access mapping and RBAC. An AWS identity alone does not grant Kubernetes
-permissions. See [AWS cluster access instructions](https://docs.aws.amazon.com/eks/latest/userguide/create-kubeconfig.html).
+Expected: the account you intended, and the cluster with status `ACTIVE`. Check
+that the cluster ARN matches the intended environment. Reading the cluster needs
+`eks:DescribeCluster`; using Kubernetes also needs the cluster's access mapping
+and RBAC, because an AWS identity alone grants no Kubernetes permissions. See
+[AWS cluster access instructions](https://docs.aws.amazon.com/eks/latest/userguide/create-kubeconfig.html).
 
 ## 2. Configure and explicitly select kubectl
 
-Create a private, separate kubeconfig. AWS's command writes local configuration
-and selects its new context; subsequent commands below still name the inspected
-context explicitly. See [update-kubeconfig](https://docs.aws.amazon.com/cli/latest/reference/eks/update-kubeconfig.html).
+**Why:** a separate, private kubeconfig keeps your other cluster connections
+untouched. AWS's command writes the configuration and selects its new context;
+the commands below still name that context explicitly. See
+[update-kubeconfig](https://docs.aws.amazon.com/cli/latest/reference/eks/update-kubeconfig.html).
 
 ```sh
 # Keep this cluster connection in its own private kubeconfig so your other contexts are preserved.
@@ -77,27 +92,33 @@ aws eks update-kubeconfig --region "$AWS_REGION" --name "$WEAVE_EKS_CLUSTER" \
 kubectl config get-contexts
 ```
 
-Expect an added context for the selected EKS ARN. Inspect the list, then copy its
-exact name into the following variable; do not copy an unrelated current context.
+Expected: a context named after the selected EKS cluster ARN. Copy its exact name
+into `WEAVE_KUBE_CONTEXT` below, never an unrelated current context. Then name the
+namespace reserved for Weave and check what you may do there:
 
 ```sh
-# Confirm Kubernetes access and the CPU architecture that your image must support.
+# Select the exact context and namespace, then confirm access and the node CPU architecture.
 export WEAVE_KUBE_CONTEXT='your-exact-context-name-from-the-list'
-kubectl --context "$WEAVE_KUBE_CONTEXT" get namespaces
+export WEAVE_KUBE_NAMESPACE='your-existing-namespace'
+kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" auth can-i create deployments
+kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" auth can-i create jobs
+kubectl --context "$WEAVE_KUBE_CONTEXT" -n "$WEAVE_KUBE_NAMESPACE" auth can-i create secrets
 kubectl --context "$WEAVE_KUBE_CONTEXT" get nodes -L kubernetes.io/arch
 ```
 
-Expect the intended namespaces and node architecture labels such as `amd64` or
-`arm64`. Build for the selected node architecture in the shared guide; a local
-Apple Silicon build is not automatically an AMD64 image. If node listing is
-restricted, have the operator supply the intended pool architecture and placement
-rules. Private clusters require an approved network path from this terminal.
+Expected: `yes` three times, then the nodes with an architecture label such as
+`amd64` or `arm64`. Build for that architecture in the shared guide: an image
+built on an Apple silicon laptop is not automatically an AMD64 image. If your role
+cannot list nodes, ask the operator for the node pool's architecture and
+placement rules. A private cluster needs an approved network path from this
+terminal.
 
 ## 3. Authenticate Docker to existing repositories
 
-The common image names require two existing ECR repositories: `weave/server` and
-`weave/worker`. The registry administrator provisions them and the appropriate
-push/pull policies. Authenticate using a token passed directly to Docker, as in
+**Why:** the shared guide pushes `weave/server` and, for a remote worker,
+`weave/worker`. Each needs an existing ECR repository, which the registry
+administrator creates with the right push and pull policies. Docker signs in
+with a token passed directly from the AWS CLI, as in
 [AWS's ECR push procedure](https://docs.aws.amazon.com/AmazonECR/latest/userguide/docker-push-ecr-image.html).
 
 ```sh
@@ -107,40 +128,60 @@ export WEAVE_ECR_HOST="$WEAVE_AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 aws ecr describe-repositories --region "$AWS_REGION" \
   --repository-names weave/server weave/worker \
   --query 'repositories[].repositoryUri' --output json
-: "${WEAVE_DOCKER_CONTEXT:?Select the local build context in the cloud overview}"
+: "${WEAVE_DOCKER_CONTEXT:?Load your local session.env as described in the cloud overview}"
 aws ecr get-login-password --region "$AWS_REGION" | \
   docker --context "$WEAVE_DOCKER_CONTEXT" login \
   --username AWS --password-stdin "$WEAVE_ECR_HOST"
 export WEAVE_REGISTRY_PREFIX="$WEAVE_ECR_HOST/weave"
 ```
 
-Expect both repository URIs and `Login Succeeded`. Stop if either repository is
-missing. The build operator needs ECR authentication and image upload permissions;
-EKS node or Fargate image-pull identity needs its own ECR read access. Docker login
-on your laptop does not grant cluster image pulls. Cross-account registries need
-an explicitly selected registry account and corresponding policies instead of
-this same-account derivation.
+Expected: both repository URIs, then `Login Succeeded`. Stop if a repository you
+need is missing. For an API-only rollout, remove `weave/worker` from the
+`describe-repositories` command: it reports an error for a repository that does
+not exist.
+
+**Pushing and pulling are separate permissions.** The build operator needs ECR
+authentication and image upload rights. The EKS nodes, or the Fargate pod
+execution role, need their own ECR read access: your Docker sign-in on a laptop
+gives the cluster nothing. A registry in another account needs that registry
+account selected explicitly, with matching policies, instead of the same-account
+address built above.
 
 ## 4. Choose supporting services deliberately
 
 | Requirement | AWS option | Weave boundary |
 | --- | --- | --- |
-| PostgreSQL | RDS for PostgreSQL or separately operated PostgreSQL | Rehearse exact migrations and role/function ownership on the chosen service; local PostgreSQL tests do not certify RDS |
-| Secret storage | AWS Secrets Manager through an operator-managed delivery mechanism | Supplying environment/configuration is distinct from implementing a Weave secret-provider port; no native AWS provider is installed by this guide |
-| Token issuer | Your compatible HTTPS OIDC/CIAM provider ([configuration](identity-and-secrets.md#use-your-own-identity-provider)) | Configure and verify issuer/audience/JWKS and provision Weave identity links and grants; AWS IAM access is not a Weave grant |
+| PostgreSQL | RDS for PostgreSQL or separately operated PostgreSQL | Rehearse the exact migrations and role and function ownership on the chosen service; local PostgreSQL tests do not certify RDS |
+| Secret storage | AWS Secrets Manager through an operator-managed delivery mechanism | Delivering values into processes is not a Weave secret-provider implementation; this guide installs no native AWS provider |
+| Token issuer | Your compatible HTTPS OIDC/CIAM provider ([configuration](identity-and-secrets.md#use-your-own-identity-provider)) | Configure and verify issuer, audience, and JWKS, and create Weave identity links and grants; AWS IAM access is not a Weave grant |
 
-RDS's administrative role is not unrestricted PostgreSQL superuser access.
-Before deployment, apply the [database qualification gate](kubernetes.md#2-prove-the-database-authority-model),
+**RDS's administrative role is not an unrestricted PostgreSQL superuser.** Before
+you deploy, pass the [database qualification gate](kubernetes.md#2-prove-the-database-authority-model),
 including role creation, grants, exact role attributes, and function ownership.
-Do not run the local fixture setup script against RDS. See
+Never run the local fixture setup script against RDS. See
 [AWS's rds_superuser restrictions](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Appendix.PostgreSQL.CommonDBATasks.Roles.rds_superuser.html).
+
+## If something goes wrong
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| `aws eks describe-cluster` is denied | The selected AWS identity lacks `eks:DescribeCluster`, or `AWS_PROFILE` selects another account | Check `aws sts get-caller-identity` and ask for the permission |
+| `kubectl` reports `You must be logged in to the server (Unauthorized)` | Your AWS identity has no access entry or RBAC in this cluster | Ask the cluster administrator to grant Kubernetes access to your identity |
+| `kubectl` times out | The cluster endpoint is private and this terminal has no route to it | Use the approved network path, such as a VPN or bastion |
+| `auth can-i` prints `no` | Your Kubernetes role cannot create that object in the namespace | Ask for the namespace permissions before you continue |
+| `describe-repositories` reports a missing repository | `weave/server` or `weave/worker` does not exist in this account and region | Ask the registry administrator to create it |
+| Pods later stay in `ImagePullBackOff` | The nodes' role cannot read the ECR repository | Grant ECR read access to the node or Fargate pod execution role |
 
 ## Continue with the shared deployment
 
-Keep `KUBECONFIG`, `WEAVE_KUBE_CONTEXT`, and `WEAVE_REGISTRY_PREFIX` in this
-terminal. Return to the [cloud deployment overview](cloud-deployment.md) to build,
-push, and record exact registry digests. Then use the
-[Kubernetes recipe](kubernetes.md) for database qualification, the migration Job,
-API rollout, and a verified public run. These provider setup commands do not
-publish a workflow or admit a worker release; the [CLI tutorial](../guides/cli-tutorial.md)
-performs that separate application lifecycle.
+Keep `KUBECONFIG`, `WEAVE_KUBE_CONTEXT`, `WEAVE_KUBE_NAMESPACE`, and
+`WEAVE_REGISTRY_PREFIX` in this terminal, then:
+
+1. Return to the [cloud deployment overview](cloud-deployment.md#2-pass-the-infrastructure-readiness-gate)
+   to pass the readiness gate, then build, push, and record the registry digests.
+2. Use the [Kubernetes walkthrough](kubernetes.md) for database qualification, the
+   migration Job, the API rollout, and a verified run.
+
+These provider commands neither publish a workflow nor admit a worker release.
+The [CLI tutorial](../guides/cli-tutorial.md) covers that separate application
+lifecycle.

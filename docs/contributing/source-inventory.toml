@@ -322,3 +322,12 @@ reason = "Installer background raster generated from the adjacent Apache-license
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/tests/fixtures/shipped-schemas.json"
+kind = "generated"
+source = "scripts/studio_schema_fixtures.py"
+reason = "Strict JSON corpus of shipped connector and example schemas for Studio form tests; regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"

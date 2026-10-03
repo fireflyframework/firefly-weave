@@ -1,0 +1,164 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1170" viewBox="0 0 1120 1170" role="img" aria-labelledby="title desc">
+<title id="title">Call a REST API without writing code</title>
+<desc id="desc">Nine steps in three columns. You author: 1, describe one HTTPS request or import operations from OpenAPI, in Studio's API action builder or with the CLI, where samples only set types and their values never enter the Action; 2, the result is an Action on the built-in weave-http@2.0.0 connector whose method sets the side effect, GET and HEAD read-only, other methods writes that are never retried; 3, it is checked offline and again at publish, with a pointer to the field to fix; 4, you publish an immutable version. Your environment allows, with tenant_admin for connections: 5, a connection holds the API's HTTPS origin, the auth kind, and secret handles but never secret values; 6, a grant lets the connector release use those handles, read and write only when needed. Once per environment, the operator enables the built-in weave-http connector, stores secrets behind handles, and grants them; Actions, workflows, and connections hold only names. You deploy and run: 7, a Call an action step uses the Action through a named connection slot; 8, activation binds the slot to a connection revision and the connector to a release and records the Action, connector, and capability digests; 9, the run receives the status and body. Trust boundary: only fixed, first-party executor code runs; it calls only HTTPS origins listed on the connection, follows no redirects, refuses private and loopback addresses unless the operator allows that network, always refuses link-local and known metadata addresses, caps responses at 1 MiB and calls at 30 seconds, and resolves secrets by handle for the granted release only.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.b{font-size:20px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.lbl{font-size:17px}.w{fill:#FFFFFF}.wm{fill:#CEE4D8}.n{font-size:17px;font-weight:700;fill:#FFFFFF}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.ret{fill:none;stroke:#367D68;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.life{fill:none;stroke:#A8C8B9;stroke-width:2;stroke-dasharray:6 6}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.iconw{fill:none;stroke:#FFFFFF;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.halo{paint-order:stroke;stroke:#EEF4F0;stroke-width:7px;stroke-linejoin:round}</style>
+<rect width="1120" height="1060" rx="24" fill="#EEF4F0"/>
+<text class="title" x="40" y="55">Call a REST API without writing code</text>
+<text class="p" x="40" y="90">Describe the request, allow it in your environment, then pin it and run it.</text>
+<rect x="40" y="118" width="330" height="46" rx="12" fill="#173D34"/><text class="b w" x="62" y="148">You author</text>
+<rect x="395" y="118" width="330" height="46" rx="12" fill="#173D34"/><text class="b w" x="417" y="148">Your environment allows</text>
+<rect x="750" y="118" width="330" height="46" rx="12" fill="#173D34"/><text class="b w" x="772" y="148">You deploy and run</text>
+<rect x="40" y="184" width="330" height="166" rx="14" fill="white"/>
+<circle cx="68" cy="213" r="15" fill="#367D68"/><text class="n" x="68" y="219" text-anchor="middle">1</text>
+<text class="b" x="94" y="220">Describe or import</text>
+<text class="lbl" x="62" y="250">Describe one HTTPS request, or</text>
+<text class="lbl" x="62" y="275">import operations from OpenAPI,</text>
+<text class="lbl" x="62" y="300">in Studio or with the CLI.</text>
+<text class="lbl" x="62" y="325">Samples only set the types.</text>
+<path class="arrow" d="M205 350V378"/>
+<rect x="40" y="380" width="330" height="166" rx="14" fill="white"/>
+<circle cx="68" cy="409" r="15" fill="#367D68"/><text class="n" x="68" y="415" text-anchor="middle">2</text>
+<text class="b" x="94" y="416">A weave-http Action</text>
+<text class="lbl" x="62" y="446">Built on weave-http@2.0.0.</text>
+<text class="lbl" x="62" y="471">The method sets the side effect:</text>
+<text class="lbl" x="62" y="496">GET, HEAD: read, read-only.</text>
+<text class="lbl" x="62" y="521">Others: write, never retried.</text>
+<path class="arrow" d="M205 546V574"/>
+<rect x="40" y="576" width="330" height="166" rx="14" fill="white"/>
+<circle cx="68" cy="605" r="15" fill="#367D68"/><text class="n" x="68" y="611" text-anchor="middle">3</text>
+<text class="b" x="94" y="612">Check it</text>
+<text class="lbl" x="62" y="642">Checked offline against the</text>
+<text class="lbl" x="62" y="667">bundled connector description.</text>
+<text class="lbl" x="62" y="692">Publishing checks again and</text>
+<text class="lbl" x="62" y="717">points at the field to fix.</text>
+<path class="arrow" d="M205 742V770"/>
+<rect x="40" y="772" width="330" height="116" rx="14" fill="white"/>
+<circle cx="68" cy="801" r="15" fill="#367D68"/><text class="n" x="68" y="807" text-anchor="middle">4</text>
+<text class="b" x="94" y="808">Publish</text>
+<text class="lbl" x="62" y="838">An immutable version, such as</text>
+<text class="lbl" x="62" y="863">get-todo@1.0.0.</text>
+<path class="arrow" d="M370 830H382V267H391"/>
+<rect x="395" y="184" width="330" height="166" rx="14" fill="white"/>
+<circle cx="423" cy="213" r="15" fill="#367D68"/><text class="n" x="423" y="219" text-anchor="middle">5</text>
+<text class="b" x="449" y="220">Create a connection</text>
+<text class="lbl" x="417" y="250">The API’s HTTPS origin, the auth</text>
+<text class="lbl" x="417" y="275">kind, and secret handles</text>
+<text class="lbl" x="417" y="300">(SLOT=HANDLE), never values.</text>
+<text class="lbl" x="417" y="325">Only listed origins are allowed.</text>
+<path class="arrow" d="M560 350V378"/>
+<rect x="395" y="380" width="330" height="166" rx="14" fill="white"/>
+<circle cx="423" cy="409" r="15" fill="#367D68"/><text class="n" x="423" y="415" text-anchor="middle">6</text>
+<text class="b" x="449" y="416">Grant the handles</text>
+<text class="lbl" x="417" y="446">Let the connector release use</text>
+<text class="lbl" x="417" y="471">this connection’s handles: read,</text>
+<text class="lbl" x="417" y="496">and write only when needed.</text>
+<text class="lbl" x="417" y="521">No handles, no grant needed.</text>
+<rect x="395" y="576" width="330" height="140" rx="14" fill="#FFF7E5"/>
+<text class="b" x="417" y="612">Once per environment</text>
+<text class="lbl" x="417" y="642">The operator enables weave-http,</text>
+<text class="lbl" x="417" y="667">stores secrets behind handles,</text>
+<text class="lbl" x="417" y="692">and grants them; you see names.</text>
+<path class="arrow" d="M725 463H737V267H746"/>
+<rect x="750" y="184" width="330" height="141" rx="14" fill="white"/>
+<circle cx="778" cy="213" r="15" fill="#367D68"/><text class="n" x="778" y="219" text-anchor="middle">7</text>
+<text class="b" x="804" y="220">Use a connection slot</text>
+<text class="lbl" x="772" y="250">A Call an action step uses</text>
+<text class="lbl" x="772" y="275">get-todo@1.0.0 through a named</text>
+<text class="lbl" x="772" y="300">slot, such as todos.</text>
+<path class="arrow" d="M915 325V353"/>
+<rect x="750" y="355" width="330" height="141" rx="14" fill="white"/>
+<circle cx="778" cy="384" r="15" fill="#367D68"/><text class="n" x="778" y="390" text-anchor="middle">8</text>
+<text class="b" x="804" y="391">Activate with pins</text>
+<text class="lbl" x="772" y="421">Binds the slot to a connection</text>
+<text class="lbl" x="772" y="446">revision and the connector to a</text>
+<text class="lbl" x="772" y="471">release; records the digests.</text>
+<path class="arrow" d="M915 496V524"/>
+<rect x="750" y="526" width="330" height="141" rx="14" fill="white"/>
+<circle cx="778" cy="555" r="15" fill="#367D68"/><text class="n" x="778" y="561" text-anchor="middle">9</text>
+<text class="b" x="804" y="562">Run</text>
+<text class="lbl" x="772" y="592">The executor sends the request.</text>
+<text class="lbl" x="772" y="617">The run receives the status and</text>
+<text class="lbl" x="772" y="642">body, then continues.</text>
+<path d="M738 686H1094V1050H26V900H738Z" fill="none" stroke="#367D68" stroke-width="2" stroke-dasharray="8 6" stroke-linejoin="round"/>
+<rect x="750" y="700" width="330" height="188" rx="14" fill="#173D34"/>
+<g class="iconw" transform="translate(772 722)"><path d="M3 2l20-7 20 7v20c0 14-20 24-20 24S3 36 3 22Z"/><path d="M14 18l7 7 13-16"/></g>
+<text class="b w" x="832" y="742">Fixed, first-party</text>
+<text class="b w" x="832" y="767">executor</text>
+<text class="lbl wm" x="772" y="808">Only built-in weave-http@2.0.0</text>
+<text class="lbl wm" x="772" y="833">code runs, pinned by digest.</text>
+<text class="lbl wm" x="772" y="858">Nothing you author runs as code.</text>
+<path class="arrow" d="M915 667V698"/>
+<text class="h" x="64" y="946">Trust boundary: egress rules on every call</text>
+<text class="small" x="64" y="976">Only HTTPS origins listed on the connection; redirects are not followed. Private and loopback addresses</text>
+<text class="small" x="64" y="1002">need a network the operator allows; link-local and known metadata addresses are always refused.</text>
+<text class="small" x="64" y="1028">Responses stop at 1 MiB and calls at 30 seconds. Secrets resolve by handle for the granted release only.</text>
+<g id="lumi-takeaway">
+<rect x="0" y="1072" width="1120" height="90" rx="16" fill="#EAF4ED"/>
+<g transform="translate(22 1083) scale(.25)"><defs>
+  <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
+    <stop stop-color="#3C6957"/><stop offset=".55" stop-color="#1C463A"/>
+    <stop offset="1" stop-color="#102E28"/>
+  </radialGradient>
+  <linearGradient id="lumi-eye" x1="0" y1="0" x2="0" y2="1">
+    <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B8DCC8"/>
+  </linearGradient>
+  <linearGradient id="lumi-lantern" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#FFEDAD"/><stop offset="1" stop-color="#DDA743"/></linearGradient>
+</defs>
+<g stroke-linecap="round" stroke-linejoin="round">
+  <path d="M113 89C109 67 100 51 89 45M143 89C147 67 156 51 167 45" fill="none" stroke="#315C4E" stroke-width="3.5"/>
+  <path d="M102 134Q128 122 154 134L153 184C153 206 142 219 128 219C114 219 103 206 103 184Z" fill="#173D34"/>
+  <path d="M107 177Q128 185 149 177L148 191C146 205 138 213 128 213C118 213 110 205 108 191Z" fill="url(#lumi-lantern)"/>
+  <path d="M30 83L56 61Q61 57 66 64L142 174L130 193L28 91Q24 86 30 83Z" fill="#173D34"/>
+  <path d="M57 63L135 175L129 185L30 87Z" fill="#78B89C"/>
+  <path d="M57 63L96 119L72 111L30 87Z" fill="#C7E6D7"/>
+  <path d="M72 111L96 119L135 175L129 185Z" fill="#4F9479"/>
+  <path d="M226 83L200 61Q195 57 190 64L111 178L127 194L228 91Q232 86 226 83Z" fill="#173D34"/>
+  <path d="M199 63L116 178L127 187L226 87Z" fill="#A1D1B9"/>
+  <path d="M199 63L160 119L184 111L226 87Z" fill="#D8EEE3"/>
+  <path d="M184 111L160 119L116 178L127 187Z" fill="#68AA8D"/>
+  <g transform="rotate(-5 128 120)">
+    <path d="M94 115C93 95 108 81 128 81C148 81 163 95 162 115
+      C162 135 150 152 130 158C109 155 95 138 94 115Z" fill="url(#lumi-face)"/>
+    <path d="M98 111C98 96 110 86 124 85" fill="none" stroke="#83AF94"
+      stroke-width="1.2" opacity=".5"/>
+    <path d="M128 87C124 99 124 106 126 112" fill="none" stroke="#58856B"
+      stroke-width="1" opacity=".4"/>
+    <path d="M103 114C104 106 111 103 117 107C124 111 124 120 119 126
+      C111 131 104 124 103 114Z" fill="#0C2923"/>
+    <path d="M105 114C106 109 111 107 116 110C120 113 121 120 117 124
+      C111 127 106 122 105 114Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="114.5" cy="116.5" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="115.5" cy="113.5" r="1.4" fill="#FFFFFF"/>
+    <path d="M135 112C138 105 145 103 151 108C156 114 153 124 147 127
+      C139 129 133 120 135 112Z" fill="#0C2923"/>
+    <path d="M137 113C139 108 144 107 148 110C152 114 150 121 146 124
+      C140 126 136 120 137 113Z" fill="url(#lumi-eye)"/>
+    <ellipse cx="145" cy="116" rx="3.3" ry="5.4" fill="#173D34"/>
+    <circle cx="146" cy="113" r="1.4" fill="#FFFFFF"/>
+    <path d="M106 101Q112 98 118 102M137 101Q143 98 149 102"
+      fill="none" stroke="#6C997E" stroke-width="1.8" opacity=".65"/>
+    <path d="M122 140Q129 143 136 139" fill="none" stroke="#84B295" stroke-width="1.5"/>
+  </g>
+</g></g>
+<text x="110" y="1101" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
+<text x="110" y="1132" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">You describe the request. The platform runs fixed code, only to destinations you allowed.</text>
+</g>
+</svg>

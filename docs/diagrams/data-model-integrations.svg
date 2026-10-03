@@ -18,21 +18,21 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1192" viewBox="0 0 960 1192" role="img" aria-labelledby="title desc">
-<title id="title">How integration receipts and delivery facts relate</title><desc id="desc">Selected actual foreign keys; scoped records retain separate meanings.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
-<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<title id="title">How integration receipts and delivery facts relate</title><desc id="desc">Selected foreign keys for integration events, provider receipts, and delivery facts, read left to right as one parent to its children. P means tenant_id plus project_id; E means P plus environment_id. An integration event has many event_deliveries; a delivery has many delivery_attempts; a provider source has many provider_receipts and many teams_references; a provider receipt has at most one provider_intent; a WhatsApp message state has many status facts. Grounded in migrations 0017 to 0020; deliveries also reference subscriptions, provider sources reference source bindings and one activation or run, and broker receipts have separate foreign keys (0016). This view does not decide retention.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
 <rect width="960" height="1092" rx="16" fill="#f7faf8"/>
 <path d="M36 99H924" stroke="#c9dacf"/>
 <text x="36" y="46" class="title">How integration receipts and delivery facts relate</text>
 <text x="36" y="79" class="body muted">Selected actual foreign keys; scoped records retain separate meanings.</text>
-<text x="36" y="132" class="small muted">P = tenant_id + project_id     E = P + environment_id</text>
+<text x="36" y="132" class="small muted">P = tenant_id + project_id  •  E = P + environment_id</text>
 <text x="36" y="162" class="small muted">Read left to right: one parent → this many children. Each child has one shown parent.</text>
 <rect x="36" y="188" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
 <rect x="552" y="188" width="372" height="102" rx="12" fill="#eaf4ed"/>
-<g transform="translate(51,207) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(51,207) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="92" y="221" class="code">integration_events</text>
 <text x="56" y="260" class="code">Key: P, id</text>
-<g transform="translate(567,207) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(567,207) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="608" y="221" class="code">event_deliveries</text>
 <text x="572" y="260" class="code">FK: P, event_id</text>
 <path class="edge" d="M408 235H552"/>
@@ -40,10 +40,10 @@ SPDX-License-Identifier: Apache-2.0
 <text x="480" y="268" class="small muted" text-anchor="middle">deliveries</text>
 <rect x="36" y="315" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
 <rect x="552" y="315" width="372" height="102" rx="12" fill="#eaf4ed"/>
-<g transform="translate(51,334) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(51,334) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="92" y="348" class="code">event_deliveries</text>
 <text x="56" y="387" class="code">Key: E, id</text>
-<g transform="translate(567,334) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(567,334) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="608" y="348" class="code">delivery_attempts</text>
 <text x="572" y="387" class="code">FK: E, delivery_id</text>
 <path class="edge" d="M408 362H552"/>
@@ -51,10 +51,10 @@ SPDX-License-Identifier: Apache-2.0
 <text x="480" y="395" class="small muted" text-anchor="middle">attempts</text>
 <rect x="36" y="442" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
 <rect x="552" y="442" width="372" height="102" rx="12" fill="#eaf4ed"/>
-<g transform="translate(51,461) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(51,461) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="92" y="475" class="code">provider_sources</text>
 <text x="56" y="514" class="code">Key: E, id</text>
-<g transform="translate(567,461) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(567,461) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="608" y="475" class="code">provider_receipts</text>
 <text x="572" y="514" class="code">FK: E, source_id</text>
 <path class="edge" d="M408 489H552"/>
@@ -62,10 +62,10 @@ SPDX-License-Identifier: Apache-2.0
 <text x="480" y="522" class="small muted" text-anchor="middle">receipts</text>
 <rect x="36" y="569" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
 <rect x="552" y="569" width="372" height="102" rx="12" fill="#eaf4ed"/>
-<g transform="translate(51,588) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(51,588) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="92" y="602" class="code">provider_receipts</text>
 <text x="56" y="641" class="code">Key: E, source_id, id</text>
-<g transform="translate(567,588) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(567,588) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="608" y="602" class="code">provider_intents</text>
 <text x="572" y="641" class="code">FK: E, source_id, receipt_id</text>
 <path class="edge" d="M408 616H552"/>
@@ -73,10 +73,10 @@ SPDX-License-Identifier: Apache-2.0
 <text x="480" y="649" class="small muted" text-anchor="middle">intent</text>
 <rect x="36" y="696" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
 <rect x="552" y="696" width="372" height="102" rx="12" fill="#eaf4ed"/>
-<g transform="translate(51,715) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(51,715) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="92" y="729" class="code">provider_sources</text>
 <text x="56" y="768" class="code">Key: E, id</text>
-<g transform="translate(567,715) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(567,715) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="608" y="729" class="code">teams_references</text>
 <text x="572" y="768" class="code">FK: E, source_id</text>
 <path class="edge" d="M408 743H552"/>
@@ -84,18 +84,18 @@ SPDX-License-Identifier: Apache-2.0
 <text x="480" y="776" class="small muted" text-anchor="middle">references</text>
 <rect x="36" y="823" width="372" height="102" rx="12" fill="white" stroke="#a8bdb1"/>
 <rect x="552" y="823" width="372" height="102" rx="12" fill="#eaf4ed"/>
-<g transform="translate(51,842) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(51,842) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="92" y="856" class="code">whatsapp_message_states</text>
 <text x="56" y="895" class="code">Key: E, id</text>
-<g transform="translate(567,842) scale(0.9615384615384616)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(567,842) scale(0.9615384615384616)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="608" y="856" class="code">whatsapp_status_facts</text>
 <text x="572" y="895" class="code">FK: E, state_id</text>
 <path class="edge" d="M408 870H552"/>
 <text x="480" y="852" class="head" text-anchor="middle">0..*</text>
 <text x="480" y="903" class="small muted" text-anchor="middle">facts</text>
-<text x="36" y="970" class="small muted">Migrations 0017–0020. Deliveries also reference subscriptions and source bindings.</text>
-<text x="36" y="996" class="small muted">WhatsApp observations join source, fact and connection revision; Teams records reference lifecycle.</text>
-<text x="36" y="1022" class="small muted">Broker receipts have separate FKs (0016). This view does not define retention eligibility.</text>
+<text x="36" y="970" class="small muted">Migrations 0017–0020. Deliveries also reference subscriptions; provider sources reference</text>
+<text x="36" y="996" class="small muted">source bindings and one activation or run. WhatsApp observations join source, fact, and</text>
+<text x="36" y="1022" class="small muted">connection revision. Broker receipts have separate FKs (0016). This view does not decide retention.</text>
 <g id="lumi-takeaway">
 <rect x="0" y="1098" width="960" height="90" rx="16" fill="#EAF4ED"/>
 <g transform="translate(22 1109) scale(.25)"><defs>
@@ -145,6 +145,6 @@ SPDX-License-Identifier: Apache-2.0
   </g>
 </g></g>
 <text x="110" y="1127" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Lumi’s takeaway</text>
-<text x="110" y="1158" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Event, receipt and delivery-attempt identities describe different facts.</text>
+<text x="110" y="1158" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Event, receipt, and delivery-attempt identities describe different facts.</text>
 </g>
 </svg>

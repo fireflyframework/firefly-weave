@@ -89,63 +89,65 @@ extra_css:
 nav:
   - Start here:
       - Documentation: README.md
-      - Start here: guides/learning-path.md
-      - People, workers, and workflow lifecycle: guides/roles-and-lifecycle.md
-      - How the platform works: guides/platform-overview.md
+      - Start here, by role: guides/learning-path.md
+      - Concepts and BPM mapping: concepts.md
+      - Install the CLI: installation.md
+      - Your first workflow: quickstart.md
+      - Who does what: guides/roles-and-lifecycle.md
+      - Deploy, start, and use the platform: guides/platform-overview.md
       - Start a local platform: guides/local-platform.md
-      - Installation: installation.md
-      - First workflow: quickstart.md
-      - Concepts: concepts.md
       - Visual guide: visual-guide.md
       - Capabilities and limits: capabilities.md
   - Workflows and runs:
-      - Connect to an API: guides/connect-to-api.md
-      - Run a local platform: guides/standalone.md
+      - Design and run workflows in Studio: guides/studio.md
+      - Configure each Studio step: guides/studio-step-reference.md
+      - Install the Studio desktop app: guides/desktop.md
+      - Connect the CLI to a platform: guides/connect-to-api.md
+      - Author, check, and simulate workflows: guides/workflow-authoring.md
       - Publish and run with the CLI: guides/cli-tutorial.md
-      - Author workflows: guides/workflow-authoring.md
-      - Install, draw, and operate with Studio: guides/studio.md
-      - Install and use Studio desktop: guides/desktop.md
-      - Configure Studio steps and integrations: guides/studio-step-reference.md
-      - Manage people and permissions: guides/people-and-access.md
-      - Human tasks and approvals: guides/human-tasks.md
-      - Manage executions and business cases: guides/execution-management.md
+      - Add human approvals: guides/human-tasks.md
+      - Manage runs and business cases: guides/execution-management.md
+      - Resolve incidents, cancel, and retry: reference/incident-operations.md
+      - See a workflow as a graph: guides/workflow-graphs.md
       - Build an email conversation workflow: guides/email.md
-      - View workflow graphs: guides/workflow-graphs.md
-      - Build workers: guides/workers.md
-  - API and SDKs:
-      - Try requests with Swagger: guides/api-playground.md
-      - Python SDK step by step: guides/sdk-tutorial.md
-      - Integrate your product: guides/host-integration.md
-      - Every HTTP operation and schema: reference/api-explorer.md
-      - HTTP behavior and errors: reference/api.md
-      - Python SDK reference: reference/sdk.md
-      - Embed the compiler or services: reference/embedding.md
   - Integrations:
-      - Email conversations and triggers: connectors/email.md
-      - Build your first connector: guides/custom-connectors-tutorial.md
-      - Author a connector: connectors/authoring.md
-      - Import OpenAPI metadata: connectors/metadata-import.md
-      - HTTP profiles: connectors/http-profiles.md
+      - Call a REST API without code: connectors/http-without-code.md
+      - Build a custom integration: guides/custom-connectors-tutorial.md
+      - Author a connector package: connectors/authoring.md
+      - Import an OpenAPI document: connectors/metadata-import.md
+      - HTTP profile v2 reference: connectors/http-profiles.md
+      - Implement and operate a worker: guides/workers.md
+      - Email connector (SMTP and IMAP): connectors/email.md
       - PostgreSQL: connectors/postgresql.md
       - Kafka: connectors/kafka.md
       - Microsoft Teams: connectors/teams.md
       - WhatsApp: connectors/whatsapp.md
       - Telegram: connectors/telegram.md
+  - API and SDKs:
+      - Python SDK step by step: guides/sdk-tutorial.md
+      - Try requests with Swagger: guides/api-playground.md
+      - Integrate your product: guides/host-integration.md
+      - Every HTTP operation and schema: reference/api-explorer.md
+      - HTTP behavior and errors: reference/api.md
+      - Python SDK reference: reference/sdk.md
+      - Embed the compiler or services: reference/embedding.md
   - Operate and deploy:
-      - Remote deployment explained: operations/remote-deployment.md
-      - Deployment: operations/deployment.md
-      - Cloud deployment: operations/cloud-deployment.md
+      - Set up identity, sign-in, and secrets: operations/identity-and-secrets.md
+      - Remote deployment, one stage at a time: operations/remote-deployment.md
+      - Deploy on AWS, Azure, or Google Cloud: operations/cloud-deployment.md
       - AWS: operations/aws.md
       - Azure: operations/azure.md
       - Google Cloud: operations/gcp.md
-      - Kubernetes: operations/kubernetes.md
-      - Configuration: operations/configuration.md
-      - Choose your identity provider and grants: operations/identity-and-secrets.md
-      - Observability: operations/observability.md
-      - Troubleshooting: operations/troubleshooting.md
-      - Upgrades: operations/upgrades.md
-      - Retention: operations/retention.md
-      - Backup and restore: operations/backup-restore.md
+      - Deploy on Kubernetes: operations/kubernetes.md
+      - Give people the right access: guides/people-and-access.md
+      - Configure the server and its clients: operations/configuration.md
+      - Set up a local platform manually: guides/standalone.md
+      - Deploy a worker locally: operations/deployment.md
+      - Troubleshoot a platform: operations/troubleshooting.md
+      - Export metrics and traces: operations/observability.md
+      - Upgrade a platform: operations/upgrades.md
+      - Back up and restore: operations/backup-restore.md
+      - Remove expired debug sessions: operations/retention.md
   - Reference:
       - Definition contracts: contracts.md
       - Schema and expressions: reference/schema-profile.md
@@ -159,7 +161,6 @@ nav:
       - Integration events: reference/integration-events.md
       - Schedules and timers: reference/schedules-and-timers.md
       - History and replay: reference/history-and-replay.md
-      - Incident operations: reference/incident-operations.md
       - Local runtime: reference/local-runtime.md
   - Project:
       - Project overview: project/overview.md

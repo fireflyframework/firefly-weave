@@ -18,37 +18,37 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="775" viewBox="0 0 960 775" role="img" aria-labelledby="title desc">
-<title id="title">Follow one message through the echo workflow</title><desc id="desc">The transform copies the accepted input; schemas guard both ends.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2d7257"/></marker></defs>
-<style>text{font-family:"Avenir Next",Arial,Helvetica,sans-serif;fill:#163e31}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#2d7257;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<title id="title">Follow one message through the echo workflow</title><desc id="desc">The echo workflow in three steps, left to right: check the input (an object whose message is a string, with additional fields rejected), copy it in the transform step echo with value {ref: /input}, which creates no external task, and check the output by reading /steps/echo/output against the output schema. The input and output are both {"message": "Hello, Weave"}. The same value can run two ways: a local simulation uses the compiled artifact and a fixed start time with no database and returns variables.output; a durable API run needs identity, grants, and an activation, stores state in PostgreSQL, and returns state.output. Only the durable run creates server-side state and history.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
 <rect width="960" height="675" rx="16" fill="#f7faf8"/>
 <path d="M36 99H924" stroke="#c9dacf"/>
 <text x="36" y="46" class="title">Follow one message through the echo workflow</text>
 <text x="36" y="79" class="body muted">The transform copies the accepted input; schemas guard both ends.</text>
-<g transform="translate(40,135) scale(1.4615384615384615)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<g transform="translate(40,135) scale(1.4615384615384615)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
 <text x="40" y="214" class="head">Check the input</text>
 <text x="40" y="251" class="small">Object: message is a string</text>
 <text x="40" y="279" class="small">Reject additional fields</text>
-<g transform="translate(357,135) scale(1.4615384615384615)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
-<text x="357" y="214" class="head">Copy the object</text>
+<g transform="translate(357,135) scale(1.4615384615384615)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
+<text x="357" y="214" class="head">Copy it in step echo</text>
 <text x="357" y="251" class="small">value: {ref: /input}</text>
 <text x="357" y="279" class="small">No external task is created</text>
-<g transform="translate(674,135) scale(1.4615384615384615)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<g transform="translate(674,135) scale(1.4615384615384615)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
 <text x="674" y="214" class="head">Check the output</text>
 <text x="674" y="251" class="small">Read /steps/echo/output</text>
 <text x="674" y="279" class="small">Apply the output schema</text>
 <path class="edge" d="M292 151H330"/>
 <path class="edge" d="M609 151H647"/>
-<rect x="40" y="319" width="880" height="67" rx="12" fill="#163e31"/>
-<text x="480" y="361" class="body white" text-anchor="middle">{&quot;message&quot;: &quot;Hello, Weave&quot;}</text>
+<rect x="40" y="319" width="880" height="67" rx="12" fill="#173D34"/>
+<text x="480" y="361" class="body white" text-anchor="middle">Input and output: {&quot;message&quot;: &quot;Hello, Weave&quot;}</text>
 <text x="480" y="418" class="body muted" text-anchor="middle">The same business value, two ways to execute</text>
 <rect x="36" y="442" width="420" height="148" rx="12" fill="#eaf4ed"/>
-<g transform="translate(56,460) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2H25V22H1Z M5 7L10 12L5 17 M13 17H20"/></g>
+<g transform="translate(56,460) scale(1.2307692307692308)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2H25V22H1Z M5 7L10 12L5 17 M13 17H20"/></g>
 <text x="104" y="488" class="head">Local simulation</text>
 <text x="56" y="526" class="small">Compiled artifact + fixed start time</text>
 <text x="56" y="555" class="small">No database · result: variables.output</text>
 <rect x="504" y="442" width="420" height="148" rx="12" fill="white" stroke="#a8bdb1"/>
-<g transform="translate(524,460) scale(1.2307692307692308)" fill="none" stroke="#2d7257" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(524,460) scale(1.2307692307692308)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="572" y="488" class="head">Durable API run</text>
 <text x="524" y="526" class="small">Identity + grants + activation</text>
 <text x="524" y="555" class="small">PostgreSQL · result: state.output</text>

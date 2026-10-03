@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1680" viewBox="0 0 960 1680" role="img" aria-labelledby="title desc">
-<title id="title">Keep each messaging provider’s identity intact</title><desc id="desc">A shared inbox does not make provider references, lifecycle facts, or delivery evidence interchangeable. READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</desc>
+<title id="title">Keep each messaging provider’s identity intact</title><desc id="desc">Three provider rows, each read left to right. Teams: a message stores reference_id, generation and activity_id for the workflow, removal revokes the generation, and replies go only through an authorized stored reference; reactivation needs a matching new source or revision. WhatsApp: whatsapp-message carries text and whatsapp-status carries status, statuses need no earlier Weave send, delivery progress sent, delivered, read never moves backward, failed_seen and deleted_seen stay independent, and text or templates go only to allowed recipients. Telegram: a webhook secret authenticates the update, identity combines bot ID and update ID, the same facts and ID reuse a receipt while conflicts are rejected, unsupported classes are ignored, and sends go to configured chats with replies pinned to a message ID. Provider acceptance is not delivery: unknown sends need reconciliation, and these profiles and local fixtures do not certify a live account.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
 <rect width="960" height="1580" rx="24" fill="#FAFCFB"/>
@@ -65,8 +65,8 @@ SPDX-License-Identifier: Apache-2.0
 <circle cx="546.0" cy="699" r="29" fill="#EEF4F0"/>
 <g transform="translate(523.0 676) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
 <text x="518.0" y="756" font-size="24" font-weight="700" fill="#173D34">Retain delivery progress</text>
-<text x="518.0" y="800" font-size="22" font-weight="400" fill="#173D34">sent → delivered → read never</text>
-<text x="518.0" y="828" font-size="22" font-weight="400" fill="#173D34">moves backward.</text>
+<text x="518.0" y="800" font-size="22" font-weight="400" fill="#173D34">Progress sent → delivered → read</text>
+<text x="518.0" y="828" font-size="22" font-weight="400" fill="#173D34">never moves backward.</text>
 <text x="518.0" y="856" font-size="22" font-weight="400" fill="#173D34">failed_seen and deleted_seen stay</text>
 <text x="518.0" y="884" font-size="22" font-weight="400" fill="#173D34">independent.</text>
 <text x="518.0" y="912" font-size="22" font-weight="400" fill="#173D34">Send text/templates to allowed</text>
@@ -92,9 +92,9 @@ SPDX-License-Identifier: Apache-2.0
 <text x="518.0" y="1274" font-size="22" font-weight="400" fill="#173D34">Unsupported classes are ignored.</text>
 <text x="518.0" y="1302" font-size="22" font-weight="400" fill="#173D34">Send to configured chats; replies</text>
 <text x="518.0" y="1330" font-size="22" font-weight="400" fill="#173D34">pin a message ID.</text>
-<rect x="40" y="1400" width="880" height="136" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1420) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1444" font-size="23" font-weight="700" fill="#326B88">Provider acceptance is not delivery</text>
+<rect x="40" y="1400" width="880" height="136" rx="16" fill="#FFF7E5"/>
+<g transform="translate(59 1420) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1444" font-size="23" font-weight="700" fill="#367D68">Provider acceptance is not delivery</text>
 <text x="60" y="1483" font-size="21" font-weight="400" fill="#173D34">Unknown sends need reconciliation. These profiles and local fixtures do not</text>
 <text x="60" y="1512" font-size="21" font-weight="400" fill="#173D34">certify a live account or installation.</text><g id="lumi-takeaway">
 <rect x="0" y="1586" width="960" height="90" rx="16" fill="#EAF4ED"/>

@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1317" viewBox="0 0 960 1317" role="img" aria-labelledby="title desc">
-<title id="title">Read evidence before changing execution</title><desc id="desc">Start with the exact run, pinned artifact, retained history, omissions, incident, and task generation. READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</desc>
+<title id="title">Read evidence before changing execution</title><desc id="desc">Two rows with separate responsibilities. Read only: offline replay feeds the pure kernel the pinned artifact and accepted events, with no Action, network, secret access or resume, and reports consistent for a fully evidenced terminal stream, incomplete to keep the verified prefix, or inconsistent to inspect the first contradiction. Authorized change: first obtain independent delivery evidence from the external system, read the incident's code and current revision, and generate a new receipt ID for your decision; then choose an allowed resolution, retry_safe for a safe effect with the same deadline and operation key, accept_reconciled_result with evidence and valid output, or terminate to cancel execution, and submit it with the incident revision. Replay cannot fill missing evidence and authorization_verified stays false; clear the last blocking incident to continue, and remember that a whole-run retry needs a terminal parent and creates new operation keys with possible new effects.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
 <rect width="960" height="1217" rx="24" fill="#FAFCFB"/>
@@ -57,24 +57,24 @@ SPDX-License-Identifier: Apache-2.0
 <text x="58.0" y="754" font-size="24" font-weight="700" fill="#173D34">Inspect the external system</text>
 <text x="58.0" y="798" font-size="22" font-weight="400" fill="#173D34">Obtain independent delivery</text>
 <text x="58.0" y="826" font-size="22" font-weight="400" fill="#173D34">evidence.</text>
-<text x="58.0" y="854" font-size="22" font-weight="400" fill="#173D34">Read current incident revision and</text>
-<text x="58.0" y="882" font-size="22" font-weight="400" fill="#173D34">authority.</text>
-<text x="58.0" y="910" font-size="22" font-weight="400" fill="#173D34">Submit a stable receipt ID with</text>
-<text x="58.0" y="938" font-size="22" font-weight="400" fill="#173D34">If-Match.</text>
+<text x="58.0" y="854" font-size="22" font-weight="400" fill="#173D34">Read the incident’s code and</text>
+<text x="58.0" y="882" font-size="22" font-weight="400" fill="#173D34">current revision.</text>
+<text x="58.0" y="910" font-size="22" font-weight="400" fill="#173D34">Generate a new receipt ID for</text>
+<text x="58.0" y="938" font-size="22" font-weight="400" fill="#173D34">your decision.</text>
 <path class="edge" d="M465.0 805.5h29"/>
 <rect x="500.0" y="651" width="420.0" height="309" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <circle cx="546.0" cy="697" r="29" fill="#EEF4F0"/>
 <g transform="translate(523.0 674) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 18c0-17 24-17 24 0 0 10-13 9-13 20 M29 46v2"/><circle cx="28" cy="28" r="25"/></g>
 <text x="518.0" y="754" font-size="24" font-weight="700" fill="#173D34">Choose an allowed resolution</text>
-<text x="518.0" y="798" font-size="22" font-weight="400" fill="#173D34">retry_safe: eligible effect,</text>
-<text x="518.0" y="826" font-size="22" font-weight="400" fill="#173D34">original deadline and operation</text>
-<text x="518.0" y="854" font-size="22" font-weight="400" fill="#173D34">key.</text>
-<text x="518.0" y="882" font-size="22" font-weight="400" fill="#173D34">accept_reconciled_result: evidence</text>
-<text x="518.0" y="910" font-size="22" font-weight="400" fill="#173D34">plus valid output.</text>
-<text x="518.0" y="938" font-size="22" font-weight="400" fill="#173D34">terminate: cancel execution.</text>
-<rect x="40" y="1008" width="880" height="165" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1028) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1052" font-size="23" font-weight="700" fill="#326B88">Replay cannot fill missing evidence</text>
+<text x="518.0" y="798" font-size="22" font-weight="400" fill="#173D34">retry_safe: safe effect, same</text>
+<text x="518.0" y="826" font-size="22" font-weight="400" fill="#173D34">deadline and operation key.</text>
+<text x="518.0" y="854" font-size="22" font-weight="400" fill="#173D34">accept_reconciled_result: evidence</text>
+<text x="518.0" y="882" font-size="22" font-weight="400" fill="#173D34">plus valid output.</text>
+<text x="518.0" y="910" font-size="22" font-weight="400" fill="#173D34">terminate: cancel execution.</text>
+<text x="518.0" y="938" font-size="22" font-weight="400" fill="#173D34">Submit with the incident revision.</text>
+<rect x="40" y="1008" width="880" height="165" rx="16" fill="#FFF7E5"/>
+<g transform="translate(59 1028) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1052" font-size="23" font-weight="700" fill="#367D68">Replay cannot fill missing evidence</text>
 <text x="60" y="1091" font-size="21" font-weight="400" fill="#173D34">authorization_verified remains false. Clear the last blocking incident to</text>
 <text x="60" y="1120" font-size="21" font-weight="400" fill="#173D34">continue. Whole-run retry needs a terminal parent and creates new operation</text>
 <text x="60" y="1149" font-size="21" font-weight="400" fill="#173D34">keys with possible new effects.</text><g id="lumi-takeaway">

@@ -15,49 +15,56 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1000" viewBox="0 0 1120 1000" role="img" aria-labelledby="title desc">
-<title id="title">An integration step chooses an Action. The Action chooses the implementation.</title>
-<desc id="desc">Read from top to bottom. A workflow action step selects an exact published Action version, business input, and a logical connection slot. The Action defines schemas, timeout, retries, and side effects. It invokes either an installed connector operation or an admitted remote worker handler. Activation binds the environment's authorized connection; credentials are not stored in workflow input. The executor calls the external system and returns a result to the durable run.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1040" viewBox="0 0 1120 1040" role="img" aria-labelledby="title desc">
+<title id="title">A Call an action step chooses an Action. The Action chooses the implementation.</title>
+<desc id="desc">Read from top to bottom. 1: a Call an action step selects an exact published Action version, its business input, and a named connection slot. 2: the published Action defines accepted input and returned output and pins the implementation, side effect, timeout, and retry policy; changing it means publishing a new version. Beside them, activation binds the slot to an authorized connection revision in each environment and pins the release that runs the implementation; secrets stay outside the workflow definition. The Action uses exactly one implementation: 3a, a connector operation that a built-in or installed connector runs, such as a REST call on the built-in weave-http@2.0.0 connector or an email send; or 3b, a remote worker task that runs your admitted handler. 4: the external system receives the request, and the executor reports the result so Weave records progress and continues the run.</desc>
 <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
-<rect width="1120" height="1000" rx="24" fill="#EEF4F0"/>
-<text class="title" x="40" y="55">What does “Call an integration” actually call?</text>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.line{fill:none;stroke:#367D68;stroke-width:3}.bind{fill:none;stroke:#367D68;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="1120" height="1040" rx="24" fill="#EEF4F0"/>
+<text class="title" x="40" y="55">What does “Call an action” actually call?</text>
 <text class="p" x="40" y="90">Follow one step from your process to the external system.</text>
 <rect x="50" y="125" width="650" height="180" rx="16" fill="white"/>
 <g class="icon" transform="translate(74 151)"><rect width="16" height="16" rx="3"/><rect x="27" y="27" width="16" height="16" rx="3"/><path d="M8 16v19h19"/></g>
 <text class="h" x="137" y="177">1. Your workflow step</text>
 <text class="p" x="74" y="222">Action version: notify-customer@1.0.0</text>
 <text class="p" x="74" y="253">Input: customer and message data</text>
-<text class="small" x="74" y="283">Connection slot: notifications</text>
+<text class="p" x="74" y="284">Connection slot: notifications</text>
+<path class="bind" d="M700 277H741"/>
 <path class="arrow" d="M375 305V350"/>
-<rect x="50" y="360" width="650" height="183" rx="16" fill="#173D34"/>
+<rect x="50" y="360" width="650" height="200" rx="16" fill="#173D34"/>
 <text class="h" x="74" y="401" style="fill:white">2. The published Action contract</text>
 <text class="p" x="74" y="442" style="fill:white">Defines accepted input and returned output.</text>
-<text class="p" x="74" y="476" style="fill:white">Pins the implementation, timeout, and retry policy.</text>
-<text class="small" x="74" y="514" style="fill:#CEE4D8">Changing this contract means publishing a new version.</text>
-<rect x="745" y="200" width="325" height="295" rx="16" fill="#FFF7E5"/>
-<g class="icon" transform="translate(770 225)"><path d="M0 5l20-5 20 5v16c0 12-20 23-20 23S0 33 0 21Z"/><path d="M10 20l7 7 14-15"/></g>
-<text class="h" x="770" y="302">Environment binding</text>
-<text class="p" x="770" y="344">Activation maps the slot</text>
-<text class="p" x="770" y="374">to an authorized</text>
-<text class="p" x="770" y="404">connection revision.</text>
-<text class="small" x="770" y="449">Secrets stay outside</text>
-<text class="small" x="770" y="475">your workflow definition.</text>
-<path class="arrow" d="M375 543v37H285v42"/>
-<path class="arrow" d="M375 580h460v42"/>
-<text class="small" x="486" y="572">One implementation</text>
-<rect x="50" y="632" width="475" height="172" rx="16" fill="white"/>
+<text class="p" x="74" y="476" style="fill:white">Pins the implementation, side effect, timeout,</text>
+<text class="p" x="74" y="504" style="fill:white">and retry policy.</text>
+<text class="small" x="74" y="540" style="fill:#CEE4D8">Changing this contract means publishing a new version.</text>
+<rect x="745" y="170" width="325" height="390" rx="16" fill="#FFF7E5"/>
+<g class="icon" transform="translate(770 195)"><path d="M0 5l20-5 20 5v16c0 12-20 23-20 23S0 33 0 21Z"/><path d="M10 20l7 7 14-15"/></g>
+<text class="h" x="770" y="272">Environment binding</text>
+<text class="p" x="770" y="312">At activation, each</text>
+<text class="p" x="770" y="340">environment maps the</text>
+<text class="p" x="770" y="368">slot to an authorized</text>
+<text class="p" x="770" y="396">connection revision and</text>
+<text class="p" x="770" y="424">pins the release that</text>
+<text class="p" x="770" y="452">runs the implementation.</text>
+<text class="small" x="770" y="504">Secrets stay outside</text>
+<text class="small" x="770" y="530">your workflow definition.</text>
+<path class="line" d="M375 560V596H285"/><path class="arrow" d="M285 594V622"/>
+<path class="line" d="M375 596H835"/><path class="arrow" d="M835 594V622"/>
+<text class="small" x="390" y="585">Exactly one implementation</text>
+<rect x="50" y="632" width="475" height="190" rx="16" fill="white"/>
 <g class="icon" transform="translate(74 654)"><path d="M9 0v12M27 0v12M1 12h34v8a17 17 0 0 1-34 0ZM18 37v10"/></g>
 <text class="h" x="130" y="684">3a. Connector operation</text>
-<text class="p" x="74" y="733">An installed adapter calls its operation.</text>
-<text class="small" x="74" y="774">Example: an email send operation.</text>
-<rect x="570" y="632" width="500" height="172" rx="16" fill="white"/>
+<text class="p" x="74" y="730">A built-in or installed connector runs it.</text>
+<text class="small" x="74" y="768">Examples: a REST call on the built-in</text>
+<text class="small" x="74" y="794">weave-http@2.0.0, or an email send.</text>
+<rect x="570" y="632" width="500" height="190" rx="16" fill="white"/>
 <g class="icon" transform="translate(595 654)"><rect width="36" height="36" rx="5"/><path d="M8 11l7 7-7 7M20 26h9"/></g>
 <text class="h" x="651" y="684">3b. Remote worker task</text>
-<text class="p" x="595" y="733">Your admitted handler executes the call.</text>
-<text class="small" x="595" y="774">Example: your company's service client.</text>
-<path class="arrow" d="M285 804v31h275v34"/><path class="arrow" d="M835 804v31H560"/>
-<rect x="50" y="880" width="1020" height="80" rx="16" fill="#DCEBE3"/>
-<text class="h" x="74" y="914">4. The external system receives the request</text>
-<text class="small" x="74" y="944">The executor reports the result; Weave records progress and continues the process.</text>
+<text class="p" x="595" y="730">Your admitted handler runs it.</text>
+<text class="small" x="595" y="768">Example: your company's own</text>
+<text class="small" x="595" y="794">service client in a container.</text>
+<path class="line" d="M285 822V860H835V822"/><path class="arrow" d="M560 860V910"/>
+<rect x="50" y="920" width="1020" height="84" rx="16" fill="#DCEBE3"/>
+<text class="h" x="74" y="955">4. The external system receives the request</text>
+<text class="small" x="74" y="986">The executor reports the result; Weave records progress and continues the run.</text>
 </svg>

@@ -16,221 +16,425 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Pure compiler and artifact boundary
+# Compile workflows and read the results
 
-This reference is for editor and runtime integrators. A **compiler** checks a
-workflow and turns it into a fixed execution plan, called an **artifact**. It
-does not run the workflow. Start with [workflow authoring](../guides/workflow-authoring.md)
-for the echo file used below; use the [standalone tutorial](../guides/standalone.md)
-when you want a durable run.
+The **compiler** checks a workflow, action, or connector definition and turns it
+into a fixed execution plan called an **artifact**. It never runs anything: no
+application startup, provider lookup, credential, database, network, or worker
+discovery. The same compiler runs in the CLI, in Studio's local host, and on the
+platform when you publish.
+
+**Who it is for.** Anyone who needs to understand a compile result or a
+diagnostic, and integrators who embed the compiler in an editor, a pipeline, or a
+runtime. **What you need.** The echo file from
+[workflow authoring](../guides/workflow-authoring.md) for the examples, and a
+source checkout to run the Python one. Allow 10 minutes. For durable runs, follow
+the [standalone tutorial](../guides/standalone.md) or the
+[local platform guide](../guides/local-platform.md).
 
 ![Compiler checks and the source correction loop](../diagrams/authoring-diagnostic-loop.svg)
 
-Start at the editable source and read down. The partial check establishes shape and schema validity; full compilation adds an explicit catalog and can produce an executable. The final card shows how an error code and semantic path guide a source edit. [Open the diagram at full size](../diagrams/authoring-diagnostic-loop.svg).
+Start at the editable source and read down. The partial check establishes shape
+and schema validity; full compilation adds an explicit catalog and can produce an
+executable. The last card shows how an error code and its path lead you back to a
+source edit.
+[Open diagram at full size](../diagrams/authoring-diagnostic-loop.svg)
 
-## Compile the tutorial file in Python
+## Choose the right check
 
-Run this from the checkout root in the installed Weave environment:
+| Entry point | Who calls it | Catalog | Produces an artifact | Use it to |
+| --- | --- | --- | --- | --- |
+| `validate_source` | `weave workflow validate`, the API's `compiler.validate` | None | Never | Check shape and schemas while a definition is incomplete |
+| `validate_authoring` | Studio's live check, and **Validate** when Studio cannot compile on a platform | None (references stay pending) | Never | Also check data flow and types before actions are available |
+| `compile_source` | `weave workflow compile` and `explain`, the API's `compiler.compile`, publication | Explicit `CatalogSnapshot` | Yes, when there are no errors | Produce the executable you simulate, publish, and activate |
+| `import_artifact` | The simulator, replay, and runtime consumers | Locks inside the artifact | Returns the checked artifact | Re-check an artifact before trusting it |
 
-```python
-from pathlib import Path
-from firefly_weave.compiler.api import compile_source, validate_source
-from firefly_weave.compiler.catalog import CatalogSnapshot
+**`validate_authoring` is new in 0.1.0a7.** An alpha6 or earlier Studio uses
+`validate_source`.
 
-path = Path(".local/tutorial/echo.workflow.yaml")
-source = path.read_text()
-partial = validate_source(source, format="yaml", filename=str(path))
-print(partial.validation_ok, partial.partial, partial.ok)
+## Compile the tutorial file
 
-result = compile_source(source, format="yaml", filename=str(path),
-                        catalog=CatalogSnapshot.empty(), strict=True)
-for diagnostic in result.diagnostics:
-    print(diagnostic.code, diagnostic.path, diagnostic.source)
-assert result.ok and result.artifact is not None
-print(result.artifact.digest)
+1. **Validate without a catalog.** This is the quickest check and needs no
+   dependencies:
+
+    ```sh
+    # Check shape and schemas only; no dependencies are resolved.
+    weave workflow validate .local/tutorial/echo.workflow.yaml --output json
+    ```
+
+    Expected: exit code `0`, `validationOk: true`, `partial: true`, `ok: false`,
+    and `artifact: null`. `ok: false` means only that no executable was
+    produced.
+
+2. **Compile with an explicit catalog.** Echo calls no action, so the empty
+   catalog from the authoring guide is enough:
+
+    ```sh
+    # Resolve dependencies, check types, and print the graph the runtime will follow.
+    weave workflow explain .local/tutorial/echo.workflow.yaml \
+      --catalog .local/tutorial/empty-catalog.json
+    ```
+
+    Expected: `Compilation passed:` followed by a 64-character digest, then the
+    `@start`, `echo`, and `@end` nodes with their source positions and edges.
+
+3. **Do the same from Python.** Embedders call the same functions. From the
+   checkout root, save this as `compile_echo.py` and run
+   `uv run python compile_echo.py`:
+
+    ```python
+    from pathlib import Path
+    from firefly_weave.compiler.api import compile_source, validate_source
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+
+    path = Path(".local/tutorial/echo.workflow.yaml")
+    source = path.read_text()
+    partial = validate_source(source, format="yaml", filename=str(path))
+    print(partial.validation_ok, partial.partial, partial.ok)
+
+    result = compile_source(source, format="yaml", filename=str(path),
+                            catalog=CatalogSnapshot.empty(), strict=True)
+    for diagnostic in result.diagnostics:
+        print(diagnostic.code, diagnostic.path, diagnostic.source)
+    assert result.ok and result.artifact is not None
+    print(result.artifact.digest)
+    ```
+
+    Expected: `True True False`, then a 64-character digest. The first line says
+    the source checks passed but produced no executable; the digest identifies
+    the compiled executable.
+
+An empty catalog works because echo only transforms data. A workflow that calls
+an action needs that action's exact contract in the catalog; see the onboarding
+example in [workflow authoring](../guides/workflow-authoring.md#read-an-external-action-example-next).
+
+## Read a compile result
+
+`CompileResult` exposes `diagnostics`, `artifact`, `ok`, `validation_ok`,
+`partial`, `error_count`, `omitted_count`, `schema_truncated`, and `truncated`.
+The CLI's `--output json` and the API return the same envelope with camelCase
+names (`validationOk`, `errorCount`, `omittedCount`, `schemaTruncated`).
+
+| Result | What it means | What an editor or script should do |
+| --- | --- | --- |
+| `validation_ok=True`, `partial=True` | The available checks passed; no artifact exists | Show that the source checks passed; compilation is still required |
+| `ok=True`, artifact present | Complete compilation produced an executable without errors | Allow simulation, or submit the source for publication |
+| Error diagnostics | At least one check failed | Show each `code`, `path`, and `source`; keep the user's source editable |
+| `truncated=True` | More diagnostics existed than the limit allows | Say that more problems exist; never present the list as complete |
+
+**`ok` is not readiness.** It does not establish a live worker, a ready
+connection, a compatible release, or permission to deploy.
+
+**Keep both locations.** `path` is a JSON Pointer into the parsed definition,
+such as `/spec/output`; `source` is the file line and column. Editors need the
+source range; JSON-based tools need the path. Each diagnostic field is described
+in [definition contracts](../contracts.md#diagnostics).
+
+**Strict mode turns warnings into errors.** With `strict=True` (CLI `--strict`),
+complete-analysis warnings such as `WV-COMP-UNKNOWN_COMPATIBILITY` (schema
+compatibility could not be proved) and `WV-COMP-REFERENCE_PRESENCE` (a referenced
+value might be missing) become errors. Strict mode does not add work to partial
+validation.
+
+`to_bytes()` serializes every retained diagnostic and the truncation metadata,
+even when no artifact is produced.
+
+## How Studio checks your workflow as you edit
+
+Studio's local host calls `validate_authoring` shortly after each change, and
+when you select **Validate** without a platform connection that lets you compile.
+It runs every `validate_source`
+check, then data-flow, dominance, operand, and type analysis against an absent
+catalog:
+
+- Each reference to an action, connector, task capability, or adapter reports
+  `WV-COMP-CATALOG_PENDING` at `info` severity instead of an unknown-resource
+  error. Studio shows these as notes, not failures.
+- The output of a pending reference stays unconstrained, so reading it raises no
+  error or uncertainty warning, and `coalesce` fallbacks after such a read are
+  left to complete compilation.
+- Definite problems are still errors: `WV-COMP-UNAVAILABLE_REFERENCE` (a step
+  reads a step that has not run yet in its scope), `WV-COMP-TYPE_MISMATCH`, and
+  `WV-COMP-CONNECTION` for a step that names an undeclared connection slot.
+- Pending notes only use diagnostic capacity that real findings leave free.
+
+The result is always `partial=True`, `artifact=None`, and `ok=False`;
+`validation_ok` counts error-severity findings only. When Studio is connected and
+your account may compile, **Validate** compiles against the project catalog
+instead. `validate_source`, the API's `compiler.validate`, and
+`weave workflow validate` keep their partial behavior unchanged.
+
+## Entry point signatures
+
+```text
+compile_source(source, *, format, catalog, filename=None, strict=False, ...) -> CompileResult
+validate_source(source, *, format, filename=None, ...) -> CompileResult
+validate_authoring(source, *, format, filename=None, ...) -> CompileResult
+import_artifact(source, *, limits=ArtifactLimits()) -> CompiledArtifact
 ```
 
-The first line prints `True True False`: source checks succeeded, but they did
-not produce an executable. Complete compilation prints a 64-character digest
-identifying the executable. An empty catalog works because echo uses only a
-transform. An Action reference needs its exact declared contracts in the catalog.
+`source` is `str`, `bytes`, or a JSON object, and `format` is `yaml`, `json`, or
+`object`. Workflow, action, and connector definitions use the same entry points.
+`compile_source` requires an explicit immutable `CatalogSnapshot`; it raises
+`TypeError` without one. The optional keywords are the separate resource policies
+described in [Limits](#limits). `compile_source` also accepts
+`action_validators`: trusted checks keyed by the exact digest of an installed
+connector manifest. The platform passes them when it compiles and publishes, so an
+action that uses an installed connector, such as `weave-http@2.0.0`, gets that connector's
+configuration checks (`WV-COMP-CONFIG_CONTRACT` and related codes). Tenant data can
+never select or replace a check. `action_validators` is new in 0.1.0a7; alpha6
+and earlier releases do not have it.
 
-| Result | What an authoring tool should do |
-| --- | --- |
-| `validation_ok=True`, `partial=True` | Show source checks passed; compilation is still required |
-| `ok=True`, artifact present | Allow local simulation or submission for server publication |
-| Error diagnostics | Show `code`, semantic `path`, and `source` location; keep the user's source editable |
-| `truncated=True` | Tell the user additional diagnostics were omitted; do not claim an exhaustive error list |
-
-A diagnostic path points into the parsed definition, such as `/spec/output`.
-A source span points to the corresponding file line/column. Preserve both:
-editors need source spans, while JSON-based authoring tools need paths. Strict
-mode turns complete-analysis warnings into errors; it does not expand the work
-performed by partial validation.
-
-## Entry points and result contract
-
-`compile_source(source, *, format, catalog, filename=None, strict=False)` compiles
-`str | bytes | JsonObject` in `yaml`, `json`, or `object` format. The explicit
-immutable `CatalogSnapshot` supplies exact dependencies. Workflow, Action, and
-Connector definitions use the same entry point. No application startup, provider
-lookup, credential access, database, network, or worker discovery is performed.
-
-`CompileResult` exposes copied `diagnostics`, `artifact`, `ok`, `validation_ok`,
-`partial`, `error_count`, `omitted_count`, `schema_truncated`, and `truncated`.
-`ok` means complete compilation produced an executable artifact without errors.
-It does not establish live worker availability, connection readiness, release
-compatibility, or deployment authorization. Strict mode promotes analysis
-warnings to errors. Serialization through `to_bytes()` includes all retained
-diagnostics and truncation metadata, even when no artifact is produced.
-
-`validate_source(source, *, format, filename=None)` shares parser, strict outer
-contract, embedded schema, and workflow preflight validation with full analysis.
-It is the no-catalog authoring entry point for the CLI. It always returns
-`partial=True`, `artifact=None`, and `ok=False`; inspect `validation_ok` to show
-whether those partial checks passed. Dependency resolution and workflow type,
-operand, and dominance analysis require complete compilation. Local schema
-references requiring an absent catalog cannot be established in partial mode.
-Neither missing dependencies nor a successful partial result produces an artifact.
+Partial validation cannot establish dependency resolution, type and dominance
+analysis, or local schema references that need an absent catalog. Neither missing
+dependencies nor a successful partial result produces an artifact.
 
 ## Executable and source envelope
 
-`CompiledArtifact` owns canonical immutable bytes. Its `executable` and
-`source_map` accessors return fresh copies. `digest` is SHA-256 of RFC 8785 bytes
-for the executable alone. `source_hash` identifies original parsed source bytes
-(or canonical object input); comments, filename changes, and formatting never
-enter executable identity. The source map retains JSON Pointer to source-span
-mappings. Diagnostics and their original locations also live in this envelope.
+A `CompiledArtifact` owns canonical, immutable bytes. Its `executable` and
+`source_map` accessors return fresh copies.
 
-The version is `irVersion: weave/ir-v1alpha1`. `ir.py` defines every node, edge,
-control, join, guard, dependency, and executable field as a strict Pydantic model.
-`export_schemas()` adds `executable` and `compiled-artifact` to the existing
-published contracts. JSON/schema/literal fields retain their intended JSON
-containers; graph control fields never use untyped object dictionaries.
+- **`digest`** is the SHA-256 of the executable's RFC 8785 canonical bytes. It is
+  the executable's identity.
+- **`source_hash`** identifies the original parsed source bytes, or the canonical
+  object input. Comments, filenames, and formatting never change the digest.
+- **The source map** maps JSON Pointers to source ranges. Diagnostics and their
+  original locations live in the same envelope, outside executable identity.
 
-Every executable carries kind, source-free metadata, API/IR versions, guards,
-a schema table indexed by canonical SHA-256, and sorted exact dependency locks.
-Each lock carries kind, reference, digest, and one canonical normalized document.
-Action nodes refer to the Action digest; task/connector implementation, retry,
-timeout, routing, connection, and side-effect policies remain in that document.
-Every resolved identity is retained, including TaskCapability, Adapter, and all
-bundled Schema resources. Adapter locks identify declarations, not installed code.
-Schema guards and signal nodes reference interned schemas rather than copying
-them into each step. Action and Connector executables retain their strict typed
-manifest spec and dependencies; they have no invented workflow graph.
+**IR version.** Executables use `irVersion: weave/ir-v1alpha1`, or
+`weave/ir-v1alpha2` when the workflow contains a human task. `ir.py` defines
+every node, edge, control, join, guard, dependency, and executable field as a
+strict Pydantic model, and `export_schemas()` publishes `executable` and
+`compiled-artifact` with the other contracts.
+
+Every executable carries its kind, source-free metadata, API and IR versions,
+guards, a schema table indexed by canonical SHA-256, and sorted exact dependency
+locks:
+
+- Each lock has a kind, reference, digest, and one canonical normalized document.
+- Action nodes refer to the action's digest. Implementation, retry, timeout,
+  routing, connection, and side-effect policy stay in that locked document.
+- Every resolved identity is kept, including task capabilities, adapters, and
+  bundled schema resources. Adapter locks identify declarations, not installed
+  code.
+- Schema guards and signal nodes reference interned schemas instead of copying
+  them into every step.
+
+Action and connector executables keep their strict manifest spec and
+dependencies; they have no workflow graph.
 
 ## Workflow graph contract for runtime consumers
 
-```mermaid
-flowchart LR
-    start[Start] --> control[Switch or parallel]
-    control --> branchA[Branch A steps]
-    control --> branchB[Branch B steps]
-    branchA --> outputA[Branch A output]
-    branchB --> outputB[Branch B output]
-    outputA --> join[Selected or all join]
-    outputB --> join
-    join --> next[Next step or end output]
+`weave workflow explain` prints the graph the runtime follows. Save this
+workflow, whose only step is a **Decision** (`switch`) with one case and a
+default, as `route.workflow.yaml`:
+
+```yaml
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: route
+  version: "1.0.0"
+spec:
+  inputSchema:
+    type: object
+    required: [urgent]
+    additionalProperties: false
+    properties:
+      urgent: {type: boolean}
+  outputSchema: {type: string}
+  steps:
+    - id: route
+      kind: switch
+      cases:
+        - when: {ref: /input/urgent}
+          steps: []
+          output: {literal: fast}
+      default:
+        steps: []
+        output: {literal: normal}
+  output: {ref: /steps/route/output}
 ```
 
-* `@start` enters the first step, or `@end` for an empty workflow. End evaluates
-  the workflow output. Sequential edges have `kind: next` and `branch: null`.
-* User step IDs remain stable. Synthetic IDs use the reserved `@` prefix, which
-  author step names cannot contain: `@join:<id>` and `@branch:<id>:<index>`.
-* Switch case arrays retain declared order; the first true case wins, otherwise
-  default runs. Explicit case/default edges name the corresponding branch.
-  A switch join uses `mode: selected` and forwards that branch's output.
-* Parallel branches sort by name, independent of mapping order. Fork edges name
-  branches, `concurrency` carries the declared cap, and `mode: all` collects
-  every successful named output into the step's output object.
-* Every branch has a `branch-output` node, including empty branches. Its output
-  expression runs in the branch's lexical scope. Empty branches enter it directly.
-* A scope is an ordered list of owner/branch pairs. Branch-private step values
-  remain private; a join publishes only the enclosing step's output.
-* Fail nodes have no success edge. A noncompleting branch has no output-to-join
-  edge; a noncompleting join has no successor. Unreachable author tail nodes can
-  remain present. Consumers must follow edges, not execute the node array order.
-* Wait nodes carry timer duration. Signal nodes carry name, timeout, and schema
-  reference. Transform/action nodes carry strict existing expression contracts.
-* Guards retain semantic pointer and purpose. Consumers match node `path`, input,
-  branch-output, or workflow-output paths and validate against `schemaRef` using
-  locked Schema resources as the local schema bundle.
+```sh
+# Compile the decision workflow and print its nodes, source positions, and edges.
+weave workflow explain route.workflow.yaml --catalog .local/tutorial/empty-catalog.json
+```
 
-`import_artifact(bytes_or_text_or_object, *, limits=ArtifactLimits())` bounds input,
-checks supported IR version, strict model/schema invariants, executable/dependency/
-schema hashes, unique IDs, referenced nodes, edge kinds, joins, lexical scopes,
-branch completion, and acyclic control flow. Joins accept only their own matching
-branch-output completion edges; other nodes cannot merge predecessors. Zero
-predecessors remain legal for unreachable author tails after failures. Import also
-checks direct/transitive TaskCapability, Connector, Adapter, connection-slot,
-connector-descriptor, and named Schema-resource reference closure against the
-supplied locks. Schema traversal uses the published schema vocabulary, leaving
-reference-shaped const/default/enum/example data alone. This checks declared
-reference closure without discovering providers or claiming activation readiness;
-publication still performs full source/schema/semantic recompilation.
-Malformed imports raise `ValueError`
-(including `ParseFailure`/Pydantic validation subclasses). It does not authenticate
-an artifact or prove source-envelope truth. Publication must recompile submitted
-source against server-owned catalog data; a recomputed hash is not authorization.
+Expected (the digest is shortened here, and the `Runtime guards:` lines that
+follow the edges are omitted):
 
-## Independent resource policies
+```text
+Compilation passed: dfd61f4d…
+Resolved dependencies:
+Flow and source positions:
+  @start (start) route.workflow.yaml:7:3
+  @end (end) route.workflow.yaml:24:11
+    reads /steps/route/output
+  @branch:route:0 (branch-output) route.workflow.yaml:20:19
+  @branch:route:1 (branch-output) route.workflow.yaml:23:17
+  @join:route (join) route.workflow.yaml:15:7
+  route (switch) route.workflow.yaml:15:7
+    reads /input/urgent
+  @branch:route:0 -> @join:route (join branch=case:0)
+  route -> @branch:route:0 (case branch=case:0)
+  @branch:route:1 -> @join:route (join branch=default)
+  route -> @branch:route:1 (default branch=default)
+  @join:route -> @end (next)
+  @start -> route (next)
+```
 
-Source/expression/runtime limits remain `Limits`; embedded author schemas use
-`SchemaLimits`; generated outer contracts retain `DEFAULT_CONTRACT_LIMITS`.
-Compiler entry points expose these as separate keyword overrides. Complete
-compilation also accepts `max_parallel_concurrency` and `artifact_limits`.
+`Resolved dependencies:` is empty because the workflow calls no action. Read the
+flow as: start, decide, take one branch, join, end. The rules behind it:
 
-`ArtifactLimits` defaults to 33,554,432 bytes (32 MiB), 2,000,000 JSON value nodes,
-and depth 128. Limits are strict positive integers and cannot be raised by source.
-Construction charges distinct fragments before adding them to aggregate tables,
-then measures the entire envelope before canonical serialization. Shared schemas
-are interned, and resolved dependency documents appear once per identity. Storage
-limits include source maps and diagnostics. These bounds do not promise that every
-source fitting 1 MiB fits every downstream policy.
+- **Entry and exit.** `@start` enters the first step, or `@end` for an empty
+  workflow. `@end` evaluates the workflow output. Sequential edges have
+  `kind: next` and `branch: null`.
+- **IDs.** Your step IDs stay stable. Synthetic IDs start with `@`, which step IDs
+  cannot contain: `@join:ID` and `@branch:ID:INDEX`.
+- **Decisions.** Cases keep their declared order; the first true case wins,
+  otherwise the default runs. `case` and `default` edges name their branch. A
+  decision's join uses `mode: selected` and forwards that branch's output.
+- **Parallel.** Branches are sorted by name, whatever their order in the source.
+  `fork` edges name the branches, `concurrency` carries the declared cap, and the
+  join uses `mode: all`, collecting every named branch output into the step's
+  output object.
+- **Branch outputs.** Every branch has a `branch-output` node, even an empty one.
+  Its output expression runs in the branch's scope; an empty branch enters it
+  directly.
+- **Scope.** A scope is an ordered list of owner and branch pairs. Values inside a
+  branch stay private; a join publishes only the enclosing step's output.
+- **Ends that do not complete.** A `fail` node has no success edge. A branch that
+  cannot complete has no edge to its join, and a join that cannot complete has no
+  successor. Unreachable steps after a failure can remain in the node list, so
+  **follow the edges; never execute the node array in order**.
+- **Node payloads.** Wait nodes carry the duration; signal nodes carry the name,
+  timeout, and schema reference; transform and action nodes carry their
+  expressions.
+- **Guards.** Each guard keeps its semantic path and purpose. Consumers match a
+  node `path`, the input, a branch output, or the workflow output, and validate it
+  against `schemaRef` using the locked schema resources as the local bundle.
 
-Import uses the same artifact policy, independently of the 1 MiB source/payload
-limits. A generated multi-megabyte source map therefore remains importable.
-Supplying larger artifact policy overrides requires using those overrides at import
-as well. Default 1,000-step and distributed 9,991-expression workflows compile and
-round-trip. Canonical fixture bytes live in `tests/fixtures/canonical/`.
+## Import an artifact
+
+`import_artifact(bytes_or_text_or_object, *, limits=ArtifactLimits())` re-checks
+an artifact before you trust it:
+
+- Input size and the supported IR version.
+- Strict model and schema invariants, and the executable, dependency, and schema
+  hashes.
+- Unique IDs, referenced nodes, edge kinds, joins, lexical scopes, branch
+  completion, and acyclic control flow. A join accepts only its own branch-output
+  edges; no other node merges predecessors. Unreachable tails after a failure may
+  have zero predecessors.
+- Reference closure: task capabilities, connectors, adapters, connection slots,
+  connector descriptors, and named schema resources must all resolve to the
+  supplied locks. Reference-shaped `const`, `default`, `enum`, or example data is
+  left alone.
+
+A malformed import raises `ValueError` (including `ParseFailure` and Pydantic
+validation errors). **Import does not authenticate an artifact.** It proves neither
+who produced it nor that its source envelope is true, and it does not discover
+providers or claim activation readiness. Publication always recompiles the
+submitted source against the server's own catalog; a matching hash is not
+authorization.
+
+## Limits
+
+Each kind of input has its own policy, passed as a separate keyword:
+
+| Policy | Governs | Defaults |
+| --- | --- | --- |
+| `Limits` | Source, expressions, and runtime payloads | 1 MiB source and payload, 1,000 steps; see [definition contracts](../contracts.md#values-and-budgets) |
+| `SchemaLimits` | Author schemas | See [schema profile limits](schema-profile.md#limits) |
+| `DEFAULT_CONTRACT_LIMITS` | Weave's generated outer contracts | Author limits with a larger work budget |
+| `ArtifactLimits` | The compiled artifact and its import | 33,554,432 bytes (32 MiB), 2,000,000 JSON value nodes, depth 128 |
+| `max_parallel_concurrency` | The largest `concurrency` a parallel step may declare | 1,000 |
+
+Limits are strict positive integers that source cannot raise. Artifact
+construction charges each fragment before adding it, then measures the whole
+envelope, including source maps and diagnostics, before serializing it. Shared
+schemas are interned, and each resolved dependency document appears once.
+
+Import uses the same artifact policy, independently of the 1 MiB source limit, so
+a multi-megabyte source map remains importable. If you compile with larger
+artifact limits, import with the same ones. Workflows at the default 1,000 steps,
+and with 9,991 expressions spread across them, compile and round-trip. Canonical
+fixture bytes live in `tests/fixtures/canonical/`. These bounds do not promise
+that every source under 1 MiB fits every downstream policy.
 
 ## CLI and published catalog contract
 
-[Offline commands](cli.md) call these entry points directly. `CatalogLock` in
-`compiler.catalog` publishes the strict lock shape and retains snapshot identity
-and digest validation; `export_schemas()` now also includes `catalog-lock`.
-Workflow command JSON is the canonical `CompileResult` envelope, including
-partial/validationOk/ok distinctions. It is not a second compiler implementation.
+The [offline CLI commands](cli.md) call these entry points directly; workflow
+command JSON is the canonical `CompileResult` envelope, not a second compiler.
+`CatalogLock` in `compiler.catalog` publishes the strict lock shape and keeps
+snapshot identity and digest validation; `export_schemas()` includes it as
+`catalog-lock`.
 
-The supported expression forms are literal, ref, object, array and op. Operators
-are eq/ne/lt/lte/gt/gte, and/or/not, exists and coalesce; arbitrary function calls,
-code, imports, secret/environment access and remote references are unsupported.
-Comparisons have two operands; not/exists have one (exists requires a direct
-reference); and/or/coalesce have at least one. Lazy Boolean/coalesce evaluation
-retains missing-vs-null semantics; exhausted coalesce produces null. Numeric
-values must be finite IEEE-754, and integer values remain within the inclusive
-safe range ±9,007,199,254,740,991. Numeric comparisons do not coerce strings or
-Booleans. Exact decimal business amounts should be validated strings. Embedded
-schema numeric semantics and the strict-model boundary are detailed in the
-[schema profile](schema-profile.md).
+**Expressions.** The supported forms are `literal`, `ref`, `object`, `array`, and
+`op`. Operators are `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `and`, `or`, `not`,
+`exists`, and `coalesce`. Function calls, code, imports, secret or environment
+access, and remote references are not supported.
 
-## Classified literals and incomplete editing
+| Operators | Operands | Evaluation |
+| --- | --- | --- |
+| `eq`, `ne`, `lt`, `lte`, `gt`, `gte` | Exactly two | Numeric comparisons never convert strings or Booleans |
+| `not` | Exactly one | Boolean negation |
+| `exists` | Exactly one direct `ref` | True when the referenced value is present |
+| `and`, `or` | At least one | Lazy; keeps the difference between missing and `null` |
+| `coalesce` | At least one | Returns the first present, non-null operand; `null` when all are exhausted |
 
-Publication and imported artifacts enforce the shared secret policy in the
-[schema profile](schema-profile.md). Complete compilation remains offline.
-Drafts still permit incomplete graph/metadata edits, declaration-only
-unresolved schema references, and reference-only bindings that would fail executable
-compilation. Mixed bindings containing concrete literals still require classification. A concrete literal/config binding requiring an
-unresolved target is rejected with `WV-DRAFT-CLASSIFICATION`; edit that binding
-locally until its authorized catalog contract is available. Known marked
-schema literals and bindings are rejected through the same classifier used
-by execution. This does not require every saved draft to be executable and
-does not classify arbitrary unannotated prose. Safe ordinary artifacts retain
-their existing canonical digests.
+Numbers must be finite IEEE-754 values, and integers must stay within
+±9,007,199,254,740,991. Validate exact decimal business amounts as strings.
+Schema number rules are in the [schema profile](schema-profile.md).
 
-Mixed operator bindings retain visible literal alternatives/operands for
-classification, including `coalesce` fallbacks nested in objects or arrays.
-The bounded authoring check does not evaluate references or execute operators;
-it conservatively checks visible operands at the governed binding location.
-A reference-only incomplete draft remains editable, while an embedded known
-classified literal cannot be saved, published or imported in an artifact.
+## Drafts, secrets, and incomplete edits
+
+Publication and artifact import enforce the secret rules of the
+[schema profile](schema-profile.md#durable-secret-classification); complete
+compilation stays offline.
+
+**Drafts may be incomplete.** A saved draft can contain unfinished graph or
+metadata edits, schema references that only declare a target, and bindings made
+only of references that would fail compilation. It does not need to be
+executable.
+
+**Drafts may not hold classified literals.** A binding that mixes in a concrete
+literal still needs classification:
+
+- A literal or configuration binding whose target cannot be resolved yet is
+  rejected with `WV-DRAFT-CLASSIFICATION`. Keep editing it locally until the
+  authorized catalog contract is available.
+- Known secret-marked literals and bindings are rejected by the same classifier
+  that execution uses.
+- Visible literal alternatives and operands are classified wherever they appear,
+  including `coalesce` fallbacks nested in objects or arrays. The check evaluates
+  no references and executes no operators.
+
+A reference-only draft stays editable, while an embedded classified literal can
+never be saved, published, or imported in an artifact. Arbitrary unannotated text
+is not classified. Safe ordinary artifacts keep their canonical digests.
+
+## Next steps
+
+- [Simulate a run](simulation.md): execute the artifact with mocks and a virtual
+  clock.
+- [Author a workflow](../guides/workflow-authoring.md): make a type error on
+  purpose and repair it.
+- [CLI reference](cli.md): every offline workflow command and its exit codes.
+- [Embed the compiler or services](embedding.md): use these functions in your own
+  application.
+
+## Troubleshooting
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| `ok: false` after `weave workflow validate` with `validationOk: true` | Partial validation never produces an artifact | Compile with `--catalog` |
+| `WV-COMP-TYPE_MISMATCH` at `/spec/output` | An expression's type cannot satisfy the target schema | Change the expression or the schema; the authoring guide shows an example |
+| `WV-COMP-UNAVAILABLE_REFERENCE` | An expression reads a step that has not run yet in its scope, or a value private to another branch | Read the step only after it runs, or read the decision or parallel step's output |
+| `WV-COMP-UNKNOWN_ACTION` (or `_CONNECTOR`, `_TASK`, `_ADAPTER`) | The catalog does not contain that exact reference | Add the exact version to the catalog, or fix the reference |
+| `WV-COMP-CATALOG_PENDING` notes in Studio | Studio works without the catalog and checks references later | Nothing; connect and **Validate** against the project catalog |
+| `WV-COMP-CONNECTION` | A step names a connection slot the workflow does not declare, omits a slot its action requires, or uses a slot declared for a different connector | Declare the slot in `spec.connections` with the action's exact connector, or fix the step's `connection` |
+| `WV-COMP-CONFIG_CONTRACT` | An action's `config` does not fit its connector | Fix the configuration; [HTTP profiles](../connectors/http-profiles.md) lists the built-in HTTP rules |
+| `WV-DRAFT-CLASSIFICATION` when saving a draft | A literal binding cannot be classified yet | Remove the literal or wait until its target contract is available |
+| `WV-CLI-EXPORT` on `compile --directory` | Export refuses to overwrite files | Choose a new directory, or add `--force` deliberately |

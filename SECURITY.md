@@ -30,14 +30,17 @@ to send a report privately to the repository maintainers. The package author
 address is not a designated security response mailbox.
 
 Prepare a minimal, redacted report with the affected source/package version,
-configuration and trust boundary, reproduction steps against an owned fixture,
-expected/observed behavior and impact. Use synthetic values and redact tokens,
-connection strings, provider payloads, user data and local secret paths.
+the component (API, native executor, worker, CLI, Studio host, desktop app, or
+Studio page), configuration and trust boundary, reproduction steps against an
+owned fixture, expected/observed behavior and impact. Use synthetic values and
+redact tokens, connection strings, provider payloads, user data and local secret
+paths.
 
 ![Verified identity, local grants, and scoped secret resolution](docs/diagrams/security-boundaries.svg)
 
-Use these boundaries to identify the affected component in a private report.
-A verified token, a local permission, and a connector secret serve different roles.
+**How to read this diagram:** Each numbered question must pass before the next
+one is asked. Use them to name the boundary your report affects: a verified token,
+a local permission, and a connector secret serve different roles.
 
 [Open diagram at full size](docs/diagrams/security-boundaries.svg)
 
@@ -50,3 +53,11 @@ layer alongside service authorization, not a replacement for it. Live-provider,
 production restore/upgrade and operational guarantees require their own evidence.
 See [identity and secrets](docs/operations/identity-and-secrets.md) and
 [configuration](docs/operations/configuration.md).
+
+On people's computers, the CLI, Studio, and the desktop app keep tokens in the
+operating system's credential store or in a private file the person chooses,
+never in the saved platforms file or the Studio browser page. In the current
+source, planned for the next release, the public
+`GET /api/v1/client-configuration` endpoint publishes sign-in settings only; its
+contract cannot carry a client secret, token, or verifier configuration. See
+[what is saved, and where](docs/guides/connect-to-api.md#what-is-saved-and-where).

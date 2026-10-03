@@ -22,21 +22,32 @@ A **worker** is a process that asks Weave for a task, calls your business code,
 and reports a result. For example, a customer-onboarding workflow can ask your
 worker to create a customer in an internal billing system. The worker implements
 that operation; Weave remembers where the overall process is and what comes next.
-The echo workflow in the [standalone tutorial](standalone.md) needs no worker;
-finish that tutorial before adding this integration.
 
-This guide explains the checked-in [worker example](../../examples/worker/main.py)
-and its [manifest](../../examples/worker/manifest.json). Its external receiver,
-identity, image, and grants must be provisioned through the
-[deployment guide](../operations/deployment.md). Running `main.py` alone is not a
-complete deployment.
+This guide is for developers who write the business code and for the operators
+who run it. It explains the checked-in [worker example](../../examples/worker/main.py)
+and its [manifest](../../examples/worker/manifest.json): the contracts, the
+handler, and what happens to one task. The commands that build, admit, and start
+the worker are in [Deploy your first worker](../operations/deployment.md), which
+builds on the [manual local setup](standalone.md). Running `main.py` alone is not
+a complete deployment.
+
+**Do you need a worker?** Many steps do not:
+
+| The step needs to… | Use | Guide |
+| --- | --- | --- |
+| Compute, decide, wait, or ask a person | A built-in step; it runs inside Weave | [Workflow authoring](workflow-authoring.md) |
+| Call one JSON-over-HTTPS operation | An Action on the built-in `weave-http@2.0.0` connector; no code | [Call a REST API without code](../connectors/http-without-code.md) |
+| Run your own code, or a protocol the built-in connector cannot express | A remote worker | This guide |
+| Ship trusted connector code that the platform runs itself | A connector package | [Author a connector](../connectors/authoring.md) |
 
 ## First, separate the people from the running processes
 
 **BPM** means business process management. In Weave, a workflow describes the
 business process and the engine coordinates its steps. A worker performs a
-particular job within that process. An operator is a person or application
-responsible for running and supporting the process.
+particular job within that process, much like the implementation behind a BPM
+service task. An operator is a person or application responsible for running
+and supporting the process. [Coming from BPM/BPMN](../concepts.md#coming-from-bpmbpmn)
+maps other BPM terms.
 
 ![People authorize and operate a process; the engine coordinates tasks and workers perform them](../diagrams/worker-and-operator-roles.svg)
 
@@ -68,10 +79,10 @@ does not mean a Kubernetes Operator controller. The
 
 ## Choose how a step will execute
 
-You do not need a custom worker for every workflow. Pure calculations and control
-flow run in the engine. An installed connector can execute an integration through
-a configured native executor. Write a remote worker when you want to own the
-handler, its dependencies, or its deployment boundary.
+Pure calculations and control flow run in the engine. An installed connector,
+such as the built-in HTTP connector, runs an integration through a configured
+native executor. Write a remote worker when you want to own the handler, its
+dependencies, or its deployment boundary.
 
 A remote worker needs an API connection and a scoped worker identity. It does not
 need the Weave database credentials. A native executor is part of the trusted
@@ -222,7 +233,9 @@ refreshing token client.
 ## 4. Observe one task through completion
 
 Start a workflow that calls the published Action. Inspect its run history and
-worker status through the API. Use the [API playground](api-playground.md) to
+worker status through the API. In Studio, **Workers** lists the workers in the
+selected environment with their **Status**, such as **Active**, and their
+**Capacity**. Use the [API playground](api-playground.md) to
 authenticate and select your environment, then the [full API reference](../reference/api-explorer.md)
 for worker registration and run/history reads. A worker token is for execution;
 use a separately granted operator/viewer identity to inspect runs. You should see
@@ -262,3 +275,16 @@ reconciliation. Heartbeats and lease fencing do not roll back external effects;
 cancellation may leave an operation in flight. Inspect the durable run and incident
 state after a restart, and preserve the original operation identity when an
 authorized safe retry is appropriate.
+
+## What you learned
+
+- A workflow calls an **Action**; the Action names a **task capability**; an
+  admitted **release** implements it; a running **instance** claims its tasks.
+- A **lease** permits one attempt, and its operation key lets the external system
+  deduplicate a repeated call after a crash.
+- A worker needs only API access and its own scoped identity, never database
+  credentials.
+
+Next, build, admit, and start this worker with
+[Deploy your first worker](../operations/deployment.md), or read the
+[worker protocol](../reference/worker-protocol.md) for the exact wire contracts.

@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1679" viewBox="0 0 960 1679" role="img" aria-labelledby="title desc">
-<title id="title">Review a bounded deletion plan before applying it</title><desc id="desc">The current deletion target is expired debug sessions in one project, not general workflow history. READ DOWN  •  Each arrow carries the result into the next step</desc>
+<title id="title">Review a bounded deletion plan before applying it</title><desc id="desc">Five steps read top to bottom for deleting expired debug sessions in one project. 1, a creator with retention.plan granted on the project or tenant (an environment grant does not count) requests a project-scoped plan; the server records at most 100 candidates, the plan expires in 15 minutes, and sessions must have expired before the 24-hour cutoff; nothing is deleted yet. 2, review the actual proposal: scope, creator, expiry, omissions, candidate revisions and references; the same creator decides whether to apply this exact plan ID. 3, inside the deletion transaction Weave rechecks scope, creator, current retention.apply authority, expiry, revision, cutoff and references, and blocks changed, missing or referenced candidates. 4, it deletes only eligible candidates and commits the manifest, accounting and audit together; a failed transaction rolls back. 5, retrying the same plan ID recovers the original manifest after a lost response. Workflow history, provider receipts, source fences, catalogs and outbox history are never deleted by this plan; archived runs are purged one at a time from execution management.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
 <style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
 <rect width="960" height="1579" rx="24" fill="#FAFCFB"/>
@@ -34,11 +34,11 @@ SPDX-License-Identifier: Apache-2.0
 <rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
 <g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
 <text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Request a project-scoped plan</text>
-<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">The creator needs retention.plan and no environment scope.</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">The creator needs retention.plan on the project or tenant.</text>
 <text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">The server records at most 100 candidates; the plan expires in</text>
 <text x="168" y="372" font-size="22" font-weight="400" fill="#173D34">15 minutes. Sessions must be expired before the 24-hour</text>
 <text x="168" y="401" font-size="22" font-weight="400" fill="#173D34">cutoff.</text>
-<text x="168" y="430" font-size="18" font-weight="600" fill="#326B88">PLAN • Proposal and audit are retained; no sessions are deleted</text>
+<text x="168" y="430" font-size="18" font-weight="600" fill="#367D68">PLAN • Proposal and audit are retained; no sessions are deleted</text>
 <path class="edge" d="M480 452v35"/>
 <rect x="40" y="500" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="517" width="90" height="90" rx="20" fill="#EEF4F0"/>
@@ -47,7 +47,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">Inspect scope, creator, expiry, omissions, candidate</text>
 <text x="168" y="611" font-size="22" font-weight="400" fill="#173D34">revisions, and references.</text>
 <text x="168" y="640" font-size="22" font-weight="400" fill="#173D34">The same creator chooses whether to apply this exact plan ID.</text>
-<text x="168" y="669" font-size="18" font-weight="600" fill="#326B88">REVIEW • Applying is a separate deliberate command</text>
+<text x="168" y="669" font-size="18" font-weight="600" fill="#367D68">REVIEW • Applying is a separate deliberate command</text>
 <path class="edge" d="M480 691v35"/>
 <rect x="40" y="739" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="756" width="90" height="90" rx="20" fill="#EEF4F0"/>
@@ -56,7 +56,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">Check scope, creator, current retention.apply authority,</text>
 <text x="168" y="850" font-size="22" font-weight="400" fill="#173D34">expiry, revision, cutoff, and references.</text>
 <text x="168" y="879" font-size="22" font-weight="400" fill="#173D34">Changed, missing, or referenced candidates are blocked.</text>
-<text x="168" y="908" font-size="18" font-weight="600" fill="#326B88">RECHECK • A plan is not permanent permission</text>
+<text x="168" y="908" font-size="18" font-weight="600" fill="#367D68">RECHECK • A plan is not permanent permission</text>
 <path class="edge" d="M480 930v35"/>
 <rect x="40" y="978" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="995" width="90" height="90" rx="20" fill="#EEF4F0"/>
@@ -65,7 +65,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">Delete only eligible candidates and commit manifest,</text>
 <text x="168" y="1089" font-size="22" font-weight="400" fill="#173D34">accounting, and audit.</text>
 <text x="168" y="1118" font-size="22" font-weight="400" fill="#173D34">A failed transaction rolls back its changes.</text>
-<text x="168" y="1147" font-size="18" font-weight="600" fill="#326B88">COMMIT • Retain the manifest as evidence</text>
+<text x="168" y="1147" font-size="18" font-weight="600" fill="#367D68">COMMIT • Retain the manifest as evidence</text>
 <path class="edge" d="M480 1169v35"/>
 <rect x="40" y="1217" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
 <rect x="56" y="1234" width="90" height="90" rx="20" fill="#EEF4F0"/>
@@ -73,12 +73,12 @@ SPDX-License-Identifier: Apache-2.0
 <text x="168" y="1260" font-size="25" font-weight="700" fill="#173D34">5. Recover a lost response with the same plan</text>
 <text x="168" y="1299" font-size="22" font-weight="400" fill="#173D34">Retry the same plan ID to recover the original manifest of an</text>
 <text x="168" y="1328" font-size="22" font-weight="400" fill="#173D34">already committed application.</text>
-<text x="168" y="1357" font-size="18" font-weight="600" fill="#326B88">RETRY • Do not invent a replacement deletion request</text>
-<rect x="40" y="1399" width="880" height="136" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1419) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1443" font-size="23" font-weight="700" fill="#326B88">Omitted records keep their protection</text>
-<text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">There is no general purge here for workflow history, provider receipts,</text>
-<text x="60" y="1511" font-size="21" font-weight="400" fill="#173D34">source fences, catalogs, or outbox history.</text><g id="lumi-takeaway">
+<text x="168" y="1357" font-size="18" font-weight="600" fill="#367D68">RETRY • Do not invent a replacement deletion request</text>
+<rect x="40" y="1399" width="880" height="136" rx="16" fill="#FFF7E5"/>
+<g transform="translate(59 1419) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1443" font-size="23" font-weight="700" fill="#367D68">Omitted records keep their protection</text>
+<text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">Workflow history, provider receipts, source fences, catalogs, and outbox</text>
+<text x="60" y="1511" font-size="21" font-weight="400" fill="#173D34">history are never deleted here; archived runs are purged one at a time.</text><g id="lumi-takeaway">
 <rect x="0" y="1585" width="960" height="90" rx="16" fill="#EAF4ED"/>
 <g transform="translate(22 1596) scale(.25)"><defs>
   <radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">
