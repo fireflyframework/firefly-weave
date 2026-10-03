@@ -106,6 +106,11 @@ nav:
       - Author, check, and simulate workflows: guides/workflow-authoring.md
       - Publish and run with the CLI: guides/cli-tutorial.md
       - Add human approvals: guides/human-tasks.md
+      - Work with files: guides/files.md
+      - Connect FTP and cloud drives: guides/file-connectors.md
+      - Evaluate decision tables: reference/decision-tables.md
+      - Run AI steps: guides/ai-workers.md
+      - Configure Lumi assistance: guides/lumi.md
       - Manage runs and business cases: guides/execution-management.md
       - Resolve incidents, cancel, and retry: reference/incident-operations.md
       - See a workflow as a graph: guides/workflow-graphs.md
@@ -152,6 +157,7 @@ nav:
       - Definition contracts: contracts.md
       - Schema and expressions: reference/schema-profile.md
       - Compiler: reference/compiler.md
+      - Decision tables: reference/decision-tables.md
       - Simulation: reference/simulation.md
       - CLI: reference/cli.md
       - Native OpenAPI: reference/native-openapi.md

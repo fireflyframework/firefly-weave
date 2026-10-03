@@ -135,7 +135,9 @@ database, `0002_access` creates identity and access state, and
 A legacy version row is kept as a compatibility sentinel; startup checks it
 together with Alembic's revision. There is no destructive downgrade or reset, and
 migration files ship inside the installed wheel. Published alpha4 expects
-`0021_operations`; alpha5, alpha6, and alpha7 expect `0025_run_lifecycle`. See
+`0021_operations`; alpha5, alpha6, and alpha7 expect `0025_run_lifecycle`.
+Alpha8 expects `0028_files`, adding decision tables, Lumi configuration, and
+file transfers and retention. See
 [upgrades](../operations/upgrades.md) for compatibility checks and the
 forward-migration procedure.
 
@@ -406,7 +408,7 @@ supervision, none of which the local setup scripts provision.
 
 The locked framework is the published **PyFly 26.9.15**; the exact wheel hash and
 upstream commit are in the [project metadata](../../pyproject.toml). The API
-package version is `0.1.0a7`; a checkout of `main` can carry unreleased changes
+package version is `0.1.0a8`; a checkout of `main` can carry unreleased changes
 on top of it. Validate readiness, an authorized workflow, and your
 [backup and restore procedure](../operations/backup-restore.md) in the
 environment you intend to operate.

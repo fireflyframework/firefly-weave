@@ -50,9 +50,9 @@ permissions, and real delivery still need checking in your deployment.
 
 ## Which release this page describes
 
-Weave is an alpha workflow and integration platform. The published release is
-**`0.1.0a7`**, with PyFly 26.9.15 and database schema revision
-`0025_run_lifecycle`; packages are on
+Weave is an alpha workflow and integration platform. This branch prepares release
+**`0.1.0a8`**, with PyFly 26.9.15 and database schema revision
+`0028_files`; published packages are on
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 It includes [Studio](guides/studio.md), [human tasks and operator
 pause and resume](guides/human-tasks.md), [email conversations and
@@ -60,13 +60,18 @@ triggers](connectors/email.md), [people and access administration](guides/people
 and [execution management](guides/execution-management.md).
 
 Rows marked **new in 0.1.0a7** describe features that alpha6 and earlier
-releases do not have. They add no database migration: the schema revision is
-still `0025_run_lifecycle`.
+releases do not have. Alpha8 adds three migrations; see the
+[upgrade procedure](operations/upgrades.md).
 
 ## Capability matrix
 
 | Capability | Implementation | Local verification | Live-provider verification | Main boundary |
 | --- | --- | --- | --- | --- |
+| [Files](guides/files.md) | New in alpha8: scoped, resumable transfer API, SDK/CLI helpers, Studio fields and human-task attachments | PostgreSQL lease/claim/retention checks; checksum and chunk tests; Studio browser tests | Not applicable to platform storage | 25 MiB per file; content stored in PostgreSQL; no automatic abandoned-upload cleanup |
+| [File integrations](guides/file-connectors.md) | FTP, FTPS, SFTP, SharePoint/OneDrive and Google Drive workers | Real local FTP/FTPS/SFTP servers; simulated Graph and Drive responses | Microsoft and Google accounts not exercised | Six explicit operations; no standalone change-feed trigger yet |
+| [Decision tables](reference/decision-tables.md) | Versioned decision definitions and a dedicated workflow step | Compiler, API and PostgreSQL execution tests | Not applicable | Deterministic rule evaluation; no arbitrary expression execution |
+| [AI tasks](guides/ai-workers.md) | Per-workflow model profiles executed by an independent Agentic worker | Real Agentic library with controlled model transport; PostgreSQL completion/replay and secret classification | No live model provider claimed | Exact operator model/endpoint policy; external requests can be ambiguous |
+| [Lumi assistant](guides/lumi.md) | Separate environment profile and private gateway; opt-in context and reviewed Studio draft proposals | API authorization tests; 7-size Studio browser checks | No live model provider claimed | No autonomous publish, activation, or execution; conversation stays in memory |
 | [Compiler and schemas](reference/compiler.md) | Implemented | Compiler, schema, expression, and canonical-artifact suites | Not applicable | Validation without a catalog is partial and produces no artifact |
 | [Definition lifecycle](reference/api.md) | Implemented | Publication, activation, revision, and scoped API suites | Not applicable | Compiling is separate from authorization and admission |
 | [Durable runtime](reference/schedules-and-timers.md) | Implemented | PostgreSQL, lease, wait, signal, parallel, schedule, and recovery scenarios | Not applicable | External effects can repeat after a crash |

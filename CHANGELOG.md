@@ -18,6 +18,44 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a8
+
+- Add verified file references, resumable bounded transfers, scoped file roles,
+  CLI upload/download commands, Python SDK streaming helpers, worker lease
+  checks, and human-task attachments with current claimant/revision checks.
+  PostgreSQL stores file chunks separately from run history; retained runs pin
+  their files until the run is purged.
+- Add independently deployed FTP, FTPS, SFTP, SharePoint/OneDrive and Google
+  Drive workers for list, metadata, download, write, move and delete operations.
+  Cloud account acceptance remains environment-specific; change-feed triggers
+  are not included.
+  FTP/FTPS/SFTP require a server-isolated account root. FTP/FTPS write and move
+  are disabled by default because the protocol cannot guarantee atomic refusal
+  to replace a concurrently created destination; enabling them requires an
+  explicit connection policy and a separate worker policy.
+- Add contains/not-contains and membership comparisons, versioned decision
+  tables, and schema-guided Studio editors for rules and AI steps.
+- Add workflow `llmProfiles` and Agentic workers with explicit provider, model,
+  reasoning pattern, endpoint policy and budgets. Pin the profile into compiled
+  execution, enforce output guards, and reject classified results before values
+  or their hashes enter durable state, simulation or reconciliation.
+- Add Lumi as a separate environment-configured assistant, using an authenticated
+  private gateway. Studio shares only selected context, validates proposed
+  definitions, and requires explicit Apply with stale-draft protection and Undo.
+- Improve Studio's step configuration, input mapping and human-task authoring;
+  render decisions and parallel branches as separate lanes; apply valid field
+  edits immediately; keep invalid drafts local; add semantic drag/drop and
+  reachable node actions.
+- Add schema revisions `0026_decision_tables`, `0027_lumi_configuration`, and
+  `0028_files`. Upgrade through the documented maintenance procedure before
+  starting the new server. Older grants do not automatically grant file or Lumi
+  access.
+- Package independent workers separately so Agentic's Python 3.13 requirement
+  does not change the server's Python 3.12 support.
+- Keep worker completion and failure retries alive after explicit capacity
+  rejections while the lease and task deadline remain valid. Direct transport
+  calls retain bounded retries; ambiguous outcomes are never retried automatically.
+
 ## 0.1.0a7
 
 - Add saved platforms shared by the CLI, Studio, and desktop app: a non-secret

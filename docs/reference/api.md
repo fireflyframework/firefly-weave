@@ -431,6 +431,27 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 
 | Operation | Method and canonical path | Required authority |
 | --- | --- | --- |
+| `human_files.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/files/create` | human_task.complete |
+| `human_files.chunk` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/files/chunk` | human_task.complete |
+| `human_files.finish` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/files/finish` | human_task.complete |
+| `human_files.read` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/files/read` | human_task.read |
+| `human_files.download` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/human-tasks/{identifier}/files/download` | human_task.read |
+| `files.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/files` | file.manage |
+| `files.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/files` | file.read |
+| `files.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/files/{identifier}` | file.read |
+| `files.chunk` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/files/{identifier}/chunks` | file.manage |
+| `files.finish` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/files/{identifier}/finish` | file.manage |
+| `files.download` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/files/{identifier}/download` | file.read |
+| `files.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/files/{identifier}` | file.manage |
+| `task_files.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/files/create` | task.claim |
+| `task_files.chunk` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/files/chunk` | task.claim |
+| `task_files.finish` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/files/finish` | task.claim |
+| `task_files.read` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/files/read` | task.claim |
+| `task_files.download` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/files/download` | task.claim |
+| `lumi.configuration.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/lumi/configuration` | lumi.manage |
+| `lumi.configuration.write` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/lumi/configuration` | lumi.manage |
+| `lumi.status` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/lumi/status` | lumi.use |
+| `lumi.ask` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/lumi/ask` | lumi.use |
 | `compatibility.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility` | status.read |
 | `compatibility.check` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility/check` | compatibility.check |
 | `retention.plan` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans` | retention.plan |
@@ -498,6 +519,7 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `environments.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}` | status.read |
 | `compiler.compile` | `POST /api/v1/tenants/{tenant}/projects/{project}/compiler/compile` | compile |
 | `compiler.validate` | `POST /api/v1/tenants/{tenant}/projects/{project}/compiler/validate` | compile |
+| `compiler.evaluate_decision` | `POST /api/v1/tenants/{tenant}/projects/{project}/compiler/evaluate-decision` | compile |
 | `catalog.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/catalog` | catalog.read |
 | `capabilities.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/capabilities` | catalog.read |
 | `schemas.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/schemas` | catalog.read |
@@ -540,6 +562,7 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `workers.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/revoke` | release.retire |
 | `workers.grant` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-connection-grants` | connection.manage |
 | `tasks.claim` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/claim` | task.claim |
+| `tasks.context` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/context` | task.claim |
 | `tasks.heartbeat` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/heartbeat` | task.heartbeat |
 | `tasks.complete` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/complete` | task.complete |
 | `tasks.fail` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/fail` | task.complete |
