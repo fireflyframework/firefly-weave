@@ -34,7 +34,7 @@ import { describeError } from "../errors";
       Registration is not health. Contact and capacity below are dated server
       observations; they do not establish container readiness.
     </p>
-    <dl>
+    <dl class="task-metadata">
       <dt>Claim mode</dt>
       <dd>
         {{
@@ -79,17 +79,10 @@ import { describeError } from "../errors";
       gap: 12px;
     }
     dl {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: 10px;
       margin: 0;
     }
     dt {
       font-weight: 600;
-    }
-    dd {
-      margin: 0;
-      overflow-wrap: anywhere;
     }
   `,
 })
