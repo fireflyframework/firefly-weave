@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { describeResponse, PlainError } from "./errors";
 export interface Profile {
   name: string;
   baseUrl: string;
@@ -28,6 +29,7 @@ export interface Session {
   version: string;
   mode: "offline" | "connected";
   profile: Profile | null;
+  connection?: { configured?: boolean; login_supported?: boolean };
 }
 export interface Diagnostic {
   message: string;
@@ -43,13 +45,29 @@ export interface Validation {
   artifact?: unknown;
 }
 export class ApiError extends Error {
+  readonly plain: PlainError;
   constructor(
     public status: number,
     public detail: unknown,
   ) {
-    super(typeof detail === "object" ? JSON.stringify(detail) : String(detail));
+    const plain = describeResponse(status, detail);
+    super(plain.message);
+    this.plain = plain;
+  }
+  get code() {
+    return this.plain.code;
   }
 }
+/** The platform's admission rejections: nothing ran, so the request may be sent again. */
+const capacityCodes = new Set(["WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"]);
+const capacityAttempts = 4;
+/** `Retry-After` in seconds, kept between a quarter second and five seconds. */
+const retryDelay = (header: string | null) => {
+  const seconds = Number(header);
+  return Number.isFinite(seconds) && header !== null && header.trim() !== ""
+    ? Math.min(Math.max(seconds, 0.25), 5) * 1000
+    : 1000;
+};
 export class StudioApi {
   session: Session = {
     paired: false,
@@ -57,11 +75,21 @@ export class StudioApi {
     mode: "offline",
     profile: null,
   };
+  /** Called when the local host no longer recognizes this window's pairing. */
+  onSessionEnded: (() => void) | null = null;
+  /** Pauses before replaying a request the platform turned away for capacity. */
+  wait = (milliseconds: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+  /**
+   * Calls the paired local host. `timeout` (milliseconds) bounds the wait;
+   * platform checks that reach a remote server or identity provider pass more.
+   */
   async request<T>(
     path: string,
     method = "GET",
     body?: unknown,
     headers: Record<string, string> = {},
+    timeout = 15000,
   ): Promise<T> {
     if (!path.startsWith("/studio/") || path.startsWith("//"))
       throw Error("Studio requests must use the same-origin host boundary.");
@@ -69,18 +97,48 @@ export class StudioApi {
     if (body !== undefined) h["Content-Type"] = "application/json";
     if (method !== "GET" && this.session.csrfToken)
       h["X-Weave-CSRF"] = this.session.csrfToken;
-    const response = await fetch(path, {
-      method,
-      credentials: "same-origin",
-      headers: h,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
+    // A capacity rejection means the platform did not admit the request, so a
+    // read, or a change that carries an idempotency key, can be sent again.
+    const replayable = method === "GET" || "Idempotency-Key" in h;
+    for (let attempt = 1; ; attempt++) {
+      const response = await fetch(path, {
+        method,
+        credentials: "same-origin",
+        headers: h,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(timeout),
+      });
+      const value: unknown = await response
+        .json()
+        .catch(() => ({ message: `HTTP ${response.status}` }));
+      if (response.ok) return value as T;
+      const error = new ApiError(response.status, value);
+      if (
+        replayable &&
+        attempt < capacityAttempts &&
+        response.status === 429 &&
+        capacityCodes.has(error.code)
+      ) {
+        await this.wait(retryDelay(response.headers.get("Retry-After")));
+        continue;
+      }
+      if (
+        response.status === 401 &&
+        error.code === "WV-STUDIO-SESSION" &&
+        path !== "/studio/session"
+      )
+        this.onSessionEnded?.();
+      throw error;
+    }
+  }
+  /** Takes a session payload from a connection change, keeping this window's CSRF token. */
+  adopt(session: Session | null | undefined) {
+    if (!session || typeof session !== "object" || !("paired" in session))
+      return this.session;
+    return (this.session = {
+      ...session,
+      csrfToken: session.csrfToken ?? this.session.csrfToken,
     });
-    const value: unknown = await response
-      .json()
-      .catch(() => ({ message: `HTTP ${response.status}` }));
-    if (!response.ok) throw new ApiError(response.status, value);
-    return value as T;
   }
   async pair(code?: string) {
     return (this.session = await this.request<Session>(

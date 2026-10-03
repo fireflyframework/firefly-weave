@@ -15,235 +15,372 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+// Home. Connected, it leads with what needs you: tasks ready to claim, and
+// failed or waiting runs, each row opening the item itself. Locally, a
+// compact welcome with the ways to start and the work kept on this computer.
 import { Component, input, output } from "@angular/core";
 import { Icon } from "./icon";
+import type { LocalDraftEntry } from "./local-drafts";
+import { absoluteTime, isoTime, relativeTime, shortId } from "./format";
+import {
+  runStatus,
+  statusLabel,
+  statusTone,
+  toneAttribute,
+  type StatusKind,
+} from "./status-labels";
+
+type Json = Record<string, unknown>;
+const text = (value: unknown) => (typeof value === "string" ? value : "");
 
 @Component({
   selector: "weave-home-dashboard",
   standalone: true,
   imports: [Icon],
   styleUrl: "./home-dashboard.css",
-  template: `
-    <section class="home" aria-labelledby="home-title">
-      <header class="welcome">
-        <div>
-          <p class="dashboard-status">
-            {{
-              connected()
-                ? workspaceName() || "Your workspace"
-                : "Not connected to a platform"
-            }}
-          </p>
-          <h1 id="home-title">Welcome to Weave Studio</h1>
+  template: `<section
+    class="home"
+    [class.local]="!connected()"
+    aria-labelledby="home-title"
+  >
+    <header
+      class="home-header"
+      [class.dragging]="dragging"
+      (dragover)="dragOver($event)"
+      (dragleave)="dragLeave($event)"
+      (drop)="drop($event)"
+    >
+      <div class="home-intro">
+        <p class="dashboard-status">
+          {{
+            connected()
+              ? workspaceName() || "Your workspace"
+              : "Local authoring"
+          }}
+        </p>
+        @if (connected()) {
+          <h1 id="home-title">Home</h1>
+        } @else {
+          <h1 id="home-title" class="display">Welcome to Weave Studio</h1>
           <p class="welcome-description">
-            {{
-              connected()
-                ? "Turn a process into a workflow. Start with a blank canvas, or bring a definition you already have."
-                : "Create, import, and validate workflows on this computer. Connect to save them to a platform, run processes, or handle tasks."
-            }}
+            Create, import, and check workflows on this computer. Connect to a
+            platform when you're ready to publish and run them.
           </p>
-        </div>
-        <img
-          class="lumi"
-          src="/assets/lumi.svg"
-          alt="Lumi, the Firefly guide"
-          width="136"
-          height="136"
-        />
-      </header>
-      <div class="start-grid">
-        <section class="create-panel" aria-labelledby="create-title">
-          <span class="panel-icon"><weave-icon name="workflows" /></span>
-          <h2 id="create-title">Create a workflow</h2>
-          <p>
-            Build a process on the canvas. Add actions, decisions and human
-            work, then validate it before execution.
-          </p>
+        }
+      </div>
+      <div class="home-tools">
+        <div class="home-actions">
           <button type="button" class="primary" (click)="createWorkflow.emit()">
-            <weave-icon name="plus" />New workflow
+            <weave-icon name="plus" [size]="16" />New workflow
           </button>
-          <span class="panel-note">Begin with an editable draft</span>
-        </section>
-        <section
-          class="import-panel"
-          [class.dragging]="dragging"
-          aria-labelledby="import-title"
-          (dragover)="dragOver($event)"
-          (dragleave)="dragLeave($event)"
-          (drop)="drop($event)"
-        >
-          <span class="panel-icon"><weave-icon name="source" /></span>
-          <h2 id="import-title">Import a definition</h2>
-          <p>
-            Open a Weave YAML or JSON file to continue editing its process and
-            source.
-          </p>
           <input
             #filePicker
             class="file-picker"
             type="file"
             accept=".yaml,.yml,.json"
-            aria-label="Choose a workflow definition"
+            aria-label="Choose a workflow file"
             (change)="choose($event)"
           />
-          <button type="button" (click)="filePicker.click()">
-            <weave-icon name="download" />Choose YAML or JSON
+          <button
+            type="button"
+            aria-describedby="import-note"
+            (click)="filePicker.click()"
+          >
+            <weave-icon name="upload" [size]="16" />Import workflow
           </button>
-          <span class="panel-note">Or drop one file here · up to 1 MiB</span>
-          @if (importError) {
-            <p class="import-error" role="alert">{{ importError }}</p>
+          @if (!connected()) {
+            <button type="button" (click)="connect.emit()">
+              <weave-icon name="cloud" [size]="16" />Connect to a platform
+            </button>
           }
-          <p class="import-help">
-            Import opens a draft for review. Publishing and activation are
-            separate steps.
-          </p>
-        </section>
-      </div>
-      @if (connected()) {
-        <div class="work-grid" [attr.aria-busy]="loading()">
-          <section class="work-panel" aria-labelledby="inbox-title">
-            <header class="section-heading">
-              <div>
-                <h2 id="inbox-title">Your human work</h2>
-                <p>Review context and decide from your task inbox.</p>
-              </div>
-              <button
-                type="button"
-                class="text-button"
-                (click)="navigate.emit('tasks')"
-              >
-                Open inbox<weave-icon name="chevron" />
-              </button>
-            </header>
-            @if (loading()) {
-              <p class="empty">Loading your task preview…</p>
-            } @else if (tasks().length) {
-              <ul class="preview-list">
-                @for (task of tasks().slice(0, 3); track task["id"]) {
-                  <li>
-                    <button
-                      type="button"
-                      class="preview-row"
-                      (click)="navigate.emit('tasks')"
-                    >
-                      <span class="row-icon"
-                        ><weave-icon name="humanTask"
-                      /></span>
-                      <span class="row-copy"
-                        ><strong>{{ task["title"] || "Human task" }}</strong
-                        ><span>{{
-                          task["claimant_id"]
-                            ? "Claimed for review"
-                            : "Ready to claim"
-                        }}</span></span
-                      ><weave-icon name="chevron" />
-                    </button>
-                  </li>
-                }
-              </ul>
-            } @else {
-              <div class="empty">
-                <weave-icon name="tasks" />
-                <p>No human tasks in this preview.</p>
-                <span
-                  >Your inbox shows work available to your identity and
-                  scope.</span
-                >
-              </div>
-            }
-          </section>
-          <section class="work-panel" aria-labelledby="runs-title">
-            <header class="section-heading">
-              <div>
-                <h2 id="runs-title">Execution preview</h2>
-                <p>See what is running, waiting or finished.</p>
-              </div>
-              <button
-                type="button"
-                class="text-button"
-                (click)="navigate.emit('runs')"
-              >
-                Open runs<weave-icon name="chevron" />
-              </button>
-            </header>
-            @if (loading()) {
-              <p class="empty">Loading your execution preview…</p>
-            } @else if (runs().length) {
-              <ul class="preview-list">
-                @for (run of runs().slice(0, 3); track run["id"]) {
-                  <li>
-                    <button
-                      type="button"
-                      class="preview-row"
-                      (click)="navigate.emit('runs')"
-                    >
-                      <span class="row-icon"><weave-icon name="runs" /></span>
-                      <span class="row-copy"
-                        ><strong>{{
-                          run["business_key"] || shortId(run["id"])
-                        }}</strong
-                        ><span>{{ runStatus(run) }}</span></span
-                      ><weave-icon name="chevron" />
-                    </button>
-                  </li>
-                }
-              </ul>
-            } @else {
-              <div class="empty">
-                <weave-icon name="runs" />
-                <p>No executions in this preview.</p>
-                <span
-                  >After activation, start a run to follow its progress
-                  here.</span
-                >
-              </div>
-            }
-          </section>
         </div>
-      } @else {
-        <section class="offline-guide" aria-labelledby="offline-title">
-          <div>
-            <h2 id="offline-title">A good place to begin</h2>
-            <p>
-              You can author and validate workflows locally. Connect Studio to a
-              platform when you are ready to publish, run a process or work
-              through a human inbox.
+        <p class="import-note" id="import-note">
+          YAML or JSON, up to 1 MiB. You can also drop it here.
+        </p>
+        @if (importError) {
+          <p class="import-error" role="alert">{{ importError }}</p>
+        }
+      </div>
+      @if (!connected()) {
+        <img
+          class="lumi"
+          src="/assets/lumi.svg"
+          alt="Lumi, the Firefly guide"
+          width="96"
+          height="96"
+        />
+      }
+    </header>
+    @if (resume(); as latest) {
+      <button
+        type="button"
+        class="continue-row"
+        (click)="continueEditing.emit()"
+      >
+        <span class="row-icon"
+          ><weave-icon name="workflows" [size]="20"
+        /></span>
+        <span class="row-copy"
+          ><span
+            >Continue editing <strong>{{ latest.name }}</strong
+            >, edited {{ relative(latest.savedAt) }}</span
+          ></span
+        ><weave-icon name="chevron" [size]="16" />
+      </button>
+    }
+    @if (connected()) {
+      <section
+        class="home-section needs-you"
+        aria-labelledby="needs-title"
+        [attr.aria-busy]="loading()"
+      >
+        <header class="section-heading">
+          <h2 id="needs-title">Needs you</h2>
+        </header>
+        @if (loading()) {
+          <p class="empty" role="status">Loading what needs you…</p>
+        } @else if (attention().length) {
+          <ul class="preview-list">
+            @for (item of attention(); track $index) {
+              <li>
+                <button
+                  type="button"
+                  class="preview-row"
+                  (click)="
+                    item.kind === 'task'
+                      ? openTask.emit(item.record)
+                      : openRun.emit(item.record)
+                  "
+                >
+                  <span class="row-icon"
+                    ><weave-icon
+                      [name]="item.kind === 'task' ? 'humanTask' : 'runs'"
+                      [size]="16"
+                  /></span>
+                  <span class="row-copy"
+                    ><strong>{{ title(item.kind, item.record) }}</strong
+                    ><span>{{ secondary(item.kind, item.record) }}</span></span
+                  ><span
+                    class="status-pill"
+                    [attr.data-tone]="tone(item.kind, item.record)"
+                    >{{ label(item.kind, item.record) }}</span
+                  >
+                </button>
+              </li>
+            }
+          </ul>
+        } @else if (signInToRead()) {
+          <p class="empty">Sign in to see what needs you.</p>
+        } @else {
+          <p class="empty">
+            Nothing needs you right now. Tasks ready to claim and runs that
+            failed or wait appear here.
+          </p>
+        }
+      </section>
+    }
+    <div class="home-columns" [class.single]="!connected()">
+      <section class="home-section" aria-labelledby="workflows-title">
+        <header class="section-heading">
+          <h2 id="workflows-title">Recent workflows</h2>
+          <button
+            type="button"
+            class="text-button"
+            (click)="navigate.emit('workflows')"
+          >
+            View all workflows<weave-icon name="chevron" [size]="16" />
+          </button>
+        </header>
+        @if (localDrafts().length || drafts().length) {
+          <ul class="preview-list">
+            @for (draft of localDrafts().slice(0, 5); track draft.id) {
+              <li>
+                <button
+                  type="button"
+                  class="preview-row"
+                  (click)="openLocal.emit(draft.id)"
+                >
+                  <span class="row-icon"
+                    ><weave-icon name="workflows" [size]="16"
+                  /></span>
+                  <span class="row-copy"
+                    ><strong>{{ draft.name }}</strong
+                    ><span
+                      >On this computer · edited
+                      <time
+                        [attr.datetime]="iso(draft.savedAt)"
+                        [attr.title]="absolute(draft.savedAt)"
+                        >{{ relative(draft.savedAt) }}</time
+                      ></span
+                    ></span
+                  >
+                  @if (draft.version) {
+                    <span class="tag">{{ draft.version }}</span>
+                  }
+                </button>
+              </li>
+            }
+            @for (draft of drafts().slice(0, 5); track draft["id"]) {
+              <li>
+                <button
+                  type="button"
+                  class="preview-row"
+                  (click)="openDraft.emit(draft)"
+                >
+                  <span class="row-icon"
+                    ><weave-icon name="workflows" [size]="16"
+                  /></span>
+                  <span class="row-copy"
+                    ><strong>{{ draftName(draft) }}</strong
+                    ><span>Draft on the platform</span></span
+                  >
+                </button>
+              </li>
+            }
+          </ul>
+        } @else {
+          <p class="empty">
+            Workflows you create or open appear here. Start with New workflow or
+            a template below.
+          </p>
+        }
+      </section>
+      @if (connected()) {
+        <section
+          class="home-section"
+          aria-labelledby="runs-title"
+          [attr.aria-busy]="loading()"
+        >
+          <header class="section-heading">
+            <h2 id="runs-title">Recent runs</h2>
+            <button
+              type="button"
+              class="text-button"
+              (click)="navigate.emit('runs')"
+            >
+              View all runs<weave-icon name="chevron" [size]="16" />
+            </button>
+          </header>
+          @if (loading()) {
+            <p class="empty" role="status">Loading recent runs…</p>
+          } @else if (runs().length) {
+            <ul class="preview-list">
+              @for (run of runs().slice(0, 5); track run["id"]) {
+                <li>
+                  <button
+                    type="button"
+                    class="preview-row"
+                    (click)="openRun.emit(run)"
+                  >
+                    <span class="row-icon"
+                      ><weave-icon name="runs" [size]="16"
+                    /></span>
+                    <span class="row-copy"
+                      ><strong>{{ title("run", run) }}</strong
+                      ><span>{{ secondary("run", run) }}</span></span
+                    ><span
+                      class="status-pill"
+                      [attr.data-tone]="tone('run', run)"
+                      >{{ label("run", run) }}</span
+                    >
+                  </button>
+                </li>
+              }
+            </ul>
+          } @else if (signInToRead()) {
+            <p class="empty">Sign in to see runs.</p>
+          } @else {
+            <p class="empty">
+              No runs yet. Activate a workflow version, then start a run to
+              follow it here.
             </p>
-          </div>
-          <ol>
-            <li>
-              <strong>Shape the process</strong
-              ><span>Create a draft or import an existing definition.</span>
-            </li>
-            <li>
-              <strong>Check the definition</strong
-              ><span
-                >Use the canvas and source together, then validate your
-                changes.</span
-              >
-            </li>
-            <li>
-              <strong>Connect when ready</strong
-              ><span
-                >Open Settings to import a login configuration, sign in, and
-                choose an authorized workspace.</span
-              >
-            </li>
-          </ol>
+          }
+        </section>
+        <section
+          class="home-section"
+          aria-labelledby="tasks-title"
+          [attr.aria-busy]="loading()"
+        >
+          <header class="section-heading">
+            <h2 id="tasks-title">My tasks</h2>
+            <button
+              type="button"
+              class="text-button"
+              (click)="navigate.emit('tasks')"
+            >
+              View all tasks<weave-icon name="chevron" [size]="16" />
+            </button>
+          </header>
+          @if (loading()) {
+            <p class="empty" role="status">Loading your tasks…</p>
+          } @else if (tasks().length) {
+            <ul class="preview-list">
+              @for (task of tasks().slice(0, 5); track task["id"]) {
+                <li>
+                  <button
+                    type="button"
+                    class="preview-row"
+                    (click)="openTask.emit(task)"
+                  >
+                    <span class="row-icon"
+                      ><weave-icon name="humanTask" [size]="16"
+                    /></span>
+                    <span class="row-copy"
+                      ><strong>{{ title("task", task) }}</strong
+                      ><span>{{ secondary("task", task) }}</span></span
+                    ><span
+                      class="status-pill"
+                      [attr.data-tone]="tone('task', task)"
+                      >{{ label("task", task) }}</span
+                    >
+                  </button>
+                </li>
+              }
+            </ul>
+          } @else if (signInToRead()) {
+            <p class="empty">Sign in to see your tasks.</p>
+          } @else {
+            <p class="empty">
+              No tasks claimed by you. Claim one from Needs you or My tasks.
+            </p>
+          }
         </section>
       }
-    </section>
-  `,
+    </div>
+  </section>`,
 })
 export class HomeDashboard {
   connected = input(false);
   workspaceName = input("");
-  tasks = input<Record<string, unknown>[]>([]);
-  runs = input<Record<string, unknown>[]>([]);
+  /** Tasks claimed by the signed-in person. */
+  tasks = input<Json[]>([]);
+  /** The most recent runs. */
+  runs = input<Json[]>([]);
+  /** "Needs you": tasks ready to claim, failed runs, waiting runs. */
+  attention = input<{ kind: "task" | "run"; record: Json }[]>([]);
+  /** Drafts on the platform. */
+  drafts = input<Json[]>([]);
+  /** Workflows kept on this computer, newest first. */
+  localDrafts = input<LocalDraftEntry[]>([]);
+  /** "Continue editing": the open workflow, or the newest kept one. */
+  resume = input<{ name: string; savedAt: string } | null>(null);
+  /** Published versions by ID, for run titles. */
+  versions = input<ReadonlyMap<string, { name: string; version: string }>>(
+    new Map(),
+  );
+  principal = input("");
   loading = input(false);
+  /** The platform is saved but not signed in: previews can't be read yet. */
+  signInToRead = input(false);
   createWorkflow = output<void>();
   importWorkflow = output<File>();
-  navigate = output<"designer" | "tasks" | "runs">();
+  connect = output<void>();
+  navigate = output<"workflows" | "tasks" | "runs">();
+  openLocal = output<string>();
+  continueEditing = output<void>();
+  openDraft = output<Json>();
+  openRun = output<Json>();
+  openTask = output<Json>();
   dragging = false;
   importError = "";
   choose(event: Event) {
@@ -277,26 +414,71 @@ export class HomeDashboard {
     }
     const file = files[0];
     if (!/\.(yaml|yml|json)$/i.test(file.name)) {
-      this.importError = "Choose a .yaml, .yml or .json workflow definition.";
+      this.importError = "Choose a .yaml, .yml or .json workflow file.";
       return;
     }
     if (file.size > 1024 * 1024) {
       this.importError =
-        "This file exceeds 1 MiB. Choose a smaller workflow definition.";
+        "This file is larger than 1 MiB. Choose a smaller workflow file.";
       return;
     }
     this.importError = "";
     this.importWorkflow.emit(file);
   }
-  shortId(value: unknown) {
-    return typeof value === "string" ? "Run " + value.slice(0, 8) : "Execution";
+  private kind(kind: "task" | "run"): StatusKind {
+    return kind;
   }
-  runStatus(run: Record<string, unknown>) {
-    const state = run["state"] as Record<string, unknown> | undefined;
-    if (state?.["manual_paused"]) return "Paused";
-    const status = state?.["status"];
-    return typeof status === "string"
-      ? status.replaceAll("_", " ")
-      : "Status unavailable";
+  /** A run reads "{workflow} {version}"; a task its title. */
+  title(kind: "task" | "run", record: Json) {
+    if (kind === "task") return text(record["title"]) || "Human task";
+    const activation = (record["activation"] ?? {}) as Json;
+    const request = (activation["request"] ?? {}) as Json;
+    const known = this.versions().get(text(request["version_id"]));
+    const workflow = known
+      ? `${known.name} ${known.version}`.trim()
+      : text(activation["name"]);
+    return (
+      workflow || text(record["business_key"]) || `Run ${shortId(record["id"])}`
+    );
+  }
+  secondary(kind: "task" | "run", record: Json) {
+    if (kind === "task") {
+      const due = relativeTime(record["due_at"]);
+      return due ? `Due ${due}` : "No due date";
+    }
+    const key = text(record["business_key"]);
+    const short = `Run ${shortId(record["id"])}`;
+    return this.title("run", record) === key ? short : key || short;
+  }
+  private status(kind: "task" | "run", record: Json) {
+    return kind === "run" ? runStatus(record) : record["status"];
+  }
+  label(kind: "task" | "run", record: Json) {
+    return statusLabel(this.kind(kind), this.status(kind, record), {
+      mine: !!this.principal() && record["claimant_id"] === this.principal(),
+    });
+  }
+  tone(kind: "task" | "run", record: Json) {
+    return toneAttribute(
+      statusTone(this.kind(kind), this.status(kind, record)),
+    );
+  }
+  draftName(draft: Json) {
+    const document = (draft["document"] ?? {}) as {
+      metadata?: { name?: string; version?: string };
+    };
+    const metadata = document.metadata;
+    return metadata?.name
+      ? `${metadata.name} ${metadata.version ?? ""}`.trim()
+      : "untitled-workflow";
+  }
+  relative(value: string) {
+    return relativeTime(value) || "recently";
+  }
+  absolute(value: string) {
+    return absoluteTime(value);
+  }
+  iso(value: string) {
+    return isoTime(value) || null;
   }
 }

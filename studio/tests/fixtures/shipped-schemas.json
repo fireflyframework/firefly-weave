@@ -1,0 +1,1755 @@
+{
+  "generator": "scripts/studio_schema_fixtures.py",
+  "summary": {
+    "schemas": 55,
+    "fields": 153,
+    "taskFormWidgets": {
+      "checkbox": 2,
+      "enum": 10,
+      "group": 1,
+      "input": 88,
+      "json": 40,
+      "list": 12
+    }
+  },
+  "schemas": [
+    {
+      "id": "weave-http@1.0.0 connection",
+      "origin": "connector",
+      "role": "connectionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "enum": [
+              "none",
+              "bearer"
+            ],
+            "type": "string"
+          },
+          "baseUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "baseUrl",
+          "auth"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@1.0.0 authentication",
+      "origin": "connector",
+      "role": "authentication",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@1.0.0 read configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "maxRedirects": {
+            "maximum": 5,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "method": {
+            "enum": [
+              "GET",
+              "HEAD"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "minLength": 1,
+            "pattern": "^/([A-Za-z0-9_-]+/)*[A-Za-z0-9_-]*$",
+            "type": "string"
+          },
+          "statuses": {
+            "items": {
+              "maximum": 299,
+              "minimum": 200,
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "statuses"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@1.0.0 read input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {},
+          "query": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@1.0.0 write configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "maxRedirects": {
+            "maximum": 5,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "method": {
+            "enum": [
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "minLength": 1,
+            "pattern": "^/([A-Za-z0-9_-]+/)*[A-Za-z0-9_-]*$",
+            "type": "string"
+          },
+          "statuses": {
+            "items": {
+              "maximum": 299,
+              "minimum": 200,
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "statuses"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@1.0.0 write input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {},
+          "query": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@2.0.0 connection",
+      "origin": "connector",
+      "role": "connectionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "type": "object"
+          },
+          "baseUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "baseUrl",
+          "auth"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@2.0.0 authentication",
+      "origin": "connector",
+      "role": "authentication",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "api_key": {
+            "type": "string"
+          },
+          "client_secret": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@2.0.0 read configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@2.0.0 read input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {},
+          "headers": {
+            "type": "object"
+          },
+          "path": {
+            "type": "object"
+          },
+          "query": {
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@2.0.0 write configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-http@2.0.0 write input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {},
+          "headers": {
+            "type": "object"
+          },
+          "path": {
+            "type": "object"
+          },
+          "query": {
+            "type": "object"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-postgresql@1.0.0 connection",
+      "origin": "connector",
+      "role": "connectionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "database": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z_][a-zA-Z_0-9]*$",
+            "title": "Database",
+            "type": "string"
+          },
+          "dialect": {
+            "const": "postgresql",
+            "title": "Dialect",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "title": "Port",
+            "type": "integer"
+          },
+          "role": {
+            "enum": [
+              "read",
+              "command"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "tls": {
+            "default": "verify-full",
+            "enum": [
+              "verify-full",
+              "disable"
+            ],
+            "title": "Tls",
+            "type": "string"
+          },
+          "user": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z_][a-zA-Z_0-9]*$",
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dialect",
+          "host",
+          "port",
+          "database",
+          "user",
+          "role"
+        ],
+        "title": "PostgresConnectionConfig",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-postgresql@1.0.0 authentication",
+      "origin": "connector",
+      "role": "authentication",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-postgresql@1.0.0 command configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "mappings": {
+            "additionalProperties": {
+              "enum": [
+                "decimal",
+                "date",
+                "datetime",
+                "time",
+                "base64",
+                "uuid"
+              ],
+              "type": "string"
+            },
+            "title": "Mappings",
+            "type": "object"
+          },
+          "maxBytes": {
+            "default": 1048576,
+            "maximum": 1048576,
+            "minimum": 32,
+            "title": "Maxbytes",
+            "type": "integer"
+          },
+          "maxRows": {
+            "default": 100,
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Maxrows",
+            "type": "integer"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "type": "object"
+            },
+            "maxProperties": 64,
+            "type": "object"
+          },
+          "statement": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "statementTimeoutMs": {
+            "default": 10000,
+            "maximum": 30000,
+            "minimum": 1,
+            "title": "Statementtimeoutms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "statement",
+          "parameters"
+        ],
+        "title": "SqlConfig",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-postgresql@1.0.0 command input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "parameters": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "parameters"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-postgresql@1.0.0 idempotent-command configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "mappings": {
+            "additionalProperties": {
+              "enum": [
+                "decimal",
+                "date",
+                "datetime",
+                "time",
+                "base64",
+                "uuid"
+              ],
+              "type": "string"
+            },
+            "title": "Mappings",
+            "type": "object"
+          },
+          "maxBytes": {
+            "default": 1048576,
+            "maximum": 1048576,
+            "minimum": 32,
+            "title": "Maxbytes",
+            "type": "integer"
+          },
+          "maxRows": {
+            "default": 100,
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Maxrows",
+            "type": "integer"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "type": "object"
+            },
+            "maxProperties": 64,
+            "type": "object"
+          },
+          "statement": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "statementTimeoutMs": {
+            "default": 10000,
+            "maximum": 30000,
+            "minimum": 1,
+            "title": "Statementtimeoutms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "statement",
+          "parameters"
+        ],
+        "title": "SqlConfig",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-postgresql@1.0.0 idempotent-command input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "parameters": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "parameters"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-postgresql@1.0.0 read configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "mappings": {
+            "additionalProperties": {
+              "enum": [
+                "decimal",
+                "date",
+                "datetime",
+                "time",
+                "base64",
+                "uuid"
+              ],
+              "type": "string"
+            },
+            "title": "Mappings",
+            "type": "object"
+          },
+          "maxBytes": {
+            "default": 1048576,
+            "maximum": 1048576,
+            "minimum": 32,
+            "title": "Maxbytes",
+            "type": "integer"
+          },
+          "maxRows": {
+            "default": 100,
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Maxrows",
+            "type": "integer"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "type": "object"
+            },
+            "maxProperties": 64,
+            "type": "object"
+          },
+          "statement": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          },
+          "statementTimeoutMs": {
+            "default": 10000,
+            "maximum": 30000,
+            "minimum": 1,
+            "title": "Statementtimeoutms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "statement",
+          "parameters"
+        ],
+        "title": "SqlConfig",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-postgresql@1.0.0 read input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "parameters": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "parameters"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-kafka@1.0.0 connection",
+      "origin": "connector",
+      "role": "connectionConfig",
+      "schema": {
+        "$defs": {
+          "ResourceName": {
+            "$ref": "#/$defs/UnicodeString_A-Za-z0-9__-_____"
+          },
+          "UnicodeString_A-Za-z0-9__-_____": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "bootstrap": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Bootstrap",
+            "type": "array"
+          },
+          "cluster_id": {
+            "$ref": "#/$defs/ResourceName"
+          },
+          "driver": {
+            "const": "kafka",
+            "title": "Driver",
+            "type": "string"
+          },
+          "sasl_mechanism": {
+            "default": "PLAIN",
+            "enum": [
+              "PLAIN",
+              "SCRAM-SHA-256",
+              "SCRAM-SHA-512"
+            ],
+            "title": "Sasl Mechanism",
+            "type": "string"
+          },
+          "security_protocol": {
+            "default": "SASL_SSL",
+            "enum": [
+              "SASL_SSL",
+              "PLAINTEXT"
+            ],
+            "title": "Security Protocol",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Topics",
+            "type": "array"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Username"
+          }
+        },
+        "required": [
+          "driver",
+          "cluster_id",
+          "bootstrap",
+          "topics"
+        ],
+        "title": "BrokerConnectionConfig",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-kafka@1.0.0 authentication",
+      "origin": "connector",
+      "role": "authentication",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-kafka@1.0.0 publish configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "topic": {
+            "maxLength": 249,
+            "minLength": 1,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "title": "BrokerPublishConfig",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-kafka@1.0.0 publish input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-email@1.0.0 connection",
+      "origin": "connector",
+      "role": "connectionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_recipients": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Recipients",
+            "type": "array"
+          },
+          "auth": {
+            "default": "none",
+            "enum": [
+              "none",
+              "password",
+              "oauth"
+            ],
+            "title": "Auth",
+            "type": "string"
+          },
+          "automated_response_limit": {
+            "default": 3,
+            "maximum": 20,
+            "minimum": 0,
+            "title": "Automated Response Limit",
+            "type": "integer"
+          },
+          "correlation_retention_seconds": {
+            "default": 86400,
+            "maximum": 604800,
+            "minimum": 60,
+            "title": "Correlation Retention Seconds",
+            "type": "integer"
+          },
+          "folder": {
+            "default": "INBOX",
+            "pattern": "^[A-Za-z0-9_. /-]{1,100}$",
+            "title": "Folder",
+            "type": "string"
+          },
+          "host": {
+            "maxLength": 253,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9.-]+$",
+            "title": "Host",
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535,
+            "minimum": 1,
+            "title": "Port",
+            "type": "integer"
+          },
+          "private_networks": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Private Networks",
+            "type": "array"
+          },
+          "routing_domain": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9.-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Routing Domain"
+          },
+          "sender": {
+            "title": "Sender",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 30,
+            "exclusiveMinimum": 0,
+            "maximum": 60,
+            "title": "Timeout Seconds",
+            "type": "number"
+          },
+          "tls": {
+            "default": "tls",
+            "enum": [
+              "tls",
+              "starttls",
+              "local_fixture"
+            ],
+            "title": "Tls",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "port",
+          "sender",
+          "allowed_recipients"
+        ],
+        "title": "MailProfile",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-email@1.0.0 authentication",
+      "origin": "connector",
+      "role": "authentication",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-email@1.0.0 reply configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-email@1.0.0 reply input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content_base64": {
+                  "maxLength": 1400000,
+                  "title": "Content Base64",
+                  "type": "string"
+                },
+                "content_type": {
+                  "pattern": "^[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+$",
+                  "title": "Content Type",
+                  "type": "string"
+                },
+                "filename": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "title": "Filename",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "filename",
+                "content_type",
+                "content_base64"
+              ],
+              "title": "EmailAttachment",
+              "type": "object"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "html": {
+            "maxLength": 1048576,
+            "type": "string"
+          },
+          "parent_message_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reply_all": {
+            "type": "boolean"
+          },
+          "text": {
+            "maxLength": 1048576,
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "parent_message_id",
+          "text"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-email@1.0.0 send configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-email@1.0.0 send input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content_base64": {
+                  "maxLength": 1400000,
+                  "title": "Content Base64",
+                  "type": "string"
+                },
+                "content_type": {
+                  "pattern": "^[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+$",
+                  "title": "Content Type",
+                  "type": "string"
+                },
+                "filename": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "title": "Filename",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "filename",
+                "content_type",
+                "content_base64"
+              ],
+              "title": "EmailAttachment",
+              "type": "object"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "bcc": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "cc": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "html": {
+            "maxLength": 1048576,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 998,
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 1048576,
+            "type": "string"
+          },
+          "to": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "to",
+          "subject",
+          "text"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-teams@1.0.0 connection",
+      "origin": "connector",
+      "role": "connectionConfig",
+      "schema": {
+        "$defs": {
+          "ExternalID": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "allowed_tenants": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Allowed Tenants",
+            "type": "array"
+          },
+          "bot_id": {
+            "$ref": "#/$defs/ExternalID"
+          },
+          "cloud": {
+            "const": "public",
+            "default": "public",
+            "title": "Cloud",
+            "type": "string"
+          },
+          "conversation_id": {
+            "$ref": "#/$defs/ExternalID"
+          },
+          "installation_generation": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "title": "Installation Generation",
+            "type": "integer"
+          },
+          "registration_tenant": {
+            "title": "Registration Tenant",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          },
+          "user_id": {
+            "$ref": "#/$defs/ExternalID"
+          }
+        },
+        "required": [
+          "account_id",
+          "registration_tenant",
+          "tenant_id",
+          "conversation_id",
+          "bot_id",
+          "user_id",
+          "installation_generation",
+          "allowed_tenants"
+        ],
+        "title": "TeamsProfile",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-teams@1.0.0 authentication",
+      "origin": "connector",
+      "role": "authentication",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "client_secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_secret"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-teams@1.0.0 reply configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-teams@1.0.0 reply input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "activity_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Activity Id"
+          },
+          "generation": {
+            "minimum": 1,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "reference_id": {
+            "format": "uuid",
+            "title": "Reference Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference_id",
+          "generation",
+          "text"
+        ],
+        "title": "TeamsInput",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-teams@1.0.0 send configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-teams@1.0.0 send input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "activity_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Activity Id"
+          },
+          "generation": {
+            "minimum": 1,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "reference_id": {
+            "format": "uuid",
+            "title": "Reference Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference_id",
+          "generation",
+          "text"
+        ],
+        "title": "TeamsInput",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-telegram@1.0.0 connection",
+      "origin": "connector",
+      "role": "connectionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "allowed_chat_ids": {
+            "items": {
+              "maxLength": 17,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Allowed Chat Ids",
+            "type": "array"
+          },
+          "mode": {
+            "const": "webhook",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "mode",
+          "allowed_chat_ids"
+        ],
+        "title": "TelegramConfig",
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-telegram@1.0.0 authentication",
+      "origin": "connector",
+      "role": "authentication",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "botToken": {
+            "type": "string"
+          },
+          "webhookSecret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "botToken",
+          "webhookSecret"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-telegram@1.0.0 reply-text configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-telegram@1.0.0 reply-text input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "chat_id": {
+            "maxLength": 17,
+            "minLength": 1,
+            "type": "string"
+          },
+          "message_id": {
+            "maxLength": 10,
+            "minLength": 1,
+            "not": {
+              "pattern": "[^0-9]"
+            },
+            "pattern": "^[1-9]",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "chat_id",
+          "text",
+          "message_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-telegram@1.0.0 send-text configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "id": "weave-telegram@1.0.0 send-text input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "chat_id": {
+            "maxLength": 17,
+            "minLength": 1,
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "chat_id",
+          "text"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "whatsapp@1.0.0 connection",
+      "origin": "connector",
+      "role": "connectionConfig",
+      "schema": {
+        "$defs": {
+          "ApprovedTemplate": {
+            "additionalProperties": false,
+            "properties": {
+              "body_parameters": {
+                "maximum": 20,
+                "minimum": 0,
+                "title": "Body Parameters",
+                "type": "integer"
+              },
+              "locale": {
+                "pattern": "^[a-z]{2,3}(?:_[A-Za-z0-9]{2,8})?$",
+                "title": "Locale",
+                "type": "string"
+              },
+              "name": {
+                "pattern": "^[a-z][a-z0-9_]{0,99}$",
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "locale",
+              "body_parameters"
+            ],
+            "title": "ApprovedTemplate",
+            "type": "object"
+          },
+          "AssetId": {
+            "pattern": "^[0-9]{1,64}$",
+            "type": "string"
+          },
+          "Phone": {
+            "pattern": "^[0-9]{1,15}$",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "$ref": "#/$defs/AssetId"
+          },
+          "app_id": {
+            "$ref": "#/$defs/AssetId"
+          },
+          "approved_templates": {
+            "items": {
+              "$ref": "#/$defs/ApprovedTemplate"
+            },
+            "maxItems": 100,
+            "title": "Approved Templates",
+            "type": "array"
+          },
+          "business_phone_number": {
+            "$ref": "#/$defs/Phone"
+          },
+          "graph_version": {
+            "pattern": "^v[0-9]{1,3}\\.[0-9]{1,2}$",
+            "title": "Graph Version",
+            "type": "string"
+          },
+          "phone_number_id": {
+            "$ref": "#/$defs/AssetId"
+          },
+          "recipient_allowlist": {
+            "items": {
+              "$ref": "#/$defs/Phone"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Recipient Allowlist",
+            "type": "array"
+          }
+        },
+        "required": [
+          "app_id",
+          "account_id",
+          "phone_number_id",
+          "business_phone_number",
+          "graph_version",
+          "recipient_allowlist",
+          "approved_templates"
+        ],
+        "title": "WhatsAppConfig",
+        "type": "object"
+      }
+    },
+    {
+      "id": "whatsapp@1.0.0 authentication",
+      "origin": "connector",
+      "role": "authentication",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "appSecret": {
+            "type": "string"
+          },
+          "verifyToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "accessToken",
+          "appSecret",
+          "verifyToken"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "whatsapp@1.0.0 send-template configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    {
+      "id": "whatsapp@1.0.0 send-template input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "$defs": {
+          "Phone": {
+            "pattern": "^[0-9]{1,15}$",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "maxLength": 12,
+            "minLength": 2,
+            "title": "Locale",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Parameters",
+            "type": "array"
+          },
+          "recipient": {
+            "$ref": "#/$defs/Phone"
+          }
+        },
+        "required": [
+          "recipient",
+          "name",
+          "locale",
+          "parameters"
+        ],
+        "title": "TemplateInput",
+        "type": "object"
+      }
+    },
+    {
+      "id": "whatsapp@1.0.0 send-text configuration",
+      "origin": "connector",
+      "role": "actionConfig",
+      "schema": {
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    {
+      "id": "whatsapp@1.0.0 send-text input",
+      "origin": "connector",
+      "role": "actionInput",
+      "schema": {
+        "$defs": {
+          "Phone": {
+            "pattern": "^[0-9]{1,15}$",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "recipient": {
+            "$ref": "#/$defs/Phone"
+          },
+          "text": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recipient",
+          "text"
+        ],
+        "title": "TextInput",
+        "type": "object"
+      }
+    },
+    {
+      "id": "examples/definitions/customer-onboarding.workflow.yaml input",
+      "origin": "example",
+      "role": "workflowInput",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "customerId"
+        ],
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "examples/definitions/customer-onboarding.workflow.yaml approval payload",
+      "origin": "example",
+      "role": "payload",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "approved"
+        ],
+        "properties": {
+          "approved": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "examples/human_tasks/workflow.yaml input",
+      "origin": "example",
+      "role": "workflowInput",
+      "schema": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "examples/human_tasks/workflow.yaml review form",
+      "origin": "example",
+      "role": "form",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "examples/teams/reply.workflow.yaml input",
+      "origin": "example",
+      "role": "workflowInput",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "reference_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "activity_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 16384
+          },
+          "service_url": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "effect": {
+            "type": "string",
+            "enum": [
+              "message",
+              "add",
+              "remove"
+            ]
+          }
+        },
+        "required": [
+          "reference_id",
+          "generation",
+          "activity_id",
+          "text",
+          "service_url",
+          "effect"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "examples/definitions/check-customer.action.yaml input",
+      "origin": "example",
+      "role": "actionInput",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "customerId"
+        ],
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "examples/definitions/postgresql.action.yaml input",
+      "origin": "example",
+      "role": "actionInput",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "parameters"
+        ],
+        "properties": {
+          "parameters": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "customerId",
+              "rowLimit"
+            ],
+            "properties": {
+              "customerId": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "rowLimit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

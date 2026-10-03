@@ -19,6 +19,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { test, expect, Page } from "@playwright/test";
+import { chooseAction } from "./integrations-po";
 const profile = {
   name: "Test platform",
   baseUrl: "https://weave.invalid",
@@ -134,18 +135,11 @@ test("draft conflict retains source and lost save reconciles the same request id
     });
   });
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(
-    page.getByText("Command: outcome unknown", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Reconcile original request" }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Reconcile original request" })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Reconcile original request" }),
-  ).toHaveCount(0);
+  await expect(page.locator(".unknown-banner")).toContainText(
+    'Studio didn\'t get an answer for "Save draft".',
+  );
+  await page.getByRole("button", { name: "Check now" }).click();
+  await expect(page.getByRole("button", { name: "Check now" })).toHaveCount(0);
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
   await page.route("**/drafts/*", (r) =>
@@ -156,7 +150,7 @@ test("draft conflict retains source and lost save reconciles the same request id
     "Draft changed on the server",
   );
   await page.getByRole("button", { name: "Keep editing locally" }).click();
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Workflow source" }),
   ).toHaveValue(/transform-1/);
@@ -190,7 +184,7 @@ test("task claim/form/decision uses actual revision and preserves revoked form",
     task = { ...task, status: "claimed", claimant_id: "human", revision: 2 };
     return r.fulfill({ json: task });
   });
-  await page.getByRole("button", { name: "My Tasks", exact: true }).click();
+  await page.getByRole("button", { name: "My tasks", exact: true }).click();
   await page.locator(".resource-row").click();
   await page.getByRole("button", { name: "Claim task", exact: true }).click();
   await page.getByLabel("Review note").fill("Reviewed receipt");
@@ -203,13 +197,18 @@ test("task claim/form/decision uses actual revision and preserves revoked form",
     return r.fulfill({ status: 403, json: { code: "WV-DENIED" } });
   });
   await page.getByRole("button", { name: "Approve", exact: true }).click();
+  // Deciding asks once, inline, before anything is sent.
+  await page
+    .locator(".decision-confirm")
+    .getByRole("button", { name: "Approve", exact: true })
+    .click();
   await expect(page.locator(".error-banner")).toContainText(
-    "authorization was revoked",
+    "This task changed or you lost access to it. Your answers are still here.",
   );
   await expect(page.getByLabel("Review note")).toHaveValue("Reviewed receipt");
   await page.screenshot({ path: "test-results/task-form.png" });
 });
-test("email reply queue and send are separate and unknown transport never auto-retries", async ({
+test("one Send reply queues and sends; an unknown send is never retried by itself", async ({
   page,
 }) => {
   await connected(page);
@@ -277,18 +276,14 @@ test("email reply queue and send are separate and unknown transport never auto-r
   await page
     .getByRole("textbox", { name: "Email reply" })
     .fill("Thanks, reviewing now.");
-  await page.getByRole("button", { name: "Queue reply", exact: true }).click();
-  expect(sends).toBe(0);
-  await page
-    .getByRole("button", { name: "Send queued email", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Send reply", exact: true }).click();
   await expect(page.locator(".submission-status")).toContainText(
-    "acceptance is unknown",
+    "We couldn't confirm it was sent. Check the status before sending again.",
   );
   expect(sends).toBe(1);
-  await expect(
-    page.getByRole("button", { name: "Send queued email", exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Send now" })).toHaveCount(0);
+  await page.waitForTimeout(500);
+  expect(sends).toBe(1);
   await page.screenshot({ path: "test-results/email-thread.png" });
 });
 
@@ -327,17 +322,19 @@ test("run keys group separate executions and filters reset the cursor", async ({
   await page.getByRole("button", { name: "Runs", exact: true }).click();
   for (let i = 0; i < 2; i++) {
     await page.getByRole("button", { name: "Start run", exact: true }).click();
-    await page
-      .getByLabel("Activation", { exact: true })
+    const dialog = page.getByRole("dialog", { name: "Start a run" });
+    await dialog
+      .getByLabel("Version to run", { exact: true })
       .selectOption("activation");
-    await page
-      .getByLabel("Business key (optional)", { exact: true })
+    await dialog.getByText("Add a business key (optional)").click();
+    await dialog
+      .getByLabel("Business key", { exact: true })
       .fill("expense-104");
-    await page
-      .getByLabel("Correlation key (optional)", { exact: true })
+    await dialog
+      .getByLabel("Correlation key", { exact: true })
       .fill("batch-2026");
-    await page
-      .getByRole("button", { name: "Start execution", exact: true })
+    await dialog
+      .getByRole("button", { name: "Start run", exact: true })
       .click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
   }
@@ -356,18 +353,20 @@ test("run keys group separate executions and filters reset the cursor", async ({
     },
   ]);
   expect(keys[0]).not.toBe(keys[1]);
-  await page.getByLabel("Business key", { exact: true }).fill("expense-104");
+  // Filters apply as they change: no Apply button.
+  await page.getByLabel("Search by business key").fill("expense-104");
+  await page.getByRole("button", { name: "More filters" }).click();
   await page.getByLabel("Correlation key", { exact: true }).fill("batch-2026");
-  await page.getByLabel("Status", { exact: true }).selectOption("waiting");
-  await page
-    .getByRole("button", { name: "Apply filters", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Waiting", exact: true }).click();
   await expect
     .poll(() => queries.at(-1)?.searchParams.get("status"))
     .toBe("waiting");
+  await expect
+    .poll(() => queries.at(-1)?.searchParams.get("correlation_key"))
+    .toBe("batch-2026");
   expect(queries.at(-1)?.searchParams.get("business_key")).toBe("expense-104");
   expect(queries.at(-1)?.searchParams.has("cursor")).toBe(false);
-  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.getByLabel("Search by business key").fill("");
   await expect
     .poll(() => queries.at(-1)?.searchParams.has("business_key"))
     .toBe(false);
@@ -434,40 +433,34 @@ test("archive and purge require terminal state, revision and exact run ID confir
   });
   await page.getByRole("button", { name: "Runs", exact: true }).click();
   await page.locator(".resource-row").click();
-  page.once("dialog", (d) => d.accept("Work finished"));
-  await page
-    .getByRole("button", { name: "Archive execution", exact: true })
+  // In-app dialogs replace window.prompt(), which the desktop webview answers with null.
+  const dialog = page.getByRole("dialog");
+  await page.getByRole("button", { name: "Archive run", exact: true }).click();
+  await dialog.getByLabel("Reason").fill("Work finished");
+  await dialog
+    .getByRole("button", { name: "Archive run", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Restore execution", exact: true }),
+    page.getByRole("button", { name: "Restore run", exact: true }),
   ).toBeVisible();
-  let dialog = 0;
-  const wrong = (d: any) => {
-    dialog++;
-    return d.accept(dialog === 1 ? "Retention policy" : "wrong-id");
-  };
-  page.on("dialog", wrong);
   await page
-    .getByRole("button", { name: "Purge execution content", exact: true })
+    .getByRole("button", { name: "Delete run data", exact: true })
     .click();
-  page.off("dialog", wrong);
+  await expect(dialog).toContainText("Delete this run's data?");
+  await dialog.getByLabel("Reason").fill("Retention policy");
+  await dialog.getByLabel("Run ID").fill("wrong-id");
+  await expect(
+    dialog.getByRole("button", { name: "Delete run data", exact: true }),
+  ).toBeDisabled();
+  await expect(dialog).toContainText("Type the exact run ID to confirm.");
   expect(purges).toBe(0);
-  await expect(page.locator(".error-banner")).toContainText(
-    "confirmation run ID does not match",
-  );
-  dialog = 0;
-  const exact = (d: any) => {
-    dialog++;
-    return d.accept(dialog === 1 ? "Retention policy" : id);
-  };
-  page.on("dialog", exact);
-  await page
-    .getByRole("button", { name: "Purge execution content", exact: true })
+  await dialog.getByLabel("Run ID").fill(id);
+  await dialog
+    .getByRole("button", { name: "Delete run data", exact: true })
     .click();
-  page.off("dialog", exact);
   await expect.poll(() => purges).toBe(1);
-  await expect(page.locator(".execution-lifecycle")).toContainText(
-    "Content purged; audit retained",
+  await expect(page.locator(".run-archive")).toContainText(
+    "Data deleted. The audit record stays.",
   );
   await page.screenshot({ path: "test-results/run-lifecycle.png" });
 });
@@ -491,7 +484,11 @@ test("task JSON validity and task identity protect submitted data", async ({
       title: "First review",
       form_schema: {
         type: "object",
-        properties: { details: { type: "object" }, old: { type: "string" } },
+        // A union stays a JSON field the person types.
+        properties: {
+          details: { type: ["object", "array"] },
+          old: { type: "string" },
+        },
       },
     },
     {
@@ -516,27 +513,36 @@ test("task JSON validity and task identity protect submitted data", async ({
       json: { ...tasks[1], status: "completed", revision: 2 },
     });
   });
-  await page.getByRole("button", { name: "My Tasks", exact: true }).click();
+  await page.getByRole("button", { name: "My tasks", exact: true }).click();
   await page
     .locator(".resource-row")
     .filter({ hasText: "First review" })
     .click();
-  await page.getByLabel("details", { exact: true }).fill('{"valid":true}');
-  await page.getByLabel("old", { exact: true }).fill("Must not survive");
-  await page.getByLabel("details", { exact: true }).fill("{");
-  await page.getByRole("button", { name: "Approve", exact: true }).click();
+  await page.getByLabel(/^Details(\s*\(optional\))?$/).fill('{"valid":true}');
+  await page.getByLabel(/^Old(\s*\(optional\))?$/).fill("Must not survive");
+  await page.getByLabel(/^Details(\s*\(optional\))?$/).fill("{");
+  // Invalid JSON keeps the decision buttons disabled, and they say why (F9).
+  const approve = page.getByRole("button", { name: "Approve", exact: true });
+  await expect(approve).toBeDisabled();
+  await expect(approve).toHaveAccessibleDescription(
+    "Correct the fields marked with an error.",
+  );
   expect(commands).toBe(0);
   expect(
     await page
-      .getByLabel("details", { exact: true })
+      .getByLabel(/^Details(\s*\(optional\))?$/)
       .evaluate((el: HTMLTextAreaElement) => el.validity.valid),
   ).toBe(false);
   await page
     .locator(".resource-row")
     .filter({ hasText: "Second review" })
     .click();
-  await page.getByLabel("note", { exact: true }).fill("New task only");
+  await page.getByLabel(/^Note(\s*\(optional\))?$/).fill("New task only");
   await page.getByRole("button", { name: "Approve", exact: true }).click();
+  await page
+    .locator(".decision-confirm")
+    .getByRole("button", { name: "Approve", exact: true })
+    .click();
   await expect.poll(() => commands).toBe(1);
 });
 
@@ -593,18 +599,16 @@ test("catalog integration fields compile against the real Python action contract
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
   await page
     .locator(".palette-step")
-    .filter({ hasText: "Call an integration" })
+    .filter({ hasText: "Call an action" })
     .click();
-  await page
-    .getByLabel("Published action", { exact: true })
-    .selectOption("action");
+  await chooseAction(page, "lookup-customer@1.0.0");
   await expect(page.getByText("crm@1.0.0", { exact: true })).toBeVisible();
   await page
-    .getByRole("button", { name: "Apply configuration", exact: true })
+    .getByRole("button", { name: "Apply changes", exact: true })
     .click();
   await page.getByLabel("Customer identifier").fill("customer-104");
   await page
-    .getByRole("button", { name: "Apply configuration", exact: true })
+    .getByRole("button", { name: "Apply changes", exact: true })
     .click();
   await page
     .getByRole("button", {
@@ -612,7 +616,7 @@ test("catalog integration fields compile against the real Python action contract
       exact: true,
     })
     .click();
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
   const source = await page
     .getByRole("textbox", { name: "Workflow source" })
     .inputValue();
@@ -639,6 +643,6 @@ print(r.to_bytes().decode())`;
     expect(result.validationOk, JSON.stringify(result.diagnostics)).toBe(true);
     expect(result.partial).toBe(false);
   }
-  await page.getByRole("button", { name: "Designer", exact: true }).click();
+  await page.getByRole("tab", { name: "Designer", exact: true }).click();
   await page.screenshot({ path: "test-results/catalog-integration.png" });
 });

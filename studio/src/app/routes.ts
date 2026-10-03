@@ -28,6 +28,7 @@ export const routes: Routes = [
     "connections",
     "workers",
     "settings",
+    "connect",
   ].map((path) => ({ path, children: [] })),
   { path: "workflows/:id/designer", children: [] },
   { path: "**", redirectTo: "home" },

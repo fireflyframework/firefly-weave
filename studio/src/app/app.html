@@ -15,7 +15,18 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
-@if (!paired) {
+@if (connecting) {
+  <main class="pair-page connecting-page">
+    <div class="pair-brand">
+      <img src="assets/weave-logo.svg" alt="Firefly Weave" /><span
+        >Firefly Weave <small>Studio</small></span
+      >
+    </div>
+    <p class="connecting-status" role="status">
+      <span class="loading-spinner small"></span>Opening Studio…
+    </p>
+  </main>
+} @else if (!paired) {
   <main class="pair-page">
     <div class="pair-brand">
       <img src="assets/weave-logo.svg" alt="Firefly Weave" /><span
@@ -25,1942 +36,466 @@ SPDX-License-Identifier: Apache-2.0
     <section class="pair-card">
       <img class="lumi" src="assets/lumi.svg" alt="Lumi, the Firefly guide" />
       <h1>Your workflows, woven together.</h1>
-      <p>
-        Pair this browser with the local Studio host. Enter the one-time code
-        printed by <code>weave studio</code> in your terminal.
-      </p>
-      <label for="pair-code">Pairing code</label
-      ><input
-        id="pair-code"
-        autocomplete="one-time-code"
-        [value]="pairCode"
-        (input)="pairCode = value($event)"
-        (keydown.enter)="pair()"
-        placeholder="Enter terminal code"
-      /><button
-        class="primary"
-        [disabled]="!pairCode || busy !== ''"
-        (click)="pair()"
-      >
-        Connect to Studio
-      </button>
+      @if (desktopShell) {
+        <p>
+          Studio pairs this window with its local host automatically. If this
+          page stays open, quit and reopen Firefly Weave Studio.
+        </p>
+      } @else {
+        <p>
+          Pair this browser with the local Studio host. Enter the one-time code
+          printed by <code>weave studio</code> in your terminal.
+        </p>
+      }
+      @if (sessionNotice) {
+        <p class="notice" role="status">{{ sessionNotice }}</p>
+      }
+      <form class="pair-form" (submit)="$event.preventDefault(); pair()">
+        <label for="pair-code">Pairing code</label
+        ><input
+          id="pair-code"
+          weaveAutofocus
+          autocomplete="one-time-code"
+          spellcheck="false"
+          [value]="pairCode"
+          [attr.aria-describedby]="error ? 'pair-error' : null"
+          (input)="pairCode = value($event)"
+          (keydown.enter)="
+            $event.preventDefault(); pairCode = value($event); pair()
+          "
+          placeholder="Enter terminal code"
+        /><button
+          type="submit"
+          class="primary"
+          [disabled]="!pairCode.trim() || busy !== ''"
+        >
+          {{ busy === "pair" ? "Pairing…" : "Pair browser" }}
+        </button>
+      </form>
       <p class="hint">Your account credentials stay with the local host.</p>
       @if (error) {
-        <p class="error" role="alert">{{ error }}</p>
+        <p class="error" id="pair-error" role="alert">
+          {{ error }}
+          @if (errorCode) {
+            <small class="support-code">Support code: {{ errorCode }}</small>
+          }
+        </p>
       }
     </section>
     <footer>Firefly Software Foundation · Apache 2.0</footer>
   </main>
 } @else {
-  <div class="shell" [class.collapsed]="collapsed">
-    <aside class="sidebar">
-      <a
-        class="brand"
-        href="/"
-        (click)="$event.preventDefault(); navigate('home')"
-        ><img src="assets/weave-logo-reversed.svg" alt="" /><span
-          >Firefly Weave<small>Studio</small></span
-        ></a
-      ><button class="workspace" (click)="navigate('settings')">
-        <span
-          >{{ profile?.name || "Local workspace"
-          }}<small>{{
-            profile ? "Connected API profile" : "Not connected"
-          }}</small></span
-        ><weave-icon name="chevron" />
-      </button>
-      <p class="nav-group">Workspace</p>
-      <nav aria-label="Main navigation">
-        @for (item of nav.slice(0, 5); track item.id) {
-          <button
-            [class.active]="
-              view === item.id ||
-              (view === 'designer' && item.id === 'workflows')
-            "
-            [attr.aria-current]="view === item.id ? 'page' : null"
-            [attr.title]="item.label"
-            (click)="navigate(item.id)"
-          >
-            <weave-icon [name]="item.id" /><span>{{ item.label }}</span>
-          </button>
-        }
-        <p class="nav-group">Operations</p>
-        @for (item of nav.slice(5); track item.id) {
-          <button
-            [class.active]="view === item.id"
-            [attr.title]="item.label"
-            (click)="navigate(item.id)"
-          >
-            <weave-icon [name]="item.id" /><span>{{ item.label }}</span>
-          </button>
-        }
-      </nav>
-      <div class="sidebar-bottom">
-        <div class="lumi-help">
-          <img src="assets/lumi.svg" alt="" />
-          <p>
-            Build a clear path.<small
-              >Start with a step, then connect the work.</small
-            >
-          </p>
-        </div>
-        <button
-          class="collapse-button"
-          [attr.aria-label]="
-            collapsed ? 'Expand navigation' : 'Collapse navigation'
-          "
-          (click)="collapsed = !collapsed"
+  <a class="skip-link" href="#main" (click)="skipToMain($event)"
+    >Skip to content</a
+  >
+  <div
+    class="shell"
+    [class.collapsed]="navCollapsed"
+    [class.in-designer]="view === 'designer'"
+  >
+    <!-- A div, not an aside: the navigation landmark inside names it. -->
+    <div class="sidebar">
+      <nav class="sidebar-nav" aria-label="Main navigation">
+        <a
+          class="brand"
+          href="/"
+          aria-label="Firefly Weave Studio home"
+          (click)="$event.preventDefault(); navigate('home')"
+          ><img src="assets/weave-logo-reversed.svg" alt="" /><span
+            aria-hidden="true"
+            >Firefly Weave<small>Studio</small></span
+          ></a
         >
-          <weave-icon name="menu" /><span>Collapse sidebar</span></button
-        ><small class="foundation">Firefly Software Foundation</small>
-      </div>
-    </aside>
+        @for (group of navGroups; track group.label) {
+          @if (group.label) {
+            <p class="nav-group" aria-hidden="true">{{ group.label }}</p>
+          }
+          <ul
+            class="nav-list"
+            [attr.aria-label]="group.label || null"
+            role="list"
+          >
+            @for (item of group.items; track item.id) {
+              <li>
+                <button
+                  [class.active]="
+                    view === item.id ||
+                    (view === 'designer' && item.id === 'workflows')
+                  "
+                  [attr.aria-current]="
+                    view === item.id ||
+                    (view === 'designer' && item.id === 'workflows')
+                      ? 'page'
+                      : null
+                  "
+                  [attr.title]="item.label"
+                  (click)="navigate(item.id)"
+                >
+                  <weave-icon [name]="item.id" /><span>{{ item.label }}</span>
+                </button>
+              </li>
+            }
+          </ul>
+        }
+        <div class="sidebar-bottom">
+          <button
+            class="settings-link"
+            [class.active]="view === 'settings'"
+            [attr.aria-current]="view === 'settings' ? 'page' : null"
+            title="Settings"
+            (click)="navigate('settings')"
+          >
+            <weave-icon name="settings" /><span>Settings</span>
+          </button>
+          <button
+            class="collapse-button"
+            [attr.aria-label]="
+              navCollapsed ? 'Expand navigation' : 'Collapse navigation'
+            "
+            [attr.aria-expanded]="!navCollapsed"
+            (click)="toggleNav()"
+          >
+            <weave-icon name="menu" /><span>Collapse sidebar</span></button
+          ><small class="foundation">Firefly Software Foundation</small>
+        </div>
+      </nav>
+    </div>
     <div class="main-shell">
       <header class="topbar">
-        <div class="breadcrumbs">
-          <button (click)="navigate('home')">Workspace</button
-          ><weave-icon name="chevron" /><span>{{
-            view === "designer"
-              ? model.definition.metadata.name
-              : view === "tasks"
-                ? "My
-          Tasks"
-                : view.charAt(0).toUpperCase() + view.slice(1)
-          }}</span>
-        </div>
-        <div class="account">
-          <span
-            class="connection-dot"
-            [class.offline]="!profile?.environmentId || !identity"
-          ></span
-          ><span
-            >{{
-              profile?.environmentId ||
-                (profile ? "Workspace not selected" : "Not connected")
-            }}<small>{{
-              profile?.baseUrl || "Create and edit on this computer"
-            }}</small></span
-          ><span class="avatar">W</span>
-        </div>
-      </header>
-      @if (error) {
-        <div class="error-banner" role="alert">
-          <weave-icon name="fail" /><span>{{ error }}</span
-          ><button
-            class="icon-button"
-            aria-label="Dismiss error"
-            (click)="error = ''"
-          >
-            <weave-icon name="close" />
-          </button>
-        </div>
-      }
-      @if (view === "home") {
-        <div class="home-connect">
-          <button (click)="navigate('settings')">
-            {{
-              profile
-                ? "Connection and sign-in settings"
-                : "Connect a workspace"
-            }}
-          </button>
-        </div>
-        <weave-home-dashboard
-          [connected]="!!profile"
-          [tasks]="homeTasks"
-          [runs]="homeRuns"
-          [loading]="loading"
-          [workspaceName]="profile?.name || 'Local workspace'"
-          (createWorkflow)="newWorkflow()"
-          (importWorkflow)="importWorkflow($event)"
-          (navigate)="navigate($event)"
-        />
-      } @else if (view === "designer") {
-        <section class="workflow-heading">
-          <div>
-            <button class="back-link" (click)="navigate('workflows')">
-              Workflows /
-            </button>
-            <h1>{{ model.definition.metadata.name }}</h1>
-            <span class="version-badge"
-              >v{{ model.definition.metadata.version }}</span
-            ><span class="save-status">{{ saveState }}</span>
-          </div>
-          <button (click)="export()">
-            <weave-icon name="download" />Export
-          </button>
-        </section>
-        <nav class="workflow-tabs" aria-label="Workflow views">
-          @for (t of ["Designer", "Source", "Outline"]; track t) {
-            <button [class.selected]="tab === t" (click)="selectTab(t)">
-              {{ t }}
-            </button>
-          }
-          <span></span
-          ><button (click)="showInspector = !showInspector">Inspector</button>
-        </nav>
-        <div class="editor-toolbar">
-          <div class="tool-group">
-            <button
-              class="insert-popover-button"
-              (click)="showPalette = !showPalette"
-            >
-              <weave-icon name="plus" />Insert step
-            </button>
-            <button
-              class="icon-button"
-              aria-label="Undo"
-              title="Undo (⌘/Ctrl Z)"
-              [disabled]="!model.canUndo"
-              (click)="undo()"
-            >
-              <weave-icon name="undo" /></button
-            ><button
-              class="icon-button"
-              aria-label="Redo"
-              title="Redo (⌘/Ctrl Shift Z)"
-              [disabled]="!model.canRedo"
-              (click)="redo()"
-            >
-              <weave-icon name="redo" /></button
-            ><span class="toolbar-divider"></span
-            ><button (click)="validate()" [disabled]="busy !== ''">
-              <weave-icon name="check" />Validate</button
-            ><button (click)="simulate()" [disabled]="!can('simulate')">
-              Simulate
-            </button>
-          </div>
-          <div class="tool-group">
-            <button
-              (click)="save()"
-              [disabled]="!can('definition.write') || busy !== ''"
-            >
-              Save draft</button
-            ><button
-              (click)="publish()"
-              [disabled]="
-                !can('definition.publish') || busy !== '' || model.readonly
-              "
-            >
-              Publish</button
-            ><button
-              class="primary"
-              (click)="activate()"
-              [disabled]="!published || !can('release.activate') || busy !== ''"
-            >
-              Activate</button
-            ><button
-              (click)="startRun()"
-              [disabled]="!can('run.start') || busy !== ''"
-            >
-              Start run
-            </button>
-          </div>
-        </div>
         <div
-          class="editor-grid"
-          [class.inspector-open]="showInspector"
-          [style.grid-template-columns]="
-            windowWidth > 1280
-              ? paletteWidth + 'px minmax(0,1fr) ' + inspectorWidth + 'px'
-              : null
-          "
+          class="account platform-menu-anchor"
+          (focusout)="platformMenuBlur($event)"
         >
-          <aside class="palette" [class.popover-visible]="showPalette">
-            <button
-              class="pane-resizer"
-              role="separator"
-              aria-label="Resize step palette"
-              aria-orientation="vertical"
-              [attr.aria-valuenow]="paletteWidth"
-              aria-valuemin="176"
-              aria-valuemax="256"
-              (pointerdown)="paneResize($event, 'palette')"
-              (pointermove)="paneMove($event)"
-              (pointerup)="resizing = null"
-              (keydown)="paneKey($event, 'palette')"
-            ></button>
-            <h2>Steps</h2>
-            <label class="search-field"
-              ><weave-icon name="search" /><input
-                aria-label="Search steps"
-                placeholder="Search steps"
-                [value]="paletteQuery"
-                (input)="paletteQuery = value($event)"
-            /></label>
-            <p class="pane-help">
-              Drag onto a connector, or select a step to insert after it.
-            </p>
-            @for (kind of palette; track kind) {
-              <button
-                class="palette-step"
-                [class.human]="kind === 'humanTask'"
-                [draggable]="!model.readonly"
-                (dragstart)="dragPalette($event, kind)"
-                (dragend)="dragPreview = null"
-                (click)="insert(kind)"
-                [disabled]="model.readonly"
-              >
-                <span class="step-icon"><weave-icon [name]="kind" /></span
-                ><span
-                  >{{ label(kind) }}<small>{{ description(kind) }}</small></span
-                ><span class="drag-grip">⠿</span>
-              </button>
+          <button
+            type="button"
+            class="platform-indicator"
+            aria-controls="platform-menu"
+            [attr.aria-expanded]="platformMenuOpen"
+            [attr.aria-label]="platformIndicatorLabel"
+            (click)="togglePlatformMenu()"
+          >
+            <span
+              class="connection-dot"
+              aria-hidden="true"
+              [class.neutral]="indicatorConnecting"
+              [class.offline]="(!profile || !signedIn) && !indicatorConnecting"
+              [class.warning]="
+                platformNotice?.kind === 'expired' ||
+                platformNotice?.kind === 'not-linked' ||
+                platformNotice?.kind === 'offline' ||
+                platformNotice?.kind === 'store'
+              "
+            ></span>
+            @if (indicatorWord) {
+              <span class="indicator-word" aria-hidden="true">{{
+                indicatorWord
+              }}</span>
             }
-            <div class="palette-note">
-              <weave-icon name="connections" />
-              <p>
-                Structured by design<small
-                  >Decisions and parallel groups keep their branches
-                  together.</small
-                >
+            <span class="platform-text"
+              >{{ profile?.name || "Local authoring"
+              }}<small>{{
+                profile
+                  ? indicatorConnecting
+                    ? "Connecting…"
+                    : workspaceText
+                      ? workspaceText + " · " + indicatorStatusText
+                      : indicatorStatusText
+                  : "Create and edit on this computer"
+              }}</small></span
+            ><span class="avatar" aria-hidden="true"
+              ><weave-icon [name]="profile ? 'cloud' : 'laptop'" /></span
+            ><weave-icon class="menu-chevron" name="chevron" />
+          </button>
+          @if (platformMenuOpen) {
+            <div
+              id="platform-menu"
+              class="platform-menu"
+              role="group"
+              aria-label="Platform"
+              (keydown)="platformMenuKey($event)"
+            >
+              <p class="platform-menu-heading">
+                {{ profile ? profile.name : "Local authoring" }}
+                <small>{{ platformMenuDetail }}</small>
               </p>
-            </div>
-          </aside>
-          <section class="canvas-panel">
-            @if (tab === "Source") {
-              <div class="source-heading">
-                <div>
-                  <h2>Workflow source</h2>
-                  <p>
-                    {{
-                      model.readonly
-                        ? "Source needs attention; last valid graph
-              retained."
-                        : "YAML and graph share one workflow definition."
-                    }}
-                  </p>
-                </div>
-                <select
-                  aria-label="Source format"
-                  [value]="model.format"
-                  (change)="changeFormat($event)"
-                >
-                  <option value="yaml">YAML</option>
-                  <option value="json">JSON</option></select
-                ><button class="primary" (click)="updateSource()">
-                  Apply source
+              @if (profile) {
+                <button type="button" (click)="menuChoice('workspace')">
+                  <weave-icon name="workspace" />Switch workspace
                 </button>
-              </div>
-              <textarea
-                class="source-editor"
-                spellcheck="false"
-                aria-label="Workflow source"
-                [value]="sourceBuffer"
-                (input)="sourceBuffer = value($event)"
-              ></textarea>
-              @if (model.error) {
-                <div class="source-error" role="alert">{{ model.error }}</div>
-              }
-            } @else if (tab === "Outline") {
-              <div class="outline-heading">
-                <h2>Execution outline</h2>
-                <p>
-                  Arrow keys select steps. Use the inspector to choose a branch
-                  and position.
-                </p>
-              </div>
-              <div
-                class="outline"
-                role="tree"
-                aria-label="Workflow execution structure"
-              >
-                @for (node of nodes; track node.step.id) {
-                  <button
-                    role="treeitem"
-                    [attr.aria-level]="node.depth + 1"
-                    [attr.aria-selected]="model.selected === node.step.id"
-                    [style.margin-left.px]="node.depth * 24"
-                    (click)="select(node)"
-                  >
-                    <weave-icon [name]="node.step.kind" /><strong>{{
-                      node.step.id
-                    }}</strong
-                    ><span>{{ node.owner }}</span>
+                @if (signedIn) {
+                  <button type="button" (click)="menuChoice('switch-account')">
+                    <weave-icon name="user" />Switch account
                   </button>
-                }
-                @if (!nodes.length) {
-                  <p>No steps yet. Insert a step from the palette.</p>
-                }
-              </div>
-            } @else {
-              <div
-                class="canvas"
-                aria-label="Workflow canvas"
-                tabindex="0"
-                (wheel)="panCanvas($event)"
-                (dragover)="allowDrop($event)"
-                (drop)="drop($event)"
-              >
-                <div class="canvas-context">
-                  <span class="canvas-chip"
-                    ><weave-icon name="workflows" />{{ nodes.length }}
-                    {{ nodes.length === 1 ? "step" : "steps" }}</span
-                  >
-                  @if (model.readonly) {
-                    <span class="canvas-chip warning"
-                      >Read-only · source needs attention</span
-                    >
-                  }
-                </div>
-                <f-flow class="graph-flow" (fFullRendered)="fitAfterRender()"
-                  ><f-canvas [position]="pan" [scale]="zoom"
-                    ><div fNodes>
-                      <svg
-                        class="edges"
-                        width="4000"
-                        height="12000"
-                        aria-hidden="true"
-                      >
-                        <defs>
-                          <marker
-                            id="arrow"
-                            viewBox="0 0 10 10"
-                            refX="9"
-                            refY="5"
-                            markerWidth="6"
-                            markerHeight="6"
-                            orient="auto"
-                          >
-                            <path d="M0 0L10 5L0 10Z" fill="#7b9c8c" />
-                          </marker>
-                        </defs>
-                        <path
-                          [attr.d]="boundaryStartEdge()"
-                          fill="none"
-                          stroke="#7b9c8c"
-                          stroke-width="2"
-                          marker-end="url(#arrow)"
-                        />
-                        @for (node of nodes; track node.step.id) {
-                          <path
-                            [attr.d]="edge(node)"
-                            fill="none"
-                            stroke="#7b9c8c"
-                            stroke-width="2"
-                            marker-end="url(#arrow)"
-                          />
-                        }
-                      </svg>
-                      @for (boundary of ["start", "end"]; track boundary) {
-                        <div
-                          fNode
-                          [fNodeId]="'$' + boundary"
-                          [fNodePosition]="
-                            boundary === 'start'
-                              ? model.boundaries().start
-                              : model.boundaries().end
-                          "
-                          class="boundary-node"
-                          [class.end]="boundary === 'end'"
-                          role="img"
-                          [attr.aria-label]="
-                            boundary === 'start'
-                              ? 'Workflow start'
-                              : 'Workflow end'
-                          "
-                        >
-                          <weave-icon
-                            [name]="boundary === 'start' ? 'play' : 'check'"
-                          />{{ boundary === "start" ? "Start" : "End" }}
-                        </div>
-                      }
-                      @for (node of nodes; track node.step.id) {
-                        <div
-                          fNode
-                          [fNodeId]="node.step.id"
-                          [fNodePosition]="nodePoint(node)"
-                          class="graph-node"
-                          [class.selected]="model.selected === node.step.id"
-                          [class.human]="node.step.kind === 'humanTask'"
-                          [class.decision]="node.step.kind === 'switch'"
-                          [attr.data-step]="node.step.id"
-                        >
-                          <button
-                            class="node-body"
-                            (pointerdown)="pointerDown($event, node)"
-                            (pointermove)="pointerMove($event)"
-                            (pointerup)="pointerUp($event)"
-                            (pointercancel)="cancelGesture()"
-                            (click)="select(node)"
-                            [attr.aria-label]="
-                              node.step.id +
-                              ', ' +
-                              label(node.step.kind) +
-                              ', ' +
-                              node.owner
-                            "
-                          >
-                            <span class="step-icon"
-                              ><weave-icon [name]="node.step.kind" /></span
-                            ><span
-                              ><strong>{{ node.step.id }}</strong
-                              ><small>{{ label(node.step.kind) }}</small></span
-                            ></button
-                          ><button
-                            class="port input-port"
-                            [attr.aria-label]="'Insert before ' + node.step.id"
-                            (click)="
-                              connectingNode
-                                ? connectTo({
-                                    owner: node.owner,
-                                    index: node.index,
-                                    point: node.point,
-                                    label: '',
-                                  })
-                                : select(node)
-                            "
-                          ></button
-                          ><button
-                            class="port output-port"
-                            [class.connecting]="connectingNode === node.step.id"
-                            [attr.aria-label]="
-                              'Move ' + node.step.id + ' to a connection'
-                            "
-                            (click)="connect(node.step.id)"
-                          ></button>
-                          @if (node.owner !== "root") {
-                            <span class="branch-label">{{ node.owner }}</span>
-                          }
-                        </div>
-                      }
-                      @for (
-                        target of targets;
-                        track target.owner + ":" + target.index
-                      ) {
-                        <button
-                          class="insertion-target"
-                          [class.drop-active]="dragPreview || connectingNode"
-                          [style.left.px]="target.point.x - 18"
-                          [style.top.px]="target.point.y - 18"
-                          [attr.aria-label]="target.label"
-                          [attr.title]="target.label"
-                          (dragover)="allowDrop($event)"
-                          (drop)="drop($event, target)"
-                          (click)="connectTo(target)"
-                        >
-                          <weave-icon name="plus" />
-                        </button>
-                      }</div></f-canvas
-                ></f-flow>
-                <div class="canvas-tools">
-                  <button
-                    class="icon-button"
-                    aria-label="Zoom out"
-                    (click)="setZoom(-0.1)"
-                  >
-                    −</button
-                  ><span>{{ (zoom * 100).toFixed(0) }}%</span
-                  ><button
-                    class="icon-button"
-                    aria-label="Zoom in"
-                    (click)="setZoom(0.1)"
-                  >
-                    +</button
-                  ><span class="toolbar-divider"></span
-                  ><button
-                    class="icon-button"
-                    aria-label="Fit graph"
-                    (click)="fit()"
-                  >
-                    <weave-icon name="fit" /></button
-                  ><button
-                    title="Auto-layout is undoable"
-                    (click)="perform(model.autoLayout.bind(model))"
-                  >
-                    Arrange
+                  <button type="button" (click)="menuChoice('sign-out')">
+                    <weave-icon name="logout" />Sign out
                   </button>
-                </div>
-                <span class="canvas-key-help"
-                  >Scroll to pan · Ctrl + scroll to zoom · Alt to bypass
-                  grid</span
-                >
-              </div>
-            }
-            @if (model.unplaced.length) {
-              <div class="unplaced">
-                <strong>{{ model.unplaced.length }} unplaced step(s)</strong
-                ><span>These steps block export and publication.</span>
-                @for (step of model.unplaced; track step.id) {
-                  <button
-                    (click)="model.selected = step.id; showInspector = true"
-                  >
-                    {{ label(step.kind) }}
+                } @else {
+                  <button type="button" (click)="menuChoice('sign-in')">
+                    <weave-icon name="user" />Sign in
                   </button>
-                }
-              </div>
-            }
-          </section>
-          <aside class="inspector" [class.visible]="showInspector">
-            <button
-              class="pane-resizer left"
-              role="separator"
-              aria-label="Resize inspector"
-              aria-orientation="vertical"
-              [attr.aria-valuenow]="inspectorWidth"
-              aria-valuemin="280"
-              aria-valuemax="420"
-              (pointerdown)="paneResize($event, 'inspector')"
-              (pointermove)="paneMove($event)"
-              (pointerup)="resizing = null"
-              (keydown)="paneKey($event, 'inspector')"
-            ></button>
-            <header>
-              <h2>{{ selected ? label(selected.step.kind) : "Workflow" }}</h2>
-              <button
-                class="icon-button inspector-close"
-                aria-label="Close inspector"
-                (click)="showInspector = false"
-              >
-                <weave-icon name="close" />
-              </button>
-            </header>
-            @if (selected) {
-              <p class="hint">
-                Owner: {{ selected.owner }}. Step ID is stable; rename in source
-                together with dependent references.
-              </p>
-              @if (selected.step.kind === "action") {
-                <section class="integration-contract">
-                  <h3>Call an integration</h3>
-                  @if (profile && can("catalog.read")) {
-                    <label
-                      >Published action<select
-                        aria-label="Published action"
-                        [disabled]="model.readonly || actionLoading"
-                        (change)="chooseCatalogAction(value($event))"
-                      >
-                        <option value="">
-                          Choose an authorized action version
-                        </option>
-                        @for (action of actionVersions; track action["id"]) {
-                          <option [value]="action['id']">
-                            {{ action["name"] }}&#64;{{ action["version"] }}
-                          </option>
-                        }
-                      </select></label
-                    >
-                    @if (actionNextCursor) {
-                      <button (click)="loadActionCatalog(true)">
-                        More action versions
-                      </button>
-                    }
-                  } @else {
-                    <p class="hint">
-                      Offline: enter a published action reference below. Connect
-                      a profile to discover connector and worker operations.
-                    </p>
-                  }
-                  @if (actionContract) {
-                    <dl class="task-metadata">
-                      <dt>Implementation</dt>
-                      <dd>{{ actionImplementation()["kind"] }}</dd>
-                      <dt>Connector / worker</dt>
-                      <dd>
-                        {{
-                          actionImplementation()["uses"] ||
-                            actionImplementation()["taskType"]
-                        }}
-                      </dd>
-                      <dt>Operation</dt>
-                      <dd>
-                        {{
-                          actionImplementation()["action"] ||
-                            actionImplementation()["taskVersion"]
-                        }}
-                      </dd>
-                      <dt>Timeout</dt>
-                      <dd>{{ actionSpec()["timeoutSeconds"] }} seconds</dd>
-                      <dt>Retry policy</dt>
-                      <dd>{{ pretty(actionSpec()["retry"]) }}</dd>
-                    </dl>
-                    <p class="hint">
-                      Retry and timeout belong to this immutable action version.
-                      Publish a new action version to change them.
-                    </p>
-                    @if (actionInputFields()) {
-                      <label
-                        >Input editing<select
-                          aria-label="Input editing"
-                          [value]="actionInputMode"
-                          (change)="actionInputModeChange($event)"
-                        >
-                          <option value="fields">Schema fields</option>
-                          <option value="expression">Expression builder</option>
-                        </select></label
-                      >
-                      @if (actionInputMode === "fields") {
-                        <form
-                          class="action-input-form"
-                          (submit)="$event.preventDefault()"
-                        >
-                          <h3>Action input</h3>
-                          @for (
-                            key of [
-                              String(selected.step.id) +
-                                String(actionContract["metadata"]),
-                            ];
-                            track key
-                          ) {
-                            <weave-task-form
-                              [schema]="actionInputSchema()"
-                              [initialData]="actionInitialInput"
-                              (dataChange)="actionInputChange($event)"
-                            />
-                          }
-                        </form>
-                      }
-                    }
-                    <details>
-                      <summary>Output schema</summary>
-                      <pre>{{ pretty(actionSpec()["outputSchema"]) }}</pre>
-                    </details>
-                    <p class="hint">
-                      Output reference: /steps/{{ selected.step.id }}/output
-                    </p>
-                    <button
-                      (click)="useActionOutput()"
-                      [disabled]="
-                        model.readonly ||
-                        !propertyValid ||
-                        selected.owner !== 'root'
-                      "
-                    >
-                      Use action output as workflow result
-                    </button>
-                    @if (selected.owner !== "root") {
-                      <p class="hint">
-                        For nested actions, expose output through the enclosing
-                        branch output first.
-                      </p>
-                    }
-                  }
-                </section>
-              }
-              <button class="property-mode" (click)="switchPropertyMode()">
-                {{ advancedProperties ? "Properties table" : "Advanced JSON" }}
-              </button>
-              @if (!advancedProperties) {
-                @for (stepId of [selected.step.id]; track stepId) {
-                  <weave-step-property-grid
-                    [step]="propertyStep || selected.step"
-                    [readOnly]="model.readonly"
-                    [hiddenFields]="
-                      selected.step.kind === 'action' &&
-                      actionInputMode === 'fields'
-                        ? ['with']
-                        : []
-                    "
-                    (stepChange)="stepEdit($event)"
-                    (validityChange)="propertyValid = $event"
-                  />
                 }
               } @else {
-                <label
-                  >Step configuration<textarea
-                    class="step-editor"
-                    spellcheck="false"
-                    [value]="inspectorBuffer"
-                    (input)="inspectorBuffer = value($event)"
-                    aria-label="Step configuration JSON"
-                  ></textarea>
-                </label>
+                <button type="button" (click)="menuChoice('connect')">
+                  <weave-icon name="cloud" />Connect to a platform
+                </button>
               }
-              <button
-                class="primary"
-                (click)="updateStep()"
-                [disabled]="model.readonly || !propertyValid"
-              >
-                Apply configuration
+              <button type="button" (click)="menuChoice('settings')">
+                <weave-icon name="settings" />Platform settings
               </button>
-              @if (
-                selected.step.kind === "switch" ||
-                selected.step.kind === "parallel"
-              ) {
-                <section class="branch-management">
-                  <h3>
-                    {{
-                      selected.step.kind === "switch"
-                        ? "Decision cases"
-                        : "Parallel branches"
-                    }}
-                  </h3>
-                  <p class="hint">
-                    Branch changes apply valid property edits. Move contained
-                    steps before removing a branch.
-                  </p>
-                  @if (selected.step.kind === "parallel") {
-                    @for (name of branchNames(); track name) {
-                      <div class="branch-row">
-                        <input
-                          [value]="name"
-                          [disabled]="model.readonly || !propertyValid"
-                          [attr.aria-label]="'Rename branch ' + name"
-                          (change)="manageBranch('rename', name, $event)"
-                        /><button
-                          (click)="manageBranch('remove', name)"
-                          [disabled]="model.readonly || !propertyValid"
-                          [attr.aria-label]="'Remove branch ' + name"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    }
-                  } @else {
-                    @for (index of caseIndexes(); track index) {
-                      <div class="branch-row">
-                        <strong>Case {{ index + 1 }}</strong
-                        ><button
-                          (click)="manageBranch('up', String(index))"
-                          [disabled]="
-                            model.readonly || !propertyValid || index === 0
-                          "
-                          [attr.aria-label]="'Move case ' + (index + 1) + ' up'"
-                        >
-                          ↑</button
-                        ><button
-                          (click)="manageBranch('down', String(index))"
-                          [disabled]="
-                            model.readonly ||
-                            !propertyValid ||
-                            index === caseIndexes().length - 1
-                          "
-                          [attr.aria-label]="
-                            'Move case ' + (index + 1) + ' down'
-                          "
-                        >
-                          ↓</button
-                        ><button
-                          (click)="manageBranch('remove', String(index))"
-                          [disabled]="model.readonly || !propertyValid"
-                          [attr.aria-label]="'Remove case ' + (index + 1)"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    }
-                  }
-                  <button
-                    (click)="manageBranch('add')"
-                    [disabled]="model.readonly || !propertyValid"
-                  >
-                    {{
-                      selected.step.kind === "switch"
-                        ? "Add case"
-                        : "Add branch"
-                    }}
-                  </button>
-                </section>
-              }
-            } @else {
-              <weave-step-property-grid
-                [step]="workflowProperties"
-                [readOnly]="model.readonly"
-                (stepChange)="workflowBuffer = serializeStep($event)"
-                (validityChange)="workflowValid = $event"
-              />
-              <button
-                class="primary"
-                (click)="updateWorkflowOptions()"
-                [disabled]="model.readonly || !workflowValid"
-              >
-                Apply workflow options
-              </button>
-              <p class="hint">
-                Connection slots map each slot name to a connector version and
-                required flag. Runtime credentials stay in authorized
-                environment connection revisions.
-              </p>
-            }
-
-            @if (model.selected) {
-              <hr />
-              <label for="move-target">Move to branch and position</label
-              ><select
-                id="move-target"
-                [value]="selectedTarget"
-                (change)="selectedTarget = value($event)"
-              >
-                @for (
-                  target of targets;
-                  track target.owner + ":" + target.index
-                ) {
-                  <option [value]="target.owner + ':' + target.index">
-                    {{ target.label }}
-                  </option>
-                }</select
-              ><button (click)="moveSelected()" [disabled]="model.readonly">
-                Move step</button
-              ><button
-                class="danger"
-                (click)="remove()"
-                [disabled]="model.readonly"
-              >
-                <weave-icon name="trash" />Delete step
-              </button>
-            }
-            <div class="inspector-tip">
-              <weave-icon name="source" />
-              <p>
-                One source of truth<small
-                  >Canvas changes produce the same definition the Weave compiler
-                  validates.</small
-                >
-              </p>
             </div>
-          </aside>
+          }
         </div>
-        <section class="diagnostics" aria-label="Compiler diagnostics">
-          <div class="diagnostics-title">
-            <weave-icon name="check" /><strong>Diagnostics</strong
-            ><span>{{
-              diagnostics
-                ? diagnostics.errorCount + " errors"
-                : "Not
-          validated"
-            }}</span>
-            @if (diagnostics?.partial) {
-              <span class="warning">Catalog checks pending</span>
-            }
-            <span class="grow"></span
-            ><span>{{ busy ? busy + "…" : message || "Ready to author" }}</span>
-          </div>
-          @if (diagnostics) {
-            <div class="diagnostic-list">
-              @for (d of diagnostics.diagnostics; track $index) {
-                <p>
-                  <strong>{{ d.code }}</strong> {{ d.message }}
-                </p>
-              }
-            </div>
-          }
-        </section>
-      } @else if (view === "settings") {
-        <section class="page-content">
-          <h1>Workspace settings</h1>
-          <weave-connection-assistant
-            [status]="connectionStatus"
-            [busy]="connectionBusy"
-            [savedRevision]="connectionRevision"
-            [workspaceSelected]="!!api.session.profile?.environmentId"
-            (configure)="configureConnection($event)"
-            (start)="startConnectionLogin()"
-            (check)="checkConnection()"
-            (cancel)="cancelConnectionLogin($event)"
-          />
-          <p class="subtitle">
-            Your local host controls the connected identity and authorized
-            scope.
-          </p>
-          <div class="settings-card">
-            <h2>API profile</h2>
-            <dl>
-              <dt>Mode</dt>
-              <dd>{{ api.session.mode }}</dd>
-              <dt>Profile</dt>
-              <dd>{{ profile?.name || "None — offline authoring" }}</dd>
-              <dt>Server</dt>
-              <dd>{{ profile?.baseUrl || "Local compiler" }}</dd>
-              <dt>Project</dt>
-              <dd>{{ profile?.projectId || "Not connected" }}</dd>
-              <dt>Environment</dt>
-              <dd>{{ profile?.environmentId || "Not connected" }}</dd>
-            </dl>
-            <p>
-              Use the connection assistant above, or start
-              <code>weave studio --profile /path/to/profile.json</code>.
-              Credentials stay in the local host.
-            </p>
-          </div>
-          <div class="settings-card">
-            <h2>Authorized workspaces</h2>
-            <label for="scope-select">Workspace and environment</label
-            ><select
-              id="scope-select"
-              [value]="scopeChoice"
-              (change)="scopeChoice = value($event)"
-            >
-              <option value="">Choose an authorized scope</option>
-              @for (scope of scopes; track scope.value) {
-                <option [value]="scope.value">{{ scope.label }}</option>
-              }</select
-            ><button (click)="switchScope()" [disabled]="!scopeChoice">
-              Change workspace
-            </button>
-            <p>
-              {{
-                identity?.truncated
-                  ? "Discovery is truncated. Contact your operator
-          for a complete scoped profile."
-                  : "Only resources visible to your
-          current identity are listed."
-              }}
-            </p>
-          </div>
-          @if (canManageMembers || can("grant.admin")) {
-            <section class="settings-card administration">
-              <h2>People and access</h2>
-              <p>
-                Roles are additive. Workflow editor maps to developer. Run
-                operator needs a separate Viewer grant to inspect runs. Platform
-                administration grants directory authority separately from scoped
-                workflow operations.
-              </p>
-              <button (click)="loadAdministration()" [disabled]="adminLoading">
-                Refresh access directory
+      </header>
+      <main id="main" class="main-view" tabindex="-1">
+        @if (platformNotice && view !== "connect") {
+          <div
+            class="platform-banner"
+            role="status"
+            [class.calm]="noticeCalm"
+            [class.warning]="!noticeCalm"
+          >
+            <weave-icon
+              [name]="
+                platformNotice.kind === 'revocation'
+                  ? 'logout'
+                  : platformNotice.kind === 'signing-in'
+                    ? 'user'
+                    : 'warning'
+              "
+            /><span>{{ noticeText }}</span>
+            @if (noticeActionLabel) {
+              <button type="button" (click)="noticeAction()">
+                {{ noticeActionLabel }}
               </button>
-              @if (can("grant.admin")) {
-                <h3>Principal directory</h3>
-                <p class="hint">
-                  Principals have a UUID, kind and active status. CIAM manages
-                  names, passwords and login profiles.
-                </p>
-                <form
-                  class="principal-create-form"
-                  (submit)="
-                    $event.preventDefault(); administrationCommand('create')
-                  "
-                >
-                  <label
-                    >Principal kind<select
-                      [value]="principalKind"
-                      (change)="principalKind = value($event)"
-                    >
-                      <option value="human">Human</option>
-                      <option value="application">Application</option>
-                      <option value="worker">Worker</option>
-                    </select></label
-                  ><button
-                    type="submit"
-                    [disabled]="busy !== '' || adminUncertainCreate"
-                  >
-                    Create principal
-                  </button>
-                </form>
-                @if (adminUncertainCreate) {
-                  <p role="alert">
-                    Create outcome unknown. Check directory UUIDs before
-                    creating again.
-                  </p>
-                  <button (click)="adminUncertainCreate = false">
-                    I reconciled the directory
-                  </button>
-                }
-                <div class="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Principal UUID</th>
-                        <th>Kind</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      @for (
-                        principal of adminPrincipals;
-                        track principal["id"]
-                      ) {
-                        <tr>
-                          <td>{{ principal["id"] }}</td>
-                          <td>{{ principal["kind"] }}</td>
-                          <td>
-                            {{ principal["active"] ? "Active" : "Inactive" }}
-                          </td>
-                          <td>
-                            <button
-                              (click)="principalId = String(principal['id'])"
-                            >
-                              Select</button
-                            ><button
-                              (click)="
-                                administrationCommand('status', principal)
-                              "
-                              [disabled]="busy !== ''"
-                            >
-                              {{
-                                principal["active"] ? "Deactivate" : "Activate"
-                              }}
-                            </button>
-                          </td>
-                        </tr>
-                      }
-                    </tbody>
-                  </table>
-                </div>
-                @if (adminPrincipalCursor) {
-                  <button (click)="loadAdministration('principals')">
-                    More principals
-                  </button>
-                }
-                <form
-                  class="principal-link-form"
-                  (submit)="
-                    $event.preventDefault(); administrationCommand('link')
-                  "
-                >
-                  <h3>Link an existing CIAM identity</h3>
-                  <label
-                    >Principal UUID<input
-                      required
-                      [value]="principalId"
-                      (input)="principalId = value($event)" /></label
-                  ><label
-                    >Provider ID<input
-                      required
-                      [value]="identityProvider"
-                      (input)="identityProvider = value($event)" /></label
-                  ><label
-                    >Exact issuer URL<input
-                      type="url"
-                      required
-                      [value]="identityIssuer"
-                      (input)="identityIssuer = value($event)" /></label
-                  ><label
-                    >Exact CIAM subject<input
-                      required
-                      [value]="identitySubject"
-                      (input)="identitySubject = value($event)" /></label
-                  ><button type="submit" [disabled]="busy !== ''">
-                    Link identity
-                  </button>
-                </form>
-              }
-              @if (canManageMembers) {
-                <h3>Tenant role bindings</h3>
-                <form
-                  class="member-grant-form"
-                  (submit)="
-                    $event.preventDefault(); administrationCommand('grant')
-                  "
-                >
-                  <label
-                    >Principal UUID<input
-                      required
-                      [value]="principalId"
-                      (input)="principalId = value($event)" /></label
-                  ><label
-                    >Role<select
-                      aria-label="Role"
-                      [value]="memberRole"
-                      (change)="memberRole = value($event)"
-                    >
-                      @for (role of memberRoles; track role.value) {
-                        <option [value]="role.value">{{ role.label }}</option>
-                      }
-                    </select></label
-                  ><label
-                    >Grant scope<select
-                      aria-label="Grant scope"
-                      [value]="memberScope"
-                      (change)="memberScope = value($event)"
-                    >
-                      <option value="environment">Selected environment</option>
-                      <option value="project">Selected project</option>
-                      <option value="tenant">Entire tenant</option>
-                    </select></label
-                  ><label
-                    >Restricted resource IDs (optional)<input
-                      [value]="memberResources"
-                      (input)="memberResources = value($event)"
-                      placeholder="Comma-separated resource IDs" /></label
-                  ><button type="submit" [disabled]="busy !== ''">
-                    Grant role
-                  </button>
-                </form>
-                <div class="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Principal UUID</th>
-                        <th>Role</th>
-                        <th>Scope</th>
-                        <th>Resources</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      @for (member of adminMembers; track member["id"]) {
-                        <tr>
-                          <td>{{ member["principal_id"] }}</td>
-                          <td>{{ member["role"] }}</td>
-                          <td>
-                            <code>{{ pretty(member["scope"]) }}</code>
-                          </td>
-                          <td>{{ pretty(member["resources"]) }}</td>
-                          <td>
-                            <button
-                              (click)="administrationCommand('revoke', member)"
-                              [disabled]="busy !== ''"
-                            >
-                              Revoke binding
-                            </button>
-                          </td>
-                        </tr>
-                      }
-                    </tbody>
-                  </table>
-                </div>
-                @if (adminMemberCursor) {
-                  <button (click)="loadAdministration('members')">
-                    More role bindings
-                  </button>
-                }
-              }
-            </section>
-          }
-          <div class="settings-card">
-            <h2>Keyboard controls</h2>
-            <dl>
-              <dt>Undo / redo</dt>
-              <dd>⌘ / Ctrl Z · Shift Z</dd>
-              <dt>Save draft</dt>
-              <dd>⌘ / Ctrl S</dd>
-              <dt>Select step</dt>
-              <dd>Arrow up / down</dd>
-              <dt>Cancel gesture</dt>
-              <dd>Escape</dd>
-              <dt>Delete step</dt>
-              <dd>Delete</dd>
-            </dl>
-          </div>
-        </section>
-      } @else {
-        <section class="page-content">
-          <div class="page-heading">
-            <div>
-              <h1>
-                {{
-                  view === "tasks"
-                    ? "My
-            Tasks"
-                    : view.charAt(0).toUpperCase() + view.slice(1)
-                }}
-              </h1>
-              <p class="subtitle">
-                {{
-                  view === "workflows"
-                    ? "Design, publish and activate your business
-            processes."
-                    : view === "runs"
-                      ? "Inspect version-pinned runs and their
-            current state."
-                      : view === "tasks"
-                        ? "Your decisions keep work
-            moving."
-                        : view === "email"
-                          ? "Conversations and SMTP submission
-            status."
-                          : view === "workers"
-                            ? "Admitted releases and live worker
-            instances."
-                            : "Authorized integrations for this environment."
-                }}
-              </p>
-            </div>
-            @if (view === "workflows") {
-              <div class="tool-group">
-                <label class="button"
-                  ><weave-icon name="source" />Import<input
-                    type="file"
-                    accept=".yaml,.yml,.json"
-                    (change)="import($event)"
-                    hidden /></label
-                ><button class="primary" (click)="newWorkflow()">
-                  <weave-icon name="plus" />New workflow
-                </button>
-              </div>
-            } @else {
-              <button (click)="refresh()" [disabled]="loading">Refresh</button>
             }
-          </div>
-          @if (view === "runs") {
-            <div class="run-filters">
-              <label class="archive-filter"
-                ><input
-                  type="checkbox"
-                  [checked]="runIncludeArchived"
-                  (change)="runIncludeArchived = !runIncludeArchived"
-                />Include archived executions</label
-              >
-              <label
-                >Business key<input
-                  [value]="runFilters.business_key"
-                  (input)="runFilters.business_key = value($event)"
-                  placeholder="e.g. expense-2026-104" /></label
-              ><label
-                >Correlation key<input
-                  [value]="runFilters.correlation_key"
-                  (input)="runFilters.correlation_key = value($event)"
-                  placeholder="Exact correlation key" /></label
-              ><label
-                >Status<select
-                  aria-label="Status"
-                  [value]="runFilters.status"
-                  (change)="runFilters.status = value($event)"
-                >
-                  <option value="">All statuses</option>
-                  @for (status of runStatuses; track status) {
-                    <option [value]="status">{{ status }}</option>
-                  }
-                </select></label
-              ><button (click)="applyRunFilters()">Apply filters</button
-              ><button (click)="clearRunFilters()">Clear</button>
-              @if (can("run.start")) {
-                <button class="primary" (click)="startRun()">
-                  <weave-icon name="plus" />Start run
-                </button>
-              }
-            </div>
-          }
-          <div class="list-toolbar">
-            <label class="search-field"
-              ><weave-icon name="search" /><input
-                [attr.aria-label]="'Search ' + view"
-                [placeholder]="'Search ' + (view === 'tasks' ? 'tasks' : view)"
-                [value]="search"
-                (input)="search = value($event)"
-            /></label>
-            @if (view === "workflows") {
-              <div class="library-toggle">
-                <button
-                  [class.selected]="libraryCollection === 'workflows'"
-                  (click)="libraryCollection = 'workflows'; refresh()"
-                >
-                  Published versions</button
-                ><button
-                  [class.selected]="libraryCollection === 'drafts'"
-                  (click)="libraryCollection = 'drafts'; refresh()"
-                >
-                  Drafts
-                </button>
-              </div>
-            }
-            @if (view === "tasks") {
-              <select
-                aria-label="Task status filter"
-                [value]="taskFilter"
-                (change)="applyTaskFilter($event)"
-              >
-                <option value="">All authorized tasks</option>
-                <option value="ready">Available</option>
-                <option value="claimed">Claimed</option>
-                <option value="completed">Completed</option>
-                <option value="expired">Expired</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            }
-            <span>{{ visibleRecords.length }} shown</span>
-            @if (profile) {
-              <span class="scope-label"
-                >{{ profile.name }} / {{ profile.environmentId }}</span
-              >
-            }
-          </div>
-          @if (loading) {
-            <div class="empty-state" role="status">
-              <span class="loading-spinner"></span>
-              <h2>Loading authorized {{ view }}</h2>
-            </div>
-          } @else if (!visibleRecords.length) {
-            <div class="empty-state">
-              <img src="assets/lumi.svg" alt="" />
-              <h2>
-                {{
-                  !profile
-                    ? "A good place to start"
-                    : search
-                      ? "No matching results"
-                      : "No " + (view === "tasks" ? "tasks" : view) + " yet"
-                }}
-              </h2>
-              <p>
-                {{
-                  !profile
-                    ? "Create or import a workflow and validate it locally. Start
-          Studio with an authorized API profile to publish and run
-          it."
-                    : search
-                      ? "Try a different search."
-                      : view === "workflows"
-                        ? "Create your
-          first workflow, then connect each piece of work."
-                        : "Only resources
-          visible to your current identity appear here."
-                }}
-              </p>
-              @if (view === "workflows") {
-                <button class="primary" (click)="newWorkflow()">
-                  <weave-icon name="plus" />Create workflow
-                </button>
-              }
-            </div>
-          } @else {
-            <div class="resource-layout" [class.has-detail]="selectedRecord">
-              <div class="resource-table">
-                <div class="table-head">
-                  <span>{{
-                    view === "workflows" ? "Workflow" : "Resource"
-                  }}</span
-                  ><span>Status</span><span>Reference</span><span></span>
-                </div>
-                @for (record of visibleRecords; track record["id"]) {
-                  <button
-                    class="resource-row"
-                    [class.selected]="selectedRecord?.['id'] === record['id']"
-                    (click)="open(record)"
-                  >
-                    <span class="resource-name"
-                      ><span class="resource-icon"
-                        ><weave-icon [name]="view" /></span
-                      ><span
-                        ><strong>{{ recordName(record) }}</strong
-                        ><small>{{
-                          view === "workflows"
-                            ? libraryCollection === "drafts"
-                              ? "Unpublished draft"
-                              : "Published workflow version"
-                            : record["id"]
-                        }}</small></span
-                      ></span
-                    ><span class="status-pill">{{ recordStatus(record) }}</span
-                    ><span class="record-ref">{{
-                      record["revision"]
-                        ? "Revision " + record["revision"]
-                        : record["version"] || "—"
-                    }}</span
-                    ><weave-icon name="chevron" />
-                  </button>
-                }
-                @if (nextCursor) {
-                  <button class="load-more" (click)="refresh(true)">
-                    Load next page
-                  </button>
-                }
-              </div>
-              @if (selectedRecord && view !== "workflows") {
-                <aside class="record-detail">
-                  <header>
-                    <h2>{{ recordName(selectedRecord) }}</h2>
-                    <button
-                      class="icon-button"
-                      aria-label="Close detail"
-                      (click)="selectedRecord = null"
-                    >
-                      <weave-icon name="close" />
-                    </button>
-                  </header>
-                  <span class="status-pill">{{
-                    recordStatus(selectedRecord)
-                  }}</span>
-                  <p class="hint">
-                    API authorization is checked on every read and action.
-                  </p>
-                  @if (view === "tasks") {
-                    <div class="task-context">
-                      <h3>Business context</h3>
-                      <pre>{{ pretty(selectedRecord["context"]) }}</pre>
-                    </div>
-                    <dl class="task-metadata">
-                      <dt>Due</dt>
-                      <dd>{{ selectedRecord["due_at"] || "No due time" }}</dd>
-                      <dt>Expires</dt>
-                      <dd>{{ selectedRecord["expires_at"] || "No expiry" }}</dd>
-                      <dt>Claimed by</dt>
-                      <dd>
-                        {{ selectedRecord["claimant_id"] || "Available" }}
-                      </dd>
-                      <dt>Decision actor</dt>
-                      <dd>
-                        {{
-                          selectedRecord["decision_actor_id"] ||
-                            "No decision yet"
-                        }}
-                      </dd>
-                    </dl>
-                    @if (
-                      selectedRecord["status"] === "ready" &&
-                      can("human_task.claim", String(selectedRecord["id"]))
-                    ) {
-                      <button
-                        class="primary"
-                        [disabled]="
-                          busy !== '' || unknownCommand || taskConflict
-                        "
-                        (click)="taskCommand('claim')"
-                      >
-                        Claim task
-                      </button>
-                    }
-                    @if (
-                      selectedRecord["status"] === "claimed" && taskOwned()
-                    ) {
-                      <form
-                        class="human-decision-form"
-                        (submit)="$event.preventDefault()"
-                      >
-                        <h3>Your decision</h3>
-                        <p class="hint">
-                          Acting as {{ identity?.principal_id }}
-                        </p>
-                        <fieldset [disabled]="taskConflict">
-                          @for (
-                            taskId of [String(selectedRecord["id"])];
-                            track taskId
-                          ) {
-                            <weave-task-form
-                              [schema]="taskSchema()"
-                              (dataChange)="taskData = $event"
-                            />
-                          }
-                        </fieldset>
-                        <div class="decision-bar">
-                          @for (decision of taskDecisions(); track decision) {
-                            @if (
-                              can(
-                                "human_task.complete",
-                                String(selectedRecord["id"])
-                              )
-                            ) {
-                              <button
-                                type="button"
-                                [class.primary]="decision !== 'reject'"
-                                [class.danger]="decision === 'reject'"
-                                [disabled]="
-                                  busy !== '' || unknownCommand || taskConflict
-                                "
-                                (click)="taskCommand('complete', decision)"
-                              >
-                                {{
-                                  decision.charAt(0).toUpperCase() +
-                                    decision.slice(1)
-                                }}
-                              </button>
-                            }
-                          }
-                        </div>
-                      </form>
-                      @if (
-                        can("human_task.release", String(selectedRecord["id"]))
-                      ) {
-                        <button
-                          [disabled]="
-                            busy !== '' || unknownCommand || taskConflict
-                          "
-                          (click)="taskCommand('release')"
-                        >
-                          Release task
-                        </button>
-                      }
-                    } @else if (selectedRecord["status"] === "completed") {
-                      <h3>Recorded outcome</h3>
-                      <pre>{{ pretty(selectedRecord["output"]) }}</pre>
-                    } @else if (selectedRecord["status"] === "claimed") {
-                      <p>This task is claimed by another person.</p>
-                    }
-                  } @else if (view === "email") {
-                    <div class="email-thread">
-                      @for (message of messages(); track message["id"]) {
-                        <article
-                          class="mail-message"
-                          [class.outbound]="message['direction'] === 'outbound'"
-                        >
-                          <header>
-                            <strong>{{ mail(message)["sender"] }}</strong
-                            ><span class="mail-state">{{
-                              message["state"] === "accepted"
-                                ? "SMTP
-                  accepted"
-                                : message["state"]
-                            }}</span>
-                          </header>
-                          <p class="mail-meta">
-                            To: {{ mail(message)["to"] }} ·
-                            {{ message["accepted_at"] }}
-                          </p>
-                          <h3>{{ mail(message)["subject"] }}</h3>
-                          <p class="mail-body">{{ mail(message)["text"] }}</p>
-                        </article>
-                      }
-                    </div>
-                    <p class="hint">
-                      SMTP accepted confirms transport acceptance. Delivery and
-                      reading remain unknown.
-                    </p>
-                    @if (can("email.send", String(selectedRecord["id"]))) {
-                      <label
-                        >Reply<textarea
-                          class="reply-editor"
-                          [value]="reply"
-                          (input)="reply = value($event)"
-                          placeholder="Write a plain-text reply"
-                          aria-label="Email reply"
-                        ></textarea>
-                      </label>
-                      <p class="hint">
-                        Replies stay in this session until queued. Sending is
-                        separate from task completion.
-                      </p>
-                      <button
-                        class="primary"
-                        [disabled]="
-                          !reply.trim() || busy !== '' || unknownCommand
-                        "
-                        (click)="sendReply()"
-                      >
-                        Queue reply
-                      </button>
-                    }
-                    @if (emailSubmission) {
-                      <div class="submission-status">
-                        <strong>{{
-                          emailSubmission["state"] === "accepted"
-                            ? "SMTP
-              accepted"
-                            : emailSubmission["state"]
-                        }}</strong>
-                        <p>Submission {{ emailSubmission["id"] }}</p>
-                        @if (
-                          emailSubmission["state"] === "queued" &&
-                          can("email.send")
-                        ) {
-                          <button
-                            class="primary"
-                            [disabled]="
-                              busy !== '' || unknownCommand || taskConflict
-                            "
-                            (click)="executeEmail()"
-                          >
-                            Send queued email
-                          </button>
-                        }
-                        @if (emailSubmission["state"] === "unknown") {
-                          <p>
-                            Transport acceptance is unknown. Reconcile with your
-                            operator before submitting another message.
-                          </p>
-                        }
-                        <button (click)="reconcileEmail()">
-                          Check submission status
-                        </button>
-                      </div>
-                    }
-                  } @else {
-                    <p class="run-reason">{{ runReason() }}</p>
-                    <dl class="task-metadata">
-                      <dt>Run ID</dt>
-                      <dd>{{ selectedRecord["id"] }}</dd>
-                      <dt>Business key</dt>
-                      <dd>{{ selectedRecord["business_key"] || "None" }}</dd>
-                      <dt>Correlation</dt>
-                      <dd>{{ selectedRecord["correlation_key"] || "None" }}</dd>
-                      <dt>Artifact</dt>
-                      <dd>{{ selectedRecord["artifact_digest"] }}</dd>
-                    </dl>
-                    @if (runCanvas) {
-                      <h3>Version-pinned workflow</h3>
-                      <div class="run-graph">
-                        <div
-                          class="run-graph-world"
-                          [style.height.px]="
-                            Math.max(220, runNodes().length * 72 + 120)
-                          "
-                        >
-                          <f-flow
-                            ><f-canvas
-                              [scale]="0.6"
-                              [position]="{ x: -24, y: 0 }"
-                              ><div fNodes>
-                                <svg
-                                  class="edges"
-                                  width="4000"
-                                  height="12000"
-                                  aria-hidden="true"
-                                >
-                                  @for (path of runEdges(); track $index) {
-                                    <path
-                                      [attr.d]="path"
-                                      fill="none"
-                                      stroke="#7b9c8c"
-                                      stroke-width="2"
-                                    />
-                                  }
-                                </svg>
-                                @for (
-                                  boundary of ["start", "end"];
-                                  track boundary
-                                ) {
-                                  <div
-                                    fNode
-                                    [fNodeId]="'run-$' + boundary"
-                                    [fNodePosition]="
-                                      boundary === 'start'
-                                        ? runCanvas!.boundaries().start
-                                        : runCanvas!.boundaries().end
-                                    "
-                                    class="boundary-node"
-                                    [class.end]="boundary === 'end'"
-                                    role="img"
-                                    [attr.aria-label]="
-                                      boundary === 'start'
-                                        ? 'Workflow start'
-                                        : 'Workflow end'
-                                    "
-                                  >
-                                    {{ boundary === "start" ? "Start" : "End" }}
-                                  </div>
-                                }
-                                @for (node of runNodes(); track node.step.id) {
-                                  <div
-                                    fNode
-                                    [fNodeId]="'run-' + node.step.id"
-                                    [fNodePosition]="node.point"
-                                    class="run-node"
-                                    [class.active]="runActive(node.step.id)"
-                                  >
-                                    <span class="step-icon"
-                                      ><weave-icon
-                                        [name]="node.step.kind" /></span
-                                    ><span
-                                      ><strong>{{ node.step.id }}</strong
-                                      ><small
-                                        >{{ label(node.step.kind) }} ·
-                                        {{ node.owner }}</small
-                                      ></span
-                                    >
-                                    @if (runActive(node.step.id)) {
-                                      <span class="run-active-label"
-                                        >Active</span
-                                      >
-                                    }
-                                  </div>
-                                }
-                              </div></f-canvas
-                            ></f-flow
-                          >
-                        </div>
-                      </div>
-                    }
-                    @if (
-                      runLifecycle &&
-                      can("run.archive", String(selectedRecord["id"]))
-                    ) {
-                      <section class="execution-lifecycle">
-                        <h3>Execution lifecycle</h3>
-                        <p class="hint">
-                          {{
-                            runLifecycle["purged"]
-                              ? "Content purged; audit retained"
-                              : runLifecycle["archived"]
-                                ? "Archived execution"
-                                : "Active in run discovery"
-                          }}
-                        </p>
-                        @if (!runLifecycle["purged"]) {
-                          <div class="tool-group">
-                            @if (runLifecycle["archived"]) {
-                              <button
-                                [disabled]="busy !== '' || unknownCommand"
-                                (click)="lifecycleCommand('restore')"
-                              >
-                                Restore execution
-                              </button>
-                            } @else {
-                              <button
-                                [disabled]="
-                                  !runTerminal() ||
-                                  busy !== '' ||
-                                  unknownCommand
-                                "
-                                (click)="lifecycleCommand('archive')"
-                              >
-                                Archive execution
-                              </button>
-                            }
-                            @if (
-                              runLifecycle["archived"] &&
-                              can("run.purge", String(selectedRecord["id"]))
-                            ) {
-                              <button
-                                class="danger"
-                                [disabled]="
-                                  !runTerminal() ||
-                                  busy !== '' ||
-                                  unknownCommand
-                                "
-                                (click)="lifecycleCommand('purge')"
-                              >
-                                Purge execution content
-                              </button>
-                            }
-                          </div>
-                          <p class="hint">
-                            Only terminal executions can be archived or purged.
-                            Purge needs exact run-ID confirmation and can be
-                            refused when durable references remain.
-                          </p>
-                        }
-                      </section>
-                    }
-                    <details>
-                      <summary>Runtime state and omissions</summary>
-                      <pre>{{ pretty(selectedRecord["state"]) }}</pre>
-                    </details>
-                    <div class="tool-group">
-                      @if (can("run.pause", String(selectedRecord["id"]))) {
-                        <button
-                          [disabled]="
-                            busy !== '' || unknownCommand || taskConflict
-                          "
-                          (click)="runControl('pause')"
-                        >
-                          Pause run
-                        </button>
-                      }
-                      @if (can("run.resume", String(selectedRecord["id"]))) {
-                        <button
-                          [disabled]="
-                            busy !== '' || unknownCommand || taskConflict
-                          "
-                          (click)="runControl('resume')"
-                        >
-                          Resume run
-                        </button>
-                      }
-                    </div>
-                    @if (runHistory) {
-                      <h3>Run history</h3>
-                      <pre>{{ pretty(runHistory) }}</pre>
-                    }
-                  }
-                  <button (click)="readDetail()">Reload current state</button>
-                </aside>
-              }
-            </div>
-          }
-        </section>
-      }
-      @if (unknownCommand && pendingMutation) {
-        <div class="unknown-banner" role="status">
-          <strong>{{ pendingMutation.label }}: outcome unknown</strong
-          ><span
-            >The exact request is retained. Do not submit another
-            operation.</span
-          ><button (click)="retryExact()" [disabled]="busy !== ''">
-            Reconcile original request
-          </button>
-        </div>
-      }
-      @if (debugSession) {
-        <section class="debug-panel">
-          <header>
-            <h2>Simulation</h2>
             <button
+              type="button"
               class="icon-button"
-              aria-label="Close simulation"
-              (click)="debugSession = null"
+              aria-label="Dismiss platform message"
+              (click)="platformNotice = null"
             >
               <weave-icon name="close" />
             </button>
-          </header>
-          <div class="tool-group">
-            <button (click)="debugCommand('next')">Next boundary</button
-            ><button (click)="debugCommand('continue')">Continue</button>
           </div>
-          <pre>{{ pretty(debugSession["view"]) }}</pre>
-        </section>
+        }
+        @if (storageNotice) {
+          <div class="error-banner storage-notice" role="alert">
+            <weave-icon name="fail" /><span
+              >Studio can't keep drafts in this browser. Use Save to file to
+              keep your work.</span
+            ><button
+              class="icon-button"
+              aria-label="Dismiss storage message"
+              (click)="storageNotice = false"
+            >
+              <weave-icon name="close" />
+            </button>
+          </div>
+        }
+        @if (error) {
+          <div class="error-banner" role="alert">
+            <weave-icon name="fail" /><span
+              >{{ error }}
+              @if (errorCode) {
+                <small class="support-code"
+                  >Support code: {{ errorCode }}</small
+                >
+              }</span
+            ><button
+              class="icon-button"
+              aria-label="Dismiss error"
+              (click)="error = ''; errorCode = ''"
+            >
+              <weave-icon name="close" />
+            </button>
+          </div>
+        }
+        @if (unknownCommand && pendingMutation) {
+          <div class="unknown-banner" role="status">
+            <weave-icon name="warning" /><span class="unknown-text"
+              ><strong
+                >Studio didn't get an answer for "{{
+                  pendingMutation.label
+                }}".</strong
+              ><span
+                >It may have worked. Check before you do anything else. Checking
+                resends the same request, so nothing happens twice.</span
+              ></span
+            ><button
+              class="primary"
+              [attr.aria-disabled]="busy !== '' ? 'true' : null"
+              (click)="busy === '' && retryExact()"
+            >
+              {{ busy === "Reconcile" ? "Checking…" : "Check now" }}
+            </button>
+          </div>
+        }
+        @if (view === "home") {
+          <div class="home-view">
+            <!-- Home loads with its first render, outside the initial bundle. -->
+            @defer (on immediate) {
+              <weave-home-dashboard
+                [connected]="!!profile"
+                [tasks]="homeTasks"
+                [runs]="homeRuns"
+                [attention]="homeAttention"
+                [drafts]="homeDrafts"
+                [localDrafts]="localList"
+                [resume]="resume"
+                [versions]="workflowVersions"
+                [principal]="identity?.principal_id ?? ''"
+                [loading]="loading"
+                [signInToRead]="signInToRead"
+                [workspaceName]="
+                  profile
+                    ? profile.name +
+                      (workspaceText ? ' · ' + workspaceText : '')
+                    : 'Local authoring'
+                "
+                (createWorkflow)="newWorkflow()"
+                (importWorkflow)="importWorkflow($event)"
+                (connect)="openWizard('server')"
+                (navigate)="navigate($event)"
+                (openLocal)="openLocalDraft($event)"
+                (continueEditing)="continueEditing()"
+                (openDraft)="openHomeDraft($event)"
+                (openRun)="viewRun($event)"
+                (openTask)="viewTask($event)"
+              />
+              <weave-template-gallery
+                class="home-templates"
+                [local]="!profile"
+                (choose)="startFromTemplate($event)"
+              />
+            }
+          </div>
+        } @else if (view === "designer") {
+          <!-- The designer loads with its first use, outside the initial bundle. -->
+          @defer (on immediate) {
+            <weave-designer [host]="this" />
+          } @placeholder {
+            <p class="connecting-status designer-loading" role="status">
+              <span class="loading-spinner small"></span>Opening the designer…
+            </p>
+          }
+        } @else if (view === "connect" && wizard) {
+          <section class="page-content connect-page">
+            @defer (on immediate) {
+              @for (key of [wizard.key]; track key) {
+                <weave-connection-wizard
+                  [client]="connection"
+                  [status]="connectionStatus"
+                  [start]="wizard.start"
+                  [platform]="wizard.platform"
+                  [server]="wizard.server"
+                  [switchAccount]="wizard.switchAccount"
+                  [desktop]="desktopShell"
+                  [watcher]="loginWatcher"
+                  [currentWorkspace]="profile"
+                  [confirmSwitch]="confirmSwitch"
+                  (switched)="applyConnection($event)"
+                  (statusChange)="wizardStatus($event)"
+                  (verified)="wizardVerified($event)"
+                  (workspaceChange)="wizardWorkspace($event)"
+                  (accountProblem)="wizardAccountProblem($event)"
+                  (finish)="finishWizard()"
+                  (cancel)="closeWizard()"
+                  (workLocally)="wizardWorkLocally()"
+                />
+              }
+            } @placeholder {
+              <p class="connecting-status" role="status">
+                <span class="loading-spinner small"></span>Opening the
+                connection assistant…
+              </p>
+            }
+          </section>
+        } @else if (view === "settings") {
+          <section class="page-content">
+            @defer (on immediate) {
+              <weave-settings-page [host]="this" />
+            }
+          </section>
+        } @else {
+          <section class="page-content">
+            @defer (on immediate) {
+              <weave-records-view [host]="this" />
+            }
+          </section>
+        }
+      </main>
+      @if (shortcutsOpen) {
+        <weave-modal
+          heading="Keyboard shortcuts"
+          closeLabel="Close keyboard shortcuts"
+          describedBy="shortcuts-description"
+          (dismiss)="shortcutsOpen = false"
+        >
+          <p id="shortcuts-description" class="dialog-message">
+            On the canvas, with a step focused:
+          </p>
+          <dl class="shortcut-list">
+            @for (item of shortcuts; track item.keys) {
+              <dt>
+                @for (key of item.keys.split(" "); track $index) {
+                  <kbd>{{ key }}</kbd>
+                }
+              </dt>
+              <dd>{{ item.does }}</dd>
+            }
+          </dl>
+          <div class="dialog-actions">
+            <button
+              type="button"
+              class="primary"
+              data-initial-focus
+              (click)="shortcutsOpen = false"
+            >
+              Done
+            </button>
+          </div>
+        </weave-modal>
       }
       @if (showStartRun) {
-        <div class="modal-backdrop">
-          <section
-            class="start-run-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="run-start-title"
-          >
-            <header>
-              <h2 id="run-start-title">Start a new execution</h2>
-              <button
-                class="icon-button"
-                aria-label="Close start run"
-                (click)="showStartRun = false"
-              >
-                <weave-icon name="close" />
-              </button>
-            </header>
-            <p>
-              Each execution has its own run ID. Business and correlation keys
-              can group several executions without making them the same run.
-            </p>
-            <form (submit)="$event.preventDefault(); confirmStartRun()">
-              <label
-                >Activation<select
-                  required
-                  aria-label="Activation"
-                  [value]="runStart.activationId"
-                  (change)="runStart.activationId = value($event)"
-                >
-                  <option value="">Choose an authorized activation</option>
-                  @for (a of availableActivations; track a["id"]) {
-                    <option [value]="a['id']">
-                      {{ a["name"] }} · {{ a["id"] }}
-                    </option>
-                  }
-                </select></label
-              ><label
-                >Business key (optional)<input
-                  maxlength="200"
-                  [value]="runStart.businessKey"
-                  (input)="runStart.businessKey = value($event)" /></label
-              ><label
-                >Correlation key (optional)<input
-                  maxlength="200"
-                  [value]="runStart.correlationKey"
-                  (input)="runStart.correlationKey = value($event)" /></label
-              ><label
-                >Run input (JSON)<textarea
-                  required
-                  [value]="runStart.input"
-                  (input)="runStart.input = value($event)"
-                  spellcheck="false"
-                ></textarea></label
-              ><button
-                type="submit"
-                class="primary"
-                [disabled]="
-                  busy !== '' || unknownCommand || !runStart.activationId
-                "
-              >
-                Start execution
-              </button>
-            </form>
-          </section>
-        </div>
+        @defer (on immediate) {
+          <weave-start-run-dialog
+            [api]="api"
+            [activations]="availableActivations"
+            [workspace]="workspaceText"
+            [versions]="workflowVersions"
+            [preselect]="runStartPreselect"
+            [initialActivationId]="runStartActivation"
+            [busy]="busy !== '' || unknownCommand"
+            [failure]="runStartError"
+            (start)="confirmStartRun($event)"
+            (cancel)="showStartRun = false"
+          />
+        }
       }
       <div class="sr-only" aria-live="polite">{{ message }}</div>
+      <weave-toast-host />
       @if (conflict) {
-        <div class="modal-backdrop">
-          <section
-            class="conflict-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="conflict-title"
-          >
-            <h2 id="conflict-title">Draft changed on the server</h2>
-            <p>
-              Your local source is retained. Review the conflict before choosing
-              a new draft.
-            </p>
-            <div class="comparison">
-              <div>
-                <h3>Local definition</h3>
-                <pre>{{ pretty(conflict["local"]) }}</pre>
-              </div>
-              <div>
-                <h3>Server response</h3>
-                <pre>{{ pretty(conflict["server"]) }}</pre>
-              </div>
+        <weave-modal
+          heading="Draft changed on the server"
+          describedBy="conflict-description"
+          [wide]="true"
+          (dismiss)="conflict = null"
+        >
+          <p id="conflict-description" class="dialog-message">
+            Your local source is retained. Review the conflict before choosing a
+            new draft.
+          </p>
+          <div class="comparison">
+            <div>
+              <h3>Local definition</h3>
+              <pre>{{ pretty(conflict["local"]) }}</pre>
             </div>
+            <div>
+              <h3>Server response</h3>
+              <pre>{{ pretty(conflict["server"]) }}</pre>
+            </div>
+          </div>
+          <div class="dialog-actions">
             <button (click)="conflict = null">Keep editing locally</button
             ><button
               class="primary"
@@ -1973,9 +508,111 @@ SPDX-License-Identifier: Apache-2.0
             >
               Save as a new draft
             </button>
-          </section>
-        </div>
+          </div>
+        </weave-modal>
       }
+      @if (showActivation && published && profile) {
+        <!-- Loaded on first use, like the other dialogs. -->
+        @defer (on immediate) {
+          <weave-activation-dialog
+            [api]="api"
+            [versionId]="String(published['id'] ?? '')"
+            [workflowName]="
+              String(published['name'] ?? model.definition.metadata.name) +
+              ' ' +
+              String(published['version'] ?? model.definition.metadata.version)
+            "
+            [environmentLabel]="environmentLabel"
+            [slots]="workflowSlots"
+            [workerTaskTypes]="workflowWorkerTypes"
+            [assignments]="workflowAssignments"
+            [busy]="busy !== '' || unknownCommand"
+            [running]="busy !== ''"
+            [failure]="activationError"
+            (confirm)="confirmActivation($event)"
+            (cancel)="closeActivation()"
+          />
+        }
+      }
+      @if (exportFallback) {
+        <weave-modal
+          heading="Save your exported files"
+          describedBy="export-description"
+          [wide]="true"
+          (dismiss)="exportFallback = null"
+        >
+          <p id="export-description" class="dialog-message">
+            Studio couldn't start the download. Copy each file and save it with
+            a text editor.
+          </p>
+          @for (file of exportFallback; track file.name) {
+            <div class="export-file">
+              <div class="export-file-heading">
+                <strong>{{ file.name }}</strong
+                ><button type="button" (click)="copyExport(file)">
+                  Copy {{ file.name }}
+                </button>
+              </div>
+              <textarea
+                class="monospace"
+                readonly
+                spellcheck="false"
+                [attr.aria-label]="'Contents of ' + file.name"
+                [value]="file.content"
+              ></textarea>
+            </div>
+          }
+          <div class="dialog-actions">
+            <button class="primary" (click)="exportFallback = null">
+              Done
+            </button>
+          </div>
+        </weave-modal>
+      }
+      @if (picker && view === "designer") {
+        @defer (on immediate) {
+          <weave-step-picker
+            [anchor]="picker.anchor"
+            [label]="picker.target.label"
+            [actions]="pickerActions"
+            [actionsLoading]="!!profile && catalogState === 'loading'"
+            [actionsNote]="pickerActionsNote"
+            (choose)="insertFromPicker($event)"
+            (dismiss)="picker = null"
+          />
+        }
+      }
+      @if (unapplied) {
+        <weave-modal
+          heading="Apply your changes?"
+          describedBy="unapplied-description"
+          (dismiss)="settleUnapplied('cancel')"
+        >
+          <p id="unapplied-description" class="dialog-message">
+            {{ unapplied.message }}
+          </p>
+          <div class="dialog-actions">
+            <button type="button" (click)="settleUnapplied('cancel')">
+              Keep editing</button
+            ><button type="button" (click)="settleUnapplied('discard')">
+              Discard changes</button
+            ><button
+              type="button"
+              class="primary"
+              data-initial-focus
+              (click)="settleUnapplied('apply')"
+            >
+              Apply and continue
+            </button>
+          </div>
+        </weave-modal>
+      }
+      @if (apiBuilder || connectionDialog || showTemplates) {
+        @defer (on immediate) {
+          <weave-integration-dialogs [host]="this" />
+        }
+      }
+      <weave-dialog-host />
     </div>
   </div>
 }

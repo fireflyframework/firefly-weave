@@ -47,9 +47,15 @@ describe("step property draft", () => {
     expect(
       (draft.snapshot()["cases"] as { steps: unknown[] }[])[0].steps,
     ).toEqual([createStep("wait", "child")]);
-    expect((source["cases"] as { when: unknown }[])[0].when).toEqual({
-      literal: true,
-    });
+    // The source is untouched: its new case still has no condition.
+    expect((source["cases"] as { when?: unknown }[])[0].when).toBeUndefined();
+  });
+  it("lets a case without a condition apply; the validator reports it", () => {
+    const draft = new PropertyDraft(createStep("switch", "decision-1"));
+    expect(draft.valid).toBe(true);
+    expect(draft.set(["cases", 0, "when"], { literal: "nope" })).toBe(true);
+    expect(draft.set(["cases", 0, "when"], { ref: "bad" })).toBe(false);
+    expect(draft.set(["cases", 0, "when"], undefined)).toBe(true);
   });
   it("validates decisions and pointers and preserves literal types", () => {
     const draft = new PropertyDraft(createStep("humanTask", "review"));
@@ -157,4 +163,43 @@ it("mapped object rename preserves reserved Unicode-capable JSON keys", () => {
   expect(JSON.stringify(editor.current)).toBe(
     '{"object":{"__proto__":{"literal":1}}}',
   );
+});
+
+it("a colliding mapped key stays invalid when a sibling changes", () => {
+  const editor = new ExpressionEditor();
+  editor.value = {
+    object: { first: { literal: 1 }, second: { literal: 2 } },
+  };
+  editor.ngOnChanges();
+  const validity: boolean[] = [];
+  const emitted: unknown[] = [];
+  editor.validityChange.subscribe((v) => validity.push(v));
+  editor.valueChange.subscribe((v) => emitted.push(v));
+  editor.rename("first", "second");
+  expect(validity.at(-1)).toBe(false);
+  editor.update("second", { literal: 3 });
+  expect(validity.at(-1)).toBe(false);
+  expect(emitted).toHaveLength(0);
+  expect(editor.error).toBe("Use a unique nonempty key.");
+  editor.rename("first", "third");
+  expect(validity.at(-1)).toBe(true);
+  expect(emitted.at(-1)).toEqual({
+    object: { third: { literal: 1 }, second: { literal: 3 } },
+  });
+});
+
+it("an echoed value keeps local validity; an external change resets it", () => {
+  const editor = new ExpressionEditor();
+  editor.value = { object: { a: { literal: 1 } } };
+  editor.ngOnChanges();
+  editor.childValidity("a", false);
+  const generation = editor.generation;
+  editor.value = structuredClone(editor.value);
+  editor.ngOnChanges();
+  expect(editor.invalid.has("a")).toBe(true);
+  expect(editor.generation).toBe(generation);
+  editor.value = { object: { b: { literal: 2 } } };
+  editor.ngOnChanges();
+  expect(editor.invalid.size).toBe(0);
+  expect(editor.generation).toBe(generation + 1);
 });

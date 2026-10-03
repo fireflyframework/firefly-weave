@@ -15,7 +15,8 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { parseDocument, stringify, isMap, isSeq, isNode } from "yaml";
+import { parseDocument, stringify, isMap, isSeq, isNode, isScalar } from "yaml";
+import { branchName } from "./designer/conditions";
 export type Kind =
   | "action"
   | "transform"
@@ -58,7 +59,25 @@ export interface Target {
   index: number;
   point: Point;
   label: string;
+  /** The branch name shown on the placeholder card of an empty branch. */
+  empty?: string;
 }
+/** The dashed card that stands for an empty branch on the canvas. */
+export interface Placeholder {
+  owner: string;
+  parent: string;
+  branch: string;
+  point: Point;
+}
+/** Where a reference sits in the document, and which step (or the workflow) holds it. */
+export interface ReferenceSite {
+  path: (string | number)[];
+  ref: string;
+  holder: string;
+}
+export const stepIdPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+/** The decisions of a human task that does not list its own. */
+export const defaultDecisions = ["approve", "reject"];
 export interface Layout {
   revision: number;
   positions: Record<string, Point>;
@@ -74,6 +93,17 @@ export const kinds: Kind[] = [
   "humanTask",
   "fail",
 ];
+/** The readable start of a new step's ID: decision-1, approval-1, call-action-1. */
+export const stepIdPrefix: Record<Kind, string> = {
+  action: "call-action",
+  transform: "transform",
+  switch: "decision",
+  parallel: "parallel",
+  wait: "wait",
+  signal: "signal",
+  humanTask: "approval",
+  fail: "fail",
+};
 export const freshWorkflow = (): Workflow => ({
   apiVersion: "weave/v1alpha1",
   kind: "Workflow",
@@ -90,8 +120,10 @@ export function createStep(kind: Kind, id: string): Step {
   const defaults: Record<Kind, Record<string, unknown>> = {
     action: { uses: "your-action@1.0.0", with: { literal: {} } },
     transform: { value: { literal: {} } },
+    // A new case has no condition yet: the inspector asks for one ("Choose
+    // when this path applies.") instead of a silent "always".
     switch: {
-      cases: [{ when: { literal: true }, ...branch() }],
+      cases: [branch()],
       default: branch(),
     },
     parallel: {
@@ -155,6 +187,103 @@ function preserveYamlComments(old: unknown, replacement: unknown): void {
     }
   }
 }
+/** Plain name of a branch: "Case 1", "Otherwise", or a parallel branch's own name. */
+export function branchTitle(step: Step, name: string) {
+  if (step.kind === "switch")
+    return name === "default" ? "Otherwise" : `Case ${name.slice(5)}`;
+  return name;
+}
+/**
+ * Where a step sits, in words: "Main sequence", "Case 1 of route",
+ * "Otherwise of route" or "first of fulfil".
+ */
+export function ownerLabel(owner: string, steps?: ReadonlyMap<string, Step>) {
+  if (owner === "root") return "Main sequence";
+  const split = owner.indexOf("/");
+  const parent = owner.slice(0, split);
+  const name = owner.slice(split + 1);
+  const step = steps?.get(parent);
+  const title = step
+    ? branchTitle(step, name)
+    : name.startsWith("case ")
+      ? `Case ${name.slice(5)}`
+      : name === "default"
+        ? "Otherwise"
+        : name;
+  return `${title} of ${parent}`;
+}
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+/** Collects `ref` values of an expression; `literal` content is data, never a reference. */
+function expressionRefs(
+  expression: unknown,
+  path: (string | number)[],
+  holder: string,
+  out: ReferenceSite[],
+) {
+  if (!isRecord(expression)) return;
+  const keys = Object.keys(expression);
+  if (keys.length !== 1) return;
+  const body = expression[keys[0]];
+  if (keys[0] === "ref" && typeof body === "string")
+    out.push({ path: [...path, "ref"], ref: body, holder });
+  else if (keys[0] === "object" && isRecord(body))
+    for (const key of Object.keys(body))
+      expressionRefs(body[key], [...path, "object", key], holder, out);
+  else if (keys[0] === "array" && Array.isArray(body))
+    body.forEach((item, i) =>
+      expressionRefs(item, [...path, "array", i], holder, out),
+    );
+  else if (keys[0] === "op" && isRecord(body) && Array.isArray(body["args"]))
+    body["args"].forEach((arg, i) =>
+      expressionRefs(arg, [...path, "op", "args", i], holder, out),
+    );
+}
+/** The expression fields of a step, as paths relative to the step. */
+function expressionPaths(step: Step): (string | number)[][] {
+  switch (step.kind) {
+    case "action":
+      return [["with"]];
+    case "transform":
+      return [["value"]];
+    case "humanTask":
+      return [["title"], ["context"]];
+    case "switch":
+      return [
+        ...(Array.isArray(step["cases"]) ? step["cases"] : []).flatMap(
+          (_, i) => [
+            ["cases", i, "when"],
+            ["cases", i, "output"],
+          ],
+        ),
+        ["default", "output"],
+      ];
+    case "parallel":
+      return Object.keys(
+        isRecord(step["branches"]) ? step["branches"] : {},
+      ).map((name) => ["branches", name, "output"]);
+    default:
+      return [];
+  }
+}
+const readPath = (root: unknown, path: (string | number)[]) =>
+  path.reduce<unknown>(
+    (value, key) =>
+      value && typeof value === "object"
+        ? (value as Record<string | number, unknown>)[key]
+        : undefined,
+    root,
+  );
+/** True when a pointer reads one of these steps (`/steps/<id>` or below it). */
+const readsStep = (ref: string, ids: Set<string>) => {
+  const match = /^\/steps\/([^/]+)(?:\/|$)/.exec(ref);
+  return !!match && ids.has(match[1]);
+};
+/** "a", "a and b", "a, b and c". */
+const listNames = (names: string[]) =>
+  names.length < 2
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 export class StructuredCanvasAdapter {
   definition: Workflow = freshWorkflow();
   source = stringify(this.definition);
@@ -170,7 +299,19 @@ export class StructuredCanvasAdapter {
   unplaced: Step[] = [];
   private past: string[] = [];
   private future: string[] = [];
+  /** Inside batch(): edits share the batch's single undo step. */
+  private batching = false;
+  /**
+   * Counts edits, undos and redos. A delayed "Undo" (a toast's) acts only
+   * while nothing else changed the workflow since.
+   */
+  get revision() {
+    return this.edits;
+  }
+  private edits = 0;
   private checkpoint() {
+    if (this.batching) return;
+    this.edits++;
     this.past.push(this.snapshot());
     if (this.past.length > 100) this.past.shift();
     this.future = [];
@@ -190,6 +331,44 @@ export class StructuredCanvasAdapter {
   private restore(s: string) {
     Object.assign(this, JSON.parse(s));
   }
+  /**
+   * Runs several edits as one undo step, for example declaring a connection
+   * slot and inserting the step that uses it. When an edit fails, the
+   * workflow and the undo history are left as they were.
+   */
+  batch<T>(edits: () => T): T {
+    if (this.batching) return edits();
+    const before = this.snapshot();
+    const past = [...this.past];
+    const future = [...this.future];
+    this.checkpoint();
+    this.batching = true;
+    try {
+      return edits();
+    } catch (error) {
+      this.restore(before);
+      this.past = past;
+      this.future = future;
+      throw error;
+    } finally {
+      this.batching = false;
+    }
+  }
+  /**
+   * Counts the workflows opened in this editor. Work that started for one
+   * (for example an insert waiting for an action's details) checks it before
+   * it changes the workflow open now.
+   */
+  get opened() {
+    return this.openings;
+  }
+  private openings = 0;
+  /** Forgets undo and redo; used when another workflow is opened. */
+  clearHistory() {
+    this.past = [];
+    this.future = [];
+    this.openings++;
+  }
   get canUndo() {
     return this.past.length > 0;
   }
@@ -199,6 +378,7 @@ export class StructuredCanvasAdapter {
   undo() {
     const s = this.past.pop();
     if (s) {
+      this.edits++;
       this.future.push(this.snapshot());
       this.restore(s);
     }
@@ -206,6 +386,7 @@ export class StructuredCanvasAdapter {
   redo() {
     const s = this.future.pop();
     if (s) {
+      this.edits++;
       this.past.push(this.snapshot());
       this.restore(s);
     }
@@ -298,25 +479,66 @@ export class StructuredCanvasAdapter {
     visit(this.definition.spec.steps);
     return map;
   }
-  nodes(): Node[] {
-    const out: Node[] = [];
-    let row = 0;
+  /**
+   * Automatic layout: one row per step in depth-first order, indented by
+   * depth. An empty branch gets a shorter row for its placeholder card, so
+   * its insertion target sits next to its group instead of floating.
+   */
+  private computeLayout(): { nodes: Node[]; placeholders: Placeholder[] } {
+    const nodes: Node[] = [];
+    const placeholders: Placeholder[] = [];
+    let y = 128;
+    // A branch's first step has its "+" above it; after a placeholder card
+    // it needs extra room so that "+" never covers the card.
+    let afterPlaceholder = false;
     const visit = (steps: Step[], owner: string, depth: number) => {
       for (let index = 0; index < steps.length; index++) {
         const step = steps[index];
-        const point = this.layout.positions[step.id] ?? {
-          x: 96 + depth * 272,
-          y: 128 + row++ * 120,
-        };
-        out.push({ step, owner, index, depth, point });
-        for (const [name, b] of branches(step))
-          visit(b.steps, `${step.id}/${name}`, depth + 1);
+        const custom = this.layout.positions[step.id];
+        if (!custom && afterPlaceholder && index === 0) y += 24;
+        afterPlaceholder = false;
+        const point = custom ?? { x: 96 + depth * 272, y };
+        if (!custom) y += 120;
+        nodes.push({ step, owner, index, depth, point });
+        let empty = 0;
+        for (const [name, b] of branches(step)) {
+          const child = `${step.id}/${name}`;
+          if (b.steps.length) {
+            visit(b.steps, child, depth + 1);
+            continue;
+          }
+          // A moved group keeps its placeholders beside it.
+          const card = custom
+            ? { x: point.x + 272, y: point.y + 120 + empty * 80 }
+            : { x: 96 + (depth + 1) * 272, y };
+          if (!custom) {
+            y += 80;
+            afterPlaceholder = true;
+          }
+          empty++;
+          placeholders.push({
+            owner: child,
+            parent: step.id,
+            branch: branchName(step, name, this.definition),
+            point: card,
+          });
+        }
       }
     };
     visit(this.definition.spec.steps, "root", 0);
-    return out;
+    return { nodes, placeholders };
   }
-  visualConnections() {
+  nodes(): Node[] {
+    return this.computeLayout().nodes;
+  }
+  placeholders(): Placeholder[] {
+    return this.computeLayout().placeholders;
+  }
+  /**
+   * Edges between steps. With `placeholders`, an empty branch is drawn through
+   * its placeholder card (`$empty:<owner>`) instead of straight to what follows.
+   */
+  visualConnections(placeholders = false) {
     const nodes = this.nodes();
     const owners = new Map<string, Node[]>();
     for (const node of nodes) {
@@ -337,33 +559,58 @@ export class StructuredCanvasAdapter {
       if (node.step.kind === "fail") continue;
       const childBranches = branches(node.step);
       if (childBranches.length) {
-        for (const [name] of childBranches)
-          links.push({
-            from: node.step.id,
-            to:
-              owners.get(`${node.step.id}/${name}`)?.[0]?.step.id ??
-              continuation(node),
-          });
+        for (const [name] of childBranches) {
+          const owner = `${node.step.id}/${name}`;
+          const first = owners.get(owner)?.[0]?.step.id;
+          if (first) links.push({ from: node.step.id, to: first });
+          else if (placeholders) {
+            links.push({ from: node.step.id, to: `$empty:${owner}` });
+            links.push({ from: `$empty:${owner}`, to: continuation(node) });
+          } else links.push({ from: node.step.id, to: continuation(node) });
+        }
       } else links.push({ from: node.step.id, to: continuation(node) });
     }
     return links;
   }
   boundaries() {
-    const nodes = this.nodes();
+    const { nodes, placeholders } = this.computeLayout();
     const first = nodes.find((n) => n.owner === "root");
     const x = first?.point.x ?? 96;
     return {
       start: { x, y: (first?.point.y ?? 128) - 104 },
-      end: { x, y: Math.max(128, ...nodes.map((n) => n.point.y)) + 128 },
+      end: {
+        x,
+        y:
+          Math.max(
+            128,
+            ...nodes.map((n) => n.point.y),
+            ...placeholders.map((p) => p.point.y),
+          ) + 128,
+      },
     };
   }
   targets(): Target[] {
-    const ns = this.nodes();
-    return [...this.owners()].flatMap(([owner, steps]) => {
+    const { nodes: ns, placeholders } = this.computeLayout();
+    const empty = new Map(placeholders.map((p) => [p.owner, p]));
+    const byId = new Map(ns.map((n) => [n.step.id, n.step]));
+    return [...this.owners()].flatMap(([owner, steps]): Target[] => {
+      const placeholder = empty.get(owner);
+      const branch = owner === "root" ? "" : ownerLabel(owner, byId);
+      if (placeholder)
+        return [
+          {
+            owner,
+            index: 0,
+            point: {
+              x: placeholder.point.x + 104,
+              y: placeholder.point.y + 24,
+            },
+            label: `Add a step here, in ${branch}`,
+            empty: placeholder.branch,
+          },
+        ];
       const own = ns.filter((n) => n.owner === owner);
-      const anchor =
-        own[0]?.point ??
-        (owner === "root" ? { x: 96, y: 128 } : { x: 368, y: 128 });
+      const anchor = own[0]?.point ?? { x: 96, y: 128 };
       return Array.from({ length: steps.length + 1 }, (_, index) => ({
         owner,
         index,
@@ -374,23 +621,89 @@ export class StructuredCanvasAdapter {
                 x: (own[index - 1]?.point.x ?? anchor.x) + 104,
                 y: (own[index - 1]?.point.y ?? anchor.y) + 86,
               },
-        label: `Insert ${owner === "root" ? "in sequence" : `in ${owner}`} ${index === 0 ? "at start" : `after ${steps[index - 1].id}`}`,
+        label:
+          index > 0
+            ? `Add a step here, after ${steps[index - 1].id}`
+            : owner === "root"
+              ? "Add a step here, at the start"
+              : `Add a step here, at the start of ${branch}`,
       }));
     });
   }
-  insert(kind: Kind, owner = "root", index?: number) {
+  insert(
+    kind: Kind,
+    owner = "root",
+    index?: number,
+    fields: Record<string, unknown> = {},
+  ) {
     if (this.readonly) throw Error("Fix source before editing the graph.");
     const steps = this.owners().get(owner);
     if (!steps) throw Error("Target branch no longer exists.");
     this.checkpoint();
-    const used = new Set(this.nodes().map((n) => n.step.id));
-    let i = 1;
-    while (used.has(`${kind}-${i}`)) i++;
-    const s = createStep(kind, `${kind}-${i}`);
+    const s = {
+      ...createStep(kind, this.freeId(stepIdPrefix[kind])),
+      ...fields,
+    };
     steps.splice(index ?? steps.length, 0, s);
     this.selected = s.id;
     this.syncSteps();
     return s;
+  }
+  /** The first unused ID of the form `<prefix>-<n>`. */
+  private freeId(prefix: string, taken: ReadonlySet<string> = new Set()) {
+    const used = new Set([
+      ...this.nodes().map((n) => n.step.id),
+      ...this.unplaced.map((s) => s.id),
+      ...taken,
+    ]);
+    let i = 1;
+    while (used.has(`${prefix}-${i}`)) i++;
+    return `${prefix}-${i}`;
+  }
+  /**
+   * Inserts a copy of a step right after it, as one undo step. The copy and
+   * every step inside it get new IDs, and references inside the copy to the
+   * copied steps follow them; references to other steps stay as they are.
+   * Returns the copy's ID.
+   */
+  duplicate(id: string) {
+    if (this.readonly) throw Error("Fix source before editing the graph.");
+    const node = this.nodes().find((n) => n.step.id === id);
+    if (!node) throw Error("Select a placed step.");
+    const renamed = new Map<string, string>();
+    const taken = new Set<string>();
+    for (const old of this.subtree(node.step)) {
+      const base = old.replace(/-\d+$/, "") || old;
+      const next = this.freeId(base, taken);
+      taken.add(next);
+      renamed.set(old, next);
+    }
+    const rewrite = (value: unknown, key = ""): unknown => {
+      if (Array.isArray(value)) return value.map((item) => rewrite(item));
+      if (isRecord(value))
+        return Object.fromEntries(
+          Object.entries(value).map(([k, v]) => [k, rewrite(v, k)]),
+        );
+      if (key === "ref" && typeof value === "string") {
+        const match = /^\/steps\/([^/]+)(.*)$/.exec(value);
+        if (match && renamed.has(match[1]))
+          return `/steps/${renamed.get(match[1])}${match[2]}`;
+      }
+      return value;
+    };
+    const copy = rewrite(structuredClone(node.step)) as Step;
+    const renameSteps = (step: Step) => {
+      step.id = renamed.get(step.id) ?? step.id;
+      branches(step).forEach(([, b]) => b.steps.forEach(renameSteps));
+    };
+    renameSteps(copy);
+    this.checkpoint();
+    this.owners()
+      .get(node.owner)!
+      .splice(node.index + 1, 0, copy);
+    this.selected = copy.id;
+    this.syncSteps();
+    return copy.id;
   }
   addUnplaced(kind: Kind) {
     this.checkpoint();
@@ -441,29 +754,215 @@ export class StructuredCanvasAdapter {
     };
     this.layout.revision++;
   }
-  remove(id: string) {
+  /** Every reference in the workflow's expressions, with the step that holds it. */
+  referenceSites(): ReferenceSite[] {
+    const out: ReferenceSite[] = [];
+    const visit = (steps: Step[], path: (string | number)[]) =>
+      steps.forEach((step, i) => {
+        const at = [...path, i];
+        for (const field of expressionPaths(step))
+          expressionRefs(
+            readPath(step, field),
+            [...at, ...field],
+            step.id,
+            out,
+          );
+        if (step.kind === "switch") {
+          (Array.isArray(step["cases"])
+            ? (step["cases"] as Branch[])
+            : []
+          ).forEach((b, j) =>
+            visit(b.steps ?? [], [...at, "cases", j, "steps"]),
+          );
+          const fallback = step["default"] as Branch | undefined;
+          visit(fallback?.steps ?? [], [...at, "default", "steps"]);
+        } else if (step.kind === "parallel")
+          for (const [name, b] of Object.entries(
+            (step["branches"] ?? {}) as Record<string, Branch>,
+          ))
+            visit(b.steps ?? [], [...at, "branches", name, "steps"]);
+      });
+    visit(this.definition.spec.steps, ["spec", "steps"]);
+    expressionRefs(this.definition.spec["output"], ["spec", "output"], "", out);
+    return out;
+  }
+  /** Ids of a step and every step nested in its branches. */
+  private subtree(step: Step) {
+    const ids = new Set<string>();
+    const gather = (s: Step) => {
+      ids.add(s.id);
+      branches(s).forEach(([, b]) => b.steps.forEach(gather));
+    };
+    gather(step);
+    return ids;
+  }
+  /** Number of steps nested inside a group's branches. */
+  containedSteps(id: string) {
+    const step = this.nodes().find((n) => n.step.id === id)?.step;
+    return step ? this.subtree(step).size - 1 : 0;
+  }
+  /**
+   * Deletes a step. A group is deleted only when its branches are empty,
+   * unless `contents` is set. Steps (or the workflow output) that still read
+   * a deleted step are named and block the deletion.
+   */
+  remove(id: string, options: { contents?: boolean } = {}) {
     const n = this.nodes().find((n) => n.step.id === id);
     if (!n) {
       this.checkpoint();
       this.unplaced = this.unplaced.filter((s) => s.id !== id);
       return;
     }
-    if (branches(n.step).some(([, b]) => b.steps.length))
+    if (!options.contents && branches(n.step).some(([, b]) => b.steps.length))
       throw Error(
         "Move or delete the contained branch steps before deleting this group.",
       );
-    const others = JSON.stringify(this.definition).replace(
-      JSON.stringify(n.step),
-      "",
-    );
-    if (others.includes(`/steps/${id}/`))
+    const removed = this.subtree(n.step);
+    const holders = [
+      ...new Set(
+        this.referenceSites()
+          .filter((site) => !removed.has(site.holder))
+          .filter((site) => readsStep(site.ref, removed))
+          .map((site) => site.holder),
+      ),
+    ];
+    if (holders.length) {
+      const names = holders
+        .filter(Boolean)
+        .concat(holders.includes("") ? ["the workflow output"] : []);
+      const group = removed.size > 1;
       throw Error(
-        "Other expressions reference this step. Update them before deleting.",
+        `${group ? "Steps in this group are" : "This step is"} referenced by ${listNames(names)}. Update ${names.length === 1 ? "it" : "them"} before deleting ${group ? "the group" : "it"}.`,
       );
+    }
     this.checkpoint();
     this.owners().get(n.owner)!.splice(n.index, 1);
-    this.selected = "";
+    const positions = { ...this.layout.positions };
+    for (const removedId of removed) delete positions[removedId];
+    this.layout.positions = positions;
+    if (removed.has(this.selected)) this.selected = "";
     this.syncSteps();
+  }
+  /**
+   * Renames a step and rewrites every reference to it (`/steps/<old>` and
+   * below) in expressions; literal text is left alone. YAML comments are kept
+   * because only the changed scalars are replaced. Returns the number of
+   * references rewritten.
+   */
+  renameStep(oldId: string, newId: string) {
+    if (this.readonly) throw Error("Fix source before editing the graph.");
+    const next = newId.trim();
+    if (next === oldId) return 0;
+    if (!stepIdPattern.test(next))
+      throw Error(
+        "Use letters, numbers, dots, underscores or hyphens for the step ID, starting with a letter or number.",
+      );
+    const ids = new Set([
+      ...this.nodes().map((n) => n.step.id),
+      ...this.unplaced.map((s) => s.id),
+    ]);
+    if (!ids.has(oldId)) throw Error("Select an existing step.");
+    if (ids.has(next)) throw Error(`Another step is already named ${next}.`);
+    const prefix = `/steps/${oldId}`;
+    const sites = this.referenceSites().filter(
+      (site) => site.ref === prefix || site.ref.startsWith(`${prefix}/`),
+    );
+    let stepPath: (string | number)[] | null = null;
+    const find = (steps: Step[], path: (string | number)[]) =>
+      steps.forEach((step, i) => {
+        if (stepPath) return;
+        if (step.id === oldId) {
+          stepPath = [...path, i];
+          return;
+        }
+        if (step.kind === "switch") {
+          (step["cases"] as Branch[]).forEach((b, j) =>
+            find(b.steps, [...path, i, "cases", j, "steps"]),
+          );
+          find((step["default"] as Branch).steps, [
+            ...path,
+            i,
+            "default",
+            "steps",
+          ]);
+        } else if (step.kind === "parallel")
+          for (const [name, b] of Object.entries(
+            step["branches"] as Record<string, Branch>,
+          ))
+            find(b.steps, [...path, i, "branches", name, "steps"]);
+      });
+    find(this.definition.spec.steps, ["spec", "steps"]);
+    this.checkpoint();
+    const changes: [(string | number)[], string][] = sites.map((site) => [
+      site.path,
+      `/steps/${next}${site.ref.slice(prefix.length)}`,
+    ]);
+    if (stepPath)
+      changes.push([[...(stepPath as (string | number)[]), "id"], next]);
+    else
+      this.unplaced = this.unplaced.map((s) =>
+        s.id === oldId ? { ...s, id: next } : s,
+      );
+    const doc = this.format === "yaml" ? parseDocument(this.source) : null;
+    for (const [path, value] of changes) {
+      const parent = readPath(this.definition, path.slice(0, -1)) as Record<
+        string | number,
+        unknown
+      >;
+      parent[path.at(-1)!] = value;
+      if (!doc) continue;
+      // Replacing only the scalar's value keeps its inline comment.
+      const node = doc.getIn(path, true);
+      if (isScalar(node)) node.value = value;
+      else doc.setIn(path, value);
+    }
+    if (doc) {
+      this.source = doc.toString();
+      this.error = "";
+    } else this.sync();
+    if (oldId in this.layout.positions) {
+      const positions = { ...this.layout.positions };
+      positions[next] = positions[oldId];
+      delete positions[oldId];
+      this.layout.positions = positions;
+      this.layout.revision++;
+    }
+    if (this.selected === oldId) this.selected = next;
+    return sites.length;
+  }
+  /**
+   * Adds a decision after a human task with one case per decision, each
+   * testing `/steps/<task>/output/decision`.
+   */
+  branchOnDecision(id: string) {
+    if (this.readonly) throw Error("Fix source before editing the graph.");
+    const node = this.nodes().find((n) => n.step.id === id);
+    if (!node || node.step.kind !== "humanTask")
+      throw Error("Select a human task.");
+    // A task that lists no decisions offers the language's defaults.
+    const decisions = Array.isArray(node.step["decisions"])
+      ? (node.step["decisions"] as unknown[]).map(String)
+      : node.step["decisions"] === undefined
+        ? defaultDecisions
+        : [];
+    if (!decisions.length)
+      throw Error("Add the decisions people can make, then branch on them.");
+    const step = this.insert("switch", node.owner, node.index + 1);
+    step["cases"] = decisions.map((decision) => ({
+      when: {
+        op: {
+          name: "eq",
+          args: [
+            { ref: `/steps/${id}/output/decision` },
+            { literal: decision },
+          ],
+        },
+      },
+      steps: [],
+      output: { literal: {} },
+    }));
+    this.syncSteps();
+    return step;
   }
   update(id: string, text: string) {
     const n = this.nodes().find((n) => n.step.id === id);
@@ -543,9 +1042,9 @@ export class StructuredCanvasAdapter {
         } else if (operation === "remove") delete groups[name];
       }
     } else {
-      const cases = draft["cases"] as (Branch & { when: unknown })[];
-      if (operation === "add")
-        cases.push({ ...empty(), when: { literal: true } });
+      const cases = draft["cases"] as Branch[];
+      // A new case starts without a condition; the inspector asks for one.
+      if (operation === "add") cases.push(empty());
       else {
         const index = Number(name);
         if (!Number.isInteger(index) || !cases[index])
@@ -603,8 +1102,9 @@ export class StructuredCanvasAdapter {
       ? doc.toString()
       : JSON.stringify(this.definition, null, 2);
   }
+  /** Opens another workflow; undo never crosses into the previous one. */
   replace(definition: Workflow) {
-    this.checkpoint();
+    this.clearHistory();
     this.definition = structuredClone(definition);
     this.source = stringify(definition);
     this.format = "yaml";

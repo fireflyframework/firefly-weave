@@ -1,0 +1,393 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+:host {
+  display: block;
+}
+.page-heading {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.heading-actions {
+  flex-wrap: wrap;
+}
+.connect-state {
+  padding-inline: 0;
+}
+/* Signed out: information, not a problem. */
+.records-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--neutral-bd);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius-md);
+  background: var(--neutral-bg);
+  color: var(--text);
+  font: var(--type-small);
+}
+.records-banner > span {
+  flex: 1 1 240px;
+}
+
+/* Runs filters: they apply as they change. */
+.run-filters {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.filter-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.filters-toggle {
+  display: none;
+  justify-self: start;
+}
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 2px;
+  gap: 2px;
+}
+.segmented button {
+  min-height: var(--control-sm);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0 12px;
+}
+.segmented button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.segmented button[aria-pressed="true"] {
+  background: var(--forest);
+  color: var(--on-dark);
+  font-weight: 600;
+}
+.disclosure-chevron {
+  transform: rotate(90deg);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.disclosure-chevron.open {
+  transform: rotate(-90deg);
+}
+.more-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4) var(--space-6);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.more-filters .field {
+  flex: 1 1 260px;
+}
+.more-filters input:not([type="checkbox"]) {
+  width: 100%;
+}
+
+/* Workflows tabs. */
+.library-toggle {
+  display: inline-flex;
+  margin-bottom: var(--space-4);
+}
+/* The Connector column repeats a connection's second line: the line shows
+   only where the column doesn't. */
+.resource-table[data-view="connections"] .row-text small {
+  display: none;
+}
+.list-toolbar {
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+}
+.list-toolbar .count {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.filter-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  font: var(--type-small);
+}
+
+/* The table: per-view columns, one button per row that opens it. */
+.resource-table {
+  --cols: minmax(200px, 1fr) 110px 130px 110px;
+}
+.resource-table[data-view="workflows"] {
+  --cols: minmax(200px, 1fr) 110px 130px 130px;
+}
+.resource-table[data-view="workflows"]:has(.cell-actions) {
+  --cols: minmax(200px, 1fr) 100px 120px 140px 96px;
+}
+.resource-table[data-view="tasks"],
+.resource-table[data-view="email"] {
+  --cols: minmax(200px, 1fr) 150px 140px;
+}
+.resource-table[data-view="tasks"] {
+  --cols: minmax(200px, 1fr) 150px 120px;
+}
+.resource-table[data-view="connections"],
+.resource-table[data-view="workers"] {
+  --cols: minmax(200px, 1fr) 170px 110px;
+}
+.resource-table[data-view="workers"] {
+  --cols: minmax(200px, 1fr) 120px 100px;
+}
+.table-head,
+.resource-row {
+  grid-template-columns: var(--cols);
+}
+.resource-row {
+  position: relative;
+  color: var(--text);
+}
+.resource-row > [role="cell"] {
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.resource-row > .cell-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text);
+}
+.resource-icon {
+  width: 32px;
+  height: 32px;
+}
+.row-text {
+  display: grid;
+  min-width: 0;
+}
+.row-text small {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-open {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  font: var(--type-body);
+  font-weight: 600;
+  text-align: left;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.row-open:hover {
+  background: none;
+}
+/* The whole row opens the item: the button's hit area covers the row. */
+.row-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+/* The focus ring goes around the whole row the button covers. */
+.row-open:focus-visible {
+  outline: none;
+}
+.row-open:focus-visible::after {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.resource-row:hover {
+  cursor: pointer;
+}
+.cell-actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+}
+.muted {
+  color: var(--muted);
+}
+.load-more {
+  grid-column: 1;
+}
+
+/* Detail panel. */
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.detail-header h2 {
+  margin: 0;
+  font: var(--type-title-sm);
+  overflow-wrap: anywhere;
+}
+.detail-status {
+  margin: var(--space-2) 0 var(--space-4);
+}
+.detail-refresh {
+  margin-top: var(--space-6);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+.decision-confirm {
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warning-bd);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+}
+.decision-confirm p {
+  margin: 0;
+  font: var(--type-small);
+  font-weight: 600;
+}
+.decision-confirm .action-row {
+  margin: var(--space-3) 0 0;
+}
+.submission-status {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+.submission-status p {
+  margin: 0;
+}
+.submission-status .notice button {
+  margin-top: var(--space-2);
+}
+.reply-field {
+  margin-top: var(--space-4);
+}
+.reply-field textarea {
+  width: 100%;
+}
+
+/* Runs with a run open: the list becomes a narrow column of titles and
+   statuses, and the run gets the rest of the page. */
+@media (min-width: 1025px) {
+  .resource-layout.run-focus {
+    grid-template-columns: 248px minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+  .run-focus .table-head {
+    display: none;
+  }
+  .run-focus .resource-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+    padding-block: var(--space-3);
+  }
+  .run-focus .resource-row > [role="cell"]:not(.cell-main, .cell-status) {
+    display: none;
+  }
+  .run-focus .resource-icon {
+    display: none;
+  }
+  .run-focus .record-detail {
+    padding: var(--space-6);
+  }
+}
+@media (max-width: 1280px) {
+  .has-detail .resource-table[data-view="connections"] .row-text small {
+    display: block;
+  }
+  .resource-layout.has-detail:not(.run-focus) .resource-row,
+  .resource-layout.has-detail:not(.run-focus) .table-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .resource-layout.has-detail:not(.run-focus)
+    .resource-row
+    > [role="cell"]:not(.cell-main, .cell-status),
+  .resource-layout.has-detail:not(.run-focus)
+    .table-head
+    > [role="columnheader"]:not(:first-child) {
+    display: none;
+  }
+}
+@media (max-width: 1024px) {
+  .resource-table[data-view="connections"] .row-text small {
+    display: block;
+  }
+  .filters-toggle {
+    display: inline-flex;
+  }
+  .run-filters:not(.open) .filter-body,
+  .run-filters:not(.open) .more-filters {
+    display: none;
+  }
+  .resource-table,
+  .resource-table[data-view] {
+    --cols: minmax(0, 1fr) auto;
+  }
+  .resource-row > [role="cell"]:not(.cell-main, .cell-status, .cell-actions),
+  .table-head > [role="columnheader"]:not(:first-child) {
+    display: none;
+  }
+  .resource-table:has(.cell-actions) {
+    --cols: minmax(0, 1fr) auto auto;
+  }
+}
+@media (max-width: 767px) {
+  .table-head {
+    display: none;
+  }
+  .resource-row > .cell-status {
+    display: block;
+  }
+  .search-field {
+    width: 100%;
+  }
+  .segmented {
+    flex-wrap: wrap;
+  }
+}
+
+/* A long send status wraps under the sender instead of widening the panel. */
+.mail-message header {
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
