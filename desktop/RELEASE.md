@@ -17,16 +17,16 @@ SPDX-License-Identifier: Apache-2.0
 -->
 # Desktop release versions
 
-The alpha6 product version is `0.1.0-alpha.6` in npm, Cargo and Tauri. It corresponds
-to Python `0.1.0a6` and the repository prerelease tag `v0.1.0a6`.
+The alpha7 product version is `0.1.0-alpha.7` in npm, Cargo and Tauri. It corresponds
+to Python `0.1.0a7` and the repository prerelease tag `v0.1.0a7`.
 
-Windows MSI uses the explicit numeric version `0.1.6`. Tauri's pinned bundler rejects
+Windows MSI uses the explicit numeric version `0.1.7`. Tauri's pinned bundler rejects
 nonnumeric prerelease identifiers when deriving MSI versions; its `windows.wix.version`
 override supplies the valid numeric installer version while filenames retain the product
 version. MSI compares only the first three fields. Future desktop alpha and stable
 releases must advance this numeric installer counter: the stable product `0.1.0`
 must not reset the MSI counter to `0.1.0`. The macOS internal bundle version also uses
-numeric `0.1.6`; its displayed product version remains the alpha product version.
+numeric `0.1.7`; its displayed product version remains the alpha product version.
 
 The Desktop installers workflow builds on four native runners and is dispatchable by
 an exact branch/tag ref. Versioned, target-specific unsigned artifacts contain only
@@ -40,7 +40,7 @@ platform installer exists before its corresponding job and upload succeed. The w
 has read-only repository permissions and does not create or publish releases itself.
 Signing and notarization remain separate release verification requirements.
 
-macOS alpha6 explicitly uses Tauri ad-hoc signing to seal nested executables and the
+macOS alpha builds explicitly use Tauri ad-hoc signing to seal nested executables and the
 application resource bundle. This is not a Developer ID identity and is not notarized.
 `APPLE_SIGNING_IDENTITY` can override the fallback for a trusted release identity.
 Packaging rejects invalid bundle seals before collecting installers. Gatekeeper trust
