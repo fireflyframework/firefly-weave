@@ -191,6 +191,7 @@ for (const viewport of [
     test("answer ghost creates a fully visible group beside the inspector", async ({
       page,
     }) => {
+      await page.clock.install();
       await offline(page);
       await newWorkflow(page);
       const item = page
@@ -211,6 +212,9 @@ for (const viewport of [
       await expect(
         page.locator('.lane-header[data-owner^="decision-1/"]'),
       ).toHaveCount(3);
+      // Let the initial flow render and its queued fit finish: neither may
+      // overwrite the view chosen by the structural edit.
+      await page.clock.runFor(500);
       for (const lane of await page
         .locator('.lane-header[data-owner^="decision-1/"]')
         .all()) {

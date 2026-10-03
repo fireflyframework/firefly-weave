@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Learn and use Firefly Weave
 
-![Lumi, a firefly with folded woven wings](../assets/lumi.svg){ .lumi-guide }
+![Lumi, a firefly with translucent mint wings](../assets/lumi.png){ .lumi-guide }
 
 Meet **Lumi**, your guide through Firefly Weave. Start small: create a workflow,
 see how it runs, then connect it to your systems and your people.

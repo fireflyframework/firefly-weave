@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # Lumi assistant
 
+![Lumi, the Firefly Weave assistant](../../assets/lumi.png){ .lumi-guide }
+
 Lumi is an optional Studio assistant for explaining and drafting Weave definitions.
 It returns text and source proposals for review. It cannot publish, activate, run,
 delete, upload, or modify resources. Proposals still need the normal compiler and

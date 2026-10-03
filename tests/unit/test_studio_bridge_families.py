@@ -178,3 +178,35 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         if identifier.split(".")[0] in STUDIO_FAMILIES or identifier in STUDIO_OPERATIONS
     }
     assert {"releases.create", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
+
+
+@pytest.mark.parametrize(
+    "method,suffix",
+    [("GET", "status"), ("GET", "configuration"), ("PUT", "configuration"), ("POST", "ask")],
+)
+@pytest.mark.parametrize("upstream_status", [200, 403])
+def test_lumi_operations_keep_host_scope_csrf_and_upstream_authorization(tmp_path, method, suffix, upstream_status):
+    seen = []
+
+    async def upstream(request):
+        seen.append(
+            (request.method, request.url.path, request.headers["authorization"], request.headers.get("if-match"))
+        )
+        return httpx.Response(upstream_status, json={"ok": upstream_status == 200})
+
+    path = f"{ENVIRONMENT}/lumi/{suffix}"
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        assert browser.request(method, f"/studio/api{path}", headers={"Origin": ORIGIN}).status_code == 401
+        headers = pair(browser)
+        if method != "GET":
+            assert browser.request(method, f"/studio/api{path}", headers={"Origin": ORIGIN}).status_code == 403
+        response = browser.request(method, f"/studio/api{path}", headers={**headers, "If-Match": '"3"'})
+        assert response.status_code == upstream_status
+        assert (
+            browser.request(method, f"/studio/api{path.replace(ENVIRONMENT_ID, RESOURCE)}", headers=headers).status_code
+            == 403
+        )
+        assert browser.request(method, f"/studio/api{path}/extra", headers=headers).status_code == 404
+        assert browser.delete(f"/studio/api{path}", headers=headers).status_code == 404
+        assert browser.post(f"/studio/api{ENVIRONMENT}/lumi/arbitrary-provider", headers=headers).status_code == 404
+    assert seen == [(method, path, "Bearer t", '"3"')]

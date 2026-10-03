@@ -979,7 +979,7 @@ export class ExpressionEditor implements OnChanges, AfterViewChecked {
     this.error = "";
     this.resetFields();
     if (this.startWithField && this.isFields && !this.fieldDraft.rows.length)
-      this.addField();
+      this.addField(false);
     if (wasInvalid) this.validityChange.emit(true);
   }
   ngAfterViewChecked() {
@@ -1041,10 +1041,10 @@ export class ExpressionEditor implements OnChanges, AfterViewChecked {
       this.validityChange.emit(false);
     }
   }
-  addField() {
+  addField(focus = true) {
     if (this.readOnly) return;
     this.fieldDraft.add();
-    this.pendingFocus = this.fieldDraft.rows.length - 1;
+    this.pendingFocus = focus ? this.fieldDraft.rows.length - 1 : null;
   }
   renameField(row: FieldRow, name: string) {
     if (this.readOnly) return;

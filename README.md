@@ -288,14 +288,15 @@ Windows and Linux is not verified.
 
 ## Meet Lumi
 
-![Lumi, the Firefly Weave guide, with folded mint wings and a golden lantern](assets/lumi.svg)
+![Lumi, the Firefly Weave guide, with translucent mint wings and an amber lantern](assets/lumi.png)
 
-**Lumi is Weave's firefly guide.** The folded wings echo the woven Weave logo,
-and the warm lantern represents a clear next step through a complex process.
+**Lumi is Weave's firefly guide.** Translucent mint wings, a forest-green
+body, and a warm amber lantern bring Weave's colors to life. The lantern
+represents a clear next step through a complex process.
 
-You will find Lumi in the CLI help, throughout the documentation, and in Studio's
-**Ask Lumi** panel. [Configure the assistant](docs/guides/lumi.md) separately from
-workflow AI tasks. In diagrams,
+You will find Lumi throughout the documentation and in Studio. Open the
+**Ask Lumi** panel for assistance, and [configure its model](docs/guides/lumi.md)
+separately from workflow AI tasks. In diagrams,
 **Lumi's takeaway** highlights the main idea to remember before moving on.
 Start with the [visual guide](docs/visual-guide.md) to explore the platform together.
 

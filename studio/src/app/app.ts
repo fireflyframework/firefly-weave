@@ -4741,6 +4741,8 @@ export class App {
   revealSelected() {
     const id = this.model.selected;
     if (!id) return;
+    // An explicit selection or edit supersedes a still-pending initial fit.
+    this.needsFit = false;
     afterNextRender(
       () =>
         requestAnimationFrame(() => {
