@@ -33,9 +33,9 @@ is deployed with checked-in Kubernetes manifests. Running `weave` on your laptop
 creates no cloud cluster: your cloud's infrastructure tooling supplies the
 cluster, registry, database, and network.
 
-**Planning Microsoft Entra ID for sign-in?** It has configuration guidance but
-has not been verified yet.
-[Read the requirements](identity-and-secrets.md#microsoft-entra-id-not-verified)
+**Planning Microsoft Entra ID for people?** Application tokens have been
+verified in Azure preproduction; human browser and device-code sign-in have not.
+[Read the requirements](identity-and-secrets.md#microsoft-entra-id-human-sign-in-not-verified)
 before you choose your identity provider.
 
 ## Before you open a cloud terminal

@@ -174,6 +174,21 @@ for (const width of [1440, 600])
         .getByLabel("Model", { exact: true })
         .fill("updated-model");
       await inspector.getByLabel("Max tokens", { exact: true }).fill("1024");
+      await inspector
+        .getByRole("button", { name: "Continue to connection", exact: true })
+        .click();
+      await inspector
+        .getByRole("button", { name: "Add AI connection slot", exact: true })
+        .click();
+      await inspector
+        .getByRole("button", { name: "Review settings", exact: true })
+        .click();
+      await inspector
+        .getByRole("button", {
+          name: "Apply workflow AI settings",
+          exact: true,
+        })
+        .click();
       const doc = parse(await sourceText(page));
       expect(doc.spec.steps[1].uses).toBe("weave-agentic-generate@1.1.0");
       expect(doc.spec.steps[1].prompt).toEqual({

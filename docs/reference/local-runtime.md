@@ -248,8 +248,10 @@ through Keycloak administration and link it with the
 [people and access commands](../guides/people-and-access.md).
 
 Signing in with the local Keycloak was verified against the real Keycloak 26.7.4
-sign-in pages, with PKCE and with the device code flow. Other identity providers,
-such as Microsoft Entra ID, need their own configuration and are not verified;
+sign-in pages, with PKCE and with the device code flow. Microsoft Entra ID
+application tokens have separately been verified in Azure preproduction; Entra
+browser and device-code sign-in for people remain unverified. Other identity
+providers need their own configuration and acceptance checks;
 see [Use your own identity provider](../operations/identity-and-secrets.md#use-your-own-identity-provider).
 
 ## Connector actions on a local platform
@@ -297,8 +299,9 @@ published keys (JWKS).
   snapshots; resolve again for a new operation.
 
 Other providers need a matching trust profile;
-[Microsoft Entra ID](../operations/identity-and-secrets.md#microsoft-entra-id-not-verified)
-is described there and is not verified.
+[Microsoft Entra ID](../operations/identity-and-secrets.md#microsoft-entra-id-human-sign-in-not-verified)
+application tokens have been verified in Azure preproduction; human sign-in
+still needs its own acceptance checks.
 
 ## Tenant isolation and compatibility inventory
 
@@ -408,7 +411,7 @@ supervision, none of which the local setup scripts provision.
 
 The locked framework is the published **PyFly 26.9.15**; the exact wheel hash and
 upstream commit are in the [project metadata](../../pyproject.toml). The API
-package version is `0.1.0a10`; a checkout of `main` can carry unreleased changes
+package version is `0.1.0a11`; a checkout of `main` can carry unreleased changes
 on top of it. Validate readiness, an authorized workflow, and your
 [backup and restore procedure](../operations/backup-restore.md) in the
 environment you intend to operate.

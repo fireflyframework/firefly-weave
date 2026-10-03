@@ -18,6 +18,20 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a11
+
+- Guide AI provider connections, Lumi settings, and workflow AI profiles through
+  focused steps with review before creation or application. Keep unfinished
+  profile changes local and apply the profile and connection slot atomically.
+- Let authors explicitly pass available earlier AI results as structured context
+  within one workflow execution, using existing compiler-checked expressions.
+- Document the verified alpha10 Azure application-token, AI workflow, Lumi, and
+  HTTP acceptance separately from unverified interactive Entra sign-in.
+- Correct browser selection tests to wait for the insertion reveal before
+  checking pointer reachability.
+- Publish worker packages 0.1.3 pinned to core 0.1.0a11. No server behavior or
+  database migration changes; the schema remains `0028_files`.
+
 ## 0.1.0a10
 
 - Expose Lumi configuration through the paired Studio host and clarify the

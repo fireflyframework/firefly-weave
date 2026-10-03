@@ -65,7 +65,7 @@ have what you need. One person often has several roles, especially on a laptop.
 [Who does what](roles-and-lifecycle.md) explains the roles and the permissions
 each one needs.
 
-**Every path starts with the v0.1.0a10 release.** [Install the CLI](../installation.md)
+**Every path starts with the v0.1.0a11 release.** [Install the CLI](../installation.md)
 first. The release includes everything these paths use: the Studio editor and
 its API action builder, saved platforms (`weave auth setup`), REST calls without
 code, and `weave platform user`.
@@ -75,7 +75,7 @@ code, and `weave platform user`.
 You draw processes, add approvals and API calls, and run them.
 
 **What you need:** the CLI and
-[Studio's browser application](studio.md#install-the-alpha10-browser-application),
+[Studio's browser application](studio.md#install-the-alpha11-browser-application),
 or the [desktop app](desktop.md), and, from step 4 on, a platform: your team's
 server address and an account, or a [local platform](local-platform.md), which
 needs Docker.
@@ -84,7 +84,7 @@ needs Docker.
 | --- | --- | --- |
 | 1 | [Concepts](../concepts.md), including [Coming from BPM/BPMN](../concepts.md#coming-from-bpmbpmn) | The vocabulary: workflow, step, activation, run, and how BPMN ideas map to them |
 | 2 | [Your first workflow](../quickstart.md) | A workflow validated and simulated on your computer, with no platform |
-| 3 | [Install Studio](studio.md#install-the-alpha10-browser-application), then [draw your first workflow](studio.md#try-it-draw-your-first-workflow) | A process drawn in the visual editor and checked as you edit |
+| 3 | [Install Studio](studio.md#install-the-alpha11-browser-application), then [draw your first workflow](studio.md#try-it-draw-your-first-workflow) | A process drawn in the visual editor and checked as you edit |
 | 4 | [Start a local platform](local-platform.md), its steps 1 to 8, or [connect Studio](studio.md#connect-to-a-platform) to your team's platform | A platform where you can publish, run, and approve; on the local platform, create your person with every role, as its step 5 explains |
 | 5 | [Step reference](studio-step-reference.md) | The right properties for each kind of step |
 | 6 | [Human tasks](human-tasks.md) | An approval assigned to real reviewers; a task manager creates the reviewer binding with the CLI |
@@ -116,8 +116,9 @@ You install the platform, configure sign-in, and give people access.
 **What you need:** the CLI and Docker to practise locally; later, a
 cloud account or a Kubernetes cluster, your identity provider's administration,
 and a database administrator. **Planning Microsoft Entra ID?** It has
-configuration guidance but has not been verified yet;
-[read the requirements](../operations/identity-and-secrets.md#microsoft-entra-id-not-verified)
+verified application-token checks in Azure preproduction, but browser and
+device-code sign-in for people remain unverified;
+[read the requirements](../operations/identity-and-secrets.md#microsoft-entra-id-human-sign-in-not-verified)
 before you deploy.
 
 | Step | Read | You finish with |

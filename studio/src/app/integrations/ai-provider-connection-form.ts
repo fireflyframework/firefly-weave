@@ -19,6 +19,9 @@ import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
+  ElementRef,
+  Injector,
+  afterNextRender,
   OnDestroy,
   OnInit,
   inject,
@@ -43,18 +46,13 @@ import {
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [Select],
   template: `
-    <p class="hint">
-      Choose the provider's approved endpoint and stored API key handle for this
-      environment. Model or Azure deployment names belong in workflow AI
-      profiles or Lumi settings.
-    </p>
     @if (!canManage()) {
       <p role="status">
         Ask an administrator for connection.manage in this environment to create
         a provider connection.
       </p>
     } @else if (done) {
-      <h3>Connection created</h3>
+      <h3 class="wizard-title" tabindex="-1">Connection created</h3>
       <p>{{ done.name }} · revision {{ done.revision }}</p>
       <p>
         The platform checked this configuration. No model request was sent. A
@@ -64,6 +62,17 @@ import {
       </p>
       <button type="button" (click)="finished.emit()">Done</button>
     } @else {
+      <ol class="progress" aria-label="AI connection setup">
+        @for (label of stages; track label; let index = $index) {
+          <li
+            [attr.aria-current]="step === index ? 'step' : null"
+            [class.complete]="step > index"
+          >
+            <span class="number" aria-hidden="true">{{ index + 1 }}</span>
+            <span>{{ label }}</span>
+          </li>
+        }
+      </ol>
       @if (loading) {
         <p role="status">Checking the published AI connector…</p>
       } @else if (!connectorId) {
@@ -75,76 +84,199 @@ import {
       }
       <form (submit)="submit($event)">
         <fieldset [disabled]="busy || loading">
-          <label
-            >Connection name<input
-              aria-label="Connection name"
-              [value]="draft.name"
-              (input)="draft.name = value($event)"
-              autocomplete="off"
-          /></label>
-          <weave-select
-            label="Provider"
-            [options]="providers"
-            [value]="draft.provider"
-            (choose)="draft.provider = $event"
-          />
-          <label
-            >Provider endpoint<input
-              aria-label="Provider endpoint"
-              [value]="draft.endpoint"
-              (input)="draft.endpoint = value($event)"
-              placeholder="https://your-resource.openai.azure.com/"
-              autocomplete="off"
-          /></label>
-          <p class="hint">
-            Only this endpoint's exact HTTPS origin is allowed. The worker and
-            Lumi gateway must also allow it.
-          </p>
-          @if (draft.provider.startsWith("azure-")) {
+          @if (step === 0) {
+            <h3 class="wizard-title" tabindex="-1">Choose a provider</h3>
+            <p class="hint">
+              Name this connection so authors can recognize it. Choose models or
+              Azure deployments later in workflow AI profiles or Lumi settings.
+            </p>
             <label
-              >Azure API version<input
-                aria-label="Azure API version"
-                [value]="draft.apiVersion"
-                (input)="draft.apiVersion = value($event)"
-                placeholder="API version approved for your deployment"
-            /></label>
+              >Connection name
+              <input
+                aria-label="Connection name"
+                [value]="draft.name"
+                (input)="draft.name = value($event)"
+                autocomplete="off"
+                placeholder="For example, team-ai"
+              />
+            </label>
+            <weave-select
+              label="Provider"
+              [options]="providers"
+              [value]="draft.provider"
+              (choose)="draft.provider = $event"
+              [disabled]="busy || loading"
+            />
+          } @else if (step === 1) {
+            <h3 class="wizard-title" tabindex="-1">
+              Endpoint and secret handle
+            </h3>
+            <p class="hint">
+              Use the operator-approved endpoint and secret handle for
+              {{ providerLabel }} in this environment.
+            </p>
+            <label
+              >Provider endpoint
+              <input
+                aria-label="Provider endpoint"
+                [value]="draft.endpoint"
+                (input)="draft.endpoint = value($event)"
+                [placeholder]="endpointHint"
+                autocomplete="off"
+                spellcheck="false"
+                aria-describedby="ai-endpoint-help"
+              />
+            </label>
+            <p class="hint" id="ai-endpoint-help">
+              Copy the exact base endpoint approved by your operator. The worker
+              or Lumi gateway must allow this endpoint; this connection permits
+              only its HTTPS origin.
+            </p>
+            @if (draft.provider.startsWith("azure-")) {
+              <label
+                >Azure API version
+                <input
+                  aria-label="Azure API version"
+                  [value]="draft.apiVersion"
+                  (input)="draft.apiVersion = value($event)"
+                  placeholder="For example, 2024-10-21"
+                />
+              </label>
+              <p class="hint">
+                Use the API version approved for your deployment.
+              </p>
+            }
+            <label
+              >API key secret handle
+              <input
+                aria-label="API key secret handle"
+                [value]="draft.handle"
+                (input)="draft.handle = value($event)"
+                autocomplete="off"
+                spellcheck="false"
+                aria-describedby="ai-secret-help"
+              />
+            </label>
+            <p class="hint" id="ai-secret-help">
+              Enter the handle supplied by your platform operator. The operator
+              stores and grants the secret for this environment. Never paste the
+              API key.
+            </p>
+          } @else {
+            <h3 class="wizard-title" tabindex="-1">Review your connection</h3>
+            <p class="hint">
+              Check these details before creating an immutable connection
+              revision.
+            </p>
+            <dl class="review">
+              <div>
+                <dt>Connection name</dt>
+                <dd>{{ draft.name.trim() }}</dd>
+              </div>
+              <div>
+                <dt>Provider</dt>
+                <dd>{{ providerLabel }}</dd>
+              </div>
+              <div>
+                <dt>Endpoint</dt>
+                <dd>{{ draft.endpoint.trim() }}</dd>
+              </div>
+              @if (draft.provider.startsWith("azure-")) {
+                <div>
+                  <dt>Azure API version</dt>
+                  <dd>{{ draft.apiVersion.trim() }}</dd>
+                </div>
+              }
+              <div>
+                <dt>API key secret handle</dt>
+                <dd>{{ draft.handle.trim() }}</dd>
+              </div>
+            </dl>
+            <p class="review-note">
+              The platform will validate the configuration. No model request or
+              connectivity test is sent. Your operator still needs to authorize
+              the worker release or configure Lumi's gateway before use.
+            </p>
           }
-          <label
-            >API key secret handle<input
-              aria-label="API key secret handle"
-              [value]="draft.handle"
-              (input)="draft.handle = value($event)"
-              autocomplete="off"
-              spellcheck="false"
-          /></label>
-          <p class="hint">
-            Enter the handle supplied by your platform operator. The operator
-            stores and grants the secret for this environment. Never paste the
-            API key.
-          </p>
-          <button type="submit" class="primary" [disabled]="!connectorId">
-            {{ busy ? "Creating connection…" : "Create AI connection" }}
-          </button>
+          <div class="actions">
+            @if (step > 0) {
+              <button type="button" (click)="back()">Back</button>
+            }
+            <button type="submit" class="primary" [disabled]="!connectorId">
+              {{
+                busy
+                  ? "Creating connection…"
+                  : step === 0
+                    ? "Continue"
+                    : step === 1
+                      ? "Review connection"
+                      : "Create AI connection"
+              }}
+            </button>
+          </div>
         </fieldset>
       </form>
     }
     @if (error) {
-      <p class="error" role="alert">{{ error }}</p>
+      <p class="error" role="alert" tabindex="-1">{{ error }}</p>
     }
   `,
   styles: `
     :host {
       display: grid;
-      gap: 12px;
+      gap: 16px;
       min-width: 0;
+    }
+    .progress {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      list-style: none;
+      padding: 0 0 16px;
+      margin: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .progress li {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .progress li[aria-current] {
+      color: var(--forest);
+      font-weight: 650;
+    }
+    .number {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      flex: 0 0 24px;
+      border: 1px solid var(--field-border);
+      border-radius: 50%;
+    }
+    [aria-current] .number {
+      background: var(--forest);
+      border-color: var(--forest);
+      color: var(--on-dark);
+    }
+    .complete .number {
+      background: var(--selected);
+      color: var(--forest);
     }
     fieldset {
       display: grid;
-      gap: 12px;
+      gap: 14px;
       border: 0;
       padding: 0;
       margin: 0;
       min-width: 0;
+    }
+    .wizard-title {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.4;
     }
     label {
       display: grid;
@@ -155,15 +287,58 @@ import {
       width: 100%;
       box-sizing: border-box;
     }
-    .hint,
     p {
       margin: 0;
-    }
-    button {
-      justify-self: start;
-    }
-    p {
       overflow-wrap: anywhere;
+    }
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+      border-top: 1px solid var(--line);
+      margin-top: 4px;
+      padding-top: 16px;
+    }
+    .actions button {
+      min-height: 40px;
+    }
+    .actions button:first-child:not(.primary) {
+      margin-right: auto;
+    }
+    .review {
+      margin: 0;
+      display: grid;
+      gap: 12px;
+      min-width: 0;
+    }
+    .review div {
+      display: grid;
+      grid-template-columns: minmax(100px, 1fr) minmax(0, 1.5fr);
+      gap: 12px;
+    }
+    dt {
+      color: var(--muted);
+    }
+    dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+      font-weight: 550;
+    }
+    .review-note {
+      border-left: 3px solid var(--jade);
+      padding: 10px 12px;
+      background: var(--mist);
+    }
+    @media (max-width: 420px) {
+      .progress li {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .review div {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 3px;
+      }
     }
   `,
 })
@@ -181,6 +356,21 @@ export class AiProviderConnectionForm implements OnInit, OnDestroy {
     apiVersion: "",
     handle: "",
   };
+  readonly stages = ["Provider", "Access", "Review"];
+  step = 0;
+  get providerLabel() {
+    return (
+      this.providers.find((provider) => provider.value === this.draft.provider)
+        ?.label ?? "your provider"
+    );
+  }
+  get endpointHint() {
+    return this.draft.provider.startsWith("azure-")
+      ? "https://your-resource.openai.azure.com"
+      : this.draft.provider === "anthropic"
+        ? "https://api.anthropic.com"
+        : "https://api.openai.com/v1";
+  }
   connectorId = "";
   loading = false;
   busy = false;
@@ -188,6 +378,24 @@ export class AiProviderConnectionForm implements OnInit, OnDestroy {
   done: AiConnection | null = null;
   private alive = true;
   private cdr = inject(ChangeDetectorRef);
+  private host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private injector = inject(Injector);
+  private focus(selector = ".wizard-title") {
+    const step = this.step;
+    afterNextRender(
+      () => {
+        if (this.alive && this.step === step)
+          this.host.nativeElement.querySelector<HTMLElement>(selector)?.focus();
+      },
+      { injector: this.injector },
+    );
+  }
+  back() {
+    if (this.busy || this.loading || this.step === 0) return;
+    this.step--;
+    this.error = "";
+    this.focus();
+  }
   private attempt: {
     body: ReturnType<typeof aiConnectionRequest>;
     key: string;
@@ -230,10 +438,31 @@ export class AiProviderConnectionForm implements OnInit, OnDestroy {
   }
   async submit(event: Event) {
     event.preventDefault();
-    if (this.busy || !this.canManage()) return;
+    if (this.busy || this.loading || !this.canManage() || !this.connectorId)
+      return;
     this.error = "";
     try {
+      if (this.step === 0) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(this.draft.name.trim()))
+          throw Error(
+            "Enter a connection name using letters, numbers, dots, dashes or underscores.",
+          );
+        if (
+          !this.providers.some(
+            (provider) => provider.value === this.draft.provider,
+          )
+        )
+          throw Error("Choose a provider.");
+        this.step = 1;
+        this.focus();
+        return;
+      }
       const body = aiConnectionRequest(this.draft, this.connectorId);
+      if (this.step === 1) {
+        this.step = 2;
+        this.focus();
+        return;
+      }
       if (
         !this.attempt ||
         JSON.stringify(this.attempt.body) !== JSON.stringify(body)
@@ -250,9 +479,11 @@ export class AiProviderConnectionForm implements OnInit, OnDestroy {
       if (!this.alive) return;
       this.done = result;
       this.created.emit(result);
+      this.focus();
     } catch (error) {
       if (this.alive) {
         this.error = describeError(error).message;
+        this.focus(".error");
         if (
           error instanceof ApiError &&
           error.code === "WV-IDEMPOTENCY-CONFLICT"

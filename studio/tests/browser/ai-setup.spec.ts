@@ -121,6 +121,7 @@ for (const width of [1440, 600])
         form.getByLabel("Provider", { exact: true }),
         "azure-responses",
       );
+      await form.getByRole("button", { name: "Continue", exact: true }).click();
       await form
         .getByLabel("Provider endpoint", { exact: true })
         .fill("https://approved-models.openai.azure.com/");
@@ -128,13 +129,16 @@ for (const width of [1440, 600])
         .getByLabel("API key secret handle", { exact: true })
         .fill("azure-model-key");
       await form
-        .getByRole("button", { name: "Create AI connection", exact: true })
+        .getByRole("button", { name: "Review connection", exact: true })
         .click();
       await expect(form).toContainText("Azure requires an API version");
       expect(capture.creates).toHaveLength(0);
       await form
         .getByLabel("Azure API version", { exact: true })
         .fill("2025-04-01-preview");
+      await form
+        .getByRole("button", { name: "Review connection", exact: true })
+        .click();
       await form
         .getByRole("button", { name: "Create AI connection", exact: true })
         .click();
@@ -169,6 +173,9 @@ for (const width of [1440, 600])
       await lumi
         .getByLabel("Model", { exact: true })
         .fill("assistant-deployment");
+      await lumi
+        .getByRole("button", { name: "Continue to connection", exact: true })
+        .click();
       await selectChoice(
         lumi.getByLabel("Provider connection", { exact: true }),
         connectionId,
@@ -176,6 +183,9 @@ for (const width of [1440, 600])
       await expect(
         lumi.getByLabel("Connection revision id", { exact: true }),
       ).toHaveCount(0);
+      await lumi
+        .getByRole("button", { name: "Review settings", exact: true })
+        .click();
       await lumi
         .getByRole("button", { name: "Save Lumi settings", exact: true })
         .click();
@@ -216,9 +226,6 @@ for (const width of [1440, 600])
         .click();
       await designer.selectStep("ask-ai-1");
       const form = page.locator("weave-llm-inspector");
-      await form
-        .getByRole("button", { name: "Add AI connection slot", exact: true })
-        .click();
       await selectChoice(
         form.getByLabel("Provider", { exact: true }),
         "azure-responses",
@@ -228,15 +235,30 @@ for (const width of [1440, 600])
         .fill("workflow-deployment");
       await form.getByLabel("Max tokens", { exact: true }).fill("512");
       await form
+        .getByRole("button", { name: "Continue to connection", exact: true })
+        .click();
+      await form
+        .getByRole("button", { name: "Add AI connection slot", exact: true })
+        .click();
+      await expect(
+        form.getByLabel("AI connection slot", { exact: true }),
+      ).toHaveValue("ai");
+      await form
+        .getByRole("button", { name: "Review settings", exact: true })
+        .click();
+      await form
+        .getByRole("button", {
+          name: "Apply workflow AI settings",
+          exact: true,
+        })
+        .click();
+      await form
         .locator('[data-field="prompt"]')
         .getByLabel("Property value", { exact: true })
         .fill("Summarize input");
       await expect(
         form.getByLabel("Workflow AI profile", { exact: true }),
       ).toHaveValue("default");
-      await expect(
-        form.getByLabel("AI connection slot", { exact: true }),
-      ).toHaveValue("ai");
       const doc = parse(await sourceText(page));
       expect(doc.spec.llmProfiles.default.provider).toBe("azure-responses");
       expect(doc.spec.llmProfiles.default.model).toBe("workflow-deployment");
@@ -250,16 +272,29 @@ for (const width of [1440, 600])
 test("Lumi manager without connection management sees the required grant instead of an editable UUID", async ({
   page,
 }) => {
-  await setup(page, ["lumi.use", "lumi.manage"]);
+  const capture = await setup(page, ["lumi.use", "lumi.manage"]);
   await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
   const lumi = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
   await lumi
     .getByRole("button", { name: "Lumi settings", exact: true })
     .click();
   await expect(lumi).toContainText("connection.manage");
+  await selectChoice(
+    lumi.getByLabel("Provider", { exact: true }),
+    "openai-responses",
+  );
+  await lumi.getByLabel("Model", { exact: true }).fill("test-model");
+  await lumi
+    .getByRole("button", { name: "Continue to connection", exact: true })
+    .click();
   await expect(
-    lumi.getByRole("button", { name: "Save Lumi settings", exact: true }),
+    lumi.getByRole("button", { name: "Review settings", exact: true }),
   ).toBeDisabled();
+  await expect(
+    lumi.getByLabel("Provider connection", { exact: true }),
+  ).toBeDisabled();
+  expect(capture.configurations).toEqual([]);
+  expect(capture.creates).toEqual([]);
   await expect(
     lumi.getByLabel("Connection revision id", { exact: true }),
   ).toHaveCount(0);
@@ -275,13 +310,22 @@ test("Settings exposes admin AI setup while viewers cannot configure or spend", 
     .click();
   await expect(
     page.getByRole("heading", {
-      name: "Lumi model and connection",
+      name: "Choose Lumi's model",
       exact: true,
     }),
   ).toBeVisible();
+  const lumi = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+  await selectChoice(
+    lumi.getByLabel("Provider", { exact: true }),
+    "openai-responses",
+  );
+  await lumi.getByLabel("Model", { exact: true }).fill("test-model");
+  await lumi
+    .getByRole("button", { name: "Continue to connection", exact: true })
+    .click();
   await expect(
-    page.getByRole("dialog", { name: "Ask Lumi", exact: true }),
-  ).toContainText("No matching provider connections");
+    lumi.getByText(/No matching provider connections/),
+  ).toBeVisible();
 });
 
 test("viewers see setup guidance without manager controls", async ({
@@ -327,7 +371,7 @@ test("provider setup explains missing catalog permission without creating a conn
   });
   await expect(form).toContainText("catalog.read");
   await expect(
-    form.getByRole("button", { name: "Create AI connection", exact: true }),
+    form.getByRole("button", { name: "Continue", exact: true }),
   ).toBeDisabled();
   expect(capture.creates).toEqual([]);
 });
@@ -365,12 +409,16 @@ test("retrying an uncertain connection create reuses the same idempotency key", 
     form.getByLabel("Provider", { exact: true }),
     "openai-responses",
   );
+  await form.getByRole("button", { name: "Continue", exact: true }).click();
   await form
     .getByLabel("Provider endpoint", { exact: true })
     .fill("https://api.openai.com/v1");
   await form
     .getByLabel("API key secret handle", { exact: true })
     .fill("model-key");
+  await form
+    .getByRole("button", { name: "Review connection", exact: true })
+    .click();
   const submit = form.getByRole("button", {
     name: "Create AI connection",
     exact: true,
@@ -383,3 +431,117 @@ test("retrying an uncertain connection create reuses the same idempotency key", 
   expect(requests[0].key).toBeTruthy();
   expect(requests[1]).toEqual(requests[0]);
 });
+
+for (const width of [1440, 360])
+  test.describe(`AI connection wizard at ${width}`, () => {
+    test.use({ viewport: { width, height: 800 } });
+    test("wizard guides keyboard review without creating early and retains Back edits", async ({
+      page,
+    }) => {
+      const capture = await setup(page);
+      await page
+        .getByRole("button", { name: "Connections", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "New AI connection", exact: true })
+        .click();
+      const form = page.getByRole("dialog", {
+        name: "New AI connection",
+        exact: true,
+      });
+      const progress = form.getByRole("list", { name: "AI connection setup" });
+      await expect(progress.locator('[aria-current="step"]')).toHaveText(
+        /Provider/,
+      );
+      await expect(
+        form.getByLabel("Provider endpoint", { exact: true }),
+      ).toHaveCount(0);
+      await form.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(form.getByRole("alert")).toContainText("connection name");
+      expect(capture.creates).toHaveLength(0);
+      await selectChoice(
+        form.getByLabel("Provider", { exact: true }),
+        "azure-chat",
+      );
+      await form
+        .getByLabel("Connection name", { exact: true })
+        .fill("approved-azure");
+      await form.getByLabel("Connection name", { exact: true }).press("Enter");
+      await expect(
+        form.getByRole("heading", {
+          name: "Endpoint and secret handle",
+          exact: true,
+        }),
+      ).toBeFocused();
+      await expect(progress.locator('[aria-current="step"]')).toHaveText(
+        /Access/,
+      );
+      await expect(
+        form.getByLabel("Provider endpoint", { exact: true }),
+      ).toHaveAttribute(
+        "placeholder",
+        "https://your-resource.openai.azure.com",
+      );
+      await expect(form).toContainText("operator-approved endpoint");
+      await form
+        .getByLabel("Provider endpoint", { exact: true })
+        .fill("https://approved.openai.azure.com");
+      await form
+        .getByLabel("Azure API version", { exact: true })
+        .fill("2024-10-21");
+      await form
+        .getByLabel("API key secret handle", { exact: true })
+        .fill("approved-key");
+      await form
+        .getByLabel("API key secret handle", { exact: true })
+        .press("Enter");
+      await expect(
+        form.getByRole("heading", {
+          name: "Review your connection",
+          exact: true,
+        }),
+      ).toBeFocused();
+      await expect(progress.locator('[aria-current="step"]')).toHaveText(
+        /Review/,
+      );
+      await expect(form).toContainText("Azure OpenAI Chat");
+      await expect(form).toContainText("https://approved.openai.azure.com");
+      await expect(form).toContainText("approved-key");
+      await expect(form).toContainText("No model request or connectivity test");
+      expect(capture.creates).toHaveLength(0);
+      await form.getByRole("button", { name: "Back", exact: true }).click();
+      await expect(
+        form.getByLabel("API key secret handle", { exact: true }),
+      ).toHaveValue("approved-key");
+      await form.getByRole("button", { name: "Back", exact: true }).click();
+      await expect(
+        form.getByLabel("Connection name", { exact: true }),
+      ).toHaveValue("approved-azure");
+      await form
+        .getByLabel("Connection name", { exact: true })
+        .fill("reviewed-azure");
+      await form.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(
+        form.getByLabel("Azure API version", { exact: true }),
+      ).toHaveValue("2024-10-21");
+      await form
+        .getByRole("button", { name: "Review connection", exact: true })
+        .click();
+      await expect(form).toContainText("reviewed-azure");
+      expect(capture.creates).toHaveLength(0);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: `../.superpowers/editor-ux/ai-wizard-review-${width}.png`,
+      });
+      await form
+        .getByRole("button", { name: "Create AI connection", exact: true })
+        .press("Enter");
+      await expect(form).toContainText("Connection created");
+      expect(capture.creates).toHaveLength(1);
+      expect(capture.creates[0].name).toBe("reviewed-azure");
+    });
+  });

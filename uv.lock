@@ -706,7 +706,7 @@ wheels = [
 
 [[package]]
 name = "firefly-weave"
-version = "0.1.0a10"
+version = "0.1.0a11"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

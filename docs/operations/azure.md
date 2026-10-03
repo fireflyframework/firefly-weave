@@ -162,9 +162,10 @@ row-level security. Never run the local fixture setup script there. See
 
 **Microsoft Entra ID as the identity provider for people is not verified.** Using
 Entra ID to manage access to AKS is separate from using it to sign people in to
-Weave. The built-in token verifier accepts Microsoft's signing keys, which omit
-`alg`, but no Entra token has been verified yet. Read
-[Microsoft Entra ID (not verified)](identity-and-secrets.md#microsoft-entra-id-not-verified)
+Weave. Azure preproduction checks have verified real Entra application tokens
+for a host application and an independent worker. They do not verify interactive
+human sign-in or qualify this AKS recipe. Read
+[Microsoft Entra ID (human sign-in not verified)](identity-and-secrets.md#microsoft-entra-id-human-sign-in-not-verified)
 before you plan Weave sign-in with it.
 
 ## If something goes wrong

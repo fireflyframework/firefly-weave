@@ -40,6 +40,7 @@ the desktop app never migrates a platform.
 | alpha8 | `0028_files` | Adds decision-table artifacts, separate Lumi configuration, file metadata/chunks/retention, and new scoped file and assistant roles. Existing grants do not automatically gain these roles. |
 | alpha9 | `0028_files` | No new schema migration. Adds guided AI configuration and renewable worker OAuth2 authentication. |
 | alpha10 | `0028_files` | No new schema migration. Restores Lumi access through the Studio host; explicit selection supersedes pending canvas fitting, and initial empty fields no longer steal focus. |
+| alpha11 | `0028_files` | Studio AI setup wizards and explicit same-execution shared AI context; no server behavior or schema change. Updating the local Studio host and assets does not require redeploying an alpha10 server. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -264,8 +265,9 @@ the schema stays at `0025_run_lifecycle`. After the upgrade, check these points:
   verifier uses a JWKS key that omits `alg`, as Microsoft Entra ID publishes
   them, only for the allowed algorithm of its key type: an RSA key for `RS256`,
   a P-256 key for `ES256`. Keys that declare `alg` are checked as before. Unit
-  tests cover Entra-shaped keys; no Entra token has been verified, as
-  [Microsoft Entra ID (not verified)](identity-and-secrets.md#microsoft-entra-id-not-verified)
+  tests cover Entra-shaped keys, and Azure preproduction checks have verified
+  real Entra application tokens. Human sign-in remains unverified, as
+  [Microsoft Entra ID](identity-and-secrets.md#microsoft-entra-id-human-sign-in-not-verified)
   explains.
 - **Local Keycloak realms accept any loopback port.** A local platform still has
   [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade), so set up

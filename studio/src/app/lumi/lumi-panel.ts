@@ -35,7 +35,8 @@ import {
   type AiConnection,
 } from "../integrations/ai-provider-connection";
 import { Modal } from "../dialog";
-import { TaskForm } from "../task-form";
+import { AiProfileEditor } from "../integrations/ai-profile-editor";
+import { AiSetupWizard } from "../integrations/ai-setup-wizard";
 import type { Schema } from "../task-schema";
 import { missingData } from "../forms/core/form-model";
 import { describeError } from "../errors";
@@ -57,7 +58,13 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   selector: "weave-lumi-panel",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Modal, TaskForm, Select, AiProviderConnectionForm],
+  imports: [
+    Modal,
+    AiProfileEditor,
+    AiSetupWizard,
+    Select,
+    AiProviderConnectionForm,
+  ],
   template: ` @if (host.lumiOpen) {
     <weave-modal
       heading="Ask Lumi"
@@ -70,11 +77,19 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           @if (status?.configured) {
             <span class="hint">{{ status.provider }} · {{ status.model }}</span>
           }
-          <button type="button" (click)="clear()" [disabled]="busy">
+          <button
+            type="button"
+            (click)="clear()"
+            [disabled]="busy || configBusy"
+          >
             New conversation
           </button>
           @if (host.profile && host.can("lumi.manage")) {
-            <button type="button" (click)="openSettings()">
+            <button
+              type="button"
+              [disabled]="configBusy"
+              (click)="openSettings()"
+            >
               Lumi settings
             </button>
           }
@@ -100,7 +115,6 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         }
         @if (settings) {
           <section class="lumi-settings">
-            <h3>Lumi model and connection</h3>
             <p class="hint">
               These settings apply only to this assistant in this environment.
               Workflow AI profiles are configured separately.
@@ -113,79 +127,125 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
               </p>
             }
             @if (configSchema) {
-              <weave-task-form
-                [schema]="configSchema"
-                [initialData]="configInitial"
-                (dataChange)="config = $event"
-                (validityChange)="configValid = $event"
-              />
-              <weave-select
-                label="Provider connection"
-                [value]="configConnection"
-                [options]="connectionOptions"
-                [disabled]="configBusy || !host.can('connection.manage')"
-                (choose)="configConnection = $event"
-              />
-              <p class="hint">
-                Lumi pins this exact revision. Choose a connection with the same
-                provider as the profile; changing a workflow profile will not
-                change these settings.
-              </p>
-              @if (configConnection && !selectedConnection) {
-                <p class="field-error">
-                  Choose an available connection that matches this provider.
-                </p>
-              }
-              @if (host.can("connection.manage")) {
-                @if (!connectionOptions.length) {
-                  <p>
-                    No matching provider connections yet. Create one with an
-                    operator-approved secret handle, or change the provider.
+              <weave-ai-setup-wizard
+                [(step)]="settingsStep"
+                [headings]="settingsHeadings"
+                progressLabel="Lumi setup progress"
+                [canContinue]="
+                  settingsStep === 0 ? modelComplete : configComplete
+                "
+                [busy]="configBusy"
+                [navigationBlocked]="newConnection"
+                finishLabel="Save Lumi settings"
+                (finish)="saveSettings()"
+              >
+                <fieldset ai-model [disabled]="configBusy">
+                  <weave-ai-profile-editor
+                    [schema]="configSchema"
+                    [initialData]="configInitial"
+                    (dataChange)="config = $event"
+                    (validityChange)="configValid = $event"
+                  />
+                </fieldset>
+                <section ai-connection class="settings-connection">
+                  <p class="hint">
+                    Select where Lumi sends requests. Your platform operator
+                    supplies the approved endpoint and stores the credentials.
                   </p>
-                }
-                <div class="action-row">
+                  <weave-select
+                    label="Provider connection"
+                    [value]="configConnection"
+                    [options]="connectionOptions"
+                    [disabled]="configBusy || !host.can('connection.manage')"
+                    (choose)="configConnection = $event"
+                  />
+                  <p class="hint">
+                    Lumi pins this exact revision. Choose a connection with the
+                    same provider as the profile; changing a workflow profile
+                    will not change these settings.
+                  </p>
+                  @if (configConnection && !selectedConnection) {
+                    <p class="field-error">
+                      Choose an available connection that matches this provider.
+                    </p>
+                  }
+                  @if (host.can("connection.manage")) {
+                    @if (!connectionOptions.length) {
+                      <p>
+                        No matching provider connections yet. Create one with an
+                        operator-approved secret handle, or change the provider.
+                      </p>
+                    }
+                    <div class="action-row">
+                      <button
+                        type="button"
+                        [disabled]="configBusy"
+                        (click)="newConnection = !newConnection"
+                      >
+                        New AI connection</button
+                      ><button
+                        type="button"
+                        [disabled]="configBusy"
+                        (click)="loadConnections()"
+                      >
+                        Refresh connections
+                      </button>
+                    </div>
+                    @if (newConnection) {
+                      <weave-ai-provider-connection-form
+                        [api]="host.api"
+                        [canManage]="host.can('connection.manage')"
+                        (created)="connectionCreated($event)"
+                        (finished)="newConnection = false"
+                      />
+                    }
+                  }
+                </section>
+                <section ai-review class="settings-connection">
+                  <dl class="settings-summary">
+                    @for (row of settingsSummary; track row.label) {
+                      <div>
+                        <dt>{{ row.label }}</dt>
+                        <dd>{{ row.value }}</dd>
+                      </div>
+                    }
+                  </dl>
+                  <p class="hint">
+                    Saving applies these settings to Lumi in the current
+                    environment. It does not change workflow AI profiles or send
+                    a model request. The platform operator must enable the Lumi
+                    gateway and authorize this connection before you can ask
+                    Lumi.
+                  </p>
+                </section>
+                <div ai-error>
+                  @if (configError) {
+                    <p class="field-error" role="alert">{{ configError }}</p>
+                  }
+                </div>
+                <div ai-secondary class="action-row">
                   <button
                     type="button"
                     [disabled]="configBusy"
-                    (click)="newConnection = !newConnection"
+                    (click)="back()"
                   >
-                    New AI connection</button
-                  ><button
-                    type="button"
-                    [disabled]="configBusy"
-                    (click)="loadConnections()"
-                  >
-                    Refresh connections
+                    Back to conversation
                   </button>
                 </div>
-                @if (newConnection) {
-                  <weave-ai-provider-connection-form
-                    [api]="host.api"
-                    [canManage]="host.can('connection.manage')"
-                    (created)="connectionCreated($event)"
-                    (finished)="newConnection = false"
-                  />
-                }
-              }
+              </weave-ai-setup-wizard>
+            } @else if (configBusy) {
+              <p role="status">Loading Lumi settings…</p>
             }
-            @if (configError) {
+            @if (!configSchema && configError) {
               <p class="field-error" role="alert">{{ configError }}</p>
             }
             <div class="action-row">
               <button
                 type="button"
-                [disabled]="configBusy || !configComplete"
-                (click)="saveSettings()"
-              >
-                Save Lumi settings</button
-              ><button
-                type="button"
                 [disabled]="configBusy"
                 (click)="openSettings()"
               >
-                Reload settings</button
-              ><button type="button" (click)="back()">
-                Back to conversation
+                Reload settings
               </button>
             </div>
           </section>
@@ -366,6 +426,38 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         flex-wrap: wrap;
         align-items: center;
       }
+      [hidden] {
+        display: none !important;
+      }
+      .settings-connection {
+        display: grid;
+        gap: 12px;
+        min-width: 0;
+      }
+      .settings-summary {
+        margin: 0;
+        border-top: 1px solid var(--line);
+      }
+      .settings-summary div {
+        display: grid;
+        grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+        gap: 16px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .settings-summary dt {
+        color: var(--muted);
+      }
+      .settings-summary dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      @media (max-width: 480px) {
+        .settings-summary div {
+          grid-template-columns: 1fr;
+          gap: 4px;
+        }
+      }
       .lumi-conversation {
         display: grid;
         gap: 16px;
@@ -456,6 +548,46 @@ export class LumiPanel implements DoCheck {
   review: ProposalReview | null = null;
   validating = false;
   settings = false;
+  settingsStep = 0;
+  readonly settingsHeadings = [
+    "Choose Lumi's model",
+    "Choose a provider connection",
+    "Review Lumi settings",
+  ];
+  get settingsSummary() {
+    const profile = object(this.config["profile"]);
+    const connection = this.connections.find(
+      (c) => c.id === this.configConnection,
+    );
+    return [
+      {
+        label: "Assistant",
+        value: this.config["enabled"] ? "Enabled" : "Disabled",
+      },
+      { label: "Provider", value: profile["provider"] },
+      { label: "Model or deployment", value: profile["model"] },
+      {
+        label: "Connection",
+        value: connection
+          ? `${connection.name} · revision ${connection.revision}`
+          : "Unavailable",
+      },
+      {
+        label: "Endpoint",
+        value: connection?.config.endpoint ?? "Unavailable",
+      },
+      {
+        label: "Reasoning",
+        value: object(profile["reasoning"])["pattern"] ?? "none",
+      },
+      { label: "Maximum calls", value: profile["maxCalls"] },
+      { label: "Timeout", value: `${profile["timeoutSeconds"]} seconds` },
+      {
+        label: "Maximum output tokens",
+        value: object(profile["options"])["max_tokens"] ?? "Provider default",
+      },
+    ];
+  }
   configBusy = false;
   configError = "";
   configSchema: Schema | null = null;
@@ -509,6 +641,7 @@ export class LumiPanel implements DoCheck {
     this.replySchema = undefined;
   }
   clear() {
+    if (this.busy || this.configBusy) return;
     this.conversation.clear();
     this.message = "";
     this.review = null;
@@ -762,19 +895,28 @@ export class LumiPanel implements DoCheck {
     ];
     this.configConnection = connection.id;
   }
-  get configComplete() {
+  get modelComplete() {
     return (
-      this.host.can("connection.manage") &&
-      this.selectedConnection &&
       !!this.configSchema &&
       this.configValid &&
       !missingData(this.configSchema, this.config).length
     );
   }
+  get configComplete() {
+    return (
+      this.host.can("connection.manage") &&
+      this.selectedConnection &&
+      this.modelComplete
+    );
+  }
   async openSettings() {
-    if (!this.host.profile || !this.host.can("lumi.manage")) return;
+    if (this.configBusy || !this.host.profile || !this.host.can("lumi.manage"))
+      return;
     this.keepFocus();
     this.settings = true;
+    this.settingsStep = 0;
+    this.newConnection = false;
+    this.configSchema = null;
     this.keepFocus();
     this.configBusy = true;
     this.configError = "";
@@ -849,7 +991,13 @@ export class LumiPanel implements DoCheck {
     }
   }
   async saveSettings() {
-    if (!this.configComplete || !this.host.can("lumi.manage")) return;
+    if (
+      this.configBusy ||
+      this.settingsStep !== 2 ||
+      !this.configComplete ||
+      !this.host.can("lumi.manage")
+    )
+      return;
     this.configBusy = true;
     this.configError = "";
     const generation = this.conversation.generation;

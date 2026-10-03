@@ -110,6 +110,7 @@ nav:
       - Connect FTP and cloud drives: guides/file-connectors.md
       - Evaluate decision tables: reference/decision-tables.md
       - Run AI steps: guides/ai-workers.md
+      - Share context between AI steps: guides/shared-ai-context.md
       - Configure Lumi assistance: guides/lumi.md
       - Manage runs and business cases: guides/execution-management.md
       - Resolve incidents, cancel, and retry: reference/incident-operations.md

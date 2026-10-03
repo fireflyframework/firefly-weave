@@ -222,6 +222,9 @@ export class DesignerPage {
    * screen.
    */
   async selectStep(stepId: string) {
+    // Insertion reveals its new selection after render; observe that view before
+    // deciding whether an earlier node needs Fit all.
+    await this.settled();
     const body = this.node(stepId).locator(".node-body");
     if (!(await this.reachable(body))) {
       const close = this.page.getByRole("button", { name: "Close inspector" });

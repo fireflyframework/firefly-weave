@@ -233,9 +233,10 @@ health probes, signed webhooks and provider ingress endpoints (which verify the
 sender by their own rules), and the interactive API documentation when it is
 enabled. Services enforce scoped authorization even when they are called without
 HTTP. The local platform uses Keycloak; a deployment can trust another OIDC
-provider through `WEAVE_OIDC_PROVIDERS`. Only the local Keycloak setup has been
-verified against a real provider, and the built-in verifier has a
-[known limitation with Microsoft Entra ID](operations/identity-and-secrets.md#microsoft-entra-id-not-verified).
+provider through `WEAVE_OIDC_PROVIDERS`. Real-provider checks cover local
+Keycloak sign-in and Microsoft Entra ID application tokens in Azure
+preproduction. Entra browser and device-code sign-in for people remain
+[unverified](operations/identity-and-secrets.md#microsoft-entra-id-human-sign-in-not-verified).
 
 **Persistence.** The [unit of work](../src/firefly_weave/persistence/uow.py) binds
 the tenant context inside a PostgreSQL transaction. Repositories use that
