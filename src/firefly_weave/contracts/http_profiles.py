@@ -21,9 +21,10 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 
+from firefly_weave.compiler.action_config import ActionConfigCheck, ActionConfigIssue
 from firefly_weave.compiler.catalog import FrozenDocument, TaskCapability
 from firefly_weave.connectors.descriptor import ConnectorDescriptor
-from firefly_weave.contracts.connectors import ConnectionRequest
+from firefly_weave.contracts.connectors import ConnectionInvalid, ConnectionRequest
 from firefly_weave.contracts.definitions import ConnectorDefinition, ContractModel
 from firefly_weave.contracts.workers import ConnectorBinding
 
@@ -209,6 +210,23 @@ class HttpOperation(ContractModel):
 
 
 def validate_profile_connection(request: ConnectionRequest) -> None:
+    """Reject a connection outside the profile, explaining each field with a request pointer."""
+    from firefly_weave.contracts.http_profile_checks import connection_issues
+
+    issues = connection_issues(request)
+    if issues:
+        raise ConnectionInvalid(issues)
+
+
+def validate_profile_action(check: ActionConfigCheck) -> list[ActionConfigIssue]:
+    """Compile-time check that an Action's config, schemas and effect fit the profile executor."""
+    from firefly_weave.contracts.http_profile_checks import action_issues
+
+    return action_issues(check)
+
+
+def check_profile_connection(request: ConnectionRequest) -> None:
+    """The authoritative connection policy; raises ``ValueError`` for anything outside it."""
     profile = ProfileConnection.model_validate(request.config)
     allowed = {fixed_server(v)[0] for v in request.allowed_destinations}
     if fixed_server(profile.base_url)[0] not in allowed or set(request.secret_refs) != profile.auth.slots():
@@ -277,7 +295,15 @@ def http_profile_descriptor() -> ConnectorDescriptor:
         )
         for name, cap in zip(actions, capabilities, strict=True)
     )
-    return ConnectorDescriptor(manifest, PROFILE_VERSION, capabilities, bindings, validate_profile_connection)
+    # Checks are callbacks, never manifest content, so the published weave-http@2.0.0 digest is unchanged.
+    return ConnectorDescriptor(
+        manifest,
+        PROFILE_VERSION,
+        capabilities,
+        bindings,
+        validate_profile_connection,
+        validate_profile_action,
+    )
 
 
 HTTP_PROFILE_DESCRIPTOR = http_profile_descriptor()

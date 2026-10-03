@@ -243,3 +243,43 @@ async def test_signed_custom_client_and_payload_profile_preserves_actor_policy(o
         values = {"appid": "delegated-client", "token_use": "access"} | changes
         with pytest.raises(AuthenticationFailed):
             await verifier.verify(token(**values))
+
+
+async def test_entra_style_keys_without_alg_verify_by_key_family(oidc):
+    from firefly_weave.access.oidc import AuthenticationFailed
+
+    verifier, token, state, key = oidc
+    published = jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key(), as_dict=True)
+    # Microsoft Entra ID publishes RSA signing keys with kid, x5t and x5c but no alg.
+    state["keys"] = [published | {"kid": "a", "use": "sig", "x5t": "thumbprint", "x5c": ["certificate"]}]
+    assert (await verifier.verify(token())).subject == "subject"
+    # A token that claims another algorithm for the same key is still refused.
+    claims = jwt.decode(token(), options={"verify_signature": False})
+    with pytest.raises(AuthenticationFailed):
+        await verifier.verify(jwt.encode(claims, "a" * 32, algorithm="HS256", headers={"kid": "a"}))
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ({"kty": "RSA"}, "RS256"),
+        ({"kty": "RSA", "use": "sig"}, "RS256"),
+        ({"kty": "RSA", "use": "enc"}, None),
+        ({"kty": "oct"}, None),
+        ({"kty": "EC", "crv": "P-256"}, None),
+        ({"kty": "RSA", "alg": "HS256"}, None),
+        ({"kty": "RSA", "alg": "RS512"}, None),
+        ({"kty": "RSA", "alg": "RS256"}, "RS256"),
+    ],
+)
+def test_only_allowed_signing_families_are_accepted(raw, expected):
+    from firefly_weave.access.oidc import key_algorithm
+
+    assert key_algorithm(raw, ("RS256",)) == expected
+
+
+def test_elliptic_keys_need_the_allowed_curve():
+    from firefly_weave.access.oidc import key_algorithm
+
+    assert key_algorithm({"kty": "EC", "crv": "P-256"}, ("RS256", "ES256")) == "ES256"
+    assert key_algorithm({"kty": "EC", "crv": "P-384"}, ("RS256", "ES256")) is None

@@ -761,3 +761,420 @@ async def test_windows_both_acquisition_stages_share_one_deadline(win32_native_s
     monkeypatch.setattr(credentials.asyncio, "timeout_at", observed)
     async with stores[0].lock("one-deadline"):
         assert len(deadlines) == 2 and deadlines[0] == deadlines[1]
+
+
+# --- connection experience: flows, prompt, identity hint, status and offline refresh -----------------------------
+
+
+def id_token(payload, *, header=b'{"alg":"RS256"}'):
+    import base64
+    import json
+
+    def encode(raw):
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+    return f"{encode(header)}.{encode(body)}.c2lnbmF0dXJl"
+
+
+CLAIMS = {"iss": "https://issuer.example", "aud": "weave-cli", "sub": "subject-1", "preferred_username": "ada"}
+
+
+def test_prompt_reaches_only_the_pkce_authorization_url():
+    from urllib.parse import parse_qs, urlsplit
+
+    auth, _ = modules()
+    pending = auth.PKCETransaction("https://issuer.example", "http://127.0.0.1:12345/callback")
+    plain = parse_qs(urlsplit(pending.authorization_url("https://issuer.example/authorize", "weave-cli", ())).query)
+    assert "prompt" not in plain
+    for prompt in ("login", "select_account"):
+        url = pending.authorization_url("https://issuer.example/authorize?tenant=x", "weave-cli", ("openid",), prompt)
+        query = parse_qs(urlsplit(url).query)
+        assert query["prompt"] == [prompt] and query["tenant"] == ["x"] and query["code_challenge_method"] == ["S256"]
+    with pytest.raises(auth.AuthError) as failure:
+        pending.authorization_url("https://issuer.example/authorize", "weave-cli", (), "consent")
+    assert failure.value.code == "WV-AUTH-INPUT" and failure.value.exit_code == 2
+
+
+async def test_unknown_flow_or_prompt_is_rejected_before_any_state_change(tmp_path):
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    calls = []
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(calls.append))
+    for options in ({"flow": "implicit"}, {"flow": "browser", "prompt": "none"}):
+        with pytest.raises(auth.AuthError) as failure:
+            await session.login(**options)
+        assert failure.value.code == "WV-AUTH-INPUT" and failure.value.exit_code == 2
+    assert store.load(settings.binding) is None and calls == []
+
+
+async def test_browser_flow_is_pkce_with_switch_account_prompt_and_identity_hint(tmp_path):
+    from urllib.parse import parse_qs, urlencode, urlsplit
+
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    token = id_token({**CLAIMS, "aud": ["other", "weave-cli"], "email": "ada@example.com"})
+    authorizations = []
+
+    def receive(request):
+        if request.method == "GET":
+            return discovery(request)
+        form = parse_qs(request.content.decode())
+        assert request.url.path == "/token" and form["grant_type"] == ["authorization_code"]
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "access",
+                "refresh_token": "refresh",
+                "id_token": token,
+                "token_type": "Bearer",
+                "expires_in": 300,
+            },
+        )
+
+    async def browser(url):
+        authorizations.append(url)
+        query = parse_qs(urlsplit(url).query)
+        redirect = urlsplit(query["redirect_uri"][0])
+        reader, writer = await asyncio.open_connection(redirect.hostname, redirect.port)
+        target = redirect.path + "?" + urlencode({"state": query["state"][0], "code": "code"})
+        writer.write(f"GET {target} HTTP/1.1\r\nHost: {redirect.netloc}\r\n\r\n".encode())
+        await writer.drain()
+        assert (await reader.read()).startswith(b"HTTP/1.1 200")
+        writer.close()
+        await writer.wait_closed()
+
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(receive))
+    result = await session.login(flow="browser", prompt="select_account", browser=browser)
+    assert parse_qs(urlsplit(authorizations[0]).query)["prompt"] == ["select_account"]
+    assert result["authenticated"] and result["state"] == "signed_in" and result["refresh_available"]
+    assert result["identity"] == {
+        "subject": "subject-1",
+        "display_name": "ada",
+        "issuer": "https://issuer.example",
+        "provider_id": "test",
+    }
+    assert token not in repr(result) and "access" not in json_values(result)
+
+
+async def test_browser_callback_page_is_complete_plain_text(tmp_path):
+    from urllib.parse import parse_qs, urlencode, urlsplit
+
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    pages = []
+
+    def receive(request):
+        if request.method == "GET":
+            return discovery(request)
+        return httpx.Response(
+            200,
+            json={"access_token": "access", "refresh_token": "refresh", "token_type": "Bearer", "expires_in": 300},
+        )
+
+    async def browser(url):
+        query = parse_qs(urlsplit(url).query)
+        redirect = urlsplit(query["redirect_uri"][0])
+        reader, writer = await asyncio.open_connection(redirect.hostname, redirect.port)
+        target = redirect.path + "?" + urlencode({"state": query["state"][0], "code": "code"})
+        writer.write(f"GET {target} HTTP/1.1\r\nHost: {redirect.netloc}\r\n\r\n".encode())
+        await writer.drain()
+        pages.append(await reader.read())
+        writer.close()
+        await writer.wait_closed()
+
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(receive))
+    await session.login(flow="browser", browser=browser)
+    head, body = pages[0].split(b"\r\n\r\n", 1)
+    headers = {
+        name.strip().lower(): value.strip() for name, value in (line.split(b":", 1) for line in head.split(b"\r\n")[1:])
+    }
+    # A browser shows exactly Content-Length bytes: the sentence must not lose its period.
+    assert body == b"Login complete. Close this window."
+    assert headers[b"content-length"] == str(len(body)).encode()
+    assert headers[b"content-type"] == b"text/plain; charset=utf-8"
+
+
+def json_values(value):
+    import json
+
+    return json.dumps(value)
+
+
+@pytest.mark.parametrize(
+    "token, expected",
+    [
+        (None, None),
+        ("", None),
+        ("not-a-jwt", None),
+        ("a.b", None),
+        ("a.b.c.d.e", None),
+        ("a..c", None),
+        ("a.!!!.c", None),
+        (id_token(b"not json"), None),
+        (id_token(b"[1, 2]"), None),
+        (id_token(b"\xff\xfe"), None),
+        (id_token({**CLAIMS, "iss": "https://evil.example"}), None),
+        (id_token({**CLAIMS, "iss": "https://issuer.example/"}), None),
+        (id_token({**CLAIMS, "aud": "other"}), None),
+        (id_token({**CLAIMS, "aud": ["other"]}), None),
+        (id_token({**CLAIMS, "aud": {"weave-cli": True}}), None),
+        (id_token({key: value for key, value in CLAIMS.items() if key != "aud"}), None),
+        (id_token({key: value for key, value in CLAIMS.items() if key != "sub"}), None),
+        (id_token({**CLAIMS, "sub": ""}), None),
+        (id_token({**CLAIMS, "sub": 42}), None),
+        (id_token({**CLAIMS, "sub": "x" * 256}), None),
+        (id_token({**CLAIMS, "sub": " padded"}), None),
+        (id_token({**CLAIMS, "sub": "line\nbreak"}), None),
+        ("a." + "A" * 70000 + ".c", None),
+        (id_token({**CLAIMS, "sub": "x" * 255}), {"subject": "x" * 255, "display_name": "ada"}),
+        (id_token({**CLAIMS, "aud": ["weave-cli"]}), {"subject": "subject-1", "display_name": "ada"}),
+        (
+            id_token({**CLAIMS, "preferred_username": "x" * 201, "email": "ada@example.com", "name": "Ada"}),
+            {"subject": "subject-1", "display_name": "ada@example.com"},
+        ),
+        (
+            id_token({**CLAIMS, "preferred_username": "  ", "email": 7, "name": "Ada Lovelace"}),
+            {"subject": "subject-1", "display_name": "Ada Lovelace"},
+        ),
+        (
+            id_token({key: value for key, value in CLAIMS.items() if key != "preferred_username"}),
+            {"subject": "subject-1", "display_name": None},
+        ),
+        (
+            id_token({**CLAIMS, "preferred_username": "bad\u0085name", "name": "Ada"}),
+            {"subject": "subject-1", "display_name": "Ada"},
+        ),
+    ],
+)
+def test_identity_hint_is_bounded_display_data_and_never_raises(token, expected):
+    auth, _ = modules()
+    hint = auth.identity_hint(token, config(auth))
+    if expected is None:
+        assert hint is None
+    else:
+        assert hint == {**expected, "issuer": "https://issuer.example", "provider_id": "test"}
+
+
+def test_status_reports_state_and_refresh_availability(tmp_path):
+    import time
+
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    session = auth.OAuthSession(settings, store)
+    keys = {"authenticated", "reauthentication_required", "provider", "target", "account", "expires_at"}
+
+    def record(**values):
+        store.save(settings.binding, credentials.CredentialRecord(binding=settings.binding, **values))
+        return session.status()
+
+    status = session.status()
+    assert keys <= set(status) and status["state"] == "signed_out" and status["refresh_available"] is False
+    pending = record(state="authenticating", expires_at=time.time() + 300)
+    assert pending["state"] == "in_progress" and pending["reauthentication_required"]
+    # A pending record past its own deadline (a crashed attempt, or one written before deadlines) is not in progress.
+    assert record(state="authenticating")["state"] == "signed_out"
+    assert record(state="authenticating", expires_at=time.time() - 1)["state"] == "signed_out"
+    signed_in = record(state="active", access_token="a", refresh_token="r", expires_at=time.time() + 300)
+    assert signed_in["state"] == "signed_in" and signed_in["refresh_available"] and signed_in["authenticated"]
+    no_refresh = record(state="active", access_token="a", expires_at=time.time() + 300)
+    assert no_refresh["state"] == "signed_in" and not no_refresh["refresh_available"]
+    expired = record(state="active", access_token="a", refresh_token="r", expires_at=1)
+    assert expired["state"] == "expired" and expired["refresh_available"] and not expired["authenticated"]
+    assert not expired["reauthentication_required"]
+    fenced = record(state="refreshing")
+    assert fenced["state"] == "expired" and not fenced["refresh_available"] and fenced["reauthentication_required"]
+    assert record(state="logged_out")["state"] == "signed_out"
+    assert "a" not in {str(value) for value in signed_in.values()}
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectError("offline"), httpx.ConnectTimeout("offline")])
+async def test_refresh_that_never_left_restores_the_credential(tmp_path, failure):
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    original = credentials.CredentialRecord(
+        binding=settings.binding,
+        state="active",
+        access_token="old-access",
+        refresh_token="old-refresh",
+        expires_at=0,
+        scopes=("openid",),
+    )
+    store.save(settings.binding, original)
+    online, posts = [False], []
+
+    def receive(request):
+        if request.method == "GET":
+            return discovery(request)
+        posts.append(request.content)
+        assert store.load(settings.binding).state == "refreshing"
+        if not online[0]:
+            raise failure
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "new-access",
+                "refresh_token": "new-refresh",
+                "token_type": "Bearer",
+                "expires_in": 300,
+                "scope": "openid",
+            },
+        )
+
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(receive))
+    with pytest.raises(auth.AuthError) as offline:
+        await session.get_access_token(settings.target)
+    assert offline.value.code == "WV-AUTH-OFFLINE" and offline.value.exit_code == 3
+    assert "old-refresh" not in str(offline.value)
+    restored = store.load(settings.binding)
+    assert restored.state == "active" and restored.refresh_token.get_secret_value() == "old-refresh"
+    assert restored.generation == original.generation
+    assert session.status()["state"] == "expired" and session.status()["refresh_available"]
+    online[0] = True
+    assert await session.get_access_token(settings.target) == "new-access"
+    assert len(posts) == 2 and all(b"old-refresh" in body for body in posts)
+
+
+async def test_offline_discovery_before_refresh_leaves_the_credential_untouched(tmp_path):
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    original = credentials.CredentialRecord(
+        binding=settings.binding, state="active", access_token="a", refresh_token="r", expires_at=0, scopes=("openid",)
+    )
+    store.save(settings.binding, original)
+
+    def receive(request):
+        raise httpx.ConnectError("offline")
+
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(receive))
+    with pytest.raises(auth.AuthError) as offline:
+        await session.get_access_token(settings.target)
+    assert offline.value.code == "WV-AUTH-OFFLINE"
+    assert store.load(settings.binding) == original
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        lambda request: httpx.Response(503, json={"error": "temporarily_unavailable"}),
+        lambda request: (_ for _ in ()).throw(httpx.ReadError("reset after send")),
+        lambda request: (_ for _ in ()).throw(httpx.RemoteProtocolError("truncated")),
+    ],
+)
+async def test_refresh_failure_after_sending_stays_fail_closed(tmp_path, outcome):
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    store.save(
+        settings.binding,
+        credentials.CredentialRecord(
+            binding=settings.binding,
+            state="active",
+            access_token="a",
+            refresh_token="r",
+            expires_at=0,
+            scopes=("openid",),
+        ),
+    )
+
+    def receive(request):
+        return discovery(request) if request.method == "GET" else outcome(request)
+
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(receive))
+    with pytest.raises(auth.AuthError) as failure:
+        await session.get_access_token(settings.target)
+    assert failure.value.code == "WV-AUTH-PROVIDER"
+    fence = store.load(settings.binding)
+    assert fence.state == "refreshing" and fence.refresh_token is None and fence.access_token is None
+
+
+async def test_shared_discovery_matches_session_discovery():
+    auth, _ = modules()
+    settings = config(auth)
+    metadata = await auth.discover_provider(settings, transport=httpx.MockTransport(discovery))
+    assert metadata["token_endpoint"] == "https://issuer.example/token"
+
+    def untrusted(request):
+        return httpx.Response(200, json={**discovery(request).json(), "revocation_endpoint": "https://evil.example/r"})
+
+    with pytest.raises(auth.AuthError) as failure:
+        await auth.discover_provider(settings, transport=httpx.MockTransport(untrusted))
+    assert failure.value.code == "WV-AUTH-TRUST"
+
+
+async def test_deeply_nested_provider_json_is_a_provider_failure():
+    auth, _ = modules()
+
+    def nested(request):
+        return httpx.Response(200, content=b"[" * 30000)
+
+    with pytest.raises(auth.AuthError) as failure:
+        await auth.discover_provider(config(auth), transport=httpx.MockTransport(nested))
+    assert failure.value.code == "WV-AUTH-PROVIDER" and failure.value.exit_code == 3
+
+
+async def test_failed_sign_in_does_not_stay_in_progress(tmp_path):
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    observed = []
+
+    def receive(request):
+        if request.method == "GET":
+            observed.append(auth.OAuthSession(settings, store).status()["state"])
+            return discovery(request)
+        return httpx.Response(400, json={"error": "access_denied"})
+
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(receive))
+    with pytest.raises(auth.AuthError) as failure:
+        await session.login(flow="device")
+    assert failure.value.code == "WV-AUTH-DENIED" and observed == ["in_progress"]
+    assert session.status()["state"] == "signed_out" and store.load(settings.binding).state == "logged_out"
+
+
+async def test_cancelled_sign_in_does_not_stay_in_progress(tmp_path):
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    opened = asyncio.Event()
+
+    def browser(url):
+        opened.set()
+
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(discovery))
+    pending = asyncio.create_task(session.login(flow="browser", browser=browser))
+    await asyncio.wait_for(opened.wait(), 5)
+    assert session.status()["state"] == "in_progress"
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert session.status()["state"] == "signed_out"
+
+
+async def test_abandoning_an_attempt_never_touches_a_newer_one(tmp_path):
+    import time
+
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    stale = credentials.CredentialRecord(binding=settings.binding, state="authenticating")
+    newer = credentials.CredentialRecord(binding=settings.binding, state="authenticating", expires_at=time.time() + 60)
+    store.save(settings.binding, newer)
+    await auth.OAuthSession(settings, store)._abandon(stale.generation)
+    assert store.load(settings.binding) == newer

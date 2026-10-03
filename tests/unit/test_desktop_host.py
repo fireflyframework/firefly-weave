@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -40,6 +41,8 @@ async def test_sidecar_emits_readiness_only_after_server_and_stops_on_parent_com
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
+        # Saved platforms come from this private directory, never the developer's own profiles.
+        env={**os.environ, "WEAVE_CONFIG_HOME": str(tmp_path / "config")},
     )
     try:
         assert child.stdout is not None
@@ -61,6 +64,19 @@ async def test_sidecar_emits_readiness_only_after_server_and_stops_on_parent_com
             )
             assert paired.status_code == 200
             assert (await client.get("/studio/session")).json()["paired"] is True
+            status = (await client.get("/studio/connection")).json()
+            assert status["store"] == {"available": True, "location": str(tmp_path / "config" / "profiles.json")}
+            assert status["configured"] is False
+            unpaired = await client.delete(
+                "/studio/session", headers={"Origin": origin, "X-Weave-CSRF": paired.json()["csrfToken"]}
+            )
+            assert unpaired.status_code == 204
+            # Desktop pairing is reusable: the native shell's reload pairs again with the same code.
+            again = await client.post(
+                "/studio/session", json={"code": bootstrap["pairing_code"]}, headers={"Origin": origin}
+            )
+            assert again.status_code == 200
+            assert again.json()["csrfToken"] != paired.json()["csrfToken"]
         assert child.stdin is not None
         if parent_eof:
             child.stdin.close()
@@ -164,3 +180,87 @@ def test_native_login_rejects_untrusted_destination_before_browser_or_output(mon
         desktop.run_login(Path("profile.json"))
     assert not opened
     assert not capsys.readouterr().out
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_desktop_uses_saved_platforms_unless_a_profile_file_is_given(tmp_path, monkeypatch, legacy):
+    from types import SimpleNamespace
+
+    from firefly_weave.sdk.profiles import ProfileStore
+    from firefly_weave.studio import desktop
+    from firefly_weave.studio.service import StudioProfile
+
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "index.html").write_text("<!doctype html><title>Studio</title>")
+    monkeypatch.setenv("WEAVE_CONFIG_HOME", str(tmp_path / "config"))
+    captured = []
+
+    class Server:
+        def __init__(self, config, options):
+            captured.append(options)
+
+        async def serve(self, sockets):
+            return None
+
+    monkeypatch.setattr(desktop, "DesktopServer", Server)
+    monkeypatch.setattr(desktop.threading, "Thread", lambda **kwargs: SimpleNamespace(start=lambda: None))
+    profile = StudioProfile(name="Legacy", base_url="https://api.example")
+    monkeypatch.setattr(desktop, "profile_session", lambda path: (profile, lambda: "token"))
+    desktop.run_desktop(tmp_path / "profile.json" if legacy else None, assets)
+    (options,) = captured
+    # The pairing code never leaves the native shell, so a reload may pair again in both modes.
+    assert options.open_login_browser is True and options.reusable_pairing is True
+    if legacy:
+        assert options.profile_store is None and options.profile is profile
+    else:
+        assert isinstance(options.profile_store, ProfileStore)
+        assert options.profile_store.path == tmp_path / "config" / "profiles.json"
+        assert options.reusable_pairing is True and options.profile is None
+
+
+def test_desktop_starts_offline_when_the_store_location_is_unusable(tmp_path, monkeypatch):
+    from firefly_weave.studio import desktop
+
+    monkeypatch.setenv("WEAVE_CONFIG_HOME", "relative/config")
+    assert desktop.saved_platforms() is None
+
+
+async def test_frozen_smoke_never_reads_the_developers_saved_platforms(tmp_path, monkeypatch, capsys):
+    import runpy
+
+    from firefly_weave.sdk.auth import LoginConfig
+    from firefly_weave.sdk.profiles import PlatformProfile, ProfileStore
+
+    tmp_path.chmod(0o700)
+    root = Path(__file__).resolve().parents[2]
+    # The developer's own configuration has an active platform; the smoke must not see it.
+    developer = tmp_path / "developer-config"
+    login = LoginConfig(
+        provider_id="acme",
+        issuer="https://login.example/realms/acme",
+        client_id="weave-cli",
+        target="https://weave.example",
+        account="prod",
+    )
+    store = ProfileStore(developer / "profiles.json")
+    store.save(PlatformProfile(name="prod", login=login, source="server"), activate=True)
+    before = store.path.read_bytes()
+    monkeypatch.setenv("WEAVE_CONFIG_HOME", str(developer))
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "index.html").write_text("<!doctype html><html><title>Studio</title></html>")
+    # Stands in for the frozen host: the smoke clears PYTHONPATH, so the wrapper sets the source tree.
+    host = tmp_path / "weave-studio-host"
+    host.write_text(
+        "#!/bin/sh\n"
+        f'PYTHONPATH="{root / "src"}" exec "{sys.executable}" -m firefly_weave.studio.desktop --assets "{assets}"\n'
+    )
+    host.chmod(0o700)
+    check = runpy.run_path(str(root / "desktop/scripts/smoke_sidecar.py"))["check"]
+    await check(host)
+    assert "passed" in capsys.readouterr().out
+    assert store.path.read_bytes() == before and sorted(p.name for p in developer.iterdir()) == [
+        "profiles.json",
+        "profiles.json.lock",
+    ]

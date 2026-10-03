@@ -29,6 +29,7 @@ from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from firefly_weave.persistence.migrations import migrate
+from firefly_weave.sdk.platform import local_client_sign_in
 from firefly_weave.settings import Settings
 
 
@@ -87,6 +88,8 @@ async def setup(output: Path) -> None:
             stream.write("WEAVE_SCHEDULER_DATABASE_URL=" + scheduler.render_as_string(hide_password=False) + "\n")
             stream.write("WEAVE_MIGRATION_DATABASE_URL=" + migration.render_as_string(hide_password=False) + "\n")
             stream.write("WEAVE_OIDC_PROVIDERS='" + json.dumps(providers, separators=(",", ":")) + "'\n")
+            # Public sign-in settings for people (weave-cli); the API publishes them without secrets.
+            stream.write("WEAVE_CLIENT_SIGN_IN='" + local_client_sign_in() + "'\n")
         finally:
             await control.dispose()
 

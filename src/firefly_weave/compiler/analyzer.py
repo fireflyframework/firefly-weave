@@ -18,9 +18,18 @@
 
 from __future__ import annotations
 
+import copy
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
+from firefly_weave.compiler.action_config import (
+    ACTION_CONFIG_CODES,
+    ActionConfigCheck,
+    ActionConfigIssue,
+    ActionConfigValidator,
+)
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot, FrozenDocument, ResourceKind
 from firefly_weave.compiler.expression_types import InferredType, infer_expression
 from firefly_weave.compiler.expressions import (
@@ -41,6 +50,17 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 
 _DEFAULT_LIMITS = Limits()
 _DEFAULT_SCHEMA_LIMITS = SchemaLimits()
+_POINTER = re.compile(r"^/spec(?:/(?:[^~/]|~[01])*)*$")
+_MESSAGES = {
+    "UNKNOWN_COMPATIBILITY": "Schema containment is unproved; runtime validation is required.",
+    "REFERENCE_PRESENCE": "Reference presence is unproved; runtime validation is required.",
+    "UNAVAILABLE_REFERENCE": "Referenced step does not dominate this expression in its lexical scope.",
+    "CATALOG_PENDING": "This reference is checked against the project catalog when the definition is compiled.",
+}
+
+
+def _message(code: str) -> str:
+    return _MESSAGES.get(code, "Definition violates the " + code.lower().replace("_", " ") + " contract.")
 
 
 def reference_available(step_id: str, completed: frozenset[str]) -> bool:
@@ -141,8 +161,17 @@ class _Analyzer:
         schema_limits: SchemaLimits,
         contract_limits: SchemaLimits,
         concurrency: int,
+        action_validators: Mapping[str, ActionConfigValidator] | None = None,
+        *,
+        catalog_absent: bool = False,
     ) -> None:
         self.source, self.catalog, self.strict = source, catalog, strict
+        self.action_validators = dict(action_validators or {})
+        # Offline authoring: every catalog reference is pending rather than unknown.
+        self.catalog_absent = catalog_absent
+        self.pending: list[Diagnostic] = []
+        # Steps whose output is unconstrained only because the catalog is absent.
+        self.pending_outputs: set[str] = set()
         self.limits, self.schema_limits, self.contract_limits = limits, schema_limits, contract_limits
         self.concurrency = concurrency
         self.issues: list[Diagnostic] = []
@@ -196,11 +225,7 @@ class _Analyzer:
                 severity=severity_for_unknown(self.strict) if unknown else "error",
                 stage=stage,
                 path=path,
-                message={
-                    "UNKNOWN_COMPATIBILITY": "Schema containment is unproved; runtime validation is required.",
-                    "REFERENCE_PRESENCE": "Reference presence is unproved; runtime validation is required.",
-                    "UNAVAILABLE_REFERENCE": "Referenced step does not dominate this expression in its lexical scope.",
-                }.get(code, "Definition violates the " + code.lower().replace("_", " ") + " contract."),
+                message=_message(code),
                 related=[] if related is None else [RelatedLocation(path=related, source=self.location(related))],
             )
         )
@@ -225,7 +250,7 @@ class _Analyzer:
             self.add(issue, path)
         return not issues
 
-    def compatibility(self, source: JsonObject, target: JsonObject, path: str) -> None:
+    def compatibility(self, source: JsonObject, target: JsonObject, path: str, *, quiet: bool = False) -> None:
         try:
             result = check_compatibility(source, target, self.bundle, limits=self.schema_limits)
         except TypeCheckLimit:
@@ -234,11 +259,42 @@ class _Analyzer:
         if result == "incompatible":
             self.issue("TYPE_MISMATCH", path)
         elif result == "unknown":
-            self.issue("UNKNOWN_COMPATIBILITY", path, unknown=True)
+            if not quiet:
+                self.issue("UNKNOWN_COMPATIBILITY", path, unknown=True)
             self.guard(path, "compatibility", target)
+
+    def reads_pending(self, expression: JsonObject) -> bool:
+        """Whether a value reads an output that only the absent catalog leaves unconstrained."""
+        if not self.pending_outputs:
+            return False
+        stack = [expression]
+        while stack:
+            node = stack.pop()
+            if "ref" in node:
+                segments = pointer_segments(cast(str, node["ref"]))
+                if not segments or (
+                    segments[0] == "steps" and (len(segments) == 1 or segments[1] in self.pending_outputs)
+                ):
+                    return True
+            stack.extend(child for child, _ in _children(node, ""))
+        return False
 
     def resolve(self, kind: ResourceKind, reference: str, path: str) -> CatalogResource | None:
         resource = self.catalog.resolve(kind, reference)
+        if resource is None and self.catalog_absent:
+            # Without a catalog nothing can be resolved, so nothing is unknown yet; analysis continues
+            # with an unconstrained output and complete compilation reports the real resolution.
+            self.pending.append(
+                Diagnostic(
+                    code="WV-COMP-CATALOG_PENDING",
+                    severity="info",
+                    stage="resolution",
+                    path=path,
+                    message=_message("CATALOG_PENDING"),
+                    source=self.location(path),
+                )
+            )
+            return None
         if resource is None:
             code = {
                 "Action": "UNKNOWN_ACTION",
@@ -290,6 +346,7 @@ class _Analyzer:
             self.resolve("Connector", cast(str, requirement["connector"]), base + "/connection/connector")
         implementation = cast(JsonObject, spec["implementation"])
         descriptor = None
+        validator: ActionConfigValidator | None = None
         if implementation["kind"] == "worker":
             reference = f"{implementation['taskType']}@{implementation['taskVersion']}"
             task = self.resolve("TaskCapability", reference, base + "/implementation")
@@ -315,6 +372,10 @@ class _Analyzer:
                     )
                     if validate_payload(config_schema, implementation.get("config", {}), self.bundle):
                         self.issue("CONFIG_CONTRACT", base + "/implementation/config")
+                    elif not dependency:
+                        # Only the exact installed manifest selects trusted checks; published
+                        # dependencies were checked when they were published.
+                        validator = self.action_validators.get(connector.digest)
         if descriptor is None or not valid:
             return
         descriptor = cast(JsonObject, descriptor)
@@ -328,6 +389,40 @@ class _Analyzer:
             self.issue("SIDE_EFFECT_CONTRACT", base + "/sideEffect")
         if cast(int, spec["timeoutSeconds"]) > cast(int, descriptor["timeoutSeconds"]):
             self.issue("TIMEOUT_CONTRACT", base + "/timeoutSeconds")
+        if validator is not None:
+            self.action_config(validator, implementation, spec, base)
+
+    def action_config(
+        self, validator: ActionConfigValidator, implementation: JsonObject, spec: JsonObject, base: str
+    ) -> None:
+        config_path = base + "/implementation/config"
+        check = ActionConfigCheck(
+            action=cast(str, implementation["action"]),
+            config=copy.deepcopy(implementation.get("config", {})),
+            spec=copy.deepcopy(spec),
+            schemas=copy.deepcopy(self.bundle),
+        )
+        try:
+            issues = list(validator(check))
+        except Exception:
+            # Trusted descriptor code still fails closed with a stable, non-revealing diagnostic.
+            self.issue("CONFIG_CONTRACT", config_path)
+            return
+        for item in issues[: self.limits.max_diagnostics]:
+            if not isinstance(item, ActionConfigIssue):
+                self.issue("CONFIG_CONTRACT", config_path)
+                continue
+            valid_path = isinstance(item.path, str) and _POINTER.fullmatch(item.path) is not None
+            message = item.message if isinstance(item.message, str) and item.message.strip() else ""
+            self.add(
+                Diagnostic(
+                    code="WV-COMP-" + (item.code if item.code in ACTION_CONFIG_CODES else "CONFIG_CONTRACT"),
+                    severity="warning" if item.severity == "warning" else "error",
+                    stage="semantic",
+                    path=base + item.path.removeprefix("/spec") if valid_path else config_path,
+                    message=message[:1000] or "Definition violates the connector configuration contract.",
+                )
+            )
 
     def preflight(self, steps: list[JsonObject], path: str, depth: int = 1) -> bool:
         for i, step in enumerate(steps):
@@ -430,7 +525,7 @@ class _Analyzer:
             self.operands(expression, path, visible)
             result = self.infer(expression, visible)
             if target is not None:
-                self.compatibility(result.schema, target, path)
+                self.compatibility(result.schema, target, path, quiet=self.reads_pending(expression))
             return result.schema
         except ExpressionFailure as failure:
             self.add(
@@ -465,7 +560,8 @@ class _Analyzer:
             if result.classification == "missing" and not handled:
                 self.issue("MISSING_REFERENCE", path)
             elif result.may_be_missing and not handled:
-                self.issue("REFERENCE_PRESENCE", path, unknown=True)
+                if not self.reads_pending(expression):
+                    self.issue("REFERENCE_PRESENCE", path, unknown=True)
                 self.guard(path, "reference_presence", result.schema)
             return
         children = _children(expression, path)
@@ -480,11 +576,15 @@ class _Analyzer:
             result = self.infer(child, visible)
             inferred.append(result)
             if name in {"and", "or", "not"}:
-                self.compatibility(result.schema, {"type": "boolean"}, child_path)
+                self.compatibility(result.schema, {"type": "boolean"}, child_path, quiet=self.reads_pending(child))
             if name == "coalesce" and result.classification == "known" and not result.may_be_missing:
                 types = schema_types(result.schema)
                 if ("const" in result.schema and result.schema["const"] is not None) or (types and "null" not in types):
                     break
+            if name == "coalesce" and self.reads_pending(child):
+                # The catalog may prove this operand present and non-null, leaving the remaining
+                # fallbacks unreachable; complete compilation checks them against the real output.
+                break
             if name in {"and", "or"} and "literal" in child and child["literal"] is (name == "or"):
                 break
         if name in {"lt", "lte", "gt", "gte"}:
@@ -497,7 +597,8 @@ class _Analyzer:
                     or (kinds[0] <= numeric and kinds[1] == {"string"})
                     or (kinds[1] <= numeric and kinds[0] == {"string"})
                 )
-                self.issue("TYPE_MISMATCH" if definite else "UNKNOWN_COMPATIBILITY", path, unknown=not definite)
+                if definite or not any(self.reads_pending(child) for child, _ in children):
+                    self.issue("TYPE_MISMATCH" if definite else "UNKNOWN_COMPATIBILITY", path, unknown=not definite)
                 if not definite:
                     self.guard(path, "operator_operands", {})
 
@@ -532,6 +633,8 @@ class _Analyzer:
             if kind == "transform":
                 output = self.expression(cast(JsonObject, step["value"]), location + "/value", visible)
                 self.guard(location + "/value", "transform_output", output)
+                if self.reads_pending(cast(JsonObject, step["value"])):
+                    self.pending_outputs.add(identifier)
             elif kind == "action":
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
@@ -544,6 +647,12 @@ class _Analyzer:
                     self.guard(location, "action_output", output)
                 else:
                     output = {}
+                    if self.catalog_absent:
+                        self.pending_outputs.add(identifier)
+                        slot = step.get("connection")
+                        if slot is not None and slot not in self.connections:
+                            # An undeclared slot fails complete compilation whatever the Action requires.
+                            self.issue("CONNECTION", location + "/connection")
             elif kind == "humanTask":
                 self.expression(
                     cast(JsonObject, step["title"]),
@@ -584,6 +693,8 @@ class _Analyzer:
                         self.expression(expression, branch_path + "/output", branch_visible) if branch_completes else {}
                     )
                     self.guard(branch_path + "/output", "branch_output", branch_schema)
+                    if branch_completes and self.reads_pending(expression):
+                        self.pending_outputs.add(identifier)
                     branches.append(
                         AnalyzedBranch(
                             name,
@@ -625,22 +736,45 @@ class _Analyzer:
             reachable = reachable and completes
         return tuple(nodes), visible, reachable
 
+    def settle_pending(self) -> None:
+        """Catalog-pending notes are the lowest priority: they only fill capacity that findings left.
+
+        Overflowing notes are counted as omitted. A slot is reserved for the truncation marker so
+        it never replaces a finding, unless findings alone already fill the whole budget.
+        """
+        pending, self.pending = self.pending, []
+        room = self.limits.max_diagnostics - len(self.issues)
+        if len(pending) > room:
+            kept = max(room - 1, 0)
+            self.omitted_count += len(pending) - kept
+            pending = pending[:kept]
+        self.issues.extend(pending)
+        self.issues.sort(key=self.order)
+
+    def truncation_marker(self) -> Diagnostic:
+        return Diagnostic(
+            code="WV-COMP-DIAGNOSTICS_TRUNCATED",
+            severity="error" if self.error_count else "warning",
+            stage="semantic",
+            path="",
+            message=f"{self.omitted_count} diagnostics omitted.",
+        )
+
     def finish(
         self,
         kind: Literal["Workflow", "Action", "Connector"] | None,
         definition: FrozenDocument | None,
         graph: tuple[AnalyzedStep, ...] = (),
     ) -> AnalysisResult:
+        self.settle_pending()
         issues = list(self.issues)
         if self.omitted_count:
-            self.omitted_count += 1
-            issues[-1] = Diagnostic(
-                code="WV-COMP-DIAGNOSTICS_TRUNCATED",
-                severity="error" if self.error_count else "warning",
-                stage="semantic",
-                path="",
-                message=f"{self.omitted_count} diagnostics omitted.",
-            )
+            if len(issues) < self.limits.max_diagnostics:
+                # Only catalog-pending overflow leaves room: the marker takes the reserved slot.
+                issues.append(self.truncation_marker())
+            else:
+                self.omitted_count += 1
+                issues[-1] = self.truncation_marker()
         return AnalysisResult(
             kind,
             definition,
@@ -725,11 +859,45 @@ def analyze(
     schema_limits: SchemaLimits = _DEFAULT_SCHEMA_LIMITS,
     contract_limits: SchemaLimits = DEFAULT_CONTRACT_LIMITS,
     max_parallel_concurrency: int = 1000,
+    action_validators: Mapping[str, ActionConfigValidator] | None = None,
 ) -> AnalysisResult:
     """Full definition analysis. A successful result is not an activation readiness claim."""
     if type(max_parallel_concurrency) is not int or max_parallel_concurrency < 1:
         raise ValueError("max_parallel_concurrency must be a positive integer")
-    analyzer = _Analyzer(source, catalog, strict, limits, schema_limits, contract_limits, max_parallel_concurrency)
+    analyzer = _Analyzer(
+        source,
+        catalog,
+        strict,
+        limits,
+        schema_limits,
+        contract_limits,
+        max_parallel_concurrency,
+        action_validators,
+    )
+    try:
+        return analyzer.run()
+    except (ExpressionFailure, RecursionError) as failure:
+        analyzer.issue("RESOURCE_LIMIT", failure.path if isinstance(failure, ExpressionFailure) else "")
+        return analyzer.finish(analyzer.kind, analyzer.definition)
+
+
+def analyze_authoring(
+    source: ParsedSource,
+    *,
+    limits: Limits = _DEFAULT_LIMITS,
+    schema_limits: SchemaLimits = _DEFAULT_SCHEMA_LIMITS,
+    contract_limits: SchemaLimits = DEFAULT_CONTRACT_LIMITS,
+) -> AnalysisResult:
+    """Offline authoring analysis: complete flow, dominance and type checks without a catalog.
+
+    Every Action, Connector, task capability and adapter reference reports
+    ``WV-COMP-CATALOG_PENDING`` at info severity instead of an unknown-resource error, and its
+    output stays unconstrained, so references into it never produce type errors. Callers must
+    not lower the result: it is an authoring aid, not a compilation.
+    """
+    analyzer = _Analyzer(
+        source, CatalogSnapshot.empty(), False, limits, schema_limits, contract_limits, 1000, catalog_absent=True
+    )
     try:
         return analyzer.run()
     except (ExpressionFailure, RecursionError) as failure:

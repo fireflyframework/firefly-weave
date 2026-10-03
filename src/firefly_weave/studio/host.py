@@ -24,7 +24,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -39,10 +39,39 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from firefly_weave.compiler.api import validate_source
+from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.sdk.auth import AuthError
-from firefly_weave.studio.connection import ConnectionConfigure, StudioConnectionService
+from firefly_weave.sdk.sign_in import WorkspaceOption
+from firefly_weave.studio.connection import (
+    ConnectionConfigure,
+    DiscoverRequest,
+    LoginStart,
+    PreferencesUpdate,
+    ProfileCreate,
+    ProfileRemoval,
+    ProfileSelection,
+    SignOut,
+    StudioConnectionService,
+    request_problem,
+)
 from firefly_weave.studio.service import BODY_LIMIT, COOKIE, StudioOptions, StudioService, problem, secret_matches
+
+
+async def read_body[Body: BaseModel](request: Request, model: type[Body], *, optional: bool = False) -> Body | None:
+    """A strict, bounded JSON body; an empty optional body takes the model defaults."""
+    raw = await request.body()
+    if len(raw) > 65536:
+        return None
+    if optional and not raw.strip():
+        return model()
+    try:
+        return model.model_validate_json(raw)
+    except (ValidationError, ValueError):
+        return None
+
+
+def _name(value: Any) -> str:
+    return value if isinstance(value, str) else ""
 
 
 class PairRequest(BaseModel):
@@ -63,6 +92,95 @@ class ValidationRequest(BaseModel):
     format: Literal["yaml", "json"]
     filename: str | None = Field(default=None, max_length=256)
     strict: bool = False
+
+
+class OpenAPIInventoryRequest(BaseModel):
+    """Pasted or uploaded OpenAPI text; there is deliberately no URL field (no fetch from Studio's host)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source: str = Field(max_length=BODY_LIMIT)
+    format: Literal["yaml", "json"]
+    relaxations: dict[str, Any] | None = None
+
+
+class OpenAPIImportRequest(OpenAPIInventoryRequest):
+    """Either a reviewed policy, or a selection the host scaffolds a policy for; built-in Actions only."""
+
+    policy: dict[str, Any] | None = None
+    selection: list[str] | None = Field(default=None, min_length=1, max_length=100)
+    name: str | None = Field(default=None, max_length=64)
+    target: Literal["builtin"] = "builtin"
+
+    def mixed(self) -> bool:
+        """A reviewed policy carries its own operations, name and relaxations; never ignore fields silently."""
+        return self.policy is not None and (
+            self.selection is not None or self.relaxations is not None or self.name is not None
+        )
+
+
+class HttpActionBuild(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    request: dict[str, Any]
+
+
+LOCAL_WORK_SECONDS = 30
+LOCAL_WORKERS = 2
+
+
+class _LocalWork:
+    """Worker slots for local analysis. A thread cannot be cancelled, so the thread itself frees its
+    slot when the work ends, not the request that gave up waiting: abandoned analyses stay bounded."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self.lock = threading.Lock()
+        self.running = 0
+
+    def claim(self) -> bool:
+        with self.lock:
+            if self.running >= LOCAL_WORKERS:
+                return False
+            self.running += 1
+            return True
+
+    def release(self) -> None:
+        with self.lock:
+            self.running -= 1
+
+
+_LOCAL_WORK = _LocalWork()
+
+
+def _settled(future: asyncio.Future[Any]) -> None:
+    # Retrieve the outcome so an abandoned analysis that failed is not reported as unhandled.
+    if not future.cancelled():
+        future.exception()
+
+
+async def local_work(
+    work: Any, *, slow: str = "The document took too long to analyze; select fewer operations"
+) -> Response:
+    """Run pure, CPU-bound authoring work off the event loop with a bounded wait; never any I/O."""
+    from firefly_weave.compiler.canonical import canonical_bytes
+
+    if not _LOCAL_WORK.claim():
+        return problem(503, "WV-STUDIO-BUSY", "Studio is still analyzing an earlier document; try again shortly")
+
+    def run() -> Any:
+        try:
+            return work()
+        finally:
+            _LOCAL_WORK.release()
+
+    future = asyncio.get_running_loop().run_in_executor(None, run)
+    future.add_done_callback(_settled)
+    try:
+        async with asyncio.timeout(LOCAL_WORK_SECONDS):
+            value = await asyncio.shield(future)
+    except TimeoutError:
+        return problem(503, "WV-STUDIO-BUSY", slow)
+    return Response(canonical_bytes(value), media_type="application/json")
 
 
 @rest_controller
@@ -95,7 +213,46 @@ class StudioController:
 
     @get_mapping("/studio/connection")
     async def connection_status(self, request: Request) -> JSONResponse:
-        return JSONResponse(self.connection.status())
+        return JSONResponse(await self.connection.status())
+
+    @post_mapping("/studio/connection/discover")
+    async def discover_platform(self, request: Request) -> Response:
+        body = await read_body(request, DiscoverRequest)
+        if body is None:
+            return request_problem("Enter the server address of your platform.")
+        return await self.connection.discover(body)
+
+    @post_mapping("/studio/connection/profiles")
+    async def save_platform(self, request: Request) -> Response:
+        body = await read_body(request, ProfileCreate)
+        if body is None:
+            return request_problem("Review the platform details and confirm that you trust them before saving.")
+        return await self.connection.create_profile(body)
+
+    @post_mapping("/studio/connection/activate")
+    async def activate_platform(self, request: Request) -> Response:
+        body = await read_body(request, ProfileSelection)
+        if body is None:
+            return request_problem("Choose a saved platform.")
+        return await self.connection.activate(body)
+
+    @post_mapping("/studio/connection/disconnect")
+    async def disconnect_platform(self, request: Request) -> Response:
+        return await self.connection.disconnect()
+
+    @post_mapping("/studio/connection/remove")
+    async def remove_platform(self, request: Request) -> Response:
+        body = await read_body(request, ProfileRemoval)
+        if body is None:
+            return request_problem("Choose a saved platform to remove.")
+        return await self.connection.remove(body)
+
+    @post_mapping("/studio/connection/logout")
+    async def sign_out(self, request: Request) -> Response:
+        body = await read_body(request, SignOut, optional=True)
+        if body is None:
+            return request_problem("Studio sent an incomplete request. Refresh Studio and try again.")
+        return await self.connection.logout(body)
 
     @post_mapping("/studio/connection/configure")
     async def configure_connection(self, request: Request) -> Response:
@@ -116,7 +273,10 @@ class StudioController:
 
     @post_mapping("/studio/connection/login/start")
     async def start_login(self, request: Request) -> Response:
-        return await self.connection.start()
+        body = await read_body(request, LoginStart, optional=True)
+        if body is None:
+            return request_problem("Choose how to sign in: in the browser or with a code.")
+        return await self.connection.start(body.flow, body.switch_account)
 
     @get_mapping("/studio/connection/login/{identifier}")
     async def login_status(self, request: Request) -> Response:
@@ -125,6 +285,17 @@ class StudioController:
     @post_mapping("/studio/connection/login/{identifier}/cancel")
     async def cancel_login(self, request: Request) -> Response:
         return await self.connection.cancel(request.path_params["identifier"])
+
+    @post_mapping("/studio/connection/login/{identifier}/open")
+    async def open_login(self, request: Request) -> Response:
+        return await self.connection.open_login(request.path_params["identifier"])
+
+    @post_mapping("/studio/preferences")
+    async def save_preferences(self, request: Request) -> Response:
+        body = await read_body(request, PreferencesUpdate)
+        if body is None:
+            return request_problem("Choose whether Studio asks how to start or starts working locally.")
+        return await self.connection.save_preferences(body)
 
     @post_mapping("/studio/scope")
     async def select_scope(self, request: Request) -> Response:
@@ -143,33 +314,38 @@ class StudioController:
             return response
         try:
             identity = json.loads(bytes(response.body))
-            allowed = any(
-                w["id"] == str(selected.tenantId)
-                and p["id"] == str(selected.projectId)
-                and e["id"] == str(selected.environmentId)
-                for w in identity["workspaces"]
-                for p in w["projects"]
-                for e in p["environments"]
+            found = next(
+                (
+                    (w, p, e)
+                    for w in identity["workspaces"]
+                    for p in w["projects"]
+                    for e in p["environments"]
+                    if w["id"] == str(selected.tenantId)
+                    and p["id"] == str(selected.projectId)
+                    and e["id"] == str(selected.environmentId)
+                ),
+                None,
             )
         except (ValueError, KeyError, TypeError):
             return problem(502, "WV-STUDIO-IDENTITY", "Platform discovery returned an incompatible response")
-        if not allowed:
+        if found is None:
             return problem(403, "WV-STUDIO-SCOPE", "This environment is not in your authorized workspace list")
         if generation != self.service.connection_generation:
             return problem(
                 409, "WV-STUDIO-CONNECTION-CHANGED", "Connection changed; choose a scope from the new profile"
             )
-        self.service.connection_generation += 1
-        profile = self.service.options.profile
-        assert profile is not None
-        self.service.options.profile = profile.model_copy(
-            update={
-                "tenant_id": selected.tenantId,
-                "project_id": selected.projectId,
-                "environment_id": selected.environmentId,
-            }
-        )
-        return JSONResponse(self.service.session_payload(True))
+        tenant, project, environment = (_name(level.get("name")) for level in found)
+        # Names are for display only; ones a profile cannot store safely are left out.
+        selection = WorkspaceOption(
+            tenant_id=selected.tenantId,
+            tenant_name=tenant,
+            project_id=selected.projectId,
+            project_name=project,
+            environment_id=selected.environmentId,
+            environment_name=environment,
+            label=f"{tenant} / {project} / {environment}",
+        ).selection()
+        return await self.connection.apply_scope(generation, selection)
 
     @post_mapping("/studio/local/validate")
     async def validate(self, request: Request) -> Response:
@@ -177,8 +353,81 @@ class StudioController:
             body = ValidationRequest.model_validate_json(await request.body())
         except ValidationError:
             return problem(422, "WV-STUDIO-REQUEST", "Provide a bounded source string and YAML or JSON format")
-        result = validate_source(body.source, format=body.format, filename=body.filename)
-        return Response(result.to_bytes(), media_type="application/json")
+        # Flow and type analysis of a bounded document can take seconds: never on the event loop.
+        # The result is already canonical JSON, so re-encoding it returns the same bytes.
+        return await local_work(
+            lambda: json.loads(validate_authoring(body.source, format=body.format, filename=body.filename).to_bytes()),
+            slow="Checking this definition took too long; simplify it and try again",
+        )
+
+    @post_mapping("/studio/local/openapi/inventory")
+    async def openapi_inventory(self, request: Request) -> Response:
+        from firefly_weave.sdk.openapi_import import inventory
+
+        try:
+            body = OpenAPIInventoryRequest.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(422, "WV-STUDIO-REQUEST", "Paste or upload an OpenAPI document as JSON or YAML text")
+
+        def work() -> Any:
+            listing = inventory(body.source, source_format=body.format, relaxations=body.relaxations)
+            return listing.model_dump(by_alias=True, mode="json")
+
+        return await local_work(work)
+
+    @post_mapping("/studio/local/openapi/import")
+    async def openapi_import(self, request: Request) -> Response:
+        from firefly_weave.sdk.openapi_import import import_openapi, init_policy
+
+        try:
+            body = OpenAPIImportRequest.model_validate_json(await request.body())
+        except ValidationError:
+            body = None
+        if body is None or body.mixed():
+            return problem(
+                422, "WV-STUDIO-REQUEST", "Provide the OpenAPI text and a reviewed policy or a selection of operations"
+            )
+
+        def work() -> Any:
+            policy, notes = body.policy, []
+            if policy is None:
+                scaffold = init_policy(
+                    body.source,
+                    body.selection,
+                    source_format=body.format,
+                    relaxations=body.relaxations,
+                    name=body.name,
+                )
+                if not scaffold.ok or scaffold.policy is None:
+                    return {
+                        "ok": False,
+                        "actions": [],
+                        "policy": None,
+                        "diagnostics": [d.model_dump(by_alias=True, mode="json") for d in scaffold.diagnostics],
+                    }
+                policy, notes = scaffold.policy, scaffold.diagnostics
+            result = import_openapi(
+                body.source, None, policy, source_format=body.format, target="builtin", all_diagnostics=True
+            )
+            seen = {(d.code, d.path) for d in result.diagnostics}
+            diagnostics = list(result.diagnostics) + [d for d in notes if (d.code, d.path) not in seen]
+            return {
+                **result.model_dump(by_alias=True, mode="json", exclude={"diagnostics", "connector", "package"}),
+                "policy": policy,
+                "diagnostics": [d.model_dump(by_alias=True, mode="json") for d in diagnostics],
+            }
+
+        return await local_work(work)
+
+    @post_mapping("/studio/local/http-action")
+    async def http_action(self, request: Request) -> Response:
+        from firefly_weave.sdk.http_actions import author_http_action
+
+        try:
+            body = HttpActionBuild.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(422, "WV-STUDIO-REQUEST", "Describe the HTTP request to turn into an action")
+        return await local_work(lambda: author_http_action(body.request).model_dump(by_alias=True, mode="json"))
 
 
 class StudioBoundary:

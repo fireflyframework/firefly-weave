@@ -23,6 +23,7 @@ import inspect
 import re
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,11 +37,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from firefly_weave import __version__
+from firefly_weave.contracts.connector_descriptors import ADAPTER
 from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.sdk.auth import AuthError
 from firefly_weave.sdk.credentials import CredentialError
 
 if TYPE_CHECKING:
+    from firefly_weave.sdk.profiles import ProfileStore
     from firefly_weave.studio.connection import StudioConnectionService
 
 BODY_LIMIT = 2 * 1024 * 1024
@@ -67,11 +70,19 @@ STUDIO_FAMILIES = frozenset(
         "email_receipts",
         "email_tokens",
         "connections",
+        "connector_descriptors",
         "workers",
         "environments",
         "incidents",
+        # Draft save/retire and Simulate are authorized server-side like every other family.
+        "drafts",
+        "debug",
     }
 )
+# Single read operations from families that otherwise stay operator-only: releases.create
+# registers image identities and remains a CLI/operator step.
+STUDIO_OPERATIONS = frozenset({"releases.list", "releases.read"})
+CATALOG_COLLECTIONS = frozenset({"drafts", "workflows", "actions", "connectors"})
 
 
 class StudioProfile(BaseModel):
@@ -128,8 +139,16 @@ class StudioOptions:
     token_provider: Any = field(default=None, repr=False)
     transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
     open_login_browser: bool = False
+    # Saved platforms mode: the shared profile store decides and remembers the connection.
+    profile_store: ProfileStore | None = field(default=None, repr=False)
+    # Desktop only: the native shell keeps the code, so it may pair again during the host lifetime.
+    reusable_pairing: bool = False
+    # Client configuration, provider discovery and sign-in requests; None uses the network.
+    sign_in_transport: Callable[[], httpx.AsyncBaseTransport] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
+        if self.profile_store is not None and (self.profile is not None or self.token_provider is not None):
+            raise ValueError("Use saved platforms or an explicit Studio profile, not both")
         target = urlsplit(self.origin)
         if (
             target.scheme != "http"
@@ -165,7 +184,7 @@ class StudioService:
         self.csrf = ""
         self.pairing_deadline = time.monotonic() + 300
         self.session_deadline = 0.0
-        self.pairing_attempts = 0
+        self.pairing_failures = 0
         self.paired_once = False
         self.client = httpx.AsyncClient(
             timeout=30, follow_redirects=False, trust_env=False, transport=options.transport
@@ -195,13 +214,15 @@ class StudioService:
         return result
 
     def pair(self, code: str) -> Response:
-        self.pairing_attempts += 1
+        # Browser mode: one use within 300 s. Desktop mode: the native shell may pair again (for
+        # example after the 8 h session ends); every success rotates the session and CSRF secrets.
+        single_use = not self.options.reusable_pairing
         if (
-            self.paired_once
-            or self.pairing_attempts > 10
-            or time.monotonic() >= self.pairing_deadline
+            self.pairing_failures >= 10
+            or (single_use and (self.paired_once or time.monotonic() >= self.pairing_deadline))
             or not secret_matches(code, self.options.pairing_code)
         ):
+            self.pairing_failures += 1
             return problem(
                 403, "WV-STUDIO-PAIRING", "Pairing code is invalid or expired; restart Studio for a new code"
             )
@@ -216,7 +237,9 @@ class StudioService:
         profile = self.options.profile
         assert profile is not None
         for operation in OPERATIONS.values():
-            if operation.method != method or operation.id.split(".")[0] not in STUDIO_FAMILIES:
+            if operation.method != method or (
+                operation.id.split(".")[0] not in STUDIO_FAMILIES and operation.id not in STUDIO_OPERATIONS
+            ):
                 continue
             names = re.findall(r"\{([^}]+)\}", operation.canonical_path)
             pattern = re.escape(operation.canonical_path)
@@ -233,26 +256,30 @@ class StudioService:
             ):
                 if name in values and (selected is None or values[name] != str(selected)):
                     return 403
-            # All variable segments are resource IDs or the finite catalog kind.
-            for name, value in values.items():
-                if name == "collection":
-                    if value not in {"drafts", "workflows", "actions", "connectors"}:
-                        return 404
-                else:
-                    try:
-                        UUID(value)
-                    except ValueError:
-                        return 404
-            return 200
+            # Variable segments are resource IDs, the finite catalog kind or a bounded adapter
+            # name. A segment that fits another operation's template keeps matching (for example
+            # /connector-descriptors also fits the {collection} template).
+            if all(self.segment(name, value) for name, value in values.items()):
+                return 200
         return 404
+
+    @staticmethod
+    def segment(name: str, value: str) -> bool:
+        if name == "collection":
+            return value in CATALOG_COLLECTIONS
+        if name == "adapter":
+            return ADAPTER.fullmatch(value) is not None
+        try:
+            UUID(value)
+        except ValueError:
+            return False
+        return True
 
     async def bridge(self, request: Request, path: str) -> Response:
         generation = self.connection_generation
         profile = self.options.profile
         if profile is None:
-            return problem(
-                409, "WV-STUDIO-OFFLINE", "Select a platform profile and restart Studio to use connected operations"
-            )
+            return problem(409, "WV-STUDIO-OFFLINE", "Connect to a platform in Settings to use connected operations")
         if any(part in path for part in ("%", "\\", "?", "#", "..")):
             return problem(404, "WV-STUDIO-ROUTE", "Unknown platform operation")
         status = self.check_scope(path, request.method)

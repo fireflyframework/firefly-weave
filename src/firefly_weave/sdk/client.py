@@ -40,6 +40,7 @@ from firefly_weave.contracts.catalog import (
     RetirementRequest,
 )
 from firefly_weave.contracts.compatibility import CompatibilityReport
+from firefly_weave.contracts.connector_descriptors import ADAPTER, ConnectorDescriptorView
 from firefly_weave.contracts.connectors import ConnectionRequest, ConnectionRevision, ConnectionTestResult
 from firefly_weave.contracts.human_tasks import (
     AssignmentBinding,
@@ -142,7 +143,7 @@ class WeaveClient:
         self,
         base_url: str,
         credential_provider: Callable[[], str] | AsyncTokenProvider,
-        scope: Scope,
+        scope: Scope | None,
         *,
         timeout: float = 30,
         transport: httpx.AsyncBaseTransport | None = None,
@@ -206,6 +207,7 @@ class WeaveClient:
         revision: int | None = None,
         idempotency_key: str | None = None,
         query: dict[str, str | int] | None = None,
+        adapter: str | None = None,
     ) -> Any:
         """Typed registry boundary also used by the thin CLI; no arbitrary URL input."""
         import httpx
@@ -213,16 +215,20 @@ class WeaveClient:
         if not self._entered or self.closed:
             raise RuntimeError("Use the client in an active async context")
         spec = OPERATIONS[operation]
+        # Without a scope only scope-free operations (for example identity.read) resolve.
         values = {
-            "tenant": self.scope.tenant_id,
-            "project": self.scope.project_id,
-            "environment": self.scope.environment_id,
+            "tenant": self.scope.tenant_id if self.scope else None,
+            "project": self.scope.project_id if self.scope else None,
+            "environment": self.scope.environment_id if self.scope else None,
             "identifier": identifier,
             "state_id": state_id,
             "collection": collection,
+            "adapter": adapter,
         }
         if collection is not None and collection not in {"drafts", "workflows", "actions", "connectors"}:
             raise ValueError("Unknown catalog collection")
+        if adapter is not None and not ADAPTER.fullmatch(adapter):
+            raise ValueError("Invalid connector adapter name")
         import re
 
         if any(values[name] is None for name in re.findall(r"{([^}]+)}", spec.path)):
@@ -350,6 +356,18 @@ class WeaveClient:
 
     async def schemas(self) -> dict[str, JsonObject]:
         return cast(dict[str, JsonObject], await self.invoke("schemas.read"))
+
+    async def list_connector_descriptors(
+        self, *, limit: int = 50, cursor: str | None = None
+    ) -> Page[ConnectorDescriptorView]:
+        """Installed connector descriptors, with the exact manifest to publish for each adapter."""
+        return cast(
+            Page[ConnectorDescriptorView],
+            await self.invoke("connector_descriptors.list", query=self._page(limit, cursor)),
+        )
+
+    async def read_connector_descriptor(self, adapter: str) -> ConnectorDescriptorView:
+        return cast(ConnectorDescriptorView, await self.invoke("connector_descriptors.read", adapter=adapter))
 
     async def save_draft(self, identifier: UUID, document: JsonObject, *, revision: int | None = None) -> Draft:
         return cast(

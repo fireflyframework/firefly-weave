@@ -17,14 +17,26 @@
 """Explicit server settings, loaded only by the server entry point."""
 
 import os
+from typing import Annotated
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy.engine import make_url
 
 from firefly_weave.access.oidc import ProviderConfig
 from firefly_weave.connections.secrets import SecretGrant
 from firefly_weave.connectors.broker import BrokerPolicy
 from firefly_weave.connectors.dispatcher import ExecutorConfig
+from firefly_weave.contracts.client_configuration import ClientConfiguration, SignInFlow, SignInOption
 from firefly_weave.contracts.operational_policy import OperationsPolicy
 from firefly_weave.contracts.telemetry import TelemetryOptions
 
@@ -39,6 +51,61 @@ def operations_from_env() -> OperationsPolicy:
         raise ValueError("Invalid WEAVE_OPERATIONS_POLICY configuration") from None
 
 
+CLIENT_SIGN_IN_INVALID = "Invalid WEAVE_CLIENT_SIGN_IN configuration"
+LOCAL_BUILD_INVALID = "Invalid local development native execution configuration"
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+class ClientSignIn(BaseModel):
+    """One `WEAVE_CLIENT_SIGN_IN` entry: a public login client offered to people.
+
+    The issuer and loopback trust are not configurable here; they come only from
+    the matching OIDC provider. No field can hold a client secret.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
+
+    provider_id: str = Field(min_length=1, max_length=200)
+    display_name: str = Field(min_length=1, max_length=100)
+    client_id: str = Field(min_length=1, max_length=200)
+    scopes: tuple[str, ...] = Field(min_length=1, max_length=32)
+    trusted_endpoint_origins: tuple[str, ...] = Field(default=(), max_length=8)
+    flows: tuple[SignInFlow, ...] = Field(default=("browser", "device"), min_length=1, max_length=2)
+    require_refresh_rotation: bool = True
+
+    def option(self, provider: ProviderConfig) -> SignInOption:
+        """Return the published option; raise ValueError, without values, when it cannot be published."""
+        # Verifiers map the token client claim to an actor kind; only a human client may sign people in.
+        if provider.provider_id != self.provider_id or provider.clients.get(self.client_id) != "human":
+            raise ValueError(CLIENT_SIGN_IN_INVALID + ": client_id must be a human client of the provider")
+        try:
+            return SignInOption(
+                provider_id=self.provider_id,
+                display_name=self.display_name,
+                issuer=provider.issuer,
+                client_id=self.client_id,
+                scopes=list(self.scopes),
+                trusted_endpoint_origins=list(self.trusted_endpoint_origins),
+                allow_loopback_http=provider.local_development,
+                flows=list(self.flows),
+                require_refresh_rotation=self.require_refresh_rotation,
+            )
+        except ValidationError:
+            raise ValueError(
+                CLIENT_SIGN_IN_INVALID + ": labels, scopes, flows, and endpoint origins must be publishable"
+            ) from None
+
+
+def client_sign_in_from_env() -> tuple[ClientSignIn, ...]:
+    raw = os.environ.get("WEAVE_CLIENT_SIGN_IN", "[]")
+    try:
+        if len(raw.encode("utf-8")) > 32768:
+            raise ValueError
+        return TypeAdapter(Annotated[tuple[ClientSignIn, ...], Field(max_length=8)]).validate_json(raw)
+    except (ValueError, UnicodeError):
+        raise ValueError(CLIENT_SIGN_IN_INVALID) from None
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
@@ -49,6 +116,8 @@ class Settings(BaseModel):
     kafka_consumer_enabled: bool = False
     broker: BrokerPolicy = Field(default_factory=BrokerPolicy)
     providers: tuple[ProviderConfig, ...] = ()
+    client_sign_in: tuple[ClientSignIn, ...] = Field(default=(), max_length=8)
+    display_name: str | None = None
     postgres_private_networks: tuple[str, ...] = ()
     postgres_plaintext_networks: tuple[str, ...] = ()
     postgres_ca_file: str | None = None
@@ -77,10 +146,65 @@ class Settings(BaseModel):
     shutdown_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
     @model_validator(mode="after")
+    def local_development_build(self) -> "Settings":
+        """Accept local development build attestation only on a loopback development platform.
+
+        Production images always use the packaged image attestation; this guard keeps a
+        copied executor configuration from relaxing it outside a local platform.
+        """
+        builds = {entry.build for entry in self.native_executors}
+        if "local-development" not in builds:
+            return self
+        if builds != {"local-development"}:
+            raise ValueError(LOCAL_BUILD_INVALID + ": executors must share one build attestation")
+        databases = {
+            make_url(url.get_secret_value()).host
+            for url in (self.database_url, self.scheduler_database_url)
+            if url is not None
+        }
+        trusted = {
+            urlsplit(endpoint).hostname
+            for provider in self.providers
+            for endpoint in (provider.issuer, provider.jwks_uri)
+        }
+        if (
+            not databases <= _LOOPBACK_HOSTS
+            or not self.providers
+            or not all(provider.local_development for provider in self.providers)
+            or not trusted <= _LOOPBACK_HOSTS
+        ):
+            raise ValueError(LOCAL_BUILD_INVALID + ": only a loopback local development platform may use it")
+        return self
+
+    @model_validator(mode="after")
     def require_broker_profile(self) -> "Settings":
         if self.kafka_consumer_enabled and not self.broker.enabled:
             raise ValueError("Kafka consumers require the enabled broker profile")
         return self
+
+    @field_validator("display_name")
+    @classmethod
+    def publishable_display_name(cls, value: str | None) -> str | None:
+        try:
+            return ClientConfiguration(display_name=value).display_name
+        except ValidationError:
+            raise ValueError("Invalid WEAVE_DISPLAY_NAME configuration") from None
+
+    @model_validator(mode="after")
+    def publishable_client_sign_in(self) -> "Settings":
+        # Fail at startup instead of publishing a sign-in option the verifiers would reject.
+        if len({entry.provider_id for entry in self.client_sign_in}) != len(self.client_sign_in):
+            raise ValueError(CLIENT_SIGN_IN_INVALID + ": each provider may appear once")
+        for entry in self.client_sign_in:
+            entry.option(self.sign_in_provider(entry))
+        return self
+
+    def sign_in_provider(self, entry: ClientSignIn) -> ProviderConfig:
+        """Return the single configured OIDC provider that an entry names."""
+        matches = [provider for provider in self.providers if provider.provider_id == entry.provider_id]
+        if len(matches) != 1:
+            raise ValueError(CLIENT_SIGN_IN_INVALID + ": provider_id must name exactly one OIDC provider")
+        return matches[0]
 
     @field_validator("database_url", "scheduler_database_url")
     @classmethod
@@ -134,6 +258,8 @@ class Settings(BaseModel):
             kafka_consumer_enabled=kafka_enabled == "true",
             broker=BrokerPolicy.model_validate_json(os.environ.get("WEAVE_BROKER_POLICY", "{}")),
             providers=providers,
+            client_sign_in=client_sign_in_from_env(),
+            display_name=os.environ.get("WEAVE_DISPLAY_NAME") or None,
             postgres_private_networks=json.loads(os.environ.get("WEAVE_POSTGRES_PRIVATE_NETWORKS", "[]")),
             postgres_plaintext_networks=json.loads(os.environ.get("WEAVE_POSTGRES_PLAINTEXT_NETWORKS", "[]")),
             postgres_ca_file=os.environ.get("WEAVE_POSTGRES_CA_FILE"),

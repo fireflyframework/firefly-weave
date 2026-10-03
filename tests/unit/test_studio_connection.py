@@ -190,7 +190,8 @@ def test_device_login_owned_status_identity_and_no_secret_outputs(tmp_path, monk
     with client:
         headers = pair(client)
         configure(client, headers)
-        started = client.post("/studio/connection/login/start", headers=headers).json()
+        started = client.post("/studio/connection/login/start", headers=headers, json={"flow": "device"}).json()
+        assert started["flow"] == "device"
         status_until(client, started["id"], "authenticated")
         tested = client.post("/studio/connection/test", headers=headers)
         assert tested.status_code == 200 and tested.json()["identity"]["kind"] == "human"
@@ -203,18 +204,19 @@ def test_pending_login_duplicate_start_cancel_reconfigure_and_logout_cleanup(tmp
     with client:
         headers = pair(client)
         configure(client, headers)
-        started = client.post("/studio/connection/login/start", headers=headers).json()
+        device = {"flow": "device"}
+        started = client.post("/studio/connection/login/start", headers=headers, json=device).json()
         waiting = status_until(client, started["id"], "awaiting_user")
         assert waiting["verification_uri"] == CONFIG["issuer"] + "/verify" and waiting["user_code"] == "ABC-123"
-        assert client.post("/studio/connection/login/start", headers=headers).json()["id"] == started["id"]
+        assert client.post("/studio/connection/login/start", headers=headers, json=device).json()["id"] == started["id"]
         cancelled = client.post("/studio/connection/login/" + started["id"] + "/cancel", headers=headers)
         assert cancelled.json()["state"] == "cancelled" and events.count("/device") == 1
         assert cancelled.json().get("user_code") is None
-        another = client.post("/studio/connection/login/start", headers=headers).json()
+        another = client.post("/studio/connection/login/start", headers=headers, json=device).json()
         status_until(client, another["id"], "awaiting_user")
         configure(client, headers)
         assert client.get("/studio/connection/login/" + another["id"]).status_code == 404
-        pending = client.post("/studio/connection/login/start", headers=headers).json()
+        pending = client.post("/studio/connection/login/start", headers=headers, json=device).json()
         status_until(client, pending["id"], "awaiting_user")
         assert client.delete("/studio/session", headers=headers).status_code == 204
         assert client.app.state.studio_connection.task is None

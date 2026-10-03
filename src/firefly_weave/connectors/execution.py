@@ -16,6 +16,7 @@
 
 """Native connector dispatch reuses the same current-authority task service as remote workers."""
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -151,26 +152,75 @@ class ConnectorExecutionService:
             active = False
 
 
+# Admission rejections: the operation ran nothing, so the identical call may be sent again.
+CAPACITY_CODES = frozenset({"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"})
+
+
+def _capacity_rejected(error: BaseException) -> bool:
+    from firefly_weave.definitions.models import CatalogError
+
+    return isinstance(error, CatalogError) and error.status == 429 and error.code in CAPACITY_CODES
+
+
 class ServiceTransport:
+    """The in-process worker transport, with the remote transport's replay policy (sdk/transport.py)."""
+
     def __init__(self, service: ConnectorExecutionService, scope: Scope, principal_id: UUID, instance_id: UUID) -> None:
         self.service, self.scope, self.principal_id, self.instance_id = service, scope, principal_id, instance_id
 
     async def claim(self, limit: int) -> list[TaskLease]:
-        return cast(
-            list[TaskLease],
-            await self.service.operation("claim", self.scope, self.principal_id, self.instance_id, limit),
-        )
+        from firefly_weave.definitions.models import CatalogError
+
+        try:
+            return cast(
+                list[TaskLease],
+                await self.service.operation("claim", self.scope, self.principal_id, self.instance_id, limit),
+            )
+        except CatalogError as error:
+            # Effects open while compatibility still reports restricted; claim nothing until it is
+            # operational instead of ending the in-process worker (and readiness) for good.
+            if error.status == 503 and error.code == "WV-COMPATIBILITY":
+                return []
+            # A busy database turned the claim away before it ran: claim nothing and poll again.
+            if _capacity_rejected(error):
+                return []
+            raise
+
+    async def _replay(self, name: str, *args: Any, settlement: bool = False) -> Any:
+        """Run one task operation, sending it again while the platform rejects it for capacity.
+
+        Settlement (complete, fail) can outlast a short admission burst; renewal keeps a short
+        window. The arguments, including the completion identity, are identical on every attempt.
+        """
+        try:
+            return await self.service.operation(name, self.scope, self.principal_id, *args)
+        except Exception as error:
+            if not _capacity_rejected(error):
+                raise
+            rejected = error
+        attempts, seconds = (48, 10) if settlement else (3, 1)
+        try:
+            async with asyncio.timeout(seconds):
+                for retry in range(attempts - 1):
+                    await asyncio.sleep(min(0.05 * 2 ** min(retry, 3), 0.25))
+                    try:
+                        return await self.service.operation(name, self.scope, self.principal_id, *args)
+                    except Exception as error:
+                        if not _capacity_rejected(error):
+                            raise
+                        rejected = error
+        except TimeoutError:
+            pass
+        raise rejected
 
     async def heartbeat(self, lease: LeaseProof) -> TaskLease:
-        return cast(TaskLease, await self.service.operation("heartbeat", self.scope, self.principal_id, lease))
+        return cast(TaskLease, await self._replay("heartbeat", lease))
 
     async def complete(self, lease: LeaseProof, completion_id: UUID, output: JsonValue) -> CompletionAcknowledgment:
         return cast(
             CompletionAcknowledgment,
-            await self.service.operation("complete", self.scope, self.principal_id, lease, completion_id, output),
+            await self._replay("complete", lease, completion_id, output, settlement=True),
         )
 
     async def fail(self, lease: LeaseProof, error: TaskError) -> CompletionAcknowledgment:
-        return cast(
-            CompletionAcknowledgment, await self.service.operation("fail", self.scope, self.principal_id, lease, error)
-        )
+        return cast(CompletionAcknowledgment, await self._replay("fail", lease, error, settlement=True))

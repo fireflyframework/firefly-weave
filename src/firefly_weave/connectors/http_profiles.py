@@ -24,6 +24,7 @@ from urllib.parse import quote
 
 import httpcore
 import rfc8785
+from pydantic import ValidationError
 from pyfly.client.exceptions import ResponseTooLargeException, UnsupportedContentEncodingException
 from pyfly.client.ports.outbound import BoundedHttpClientPort
 from pyfly.container import service
@@ -138,8 +139,12 @@ class HttpProfileConnector:
             )
 
         try:
-            operation = HttpOperation.model_validate(invocation.config)
-            connection = ProfileConnection.model_validate(invocation.connection.config)
+            try:
+                operation = HttpOperation.model_validate(invocation.config)
+                connection = ProfileConnection.model_validate(invocation.connection.config)
+            except ValidationError:
+                # A configuration outside the profile is an authoring defect, not bad run input.
+                raise failure("CONFIG") from None
             if context.authorize is None or set(invocation.connection.secret_refs) != connection.auth.slots():
                 raise failure("AUTH")
             if invocation.connection.adapter == "weave-http-v2" and operation.side_effect != {

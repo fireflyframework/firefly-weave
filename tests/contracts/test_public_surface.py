@@ -169,7 +169,7 @@ def test_full_native_openapi_references_and_operation_identity():
         path.startswith("/api/v1/tenants/")
         or path.startswith("/health/")
         or path in {"/webhooks/{identifier}", "/provider-ingress/{identifier}"}
-        or path in {"/admin/tenants", "/admin/grants", "/api/v1/identity"}
+        or path in {"/admin/tenants", "/admin/grants", "/api/v1/identity", "/api/v1/client-configuration"}
         or path
         in {
             "/api/v1/admin/principals",

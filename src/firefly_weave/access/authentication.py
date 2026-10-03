@@ -99,13 +99,15 @@ class AuthenticationFilter(OncePerRequestFilter):
 
     async def do_filter(self, request: Request, call_next: CallNext) -> Any:
         request.state.audit_context = AuditContext(request_id=uuid4())
+        mounted_path = request.url.path.removeprefix(request.scope.get("root_path", "").rstrip("/"))
         if (
             (
                 getattr(request.app.state, "weave_docs_enabled", False)
                 and request.method in {"GET", "HEAD"}
-                and request.url.path.removeprefix(request.scope.get("root_path", "").rstrip("/"))
-                in {"/docs", "/openapi.json"}
+                and mounted_path in {"/docs", "/openapi.json"}
             )
+            # Published sign-in settings are public by design: exact path, read methods only.
+            or (request.method in {"GET", "HEAD"} and mounted_path == "/api/v1/client-configuration")
             or (
                 request.method in {"GET", "POST"}
                 and re.fullmatch(

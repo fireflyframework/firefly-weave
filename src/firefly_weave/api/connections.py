@@ -43,7 +43,12 @@ class ConnectionController:
     async def create(self, request: Request) -> JSONResponse:
         body = ConnectionRequest.model_validate_json(await request.body())
         result = await self.service.create_revision(
-            request.state.principal, request_scope(request, environment=True), body, context=request.state.audit_context
+            request.state.principal,
+            request_scope(request, environment=True),
+            body,
+            context=request.state.audit_context,
+            # Optional: absent keeps the original non-idempotent create; present replays a retry.
+            idempotency_key=request.headers.get("Idempotency-Key"),
         )
         return JSONResponse(result.model_dump(mode="json", by_alias=True), status_code=201)
 

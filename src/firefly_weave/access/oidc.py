@@ -36,6 +36,24 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from firefly_weave.access.models import VerifiedIdentity
 
+# A key published without `alg` (Microsoft Entra ID does this) may only sign with the one allowed
+# algorithm of its family. Every allowed algorithm has its own family, so the choice is unambiguous.
+KEY_FAMILIES: dict[str, tuple[str, str | None]] = {"RS256": ("RSA", None), "ES256": ("EC", "P-256")}
+
+
+def key_algorithm(raw: dict[str, Any], allowed: tuple[str, ...]) -> str | None:
+    """The algorithm a published signing key may verify, or None when it must be ignored."""
+    if raw.get("use", "sig") != "sig":
+        return None
+    if "alg" in raw:
+        algorithm = raw["alg"]
+        return algorithm if algorithm in allowed else None
+    for algorithm in allowed:
+        kty, crv = KEY_FAMILIES[algorithm]
+        if raw.get("kty") == kty and (crv is None or raw.get("crv") == crv):
+            return algorithm
+    return None
+
 
 class AuthenticationFailed(Exception):
     def __init__(self) -> None:
@@ -122,9 +140,10 @@ class OIDCVerifier:
                         raise AuthenticationFailed()
                     updated = {}
                     for raw in keys:
-                        if raw.get("alg") not in self.config.algorithms or raw.get("use", "sig") != "sig":
+                        algorithm = key_algorithm(raw, self.config.algorithms)
+                        if algorithm is None:
                             continue
-                        key = jwt.PyJWK.from_dict(raw)
+                        key = jwt.PyJWK.from_dict(raw, algorithm=algorithm)
                         if not key.key_id or key.key_id in updated:
                             raise AuthenticationFailed()
                         updated[key.key_id] = key

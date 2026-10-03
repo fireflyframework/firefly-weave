@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import math
@@ -39,11 +41,20 @@ if TYPE_CHECKING:
     import httpx
     from pyfly.oauth2 import OAuth2Client, OAuth2Tokens
 
+LoginFlow = Literal["auto", "browser", "device", "pkce"]
+LoginPrompt = Literal["login", "select_account"]
+SessionState = Literal["signed_in", "expired", "signed_out", "in_progress"]
+PROMPTS = frozenset({"login", "select_account"})
+
 
 class AuthError(Exception):
     def __init__(self, code: str = "WV-AUTH-REQUIRED", exit_code: int = 1) -> None:
         self.code, self.exit_code = code, exit_code
         super().__init__(code)
+
+
+class _NotSent(AuthError):
+    """The connection was never established, so no request byte reached the provider."""
 
 
 def origin(url: str, *, allow_loopback_http: bool = False) -> str:
@@ -120,7 +131,11 @@ class PKCETransaction:
         pair = generate_pkce()
         self.verifier, self.challenge = pair.verifier, pair.challenge
 
-    def authorization_url(self, endpoint: str, client_id: str, scopes: tuple[str, ...]) -> str:
+    def authorization_url(
+        self, endpoint: str, client_id: str, scopes: tuple[str, ...], prompt: LoginPrompt | None = None
+    ) -> str:
+        if prompt is not None and prompt not in PROMPTS:
+            raise AuthError("WV-AUTH-INPUT", 2)
         return (
             endpoint
             + ("&" if "?" in endpoint else "?")
@@ -133,6 +148,8 @@ class PKCETransaction:
                     "state": self.state,
                     "code_challenge": self.challenge,
                     "code_challenge_method": "S256",
+                    # "Switch account": ask the provider to show its sign-in or account picker.
+                    **({"prompt": prompt} if prompt is not None else {}),
                 }
             )
         )
@@ -156,6 +173,119 @@ class PKCETransaction:
         return code
 
 
+async def provider_request(
+    config: LoginConfig,
+    method: str,
+    endpoint: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    data: dict[str, str] | None = None,
+    revoke: bool = False,
+) -> dict[str, Any]:
+    """One bounded, redirect-free request to a trusted provider endpoint; bodies never enter errors."""
+    import httpx
+
+    config.trust_endpoint(endpoint)
+    try:
+        async with (
+            httpx.AsyncClient(
+                transport=transport,
+                timeout=config.timeout,
+                follow_redirects=False,
+                trust_env=False,
+                headers={"Accept-Encoding": "identity"},
+            ) as client,
+            client.stream(method, endpoint, data=data) as response,
+        ):
+            if response.headers.get("content-encoding", "identity") != "identity":
+                raise AuthError("WV-AUTH-PROVIDER", 3)
+            raw = bytearray()
+            async for chunk in response.aiter_bytes():
+                if len(raw) + len(chunk) > 65536:
+                    raise AuthError("WV-AUTH-PROVIDER", 3)
+                raw.extend(chunk)
+            if response.status_code != 200:
+                raise AuthError(
+                    "WV-AUTH-DENIED" if response.status_code in (400, 401, 403) else "WV-AUTH-PROVIDER",
+                    1 if response.status_code in (400, 401, 403) else 3,
+                )
+            if revoke:
+                return {}
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                raise ValueError()
+            return value
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        # Each request owns a fresh client, so a failed connect proves nothing was sent.
+        raise _NotSent("WV-AUTH-PROVIDER", 3) from None
+    except (httpx.HTTPError, ValueError, RecursionError):
+        # RecursionError: a deeply nested JSON body is a provider failure, not a crash.
+        raise AuthError("WV-AUTH-PROVIDER", 3) from None
+
+
+async def discover_provider(
+    config: LoginConfig, *, transport: httpx.AsyncBaseTransport | None = None
+) -> dict[str, Any]:
+    """Exact-issuer OIDC discovery; every advertised endpoint must stay on a reviewed origin."""
+    metadata = await provider_request(
+        config, "GET", config.issuer.rstrip("/") + "/.well-known/openid-configuration", transport=transport
+    )
+    if metadata.get("issuer") != config.issuer:
+        raise AuthError("WV-AUTH-TRUST", 2)
+    for key in ("authorization_endpoint", "token_endpoint"):
+        if not isinstance(metadata.get(key), str):
+            raise AuthError("WV-AUTH-PROVIDER", 3)
+    for key in ("authorization_endpoint", "token_endpoint", "device_authorization_endpoint", "revocation_endpoint"):
+        if metadata.get(key) is not None:
+            if not isinstance(metadata[key], str):
+                raise AuthError("WV-AUTH-PROVIDER", 3)
+            config.trust_endpoint(metadata[key])
+    return metadata
+
+
+def _hint_text(value: Any, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > limit or any(ord(c) < 32 or 127 <= ord(c) < 160 for c in text):
+        return None
+    return text
+
+
+def identity_hint(id_token: str | None, config: LoginConfig) -> dict[str, Any] | None:
+    """Unverified account hint for display and linking help only; never an authenticated identity.
+
+    The payload is decoded without checking the signature, so nothing here may
+    grant access. It is only kept when it names this exact issuer and login
+    client. Absent, malformed or foreign tokens yield None instead of an error.
+    """
+    try:
+        if not isinstance(id_token, str) or len(id_token) > 65536:
+            return None
+        parts = id_token.split(".")
+        if len(parts) != 3 or not parts[1]:
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+        if not isinstance(payload, dict) or payload.get("iss") != config.issuer:
+            return None
+        audience = payload.get("aud")
+        audiences = [audience] if isinstance(audience, str) else audience
+        if not isinstance(audiences, list) or config.client_id not in audiences:
+            return None
+        subject = _hint_text(payload.get("sub"), 255)
+        if subject is None or subject != payload.get("sub"):
+            return None
+        names = (_hint_text(payload.get(key), 200) for key in ("preferred_username", "email", "name"))
+        return {
+            "subject": subject,
+            "display_name": next((name for name in names if name is not None), None),
+            "issuer": config.issuer,
+            "provider_id": config.provider_id,
+        }
+    except (ValueError, TypeError, binascii.Error, RecursionError):
+        return None
+
+
 class OAuthSession:
     def __init__(
         self,
@@ -172,54 +302,12 @@ class OAuthSession:
     async def _request(
         self, method: str, endpoint: str, *, data: dict[str, str] | None = None, revoke: bool = False
     ) -> dict[str, Any]:
-        import httpx
-
-        self.config.trust_endpoint(endpoint)
-        try:
-            async with (
-                httpx.AsyncClient(
-                    transport=self.transport(),
-                    timeout=self.config.timeout,
-                    follow_redirects=False,
-                    trust_env=False,
-                    headers={"Accept-Encoding": "identity"},
-                ) as client,
-                client.stream(method, endpoint, data=data) as response,
-            ):
-                if response.headers.get("content-encoding", "identity") != "identity":
-                    raise AuthError("WV-AUTH-PROVIDER", 3)
-                raw = bytearray()
-                async for chunk in response.aiter_bytes():
-                    if len(raw) + len(chunk) > 65536:
-                        raise AuthError("WV-AUTH-PROVIDER", 3)
-                    raw.extend(chunk)
-                if response.status_code != 200:
-                    raise AuthError(
-                        "WV-AUTH-DENIED" if response.status_code in (400, 401, 403) else "WV-AUTH-PROVIDER",
-                        1 if response.status_code in (400, 401, 403) else 3,
-                    )
-                if revoke:
-                    return {}
-                value = json.loads(raw)
-                if not isinstance(value, dict):
-                    raise ValueError()
-                return value
-        except (httpx.HTTPError, ValueError):
-            raise AuthError("WV-AUTH-PROVIDER", 3) from None
+        return await provider_request(
+            self.config, method, endpoint, transport=self.transport(), data=data, revoke=revoke
+        )
 
     async def discover(self) -> dict[str, Any]:
-        metadata = await self._request("GET", self.config.issuer.rstrip("/") + "/.well-known/openid-configuration")
-        if metadata.get("issuer") != self.config.issuer:
-            raise AuthError("WV-AUTH-TRUST", 2)
-        for key in ("authorization_endpoint", "token_endpoint"):
-            if not isinstance(metadata.get(key), str):
-                raise AuthError("WV-AUTH-PROVIDER", 3)
-        for key in ("authorization_endpoint", "token_endpoint", "device_authorization_endpoint", "revocation_endpoint"):
-            if metadata.get(key) is not None:
-                if not isinstance(metadata[key], str):
-                    raise AuthError("WV-AUTH-PROVIDER", 3)
-                self.config.trust_endpoint(metadata[key])
-        return metadata
+        return await discover_provider(self.config, transport=self.transport())
 
     def _record(self, tokens: OAuth2Tokens) -> CredentialRecord:
         if (
@@ -249,29 +337,88 @@ class OAuthSession:
 
     def status(self) -> dict[str, Any]:
         record = self.store.load(self.config.binding)
+        active = bool(record and record.state == "active")
+        authenticated = bool(record and active and record.access_token and record.expires_at > time.time())
+        state: SessionState
+        if authenticated:
+            state = "signed_in"
+        elif record is not None and record.state == "authenticating" and record.expires_at > time.time():
+            # A pending attempt carries its own deadline, so a crashed attempt stops reading as in progress.
+            state = "in_progress"
+        elif record is not None and record.state in ("active", "refreshing"):
+            # A durable refresh fence holds no tokens; only a new sign-in recovers it.
+            state = "expired"
+        else:
+            state = "signed_out"
         return {
-            "authenticated": bool(
-                record and record.state == "active" and record.access_token and record.expires_at > time.time()
-            ),
+            "authenticated": authenticated,
             "reauthentication_required": not record or record.state != "active",
             "provider": self.config.provider_id,
             "target": self.config.target,
             "account": self.config.account,
             "expires_at": record.expires_at if record and record.state == "active" else None,
+            "refresh_available": bool(record and active and record.refresh_token is not None),
+            "state": state,
         }
 
     async def login(
         self,
         *,
-        flow: Literal["auto", "device", "pkce"] = "auto",
+        flow: LoginFlow = "auto",
         instructions: Callable[[str, str], None] | None = None,
         browser: Callable[[str], Any] | None = None,
+        prompt: LoginPrompt | None = None,
+    ) -> dict[str, Any]:
+        """Sign in; "browser" is PKCE, "auto" prefers the device flow when advertised.
+
+        `prompt` only reaches the PKCE authorization URL (for example to switch
+        account). The result adds an unverified `identity` display hint.
+        """
+        # Fail before any state change when the OAuth client is not installed.
+        import pyfly.oauth2  # noqa: F401
+
+        if flow not in ("auto", "browser", "device", "pkce") or (prompt is not None and prompt not in PROMPTS):
+            raise AuthError("WV-AUTH-INPUT", 2)
+        if flow == "browser":
+            flow = "pkce"
+        pending_record = CredentialRecord(
+            binding=self.config.binding,
+            state="authenticating",
+            # Discovery, the interactive step and saving all fit in this attempt budget.
+            expires_at=time.time() + 2 * self.config.timeout + self.config.login_timeout,
+        )
+        async with self.store.lock(self.config.binding):
+            self.store.save(self.config.binding, pending_record)
+        try:
+            return await self._acquire(flow, instructions, browser, prompt, pending_record.generation)
+        except BaseException:
+            await self._abandon(pending_record.generation)
+            raise
+
+    async def _abandon(self, generation: UUID) -> None:
+        """Best effort and bounded: a failed or cancelled attempt must not keep reading as in progress.
+
+        A newer attempt or a completed sign-in has another generation or state
+        and is left alone; if this cannot run, the pending deadline still expires.
+        """
+        with suppress(Exception):
+            async with asyncio.timeout(1), self.store.lock(self.config.binding):
+                current = self.store.load(self.config.binding)
+                if current is not None and current.generation == generation and current.state == "authenticating":
+                    self.store.save(
+                        self.config.binding, CredentialRecord(binding=self.config.binding, state="logged_out")
+                    )
+
+    async def _acquire(
+        self,
+        flow: LoginFlow,
+        instructions: Callable[[str, str], None] | None,
+        browser: Callable[[str], Any] | None,
+        prompt: LoginPrompt | None,
+        generation: UUID,
     ) -> dict[str, Any]:
         from pyfly.oauth2 import OAuth2Client, OAuth2ClientError, OAuth2Endpoints
 
-        pending_record = CredentialRecord(binding=self.config.binding, state="authenticating")
-        async with self.store.lock(self.config.binding):
-            self.store.save(self.config.binding, pending_record)
         metadata = await self.discover()
         if flow == "auto":
             flow = "device" if metadata.get("device_authorization_endpoint") else "pkce"
@@ -301,8 +448,9 @@ class OAuthSession:
                         instructions(grant.verification_uri, grant.user_code)
                     tokens = await client.poll_device_token(grant)
                 else:
-                    tokens = await self._pkce(client, metadata, browser)
-            return await self._save_login(tokens, pending_record.generation)
+                    tokens = await self._pkce(client, metadata, browser, prompt)
+            result = await self._save_login(tokens, generation)
+            return {**result, "identity": identity_hint(tokens.id_token, self.config)}
         except OAuth2ClientError as error:
             code = getattr(error, "code", "")
             raise AuthError(
@@ -313,7 +461,11 @@ class OAuthSession:
             raise AuthError("WV-AUTH-EXPIRED", 1) from None
 
     async def _pkce(
-        self, client: OAuth2Client, metadata: dict[str, Any], browser: Callable[[str], Any] | None
+        self,
+        client: OAuth2Client,
+        metadata: dict[str, Any],
+        browser: Callable[[str], Any] | None,
+        prompt: LoginPrompt | None = None,
     ) -> OAuth2Tokens:
         future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         pending: PKCETransaction | None = None
@@ -350,9 +502,10 @@ class OAuthSession:
                     if future.done():
                         raise AuthError("WV-AUTH-CALLBACK")
                     future.set_result(code)
+                    page = b"Login complete. Close this window."
                     writer.write(
-                        b"HTTP/1.1 200 OK\r\nContent-Length: 33\r\nConnection: close\r\n\r\n"
-                        b"Login complete. Close this window."
+                        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n"
+                        b"Content-Length: " + str(len(page)).encode() + b"\r\nConnection: close\r\n\r\n" + page
                     )
             except (
                 AuthError,
@@ -386,7 +539,7 @@ class OAuthSession:
                 bool(metadata.get("authorization_response_iss_parameter_supported")),
             )
             url = pending.authorization_url(
-                metadata["authorization_endpoint"], self.config.client_id, self.config.scopes
+                metadata["authorization_endpoint"], self.config.client_id, self.config.scopes, prompt
             )
             if browser is None:
                 import webbrowser
@@ -418,15 +571,29 @@ class OAuthSession:
                 return record.access_token.get_secret_value()
             if record.refresh_token is None:
                 raise AuthError()
-            metadata = await self.discover()
+            try:
+                metadata = await self.discover()
+            except _NotSent:
+                # Offline before the fence was written: the stored credential is untouched.
+                raise AuthError("WV-AUTH-OFFLINE", 3) from None
             old_refresh = record.refresh_token.get_secret_value()
             fence = CredentialRecord(binding=self.config.binding, state="refreshing", scopes=record.scopes)
             self.store.save(self.config.binding, fence)
-            result = await self._request(
-                "POST",
-                metadata["token_endpoint"],
-                data={"grant_type": "refresh_token", "client_id": self.config.client_id, "refresh_token": old_refresh},
-            )
+            try:
+                result = await self._request(
+                    "POST",
+                    metadata["token_endpoint"],
+                    data={
+                        "grant_type": "refresh_token",
+                        "client_id": self.config.client_id,
+                        "refresh_token": old_refresh,
+                    },
+                )
+            except _NotSent:
+                # The grant provably never left, so the old refresh token is still unused and
+                # may be restored. Any failure after sending keeps the token-free fence.
+                self.store.save(self.config.binding, record)
+                raise AuthError("WV-AUTH-OFFLINE", 3) from None
             try:
                 from pyfly.oauth2 import OAuth2Tokens
 

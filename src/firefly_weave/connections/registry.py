@@ -31,6 +31,7 @@ from firefly_weave.definitions.models import CatalogError
 if TYPE_CHECKING:
     from pyfly.context import ApplicationContext
 
+    from firefly_weave.compiler.action_config import ActionConfigValidator
     from firefly_weave.connectors.descriptor import ConnectorDescriptor
     from firefly_weave.contracts.connectors import ConnectionRequest
     from firefly_weave.contracts.workers import ReleaseRequest
@@ -166,6 +167,22 @@ class ConnectorRegistry:
         if adapter not in self._descriptors:
             raise unavailable()
         return self._descriptors[adapter]
+
+    def descriptors(self) -> dict[str, "ConnectorDescriptor"]:
+        """Installed, non-retired descriptors by adapter; trusted read-only deployment facts."""
+        return {
+            adapter: descriptor
+            for adapter, descriptor in sorted(self._descriptors.items())
+            if adapter in self._adapters and adapter not in self._retired
+        }
+
+    def action_validators(self) -> dict[str, "ActionConfigValidator"]:
+        """Compile-time Action checks keyed by the exact installed manifest digest."""
+        return {
+            descriptor.manifest.digest: descriptor.validate_action_config
+            for descriptor in self.descriptors().values()
+            if descriptor.validate_action_config is not None
+        }
 
     def validate_manifest(self, document: dict[str, Any]) -> None:
         from firefly_weave.compiler.catalog import FrozenDocument

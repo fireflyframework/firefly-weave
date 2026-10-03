@@ -18,6 +18,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from firefly_weave.compiler.action_config import ActionConfigValidator
 from firefly_weave.compiler.catalog import FrozenDocument, TaskCapability
 from firefly_weave.contracts.connectors import ConnectionRequest
 from firefly_weave.contracts.workers import ConnectorBinding
@@ -30,3 +31,5 @@ class ConnectorDescriptor:
     capabilities: tuple[TaskCapability, ...]
     bindings: tuple[ConnectorBinding, ...]
     validate_connection: Callable[[ConnectionRequest], None] | None = None
+    # Compile-time Action configuration checks; invoked only for this exact manifest digest.
+    validate_action_config: ActionConfigValidator | None = None

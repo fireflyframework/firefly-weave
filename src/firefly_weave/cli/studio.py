@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Launch an explicitly paired, loopback-only browser Studio without Node.js."""
+"""Launch an explicitly paired, loopback-only browser Studio without Node.js, using saved platforms."""
 
 from __future__ import annotations
 
@@ -30,12 +30,21 @@ class StudioLaunchError(click.ClickException):
     """Value-free, actionable launcher failures safe for the root CLI to display."""
 
 
+def is_profile_file(value: str) -> bool:
+    """A legacy profile file names a path or a `.json` file; anything else is a saved platform name."""
+    separators = {"/", os.sep} | ({os.altsep} if os.altsep else set())
+    return any(separator in value for separator in separators) or value.lower().endswith(".json")
+
+
 @click.group(invoke_without_command=True)
 @click.option(
     "--profile",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
     envvar="WEAVE_STUDIO_PROFILE",
-    help="Explicit non-secret Studio profile JSON; omit for offline authoring.",
+    metavar="NAME|FILE",
+    help=(
+        "Saved platform to use (it becomes the active one), or a legacy Studio profile JSON file. "
+        "Omit to reconnect to the active saved platform, or to work locally."
+    ),
 )
 @click.option(
     "--assets",
@@ -44,10 +53,10 @@ class StudioLaunchError(click.ClickException):
 )
 @click.option("--port", type=click.IntRange(1024, 65535), default=8766, show_default=True)
 @click.option("--no-browser", is_flag=True, help="Print the local address without opening a browser.")
-@click.option("--token-env", help="Explicit environment variable holding an API token; prefer a saved OAuth profile.")
+@click.option("--token-env", help="Explicit environment variable holding an API token; needs a legacy profile file.")
 @click.pass_context
 def studio(
-    ctx: click.Context, profile: Path | None, assets: Path | None, port: int, no_browser: bool, token_env: str | None
+    ctx: click.Context, profile: str | None, assets: Path | None, port: int, no_browser: bool, token_env: str | None
 ) -> None:
     """Draw workflows and work with a local or remote platform in your browser."""
     if ctx.invoked_subcommand:
@@ -60,16 +69,36 @@ def studio(
         import uvicorn
 
         from firefly_weave.cli.auth import session_from_options
+        from firefly_weave.sdk.profiles import ProfileError, ProfileStore
         from firefly_weave.studio.assets import find_assets
         from firefly_weave.studio.host import make_studio_app
         from firefly_weave.studio.service import StudioOptions, StudioProfile
 
         selected = None
         provider = None
-        if profile:
-            if profile.stat().st_size > 65536:
+        store = None
+        path = Path(profile) if profile and is_profile_file(profile) else None
+        if profile and path is None:
+            try:
+                store = ProfileStore()
+                store.get(profile)
+            except ProfileError as error:
+                if error.code in {"WV-PROFILE-NOT-FOUND", "WV-PROFILE-NAME"} and Path(profile).is_file():
+                    # Earlier releases accepted any existing file; keep that when no saved platform has the name.
+                    path, store = Path(profile), None
+                else:
+                    hint = (
+                        " List saved platforms with: weave auth profiles"
+                        if error.code == "WV-PROFILE-NOT-FOUND"
+                        else ""
+                    )
+                    raise StudioLaunchError(error.message + hint) from None
+        if path is not None:
+            if not path.is_file():
+                raise StudioLaunchError("Studio profile file not found; check the --profile path")
+            if path.stat().st_size > 65536:
                 raise ValueError("Studio profile exceeds size limit")
-            selected = StudioProfile.model_validate_json(profile.read_bytes())
+            selected = StudioProfile.model_validate_json(path.read_bytes())
             if selected.auth_config:
                 provider = session_from_options(
                     {
@@ -87,16 +116,44 @@ def studio(
             else:
                 raise ValueError("Connected Studio needs auth_config in its profile or an explicit --token-env")
         elif token_env:
-            raise ValueError("--token-env requires a platform profile")
+            raise ValueError("--token-env requires a legacy Studio profile file")
+        elif store is not None and profile:
+            try:
+                store.activate(profile)
+            except ProfileError as error:
+                raise StudioLaunchError(error.message) from None
+        else:
+            try:
+                store = ProfileStore()
+            except ProfileError as error:
+                click.echo(
+                    f"Saved platforms are unavailable: {error.message} Studio starts for local authoring.", err=True
+                )
+                store = None
         options = StudioOptions(
-            origin=f"http://127.0.0.1:{port}", assets=assets or find_assets(), profile=selected, token_provider=provider
+            origin=f"http://127.0.0.1:{port}",
+            assets=assets or find_assets(),
+            profile=selected,
+            token_provider=provider,
+            profile_store=store,
         )
         app = make_studio_app(options)
+        connection = app.state.studio_connection
+        if connection.store_error is not None:
+            click.echo(
+                f"Saved platforms could not be read: {connection.store_error.message} "
+                "Studio starts for local authoring.",
+                err=True,
+            )
         # Own the listening socket before showing a URL or starting a browser.
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", port))
             listener.listen(128)
-            click.echo(f"Firefly Weave Studio · {'Connected: ' + selected.name if selected else 'Offline authoring'}")
+            active = options.profile
+            click.echo(
+                "Firefly Weave Studio · "
+                + (f"Platform: {active.name}" if active else "Local authoring (no platform selected)")
+            )
             click.echo(f"Open {options.origin}")
             click.echo(f"Pairing code: {options.pairing_code}")
             click.echo("Enter this code in the browser. Press Ctrl+C to stop Studio.")

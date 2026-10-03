@@ -217,7 +217,15 @@ class DefinitionService:
                 else await DefinitionRepository(tx).snapshot(await self.compiler_capabilities(tx))
             )
             return await execute_pure(
-                bind_call(compile_source, source, format=format, catalog=snapshot, filename=filename, strict=strict)
+                bind_call(
+                    compile_source,
+                    source,
+                    format=format,
+                    catalog=snapshot,
+                    filename=filename,
+                    strict=strict,
+                    action_validators=self.registry.action_validators(),
+                )
             )
 
     async def publish(
@@ -250,7 +258,15 @@ class DefinitionService:
                 return PublishedVersion.model_validate_json(json.dumps(prior))
             repository = DefinitionRepository(tx)
             snapshot = await repository.snapshot(await self.compiler_capabilities(tx))
-            result = await execute_pure(bind_call(compile_source, source, format=format, catalog=snapshot))
+            result = await execute_pure(
+                bind_call(
+                    compile_source,
+                    source,
+                    format=format,
+                    catalog=snapshot,
+                    action_validators=self.registry.action_validators(),
+                )
+            )
             from firefly_weave.access.repository import load_principal
 
             self.require(await load_principal(tx.session, actor.id), scope, "definition.publish", context)
