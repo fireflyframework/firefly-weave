@@ -31,13 +31,13 @@ Studio writes the same versioned definition language that you can edit as YAML
 or build with the CLI and the Python SDK, so every choice here is visible in
 the **Source** tab.
 
-**This page describes the Studio 0.1.0a10 editor.** The step kinds and native
+**This page describes the Studio 0.1.0a11 editor.** The step kinds and native
 human tasks are also part of alpha6, but several controls described here, such
 as the canvas step picker, the searchable action picker, the **Value** /
 typed input rows with **Use data** and **Calculate…**, the schema designer, the API action builder,
 and the simulation setup and panel, are new in 0.1.0a7. An alpha6 or earlier
 browser bundle does not have them; to see the same screens,
-[install the alpha10 browser application](studio.md#install-the-alpha10-browser-application).
+[install the alpha11 browser application](studio.md#install-the-alpha11-browser-application).
 
 **How to use this page:**
 
@@ -188,11 +188,32 @@ in the connected catalog. Select a **Workflow AI profile** and an **AI connectio
 slot**, then map **AI prompt** and **AI context** using Value, Data or Formula.
 
 Open **Configure workflow AI profiles** to create or edit a named profile.
-Choose its provider and model explicitly, configure time and token limits, and
-describe the expected result with the schema designer. Profile changes belong
-to the workflow; select the profile on each AI task that should use it. Provider
-credentials belong to an authorized connection, not the prompt or profile.
-Workflow AI profiles are separate from Studio's Lumi assistant settings.
+Studio alpha11 uses the same **Model → Connection → Review** structure as Lumi,
+but saves only to this workflow.
+
+1. **Model:** choose the provider and model explicitly, configure time and token
+   limits, and describe the expected result with the schema designer. For Azure,
+   **Model** is the deployment name. Select **Continue to connection**.
+2. **Connection:** choose the **AI connection slot**, or select **Add AI connection
+   slot** to include a new slot when you apply. An authorized administrator can
+   also open **New AI connection** to create an environment connection using an
+   operator-provisioned secret handle. Activation binds the slot to that
+   environment connection; this wizard does not activate the workflow.
+3. **Review:** check the profile, provider, model, slot, and list of affected AI
+   steps. **Apply workflow AI settings** applies the profile, slot, and current
+   step's references together. **Back** keeps the draft; **Cancel profile
+   changes** discards unapplied profile edits. Existing named profiles affect
+   every step listed in the review.
+
+Use **Shared AI context** to select results from earlier AI steps available on
+this path. Existing context stays under `data`; selected results appear under
+`sharedAiResults`. This is structured data within one execution, not memory
+shared between unrelated runs. The compiler enforces which prior results can be
+read. See [Share context between AI steps](shared-ai-context.md) for a complete
+example and the limits across branches, waits, and retries.
+
+Provider credentials belong to an authorized connection, not the prompt or
+profile. Workflow AI profiles are separate from Studio's Lumi assistant settings.
 The [AI worker guide](ai-workers.md) covers deployment, supported providers,
 credential binding and execution limits. A configured inspector alone does not
 install the action or start a worker.

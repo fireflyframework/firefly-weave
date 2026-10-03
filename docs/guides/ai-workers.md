@@ -27,7 +27,7 @@ Use [Lumi](lumi.md) when *you*, the person using Studio, want an explanation or
 a proposed definition change. Lumi has separate configuration and does not
 execute workflow AI tasks.
 
-The examples here use Weave **0.1.0a10** and the **0.1.2 Agentic worker package**,
+The examples here use Weave **0.1.0a11** and the **0.1.3 Agentic worker package**,
 whose core dependency is
 pinned to that Weave version. The catalog references below retain their own
 `1.0.0` definition and task versions.
@@ -213,18 +213,26 @@ available from **Connections** and the AI task inspector. You need
 `connection.manage` in the environment. If the provider Connector is not yet
 published, the form explains the prerequisite; an author cannot bypass it.
 
-1. Enter a **Connection name** that identifies the intended account or purpose.
-2. Choose **Provider** and enter its approved **Provider endpoint**. For an Azure
-   provider, also enter the explicit **Azure API version**. The model or Azure
-   deployment name belongs in the workflow profile, not this connection form.
-3. Enter the **API key secret handle** supplied by the operator. This field takes
-   a handle, never the raw API key.
-4. Select **Create AI connection**. Studio restricts allowed destinations to the
-   endpoint's exact HTTPS origin. The operator's worker policy must also permit
-   that endpoint.
-5. Record the created connection and revision. The platform checked its
-   configuration; no model request was sent. Complete the worker release and
-   credential grants before binding it to an executable workflow.
+Studio alpha11 guides this setup through three steps. Alpha10 presents the
+same fields in a single form.
+
+1. **Provider:** enter a **Connection name** that identifies the intended account
+   or purpose, choose **Provider**, and select **Continue**. The model or Azure
+   deployment name belongs in the workflow profile.
+2. **Access:** copy the exact operator-approved **Provider endpoint**. For Azure,
+   also enter the explicit **Azure API version**. Enter the **API key secret
+   handle** supplied by the operator, never the raw API key, then select
+   **Review connection**. The Azure endpoint hint has no trailing slash; copy
+   the approved endpoint exactly rather than inventing a different spelling.
+3. **Review:** check the name, provider, endpoint, API version when applicable,
+   and secret handle. **Back** preserves these details so you can correct them.
+   Select **Create AI connection** only when they are ready. Earlier steps do
+   not create a connection or send a model request.
+4. Record the created connection and revision. Studio restricts allowed
+   destinations to the endpoint's HTTPS origin, and the operator's worker policy
+   must also permit the endpoint. The platform checked configuration, not live
+   provider connectivity. Complete worker release and credential grants before
+   binding it to an executable workflow.
 
 For API clients, create a connection for the published provider Connector with
 this configuration:
@@ -405,6 +413,12 @@ The platform integration tests additionally activate the canonical catalog,
 claim a real database-backed task, enforce the pinned credential grant, and
 verify completion, output guards, replay, and classified-result rejection.
 
+A separate Azure preproduction check on alpha10 used real Microsoft Entra ID
+application tokens and an independently deployed Agentic worker to complete an
+Azure OpenAI workflow. Its accepted result replayed consistently. This verifies
+that configured deployment and model path; it does not certify other providers,
+models, environments, or interactive Entra sign-in for people.
+
 ## Check readiness one layer at a time
 
 | What you see | What to check next |
@@ -415,6 +429,10 @@ verify completion, output guards, replay, and classified-result rejection.
 | Activation cannot bind a worker or connection | Check the admitted release, task capability, worker authority, and exact connection-revision grant. |
 | The task waits without being claimed | Check that the independently deployed worker is running, authenticated, and has capacity for its admitted release. |
 | The call fails with a safe LLM error | Check the allowed model/endpoint, provider access, output contract, and configured budgets. A generic connection test does not validate remote provider credentials. |
+
+To pass results between AI steps in one workflow execution, follow
+[Share context between AI steps](shared-ai-context.md). Context is explicit
+workflow data; it is not a persistent conversation shared by unrelated runs.
 
 For assistance while editing, continue with [Lumi](lumi.md). Enabling Lumi is a
 separate setup; it neither starts this worker nor changes any workflow profile.

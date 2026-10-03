@@ -71,8 +71,9 @@ to the CLI that started it), sign-in with a code (device flow), silent renewal,
 switching account, an account the platform does not know, an account without a
 workspace, several saved platforms, and sign-out with revocation. That run kept
 its tokens in a [private credential file](#what-is-saved-and-where), not in a
-system credential store. Microsoft Entra ID and other identity providers have
-not been verified; see
+system credential store. Entra application tokens have separately been verified
+in Azure preproduction; Entra human sign-in and other identity providers remain
+unverified. See
 [Use Microsoft Entra ID or another identity provider](#use-microsoft-entra-id-or-another-identity-provider).
 
 ## Choose how you connect
@@ -842,15 +843,18 @@ release.
 
 ## Use Microsoft Entra ID or another identity provider
 
-**Not verified.** Only the local platform's Keycloak 26.7.4 has been tested end
-to end. Treat everything else as configuration guidance, and test with one
-account before you roll out. Your administrator configures the server side by
+**Human sign-in remains unverified for Entra ID.** Browser and device-code
+sign-in have been tested end to end against the local platform's Keycloak
+26.7.4. Separate Azure preproduction checks verified Entra application tokens
+for a host application and an independent worker; these do not verify a
+person's interactive sign-in. Test with one account before you roll out. Your administrator configures the server side by
 following [Use your own identity provider](../operations/identity-and-secrets.md#use-your-own-identity-provider).
 
 For **Microsoft Entra ID**, read
-[Microsoft Entra ID (not verified)](../operations/identity-and-secrets.md#microsoft-entra-id-not-verified)
-first. The built-in token verifier accepts Entra's signing keys, but no Entra
-token has been verified yet, so try it with one account first.
+[Microsoft Entra ID (human sign-in not verified)](../operations/identity-and-secrets.md#microsoft-entra-id-human-sign-in-not-verified)
+first. The built-in token verifier has accepted real Entra application tokens;
+the human account, consent, browser/device flow, refresh, and sign-out paths
+still need their own acceptance checks.
 
 Whatever the provider, the CLI checks these points while it connects and signs
 in. Each failure has its own support code:

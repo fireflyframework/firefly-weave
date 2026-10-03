@@ -29,7 +29,7 @@ Lumi has its own configuration per environment. It never reads a workflow's
 `llmProfiles`, and changing an LLM step does not change the assistant.
 
 The Studio **AI setup** examples and named provider-connection selection
-shown here use Weave **0.1.0a10**. Use the matching **0.1.2 Agentic worker
+shown here use Weave **0.1.0a11**. Use the matching **0.1.3 Agentic worker
 package** for the independently deployed Lumi gateway.
 
 ## Follow a question through review
@@ -178,16 +178,19 @@ separate from the administrator's editable environment Lumi configuration.
 
 1. Open **Settings → AI setup → Configure Lumi**, or open **Lumi settings** from
    the assistant. These settings belong to the current environment.
-2. Choose the provider and an explicit model in the Lumi profile. For Azure,
+2. In Studio alpha11, the **Model → Connection → Review** wizard
+   keeps changes local until **Save Lumi settings**. Alpha10 presents
+   these fields in a single form. Choose the provider and an explicit model. For Azure,
    supply the Azure deployment name. Set the model's token, call, and time limits;
-   Studio supplies the fixed reply schema.
+   Studio supplies the fixed reply schema. Select **Continue to connection**.
 3. Choose **Provider connection**. The list displays the connection name and
    revision and filters for the selected provider. Lumi pins the exact revision,
    so a later connection revision does not silently change the assistant.
 4. If needed, select **New AI connection** and follow the
    [provider connection steps](ai-workers.md#configure-the-provider-connection).
    Use **Refresh connections** to reload available choices.
-5. Enable the assistant and select **Save Lumi settings**. Use a simple request
+5. Select **Review settings**, check the model and pinned connection, then select
+   **Save Lumi settings**. **Back** preserves your draft. Use a simple request
    without attachments to confirm the complete path, as described
    [below](#confirm-setup-without-sharing-sensitive-source).
 
@@ -274,6 +277,13 @@ gateway, credential, policy, and provider can complete that request. It does not
 prove future model availability or the correctness of every proposed definition.
 Then try an explicitly selected, nonsensitive draft and practice reviewing,
 validating, applying, and undoing one proposed workflow change.
+
+A separate Azure preproduction check on alpha10 completed a real Azure OpenAI
+request through the Lumi gateway. Installed alpha10 Studio was also used at
+desktop and narrow widths to read back Lumi configuration using an application
+identity.
+These checks do not establish interactive Entra sign-in for people or prove
+that every generated proposal is correct.
 
 | Problem | Responsible next step |
 | --- | --- |

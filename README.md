@@ -53,13 +53,14 @@ maps service tasks, user tasks, gateways, and timers to Weave steps.
 
 ## What you get
 
-The **v0.1.0a10 alpha** release provides the **API, CLI, Python SDK, and Studio**
+The **v0.1.0a11 alpha** release provides the **API, CLI, Python SDK, and Studio**
 visual workspace, with human-task inboxes, email conversations, execution
 management, and administration of people and access. Run Weave as a standalone
 service or embed it in another product.
 
-**New in 0.1.0a9:** configure AI provider connections from Studio settings, select
-Lumi's connection by name, and run Agentic workers with renewable OAuth2 credentials.
+**New in 0.1.0a11:** configure AI provider connections, Lumi, and workflow AI
+profiles through guided setup with review before saving. Explicitly select
+earlier AI results as [shared context within one execution](docs/guides/shared-ai-context.md).
 See the illustrated [AI workflow guide](docs/guides/ai-workers.md) and
 [Lumi guide](docs/guides/lumi.md).
 
@@ -80,7 +81,7 @@ See the illustrated [AI workflow guide](docs/guides/ai-workers.md) and
 Read the [capability matrix](docs/capabilities.md) for tested boundaries and
 live-provider checks that remain environment-specific.
 
-Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha10-browser-application)
+Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha11-browser-application)
 or as a [desktop app](docs/guides/desktop.md). The macOS desktop bundles
 are ad-hoc signed, not Developer ID signed or notarized, so macOS may ask you to
 approve them; do not use the alpha5 macOS installers, which were damaged. The
@@ -118,7 +119,7 @@ integration code. Each has its own guide, so you can stop at the result you need
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a10 alpha**
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a11 alpha**
 into your user account without `sudo`, Git, or Docker:
 
 ```sh
@@ -126,12 +127,12 @@ into your user account without `sudo`, Git, or Docker:
   # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a10/install.sh \
-    | sh -s -- --version v0.1.0a10
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a11/install.sh \
+    | sh -s -- --version v0.1.0a11
 )
 ```
 
-Expected: `Installed Firefly Weave 0.1.0a10:` followed by the command's path. Then
+Expected: `Installed Firefly Weave 0.1.0a11:` followed by the command's path. Then
 make the default command directory available in this terminal and look around:
 
 ```sh
@@ -145,7 +146,7 @@ weave help workflow
 weave docs platform
 ```
 
-Expected: `Firefly Weave 0.1.0a10`, the command overview, the `workflow`
+Expected: `Firefly Weave 0.1.0a11`, the command overview, the `workflow`
 commands, and the address of the platform guide. You do not need to learn every
 command first: help explains each family and its next steps. The
 [installation guide](docs/installation.md) covers choosing Python, a permanent
@@ -178,7 +179,7 @@ Compose files and setup helpers. Clone the tag that matches the CLI:
 
 ```sh
 # Keep the platform files at the same version as the CLI.
-git clone --branch v0.1.0a10 --single-branch https://github.com/fireflyframework/firefly-weave.git
+git clone --branch v0.1.0a11 --single-branch https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 
 # Check prerequisites, then prepare private settings and dependencies once.
@@ -264,7 +265,7 @@ path, and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a10**, an **alpha** release. Download
+The recommended installation is **v0.1.0a11**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The documentation on a branch describes the source on that branch; a release tag
@@ -280,11 +281,17 @@ setup and delivery still need validation in your environment. Sign-in from the
 CLI, and from Studio in an opt-in browser test, has been verified end to end only
 against the local platform's Keycloak 26.7.4, and sign-in with a code from a
 locally built macOS desktop app against the same platform; browser sign-in from
-the desktop app and the DMG have not been verified. Microsoft Entra ID and other
-OIDC providers have configuration guidance, not verification: the built-in token
-verifier accepts Entra's signing keys, which omit `alg`, but only unit tests
-cover them, and no Entra token has been verified yet. Credential storage on
+the desktop app and the DMG have not been verified. Credential storage on
 Windows and Linux is not verified.
+
+Azure preproduction checks on alpha10 verified Microsoft Entra ID application
+tokens for a host application and an independent Agentic worker. An Azure OpenAI
+workflow completed through that worker with consistent replay, and Lumi returned
+a response through its separate gateway. An HTTP workflow also completed after
+the alpha10 deployment, and five existing run states were unchanged. These checks
+do not verify Entra browser or device-code sign-in for people, other identity providers, or general
+provider availability. See the [capability matrix](docs/capabilities.md) for the
+verified scope.
 
 ## Meet Lumi
 

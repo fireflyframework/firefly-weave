@@ -290,10 +290,10 @@ The API adds the issuer of the `local-keycloak` provider,
 installation, and publishes `allow_loopback_http: true` because that provider is
 `local_development`.
 
-**Microsoft Entra ID (illustrative, not verified).** This shape follows the
-requirements in [Microsoft Entra ID](#microsoft-entra-id-not-verified). It has
+**Microsoft Entra ID human sign-in (illustrative, not verified).** This shape follows the
+requirements in [Microsoft Entra ID](#microsoft-entra-id-human-sign-in-not-verified). It has
 not been run against a Microsoft tenant. Replace every `YOUR_*` placeholder and
-check the known verifier limitation in that section before you rely on it:
+check the human sign-in requirements in that section before you rely on it:
 
 ```json
 [
@@ -586,7 +586,7 @@ are never used for authorization.
 | Provider | Server verification | Published sign-in | Status |
 | --- | --- | --- | --- |
 | Local Keycloak 26.7.4 from `weave platform setup` | Written to `runtime.env` | Written to `runtime.env`; display name set by `weave platform start` | Verified locally: browser sign-in with PKCE and the device flow, silent renewal with refresh-token rotation, revocation at sign-out, an unlinked account, and an account without grants |
-| Microsoft Entra ID | Tenant-specific v2 profile | Illustrative entry in step 3 | Not verified; signing keys shaped like Entra's are covered by unit tests only, as described below |
+| Microsoft Entra ID | Tenant-specific v2 profile | Illustrative human sign-in entry in step 3 | Application tokens verified in Azure preproduction for a host application and independent worker; human browser/device sign-in remains unverified |
 | Other OIDC providers | Profile built from the provider's access-token contract | Built from the checklist below | Not verified |
 
 ### Local Keycloak (development)
@@ -650,16 +650,19 @@ realm. If browser sign-in is refused on a retained realm that `weave platform
 start` could not update, sign in with a code instead: `weave auth login --flow
 device`.
 
-### Microsoft Entra ID (not verified)
+### Microsoft Entra ID (human sign-in not verified)
 
 **Signing keys without `alg` are accepted by key type.** Microsoft's published
 signing keys for a tenant's v2 `jwks_uri` do not declare `alg`. The built-in
 verifier uses such an RSA key for `RS256` only, which is what Entra signs
-access tokens with. Unit tests cover keys shaped like Entra's; no Entra token
-has been verified yet.
+access tokens with. Azure preproduction checks have verified real Entra
+application tokens for a host application and an independent Agentic worker,
+including the configured audience, client mapping, identity links, and scoped
+grants.
 
-The following requirements describe a configuration. None of them has been run
-against a Microsoft tenant:
+Application-token verification does not establish browser or device-code
+sign-in for people. The following human sign-in configuration remains
+unverified against a Microsoft tenant:
 
 1. **Use the tenant-specific v2 issuer.**
     - The issuer is `https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0`, and
@@ -799,7 +802,7 @@ database login.
 | `ClaimsMapper` | Keycloak, generic, and Entra claim profiles; not wired into the built-in verifier | Exact provider claim shape and allowed mapping |
 | `PrincipalResolver` and identity links | Explicit local-principal mapping | Provisioning lifecycle and scope grants |
 | Published sign-in settings | Any provider listed in `WEAVE_OIDC_PROVIDERS` that meets the login-client checklist | Provider registration, scopes, and device verification origins |
-| Entra and other CIAM products | Configuration guidance only | Not verified; Entra-shaped signing keys without `alg` are covered by unit tests only; no Entra group-overage expansion |
+| Entra and other CIAM products | Entra application tokens verified in Azure preproduction; configuration guidance for human sign-in and other CIAM | Entra human browser/device sign-in and other providers remain unverified; no Entra group-overage expansion |
 
 An embedded verifier or resolver must keep these contracts. A generic mapper is
 not proof that a provider's ID token is safe as an API access token, or that its
@@ -897,7 +900,7 @@ ones a person can fix alone.
 | `WV-AUTH-NOT-LINKED` | Sign-in worked, but the identity has no Weave principal yet | Link it with the details the person shares, as described in [People and access](../guides/people-and-access.md) |
 | `WV-AUTH-NO-ACCESS` | The principal is linked but has no grant in any environment | Grant a role in the intended workspace |
 | `WV-PROFILE-CHANGED` | The published issuer or login client changed after the person's review | The person reviews the platform again |
-| HTTP 401 with `WV-UNAUTHENTICATED` for a token the provider issued | Issuer, audience, client mapping, token class, or signing key does not match the profile, or the identity is not linked | Compare the token's claims with step 2 and check the identity link; for Entra, see [Microsoft Entra ID (not verified)](#microsoft-entra-id-not-verified) |
+| HTTP 401 with `WV-UNAUTHENTICATED` for a token the provider issued | Issuer, audience, client mapping, token class, or signing key does not match the profile, or the identity is not linked | Compare the token's claims with step 2 and check the identity link; for Entra, see [Microsoft Entra ID (human sign-in not verified)](#microsoft-entra-id-human-sign-in-not-verified) |
 | HTTP 403 with `WV-FORBIDDEN` | The identity is linked, but no grant covers that operation in that scope | Grant the role at the right level; an environment grant does not cover project-level operations such as retention and compatibility |
 
 **Changes take effect at different times.** A changed local grant applies at the
