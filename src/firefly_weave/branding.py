@@ -14,14 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Lumi artwork shared by terminal help and self-contained workflow drawings."""
-
-LUMI_ASCII = r"""       \ /
-   \\ (o o) //
-    \\|___|//
-     \|   |/
-      \ * /
-       \_/"""
+"""Lumi artwork for self-contained workflow drawings and the API explorer."""
 
 # One mascot per SVG: its gradient IDs are namespaced to avoid graph marker IDs.
 LUMI_SVG_BODY = """<defs><radialGradient id="lumi-face" cx=".3" cy=".2" r=".9">

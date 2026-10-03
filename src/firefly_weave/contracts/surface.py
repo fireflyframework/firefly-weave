@@ -36,7 +36,9 @@ from firefly_weave.contracts.catalog import (
     PublishedVersion,
     RetirementRequest,
 )
+from firefly_weave.contracts.client_configuration import ClientConfiguration
 from firefly_weave.contracts.compatibility import CompatibilityReport
+from firefly_weave.contracts.connector_descriptors import AdapterName, ConnectorDescriptorView
 from firefly_weave.contracts.connectors import ConnectionRequest, ConnectionRevision, ConnectionTestResult
 from firefly_weave.contracts.email import (
     EmailConversation,
@@ -172,8 +174,19 @@ class Operation:
     page: bool = False
     revision: Literal["none", "optional", "required"] = "none"
     idempotency: bool = False
+    # Documents an accepted but optional Idempotency-Key; ``idempotency`` makes it required.
+    optional_idempotency: bool = False
     etag: bool = False
     request_required: bool = True
+    # Public operations are documented without bearer security; AuthenticationFilter
+    # must allowlist exactly the same routes and methods.
+    public: bool = False
+    # Shown instead of the capability sentence for public operations without one.
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.capability and not (self.public and self.description):
+            raise ValueError("An operation without a capability must be public and described")
 
     @property
     def canonical_path(self) -> str:
@@ -190,6 +203,8 @@ class Operation:
                 if name == "collection" and self.method == "GET"
                 else Literal["workflows", "actions", "connectors"]
                 if name == "collection"
+                else AdapterName
+                if name == "adapter"
                 else UUID,
             )
             for name in re.findall(r"{([^}]+)}", self.path)
@@ -240,9 +255,14 @@ class Operation:
                 params.append(OpenAPIParameter("cursor", "query", str, required=False))
         if self.revision != "none":
             params.append(OpenAPIParameter("If-Match", "header", RevisionTag, required=self.revision == "required"))
-        if self.idempotency:
+        if self.idempotency or self.optional_idempotency:
             params.append(
-                OpenAPIParameter("Idempotency-Key", "header", Annotated[str, Field(min_length=1, max_length=200)])
+                OpenAPIParameter(
+                    "Idempotency-Key",
+                    "header",
+                    Annotated[str, Field(min_length=1, max_length=200)],
+                    required=self.idempotency,
+                )
             )
         headers = {
             "X-Weave-Request-ID": OpenAPIHeader(str, required=True),
@@ -281,7 +301,7 @@ class Operation:
                             **headers,
                             **(
                                 {"WWW-Authenticate": OpenAPIHeader(Literal["Bearer"])}
-                                if status == 401 and not self.id.startswith("provider_ingress.")
+                                if status == 401 and not self.public
                                 else {}
                             ),
                         },
@@ -292,11 +312,7 @@ class Operation:
         if self.id.startswith("debug."):
             responses[410] = OpenAPIResponse("Expired session", {"application/problem+json": Problem}, headers)
         security: list[dict[str, list[str]]] = (
-            []
-            if self.id.startswith(("health.", "provider_ingress."))
-            else [{"webhookSignature": []}]
-            if self.id == "webhooks.receive"
-            else [{"bearer": []}]
+            [] if self.public else [{"webhookSignature": []}] if self.id == "webhooks.receive" else [{"bearer": []}]
         )
         if self.id == "webhooks.receive":
             params += [
@@ -316,7 +332,7 @@ class Operation:
                     else ""
                 )
                 if self.capability
-                else "Public health probe."
+                else self.description
             ),
             tags=[self.id.split(".")[0]],
             parameters=params,
@@ -474,6 +490,7 @@ OPERATIONS = {
             "POST",
             ProviderIngressResponse,
             "provider verification",
+            public=True,
         ),
         Operation(
             "provider_ingress.challenge",
@@ -481,6 +498,7 @@ OPERATIONS = {
             "GET",
             ProviderIngressResponse,
             "provider challenge verification",
+            public=True,
         ),
         Operation(
             "human_tasks.list", ENVIRONMENT + "/human-tasks", "GET", Page[HumanTask], "human_task.read", page=True
@@ -750,8 +768,17 @@ OPERATIONS = {
             "grant.manage or grant.admin",
         ),
         Operation("identity.read", "/api/v1/identity", "GET", IdentityView, "authenticated identity"),
-        Operation("health.live", "/health/live", "GET", Health, ""),
-        Operation("health.ready", "/health/ready", "GET", Health, ""),
+        Operation(
+            "client_configuration.read",
+            "/api/v1/client-configuration",
+            "GET",
+            ClientConfiguration,
+            "",
+            public=True,
+            description="Public sign-in settings for CLI and Studio onboarding.",
+        ),
+        Operation("health.live", "/health/live", "GET", Health, "", public=True, description="Public health probe."),
+        Operation("health.ready", "/health/ready", "GET", Health, "", public=True, description="Public health probe."),
         Operation("admin.tenant", "/admin/tenants", "POST", Identifier, "tenant.create", NameRequest),
         Operation("admin.grant", "/admin/grants", "POST", Identifier, "grant.admin or grant.manage", GrantRequest),
         Operation("projects.create", "/tenants/{tenant}/projects", "POST", Identifier, "project.manage", NameRequest),
@@ -768,6 +795,22 @@ OPERATIONS = {
         Operation("catalog.read", PROJECT + "/catalog", "GET", CatalogLock, "catalog.read"),
         Operation("capabilities.read", PROJECT + "/capabilities", "GET", Capabilities, "catalog.read"),
         Operation("schemas.read", PROJECT + "/schemas", "GET", dict[str, JsonObjectData], "catalog.read"),
+        # Static catalog resources precede the {collection} matcher for first-match consumers.
+        Operation(
+            "connector_descriptors.list",
+            PROJECT + "/connector-descriptors",
+            "GET",
+            Page[ConnectorDescriptorView],
+            "catalog.read",
+            page=True,
+        ),
+        Operation(
+            "connector_descriptors.read",
+            PROJECT + "/connector-descriptors/{adapter}",
+            "GET",
+            ConnectorDescriptorView,
+            "catalog.read",
+        ),
         Operation(
             "definitions.publish",
             PROJECT + "/{collection}",
@@ -874,6 +917,7 @@ OPERATIONS = {
             "connection.manage",
             ConnectionRequest,
             (201,),
+            optional_idempotency=True,
         ),
         Operation(
             "connections.list",

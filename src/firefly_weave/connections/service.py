@@ -17,8 +17,9 @@
 """Authorized references commit atomically; explicit test effects run after commit."""
 
 import asyncio
+import json
 from functools import partial
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from pyfly.container import service
@@ -28,6 +29,7 @@ from firefly_weave.access.models import Principal
 from firefly_weave.access.service import audit
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.schemas import validate_payload
+from firefly_weave.connections.diagnostics import connector_unavailable, readiness_issues, rejected, request_issues
 from firefly_weave.connections.models import unavailable
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.repository import ConnectionRepository
@@ -41,10 +43,10 @@ from firefly_weave.contracts.connectors import (
     ConnectionTestResult,
     ResolvedSecret,
 )
-from firefly_weave.contracts.values import JsonObject
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.ports import ConnectionBindingPort
 from firefly_weave.definitions.service import DefinitionService
-from firefly_weave.persistence.idempotency import lock
+from firefly_weave.persistence.idempotency import Idempotency, lock
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
 
 if TYPE_CHECKING:
@@ -82,65 +84,38 @@ class ConnectionService(ConnectionBindingPort):
         *,
         context: AuditContext,
         tx: Transaction | None = None,
+        idempotency_key: str | None = None,
     ) -> ConnectionRevision:
         self.require(actor, scope, "connection.manage", context)
         measure_value(request.model_dump(mode="json", by_alias=True))
         async with self.definitions.transaction(scope, tx) as tx:
-            contract = await self.definitions.connector_contract(
-                actor, scope, request.connector_version_id, capability="connection.manage", context=context, tx=tx
-            )
+            replay = None
+            if idempotency_key is not None:
+                # Optional: a retried create replays the committed revision instead of adding one.
+                replay = Idempotency(
+                    tx,
+                    actor.id,
+                    f"connection.create:{scope.environment_id}",
+                    idempotency_key,
+                    request.model_dump(mode="json", by_alias=True),
+                )
+                prior = await replay.replay()
+                if prior is not None:
+                    return ConnectionRevision.model_validate_json(json.dumps(prior))
+            try:
+                contract = await self.definitions.connector_contract(
+                    actor, scope, request.connector_version_id, capability="connection.manage", context=context, tx=tx
+                )
+            except CatalogError as error:
+                if error.code != "WV-CONNECTION":
+                    raise
+                raise connector_unavailable() from None
             spec = contract["document"]["spec"]
-            self.registry.get(spec["adapter"])
-            bundle = {
-                dependency["reference"]: dependency["document"]
-                for dependency in contract["artifact"]["executable"]["dependencies"]
-                if dependency["kind"] == "Schema"
-            }
-            if validate_payload(spec["configSchema"], request.config, bundle) or validate_payload(
-                spec["authSchema"], cast(JsonObject, request.secret_refs), bundle, credential_references=True
-            ):
-                raise unavailable()
-            self.registry.validate_connection(spec["adapter"], request)
-            for handle in request.secret_refs.values():
-                self.secrets.check(scope, handle)
-            # Destination strings are literal origins. Wildcards, credentials, and path
-            # selectors cannot silently broaden an adapter's future egress policy.
-            from urllib.parse import urlsplit
-
-            for destination in request.allowed_destinations:
-                if spec["adapter"] == "weave-kafka":
-                    from firefly_weave.connectors.broker import destination as broker_destination
-
-                    try:
-                        broker_destination(destination)
-                    except ValueError:
-                        raise unavailable() from None
-                    continue
-                if spec["adapter"] == "weave-postgresql":
-                    from firefly_weave.connectors.postgresql import destination as postgres_destination
-
-                    try:
-                        postgres_destination(destination)
-                    except ValueError:
-                        raise unavailable() from None
-                    continue
-                try:
-                    parsed = urlsplit(destination)
-                    port = parsed.port
-                except ValueError:
-                    raise unavailable() from None
-                if (
-                    parsed.scheme not in {"https", "http"}
-                    or port == 0
-                    or not parsed.hostname
-                    or parsed.username
-                    or parsed.password
-                    or parsed.query
-                    or parsed.fragment
-                    or parsed.path not in {"", "/"}
-                    or "*" in destination
-                ):
-                    raise unavailable()
+            # Every rejection (schemas, descriptor policy, literal destination origins and
+            # operator-granted handles) is reported at once, each at its request pointer.
+            issues = request_issues(contract, request, self.registry, self.secrets, scope)
+            if issues:
+                raise rejected(issues)
             await lock(tx, f"connection:{scope.tenant_id}:{scope.project_id}:{scope.environment_id}:{request.name}")
             repository = ConnectionRepository(tx)
             revision = ConnectionRevision(
@@ -175,6 +150,8 @@ class ConnectionService(ConnectionBindingPort):
                 capability="connection.manage",
                 context=context,
             )
+            if replay is not None:
+                await replay.save(revision.model_dump(mode="json", by_alias=True))
             return revision
 
     async def read(
@@ -217,16 +194,30 @@ class ConnectionService(ConnectionBindingPort):
         capability: str,
         context: AuditContext,
         tx: Transaction,
+        *,
+        explain: bool = False,
     ) -> None:
-        contract = await self.definitions.connector_contract(
-            actor, scope, revision.connector_version_id, capability=capability, context=context, tx=tx
+        try:
+            contract = await self.definitions.connector_contract(
+                actor, scope, revision.connector_version_id, capability=capability, context=context, tx=tx
+            )
+        except CatalogError as error:
+            if not explain or error.code != "WV-CONNECTION":
+                raise
+            raise connector_unavailable() from None
+        issues = readiness_issues(
+            contract,
+            revision.connector_digest,
+            revision.config,
+            revision.adapter,
+            revision.secret_refs,
+            self.registry,
+            self.secrets,
+            scope,
         )
-        if contract["definition_digest"] != revision.connector_digest:
-            raise unavailable()
-        self._admit_config(revision, contract)
-        self.registry.get(revision.adapter)
-        for handle in revision.secret_refs.values():
-            self.secrets.check(scope, handle)
+        if issues:
+            # Bindings keep the opaque problem; an explicit connection test explains each field.
+            raise rejected(issues) if explain else unavailable()
 
     @staticmethod
     def _admit_config(revision: ConnectionRevision, contract: dict[str, Any]) -> None:
@@ -246,7 +237,7 @@ class ConnectionService(ConnectionBindingPort):
         async with self.uow.open(scope) as tx:
             repository = ConnectionRepository(tx)
             revision = await repository.revision(revision_id)
-            await self._ready(actor, scope, revision, "connection.manage", context, tx)
+            await self._ready(actor, scope, revision, "connection.manage", context, tx, explain=True)
             await repository.execute(
                 "INSERT INTO connection_test_jobs VALUES(:id,:tenant,:project,:environment,:revision,:principal)",
                 id=job_id,

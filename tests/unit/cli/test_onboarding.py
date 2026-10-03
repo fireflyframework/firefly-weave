@@ -177,12 +177,13 @@ def test_starter_readme_refreshes_simulation_after_input_edit(tmp_path):
     assert json.loads(result.output)["variables"]["output"] == {"message": "Edited input"}
 
 
-def test_lumi_help_keeps_narrow_and_machine_outputs_clean():
+def test_logo_help_keeps_narrow_and_machine_outputs_clean():
     runner = CliRunner()
     wide = runner.invoke(cli, ["--help"], terminal_width=80)
     assert wide.exit_code == 0
-    assert "Lumi, your guide" in wide.output
-    assert "(o o)" in wide.output
+    assert "#########" in wide.output and "Firefly Weave" in wide.output
+    assert "Lumi" not in wide.output
+    assert "(o o)" not in wide.output
     narrow = runner.invoke(cli, ["--help"], terminal_width=50)
     assert "Lumi" not in narrow.output
     assert "Firefly Weave" in narrow.output

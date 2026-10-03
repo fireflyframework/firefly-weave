@@ -68,8 +68,8 @@ async def live_cli():
         record["redirectUris"] = sorted(
             set(record["redirectUris"])
             | {
-                "http://127.0.0.1:80/callback",
-                "http://[::1]:80/callback",
+                "http://127.0.0.1/callback",
+                "http://[::1]/callback",
             }
         )
         assert (await client.put(admin + "/clients/" + record["id"], headers=headers, json=record)).status_code == 204
@@ -305,7 +305,8 @@ async def test_live_device_pkce_completion_and_cancel_no_late_save(live_cli, tmp
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert store.load(config.binding).state == "authenticating"
+    # A cancelled attempt is abandoned as signed out (never left reading as in progress) and saves no token.
+    assert store.load(config.binding).state == "logged_out"
     assert store.load(config.binding).access_token is None
     await session.logout()
     assert store.load(config.binding) is None
@@ -367,7 +368,7 @@ async def test_live_device_expiry_with_retained_unique_public_client(live_cli, t
                 "directAccessGrantsEnabled": False,
                 "implicitFlowEnabled": False,
                 "serviceAccountsEnabled": False,
-                "redirectUris": ["http://127.0.0.1:80/callback"],
+                "redirectUris": ["http://127.0.0.1/callback"],
                 "attributes": {
                     "pkce.code.challenge.method": "S256",
                     "oauth2.device.authorization.grant.enabled": "true",
@@ -394,7 +395,7 @@ async def test_live_device_expiry_with_retained_unique_public_client(live_cli, t
     with pytest.raises(AuthError) as failure:
         await session.login(flow="device", instructions=lambda *_: notified.append(True))
     assert notified == [True] and failure.value.code in {"WV-AUTH-DENIED", "WV-AUTH-EXPIRED"}
-    assert store.load(config.binding).state == "authenticating"
+    assert store.load(config.binding).state == "logged_out"
     assert store.load(config.binding).refresh_token is None
 
 
@@ -472,3 +473,177 @@ async def test_installed_cli_device_login_status_logout_json(live_cli, tmp_path)
         assert record.access_token.get_secret_value().encode() not in stdout
         assert record.refresh_token.get_secret_value().encode() not in stdout
     assert not credentials.exists()
+
+
+async def keycloak_browser(browser, url, root, username, password):
+    """Drive one authorization request in a persistent cookie jar; return how many sign-in forms were shown."""
+    forms = 0
+    response = await browser.get(url)
+    for _ in range(15):
+        for cookie in browser.cookies.jar:
+            if cookie.domain == "localhost.local":
+                cookie.secure = False
+        if response.is_redirect:
+            destination = urljoin(str(response.url), response.headers["location"])
+            parsed = urlsplit(destination)
+            if parsed.hostname in {"127.0.0.1", "::1"} and parsed.path == "/callback":
+                assert "error" not in parse_qs(parsed.query), parsed.query
+                assert (await browser.get(destination)).status_code == 200
+                return forms
+            assert destination.startswith(root + "/")
+            response = await browser.get(destination)
+            continue
+        form = Form(response.text)
+        assert response.status_code == 200 and form.action, response.status_code
+        action = urljoin(str(response.url), form.action)
+        assert action.startswith(root + "/")
+        forms += 1
+        response = await browser.post(
+            action,
+            data={**form.inputs, "username": username, "password": password.get_secret_value(), "accept": "Yes"},
+        )
+    pytest.fail("Normal browser flow exceeded its redirect bound", pytrace=False)
+
+
+async def test_cli_profile_setup_status_switch_account_and_revoke(live_cli, tmp_path):
+    """Saved-platform journey through the CLI process against the real isolated Keycloak (no Weave API)."""
+    import json
+    import sys
+    from pathlib import Path
+
+    from firefly_weave.sdk.auth import LoginConfig
+    from firefly_weave.sdk.credentials import FileCredentialStore
+    from firefly_weave.sdk.profiles import ProfileStore
+
+    root, username, password = live_cli
+    tmp_path.chmod(0o700)
+    issuer = root + "/realms/weave"
+    config = LoginConfig(
+        provider_id="local-keycloak",
+        issuer=issuer,
+        client_id="weave-cli",
+        target="https://api.example",
+        account="operator-file-account",
+        scopes=("openid",),
+        allow_loopback_http=True,
+        login_timeout=60,
+    )
+    connection, credentials = tmp_path / "connection.json", tmp_path / "credentials.json"
+    connection.write_text(config.model_dump_json())
+    bound = LoginConfig.model_validate({**config.model_dump(), "account": "kc"})
+    python = os.environ.get("WEAVE_C6_CLIENT_PYTHON")
+    environment = {k: v for k, v in os.environ.items() if k not in {"WEAVE_PROFILE", "WEAVE_BASE_URL"}}
+    environment.update(WEAVE_CONFIG_HOME=str(tmp_path / "config"), WEAVE_NO_ANIMATION="1")
+    if python is None:
+        # Exercise this source tree with the test interpreter.
+        python = sys.executable
+        environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
+
+    async def start(*arguments):
+        return await asyncio.create_subprocess_exec(
+            python,
+            "-m",
+            "firefly_weave.cli.main",
+            "auth",
+            *arguments,
+            env=environment,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+    async def sign_in(process, browser):
+        """Read the printed sign-in address from stderr, complete it, and return (url, forms, result)."""
+        lines = []
+        try:
+            while True:
+                line = (await asyncio.wait_for(process.stderr.readline(), 20)).decode()
+                assert line, "".join(lines)
+                lines.append(line)
+                if line.startswith("  ") and "/protocol/openid-connect/auth?" in line:
+                    url = line.strip()
+                    break
+            forms = await keycloak_browser(browser, url, root, username, password)
+            stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
+        finally:
+            if process.returncode is None:
+                process.terminate()
+                await asyncio.wait_for(process.wait(), 5)
+        assert process.returncode == 0, ("".join(lines), stderr.decode(), stdout.decode())
+        return url, forms, json.loads(stdout), "".join(lines) + stderr.decode() + stdout.decode()
+
+    async def run(*arguments, expected=0):
+        process = await start(*arguments)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
+        assert process.returncode == expected, (stdout.decode(), stderr.decode())
+        return json.loads(stdout), stdout.decode() + stderr.decode()
+
+    seen = []
+    async with httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False) as browser:
+        setup = await start(
+            "setup", "--auth-config", str(connection), "--name", "kc", "--yes", "--flow", "browser",
+            "--no-browser", "--skip-workspace", "--credential-store", "file", "--credential-file",
+            str(credentials), "--output", "json",
+        )  # fmt: skip
+        url, forms, summary, output = await sign_in(setup, browser)
+        seen.append(output)
+        assert forms >= 1 and "prompt" not in parse_qs(urlsplit(url).query)
+        assert "Step 3 of 4 · Sign in" in output and "no passwords or tokens" in output
+        assert summary["profile"] == "kc" and summary["authenticated"] is True and summary["active"] is True
+        assert summary["workspace"] is None and summary["saved"]["credentials"] == f"file:{credentials}"
+        assert summary["account"]["issuer"] == issuer and summary["account"]["provider_id"] == "local-keycloak"
+        # With only the "openid" scope Keycloak's id_token carries no username, so the hint is the subject.
+        assert summary["account"]["display_name"] in {None, username} and summary["account"]["subject"]
+        profile = ProfileStore(tmp_path / "config" / "profiles.json").get("kc")
+        assert profile.source == "file" and profile.login == bound
+        first = FileCredentialStore(credentials).load(bound.binding)
+        assert first.state == "active" and first.refresh_token is not None
+
+        status, output = await run("status", "--profile", "kc", "--output", "json")
+        seen.append(output)
+        assert status["authenticated"] is True and status["state"] == "signed_in"
+        assert status["account"]["subject"] == summary["account"]["subject"]
+
+        # Control: the same browser session signs in again without a form (single sign-on).
+        process = await start("login", "--profile", "kc", "--flow", "browser", "--no-browser", "--output", "json")
+        url, forms, result, output = await sign_in(process, browser)
+        seen.append(output)
+        assert forms == 0 and "prompt" not in parse_qs(urlsplit(url).query) and result["authenticated"]
+
+        # Switch account: prompt=login makes Keycloak ask again despite the session cookie.
+        process = await start("login", "--profile", "kc", "--switch-account", "--no-browser", "--output", "json")
+        url, forms, result, output = await sign_in(process, browser)
+        seen.append(output)
+        assert parse_qs(urlsplit(url).query)["prompt"] == ["login"]
+        assert forms >= 1 and result["authenticated"] is True and result["account"]["subject"]
+        current = FileCredentialStore(credentials).load(bound.binding)
+        assert current.refresh_token.get_secret_value() != first.refresh_token.get_secret_value()
+
+    logout, output = await run("logout", "--profile", "kc", "--revoke", "--output", "json")
+    seen.append(output)
+    assert logout == {
+        "profile": "kc",
+        "server": "https://api.example",
+        "logged_out": True,
+        "remote_revocation": "confirmed",
+        "account": None,
+    }
+    assert FileCredentialStore(credentials).load(bound.binding) is None
+    assert ProfileStore(tmp_path / "config" / "profiles.json").get("kc").account is None
+    async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+        revoked = await client.post(
+            issuer + "/protocol/openid-connect/token",
+            data={
+                "client_id": "weave-cli",
+                "grant_type": "refresh_token",
+                "refresh_token": current.refresh_token.get_secret_value(),
+            },
+        )
+        assert revoked.status_code == 400 and revoked.json()["error"] == "invalid_grant"
+    after, output = await run("status", "--profile", "kc", "--output", "json", expected=1)
+    seen.append(output)
+    assert after["authenticated"] is False and after["state"] == "signed_out"
+    profiles = (tmp_path / "config" / "profiles.json").read_text()
+    for record in (first, current):
+        for secret in (record.access_token, record.refresh_token):
+            value = secret.get_secret_value()
+            assert value not in profiles and all(value not in text for text in seen)

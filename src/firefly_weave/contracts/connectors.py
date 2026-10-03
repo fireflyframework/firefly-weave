@@ -16,7 +16,7 @@
 
 """Reference-only connection contracts and adapter execution ports."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Protocol
@@ -43,6 +43,29 @@ class ConnectionRequest(ContractModel):
     config: JsonObjectData = Field(default_factory=dict)
     secret_refs: dict[ResourceName, ResourceName] = Field(alias="secretRef", default_factory=dict)
     allowed_destinations: tuple[str, ...] = ()
+
+
+type ConnectionIssueCode = Literal["CONNECTOR", "CONFIG", "AUTH", "SECRET", "DESTINATION"]
+
+
+@dataclass(frozen=True)
+class ConnectionIssue:
+    """A safe finding about a connection request; ``path`` is a JSON pointer into the request body.
+
+    Messages are plain language and never contain secret values or the names of other handles.
+    """
+
+    path: str
+    message: str
+    code: ConnectionIssueCode = "CONFIG"
+
+
+class ConnectionInvalid(ValueError):
+    """Descriptor connection validation failure that explains each rejected field."""
+
+    def __init__(self, issues: Sequence[ConnectionIssue]) -> None:
+        super().__init__("Connection requirements are unavailable or incompatible")
+        self.issues = tuple(issues)
 
 
 class ConnectionRevision(ConnectionRequest):

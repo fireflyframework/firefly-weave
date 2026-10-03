@@ -172,8 +172,8 @@
       "serviceAccountsEnabled": false,
       "redirectUris": [
         "http://127.0.0.1:18555/callback",
-        "http://127.0.0.1:80/callback",
-        "http://[::1]:80/callback"
+        "http://127.0.0.1/callback",
+        "http://[::1]/callback"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
@@ -213,6 +213,19 @@
             "multivalued": "true",
             "access.token.claim": "true",
             "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "preferred-username-id-token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "config": {
+            "user.attribute": "username",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true"
           }
         }
       ]

@@ -19,10 +19,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from firefly_weave.compiler.analyzer import analyze, analyze_partial
+from firefly_weave.compiler.action_config import ActionConfigValidator
+from firefly_weave.compiler.analyzer import analyze, analyze_authoring, analyze_partial
 from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest
 from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.expressions import ExpressionFailure, measure_value
@@ -144,6 +146,8 @@ def _compile(
     contract_limits: SchemaLimits,
     artifact_limits: ArtifactLimits,
     max_parallel_concurrency: int,
+    action_validators: Mapping[str, ActionConfigValidator] | None = None,
+    authoring: bool = False,
 ) -> CompileResult:
     partial = catalog is None
     try:
@@ -165,7 +169,9 @@ def _compile(
             (FrozenDocument.from_value(_issue(failure.code).model_dump(by_alias=True)),), partial=partial, error_count=1
         )
     analysis = (
-        analyze_partial(parsed, limits=limits, schema_limits=schema_limits, contract_limits=contract_limits)
+        (analyze_authoring if authoring else analyze_partial)(
+            parsed, limits=limits, schema_limits=schema_limits, contract_limits=contract_limits
+        )
         if catalog is None
         else analyze(
             parsed,
@@ -175,6 +181,7 @@ def _compile(
             schema_limits=schema_limits,
             contract_limits=contract_limits,
             max_parallel_concurrency=max_parallel_concurrency,
+            action_validators=action_validators,
         )
     )
     diagnostics = tuple(FrozenDocument.from_value(d.model_dump(by_alias=True)) for d in analysis.diagnostics)
@@ -239,8 +246,13 @@ def compile_source(
     contract_limits: SchemaLimits = DEFAULT_CONTRACT_LIMITS,
     artifact_limits: ArtifactLimits = DEFAULT_ARTIFACT_LIMITS,
     max_parallel_concurrency: int = 1000,
+    action_validators: Mapping[str, ActionConfigValidator] | None = None,
 ) -> CompileResult:
-    """Complete definition validity; never claims live deployment/activation readiness."""
+    """Complete definition validity; never claims live deployment/activation readiness.
+
+    ``action_validators`` maps an installed Connector manifest digest to its trusted descriptor
+    check for Actions that use exactly that Connector. Callers supply them explicitly.
+    """
     if not isinstance(catalog, CatalogSnapshot):
         raise TypeError("Complete compilation requires an explicit CatalogSnapshot")
     return _compile(
@@ -254,6 +266,7 @@ def compile_source(
         contract_limits=contract_limits,
         artifact_limits=artifact_limits,
         max_parallel_concurrency=max_parallel_concurrency,
+        action_validators=action_validators,
     )
 
 
@@ -278,6 +291,37 @@ def validate_source(
         contract_limits=contract_limits,
         artifact_limits=DEFAULT_ARTIFACT_LIMITS,
         max_parallel_concurrency=1000,
+    )
+
+
+def validate_authoring(
+    source: str | bytes | JsonObject,
+    *,
+    format: Literal["yaml", "json", "object"],
+    filename: str | None = None,
+    limits: Limits = _DEFAULT_LIMITS,
+    schema_limits: SchemaLimits = _DEFAULT_SCHEMA_LIMITS,
+    contract_limits: SchemaLimits = DEFAULT_CONTRACT_LIMITS,
+) -> CompileResult:
+    """No-catalog authoring validation with flow, dominance and type analysis, for editors.
+
+    Runs every ``validate_source`` check, then analyzes the workflow against an absent catalog:
+    each dependency reference yields ``WV-COMP-CATALOG_PENDING`` (info) instead of an
+    unknown-resource error. Always artifact=None, partial=True, ok=False; ``validation_ok``
+    reflects error-severity findings only. ``validate_source`` and its callers are unchanged.
+    """
+    return _compile(
+        source,
+        format=format,
+        catalog=None,
+        filename=filename,
+        strict=False,
+        limits=limits,
+        schema_limits=schema_limits,
+        contract_limits=contract_limits,
+        artifact_limits=DEFAULT_ARTIFACT_LIMITS,
+        max_parallel_concurrency=1000,
+        authoring=True,
     )
 
 

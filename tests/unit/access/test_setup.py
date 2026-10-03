@@ -52,6 +52,37 @@ def test_realm_template_flow_and_audience_policy():
     assert clients["weave-cli"]["attributes"]["pkce.code.challenge.method"] == "S256"
 
 
+def test_realm_template_registers_port_free_loopback_callbacks():
+    # Keycloak 26.7.4 matches an ephemeral loopback port only for port-free entries (RFC 8252 7.3);
+    # an explicit :80 entry matches port 80 alone, which broke browser sign-in on new realms.
+    path = Path(__file__).resolve().parents[3] / "infra/keycloak/weave-realm.json"
+    clients = {client["clientId"]: client for client in json.loads(path.read_text())["clients"]}
+    redirects = clients["weave-cli"]["redirectUris"]
+    assert {"http://127.0.0.1/callback", "http://[::1]/callback"} <= set(redirects)
+    assert all(uri.endswith("/callback") and "*" not in uri for uri in redirects)
+    assert not any(":80/" in uri for uri in redirects)
+
+
+def test_realm_template_shares_the_username_only_in_the_login_id_token():
+    path = Path(__file__).resolve().parents[3] / "infra/keycloak/weave-realm.json"
+    clients = {client["clientId"]: client for client in json.loads(path.read_text())["clients"]}
+    (mapper,) = [m for m in clients["weave-cli"]["protocolMappers"] if m["name"] == "preferred-username-id-token"]
+    assert mapper["protocol"] == "openid-connect" and mapper["protocolMapper"] == "oidc-usermodel-property-mapper"
+    assert mapper["config"] == {
+        "user.attribute": "username",
+        "claim.name": "preferred_username",
+        "jsonType.label": "String",
+        "id.token.claim": "true",
+        "access.token.claim": "false",
+        "userinfo.token.claim": "true",
+    }
+    # Service clients and access tokens stay minimal: no person names.
+    for name, client in clients.items():
+        for other in client.get("protocolMappers", []):
+            if other is not mapper:
+                assert other["config"].get("claim.name") != "preferred_username", name
+
+
 def test_postgres_setup_supports_new_isolated_destination(tmp_path):
     import os
 

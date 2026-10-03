@@ -86,6 +86,8 @@ def contract_models() -> dict[str, SchemaModel]:
         PublishedVersion,
         RetirementRequest,
     )
+    from firefly_weave.contracts.client_configuration import ClientConfiguration
+    from firefly_weave.contracts.connector_descriptors import ConnectorDescriptorView
     from firefly_weave.contracts.connectors import ConnectionRequest, ConnectionRevision, ConnectionTestResult
     from firefly_weave.contracts.email import (
         EmailConversation,
@@ -103,6 +105,7 @@ def contract_models() -> dict[str, SchemaModel]:
         EmailTokenRequest,
         MailProfile,
     )
+    from firefly_weave.contracts.http_profiles import AuthProfile, HttpOperation, ProfileConnection
     from firefly_weave.contracts.human_tasks import (
         AssignmentBinding,
         AssignmentBindingList,
@@ -175,6 +178,7 @@ def contract_models() -> dict[str, SchemaModel]:
     )
     from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugSession, DebugView
     from firefly_weave.operations.redaction import SafeProjection
+    from firefly_weave.sdk.openapi_import import OpenAPIImportPolicy
     from firefly_weave.triggers.models import Trigger, TriggerReceipt, TriggerRequest
 
     return {
@@ -188,6 +192,7 @@ def contract_models() -> dict[str, SchemaModel]:
         "provider-event": ProviderEvent,
         "provider-receipt": ProviderReceipt,
         "identity-view": IdentityView,
+        "client-configuration": ClientConfiguration,
         "member-binding": MemberBinding,
         "member-grant-request": MemberGrantRequest,
         "principal-create-request": PrincipalCreateRequest,
@@ -258,6 +263,12 @@ def contract_models() -> dict[str, SchemaModel]:
         "connection-request": ConnectionRequest,
         "connection-revision": ConnectionRevision,
         "connection-test-result": ConnectionTestResult,
+        "connector-descriptor": ConnectorDescriptorView,
+        # HTTP profile 2.0.0 authoring contracts; the profile models remain the final authority.
+        "http-operation": HttpOperation,
+        "http-profile-connection": ProfileConnection,
+        "auth-profile": AuthProfile,
+        "openapi-import-policy": OpenAPIImportPolicy,
         "run-view": RunView,
         "safe-projection": SafeProjection,
         "debug-create": DebugCreate,

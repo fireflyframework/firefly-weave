@@ -25,7 +25,6 @@ from typing import Any
 import click
 
 from firefly_weave import __version__
-from firefly_weave.branding import LUMI_ASCII
 from firefly_weave.cli import EXIT_USAGE, emit_result, error_result
 from firefly_weave.cli.admin import admin
 from firefly_weave.cli.auth import auth
@@ -65,15 +64,24 @@ _LOGO = """  ###    ###        ###    ###
             #      #"""
 
 
+LEGACY_AUTH_COMMANDS = frozenset({"login", "status", "logout"})
+
+
+def _human_auth(arguments: Sequence[str], machine: bool) -> bool:
+    """A text-mode `weave auth` invocation; the alpha6 `--auth-config` login/status/logout stay JSON-only."""
+    if machine or arguments[:1] != ["auth"]:
+        return False
+    connection_file = any(value == "--auth-config" or value.startswith("--auth-config=") for value in arguments)
+    return not (connection_file and arguments[1:2] and arguments[1] in LEGACY_AUTH_COMMANDS)
+
+
 class OfflineGroup(click.Group):
     """Present human help while preserving value-free machine error contracts."""
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         if formatter.width >= 60:
-            companion = {1: "   Firefly Weave", 11: "      Lumi, your guide"}
-            companion.update({index + 4: "   " + line for index, line in enumerate(LUMI_ASCII.splitlines())})
             for index, line in enumerate(_LOGO.splitlines()):
-                title = companion.get(index, "")
+                title = "   Firefly Weave" if index == 1 else ""
                 formatter.write(f"{line:<32}{title}".rstrip() + "\n")
         else:
             formatter.write("Firefly Weave\n")
@@ -87,7 +95,7 @@ class OfflineGroup(click.Group):
                     (f"{ctx.command_path} workflow compile --help", "Compile with a pinned catalog."),
                     (f"{ctx.command_path} platform setup", "Set up a local platform from a matching checkout."),
                     (f"{ctx.command_path} docs platform", "Learn the platform services and deployment choices."),
-                    (f"{ctx.command_path} auth --help", "Configure API credentials."),
+                    (f"{ctx.command_path} auth setup", "Connect to a platform, sign in, and choose a workspace."),
                     (f"{ctx.command_path} definitions --help", "Publish and activate definitions."),
                     (f"{ctx.command_path} worker deploy --help", "Deploy a worker to an existing platform."),
                     (f"{ctx.command_path} help COMMAND", "Explore any command without running it."),
@@ -133,8 +141,8 @@ class OfflineGroup(click.Group):
             "docs": "Find docs for platform startup and next steps.",
             "workflow": "Validate, compile, and simulate local workflows.",
             "schema": "Inspect and export definition schemas.",
-            "connector": "Build connectors or import an OpenAPI definition.",
-            "auth": "Sign in and manage saved API credentials.",
+            "connector": "Import OpenAPI, build no-code HTTP actions, or package connectors.",
+            "auth": "Connect to a platform, sign in, and choose a workspace.",
             "definitions": "Publish and activate workflows and actions.",
             "connections": "Configure and test integration connections.",
             "run": "Cancel or retry runs; replay exported history.",
@@ -199,7 +207,11 @@ class OfflineGroup(click.Group):
             machine = "--output=json" in arguments or any(
                 arguments[i : i + 2] == ["--output", "json"] for i in range(len(arguments))
             )
-            if arguments and arguments[0] in {
+            if _human_auth(arguments, machine):
+                # Profile-mode `weave auth` takes names, server addresses and ids, never secrets, so
+                # click's own message (with usage and the --help hint) is safe and more helpful.
+                error.show()
+            elif arguments and arguments[0] in {
                 "remote",
                 "auth",
                 "definitions",

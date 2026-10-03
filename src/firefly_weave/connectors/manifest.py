@@ -124,27 +124,60 @@ def http_descriptor() -> ConnectorDescriptor:
 
 
 def validate_http_connection(request: ConnectionRequest) -> None:
+    """weave-http@1.0.0 policy; each rejection names the request field to change."""
     from urllib.parse import urlsplit
 
-    from firefly_weave.connections.models import unavailable
+    from firefly_weave.compiler.source_map import pointer_child
     from firefly_weave.connectors.egress import origin
+    from firefly_weave.contracts.connectors import ConnectionInvalid, ConnectionIssue
 
-    try:
-        base = request.config["baseUrl"]
-        if not isinstance(base, str):
-            raise ValueError
-        parsed = urlsplit(base)
-        if (
-            parsed.path not in {"", "/"}
-            or parsed.query
-            or origin(base) not in {origin(v) for v in request.allowed_destinations}
-        ):
-            raise ValueError
-        expected = {"token"} if request.config.get("auth") == "bearer" else set()
-        if set(request.secret_refs) != expected:
-            raise ValueError
-    except (ValueError, KeyError):
-        raise unavailable() from None
+    issues: list[ConnectionIssue] = []
+    base = request.config.get("baseUrl")
+    if not isinstance(base, str):
+        issues.append(ConnectionIssue("/config/baseUrl", "Enter the API origin, for example https://api.example.com."))
+    else:
+        try:
+            parsed = urlsplit(base)
+            selected = origin(base)
+            if parsed.path not in {"", "/"} or parsed.query:
+                issues.append(
+                    ConnectionIssue("/config/baseUrl", "Use only the origin here, for example https://api.example.com.")
+                )
+            allowed = set()
+            for index, value in enumerate(request.allowed_destinations):
+                try:
+                    allowed.add(origin(value))
+                except ValueError:
+                    issues.append(
+                        ConnectionIssue(
+                            f"/allowed_destinations/{index}",
+                            "Use an origin such as https://api.example.com.",
+                            "DESTINATION",
+                        )
+                    )
+            if selected not in allowed:
+                issues.append(
+                    ConnectionIssue(
+                        "/allowed_destinations", "Add the base URL origin to allowed_destinations.", "DESTINATION"
+                    )
+                )
+        except ValueError:
+            issues.append(
+                ConnectionIssue("/config/baseUrl", "Use an http or https origin such as https://api.example.com.")
+            )
+    expected = {"token"} if request.config.get("auth") == "bearer" else set()
+    for slot in sorted(expected - set(request.secret_refs)):
+        issues.append(
+            ConnectionIssue(pointer_child("/secretRef", slot), "Bearer authentication needs a token handle.", "SECRET")
+        )
+    for slot in sorted(set(request.secret_refs) - expected):
+        issues.append(
+            ConnectionIssue(
+                pointer_child("/secretRef", slot), "This authentication mode does not use this slot.", "SECRET"
+            )
+        )
+    if issues:
+        raise ConnectionInvalid(issues)
 
 
 HTTP_DESCRIPTOR = http_descriptor()

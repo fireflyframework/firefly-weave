@@ -31,6 +31,27 @@ from firefly_weave.connectors.packages import PackageMetadata
 from firefly_weave.contracts.values import JsonObject
 
 
+def weave_requirement_version() -> str:
+    """The Weave version generated packages pin: the version of the code rendering them.
+
+    ``firefly_weave.__version__`` is used rather than installed distribution
+    metadata, which can describe an older install than the imported code.
+    """
+    from firefly_weave import __version__
+
+    return __version__
+
+
+def render_template(name: str, **values: str) -> str:
+    """Render a packaged connector template; every ``__PLACEHOLDER__`` must be filled."""
+    text = files("firefly_weave.sdk").joinpath("templates/connectors").joinpath(name).read_text()
+    for key, value in {"WEAVE_VERSION": weave_requirement_version(), **values}.items():
+        text = text.replace(f"__{key}__", value)
+    if re.search(r"__[A-Z][A-Z_]*__", text):
+        raise ValueError("Connector template has an unrendered placeholder")
+    return text
+
+
 def validate(path: Path) -> PackageMetadata:
     """Read bounded JSON only. Never import, install, or enable a package."""
     with path.open("rb") as stream:
@@ -52,7 +73,6 @@ def scaffold(target: Path, name: str) -> None:
     if target.is_symlink() or target.exists() and (not target.is_dir() or any(target.iterdir())):
         raise ValueError("Scaffold target must be absent or an empty directory")
     module = name.replace("-", "_")
-    template = files("firefly_weave.sdk").joinpath("templates/connectors")
     manifest: JsonObject = {
         "apiVersion": "weave/v1alpha1",
         "kind": "Connector",
@@ -115,10 +135,7 @@ def scaffold(target: Path, name: str) -> None:
         "tests/test_conformance.py": "test_conformance.py.tmpl",
         "examples/provider_verifier.py": "provider_verifier.py.tmpl",
     }
-    content = {
-        path: template.joinpath(source).read_text().replace("__NAME__", name).replace("__MODULE__", module)
-        for path, source in artifacts.items()
-    }
+    content = {path: render_template(source, NAME=name, MODULE=module) for path, source in artifacts.items()}
     from firefly_weave.compiler.canonical import canonical_bytes
 
     action: JsonObject = {
@@ -249,20 +266,16 @@ def scaffold_import(target: Path, result: Any) -> None:
         or doc.family != "http"
     ):
         raise ValueError("Invalid HTTP package identity")
-    template = files("firefly_weave.sdk").joinpath("templates/connectors")
     content = {
-        f"src/{module}/__init__.py": template.joinpath("http_adapter.py.tmpl").read_text(),
-        "pyproject.toml": template.joinpath("pyproject.toml.tmpl")
-        .read_text()
-        .replace('"firefly-weave==0.1.0a4"', '"firefly-weave[server,client]==0.1.0a4"')
-        .replace('version = "1.0.0"', f'version = "{doc.version}"'),
+        f"src/{module}/__init__.py": render_template("http_adapter.py.tmpl", NAME=name, MODULE=module),
+        "pyproject.toml": render_template("pyproject.toml.tmpl", NAME=name, MODULE=module).replace(
+            'version = "1.0.0"', f'version = "{doc.version}"'
+        ),
         "README.md": "# Imported HTTP connector\n\nReview connector.json and examples before building. "
         "Installation and operator allowlisting are separate. Run connector test with --mode native; "
         "this scaffold has no live-provider certification. HTTP profile version: 2.0.0.\n",
         "import-provenance.json": canonical_bytes(result.provenance or {}).decode() + "\n",
     }
-    for path in content:
-        content[path] = content[path].replace("__NAME__", name).replace("__MODULE__", module)
     data = metadata.canonical.canonical.decode() + "\n"
     content[f"src/{module}/connector.json"] = data
     from firefly_weave.contracts.definitions import ActionDefinition
@@ -274,7 +287,37 @@ def scaffold_import(target: Path, result: Any) -> None:
     _write_import_files(target, content)
 
 
-def _write_import_files(target: Path, content: dict[str, str]) -> None:
+def scaffold_builtin(target: Path, result: Any) -> list[str]:
+    """Write reviewed Actions for the built-in ``weave-http@2.0.0`` connector; no code, no package.
+
+    Writes ``actions/<name>.action.json``, ``connection.example.json`` (secret
+    handle placeholders, never values) and ``provenance.json`` into an absent or
+    empty directory, with the same anchored no-follow writer as package imports.
+    Returns the relative paths written.
+    """
+    from firefly_weave.compiler.canonical import canonical_bytes
+    from firefly_weave.contracts.definitions import ActionDefinition
+    from firefly_weave.sdk.openapi_import import OpenAPIImportResult
+
+    if (
+        not isinstance(result, OpenAPIImportResult)
+        or not result.ok
+        or result.package is not None
+        or result.connection_example is None
+        or not result.actions
+    ):
+        raise ValueError("A successful reviewed built-in import is required")
+    content: dict[str, str] = {}
+    for action in result.actions:
+        action_name = ActionDefinition.model_validate(action).metadata.name
+        content[f"actions/{action_name}.action.json"] = canonical_bytes(action).decode() + "\n"
+    content["connection.example.json"] = canonical_bytes(result.connection_example).decode() + "\n"
+    content["provenance.json"] = canonical_bytes(result.provenance or {}).decode() + "\n"
+    _write_import_files(target, content, final="provenance.json")
+    return sorted(content)
+
+
+def _write_import_files(target: Path, content: dict[str, str], *, final: str = "pyproject.toml") -> None:
     """Anchor all directory components; never reopen destinations through mutable paths."""
     target = target.absolute()
     if ".." in target.parts or target == Path(target.anchor):
@@ -351,10 +394,10 @@ def _write_import_files(target: Path, content: dict[str, str]) -> None:
         check()
         write(".weave-import-incomplete", "Incomplete import; do not build or install.\n")
         for path, value in content.items():
-            if path != "pyproject.toml":
+            if path != final:
                 write(path, value)
-        # A build declaration is admitted only after every data file is complete.
-        write("pyproject.toml", content["pyproject.toml"])
+        # A build declaration (or the provenance record) is admitted only after every data file is complete.
+        write(final, content[final])
         check()
         os.unlink(".weave-import-incomplete", dir_fd=descriptor)
         expected[descriptor].remove(".weave-import-incomplete")

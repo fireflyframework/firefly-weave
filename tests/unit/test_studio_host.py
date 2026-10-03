@@ -290,3 +290,38 @@ def test_member_bridge_is_exact_scoped_and_never_allows_bootstrap_or_generic_gra
         assert service.check_scope("/admin/grants", "POST") == 404
         assert service.check_scope("/api/v1/admin/grants", "POST") == 404
         assert service.check_scope("/api/v1/admin/bootstrap", "POST") == 404
+
+
+def test_desktop_pairing_is_reusable_rotates_secrets_and_still_limits_failures(tmp_path):
+    with client(tmp_path, reusable_pairing=True) as browser:
+        first = pair(browser)
+        old_cookie = browser.cookies.get("weave_studio_session")
+        assert browser.delete("/studio/session", headers=first).status_code == 204
+        assert browser.get("/studio/session").json()["paired"] is False
+        # The native shell pairs again after a reload, an unpairing or the end of the 8 h session.
+        second = pair(browser)
+        assert second["X-Weave-CSRF"] != first["X-Weave-CSRF"]
+        assert browser.cookies.get("weave_studio_session") != old_cookie
+        assert (
+            browser.post("/studio/local/validate", json={"source": "a: 1", "format": "yaml"}, headers=first).status_code
+            == 403
+        )
+        browser.app.state.studio.session_deadline = 0
+        assert browser.get("/studio/session").json()["paired"] is False
+        third = pair(browser)
+        assert third["X-Weave-CSRF"] != second["X-Weave-CSRF"]
+        for _ in range(10):
+            refused = browser.post("/studio/session", json={"code": "wrong"}, headers={"Origin": ORIGIN})
+            assert refused.status_code == 403
+        assert browser.post("/studio/session", json={"code": CODE}, headers={"Origin": ORIGIN}).status_code == 403
+
+
+def test_browser_pairing_stays_single_use_after_unpairing(tmp_path):
+    with client(tmp_path) as browser:
+        headers = pair(browser)
+        assert browser.delete("/studio/session", headers=headers).status_code == 204
+        assert browser.post("/studio/session", json={"code": CODE}, headers={"Origin": ORIGIN}).status_code == 403
+    (tmp_path / "late").mkdir()
+    with client(tmp_path / "late") as browser:
+        browser.app.state.studio.pairing_deadline = 0
+        assert browser.post("/studio/session", json={"code": CODE}, headers={"Origin": ORIGIN}).status_code == 403

@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Owned native sidecar: a ready-only loopback bootstrap and parent-bound lifetime."""
+"""Owned native sidecar: a ready-only loopback bootstrap, saved platforms and a parent-bound lifetime."""
 
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ from firefly_weave.studio.service import StudioOptions, StudioProfile
 
 if TYPE_CHECKING:
     from firefly_weave.sdk.auth import OAuthSession
+    from firefly_weave.sdk.profiles import ProfileStore
 
 
 class DesktopServer(uvicorn.Server):
@@ -116,11 +117,25 @@ def run_login(profile_path: Path) -> None:
     asyncio.run(acquire())
 
 
+def saved_platforms() -> ProfileStore | None:
+    """The shared profile store; an unusable location leaves Studio offline instead of stopping it."""
+    from firefly_weave.sdk.profiles import ProfileError, ProfileStore
+
+    try:
+        return ProfileStore()
+    except ProfileError:
+        return None
+
+
 def run_desktop(profile_path: Path | None, assets: Path) -> None:
     profile = None
     provider = None
+    store = None
     if profile_path is not None:
+        # Legacy: one explicit profile file for this window, kept in memory only.
         profile, provider = profile_session(profile_path)
+    else:
+        store = saved_platforms()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen(128)
@@ -131,6 +146,10 @@ def run_desktop(profile_path: Path | None, assets: Path) -> None:
             profile=profile,
             token_provider=provider,
             open_login_browser=True,
+            profile_store=store,
+            # The pairing code never leaves the native shell, so a reload may pair again (with or
+            # without a profile file), for example after the 8-hour Studio session ends.
+            reusable_pairing=True,
         )
         app = make_studio_app(options)
         server = DesktopServer(

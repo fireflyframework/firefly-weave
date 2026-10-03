@@ -39,8 +39,10 @@ from firefly_weave.access.identity_links import IdentityResolver
 from firefly_weave.access.oidc import OIDCVerifier
 from firefly_weave.access.service import AccessService
 from firefly_weave.api.access import AccessController
+from firefly_weave.api.client_configuration import ClientConfigurationController
 from firefly_weave.api.compiler import CompilerController
 from firefly_weave.api.connections import ConnectionController
+from firefly_weave.api.connector_descriptors import ConnectorDescriptorController
 from firefly_weave.api.debug import DebugController
 from firefly_weave.api.definitions import DefinitionController
 from firefly_weave.api.health import HealthController
@@ -50,6 +52,7 @@ from firefly_weave.api.runs import RunController
 from firefly_weave.api.schedules import ScheduleController
 from firefly_weave.api.triggers import TriggerController
 from firefly_weave.api.workers import WorkerController
+from firefly_weave.connections.descriptors import ConnectorDescriptorService
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import (
     EnvironmentSecretProvider,
@@ -102,6 +105,7 @@ from firefly_weave.workers.service import WorkerService
 
 SERVICE_PACKAGES = (
     "firefly_weave.access.service",
+    "firefly_weave.access.client_configuration",
     "firefly_weave.access.discovery",
     "firefly_weave.access.members",
     "firefly_weave.human_tasks",
@@ -111,6 +115,7 @@ SERVICE_PACKAGES = (
     "firefly_weave.access.identity_links",
     "firefly_weave.definitions.service",
     "firefly_weave.connections.service",
+    "firefly_weave.connections.descriptors",
     "firefly_weave.connections.source_bindings",
     "firefly_weave.runtime",
     "firefly_weave.providers.credentials",
@@ -251,6 +256,7 @@ def make_app(
                 IdentityResolver,
                 DefinitionService,
                 ConnectionService,
+                ConnectorDescriptorService,
                 RuntimeService,
                 IncidentService,
                 HistoryService,
@@ -271,10 +277,12 @@ def make_app(
                 WorkerAdmissionPort,
                 AuthenticationFilter,
                 HealthController,
+                ClientConfigurationController,
                 AccessController,
                 CompilerController,
                 DefinitionController,
                 ConnectionController,
+                ConnectorDescriptorController,
                 RunController,
                 WorkerController,
             ):
