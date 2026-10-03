@@ -106,14 +106,11 @@ for (const viewport of [
       await page.keyboard.press("ArrowDown");
       await page.keyboard.press("Enter");
       await expect(page.locator('[data-step="transform-1"]')).toBeVisible();
-      if (viewport.width > 767)
-        await expect(
-          page.getByRole("textbox", { name: "Field name", exact: true }),
-        ).toBeFocused();
-      else
-        await expect(
-          page.locator('[data-step="transform-1"] .node-body'),
-        ).toBeFocused();
+      // Insertion keeps keyboard navigation on the canvas. Creating the
+      // inspector's initial empty row must not steal focus from the new node.
+      await expect(
+        page.locator('[data-step="transform-1"] .node-body'),
+      ).toBeFocused();
       expect((await steps(page)).map((s) => s.id)).toEqual(["transform-1"]);
     });
 
