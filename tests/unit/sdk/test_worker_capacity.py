@@ -483,3 +483,152 @@ async def test_completion_retries_obey_last_renewed_lease_after_heartbeat_failur
     assert executions == 1 and heartbeats == 2 and len(set(completions)) == 1
     assert last_expiry is not None and datetime.now(UTC) >= last_expiry
     assert not worker.running and not worker.active and wire_cancelled.is_set() == stall
+
+
+@pytest.mark.parametrize("outcome", ["complete", "handler_failure", "unavailable_handler"])
+async def test_owned_settlement_survives_more_than_ten_seconds_simulated_rejection(monkeypatch, outcome):
+    lease = task(30)
+    bodies, delays = [], []
+    executions = 0
+    real_sleep = asyncio.sleep
+
+    async def simulated_backoff(delay):
+        if delay > 0.25:
+            await real_sleep(delay)
+        else:
+            delays.append(delay)
+            await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", simulated_backoff)
+
+    async def endpoint(request):
+        bodies.append(request.content)
+        if len(bodies) <= 52:
+            return rejected("WV-OPERATION-CAPACITY")
+        return receipt(request, lease)
+
+    async def handler(_):
+        nonlocal executions
+        executions += 1
+        if outcome == "handler_failure":
+            raise RuntimeError("private handler detail")
+        return {"answer": 42}
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        handlers = {} if outcome == "unavailable_handler" else {lease.capability: handler}
+        worker = Worker(WorkerTransport(client, "/scope", lease.proof.owner), handlers, 1)
+        await worker._execute(lease)
+    assert len(bodies) == 53 and len(set(bodies)) == 1 and sum(delays) > 10
+    assert executions == int(outcome != "unavailable_handler")
+
+
+@pytest.mark.parametrize("kind", ["timeout", "disconnect", "unknown429", "server"])
+async def test_owned_settlement_never_retries_an_ambiguous_result(monkeypatch, kind):
+    lease = task(30)
+    calls = executions = 0
+    real_sleep = asyncio.sleep
+
+    async def fast_backoff(delay):
+        await real_sleep(delay if delay > 0.25 else 0)
+
+    monkeypatch.setattr(asyncio, "sleep", fast_backoff)
+
+    async def endpoint(request):
+        nonlocal calls
+        calls += 1
+        if calls <= 4:
+            return rejected()
+        if kind == "timeout":
+            raise httpx.ReadTimeout("private unknown outcome")
+        if kind == "disconnect":
+            raise httpx.ReadError("private unknown outcome")
+        return httpx.Response(429 if kind == "unknown429" else 503, json={"code": "OTHER"})
+
+    async def handler(_):
+        nonlocal executions
+        executions += 1
+        return 1
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        worker = Worker(WorkerTransport(client, "/scope", lease.proof.owner), {lease.capability: handler}, 1)
+        with pytest.raises(httpx.HTTPError):
+            await worker._execute(lease)
+    assert calls == 5 and executions == 1
+
+
+async def test_settlement_scope_requires_exact_proof_owner_task_and_resets():
+    from firefly_weave.sdk._settlement import lease_settlement, settlement_deadline
+
+    lease = task(30)
+    deadline = asyncio.get_running_loop().time() + 30
+    assert settlement_deadline(lease.proof) is None
+    with pytest.raises(RuntimeError, match="cancelled scope"):
+        async with lease_settlement(lease.proof, deadline):
+            assert settlement_deadline(lease.proof) == deadline
+            for field, value in (("task_id", uuid4()), ("owner", uuid4()), ("generation", 2), ("token", "other")):
+                assert settlement_deadline(lease.proof.model_copy(update={field: value})) is None
+
+            async def inherited_child():
+                return settlement_deadline(lease.proof)
+
+            assert await asyncio.create_task(inherited_child()) is None
+            raise RuntimeError("cancelled scope")
+    assert settlement_deadline(lease.proof) is None
+
+
+async def test_inherited_child_keeps_direct_settlement_attempt_bound(monkeypatch):
+    from firefly_weave.sdk._settlement import lease_settlement
+
+    lease = task(30)
+    calls = 0
+    real_sleep = asyncio.sleep
+
+    async def no_delay(_):
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", no_delay)
+
+    async def endpoint(request):
+        nonlocal calls
+        calls += 1
+        return rejected()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        transport = WorkerTransport(client, "/scope", lease.proof.owner)
+        async with lease_settlement(lease.proof, asyncio.get_running_loop().time() + 30):
+            with pytest.raises(httpx.HTTPStatusError):
+                await asyncio.create_task(transport.complete(lease.proof, uuid4(), 1))
+    assert calls == 48
+
+
+async def test_owned_settlement_cancellation_stops_wire_and_renewal_without_reexecution():
+    lease = task(30)
+    entered, wire_cancelled = asyncio.Event(), asyncio.Event()
+    calls = executions = 0
+    before = asyncio.all_tasks()
+
+    async def endpoint(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return rejected()
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            wire_cancelled.set()
+
+    async def handler(_):
+        nonlocal executions
+        executions += 1
+        return 1
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        worker = Worker(WorkerTransport(client, "/scope", lease.proof.owner), {lease.capability: handler}, 1)
+        execution = asyncio.create_task(worker._execute(lease))
+        await asyncio.wait_for(entered.wait(), 1)
+        execution.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await execution
+    assert wire_cancelled.is_set() and calls == 2 and executions == 1
+    assert not (asyncio.all_tasks() - before)

@@ -66,3 +66,24 @@ def test_unknown_response_details_never_escape(body):
         "code": None,
     }
     assert "secret" not in json.dumps(result)
+
+
+async def test_timeout_reports_only_allowlisted_sdk_frames(monkeypatch):
+    import asyncio
+    from uuid import uuid4
+
+    from firefly_weave.sdk.transport import WorkerTransport
+
+    original_timeout = asyncio.timeout
+    monkeypatch.setattr(asyncio, "timeout", lambda _: original_timeout(0.001))
+
+    async def reject(request):
+        return httpx.Response(429, json={"code": "WV-OPERATION-CAPACITY", "detail": "private-secret"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reject), base_url="https://private") as client:
+        transport = WorkerTransport(client, "/secret", uuid4())
+        with pytest.raises(TimeoutError) as error:
+            await transport._post_rejected("/tasks/complete", {"input": "private-secret"}, settlement=True)
+    result = module.failure_summary(error.value)
+    assert result.get("sdk_frames") == ["transport._post_rejected"]
+    assert "private-secret" not in json.dumps(result)

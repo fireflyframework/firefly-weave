@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+import math
 from uuid import UUID
 
 from httpx import AsyncClient, Response
@@ -35,6 +36,7 @@ from firefly_weave.contracts.workers import (
     TaskExecutionContext,
     TaskLease,
 )
+from firefly_weave.sdk._settlement import settlement_deadline
 
 
 class WorkerTransport:
@@ -64,6 +66,7 @@ class WorkerTransport:
             "/tasks/complete",
             {"lease": lease.model_dump(mode="json"), "completion_id": str(completion_id), "output": output},
             settlement=True,
+            lease=lease,
         )
         response.raise_for_status()
         return TypeAdapter(CompletionAcknowledgment).validate_json(response.content)
@@ -73,6 +76,7 @@ class WorkerTransport:
             "/tasks/fail",
             {"lease": lease.model_dump(mode="json"), "error": error.model_dump(mode="json")},
             settlement=True,
+            lease=lease,
         )
         response.raise_for_status()
         return TypeAdapter(CompletionAcknowledgment).validate_json(response.content)
@@ -90,7 +94,9 @@ class WorkerTransport:
             "WV-OPERATION-CAPACITY",
         )
 
-    async def _post_rejected(self, path: str, body: object, *, settlement: bool = False) -> Response:
+    async def _post_rejected(
+        self, path: str, body: object, *, settlement: bool = False, lease: LeaseProof | None = None
+    ) -> Response:
         # Freeze caller-owned values before the first attempt, including the completion identity.
         content = json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
         headers = {"Content-Type": "application/json"}
@@ -98,10 +104,17 @@ class WorkerTransport:
         if not self._capacity_rejected(response):
             return response
         # Only explicit rollback/admission rejection permits replay. Wire errors remain ambiguous.
-        # Settlement can outlast a short admission burst; renewal retains its short window.
-        # The Worker's lease watchdog can cancel either policy sooner, without rerunning work.
+        # Direct callers retain a finite retry window. The owning Worker can wait
+        # through a longer rejection burst while its current lease watchdog remains authoritative.
         attempts, seconds = (48, 10) if settlement else (3, 1)
-        async with asyncio.timeout(seconds):
+        deadline = settlement_deadline(lease) if settlement else None
+        if deadline is None:
+            window = asyncio.timeout(seconds)
+        else:
+            remaining = max(0, deadline - asyncio.get_running_loop().time())
+            attempts = math.ceil(remaining / 0.05) + 1
+            window = asyncio.timeout_at(deadline)
+        async with window:
             for retry in range(attempts - 1):
                 await asyncio.sleep(min(0.05 * 2 ** min(retry, 3), 0.25))
                 response = await self.client.post(self.prefix + path, content=content, headers=headers)

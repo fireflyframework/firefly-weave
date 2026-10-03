@@ -35,6 +35,20 @@ from firefly_weave.sdk.worker import Worker
 def failure_summary(error):
     """Expose classification only; exception messages and response bodies may contain secrets."""
     result = {"failed": True, "error_type": type(error).__name__}
+    allowed = {
+        "firefly_weave.sdk.worker": {"run", "_execute", "heartbeat"},
+        "firefly_weave.sdk.transport": {"claim", "complete", "fail", "heartbeat", "_post_rejected"},
+    }
+    frames = []
+    trace = error.__traceback__
+    while trace is not None:
+        name = trace.tb_frame.f_globals.get("__name__")
+        function = trace.tb_frame.f_code.co_name
+        if name in allowed and function in allowed[name]:
+            frames.append(name.rsplit(".", 1)[-1] + "." + function)
+        trace = trace.tb_next
+    if frames:
+        result["sdk_frames"] = frames[-8:]
     if isinstance(error, httpx.HTTPStatusError):
         operation = error.request.url.path.rsplit("/", 1)[-1]
         if operation not in {"claim", "heartbeat", "complete", "fail", "credentials", "workers"}:
