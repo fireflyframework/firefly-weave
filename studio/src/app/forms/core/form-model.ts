@@ -32,6 +32,7 @@ import {
 } from "./resolve";
 import { decode, get, type Bound } from "./binding";
 import { isPointer } from "./json";
+import { isFileSchema } from "./file-reference";
 
 type Data = Record<string, unknown>;
 const isRecord = (value: unknown): value is Data =>
@@ -41,6 +42,7 @@ const isRecord = (value: unknown): value is Data =>
 export const MAX_GROUP_DEPTH = 4;
 
 export type Widget =
+  | "file"
   | "text"
   | "multiline"
   | "number"
@@ -78,6 +80,7 @@ const SCALARS = new Set([
 
 /** The widget that edits a field; `depth` is how deeply its group is nested. */
 export function widgetFor(field: FieldInfo, depth = 0): Widget {
+  if (field.kind === "object" && isFileSchema(field.schema)) return "file";
   switch (field.kind) {
     case "secret":
     case "never":
@@ -175,7 +178,12 @@ export function prepareData(
           changed = true;
         }
       }
-      if (field.kind !== "object" || depth + 1 >= MAX_GROUP_DEPTH) continue;
+      if (
+        field.kind !== "object" ||
+        isFileSchema(field.schema) ||
+        depth + 1 >= MAX_GROUP_DEPTH
+      )
+        continue;
       const child = target[field.key];
       if (child === undefined && !field.required) continue;
       if (child !== undefined && !isRecord(child)) continue;

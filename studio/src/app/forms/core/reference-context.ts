@@ -28,6 +28,7 @@ export interface ReferenceContext {
   stepId: string;
   /** Output schema of a published action by its `uses`, when known. */
   actionOutput?: (uses: string) => unknown;
+  decisionOutput?: (uses: string) => unknown;
 }
 
 const cache = new WeakMap<ReferenceContext, Map<string, ScopeEntry[]>>();
@@ -48,6 +49,7 @@ export function referencesAt(
   if (!entries) {
     entries = visibleRefs(context.definition, context.stepId, fieldPath, {
       actionOutput: context.actionOutput,
+      decisionOutput: context.decisionOutput,
     });
     fields.set(fieldPath, entries);
   }

@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // compiler decides whether it is available.
 import {
   Component,
+  afterNextRender,
   ElementRef,
   computed,
   inject,
@@ -33,6 +34,11 @@ import { isPointer, parsePointer } from "../core/json";
 import { compatibility, type Schema } from "../core/scope";
 import { stepKindLabels } from "../../designer/step-kinds";
 import { Icon } from "../../icon";
+import {
+  AnchoredPopover,
+  pageOptionIndex,
+  revealPopoverOption,
+} from "./anchored-popover";
 
 /** One suggestion; `ScopeEntry` from forms/core/scope.ts fits as is. */
 export interface ReferenceOption {
@@ -116,13 +122,18 @@ export function referenceView(
     group.options.push({ option, fit, index: 0 });
   }
   const flat: ViewOption[] = [];
-  const ordered = [...groups.values()];
+  const score = (item: ViewOption) =>
+    (item.fit === "incompatible" ? 4 : item.fit === "unknown" ? 2 : 0) +
+    (item.option.schema?.["type"] === "object" ||
+    item.option.schema?.["type"] === "array"
+      ? 1
+      : 0);
+  const ordered = [...groups.values()].sort(
+    (a, b) =>
+      Math.min(...a.options.map(score)) - Math.min(...b.options.map(score)),
+  );
   for (const group of ordered) {
-    // Stable: compatible and unknown keep their order, mismatches go last.
-    group.options = [
-      ...group.options.filter((o) => o.fit !== "incompatible"),
-      ...group.options.filter((o) => o.fit === "incompatible"),
-    ];
+    group.options.sort((a, b) => score(a) - score(b));
     for (const item of group.options) {
       item.index = flat.length;
       flat.push(item);
@@ -209,18 +220,22 @@ let sequence = 0;
 @Component({
   selector: "weave-reference-combobox",
   standalone: true,
-  imports: [Icon],
+  imports: [Icon, AnchoredPopover],
   template: `<div class="ref-combo" (focusout)="focusOut($event)">
     <div
+      #field
       class="ref-combo-field"
       [class.disabled]="disabled()"
-      [class.has-token]="!!token()"
+      [class.has-token]="false"
     >
       @if (token(); as label) {
         <!-- The data in words ("Input › Customer ID"); the pointer under it. -->
-        <span class="ref-combo-token" [id]="tokenId" [attr.title]="label">{{
-          label
-        }}</span>
+        <span
+          class="ref-combo-token sr-only"
+          [id]="tokenId"
+          [attr.title]="label"
+          >{{ label }}</span
+        >
       }
       <input
         type="text"
@@ -239,7 +254,7 @@ let sequence = 0;
         [attr.aria-describedby]="describedBy()"
         [attr.aria-invalid]="hint()?.tone === 'error' ? 'true' : null"
         [placeholder]="placeholder()"
-        [value]="text()"
+        [value]="!open() && token() && !showPaths() ? token() : text()"
         [disabled]="disabled()"
         (input)="typed($event)"
         (keydown)="keydown($event)"
@@ -262,10 +277,33 @@ let sequence = 0;
         </svg>
       </button>
     </div>
+    @if (removable()) {
+      <button
+        type="button"
+        class="text-link"
+        [disabled]="disabled()"
+        (click)="removed.emit()"
+      >
+        Remove data
+      </button>
+    }
+    @if (open() || showPaths()) {
+      <button
+        type="button"
+        class="text-link"
+        (mousedown)="$event.preventDefault()"
+        (click)="showPaths.set(!showPaths())"
+      >
+        {{ showPaths() ? "Hide path" : "Show path" }}
+      </button>
+    }
     <!-- A press anywhere in the list (an option, a group heading, the
          scrollbar) keeps focus in the text box, so the list stays usable. -->
     <div
       class="ref-combo-list"
+      [weaveAnchoredPopover]="open()"
+      [popoverAnchor]="field"
+      (popoverClosed)="close()"
       role="listbox"
       [id]="listId"
       [attr.aria-label]="listLabel()"
@@ -316,7 +354,9 @@ let sequence = 0;
                     <span class="ref-combo-warn">may not match this field</span>
                   }
                 </span>
-                <code class="ref-combo-path">{{ item.option.ref }}</code>
+                @if (showPaths()) {
+                  <code class="ref-combo-path">{{ item.option.ref }}</code>
+                }
               </div>
             }
           </div>
@@ -426,16 +466,8 @@ let sequence = 0;
         stroke: currentColor;
         stroke-width: 2;
       }
-      /* Anchored to the field's right edge, at least 320 px wide: it may
-         reach past a narrow inspector's left edge. */
       .ref-combo-list {
-        position: absolute;
-        right: 0;
-        top: calc(100% + 4px);
-        z-index: 30;
-        min-width: max(100%, 320px);
-        max-width: calc(100vw - 32px);
-        max-height: 280px;
+        color: var(--text);
         overflow: auto;
         overscroll-behavior: contain;
         border: 1px solid var(--border);
@@ -554,7 +586,12 @@ export class ReferenceCombobox {
   ariaLabel = input("Data reference");
   /** Id for the text box, so a visible `<label for>` can name it. */
   inputId = input(`${this.prefix}-input`);
-  placeholder = input("/input/…");
+  placeholder = input("Choose data…");
+  removable = input(false);
+  focusOnMount = input(false);
+  removed = output<void>();
+  readonly showPaths = signal(false);
+  private readonly touched = signal(false);
   disabled = input(false);
   /** Extra ids for `aria-describedby`, for example a field hint. */
   describedByIds = input("");
@@ -586,7 +623,9 @@ export class ReferenceCombobox {
   );
   /** Shown once the list is closed: while it is open, typing is a search. */
   readonly hint = computed(() =>
-    this.open() ? null : referenceHint(this.text(), this.options()),
+    this.open() || !this.touched()
+      ? null
+      : referenceHint(this.text(), this.options()),
   );
   /** "<field name> suggestions", from `ariaLabel` or the visible `<label for>`. */
   readonly listLabel = signal("Data reference suggestions");
@@ -606,7 +645,12 @@ export class ReferenceCombobox {
     return count === 1 ? "1 suggestion" : `${count} suggestions`;
   });
 
-  private readonly host = inject(ElementRef<HTMLElement>);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  constructor() {
+    afterNextRender(() => {
+      if (this.focusOnMount()) this.inputElement()?.focus();
+    });
+  }
 
   optionId(index: number) {
     return `${this.listId}-option-${index}`;
@@ -701,6 +745,23 @@ export class ReferenceCombobox {
         else this.close();
         return;
       }
+      case "PageDown":
+      case "PageUp": {
+        if (!this.open()) return;
+        event.preventDefault();
+        const list =
+          this.host.nativeElement.querySelector<HTMLElement>("[role=listbox]");
+        if (list)
+          this.activeIndex.set(
+            pageOptionIndex(
+              list,
+              this.activeIndex(),
+              event.key === "PageDown" ? 1 : -1,
+            ),
+          );
+        this.reveal();
+        return;
+      }
       case "Escape":
         if (!this.open()) return;
         // Only the list closes; the inspector must not see this key.
@@ -716,7 +777,15 @@ export class ReferenceCombobox {
 
   focusOut(event: FocusEvent) {
     const next = event.relatedTarget as Node | null;
-    if (!next || !this.host.nativeElement.contains(next)) this.close();
+    if (!next || !this.host.nativeElement.contains(next)) {
+      this.touched.set(true);
+      const value = this.text().trim();
+      if (/^(input|steps)\//.test(value)) {
+        this.text.set("/" + value);
+        this.valueChange.emit("/" + value);
+      }
+      this.close();
+    }
   }
 
   private inputElement() {
@@ -734,7 +803,9 @@ export class ReferenceCombobox {
         const element = this.host.nativeElement.querySelector(
           `#${CSS.escape(this.optionId(index))}`,
         ) as HTMLElement | null;
-        element?.scrollIntoView({ block: "nearest" });
+        const list =
+          this.host.nativeElement.querySelector<HTMLElement>("[role=listbox]");
+        if (list && element) revealPopoverOption(list, element);
       }),
     );
   }

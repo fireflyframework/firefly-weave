@@ -27,6 +27,8 @@ SPDX-License-Identifier: Apache-2.0
 // - `fail` (and a group whose paths cannot complete) ends reachability.
 // The compiler stays authoritative; this module only drives suggestions.
 
+import { typeLabels, pluralTypeLabels } from "./type-labels";
+
 type JsonObject = Record<string, unknown>;
 export type Schema = JsonObject;
 
@@ -77,6 +79,7 @@ export interface ReferenceScope {
 export interface ScopeOptions {
   /** Output schema of a published action by its `uses` reference. */
   actionOutput?: (uses: string) => unknown;
+  decisionOutput?: (uses: string) => unknown;
   /** Deepest property path expanded below a root (default 4). */
   maxDepth?: number;
   /** Total suggestions, roots included (default 200). */
@@ -238,47 +241,28 @@ function jsonType(value: unknown): string {
   return typeof value === "object" ? "object" : typeof value;
 }
 
-const singular: Record<string, string> = {
-  string: "Text",
-  integer: "Whole number",
-  number: "Number",
-  boolean: "Yes or no",
-  object: "Object",
-  array: "List",
-  null: "Empty",
-};
-const plural: Record<string, string> = {
-  string: "text",
-  integer: "whole numbers",
-  number: "numbers",
-  boolean: "yes-or-no values",
-  object: "objects",
-  array: "lists",
-  null: "empty values",
-};
-
 /** A plain-language description of a schema's type for suggestion badges. */
 export function typeLabel(schema: Schema, root: Schema = schema): string {
   const resolved = resolveRef(schema, root);
-  if ("const" in resolved) return "Fixed value";
-  if (Array.isArray(resolved["enum"])) return "Choice";
+  if ("const" in resolved) return typeLabels["fixed"];
+  if (Array.isArray(resolved["enum"])) return typeLabels["choice"];
   const types = schemaTypes(resolved, root);
-  if (!types.length) return "Any value";
+  if (!types.length) return typeLabels["any"];
   if (
     types.includes("string") &&
     resolved["format"] === "date-time" &&
     types.length === 1
   )
-    return "Date and time";
+    return typeLabels["date-time"];
   const named = types
     .filter((t) => t !== "null" || types.length === 1)
     .map((t) => {
-      if (t !== "array") return singular[t] ?? t;
+      if (t !== "array") return typeLabels[t] ?? t;
       const items = isObject(resolved["items"])
         ? schemaTypes(resolved["items"], root)
         : [];
-      return items.length === 1 && plural[items[0]]
-        ? `List of ${plural[items[0]]}`
+      return items.length === 1 && pluralTypeLabels[items[0]]
+        ? `List of ${pluralTypeLabels[items[0]]}`
         : "List";
     });
   const label = named
@@ -330,6 +314,7 @@ class Walker {
     private readonly target: Target,
     private readonly input: Schema,
     private readonly options: ScopeOptions,
+    private readonly profiles: JsonObject = {},
   ) {}
 
   private take(visible: Map<string, VisibleStep>, evaluated: boolean) {
@@ -353,13 +338,29 @@ class Walker {
       let schema: Schema = { type: "null" };
       let completes = kind !== "fail";
       if (kind === "transform") schema = this.infer(step["value"], visible);
-      else if (kind === "action")
+      else if (kind === "action" || kind === "decisionTable")
         schema = schemaOf(
           typeof step["uses"] === "string"
-            ? this.options.actionOutput?.(step["uses"])
+            ? (kind === "decisionTable"
+                ? this.options.decisionOutput
+                : this.options.actionOutput)?.(step["uses"])
             : undefined,
         );
-      else if (kind === "humanTask")
+      else if (kind === "llm") {
+        const profile = this.profiles[String(step["profile"] ?? "")];
+        schema = {
+          type: "object",
+          properties: {
+            result: schemaOf(
+              isObject(profile) ? profile["outputSchema"] : undefined,
+            ),
+            usage: { type: "object" },
+            provider: { type: "string" },
+            model: { type: "string" },
+          },
+          required: ["result", "usage", "provider", "model"],
+        };
+      } else if (kind === "humanTask")
         schema = {
           type: "object",
           properties: {
@@ -498,7 +499,10 @@ function walk(
   const target = targetOf(stepId, fieldPath);
   const { steps, input } = stepsAndInput(definition);
   if (!target) return { capture: null, input };
-  const walker = new Walker(target, input, options);
+  const spec = isObject(definition) ? definition["spec"] : undefined;
+  const profiles =
+    isObject(spec) && isObject(spec["llmProfiles"]) ? spec["llmProfiles"] : {};
+  const walker = new Walker(target, input, options, profiles);
   const result = walker.block(steps, new Map());
   if (target.kind === "workflow")
     return {

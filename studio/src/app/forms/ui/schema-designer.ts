@@ -41,8 +41,12 @@ import {
   output,
   signal,
 } from "@angular/core";
+import { Select } from "./select";
 import { NgTemplateOutlet } from "@angular/common";
+import { typeLabels } from "../core/type-labels";
+import { isFileSchema } from "../core/file-reference";
 import { Modal } from "../../dialog";
+import { RowMenu, type RowMenuItem } from "../../row-menu";
 import { describeError } from "../../errors";
 import { TaskForm, type Schema as TaskSchema } from "../../task-form";
 import {
@@ -59,6 +63,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export type RowType =
+  | "file"
   | "string"
   | "number"
   | "integer"
@@ -71,19 +76,22 @@ export type RowType =
 export type EditableType = Exclude<RowType, "advanced">;
 export type Format = "" | "date-time" | "email" | "uri" | "uuid";
 
-export const typeOptions: { value: EditableType; label: string }[] = [
-  { value: "string", label: "Text" },
-  { value: "number", label: "Number" },
-  { value: "integer", label: "Whole number" },
-  { value: "boolean", label: "Yes or no" },
-  { value: "object", label: "Group of fields" },
-  { value: "array", label: "List" },
-  { value: "any", label: "Any value" },
-  { value: "null", label: "Empty (null)" },
-];
+export const typeOptions: { value: EditableType | "choice"; label: string }[] =
+  [
+    { value: "choice", label: typeLabels["choice"] },
+    { value: "file", label: typeLabels["file"] },
+    { value: "string", label: typeLabels["string"] },
+    { value: "number", label: typeLabels["number"] },
+    { value: "integer", label: typeLabels["integer"] },
+    { value: "boolean", label: typeLabels["boolean"] },
+    { value: "object", label: typeLabels["object"] },
+    { value: "array", label: typeLabels["array"] },
+    { value: "any", label: typeLabels["any"] },
+    { value: "null", label: typeLabels["null"] },
+  ];
 export const formatOptions: { value: Format; label: string }[] = [
   { value: "", label: "Any text" },
-  { value: "date-time", label: "Date and time" },
+  { value: "date-time", label: typeLabels["date-time"] },
   { value: "email", label: "Email address" },
   { value: "uri", label: "Web address (URI)" },
   { value: "uuid", label: "UUID" },
@@ -300,7 +308,10 @@ export function schemaToRow(
   const raw = own(schema, "type");
   let type: RowType;
   let nullable = false;
-  if (lock) type = "advanced";
+  if (isFileSchema(schema)) {
+    type = "file";
+    nullable = Array.isArray(raw) && raw.includes("null");
+  } else if (lock) type = "advanced";
   else if (typeof raw === "string")
     type =
       SCALAR.has(raw) || raw === "object" || raw === "array"
@@ -500,6 +511,17 @@ export function rowToSchema(row: DesignerRow): Json {
   if (row.locked && !isJsonObject(row.source)) return row.source as Json;
   const source = isJsonObject(row.source) ? row.source : {};
   const target: JsonObject = { ...source };
+  if (row.type === "file") {
+    if (row.nullable !== row.original.nullable)
+      put(target, "type", row.nullable ? ["object", "null"] : "object");
+    put(target, "title", row.title.trim() ? row.title : undefined);
+    put(
+      target,
+      "description",
+      row.description.trim() ? row.description : undefined,
+    );
+    return unchanged(target, row.source);
+  }
   const changed = row.type !== row.original.type;
   if (
     !row.locked &&
@@ -1041,7 +1063,7 @@ let sequence = 0;
 @Component({
   selector: "weave-schema-designer",
   standalone: true,
-  imports: [NgTemplateOutlet, Modal, TaskForm],
+  imports: [NgTemplateOutlet, Modal, TaskForm, Select, RowMenu],
   template: `<section class="sd" [attr.aria-labelledby]="prefix + '-heading'">
     <header class="sd-head">
       <h3 [id]="prefix + '-heading'">{{ heading() }}</h3>
@@ -1098,7 +1120,7 @@ let sequence = 0;
             [checked]="model.closed"
             [disabled]="readonly() || model.closedKept"
             (change)="setRootClosed($event)"
-          />Reject fields that are not listed</label
+          />Only allow these fields</label
         >
         @if (model.kept.length) {
           <p class="sd-flag">
@@ -1108,6 +1130,9 @@ let sequence = 0;
       </div>
     }
     <p class="sr-only" aria-live="polite" aria-atomic="true">{{ status() }}</p>
+    @if (fileError()) {
+      <p class="field-error" role="alert">{{ fileError() }}</p>
+    }
     @if (issueCount()) {
       <p class="sd-summary" [id]="prefix + '-summary'">
         {{
@@ -1137,229 +1162,238 @@ let sequence = 0;
           let last = $last
         ) {
           <li class="sd-row" [attr.data-row]="row.uid">
-            <div class="sd-main">
-              <div class="sd-field">
-                <label [for]="id(row, 'name')">Field name</label>
-                <input
-                  [id]="id(row, 'name')"
-                  autocomplete="off"
-                  spellcheck="false"
-                  [value]="row.name"
-                  [disabled]="readonly()"
-                  [attr.aria-invalid]="shownIssue(row, 'name') ? 'true' : null"
-                  [attr.aria-describedby]="
-                    shownIssue(row, 'name') ? id(row, 'name-error') : null
-                  "
-                  (input)="setName(row, $event)"
-                  (blur)="touch(row)"
-                />
-              </div>
-              <div class="sd-field">
-                <label [for]="id(row, 'type')">Type</label>
-                @if (row.locked) {
-                  <input
-                    [id]="id(row, 'type')"
-                    readonly
-                    [value]="'Advanced (' + row.locked + ')'"
-                  />
-                } @else {
-                  <select
-                    [id]="id(row, 'type')"
-                    [attr.aria-label]="'Type of ' + nameOf(row)"
-                    [disabled]="readonly()"
-                    (change)="setType(row, $event)"
-                  >
-                    @for (option of typeOptions; track option.value) {
-                      <option
-                        [value]="option.value"
-                        [selected]="option.value === row.type"
-                      >
-                        {{ option.label }}
-                      </option>
-                    }
-                  </select>
-                }
-              </div>
-              <label class="checkbox-field sd-required"
-                ><input
-                  type="checkbox"
-                  [checked]="row.required"
-                  [disabled]="readonly()"
-                  [attr.aria-label]="'Required: ' + nameOf(row)"
-                  (change)="setRequired(row, $event)"
-                />Required</label
-              >
-              <div class="sd-actions">
+            @if (compact()) {
+              <div class="sd-row-heading">
                 <button
                   type="button"
-                  class="sd-small"
-                  [id]="id(row, 'details')"
-                  [attr.aria-expanded]="row.expanded"
-                  [attr.aria-controls]="row.expanded ? id(row, 'panel') : null"
-                  [attr.aria-label]="'Details for ' + nameOf(row)"
-                  (click)="row.expanded = !row.expanded"
+                  class="sd-summary"
+                  [id]="id(row, 'summary')"
+                  [attr.aria-label]="'Edit ' + (row.name || 'new field')"
+                  [attr.aria-expanded]="openRows.has(row.uid)"
+                  (click)="toggleRow(row)"
                 >
-                  Details
+                  <strong>{{ row.name || "New field" }}</strong
+                  ><span
+                    >{{ typeLabel(row)
+                    }}{{ row.required ? " · Required" : "" }}</span
+                  >
                 </button>
                 @if (!readonly()) {
-                  <button
-                    type="button"
-                    class="sd-icon"
-                    [id]="id(row, 'up')"
-                    [disabled]="first"
-                    [attr.aria-label]="'Move ' + nameOf(row) + ' up'"
-                    (click)="move(row, -1)"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M6 15l6-6 6 6" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    class="sd-icon"
-                    [id]="id(row, 'down')"
-                    [disabled]="last"
-                    [attr.aria-label]="'Move ' + nameOf(row) + ' down'"
-                    (click)="move(row, 1)"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M6 9l6 6 6-6" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    class="sd-icon danger"
-                    [id]="id(row, 'remove')"
-                    [attr.aria-label]="'Remove ' + nameOf(row)"
-                    (click)="remove(row, rows, parent)"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M4 6h16M9 6V3h6v3M7 6l1 15h8l1-15" />
-                    </svg>
-                  </button>
-                }
-              </div>
-            </div>
-            @if (shownIssue(row, "name"); as message) {
-              <p class="sd-error" [id]="id(row, 'name-error')">
-                {{ message }}
-              </p>
-            }
-            @if (row.locked) {
-              <p class="sd-flag warn">
-                Uses {{ row.locked }}, which this designer cannot edit. It is
-                kept unchanged; edit it in Source.
-              </p>
-            }
-            @if (row.kept.length) {
-              <p class="sd-flag">
-                Also kept as written: {{ row.kept.join(", ") }}.
-              </p>
-            }
-            @if (row.expanded) {
-              <div
-                class="sd-details"
-                [id]="id(row, 'panel')"
-                role="group"
-                [attr.aria-label]="'Details for ' + nameOf(row)"
-              >
-                <ng-container
-                  *ngTemplateOutlet="
-                    detailsTpl;
-                    context: { $implicit: row, owner: row }
-                  "
-                />
-                @if (row.type === "array" && row.item && !row.item.locked) {
-                  <fieldset class="sd-item">
-                    <legend>Each item in {{ nameOf(row) }}</legend>
-                    <ng-container
-                      *ngTemplateOutlet="
-                        detailsTpl;
-                        context: { $implicit: row.item, owner: row }
-                      "
-                    />
-                  </fieldset>
-                }
-              </div>
-            }
-            @if (row.type === "array" && !row.locked) {
-              <div class="sd-field sd-each">
-                <label [for]="id(row, 'item-type')">Each item is</label>
-                @if (row.item?.locked) {
-                  <input
-                    [id]="id(row, 'item-type')"
-                    readonly
-                    [value]="'Advanced (' + row.item!.locked + ')'"
+                  <weave-row-menu
+                    [label]="'Options for ' + (row.name || 'new field')"
+                    [items]="rowActions(row, rows, parent)"
                   />
-                } @else {
-                  <select
-                    [id]="id(row, 'item-type')"
-                    [disabled]="readonly()"
-                    (change)="setItemType(row, $event)"
-                  >
-                    @if (!row.item) {
-                      <option value="" selected>
-                        Not described (any value)
-                      </option>
-                    }
-                    @for (option of typeOptions; track option.value) {
-                      <!-- A list of lists only comes from Source; show it as it is. -->
-                      @if (
-                        option.value !== "array" || row.item?.type === "array"
-                      ) {
-                        <option
-                          [value]="option.value"
-                          [selected]="option.value === row.item?.type"
-                        >
-                          {{ option.label }}
-                        </option>
-                      }
-                    }
-                  </select>
                 }
               </div>
-              @if (row.item?.type === "array") {
-                <p class="sd-flag">
-                  Each item is itself a list; what it holds is kept as written.
-                  Edit it in Source.
-                </p>
-              }
             }
-            @if (groupOf(row); as group) {
-              @if (depth + 1 >= maxDepth) {
-                <p class="sd-flag">
-                  Fields nested this deeply are kept as written; edit them in
-                  Source.
-                </p>
-              } @else {
-                <div class="sd-group">
-                  @if (group.children.length) {
-                    <ng-container
-                      *ngTemplateOutlet="
-                        rowsTpl;
-                        context: {
-                          $implicit: group.children,
-                          parent: group,
-                          depth: depth + 1,
-                        }
-                      "
+            @if (!compact() || openRows.has(row.uid)) {
+              <div class="sd-main">
+                <div class="sd-field">
+                  <label [for]="id(row, 'name')">Field name</label>
+                  <input
+                    [id]="id(row, 'name')"
+                    autocomplete="off"
+                    spellcheck="false"
+                    [value]="row.name"
+                    [disabled]="readonly()"
+                    [attr.aria-invalid]="
+                      shownIssue(row, 'name') ? 'true' : null
+                    "
+                    [attr.aria-describedby]="
+                      shownIssue(row, 'name') ? id(row, 'name-error') : null
+                    "
+                    (input)="setName(row, $event)"
+                    (blur)="touch(row)"
+                  />
+                </div>
+                <div class="sd-field">
+                  <label [for]="id(row, 'type')">Type</label>
+                  @if (row.locked) {
+                    <input
+                      [id]="id(row, 'type')"
+                      readonly
+                      [value]="'Advanced (' + row.locked + ')'"
+                    />
+                  } @else {
+                    <weave-select
+                      [controlId]="id(row, 'type')"
+                      [label]="'Type of ' + nameOf(row)"
+                      [hideLabel]="true"
+                      [options]="typeOptions"
+                      [value]="displayType(row)"
+                      [disabled]="readonly()"
+                      (choose)="setType(row, $event)"
                     />
                   }
+                </div>
+                <label class="checkbox-field sd-required"
+                  ><input
+                    type="checkbox"
+                    [checked]="row.required"
+                    [disabled]="readonly()"
+                    [attr.aria-label]="'Required: ' + nameOf(row)"
+                    (change)="setRequired(row, $event)"
+                  />Required</label
+                >
+                <div class="sd-actions">
+                  <button
+                    type="button"
+                    class="sd-small"
+                    [id]="id(row, 'details')"
+                    [attr.aria-expanded]="row.expanded"
+                    [attr.aria-controls]="
+                      row.expanded ? id(row, 'panel') : null
+                    "
+                    [attr.aria-label]="'Details for ' + nameOf(row)"
+                    (click)="row.expanded = !row.expanded"
+                  >
+                    Details
+                  </button>
                   @if (!readonly()) {
                     <button
                       type="button"
-                      class="sd-small sd-add-nested"
-                      [id]="addId(group)"
-                      (click)="add(group)"
+                      class="sd-icon"
+                      [id]="id(row, 'up')"
+                      [disabled]="first"
+                      [attr.aria-label]="'Move ' + nameOf(row) + ' up'"
+                      (click)="move(row, -1)"
                     >
-                      {{
-                        group === row
-                          ? "Add field to " + nameOf(row)
-                          : "Add field to each " + nameOf(row) + " item"
-                      }}
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 15l6-6 6 6" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="sd-icon"
+                      [id]="id(row, 'down')"
+                      [disabled]="last"
+                      [attr.aria-label]="'Move ' + nameOf(row) + ' down'"
+                      (click)="move(row, 1)"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="sd-icon danger"
+                      [id]="id(row, 'remove')"
+                      [attr.aria-label]="'Remove ' + nameOf(row)"
+                      (click)="remove(row, rows, parent)"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 6h16M9 6V3h6v3M7 6l1 15h8l1-15" />
+                      </svg>
                     </button>
                   }
                 </div>
+              </div>
+              @if (shownIssue(row, "name"); as message) {
+                <p class="sd-error" [id]="id(row, 'name-error')">
+                  {{ message }}
+                </p>
+              }
+              @if (row.locked) {
+                <p class="sd-flag warn">
+                  Uses {{ row.locked }}, which this designer cannot edit. It is
+                  kept unchanged; edit it in Source.
+                </p>
+              }
+              @if (row.kept.length) {
+                <p class="sd-flag">
+                  Also kept as written: {{ row.kept.join(", ") }}.
+                </p>
+              }
+              @if (row.expanded) {
+                <div
+                  class="sd-details"
+                  [id]="id(row, 'panel')"
+                  role="group"
+                  [attr.aria-label]="'Details for ' + nameOf(row)"
+                >
+                  <ng-container
+                    *ngTemplateOutlet="
+                      detailsTpl;
+                      context: { $implicit: row, owner: row }
+                    "
+                  />
+                  @if (row.type === "array" && row.item && !row.item.locked) {
+                    <fieldset class="sd-item">
+                      <legend>Each item in {{ nameOf(row) }}</legend>
+                      <ng-container
+                        *ngTemplateOutlet="
+                          detailsTpl;
+                          context: { $implicit: row.item, owner: row }
+                        "
+                      />
+                    </fieldset>
+                  }
+                </div>
+              }
+              @if (row.type === "array" && !row.locked) {
+                <div class="sd-field sd-each">
+                  <label [for]="id(row, 'item-type')">Each item is</label>
+                  @if (row.item?.locked) {
+                    <input
+                      [id]="id(row, 'item-type')"
+                      readonly
+                      [value]="'Advanced (' + row.item!.locked + ')'"
+                    />
+                  } @else {
+                    <weave-select
+                      [controlId]="id(row, 'item-type')"
+                      [label]="'Each item is'"
+                      [hideLabel]="true"
+                      [options]="itemTypeOptions(row)"
+                      [value]="row.item?.type ?? ''"
+                      [disabled]="readonly()"
+                      (choose)="setItemType(row, $event)"
+                    />
+                  }
+                </div>
+                @if (row.item?.type === "array") {
+                  <p class="sd-flag">
+                    Each item is itself a list; what it holds is kept as
+                    written. Edit it in Source.
+                  </p>
+                }
+              }
+              @if (groupOf(row); as group) {
+                @if (depth + 1 >= maxDepth) {
+                  <p class="sd-flag">
+                    Fields nested this deeply are kept as written; edit them in
+                    Source.
+                  </p>
+                } @else {
+                  <div class="sd-group">
+                    @if (group.children.length) {
+                      <ng-container
+                        *ngTemplateOutlet="
+                          rowsTpl;
+                          context: {
+                            $implicit: group.children,
+                            parent: group,
+                            depth: depth + 1,
+                          }
+                        "
+                      />
+                    }
+                    @if (!readonly()) {
+                      <button
+                        type="button"
+                        class="sd-small sd-add-nested"
+                        [id]="addId(group)"
+                        (click)="add(group)"
+                      >
+                        {{
+                          group === row
+                            ? "Add field to " + nameOf(row)
+                            : "Add field to each " + nameOf(row) + " item"
+                        }}
+                      </button>
+                    }
+                  </div>
+                }
               }
             }
           </li>
@@ -1442,20 +1476,15 @@ let sequence = 0;
                   [value]="'Kept as written'"
                 />
               } @else {
-                <select
-                  [id]="id(row, 'format')"
+                <weave-select
+                  [controlId]="id(row, 'format')"
+                  label="Format"
+                  [hideLabel]="true"
+                  [options]="formatOptions"
+                  [value]="row.format"
                   [disabled]="readonly()"
-                  (change)="setFormat(row, $event)"
-                >
-                  @for (option of formatOptions; track option.value) {
-                    <option
-                      [value]="option.value"
-                      [selected]="option.value === row.format"
-                    >
-                      {{ option.label }}
-                    </option>
-                  }
-                </select>
+                  (choose)="setFormat(row, $event)"
+                />
               }
             </div>
           }
@@ -1507,7 +1536,7 @@ let sequence = 0;
                 [checked]="row.closed"
                 [disabled]="readonly() || row.closedKept"
                 (change)="setClosed(row, $event)"
-              />Reject fields that are not listed</label
+              />Only allow these fields</label
             >
           }
         }
@@ -1650,6 +1679,32 @@ let sequence = 0;
         gap: 6px;
         min-width: 0;
       }
+      .sd-summary {
+        display: flex;
+        gap: 8px;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        text-align: left;
+        min-height: 40px;
+        padding: 4px 0;
+        border: 0;
+        background: transparent;
+      }
+      .sd-row-heading {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+      }
+      .sd-summary strong {
+        overflow-wrap: anywhere;
+      }
+      .sd-summary span {
+        font-size: 12px;
+        color: var(--muted);
+        flex-shrink: 0;
+      }
       .sd-main {
         display: grid;
         grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.2fr) auto auto;
@@ -1750,7 +1805,7 @@ let sequence = 0;
         color: #5f4612;
       }
       .sd-error,
-      .sd-summary {
+      p.sd-summary {
         color: var(--danger);
       }
       .sd-notes {
@@ -1825,6 +1880,7 @@ let sequence = 0;
   ],
 })
 export class SchemaDesigner implements OnChanges {
+  readonly fileError = signal("");
   /** The schema being edited (any JSON; undefined for none yet). */
   schema = input<unknown>(undefined);
   /** When set, the designer reloads `schema` only when this number changes. */
@@ -1836,6 +1892,9 @@ export class SchemaDesigner implements OnChanges {
   inferSchema = input<InferSchema | null>(null);
   /** Shows a live form preview of the schema. */
   preview = input(true);
+  compact = input(false);
+  openRows = new Set<number>();
+  choiceRows = new Set<number>();
   /** Each valid edit: the whole schema. Nothing is emitted while rows are invalid. */
   schemaChange = output<JsonObject>();
   /**
@@ -1997,8 +2056,20 @@ export class SchemaDesigner implements OnChanges {
     this.refresh(false);
   }
 
-  private value(event: Event) {
-    return (event.target as HTMLInputElement).value;
+  itemTypeOptions(row: DesignerRow) {
+    return [
+      ...(!row.item ? [{ value: "", label: "Not described (any value)" }] : []),
+      ...this.typeOptions.filter(
+        (option) =>
+          option.value !== "choice" &&
+          (option.value !== "array" || row.item?.type === "array"),
+      ),
+    ];
+  }
+  private value(event: Event | string) {
+    return typeof event === "string"
+      ? event
+      : (event.target as HTMLInputElement).value;
   }
   private checked(event: Event) {
     return (event.target as HTMLInputElement).checked;
@@ -2007,16 +2078,74 @@ export class SchemaDesigner implements OnChanges {
     row.name = this.value(event);
     this.changed();
   }
-  setType(row: DesignerRow, event: Event) {
+  displayType(row: DesignerRow) {
+    return this.choiceRows.has(row.uid) || row.choices ? "choice" : row.type;
+  }
+  typeLabel(row: DesignerRow) {
+    return typeLabels[this.displayType(row)] ?? "Advanced";
+  }
+  toggleRow(row: DesignerRow) {
+    if (!this.openRows.delete(row.uid)) this.openRows.add(row.uid);
+  }
+  async setType(row: DesignerRow, event: Event | string) {
+    if (this.value(event) === "choice") {
+      if (!["string", "number", "integer"].includes(row.type))
+        changeType(row, "string");
+      this.choiceRows.add(row.uid);
+      row.expanded = true;
+      this.focusLater(this.id(row, "choices"));
+      return;
+    }
+    this.choiceRows.delete(row.uid);
+    if (this.value(event) === "file") {
+      await this.fileType(row, event);
+      return;
+    }
     changeType(row, this.value(event) as EditableType);
     if (row.type === "object" || row.type === "array") row.expanded = false;
     this.changed();
   }
-  setItemType(row: DesignerRow, event: Event) {
+  async setItemType(row: DesignerRow, event: Event | string) {
     const type = this.value(event) as EditableType;
+    if (type === "file") {
+      row.item ??= newRow();
+      await this.fileType(row.item, event);
+      return;
+    }
     if (!row.item) row.item = newRow(type);
     else changeType(row.item, type);
     this.changed();
+  }
+  private async fileType(row: DesignerRow, event: Event | string) {
+    this.fileError.set("");
+    const model = this.model;
+    try {
+      const response = await fetch("/studio/contracts/file-reference", {
+        credentials: "same-origin",
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok)
+        throw Error(
+          "File fields could not be loaded. Try choosing File again.",
+        );
+      const schema = await response.json();
+      if (!isFileSchema(schema))
+        throw Error("The host did not return a file schema.");
+      if (this.destroyed || this.model !== model || this.readonly()) return;
+      const { uid, title, description } = row;
+      Object.assign(row, schemaToRow(row.name, schema, row.required), {
+        uid,
+        title,
+        description,
+      });
+      this.changed();
+      this.cdr.markForCheck();
+    } catch (error) {
+      if (this.destroyed || this.model !== model) return;
+      if (typeof event !== "string")
+        (event.target as HTMLSelectElement).value = row.type;
+      this.fileError.set(describeError(error).message);
+    }
   }
   setRequired(row: DesignerRow, event: Event) {
     row.required = this.checked(event);
@@ -2030,7 +2159,7 @@ export class SchemaDesigner implements OnChanges {
     row[key] = this.value(event);
     this.changed();
   }
-  setFormat(row: DesignerRow, event: Event) {
+  setFormat(row: DesignerRow, event: Event | string) {
     row.format = this.value(event) as Format;
     this.changed();
   }
@@ -2049,6 +2178,7 @@ export class SchemaDesigner implements OnChanges {
 
   add(parent: DesignerRow | null) {
     const row = addRow(this.model, parent);
+    this.openRows.add(row.uid);
     this.changed();
     this.status.set("Field added. Enter its name.");
     this.focusLater(this.id(row, "name"));
@@ -2061,7 +2191,35 @@ export class SchemaDesigner implements OnChanges {
     this.touched.delete(row.uid);
     this.changed();
     this.status.set(`Removed ${label}.`);
-    this.focusLater(neighbor ? this.id(neighbor, "name") : this.addId(parent));
+    this.focusLater(
+      neighbor
+        ? this.id(neighbor, this.compact() ? "summary" : "name")
+        : this.addId(parent),
+    );
+  }
+  rowActions(
+    row: DesignerRow,
+    rows: DesignerRow[],
+    parent: DesignerRow | null,
+  ): RowMenuItem[] {
+    const index = rows.indexOf(row);
+    return [
+      {
+        label: "Move up",
+        disabled: index === 0,
+        run: () => this.move(row, -1),
+      },
+      {
+        label: "Move down",
+        disabled: index === rows.length - 1,
+        run: () => this.move(row, 1),
+      },
+      {
+        label: "Remove field",
+        danger: true,
+        run: () => this.remove(row, rows, parent),
+      },
+    ];
   }
   move(row: DesignerRow, delta: -1 | 1) {
     if (!moveRow(this.model, row, delta)) return;
@@ -2069,6 +2227,10 @@ export class SchemaDesigner implements OnChanges {
     this.status.set(
       `Moved ${row.name.trim() || "the field"} ${delta < 0 ? "up" : "down"}.`,
     );
+    if (this.compact()) {
+      this.focusLater(this.id(row, "summary"));
+      return;
+    }
     // Moving the element drops its focus; put it back, or on the other arrow at an end.
     const same = this.id(row, delta < 0 ? "up" : "down");
     const other = this.id(row, delta < 0 ? "down" : "up");
