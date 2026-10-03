@@ -430,7 +430,7 @@ print(json.dumps(failures))
           {
             cwd: root,
             encoding: "utf8",
-            timeout: 60000,
+            timeout: 180_000,
             input: JSON.stringify(encoded),
             env: {
               ...process.env,

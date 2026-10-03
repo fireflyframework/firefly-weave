@@ -437,7 +437,7 @@ print(json.dumps(author_http_action(request).model_dump(by_alias=True, mode="jso
               input: JSON.stringify(body),
               env: { ...process.env, PYTHONPATH: resolve(root, "src") },
               encoding: "utf8",
-              timeout: 60000,
+              timeout: 180_000,
             },
           ),
         ),
@@ -472,7 +472,7 @@ print(json.dumps([i.code for i in issues]))`,
           input: JSON.stringify({ schema: emitted, samples }),
           env: { ...process.env, PYTHONPATH: resolve(root, "src") },
           encoding: "utf8",
-          timeout: 60000,
+          timeout: 180_000,
         },
       );
       expect(JSON.parse(verdict)).toEqual([]);
@@ -570,7 +570,7 @@ print(json.dumps(author_http_action(request).model_dump(by_alias=True, mode="jso
               input: JSON.stringify(body),
               env: { ...process.env, PYTHONPATH: resolve(root, "src") },
               encoding: "utf8",
-              timeout: 60000,
+              timeout: 180_000,
             },
           ),
         ),
@@ -661,7 +661,7 @@ print(json.dumps([[i.code for i in validate_schema(s, {})] for s in json.load(sy
         input: JSON.stringify(outputs),
         env: { ...process.env, PYTHONPATH: resolve(root, "src") },
         encoding: "utf8",
-        timeout: 60000,
+        timeout: 180_000,
       },
     );
     const results = JSON.parse(verdict) as string[][];

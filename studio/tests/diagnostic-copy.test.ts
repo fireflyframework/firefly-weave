@@ -215,7 +215,7 @@ print(json.dumps(sorted("WV-COMP-" + c for c in codes)))
           {
             cwd: root,
             encoding: "utf8",
-            timeout: 30000,
+            timeout: 180_000,
             env: {
               ...process.env,
               PYTHONPATH: [resolve(root, "src"), process.env.PYTHONPATH]

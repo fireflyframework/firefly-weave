@@ -16,4 +16,14 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { defineConfig } from "vitest/config";
-export default defineConfig({ test: { include: ["tests/*.test.ts"] } });
+// Several suites run the Python compiler, simulator or fixture generator in a
+// child process. Those processes have their own 180 s limits; on a busy CI
+// runner a single start can exceed Vitest's 5 s default, so tests get the same
+// headroom.
+export default defineConfig({
+  test: {
+    include: ["tests/*.test.ts"],
+    testTimeout: 240_000,
+    hookTimeout: 240_000,
+  },
+});

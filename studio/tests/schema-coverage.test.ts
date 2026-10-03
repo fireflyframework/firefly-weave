@@ -55,7 +55,7 @@ print(json.dumps({
 }))
 `,
         ],
-        { cwd: root, encoding: "utf8", timeout: 10000 },
+        { cwd: root, encoding: "utf8", timeout: 180_000 },
       ),
     )
   : null;

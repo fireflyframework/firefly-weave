@@ -453,7 +453,7 @@ print(json.dumps(result))
         {
           cwd: root,
           encoding: "utf8",
-          timeout: 30000,
+          timeout: 180_000,
           input: JSON.stringify(requests),
           env: { ...process.env, PYTHONPATH: resolve(root, "src") },
         },
