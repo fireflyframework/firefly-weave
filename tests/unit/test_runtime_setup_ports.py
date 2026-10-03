@@ -24,6 +24,7 @@ import pytest
 
 @pytest.fixture
 def setup_module(monkeypatch):
+    monkeypatch.delenv("WEAVE_RELEASE_BACKENDS", raising=False)
     path = Path(__file__).resolve().parents[2] / "scripts/setup-runtime.py"
     spec = importlib.util.spec_from_file_location("runtime_setup_ports", path)
     module = importlib.util.module_from_spec(spec)

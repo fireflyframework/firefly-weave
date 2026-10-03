@@ -146,6 +146,7 @@ import {
   workspaceShort,
 } from "./format";
 // The operations pages and Settings load lazily (@defer): only these classes.
+import { OperationsView } from "./operations/operations-view";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
@@ -168,6 +169,7 @@ export type View =
   | "email"
   | "connections"
   | "workers"
+  | "operations"
   | "settings"
   | "connect";
 type PlatformNoticeKind =
@@ -318,6 +320,7 @@ const sideEffects: Record<string, string> = {
     ToastHost,
     DesignerView,
     RecordsView,
+    OperationsView,
     SettingsPage,
     LumiPanel,
   ],
@@ -535,12 +538,13 @@ export class App {
     { id: "tasks", label: "My tasks" },
     { id: "email", label: "Email" },
     { id: "workers", label: "Workers" },
+    { id: "operations", label: "Operations" },
     { id: "settings", label: "Settings" },
   ];
   readonly navGroups = [
     { label: "", items: this.nav.slice(0, 1) },
     { label: "Build", items: this.nav.slice(1, 3) },
-    { label: "Operate", items: this.nav.slice(3, 7) },
+    { label: "Operate", items: this.nav.slice(3, 8) },
   ];
   kinds = kinds;
   paletteQuery = "";
@@ -4972,7 +4976,7 @@ export class App {
       await this.loadAdministration();
       return;
     }
-    if (this.view === "connect") return;
+    if (this.view === "connect" || this.view === "operations") return;
     if (this.view === "home") {
       await this.refreshHome();
       return;

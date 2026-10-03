@@ -600,6 +600,78 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `debug.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/debug/sessions/{identifier}` | simulate |
 | `debug.command` | `POST /api/v1/tenants/{tenant}/projects/{project}/debug/sessions/{identifier}/commands` | simulate |
 
+| `deployment_plans.approval` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-plans/{identifier}/approval` | deployment.read |
+| `deployment_jobs.reconcile` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-jobs/{identifier}/reconcile` | deployment.apply and deployment.approve |
+| `deployment_targets.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-targets` | deployment.read |
+| `deployment_targets.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-targets/{identifier}` | deployment.read |
+| `deployments.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployments` | deployment.read |
+| `deployments.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployments/{identifier}` | deployment.read |
+| `deployment_observations.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-observations` | deployment.read |
+| `deployment_observations.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-observations/{identifier}` | deployment.read |
+| `deployment_plans.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-plans` | deployment.read |
+| `deployment_plans.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-plans/{identifier}` | deployment.read |
+| `deployment_jobs.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-jobs` | deployment.read |
+| `deployment_jobs.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-jobs/{identifier}` | deployment.read |
+| `deployment_runners.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners` | deployment.read |
+| `deployment_runners.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/{identifier}` | deployment.read |
+| `deployment_targets.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-targets` | target.manage |
+| `deployments.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployments` | target.manage |
+| `deployment_observations.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-observations` | deployment.plan |
+| `deployment_plans.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-plans` | deployment.plan |
+| `deployment_targets.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-targets/{identifier}` | target.manage |
+| `deployments.update` | `PUT /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployments/{identifier}` | target.manage |
+| `deployment_plans.approve` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-plans/{identifier}/approve` | deployment.approve |
+| `deployment_plans.apply` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-plans/{identifier}/apply` | deployment.apply |
+| `deployment_jobs.cancel` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-jobs/{identifier}/cancel` | deployment.cancel |
+| `deployment_runners.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners` | runner.register |
+| `deployment_runners.claim` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/claim` | runner.claim |
+| `deployment_runners.renew` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/renew` | runner.renew |
+| `deployment_runners.report` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/report` | runner.report |
+| `deployment_runners.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/{identifier}/revoke` | target.manage |
+| `workers.drain` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/drain` | worker.drain |
+| `workers.resume` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/resume` | worker.drain |
+
+## Deployment Operations authority
+
+Follow [Manage container deployments](../operations/cluster-management.md)
+for the complete Studio and CLI sequence.
+
+Deployment targets, desired deployments, observations, plans, approvals, jobs,
+and runner registrations belong to one environment. Child-resource reads check
+the target grant. Lists filter authorized target IDs before pagination; use
+`target_id` to select a target, and `deployment_id` to narrow plan history.
+An observation is a dated snapshot, not a promise of current health.
+
+The server creates an immutable plan from the desired revision and a fresh,
+complete observation. Approval records its exact digest. Applying checks the
+current target and desired revisions, freshness, and the approver's current
+authority again. `deployment_plans.approval` returns the recorded approval or
+`null`; a recorded approval does not bypass those final checks.
+
+| Role | Responsibility |
+| --- | --- |
+| `deployment_reader` | Read authorized target inventory and evidence |
+| `deployment_planner` | Register target metadata, edit desired deployment, observe, and plan |
+| `deployment_approver` | Approve the exact immutable plan |
+| `deployment_operator` | Apply or cancel work |
+| `deployment_runner` | Dedicated application's registration, claims, renewals, and reports |
+| `worker_operator` | Drain or resume a specific worker instance |
+
+Provider credentials and configuration templates stay on the outbound runner.
+The API accepts typed intent, immutable image digests, and local configuration
+aliases; it does not accept commands or cloud credentials. API/scheduler
+components require exactly one instance. Worker components require an admitted
+release. Available actions are bounded by both the registered target and the
+runner's local adapter policy.
+
+Only one job may be active per target. Losing authority after external changes
+begin requires reconciliation, never automatic re-execution. An operator with
+both apply and approve capabilities must acknowledge that the external
+operation stopped and select a new complete, settled observation to close the
+ambiguous job. Closing it does not reverse changes or apply another plan.
+Worker drain prevents new claims and lets existing leases settle; scaling a
+provider replica count to zero is a different operation.
+
 ## Compatibility and retention authority
 
 **Compatibility.** A project viewer with `status.read` can read the project's

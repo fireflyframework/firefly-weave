@@ -28,6 +28,7 @@ from firefly_weave import __version__
 from firefly_weave.cli import EXIT_USAGE, emit_result, error_result
 from firefly_weave.cli.admin import admin
 from firefly_weave.cli.auth import auth
+from firefly_weave.cli.cluster_operations import operations
 from firefly_weave.cli.connections import connections
 from firefly_weave.cli.connectors import connector
 from firefly_weave.cli.debug import simulate
@@ -128,7 +129,7 @@ class OfflineGroup(click.Group):
                     "provider-receipts",
                 ),
             ),
-            ("Deploy and administer", ("worker", "admin", "retention", "compatibility", "remote")),
+            ("Deploy and administer", ("worker", "operations", "admin", "retention", "compatibility", "remote")),
             ("Help and version", ("help", "version")),
         )
         summaries = {
@@ -302,6 +303,7 @@ cli.add_command(workflow)
 cli.add_command(schema)
 cli.add_command(connector)
 cli.add_command(worker)
+cli.add_command(operations)
 cli.add_command(admin)
 cli.add_command(auth)
 cli.add_command(run)

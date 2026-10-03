@@ -44,31 +44,31 @@ start them:
 ## Choose an installer
 
 Choose a matching installer **actually attached** to the
-[v0.1.0a11 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a11).
-The desktop product version is `0.1.0-alpha.11`; its bundled Python host is
-`0.1.0a11`. macOS bundles use **ad-hoc signing** for resource integrity; they are
+[v0.1.0a12 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a12).
+The desktop product version is `0.1.0-alpha.12`; its bundled Python host is
+`0.1.0a12`. macOS bundles use **ad-hoc signing** for resource integrity; they are
 **not Developer ID signed and not notarized**. Windows installers remain unsigned.
 Build and frozen-host smoke checks do not establish interactive GUI testing on
 every operating system. Your organization's installation policy still applies.
 
 | Computer | Target | Installer filename |
 | --- | --- | --- |
-| macOS Apple silicon | `aarch64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.11-aarch64-apple-darwin.dmg` |
-| macOS Intel | `x86_64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.11-x86_64-apple-darwin.dmg` |
-| Windows x64 | `x86_64-pc-windows-msvc` | `firefly-weave-studio-0.1.0-alpha.11-x86_64-pc-windows-msvc.exe` or `.msi` |
-| Linux x64 | `x86_64-unknown-linux-gnu` | `firefly-weave-studio-0.1.0-alpha.11-x86_64-unknown-linux-gnu.deb` or `.AppImage` |
+| macOS Apple silicon | `aarch64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.12-aarch64-apple-darwin.dmg` |
+| macOS Intel | `x86_64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.12-x86_64-apple-darwin.dmg` |
+| Windows x64 | `x86_64-pc-windows-msvc` | `firefly-weave-studio-0.1.0-alpha.12-x86_64-pc-windows-msvc.exe` or `.msi` |
+| Linux x64 | `x86_64-unknown-linux-gnu` | `firefly-weave-studio-0.1.0-alpha.12-x86_64-unknown-linux-gnu.deb` or `.AppImage` |
 
 Download the chosen installer and its target's checksum inventory,
 `weave-studio-TARGET-SHA256SUMS`, from that same release. The matrix describes
 filenames, not a promise that every asset is already available. If your matching
-asset is absent, use the [browser installation](studio.md#install-the-alpha11-browser-application)
+asset is absent, use the [browser installation](studio.md#install-the-alpha12-browser-application)
 instead. Alpha4 Python releases do not contain Studio or desktop installers.
 
 **Do not use the alpha5 macOS installers.** Their outer application bundle lacked
 its resource seal, causing macOS to report that the application was damaged.
 Alpha6 added explicit ad-hoc bundle signing and a strict verification gate for both
-the built application and the application enclosed in its DMG, and alpha11 keeps
-them. Download the matching alpha11 asset rather than attempting to bypass the
+the built application and the application enclosed in its DMG, and alpha12 keeps
+them. Download the matching alpha12 asset rather than attempting to bypass the
 alpha5 failure.
 Ad-hoc integrity does not establish publisher trust or Gatekeeper acceptance.
 
@@ -110,9 +110,9 @@ This follows Tauri's [sidecar model](https://v2.tauri.app/develop/sidecar/) and
     ```sh
     # Inspect the downloaded installer without opening it.
     cd ~/Downloads
-    shasum -a 256 firefly-weave-studio-0.1.0-alpha.11-aarch64-apple-darwin.dmg
+    shasum -a 256 firefly-weave-studio-0.1.0-alpha.12-aarch64-apple-darwin.dmg
     # Show the expected digest for this exact filename.
-    grep 'firefly-weave-studio-0.1.0-alpha.11-aarch64-apple-darwin.dmg$' weave-studio-aarch64-apple-darwin-SHA256SUMS
+    grep 'firefly-weave-studio-0.1.0-alpha.12-aarch64-apple-darwin.dmg$' weave-studio-aarch64-apple-darwin-SHA256SUMS
     ```
 
     Both displayed digests must match. For Intel, replace `aarch64-apple-darwin`
@@ -149,9 +149,9 @@ matching `weave-studio-x86_64-pc-windows-msvc-SHA256SUMS` inventory first.
 ```powershell
 # Inspect the downloaded EXE before running it.
 Set-Location "$HOME\Downloads"
-Get-FileHash .\firefly-weave-studio-0.1.0-alpha.11-x86_64-pc-windows-msvc.exe -Algorithm SHA256
+Get-FileHash .\firefly-weave-studio-0.1.0-alpha.12-x86_64-pc-windows-msvc.exe -Algorithm SHA256
 # Compare the digest with the line for this exact filename.
-Select-String -Path .\weave-studio-x86_64-pc-windows-msvc-SHA256SUMS -Pattern 'firefly-weave-studio-0.1.0-alpha.11-x86_64-pc-windows-msvc.exe$'
+Select-String -Path .\weave-studio-x86_64-pc-windows-msvc-SHA256SUMS -Pattern 'firefly-weave-studio-0.1.0-alpha.12-x86_64-pc-windows-msvc.exe$'
 ```
 
 Expected: `Get-FileHash` prints a `Hash` value, and `Select-String` prints the
@@ -159,8 +159,8 @@ inventory line for the same file. For MSI, substitute `.msi` in both commands.
 Compare the two digests without regard to letter case; stop on a mismatch. Double-click the verified installer, complete its
 setup, then open **Firefly Weave Studio** from the Start menu. The installer may
 need network access to provision WebView2. Unsigned-installation warnings remain
-subject to your organization's policy. The MSI's internal version is `0.1.11`, a
-monotonic Windows Installer counter; the displayed product remains alpha11.
+subject to your organization's policy. The MSI's internal version is `0.1.12`, a
+monotonic Windows Installer counter; the displayed product remains alpha12.
 
 ## Install on Linux
 
@@ -171,8 +171,8 @@ application where your distribution supports its runtime. Download the matching
 ```sh
 # Enter the download directory, verify this exact file, then install only on success.
 cd ~/Downloads &&
-  grep 'firefly-weave-studio-0.1.0-alpha.11-x86_64-unknown-linux-gnu.deb$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
-  sudo apt install ./firefly-weave-studio-0.1.0-alpha.11-x86_64-unknown-linux-gnu.deb
+  grep 'firefly-weave-studio-0.1.0-alpha.12-x86_64-unknown-linux-gnu.deb$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
+  sudo apt install ./firefly-weave-studio-0.1.0-alpha.12-x86_64-unknown-linux-gnu.deb
 ```
 
 Expected: `sha256sum` prints the file name followed by `OK`, and only then does
@@ -182,9 +182,9 @@ application launcher. For AppImage:
 ```sh
 # Verify this exact portable file; a failed or missing checksum prevents launch.
 cd ~/Downloads &&
-  grep 'firefly-weave-studio-0.1.0-alpha.11-x86_64-unknown-linux-gnu.AppImage$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
-  chmod +x firefly-weave-studio-0.1.0-alpha.11-x86_64-unknown-linux-gnu.AppImage &&
-  ./firefly-weave-studio-0.1.0-alpha.11-x86_64-unknown-linux-gnu.AppImage
+  grep 'firefly-weave-studio-0.1.0-alpha.12-x86_64-unknown-linux-gnu.AppImage$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
+  chmod +x firefly-weave-studio-0.1.0-alpha.12-x86_64-unknown-linux-gnu.AppImage &&
+  ./firefly-weave-studio-0.1.0-alpha.12-x86_64-unknown-linux-gnu.AppImage
 ```
 
 Linux requires the distribution's WebKitGTK runtime, and AppImage execution may
@@ -479,7 +479,7 @@ with a text editor.
 **Untested platform cases.** On macOS 11.0 to 11.2 the webview lacks the
 download support the app relies on, so an export may save nothing even though
 the confirmation appears; use macOS 11.3 or later, or the
-[browser installation](studio.md#install-the-alpha11-browser-application). macOS
+[browser installation](studio.md#install-the-alpha12-browser-application). macOS
 may ask whether Firefly Weave Studio can use your Downloads folder the first
 time you export. On Windows, WebView2 may ask whether to allow the second of the
 two files.
@@ -633,8 +633,8 @@ source checkout, you can run that same gate on an explicitly downloaded DMG:
 
 ```sh
 # Verify resource integrity without launching the application.
-# Replace the path with the actual alpha11 installer you downloaded.
-.venv/bin/python desktop/scripts/verify_macos_bundle.py /path/to/firefly-weave-studio-0.1.0-alpha.11-aarch64-apple-darwin.dmg
+# Replace the path with the actual alpha12 installer you downloaded.
+.venv/bin/python desktop/scripts/verify_macos_bundle.py /path/to/firefly-weave-studio-0.1.0-alpha.12-aarch64-apple-darwin.dmg
 ```
 
 The build also smoke-tests the frozen host after Tauri signs it. Hardened runtime

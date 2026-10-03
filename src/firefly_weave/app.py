@@ -121,6 +121,7 @@ SERVICE_PACKAGES = (
     "firefly_weave.access.members",
     "firefly_weave.human_tasks",
     "firefly_weave.files",
+    "firefly_weave.deployments",
     "firefly_weave.email",
     "firefly_weave.access.authorization",
     "firefly_weave.access.authentication",

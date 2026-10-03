@@ -347,6 +347,24 @@ class StudioController:
         ).selection()
         return await self.connection.apply_scope(generation, selection)
 
+    @get_mapping("/studio/contracts/deployment-target")
+    async def deployment_target_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.deployments import TargetRequest
+
+        return JSONResponse(TargetRequest.model_json_schema(), headers={"Cache-Control": "no-store"})
+
+    @get_mapping("/studio/contracts/deployment-target-update")
+    async def deployment_target_update_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.deployments import TargetUpdate
+
+        return JSONResponse(TargetUpdate.model_json_schema(), headers={"Cache-Control": "no-store"})
+
+    @get_mapping("/studio/contracts/deployment")
+    async def deployment_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.deployments import DeploymentRequest
+
+        return JSONResponse(DeploymentRequest.model_json_schema(), headers={"Cache-Control": "no-store"})
+
     @get_mapping("/studio/contracts/llm-profile")
     async def llm_profile_contract(self, request: Request) -> Response:
         from firefly_weave.contracts.llm import LLMProfile

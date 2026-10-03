@@ -125,8 +125,10 @@ from firefly_weave.contracts.workers import (
     LeaseProof,
     ReleaseRequest,
     TaskLease,
+    WorkerControlRequest,
     WorkerInstance,
     WorkerRelease,
+    WorkerStatus,
 )
 from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugSession
 from firefly_weave.sdk.errors import ContractError, PreconditionFailed, TransportError, WeaveError
@@ -556,8 +558,24 @@ class WeaveClient:
     async def read_release(self, identifier: UUID) -> WorkerRelease:
         return cast(WorkerRelease, await self.invoke("releases.read", identifier=identifier))
 
-    async def read_worker(self, identifier: UUID) -> WorkerInstance:
-        return cast(WorkerInstance, await self.invoke("workers.read", identifier=identifier))
+    async def read_worker(self, identifier: UUID) -> WorkerStatus:
+        return cast(WorkerStatus, await self.invoke("workers.read", identifier=identifier))
+
+    async def drain_worker(
+        self, identifier: UUID, request: WorkerControlRequest, *, idempotency_key: str
+    ) -> WorkerStatus:
+        return cast(
+            WorkerStatus,
+            await self.invoke("workers.drain", identifier=identifier, body=request, idempotency_key=idempotency_key),
+        )
+
+    async def resume_worker(
+        self, identifier: UUID, request: WorkerControlRequest, *, idempotency_key: str
+    ) -> WorkerStatus:
+        return cast(
+            WorkerStatus,
+            await self.invoke("workers.resume", identifier=identifier, body=request, idempotency_key=idempotency_key),
+        )
 
     async def revoke_worker(self, identifier: UUID) -> Revoked:
         return cast(Revoked, await self.invoke("workers.revoke", identifier=identifier))
@@ -712,8 +730,8 @@ class WeaveClient:
             ),
         )
 
-    async def list_workers(self, *, limit: int = 50, cursor: str | None = None) -> Page[WorkerInstance]:
-        return cast(Page[WorkerInstance], await self.invoke("workers.list", query=self._page(limit, cursor)))
+    async def list_workers(self, *, limit: int = 50, cursor: str | None = None) -> Page[WorkerStatus]:
+        return cast(Page[WorkerStatus], await self.invoke("workers.list", query=self._page(limit, cursor)))
 
     async def list_releases(self, *, limit: int = 50, cursor: str | None = None) -> Page[WorkerRelease]:
         return cast(Page[WorkerRelease], await self.invoke("releases.list", query=self._page(limit, cursor)))

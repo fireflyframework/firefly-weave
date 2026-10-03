@@ -36,6 +36,7 @@ from firefly_weave.contracts.workers import (
     InstanceRequest,
     LeaseProof,
     ReleaseRequest,
+    WorkerControlRequest,
 )
 from firefly_weave.workers.leases import TaskService
 from firefly_weave.workers.service import WorkerService
@@ -85,6 +86,26 @@ class WorkerController:
             context=request.state.audit_context,
         )
         return JSONResponse({"revoked": True})
+
+    @operation("workers.drain")
+    async def drain(self, request: Request) -> JSONResponse:
+        return await self.control(request, draining=True)
+
+    @operation("workers.resume")
+    async def resume(self, request: Request) -> JSONResponse:
+        return await self.control(request, draining=False)
+
+    async def control(self, request: Request, *, draining: bool) -> JSONResponse:
+        result = await self.service.control(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            WorkerControlRequest.model_validate_json(await request.body()),
+            request.headers.get("Idempotency-Key", ""),
+            draining=draining,
+            context=request.state.audit_context,
+        )
+        return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
 
     @operation("workers.grant")
     async def grant(self, request: Request) -> JSONResponse:

@@ -58,6 +58,12 @@ ROLE_CAPABILITIES = MappingProxyType(
         "lumi_manager": frozenset({"lumi.use", "lumi.manage"}),
         "file_reader": frozenset({"file.read"}),
         "file_manager": frozenset({"file.read", "file.manage"}),
+        "deployment_reader": frozenset({"deployment.read"}),
+        "deployment_planner": frozenset({"deployment.read", "target.manage", "deployment.plan"}),
+        "deployment_approver": frozenset({"deployment.read", "deployment.approve"}),
+        "deployment_operator": frozenset({"deployment.read", "deployment.apply", "deployment.cancel"}),
+        "deployment_runner": frozenset({"runner.register", "runner.claim", "runner.renew", "runner.report"}),
+        "worker_operator": frozenset({"status.read", "worker.drain"}),
         "worker": frozenset({"worker.register", "task.claim", "task.heartbeat", "task.complete", "credential.lease"}),
     }
 )

@@ -17,6 +17,7 @@
 """Immutable release admission and scoped worker identities."""
 
 import json
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -37,14 +38,16 @@ from firefly_weave.contracts.workers import (
     CredentialGrantRequest,
     InstanceRequest,
     ReleaseRequest,
+    WorkerControlRequest,
     WorkerInstance,
     WorkerRelease,
+    WorkerStatus,
 )
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.ports import ConnectionBindingPort, WorkerAdmissionPort
 from firefly_weave.definitions.repository import DefinitionRepository
 from firefly_weave.definitions.service import DefinitionService
-from firefly_weave.persistence.idempotency import lock
+from firefly_weave.persistence.idempotency import Idempotency, lock
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.workers.repository import SCOPE, WorkerRepository
 
@@ -159,6 +162,7 @@ class WorkerService(WorkerAdmissionPort):
             instance = WorkerInstance(id=uuid4(), principal_id=actor.id, **request.model_dump())
             await repository.execute(
                 "INSERT INTO worker_instances "
+                "(id,tenant_id,project_id,environment_id,release_id,principal_id,payload,revoked) "
                 "VALUES(:id,:tenant,:project,:environment,:release,:principal,"
                 "cast(:payload AS jsonb),false)",
                 id=instance.id,
@@ -183,7 +187,9 @@ class WorkerService(WorkerAdmissionPort):
         async with self.definitions.transaction(scope, tx) as tx:
             await self.require(actor, scope, "release.retire", context, tx)
             await WorkerRepository(tx).execute(
-                f"UPDATE worker_instances SET revoked=true WHERE {SCOPE} AND id=:id", id=identifier
+                f"UPDATE worker_instances SET revoked=true,control_revision=control_revision+1 "
+                f"WHERE {SCOPE} AND id=:id AND NOT revoked",
+                id=identifier,
             )
             await audit(
                 tx.session,
@@ -194,6 +200,60 @@ class WorkerService(WorkerAdmissionPort):
                 capability="release.retire",
                 context=context,
             )
+
+    async def control(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        request: WorkerControlRequest,
+        idempotency_key: str,
+        *,
+        draining: bool,
+        context: AuditContext,
+        tx: Transaction | None = None,
+    ) -> WorkerStatus:
+        async with self.definitions.transaction(scope, tx) as enlisted:
+            await self.require(actor, scope, "worker.drain", context, enlisted, str(identifier))
+            command = "drain" if draining else "resume"
+            replay = Idempotency(
+                enlisted,
+                actor.id,
+                f"worker.{command}:{scope.environment_id}:{identifier}",
+                idempotency_key,
+                request.model_dump(mode="json"),
+            )
+            if prior := await replay.replay():
+                return WorkerStatus.model_validate_json(json.dumps(prior))
+            repository = WorkerRepository(enlisted)
+            rows = await repository.rows(
+                f"SELECT revoked,control_revision FROM worker_instances WHERE {SCOPE} AND id=:id FOR UPDATE",
+                id=identifier,
+            )
+            if not rows:
+                raise CatalogError(404, "WV-NOT-FOUND", "Worker resource not found")
+            if rows[0]["revoked"]:
+                raise CatalogError(409, "WV-WORKER-REVOKED", "A revoked worker cannot be drained or resumed")
+            if rows[0]["control_revision"] != request.expected_revision:
+                raise CatalogError(409, "WV-WORKER-REVISION", "Worker control state changed; refresh before retrying")
+            await repository.execute(
+                f"UPDATE worker_instances SET draining=:draining,control_revision=control_revision+1 "
+                f"WHERE {SCOPE} AND id=:id",
+                id=identifier,
+                draining=draining,
+            )
+            result = await repository.status(identifier)
+            await audit(
+                enlisted.session,
+                actor,
+                f"worker.{command}",
+                str(identifier),
+                scope=scope,
+                capability="worker.drain",
+                context=context,
+            )
+            await replay.save(result.model_dump(mode="json"))
+            return result
 
     async def admit(
         self,
@@ -368,10 +428,13 @@ class WorkerService(WorkerAdmissionPort):
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
             await self.require(actor, scope, capability, context, tx)
             ids = await page_ids(tx, "worker_releases" if releases else "worker_instances", limit, cursor)
+            observed_at = await WorkerRepository(tx).now()
             items = [
-                (await self.read(actor, scope, identifier, releases=releases, context=context, tx=tx)).model_dump(
-                    mode="json", by_alias=True
-                )
+                (
+                    await self.read(
+                        actor, scope, identifier, releases=releases, context=context, tx=tx, observed_at=observed_at
+                    )
+                ).model_dump(mode="json", by_alias=True)
                 for identifier in ids[:limit]
             ]
             return {"items": items, "next_cursor": str(ids[limit - 1]) if len(ids) > limit else None}
@@ -385,9 +448,17 @@ class WorkerService(WorkerAdmissionPort):
         releases: bool = False,
         context: AuditContext,
         tx: Transaction | None = None,
-    ) -> WorkerInstance | WorkerRelease:
+        observed_at: datetime | None = None,
+    ) -> WorkerStatus | WorkerRelease:
         async with self.definitions.transaction(scope, tx, mutation=False) as enlisted:
-            await self.require(actor, scope, "catalog.read" if releases else "status.read", context, enlisted)
+            await self.require(
+                actor,
+                scope,
+                "catalog.read" if releases else "status.read",
+                context,
+                enlisted,
+                None if releases else str(identifier),
+            )
             table = "worker_releases" if releases else "worker_instances"
             rows = await WorkerRepository(enlisted).rows(
                 f"SELECT * FROM {table} WHERE {SCOPE} AND id=:id", id=identifier
@@ -396,4 +467,4 @@ class WorkerService(WorkerAdmissionPort):
                 raise CatalogError(404, "WV-NOT-FOUND", "Worker resource not found")
             if releases:
                 return WorkerRelease.model_validate_json(json.dumps(rows[0]["payload"]))
-            return WorkerInstance.model_validate_json(json.dumps({**rows[0]["payload"], "revoked": rows[0]["revoked"]}))
+            return await WorkerRepository(enlisted).status(identifier, observed_at)
