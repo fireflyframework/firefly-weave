@@ -4090,8 +4090,9 @@ export class App {
    * render returns focus to its opener in a microtask, so this runs after it.
    */
   focusStep(id: string) {
+    const selection = this.model.selected;
     this.focusLater(() =>
-      this.model.selected === id
+      this.model.selected === selection
         ? document.querySelector<HTMLElement>(
             `[data-step="${CSS.escape(id)}"] .node-body`,
           )

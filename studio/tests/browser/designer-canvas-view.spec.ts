@@ -123,6 +123,24 @@ for (const viewport of [
 test.describe("1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
+  test("canceling Move from an unselected node's menu returns focus to that node", async ({
+    page,
+  }) => {
+    await openLongFlow(page);
+    const designer = new DesignerPage(page);
+    await designer.selectStep("wait-1");
+    await page
+      .getByRole("button", { name: "Actions for wait-2", exact: true })
+      .click();
+    await expect(designer.node("wait-1")).toHaveClass(/\bselected\b/);
+    await expect(designer.node("wait-2")).not.toHaveClass(/\bselected\b/);
+    await page.getByRole("menuitem", { name: "Move to…", exact: true }).click();
+    await expect(page.locator(".insertion-target").first()).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(designer.node("wait-2").locator(".node-body")).toBeFocused();
+    await expect(page.locator(".canvas.moving")).toHaveCount(0);
+  });
+
   test("the wheel zooms in small steps around the pointer; Fit all and 100% are one click", async ({
     page,
   }) => {
