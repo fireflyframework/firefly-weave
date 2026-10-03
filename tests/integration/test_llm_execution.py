@@ -50,6 +50,7 @@ from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.operations.history import HistoryService
 from firefly_weave.operations.incidents import IncidentService
 from firefly_weave.runtime.service import RuntimeService
+from firefly_weave.runtime.signals import SignalService
 from firefly_weave.workers.leases import TaskService
 from firefly_weave.workers.service import WorkerService
 
@@ -113,13 +114,15 @@ async def llm_task(services, access_db, provisioned, monkeypatch, request):
     await definitions.publish(
         actor, scope, "Action", json.dumps(action_definition()), "json", "action", context=AuditContext()
     )
+    shared_context = getattr(request, "param", None) == "shared-context"
+    result_schema = {"type": "object", "properties": {"marker": {"type": "string"}}, "required": ["marker"]}
     profile = {
         "provider": "openai-chat",
         "model": "fixture",
         "options": {"max_tokens": 256},
         "maxCalls": 2,
         "timeoutSeconds": 10,
-        "outputSchema": getattr(request, "param", {"type": "boolean"}),
+        "outputSchema": result_schema if shared_context else getattr(request, "param", {"type": "boolean"}),
     }
     source = {
         "apiVersion": "weave/v1alpha1",
@@ -145,6 +148,20 @@ async def llm_task(services, access_db, provisioned, monkeypatch, request):
             "output": {"literal": True} if hasattr(request, "param") else {"ref": "/steps/ask/output/result"},
         },
     }
+    if shared_context:
+        source["spec"]["outputSchema"] = result_schema
+        source["spec"]["steps"].extend(
+            [
+                {"id": "pause", "kind": "signal", "name": "continue", "timeoutSeconds": 60, "payloadSchema": {}},
+                {
+                    **source["spec"]["steps"][0],
+                    "id": "followup",
+                    "context": {"ref": "/steps/ask/output/result"},
+                },
+                {**source["spec"]["steps"][0], "id": "independent"},
+            ]
+        )
+        source["spec"]["output"] = {"ref": "/steps/followup/output/result"}
     published = await definitions.publish(
         actor, scope, "Workflow", json.dumps(source), "json", "flow", context=AuditContext()
     )
@@ -189,6 +206,9 @@ async def llm_task(services, access_db, provisioned, monkeypatch, request):
         release=release,
         capability=capability,
         profile=profile,
+        activation=activation,
+        instance=instance,
+        reload=lambda: services(access_db[0], registry=registry, secrets=secrets),
     )
 
 
@@ -314,3 +334,77 @@ async def test_model_profile_secret_output_cannot_enter_durable_history(llm_task
         exported = await setup.history.export(tx, setup.run.id, **setup.authority)
     assert exported.events[-1].type == "incident_opened"
     assert exported.events[-1].data["code"] == "WV-SCHEMA-SECRET_VALUE"
+
+
+@pytest.mark.parametrize("llm_task", ["shared-context"], indirect=True)
+async def test_explicit_ai_context_survives_wait_reload_and_completion_retry_without_cross_run_memory(llm_task):
+    setup = llm_task
+    actor, scope = setup.authority["actor"], setup.authority["scope"]
+    first_result = {"marker": "first-execution"}
+    second_result = {"marker": "second-execution"}
+    first_completion = uuid4()
+    async with setup.definitions.transaction(scope, None) as tx:
+        await setup.tasks.complete(
+            tx, setup.lease.proof, first_completion, {**valid_output(), "result": first_result}, **setup.authority
+        )
+    graph = setup.reload()
+    runtime = graph.resolve(RuntimeService)
+    second = await runtime.start(
+        actor,
+        scope,
+        StartRunRequest(activation_id=setup.activation.id, input={"text": "Second execution"}),
+        "second-context-run",
+        context=AuditContext(),
+    )
+    async with setup.definitions.transaction(scope, None) as tx:
+        second_lease = (await graph.resolve(TaskService).claim(tx, setup.instance.id, 1, **setup.authority))[0]
+        assert second_lease.input["context"] == {}
+        assert second_lease.input["prompt"] == "Second execution"
+        await graph.resolve(TaskService).complete(
+            tx, second_lease.proof, uuid4(), {**valid_output(), "result": second_result}, **setup.authority
+        )
+    for run, expected, prompt in (
+        (setup.run, first_result, "Return true"),
+        (second, second_result, "Second execution"),
+    ):
+        graph = setup.reload()
+        waiting = await graph.resolve(RuntimeService).read(actor, scope, run.id, context=AuditContext())
+        assert waiting.state.status == "waiting"
+        assert waiting.state.active == ["pause"]
+        assert waiting.state.steps["ask"]["output"]["result"] == expected
+        async with setup.definitions.transaction(scope, None) as tx:
+            await graph.resolve(SignalService).deliver(tx, run.id, "resume", "continue", {}, **setup.authority)
+        graph = setup.reload()
+        tasks = graph.resolve(TaskService)
+        async with setup.definitions.transaction(scope, None) as tx:
+            followup = (await tasks.claim(tx, setup.instance.id, 1, **setup.authority))[0]
+        assert followup.input["context"] == expected
+        assert followup.input["prompt"] == prompt
+        completion = uuid4()
+        result = {**valid_output(), "result": expected}
+        with pytest.raises(RuntimeError, match="completion transaction rolled back"):
+            async with setup.definitions.transaction(scope, None) as tx:
+                await tasks.complete(tx, followup.proof, completion, result, **setup.authority)
+                raise RuntimeError("completion transaction rolled back")
+        graph = setup.reload()
+        tasks = graph.resolve(TaskService)
+        async with setup.definitions.transaction(scope, None) as tx:
+            context = await tasks.heartbeat(tx, followup.proof, **setup.authority)
+            assert context.input == followup.input
+            assert context.input["context"] == expected
+        for _ in range(2):
+            async with setup.definitions.transaction(scope, None) as tx:
+                acknowledgment = await tasks.complete(tx, followup.proof, completion, result, **setup.authority)
+                assert acknowledgment.status == "completed"
+        async with setup.definitions.transaction(scope, None) as tx:
+            independent = (await tasks.claim(tx, setup.instance.id, 1, **setup.authority))[0]
+            assert independent.input["context"] == {}
+            assert independent.input["prompt"] == prompt
+            await tasks.complete(tx, independent.proof, uuid4(), result, **setup.authority)
+        graph = setup.reload()
+        async with setup.definitions.transaction(scope, None) as tx:
+            exported = await graph.resolve(HistoryService).export(tx, run.id, **setup.authority)
+        assert exported.replay.status == "consistent"
+        assert exported.replay.final_state.status == "succeeded"
+        assert exported.replay.final_state.output == expected
+        assert len(exported.events) == 5

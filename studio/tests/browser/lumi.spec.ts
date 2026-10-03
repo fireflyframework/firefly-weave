@@ -171,94 +171,163 @@ test("context defaults off, stale proposals cannot replace later edits, and relo
   await expect(panel).not.toContainText("Private conversation");
 });
 
-test("Lumi settings use the canonical profile, fixed reply schema, and configuration revision", async ({
-  page,
-}) => {
-  const schema = JSON.parse(
-    execFileSync(
-      ".venv/bin/python",
-      [
-        "-c",
-        "import json; from firefly_weave.contracts.lumi import LumiConfigurationRequest; print(json.dumps(LumiConfigurationRequest.model_json_schema(by_alias=True)))",
-      ],
-      { cwd: "..", encoding: "utf8" },
-    ),
-  );
-  const fixed = schema.$defs.LumiProfile.properties.outputSchema.const;
-  await connected(page, {
-    capabilities: [...allCapabilities, "lumi.use", "lumi.manage"],
-  });
-  await page.route("**/lumi/status", (r) =>
-    r.fulfill({
-      json: { configured: true, provider: "openai-responses", model: "before" },
-    }),
-  );
-  await page.route("**/studio/contracts/lumi-configuration", (r) =>
-    r.fulfill({ json: schema }),
-  );
-  const original = {
-    enabled: true,
-    connection_revision_id: "11111111-1111-4111-8111-111111111111",
-    profile: {
-      provider: "openai-responses",
-      model: "before",
-      options: { max_tokens: 512 },
-      reasoning: { pattern: "none", maxSteps: 6 },
-      maxCalls: 8,
-      timeoutSeconds: 120,
-      outputSchema: fixed,
-    },
-    revision: 7,
-  };
-  await page.route("**/environments/development/connections?*", (r) =>
-    r.fulfill({
-      json: {
-        items: [
-          {
-            id: original.connection_revision_id,
-            name: "lumi-provider",
-            revision: 1,
-            connector: "weave-agentic-provider@1.0.0",
-            config: {
-              provider: "openai-responses",
-              endpoint: "https://api.openai.com",
-            },
-          },
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 700 },
+])
+  test(`Lumi settings wizard preserves drafts and saves reviewed configuration at ${viewport.width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport);
+    const schema = JSON.parse(
+      execFileSync(
+        ".venv/bin/python",
+        [
+          "-c",
+          "import json; from firefly_weave.contracts.lumi import LumiConfigurationRequest; print(json.dumps(LumiConfigurationRequest.model_json_schema(by_alias=True)))",
         ],
-        next_cursor: null,
+        { cwd: "..", encoding: "utf8" },
+      ),
+    );
+    const fixed = schema.$defs.LumiProfile.properties.outputSchema.const;
+    await connected(page, {
+      capabilities: [...allCapabilities, "lumi.use", "lumi.manage"],
+    });
+    await page.route("**/lumi/status", (r) =>
+      r.fulfill({
+        json: {
+          configured: true,
+          provider: "openai-responses",
+          model: "before",
+        },
+      }),
+    );
+    await page.route("**/studio/contracts/lumi-configuration", (r) =>
+      r.fulfill({ json: schema }),
+    );
+    const original = {
+      enabled: true,
+      connection_revision_id: "11111111-1111-4111-8111-111111111111",
+      profile: {
+        provider: "openai-responses",
+        model: "before",
+        options: { max_tokens: 512 },
+        reasoning: { pattern: "none", maxSteps: 6 },
+        maxCalls: 8,
+        timeoutSeconds: 120,
+        outputSchema: fixed,
       },
-    }),
-  );
-  let saved: any;
-  let etag: string | undefined;
-  await page.route("**/lumi/configuration", (r) => {
-    if (r.request().method() === "PUT") {
-      saved = r.request().postDataJSON();
-      etag = r.request().headers()["if-match"];
-      return r.fulfill({ json: { ...saved, revision: 8 } });
-    }
-    return r.fulfill({ json: original });
+      revision: 7,
+    };
+    await page.route("**/environments/development/connections?*", (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: original.connection_revision_id,
+              name: "lumi-provider",
+              revision: 1,
+              connector: "weave-agentic-provider@1.0.0",
+              config: {
+                provider: "openai-responses",
+                endpoint: "https://api.openai.com",
+              },
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    let saved: any;
+    let etag: string | undefined;
+    let finishSave: () => void = () => {};
+    const saving = new Promise<void>((resolve) => {
+      finishSave = resolve;
+    });
+    await page.route("**/lumi/configuration", async (r) => {
+      if (r.request().method() === "PUT") {
+        saved = r.request().postDataJSON();
+        etag = r.request().headers()["if-match"];
+        await saving;
+        return r.fulfill({ json: { ...saved, revision: 8 } });
+      }
+      return r.fulfill({ json: original });
+    });
+    await newWorkflow(page);
+    await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
+    const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+    await panel
+      .getByRole("button", { name: "Lumi settings", exact: true })
+      .click();
+    await panel.getByLabel("Model", { exact: true }).fill("configured-model");
+    await panel.getByLabel("Max tokens", { exact: true }).fill("1024");
+    await expect(panel.getByText("Output schema", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(
+      panel.getByRole("button", { name: "Save Lumi settings", exact: true }),
+    ).toHaveCount(0);
+    await panel
+      .getByRole("button", { name: "Continue to connection", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("heading", {
+        name: "Choose a provider connection",
+        exact: true,
+      }),
+    ).toBeFocused();
+    expect(saved).toBeUndefined();
+    await panel.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(panel.getByLabel("Model", { exact: true })).toHaveValue(
+      "configured-model",
+    );
+    await expect(panel.getByLabel("Max tokens", { exact: true })).toHaveValue(
+      "1024",
+    );
+    await panel
+      .getByRole("button", { name: "Continue to connection", exact: true })
+      .click();
+    await panel
+      .getByRole("button", { name: "Review settings", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("heading", { name: "Review Lumi settings", exact: true }),
+    ).toBeFocused();
+    await expect(panel.locator(".settings-summary")).toContainText(
+      "configured-model",
+    );
+    await expect(panel.locator(".settings-summary")).toContainText(
+      "https://api.openai.com",
+    );
+    await expect(panel.locator(".settings-summary")).toContainText(
+      "lumi-provider",
+    );
+    expect(saved).toBeUndefined();
+    await panel.screenshot({
+      path: testInfo.outputPath(`lumi-review-${viewport.width}.png`),
+    });
+    expect(await panel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
+      true,
+    );
+    await panel
+      .getByRole("button", { name: "Save Lumi settings", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("button", { name: "Lumi settings", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      panel.getByRole("button", { name: "New conversation", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      panel.getByRole("button", { name: "Reload settings", exact: true }),
+    ).toBeDisabled();
+    finishSave();
+    await expect(panel.getByLabel("Message to Lumi")).toBeVisible();
+    expect(etag).toBe('"7"');
+    expect(saved.profile.model).toBe("configured-model");
+    expect(saved.profile.options.max_tokens).toBe(1024);
+    expect(saved.profile.outputSchema).toEqual(fixed);
   });
-  await newWorkflow(page);
-  await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-  const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
-  await panel
-    .getByRole("button", { name: "Lumi settings", exact: true })
-    .click();
-  await panel.getByLabel("Model", { exact: true }).fill("configured-model");
-  await panel.getByLabel("Max tokens", { exact: true }).fill("1024");
-  await expect(panel.getByText("Output schema", { exact: true })).toHaveCount(
-    0,
-  );
-  await panel
-    .getByRole("button", { name: "Save Lumi settings", exact: true })
-    .click();
-  await expect(panel.getByLabel("Message to Lumi")).toBeVisible();
-  expect(etag).toBe('"7"');
-  expect(saved.profile.model).toBe("configured-model");
-  expect(saved.profile.options.max_tokens).toBe(1024);
-  expect(saved.profile.outputSchema).toEqual(fixed);
-});
 
 test("non-workflow proposals are validated before saving a reviewed file", async ({
   page,

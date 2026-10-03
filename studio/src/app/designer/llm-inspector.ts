@@ -30,7 +30,9 @@ import { ExpressionEditor } from "../property-grid";
 import { aiConnector } from "../integrations/ai-provider-connection";
 import { compatibleSlots, slotName } from "../integrations/slot-binding";
 import { Select } from "../forms/ui/select";
-import { TaskForm } from "../task-form";
+import { AiProfileEditor } from "../integrations/ai-profile-editor";
+import { AiSetupWizard } from "../integrations/ai-setup-wizard";
+import { AiSharedContextPicker } from "../integrations/ai-shared-context-picker";
 import { SchemaDesigner } from "../forms/ui/schema-designer";
 import { referencesAt } from "../forms/core/reference-context";
 import { describeError } from "../errors";
@@ -49,7 +51,14 @@ const object = (value: unknown): RecordValue =>
   selector: "weave-llm-inspector",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ExpressionEditor, TaskForm, SchemaDesigner, Select],
+  imports: [
+    ExpressionEditor,
+    AiProfileEditor,
+    AiSetupWizard,
+    AiSharedContextPicker,
+    SchemaDesigner,
+    Select,
+  ],
   template: `
     <fieldset
       [disabled]="host.model.readonly || host.editingLocked"
@@ -88,36 +97,10 @@ const object = (value: unknown): RecordValue =>
           fields.
         </p>
       }
-      <div data-field="connection">
-        <weave-select
-          label="AI connection slot"
-          [options]="slotOptions"
-          [value]="String(step['connection'] ?? '')"
-          [disabled]="host.model.readonly || host.editingLocked"
-          (choose)="edit('connection', $event)"
-        />
-      </div>
-      @if (!aiSlots.length) {
-        <p class="hint">
-          Add an AI connection slot for this workflow. Activation binds it to an
-          approved provider connection in the environment.
-        </p>
-      }
-      <button type="button" (click)="addAiSlot()">
-        Add AI connection slot
-      </button>
-      @if (host.profile && host.can("connection.manage")) {
-        <button type="button" (click)="host.openAiConnectionDialog()">
-          New AI connection
-        </button>
-      }
       <p class="hint">
         Workflow profiles do not change Lumi. A platform operator must install
         and authorize the Agentic worker before these tasks can run.
       </p>
-      <button type="button" (click)="host.openWorkflowSettings()">
-        Manage workflow connections
-      </button>
       <div data-field="prompt">
         <weave-expression-editor
           [value]="step['prompt']"
@@ -129,6 +112,11 @@ const object = (value: unknown): RecordValue =>
         />
       </div>
       <div data-field="context">
+        <weave-ai-shared-context-picker
+          [value]="step['context']"
+          [references]="contextReferences"
+          (valueChange)="edit('context', $event)"
+        />
         <weave-expression-editor
           [value]="step['context']"
           label="AI context"
@@ -145,10 +133,8 @@ const object = (value: unknown): RecordValue =>
       >
         <summary>Configure workflow AI profiles</summary>
         <p class="hint">
-          All steps that choose a profile share its model, reasoning and
-          generation limits. For Azure, Model is the deployment name. The
-          endpoint, API version and approved secret handle belong to the
-          environment connection.
+          Profile changes stay in this draft until you review and apply them.
+          All steps using the same named profile share its settings.
         </p>
         <weave-select
           label="Profile to edit"
@@ -158,42 +144,118 @@ const object = (value: unknown): RecordValue =>
           (choose)="loadProfile($event)"
         />
         <button type="button" (click)="newProfile()">Add AI profile</button>
-        <label data-field="spec/llmProfiles"
-          >Profile name
-          <input
-            aria-label="AI profile name"
-            [value]="profileName"
-            [readOnly]="existingProfile"
-            (input)="profileName = value($event); saveProfile()"
-        /></label>
         @if (schema) {
-          <div data-field="spec/llmProfiles">
-            <weave-task-form
-              [schema]="schema"
-              [initialData]="initialProfile"
-              (validityChange)="profileValidity($event)"
-              (dataChange)="profileData($event)"
-            />
-          </div>
-          <weave-schema-designer
-            [schema]="resultSchema"
-            heading="AI result fields"
-            [preview]="false"
-            (schemaChange)="resultSchema = $event; saveProfile()"
-            (validityChange)="
-              resultValid = $event; profileValidity(profileValid)
-            "
-          />
-          @if (!profileValid || !profileName) {
-            <p class="hint">
-              Complete the required profile fields to save this profile.
-            </p>
-          }
-          @if (profileValid && existingProfile) {
-            <p role="status">
-              Valid profile changes update the workflow automatically.
-            </p>
-          }
+          <weave-ai-setup-wizard
+            [(step)]="wizardStep"
+            [headings]="[
+              'Configure the workflow model',
+              'Choose a workflow connection slot',
+              'Review workflow AI settings',
+            ]"
+            progressLabel="Workflow AI setup"
+            finishLabel="Apply workflow AI settings"
+            [canContinue]="canContinue"
+            [navigationBlocked]="host.model.readonly || host.editingLocked"
+            (finish)="saveProfile()"
+          >
+            <div ai-model>
+              <label
+                >Profile name
+                <input
+                  aria-label="AI profile name"
+                  [value]="profileName"
+                  [readOnly]="existingProfile"
+                  (input)="profileName = value($event)"
+                />
+              </label>
+              @if (!nameValid) {
+                <p class="hint">
+                  Choose a unique profile name using letters, numbers, dots,
+                  underscores or hyphens.
+                </p>
+              }
+              <weave-ai-profile-editor
+                [schema]="schema"
+                [initialData]="initialProfile"
+                (validityChange)="profileValid = $event"
+                (dataChange)="profile = $event"
+              />
+              <weave-schema-designer
+                [schema]="resultSchema"
+                heading="AI result fields"
+                [preview]="false"
+                (schemaChange)="resultSchema = $event"
+                (validityChange)="resultValid = $event"
+              />
+            </div>
+            <div ai-connection>
+              <div data-field="connection">
+                <weave-select
+                  label="AI connection slot"
+                  [options]="slotOptions"
+                  [value]="draftSlot"
+                  [disabled]="host.model.readonly || host.editingLocked"
+                  (choose)="draftSlot = $event"
+                />
+              </div>
+              <p class="hint">
+                Activation binds this slot to an approved provider connection in
+                each environment. Provider credentials are never stored in this
+                workflow.
+              </p>
+              @if (!aiSlots.length && !newSlot) {
+                <p class="hint">Add an AI connection slot to continue.</p>
+              }
+              @if (newSlot) {
+                <p class="hint">
+                  New slot {{ newSlot }} will be added when you apply these
+                  settings.
+                </p>
+              }
+              <button type="button" (click)="addAiSlot()">
+                Add AI connection slot
+              </button>
+              @if (host.profile && host.can("connection.manage")) {
+                <button type="button" (click)="host.openAiConnectionDialog()">
+                  New AI connection
+                </button>
+              }
+              <button type="button" (click)="host.openWorkflowSettings()">
+                Manage workflow connections
+              </button>
+            </div>
+            <div ai-review>
+              <dl>
+                <dt>Profile</dt>
+                <dd>{{ profileName }}</dd>
+                <dt>Provider</dt>
+                <dd>{{ profile["provider"] }}</dd>
+                <dt>Model or Azure deployment</dt>
+                <dd>{{ profile["model"] }}</dd>
+                <dt>Connection slot</dt>
+                <dd>{{ draftSlot }}</dd>
+              </dl>
+              <p class="hint">
+                Activation binds this slot to the environment connection; this
+                edit does not activate or run the workflow.
+              </p>
+              <p>These steps will use this profile:</p>
+              <ul aria-label="Steps using this AI profile">
+                @for (id of affectedSteps; track id) {
+                  <li>{{ id }}</li>
+                }
+              </ul>
+              @if (affectedSteps.length > 1) {
+                <p role="note">
+                  Applying changes updates the shared model, reasoning,
+                  generation limits and result fields for every listed step.
+                </p>
+              }
+            </div>
+            <button ai-secondary type="button" (click)="cancelProfile()">
+              Cancel profile changes
+            </button>
+          </weave-ai-setup-wizard>
         } @else if (loading) {
           <p role="status">Loading profile fields…</p>
         } @else {
@@ -202,6 +264,9 @@ const object = (value: unknown): RecordValue =>
           </button>
         }
       </details>
+      @if (applied) {
+        <p role="status">Workflow AI settings applied.</p>
+      }
       @if (error) {
         <p class="field-error" role="alert">{{ error }}</p>
       }
@@ -231,6 +296,13 @@ const object = (value: unknown): RecordValue =>
         min-width: 0;
         max-width: 100%;
       }
+      dd {
+        margin: 0 0 12px;
+        overflow-wrap: anywhere;
+      }
+      dt {
+        font-weight: 600;
+      }
       details[open] > summary {
         margin-bottom: 12px;
       }
@@ -254,6 +326,11 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
   profilesOpen = false;
   profileValid = false;
   resultValid = true;
+  wizardStep = 0;
+  draftSlot = "";
+  newSlot = "";
+  applied = false;
+  private loadedProfile = "";
   private invalid = new Set<string>();
   get step() {
     return JSON.parse(this.host.inspectorBuffer) as Step;
@@ -262,7 +339,10 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     return this.profileNames.map((name) => ({ value: name, label: name }));
   }
   get slotOptions() {
-    return this.aiSlots.map((slot) => ({
+    const slots = this.newSlot
+      ? [...this.aiSlots, { name: this.newSlot, connector: aiConnector }]
+      : this.aiSlots;
+    return slots.map((slot) => ({
       value: slot.name,
       label: slot.name,
       description: slot.connector,
@@ -272,14 +352,48 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     return compatibleSlots({ connector: aiConnector }, this.host.workflowSlots);
   }
   addAiSlot() {
-    this.host.newSlotName = slotName(
+    this.newSlot = slotName(
       "ai",
       this.host.workflowSlots.map((slot) => slot.name),
     );
-    this.host.newSlotNameEdited = true;
-    this.host.newSlotConnector = aiConnector;
-    this.host.newSlotRequired = true;
-    this.host.addConnectionSlot();
+    this.draftSlot = this.newSlot;
+  }
+  get nameValid() {
+    return (
+      /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(this.profileName) &&
+      (!this.profiles[this.profileName] ||
+        this.profileName === this.loadedProfile)
+    );
+  }
+  get completeProfile() {
+    return (
+      this.nameValid &&
+      this.profileValid &&
+      this.resultValid &&
+      !!this.schema &&
+      missingData(this.schema, this.profile).length === 0
+    );
+  }
+  get validSlot() {
+    return (
+      this.aiSlots.some((slot) => slot.name === this.draftSlot) ||
+      (!!this.newSlot &&
+        this.draftSlot === this.newSlot &&
+        !this.host.workflowSlots.some((slot) => slot.name === this.newSlot))
+    );
+  }
+  get canContinue() {
+    return this.completeProfile && (this.wizardStep === 0 || this.validSlot);
+  }
+  get affectedSteps() {
+    return this.host.model
+      .nodes()
+      .filter(
+        ({ step }) =>
+          step.kind === "llm" &&
+          (step["profile"] === this.profileName || step.id === this.step.id),
+      )
+      .map(({ step }) => step.id);
   }
   get profiles() {
     return object(this.host.model.definition.spec["llmProfiles"]);
@@ -340,6 +454,12 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
   }
   loadProfile(name: string) {
     this.profileName = name;
+    this.loadedProfile = name;
+    this.wizardStep = 0;
+    this.draftSlot = String(this.step["connection"] ?? "");
+    this.newSlot = "";
+    this.applied = false;
+    this.resultValid = true;
     this.existingProfile = !!this.profiles[name];
     if (!this.existingProfile) this.profilesOpen = true;
     const loaded = object(this.profiles[name]);
@@ -349,7 +469,8 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     const { outputSchema: _, ...rest } = loaded;
     this.initialProfile = structuredClone(rest);
     this.profile = structuredClone(rest);
-    this.profileValid = false;
+    // TaskForm clears field errors on reload without emitting initial validity.
+    this.profileValid = true;
   }
   newProfile() {
     let name = "default";
@@ -357,34 +478,47 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     while (this.profiles[name]) name = `profile-${i++}`;
     this.loadProfile(name);
   }
-  profileData(value: RecordValue) {
-    this.profile = value;
-    this.saveProfile();
-  }
-  profileValidity(valid: boolean) {
-    this.profileValid = valid;
-    if (!valid || !this.resultValid)
-      this.host.inspectorFieldValidity({
-        path: "spec/llmProfiles",
-        valid: false,
-      });
+  cancelProfile() {
+    this.loadProfile(String(this.step["profile"] ?? ""));
+    this.profilesOpen = false;
   }
   saveProfile() {
     if (
-      !this.profileValid ||
-      !this.schema ||
-      missingData(this.schema, this.profile).length > 0 ||
-      !this.resultValid ||
-      !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(this.profileName)
+      !this.completeProfile ||
+      !this.validSlot ||
+      this.host.model.readonly ||
+      this.host.editingLocked
     )
       return;
+    this.host.flushInspector();
     const document = structuredClone(this.host.model.definition);
     document.spec["llmProfiles"] = {
       ...this.profiles,
-      [this.profileName]: { ...this.profile, outputSchema: this.resultSchema },
+      [this.profileName]: structuredClone({
+        ...this.profile,
+        outputSchema: this.resultSchema,
+      }),
     };
-    this.host.workflowEdit({ value: document, path: "spec/llmProfiles" });
+    if (this.newSlot && this.draftSlot === this.newSlot) {
+      document.spec["connections"] = {
+        ...object(document.spec["connections"]),
+        [this.newSlot]: { connector: aiConnector, required: true },
+      };
+    }
+    this.host.model.batch(() => {
+      this.host.workflowEdit({ value: document, path: "spec/llmProfiles" });
+      this.host.flushInspector();
+      this.host.stepEdit(
+        { ...this.step, profile: this.profileName, connection: this.draftSlot },
+        "profile",
+      );
+      this.host.flushInspector();
+    });
     this.existingProfile = true;
+    this.loadedProfile = this.profileName;
+    this.newSlot = "";
+    this.profilesOpen = false;
+    this.applied = true;
   }
   async loadSchema() {
     this.loading = true;
