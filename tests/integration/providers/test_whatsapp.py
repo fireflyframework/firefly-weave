@@ -146,7 +146,7 @@ async def whatsapp(worker_setup, access_db, provisioned, scheduler_url):
             name="whatsapp",
             provider="whatsapp",
             package="firefly-weave",
-            package_version="0.1.0a9",
+            package_version=package.metadata.model.distribution_version,
             schema_digest=provider_schema_digest(
                 package.metadata.model.event_schemas, package.metadata.model.dispatch_event_kinds
             ),
