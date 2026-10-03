@@ -21,7 +21,7 @@ build-backend = "hatchling.build"
 name = "e2-inbox-fixture"
 version = "1.0.0"
 requires-python = ">=3.12"
-dependencies = ["firefly-weave==0.1.0a6", "pyfly @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"]
+dependencies = ["firefly-weave==0.1.0a7", "pyfly @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b"]
 
 [project.optional-dependencies]
 test = ["pytest>=9,<10"]

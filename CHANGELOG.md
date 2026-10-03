@@ -18,6 +18,87 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a7
+
+- Add saved platforms shared by the CLI, Studio, and desktop app: a non-secret
+  `profiles.json` in the system configuration folder (`WEAVE_CONFIG_HOME`
+  overrides it), written atomically with private permissions. Tokens stay in the
+  system credential store, or in an explicit private file.
+- Add `weave auth setup SERVER`. It checks the server, shows its sign-in settings
+  for review, signs you in through the system browser (PKCE with a loopback
+  callback) or a device code, lets you choose a workspace, and says what was
+  saved and which command to run next. Explicit flags, `--yes`, and
+  `--output json` keep it usable in scripts without prompts.
+- Add `weave auth profiles`, `use`, `remove`, `workspace`, and
+  `login --switch-account`. `weave auth status` exits 1 when you are not signed in.
+- Add the public `GET /api/v1/client-configuration` endpoint, configured with
+  `WEAVE_CLIENT_SIGN_IN` and `WEAVE_DISPLAY_NAME`. Clients treat it as a
+  proposal: you review it once, the issuer, client, and endpoint origins are
+  pinned, and a later change is refused with `WV-PROFILE-CHANGED`.
+- Check server addresses before connecting: HTTPS except on loopback, no
+  redirects, bounded responses, and no link-local, metadata, NAT64, or 6to4
+  destinations.
+- Rebuild the Studio connection wizard: work locally or connect to a platform,
+  pick a saved platform, check the connection, review the sign-in settings, sign
+  in through the system browser or a device code, and choose a workspace. Studio
+  reconnects on reopen and never asks for your identity-provider password.
+  Local authoring still needs no sign-in.
+- Keep desktop pairing across restarts and save Studio exports through the
+  system download handler.
+- Add no-code REST integrations on the built-in `weave-http@2.0.0` connector:
+  `weave connector http-action`, `weave connector import-openapi --target builtin`,
+  guided `weave connections create` flags, connector descriptors, and the
+  Studio **New API action** builder and OpenAPI import. Publishing now rejects an
+  HTTP action whose configuration contradicts its method, with a pointer to
+  `/spec/implementation/config`.
+- Add `weave platform integrations` and `weave platform secret` so a local
+  platform can run built-in HTTP actions with secrets stored by handle.
+- Make the **Call an action** step usable end to end in Studio: choose an
+  action and a connection, fill inputs through generated forms, map data,
+  validate without a platform, save, reopen, and import or export YAML and JSON.
+- Redesign the Studio editor: one primary command that follows the lifecycle,
+  readable zoom with **Fit all** and **Tidy layout**, Delete with Undo, Decision
+  conditions as rule rows with **Otherwise**, problems shown on the steps, an
+  inspector with **Apply changes** and **Discard**, and a docked simulation that
+  highlights the live path.
+- Rework the Studio shell: **Build** and **Operate** navigation, a Home page
+  that leads with what needs you, toasts with Undo, drafts kept on this computer
+  with autosave, a run detail page for operators, consistent status names, and
+  accessibility fixes for contrast, focus, and side panels at narrow widths.
+- Register port-free loopback callbacks for the local Keycloak `weave-cli`
+  client, and repair existing local platforms on `weave platform start`, so
+  browser sign-in works on any loopback port.
+- Keep in-process native workers running when they claim work while the
+  platform is still opening effects; the dispatcher restarts a failed worker with
+  backoff and reports not ready after three consecutive failures.
+- Replay in-process native worker claims, renewals, and settlements that the
+  platform rejects for capacity, with the same policy as remote workers, so a
+  busy database no longer exhausts a task's retries.
+- Accept JWKS signing keys that omit `alg`, as Microsoft Entra ID publishes them,
+  for the allowed algorithm of their key type only (RSA for `RS256`, P-256 for
+  `ES256`).
+- Retry Studio reads, and changes that carry an idempotency key, when the
+  platform turns them away for capacity (`WV-OPERATION-CAPACITY`,
+  `WV-REQUEST-CAPACITY`), honoring `Retry-After` for up to four attempts.
+- Show only the logo in the CLI help banner.
+- Bump the Python package and browser Studio bundle to `0.1.0a7` and the desktop
+  product to `0.1.0-alpha.7`; the native internal installer counter is `0.1.7`.
+- Rewrite the documentation around four learning paths, with new guides for
+  signing in, no-code REST integrations, and readers coming from BPM tools.
+
+Verified on macOS against a real local Keycloak 26.7.4: CLI sign-in and
+workspace selection with a private credential file, a no-code HTTP action
+running on a local platform, the Studio sign-in journeys with the macOS
+Keychain, and sign-in with a code, reconnection after a restart, and export in
+a locally built macOS desktop app. In the desktop app, drafts kept on this
+computer last only until the app quits; use **Save to file** to keep a copy.
+Microsoft Entra ID and other OpenID
+Connect providers are supported through configuration but **not verified**;
+Entra-shaped keys are covered by unit tests only.
+Credential storage on Windows and Linux is **not verified**. Existing
+`--auth-config` connection files keep working. Schema revision remains
+`0025_run_lifecycle`; no new database migration is added.
+
 ## 0.1.0a6
 
 - Fix the macOS desktop outer application resource seal with explicit ad-hoc

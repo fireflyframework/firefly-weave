@@ -113,7 +113,7 @@ async def teams(worker_setup, access_db, provisioned, monkeypatch, signed_activi
                 name="teams",
                 provider="teams",
                 package="firefly-weave",
-                package_version="0.1.0a6",
+                package_version="0.1.0a7",
                 adapter_version="1.0.0",
                 schema_digest=provider_schema_digest(
                     package.metadata.model.event_schemas, package.metadata.model.dispatch_event_kinds
