@@ -227,19 +227,15 @@ export class DesignerPage {
       const close = this.page.getByRole("button", { name: "Close inspector" });
       if (await close.isVisible()) await close.click();
       if (!(await this.reachable(body))) {
-        // Focus pans a step into view, as it does for keyboard users.
-        await body.focus();
-        await this.settled();
+        // An explicit view command also supersedes a pending initial fit.
+        await this.fit();
       }
       if (!(await this.reachable(body))) {
-        await this.fit();
         await this.canvas.focus();
         await body.focus();
         await this.settled();
       }
     }
-    await body.focus();
-    await this.settled();
     await expect.poll(() => this.reachable(body)).toBe(true);
     await body.click();
     await expect(this.node(stepId)).toHaveClass(/\bselected\b/);

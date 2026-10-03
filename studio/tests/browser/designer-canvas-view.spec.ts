@@ -23,7 +23,6 @@ import { test, expect, type Page } from "@playwright/test";
 import { expectHitTarget, insertStep, newWorkflow, offline } from "./support";
 import { DesignerPage } from "./designer-po";
 import { iconPaths } from "../../src/app/icon";
-
 /** A workflow of twelve steps in the main sequence. */
 const twelve = `apiVersion: weave/v1alpha1
 kind: Workflow
@@ -84,6 +83,40 @@ for (const viewport of [
       const start = await page.locator(".start-node").boundingBox();
       expect(start!.y - canvas!.y).toBeGreaterThanOrEqual(16);
       expect(start!.y - canvas!.y).toBeLessThanOrEqual(48);
+    });
+    test("keyboard navigation after import keeps the focused step visible without Fit all", async ({
+      page,
+    }) => {
+      await openLongFlow(page);
+      const show = page.getByRole("button", { name: "Show canvas" });
+      if (await show.isVisible()) await show.click();
+      await page
+        .getByRole("button", { name: "Start — workflow settings" })
+        .focus();
+      await page.keyboard.press("Tab");
+      await expect(
+        page.locator('[data-step="wait-1"] .node-body'),
+      ).toBeFocused();
+      for (let index = 1; index < 12; index++)
+        await page.keyboard.press("ArrowDown");
+      const last = page.locator('[data-step="wait-12"] .node-body');
+      await expect(last).toBeFocused();
+      await expect
+        .poll(() =>
+          last.evaluate((element) => {
+            const box = element.getBoundingClientRect();
+            const hit = document.elementFromPoint(
+              box.left + box.width / 2,
+              box.top + box.height / 2,
+            );
+            return hit === element || element.contains(hit);
+          }),
+        )
+        .toBe(true);
+      await page.keyboard.press("Enter");
+      await expect(page.getByLabel("Step name", { exact: true })).toHaveValue(
+        "wait-12",
+      );
     });
   });
 

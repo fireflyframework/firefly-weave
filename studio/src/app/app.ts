@@ -1712,6 +1712,8 @@ export class App {
    * inspector holds edits for another step) and pans into view.
    */
   nodeFocused(node: Node) {
+    // Keyboard navigation supersedes the import's still-pending initial fit.
+    this.needsFit = false;
     this.afterFocusScroll(() => this.revealStep(node.step.id));
     if (this.model.selected !== node.step.id && !this.editsPending)
       void this.select(node, this.windowWidth > 767 && this.showInspector);
@@ -4089,9 +4091,11 @@ export class App {
    */
   focusStep(id: string) {
     this.focusLater(() =>
-      document.querySelector<HTMLElement>(
-        `[data-step="${CSS.escape(id)}"] .node-body`,
-      ),
+      this.model.selected === id
+        ? document.querySelector<HTMLElement>(
+            `[data-step="${CSS.escape(id)}"] .node-body`,
+          )
+        : null,
     );
   }
   /** Moves focus to the inspector's Action section, for example after "Use in this step". */
