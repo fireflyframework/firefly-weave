@@ -33,6 +33,7 @@ from pyfly.web.ports.outbound import WebServerPort
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.applications import Starlette
 
+from firefly_weave import __version__
 from firefly_weave.access.authentication import AuthenticationFilter, AuthenticationService, VerifierSet
 from firefly_weave.access.authorization import AuthorizationService
 from firefly_weave.access.identity_links import IdentityResolver
@@ -132,7 +133,7 @@ SERVICE_PACKAGES = (
 )
 
 
-@pyfly_application(name="firefly-weave", version="0.1.0a4", scan_packages=["firefly_weave.api", *SERVICE_PACKAGES])
+@pyfly_application(name="firefly-weave", version=__version__, scan_packages=["firefly_weave.api", *SERVICE_PACKAGES])
 class WeaveApplication:
     pass
 
