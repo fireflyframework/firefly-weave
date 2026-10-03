@@ -408,7 +408,7 @@ supervision, none of which the local setup scripts provision.
 
 The locked framework is the published **PyFly 26.9.15**; the exact wheel hash and
 upstream commit are in the [project metadata](../../pyproject.toml). The API
-package version is `0.1.0a9`; a checkout of `main` can carry unreleased changes
+package version is `0.1.0a10`; a checkout of `main` can carry unreleased changes
 on top of it. Validate readiness, an authorized workflow, and your
 [backup and restore procedure](../operations/backup-restore.md) in the
 environment you intend to operate.

@@ -17,6 +17,23 @@
 version = 1
 
 [[exceptions]]
+path = "assets/lumi.png"
+kind = "commentless"
+reason = "Apache-licensed Lumi mascot master documented in docs/visual-assets.md; PNG cannot carry a source comment header."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/public/assets/lumi.png"
+kind = "commentless"
+source = "assets/lumi.png"
+reason = "Byte-identical Studio distribution copy of the Apache-licensed Lumi mascot master."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "tests/fixtures/definitions/invalid/duplicate-key.yaml"
 kind = "immutable-fixture"
 reason = "Parser regression asserts the duplicate key at original line 2; a header would change the source map."

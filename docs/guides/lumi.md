@@ -28,8 +28,8 @@ permission checks before a person applies them.
 Lumi has its own configuration per environment. It never reads a workflow's
 `llmProfiles`, and changing an LLM step does not change the assistant.
 
-The Studio **AI setup** entry points and named provider-connection selection
-shown here require Weave **0.1.0a9**. Use the matching **0.1.1 Agentic worker
+The Studio **AI setup** examples and named provider-connection selection
+shown here use Weave **0.1.0a10**. Use the matching **0.1.2 Agentic worker
 package** for the independently deployed Lumi gateway.
 
 ## Follow a question through review

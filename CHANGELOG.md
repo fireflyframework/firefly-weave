@@ -18,6 +18,18 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a10
+
+- Expose Lumi configuration through the paired Studio host and clarify the
+  separate administrator, worker-admission, and deployment responsibilities.
+- Let explicit canvas selection and structural edits supersede pending initial
+  fitting. Keep automatically added empty fields from stealing keyboard focus.
+- Use the Lumi mascot in Studio and the illustrated documentation.
+- Make compiler scope-parity tests reject inconclusive resource-limit results
+  and isolate their timing allowance from production validation budgets.
+- Publish worker packages 0.1.2 pinned to core 0.1.0a10. No database migration is
+  added; the server still requires schema `0028_files`.
+
 ## 0.1.0a9
 
 - Add guided Studio setup for AI provider connections, named connection selection
