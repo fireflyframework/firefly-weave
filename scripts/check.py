@@ -109,7 +109,8 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
             (
                 "unit-contracts",
                 [python, "-m", "pytest", "tests/unit", "tests/contracts", "-q", "--tb=short", "--show-capture=no"],
-                600,
+                # More than 3,000 tests: about 4 minutes locally, up to 10 on a shared CI runner.
+                1800,
             ),
             ("prepare", [python, "scripts/prepare_release.py", "--output", str(evidence / "release")], 300),
             (

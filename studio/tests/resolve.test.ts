@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
 import { existsSync, readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -459,14 +459,27 @@ const python = resolvePath(
     ? ".venv/Scripts/python.exe"
     : ".venv/bin/python",
 );
-describe.skipIf(!existsSync(python))("fixture freshness", () => {
+// The corpus covers every first-party connector, including Teams, whose
+// descriptor needs the optional `teams` extra. An environment without it, such
+// as the desktop build's `--extra studio` install, cannot regenerate the corpus.
+const connectorExtras =
+  existsSync(python) &&
+  spawnSync(
+    python,
+    [
+      "-c",
+      "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('microsoft_agents') else 1)",
+    ],
+    { timeout: 180_000 },
+  ).status === 0;
+describe.skipIf(!connectorExtras)("fixture freshness", () => {
   it("matches what scripts/studio_schema_fixtures.py generates today", () => {
     // Throws (non-zero exit) when the committed corpus is out of date.
     execFileSync(python, ["scripts/studio_schema_fixtures.py", "--check"], {
       cwd: root,
       env: { ...process.env, PYTHONPATH: resolvePath(root, "src") },
       encoding: "utf8",
-      timeout: 60000,
+      timeout: 180_000,
     });
   });
 });

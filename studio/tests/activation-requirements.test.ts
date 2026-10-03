@@ -454,7 +454,7 @@ print(json.dumps({"export": {"document": workflow, "artifact": json.loads(result
       {
         cwd: root,
         encoding: "utf8",
-        timeout: 30000,
+        timeout: 180_000,
         env: { ...process.env, PYTHONPATH: resolve(root, "src") },
       },
     );

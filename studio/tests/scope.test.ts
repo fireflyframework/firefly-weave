@@ -638,7 +638,7 @@ const compiled = available
       execFileSync(python, ["-c", COMPILER_PROBE], {
         cwd: root,
         encoding: "utf8",
-        timeout: 60000,
+        timeout: 180_000,
         input: JSON.stringify(probes.map((p) => p.document)),
         env: {
           ...process.env,

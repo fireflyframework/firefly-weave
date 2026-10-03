@@ -16,6 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -227,7 +228,7 @@ describe("design tokens", () => {
         else if (/\.(ts|css)$/.test(name)) files.push(path);
       }
     };
-    walk(new URL("../src/app", import.meta.url).pathname);
+    walk(fileURLToPath(new URL("../src/app", import.meta.url)));
     for (const file of files) {
       const text = readFileSync(file, "utf8");
       for (const rule of text.matchAll(/([^{}]*)\{([^{}]*)\}/g))

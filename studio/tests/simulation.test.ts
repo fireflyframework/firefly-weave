@@ -249,7 +249,7 @@ print(json.dumps(out))
           cwd: root,
           env,
           encoding: "utf8",
-          timeout: 30000,
+          timeout: 180_000,
           input: JSON.stringify(
             workflowTemplates.map(({ id, yaml }) => ({ id, yaml })),
           ),

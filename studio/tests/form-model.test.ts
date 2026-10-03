@@ -276,7 +276,7 @@ print(json.dumps([d.code for d in result.diagnostics]))
             env: { ...process.env, PYTHONPATH: resolve(root, "src") },
             encoding: "utf8",
             input: JSON.stringify([input, literal]),
-            timeout: 30000,
+            timeout: 180_000,
           },
         ),
       ) as string[];
