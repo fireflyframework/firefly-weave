@@ -94,6 +94,7 @@ import type { Step } from "../model";
       <div data-field="with">
         <weave-expression-editor
           [value]="step['with']"
+          [expectedSchema]="inputSchema"
           label="Table input"
           heading="Table input"
           [references]="references"
@@ -158,6 +159,16 @@ export class DecisionInspector implements OnInit, OnDestroy {
   }
   get references() {
     return referencesAt(this.host.referenceContext, "/with");
+  }
+  get inputSchema(): Record<string, unknown> | null {
+    const contract = this.host.decisionContracts.get(
+      String(this.step["uses"] ?? ""),
+    );
+    const spec = contract?.["spec"] as Record<string, unknown> | undefined;
+    const schema = spec?.["inputSchema"];
+    return schema && typeof schema === "object" && !Array.isArray(schema)
+      ? (schema as Record<string, unknown>)
+      : null;
   }
   value(event: Event) {
     return (event.target as HTMLInputElement).value;

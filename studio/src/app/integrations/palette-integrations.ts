@@ -24,6 +24,7 @@ import {
   Component,
   OnInit,
   input,
+  output,
 } from "@angular/core";
 import { Icon } from "../icon";
 import { searchActions, type ActionPickerItem } from "./action-picker";
@@ -45,97 +46,146 @@ let sequence = 0;
   imports: [Icon],
   template: `<section
     class="palette-integrations"
-    [attr.aria-labelledby]="prefix + '-title'"
+    aria-label="Action shortcuts"
   >
-    <h4 class="palette-subheading" [id]="prefix + '-title'">
-      Published actions
-    </h4>
-    @switch (state()) {
-      @case ("offline") {
-        <p class="pane-help">Connect to a platform to use published actions.</p>
-      }
-      @case ("loading") {
-        <p class="pane-help" role="status">Loading published actions…</p>
-      }
-      @case ("forbidden") {
-        <p class="pane-help">
-          Your account can't read the published actions in this workspace.
-        </p>
-      }
-      @case ("error") {
-        <div class="pane-help" role="alert">
+    <section class="palette-reuse" [attr.aria-labelledby]="prefix + '-title'">
+      <div class="palette-section-heading">
+        <h4 class="palette-subheading" [id]="prefix + '-title'">
+          Use an existing action
+        </h4>
+        <details
+          class="palette-action-help"
+          (keydown.escape)="closeHelp($event)"
+        >
+          <summary
+            aria-label="About existing actions"
+            title="About existing actions"
+          >
+            i
+          </summary>
           <p>
-            Published actions couldn't be loaded.
-            {{ host().catalogError?.message }}
+            Published actions are reusable steps shared in your project. Choose
+            one to add it to this workflow with its saved settings.
           </p>
+        </details>
+      </div>
+      @switch (state()) {
+        @case ("offline") {
+          <p class="pane-help">Connect to browse your project's actions.</p>
           <button
             type="button"
-            class="palette-retry"
-            (click)="host().loadActionCatalog(false, true)"
+            class="palette-connect"
+            (click)="connectPlatform()"
           >
-            Try again
+            Connect to a platform
           </button>
-        </div>
-      }
-      @default {
-        @if (!results().count) {
+        }
+        @case ("loading") {
+          <p class="pane-help" role="status">Loading published actions…</p>
+        }
+        @case ("forbidden") {
           <p class="pane-help">
-            {{
-              query().trim()
-                ? "No published action matches the search."
-                : "This project has no published actions yet."
-            }}
+            Your account can't read the published actions in this workspace.
           </p>
         }
+        @case ("error") {
+          <div class="pane-help" role="alert">
+            <p>
+              Published actions couldn't be loaded.
+              {{ host().catalogError?.message }}
+            </p>
+            <button
+              type="button"
+              class="palette-retry"
+              (click)="host().loadActionCatalog(false, true)"
+            >
+              Try again
+            </button>
+          </div>
+        }
+        @default {
+          @if (!results().count) {
+            <p class="pane-help">
+              {{
+                query().trim()
+                  ? "No published action matches the search."
+                  : "This project has no published actions yet."
+              }}
+            </p>
+          }
+        }
       }
-    }
-    @for (group of results().groups; track group.key) {
-      @for (item of group.items; track item.name + "@" + item.version) {
+      @for (group of results().groups; track group.key) {
+        @for (item of group.items; track item.name + "@" + item.version) {
+          <button
+            type="button"
+            class="palette-step palette-action"
+            [attr.data-uses]="item.name + '@' + item.version"
+            [disabled]="host().model.readonly"
+            [attr.aria-label]="
+              'Insert ' +
+              item.name +
+              '@' +
+              item.version +
+              (item.operation ? ', ' + item.operation : '')
+            "
+            (click)="pick(item)"
+          >
+            <span class="step-icon"><weave-icon name="action" /></span
+            ><span class="palette-label"
+              >{{ item.name
+              }}<small
+                >{{ item.version
+                }}{{ item.operation ? " · " + item.operation : ""
+                }}{{ group.key === "other" ? "" : " · " + group.label }}</small
+              ></span
+            >
+          </button>
+        }
+      }
+      @if (results().hidden) {
+        <p class="pane-help">
+          {{ results().hidden }} more. Search the steps to narrow the list.
+        </p>
+      }
+    </section>
+    <section class="palette-create" [attr.aria-labelledby]="prefix + '-create'">
+      <div class="palette-section-heading">
+        <h4 class="palette-subheading" [id]="prefix + '-create'">
+          Create an API action
+        </h4>
+        <details
+          class="palette-action-help"
+          (keydown.escape)="closeHelp($event)"
+        >
+          <summary
+            aria-label="About creating an API action"
+            title="About creating an API action"
+          >
+            i
+          </summary>
+          <p>
+            Describe an API request or import its OpenAPI definition. You can
+            configure and save an action file on this computer. Connect to
+            publish it for your project.
+          </p>
+        </details>
+      </div>
+      @if (canCreate()) {
         <button
           type="button"
-          class="palette-step palette-action"
-          [attr.data-uses]="item.name + '@' + item.version"
+          class="palette-new-api"
           [disabled]="host().model.readonly"
-          [attr.aria-label]="
-            'Insert ' +
-            item.name +
-            '@' +
-            item.version +
-            (item.operation ? ', ' + item.operation : '')
-          "
-          (click)="pick(item)"
+          (click)="host().openApiBuilder('workflow')"
         >
-          <span class="step-icon"><weave-icon name="action" /></span
-          ><span class="palette-label"
-            >{{ item.name
-            }}<small
-              >{{ item.version
-              }}{{ item.operation ? " · " + item.operation : ""
-              }}{{ group.key === "other" ? "" : " · " + group.label }}</small
-            ></span
-          >
+          <weave-icon name="plus" />New API action
         </button>
+      } @else {
+        <p class="pane-help">
+          To call another API, ask a developer to publish an action.
+        </p>
       }
-    }
-    @if (results().hidden) {
-      <p class="pane-help">
-        {{ results().hidden }} more. Search the steps to narrow the list.
-      </p>
-    }
-    @if (canCreate()) {
-      <button
-        type="button"
-        class="palette-new-api"
-        [disabled]="host().model.readonly"
-        (click)="host().openApiBuilder('workflow')"
-      >
-        <weave-icon name="plus" />New API action
-      </button>
-    } @else {
-      <p class="pane-help">
-        To call another API, ask a developer to publish an action.
-      </p>
-    }
+    </section>
   </section>`,
   styles: [
     `
@@ -143,6 +193,57 @@ let sequence = 0;
         margin-top: 6px;
         padding: 6px 0 0 8px;
         border-left: 2px solid var(--line);
+      }
+      .palette-create {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+      }
+      .palette-section-heading {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      .palette-section-heading h4 {
+        flex: 1;
+        min-width: 0;
+      }
+      .palette-action-help {
+        min-width: 0;
+      }
+      .palette-action-help > summary {
+        display: grid;
+        place-items: center;
+        width: 24px;
+        min-height: 24px;
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        color: var(--muted);
+        font: 600 12px/1 var(--font-sans);
+        cursor: pointer;
+        list-style: none;
+      }
+      .palette-action-help > summary::-webkit-details-marker {
+        display: none;
+      }
+      .palette-action-help[open] {
+        flex-basis: 100%;
+      }
+      .palette-action-help p {
+        margin: 8px 0 0;
+        font: var(--type-caption);
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+      .palette-connect {
+        width: 100%;
+        height: auto;
+        min-height: 36px;
+        padding: 6px 8px;
+        white-space: normal;
+        font-size: 12px;
       }
       .palette-subheading {
         margin: 0;
@@ -190,6 +291,17 @@ export class PaletteIntegrations implements OnInit {
   host = input.required<EditorHost>();
   /** The palette search text. */
   query = input("");
+  connect = output<void>();
+
+  async connectPlatform() {
+    if (await this.host().ensureApplied()) this.connect.emit();
+  }
+  closeHelp(event: Event) {
+    const details = event.currentTarget as HTMLDetailsElement;
+    details.open = false;
+    details.querySelector("summary")?.focus();
+    event.stopPropagation();
+  }
 
   prefix = `palette-integrations-${++sequence}`;
   private memo: {

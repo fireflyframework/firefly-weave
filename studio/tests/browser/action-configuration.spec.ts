@@ -100,7 +100,9 @@ for (const viewport of [
       const output = page
         .locator("weave-action-inspector details")
         .filter({
-          has: page.locator("summary").getByText("Output", { exact: true }),
+          has: page
+            .locator(":scope > summary")
+            .filter({ hasText: /^\s*4\s*Output\s*$/ }),
         })
         .first();
       if ((await output.getAttribute("open")) === null)

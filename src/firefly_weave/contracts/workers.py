@@ -75,6 +75,24 @@ class WorkerInstance(InstanceRequest):
     revoked: bool = False
 
 
+class WorkerControlRequest(ContractModel):
+    expected_revision: int = Field(ge=1)
+
+
+class WorkerStatus(WorkerInstance):
+    """A scoped observation, separate from the stable worker registration protocol."""
+
+    revision: int = Field(ge=1)
+    draining: bool
+    presence: Literal["unknown", "recent", "stale"]
+    last_seen_at: AwareDatetime | None
+    presence_expires_at: AwareDatetime | None
+    presence_ttl_seconds: Literal[60] = 60
+    observed_at: AwareDatetime
+    active_leases: int = Field(ge=0)
+    available_capacity: int | None = Field(ge=0, le=100)
+
+
 class LeaseProof(ContractModel):
     task_id: UUID
     generation: int = Field(ge=1)

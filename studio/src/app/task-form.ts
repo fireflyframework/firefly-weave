@@ -414,10 +414,13 @@ let sequence = 0;
                 <input [id]="id" disabled placeholder="Loading data…" />
               }
             } @else if (mode === "formula") {
+              @let target = formulaSchema(field);
               <ng-container
                 [weaveLazy]="loadFormula"
                 [lazyInputs]="{
                   value: formulaAt(fieldPath),
+                  expectedSchema: target.expectedSchema,
+                  schemaRoot: target.schemaRoot,
                   label: field.label,
                   references,
                   compact: true,
@@ -535,7 +538,7 @@ let sequence = 0;
     >
       <!-- The group name leaves the field label out, so the field's own
            label names only its control; each button is described by it. -->
-      <span class="binding-modes">
+      <div class="binding-modes">
         @if (mode !== "data") {
           <button
             type="button"
@@ -561,7 +564,37 @@ let sequence = 0;
           [label]="'Options for ' + field.label"
           [items]="sourceActions(path, widget)"
         />
-      </span>
+        <details
+          class="binding-help"
+          (keydown.escape)="closeSourceHelp($event)"
+        >
+          <summary
+            [attr.aria-label]="'Help for ' + field.label + ': data sources'"
+            title="When should I use each source?"
+          >
+            <span aria-hidden="true">ⓘ</span>
+          </summary>
+          <div>
+            <strong>Where should this field's value come from?</strong>
+            <p>
+              <b>Value</b> stays the same on every run. Type it in the field.
+            </p>
+            <p>
+              <b>Data</b> reads this run's input or an earlier step's result.
+              Choose Use data, then select a field.
+            </p>
+            <p>
+              <b>Formula</b> applies a supported rule or selects a fallback.
+              Choose Calculate in the options menu.
+            </p>
+            <p>
+              For a record, fill its named fields. For a list, add items. Each
+              can use its own data source. Validate the workflow when the
+              mapping is ready.
+            </p>
+          </div>
+        </details>
+      </div>
     </ng-template>
 
     <!-- One plain value: a scalar field, a list item or a map value. -->
@@ -686,13 +719,14 @@ let sequence = 0;
       }
       .binding-modes {
         display: inline-flex;
+        flex-wrap: wrap;
+        max-width: 100%;
         justify-self: start;
         border: 1px solid var(--line);
         border-radius: 6px;
-        overflow: hidden;
       }
       .binding-mode {
-        min-height: 24px;
+        min-height: 32px;
         padding: 0 8px;
         border: 0;
         border-radius: 0;
@@ -705,6 +739,36 @@ let sequence = 0;
         background: var(--forest);
         color: var(--on-dark);
         font-weight: 600;
+      }
+      .binding-help summary {
+        display: grid;
+        place-items: center;
+        min-width: 32px;
+        min-height: 32px;
+        cursor: pointer;
+        list-style: none;
+        color: var(--muted);
+      }
+      .binding-help summary::-webkit-details-marker {
+        display: none;
+      }
+      .binding-help[open] {
+        flex-basis: 100%;
+      }
+      .binding-help > div {
+        padding: 10px;
+        font: var(--type-caption);
+        line-height: 1.5;
+      }
+      .binding-help p {
+        margin: 8px 0;
+      }
+      @media (pointer: coarse) {
+        .binding-help summary,
+        .binding-mode {
+          min-width: 44px;
+          min-height: 44px;
+        }
       }
       .schema-map-row {
         display: grid;
@@ -881,6 +945,15 @@ export class TaskForm implements OnChanges {
   rootFields() {
     return this.fieldsIn(this.schema());
   }
+  /** Normalized fields keep nullability and reference roots outside their schema. */
+  formulaSchema(field: FieldInfo) {
+    return {
+      expectedSchema: field.nullable
+        ? { anyOf: [field.schema, { type: "null" }] }
+        : field.schema,
+      schemaRoot: isRecord(field.context.root) ? field.context.root : null,
+    };
+  }
   /** Fields of an object schema or field, resolved once. */
   fieldsIn(source: FieldInfo | Schema | null | undefined): FieldInfo[] {
     if (!source || typeof source !== "object") return [];
@@ -1029,6 +1102,12 @@ export class TaskForm implements OnChanges {
         run: () => this.switchMode(path, widget, "formula"),
       },
     ];
+  }
+  closeSourceHelp(event: Event) {
+    const details = event.currentTarget as HTMLDetailsElement;
+    details.open = false;
+    details.querySelector("summary")?.focus();
+    event.stopPropagation();
   }
   /** Switches a field's source; what the previous source held is kept. */
   switchMode(path: Path, widget: Widget, mode: Mode) {

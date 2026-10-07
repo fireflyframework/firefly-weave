@@ -291,12 +291,15 @@ for (const viewport of [
       expect(after).not.toContain("/steps/a/output");
       expect(after).not.toContain("/steps/b/output");
       await page.keyboard.press("Escape");
-      // Blur the reference before selecting another step.
+      await designer.inspector
+        .getByRole("combobox", { name: "Value reference" })
+        .fill("/steps/route/output");
+      // Commit a valid reference before selecting another step.
       await inspectorHeading(page).click();
       await designer.selectStep("route");
       await designer.inspector
         .locator('[data-field="cases/0/output"]')
-        .locator("summary")
+        .locator(":scope > summary")
         .click();
       await designer.inspector
         .getByRole("radiogroup", {

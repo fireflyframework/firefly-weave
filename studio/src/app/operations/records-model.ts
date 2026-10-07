@@ -65,7 +65,7 @@ export const columns: Record<ListView, string[]> = {
   tasks: ["Task", "Status", "Due"],
   connections: ["Connection", "Connector", "Revision"],
   email: ["Conversation", "Last message", "Status"],
-  workers: ["Worker", "Status", "Capacity"],
+  workers: ["Worker", "Status", "Registered limit"],
 };
 
 const nouns: Record<ListView, [string, string]> = {
@@ -220,7 +220,7 @@ export function rowStatus(
           ? "unavailable"
           : record["revoked"]
             ? "revoked"
-            : "active",
+            : "registered",
       );
     case "email": {
       const state = text(record["last_state"]) || text(record["state"]);

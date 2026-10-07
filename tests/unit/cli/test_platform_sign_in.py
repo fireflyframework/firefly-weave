@@ -238,6 +238,7 @@ def _files(root: Path) -> list[Path]:
 
 @pytest.fixture
 def setup_runtime(monkeypatch):
+    monkeypatch.delenv("WEAVE_RELEASE_BACKENDS", raising=False)
     path = Path(__file__).resolve().parents[3] / "scripts/setup-runtime.py"
     spec = importlib.util.spec_from_file_location("runtime_setup_sign_in", path)
     module = importlib.util.module_from_spec(spec)
@@ -584,12 +585,21 @@ def test_user_requires_the_private_keycloak_administrator_secret(demo_workspace)
     assert identity.requests == [] and refreshed == []
 
 
-def test_person_roles_are_every_scoped_role_except_platform_and_worker():
+def test_person_roles_include_operations_but_exclude_machine_roles():
     from firefly_weave.access.roles import ROLE_CAPABILITIES
 
-    assert set(platform.PERSON_ROLES) == set(ROLE_CAPABILITIES) - {"platform_admin", "worker"}
+    assert set(platform.PERSON_ROLES) == set(ROLE_CAPABILITIES) - {"platform_admin", "worker", "deployment_runner"}
     assert len(set(platform.PERSON_ROLES)) == len(platform.PERSON_ROLES)
     assert set(platform.DEFAULT_PERSON_ROLES) <= set(platform.PERSON_ROLES)
+    assert not set(platform.DEFAULT_PERSON_ROLES) & {
+        "deployment_reader",
+        "deployment_planner",
+        "deployment_approver",
+        "deployment_operator",
+        "worker_operator",
+    }
+    with pytest.raises(platform.PlatformError):
+        platform._person_roles(("deployment_runner",))
 
 
 @pytest.mark.parametrize("status", [401, 302])

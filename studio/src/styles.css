@@ -2550,16 +2550,15 @@ details.disclosure[open] > summary::before {
 }
 
 /* ------------------------------------------------------------------ designer
-   One 52 px editor bar (where you are, the views, the commands), then the
+   Identity and views above one command row, then the
    palette, the canvas and the inspector (or the docked simulation), then a
    36 px diagnostics strip. The canvas gets every pixel the chrome gives back. */
-/* Commands move to a second row when they do not fit, whatever the font,
-   instead of overlapping the views. */
+/* Keep command groups aligned independently of workflow identity. */
 .editor-bar {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-3) var(--space-4);
+  gap: 8px 16px;
   min-height: 52px;
   padding: 6px 16px;
   border-bottom: 1px solid var(--line);
@@ -2569,7 +2568,7 @@ details.disclosure[open] > summary::before {
 }
 .editor-heading {
   min-width: 0;
-  flex: 1 1 280px;
+  grid-column: 1;
 }
 .editor-identity {
   display: flex;
@@ -2652,23 +2651,115 @@ details.disclosure[open] > summary::before {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
+.compact-save-label {
+  display: none;
+}
 .editor-toolbar {
+  position: relative;
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 8px;
   flex: 1 1 auto;
   min-width: 0;
 }
-.editor-toolbar > button:not(.icon-button) {
+.editor-toolbar .toolbar-group > button:not(.icon-button) {
   font-size: 13px;
   padding: 0 12px;
   white-space: nowrap;
+}
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+}
+.editor-toolbar .toolbar-group + .toolbar-group {
+  border-left: 1px solid var(--line);
+  padding-left: 8px;
+}
+.editor-toolbar .toolbar-lifecycle {
+  margin-left: auto;
+}
+.editor-toolbar .toolbar-group > button,
+.editor-toolbar weave-row-menu > button {
+  min-height: var(--control-md);
 }
 .editor-toolbar .icon-button {
   width: var(--control-md);
   height: var(--control-md);
   min-height: var(--control-md);
+}
+.editor-toolbar weave-row-menu .row-menu-toggle {
+  width: auto;
+  min-width: 68px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+.toolbar-help,
+.palette-help,
+.inspector-help {
+  flex: none;
+}
+.toolbar-help > summary,
+.palette-help > summary,
+.inspector-help > summary {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--field-border);
+  border-radius: 50%;
+  color: var(--muted);
+  font: 600 13px var(--font-sans);
+  cursor: pointer;
+  list-style: none;
+}
+.toolbar-help > summary::-webkit-details-marker,
+.palette-help > summary::-webkit-details-marker,
+.inspector-help > summary::-webkit-details-marker {
+  display: none;
+}
+.toolbar-help-content {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(420px, 100%);
+  padding: 16px;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  font: var(--type-small);
+}
+.toolbar-help-content p {
+  margin: 0 0 8px;
+}
+.palette-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.palette-heading-row h2 {
+  margin: 0;
+}
+.palette-help[open] {
+  flex: 1;
+}
+.integration-create {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.inspector-help[open] {
+  flex-basis: 100%;
 }
 .editor-toolbar .inspector-toggle[aria-pressed="true"] {
   background: var(--selected);
@@ -2750,6 +2841,18 @@ details.disclosure[open] > summary::before {
   overflow: auto;
   padding: 16px 12px;
 }
+.palette-header {
+  position: sticky;
+  top: -16px;
+  z-index: 2;
+  margin: -16px -12px 12px;
+  padding: 16px 12px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.palette-header .pane-help {
+  margin-bottom: 12px;
+}
 .palette h2 {
   font: var(--type-title-sm);
   margin: 0 0 12px;
@@ -2771,6 +2874,7 @@ details.disclosure[open] > summary::before {
   margin: 0 0 4px;
 }
 .palette-step {
+  position: relative;
   width: 100%;
   min-height: 40px;
   border: 1px solid transparent;
@@ -2799,6 +2903,9 @@ details.disclosure[open] > summary::before {
   white-space: normal;
 }
 .drag-grip {
+  position: absolute;
+  top: 2px;
+  right: 2px;
   display: inline-flex;
   color: var(--border-hover);
 }
@@ -3353,6 +3460,21 @@ details.disclosure[open] > summary::before {
     justify-content: center;
   }
 }
+@container canvas (max-width: 260px) {
+  .canvas-tools {
+    left: 4px;
+    right: 4px;
+    gap: 0;
+    justify-content: space-between;
+  }
+  .canvas-tools .zoom-level {
+    min-width: 40px;
+    padding: 0;
+  }
+  .canvas-tools > .toolbar-divider {
+    margin: 0;
+  }
+}
 /* The inspector keeps its header and action bar fixed and scrolls only its
    body, so Apply changes stays reachable at every height. */
 .inspector {
@@ -3391,6 +3513,13 @@ details.disclosure[open] > summary::before {
   overscroll-behavior: contain;
   padding: 12px 16px 16px;
   container: inspector / inline-size;
+}
+/* The profile dialog spans the window rather than the inspector's container. */
+.inspector-body:has(weave-llm-inspector weave-modal) {
+  container-type: normal;
+}
+weave-llm-inspector .modal-panel.wide {
+  width: min(760px, 100%);
 }
 .inspector label {
   margin-bottom: 12px;
@@ -3442,6 +3571,41 @@ details.disclosure[open] > summary::before {
 .integration-contract.action-sections > details.inspector-section {
   font-size: inherit;
   margin: 0;
+}
+.section-step {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.action-details,
+.slot-management {
+  margin: 12px 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.action-details > summary,
+.slot-management > summary,
+.human-deadlines > summary {
+  cursor: pointer;
+  font: var(--type-label);
+  color: var(--forest);
+}
+.action-details > summary,
+.slot-management > summary {
+  margin-bottom: 8px;
+}
+.human-deadlines[open] > summary {
+  margin-bottom: 12px;
+}
+.human-deadlines > summary .hint {
+  margin-left: 8px;
+  font-weight: 400;
 }
 .section-body {
   min-width: 0;
@@ -3795,11 +3959,6 @@ kbd {
     max-width: 180px;
   }
 }
-@media (min-width: 1024px) and (max-width: 1440px) {
-  .editor-heading {
-    min-width: 330px;
-  }
-}
 /* Below 1366 px the local note keeps only its link; the reason stays in the
    tooltip and for screen readers. */
 @media (max-width: 1366px) {
@@ -3887,6 +4046,10 @@ kbd {
   .editor-toolbar {
     flex-wrap: wrap;
   }
+  .editor-toolbar .toolbar-group + .toolbar-group {
+    border-left: 0;
+    padding-left: 0;
+  }
   .lifecycle-note {
     flex-basis: 100%;
     max-width: none;
@@ -3901,7 +4064,7 @@ kbd {
     clip-path: none;
     white-space: normal;
   }
-  .editor-toolbar > button:not(.icon-button) {
+  .editor-toolbar .toolbar-group > button:not(.icon-button) {
     padding: 0 10px;
   }
   .editor-grid,
@@ -3964,6 +4127,9 @@ kbd {
   }
 }
 @media (max-height: 560px) {
+  .shell.in-designer .main-view {
+    overflow-y: auto;
+  }
   .editor-grid {
     min-height: 280px;
   }
@@ -4049,4 +4215,72 @@ kbd {
 .contract-gap-list {
   margin: 0;
   padding: 8px 16px 8px 32px;
+}
+
+@media (max-width: 480px) {
+  .editor-bar {
+    gap: 8px;
+  }
+  .editor-views button {
+    padding: 0 6px;
+    font-size: 12px;
+  }
+  .editor-identity .version-badge,
+  .insert-popover-button .insert-label {
+    display: none;
+  }
+  .editor-heading .workflow-progress li:not([aria-current="step"]),
+  .editor-heading .workflow-progress li::before {
+    display: none;
+  }
+  .editor-identity h1 {
+    max-width: 90px;
+  }
+  .editor-identity .status-chip {
+    min-width: 18px;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    justify-content: center;
+  }
+  .editor-identity .status-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .editor-toolbar .validate-label,
+  .editor-toolbar .save-label,
+  .editor-toolbar weave-row-menu weave-icon {
+    display: none;
+  }
+  .editor-toolbar .compact-save-label {
+    display: inline;
+  }
+  .editor-toolbar {
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+  .editor-toolbar .toolbar-group > .insert-popover-button {
+    width: 36px;
+    padding: 0;
+  }
+  .editor-toolbar .toolbar-group > button:not(.icon-button) {
+    padding: 0 8px;
+  }
+  .editor-toolbar weave-row-menu .row-menu-toggle {
+    min-width: 60px;
+    padding: 0 8px;
+  }
+}
+
+@media (max-width: 360px) {
+  .editor-toolbar .compact-save-label {
+    display: none;
+  }
+  .editor-views button {
+    padding: 0 4px;
+    font-size: 12px;
+  }
 }

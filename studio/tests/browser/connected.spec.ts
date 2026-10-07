@@ -604,6 +604,7 @@ test("catalog integration fields compile against the real Python action contract
     .filter({ hasText: "Call an action" })
     .click();
   await chooseAction(page, "lookup-customer@1.0.0");
+  await page.locator(".action-details > summary").click();
   await expect(page.getByText("crm@1.0.0", { exact: true })).toBeVisible();
   await page.locator(".inspector-header h2").click();
   await page

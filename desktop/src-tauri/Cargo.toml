@@ -16,7 +16,7 @@
 
 [package]
 name = "firefly-weave-studio"
-version = "0.1.0-alpha.11"
+version = "0.1.0-alpha.12"
 description = "Firefly Weave Studio desktop"
 authors = ["Firefly Software Foundation"]
 license = "Apache-2.0"

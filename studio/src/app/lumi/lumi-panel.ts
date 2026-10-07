@@ -73,7 +73,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       (dismiss)="host.lumiOpen = false"
     >
       <div class="lumi-panel">
-        <div class="lumi-tools">
+        <div class="lumi-tools" [hidden]="settings">
           @if (status?.configured) {
             <span class="hint">{{ status.provider }} · {{ status.model }}</span>
           }
@@ -103,7 +103,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           <p class="hint">
             Ask an administrator for access to Lumi in this environment.
           </p>
-        } @else if (!status?.configured && !loading) {
+        } @else if (!settings && !status?.configured && !loading) {
           <p class="hint">
             Lumi is unavailable in this environment. An administrator configures
             its model and connection; a platform operator enables the Lumi
@@ -116,8 +116,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         @if (settings) {
           <section class="lumi-settings">
             <p class="hint">
-              These settings apply only to this assistant in this environment.
-              Workflow AI profiles are configured separately.
+              Configure Lumi for this environment. Workflow AI profiles have
+              their own settings.
             </p>
             @if (!host.can("connection.manage")) {
               <p role="status">
@@ -143,14 +143,15 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                   <weave-ai-profile-editor
                     [schema]="configSchema"
                     [initialData]="configInitial"
+                    [validateProfile]="validateAiProfile"
                     (dataChange)="config = $event"
                     (validityChange)="configValid = $event"
                   />
                 </fieldset>
                 <section ai-connection class="settings-connection">
                   <p class="hint">
-                    Select where Lumi sends requests. Your platform operator
-                    supplies the approved endpoint and stores the credentials.
+                    Choose Lumi's provider connection. Credentials stay with the
+                    platform operator.
                   </p>
                   <weave-select
                     label="Provider connection"
@@ -362,7 +363,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                   (input)="message = text($event)"
                 ></textarea>
               </label>
-              @if (host.model.opened) {
+              @if (host.model.opened && host.view !== "operations") {
                 <label class="checkbox-field"
                   ><input
                     type="checkbox"
@@ -379,6 +380,10 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                   ><input
                     type="checkbox"
                     [checked]="attachments.has(attachment.kind + attachment.id)"
+                    [disabled]="
+                      attachments.size >= 4 &&
+                      !attachments.has(attachment.kind + attachment.id)
+                    "
                     (change)="
                       toggleAttachment(
                         attachment.kind + attachment.id,
@@ -393,6 +398,13 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 context you include. This conversation stays in memory for this
                 identity and environment.
               </p>
+              @if (host.view === "operations") {
+                <p class="hint">
+                  Lumi explains only the saved Operations records you select.
+                  Replica and resource limits do not show worker task capacity
+                  or current cloud state. No deployment changes are made.
+                </p>
+              }
               <button
                 type="submit"
                 class="primary"
@@ -520,6 +532,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 })
 export class LumiPanel implements DoCheck {
   @Input({ required: true }) host!: App;
+  readonly validateAiProfile = (profile: Record<string, unknown>) =>
+    this.host.api.validateLlmProfile({ ...profile, outputSchema: {} });
   private cdr = inject(ChangeDetectorRef);
   private element = inject<ElementRef<HTMLElement>>(ElementRef);
   private keepFocus() {
@@ -606,6 +620,9 @@ export class LumiPanel implements DoCheck {
       this.host.identity?.principal_id,
       this.host.can("lumi.use"),
       this.host.can("lumi.manage"),
+      this.host.view === "operations"
+        ? this.host.lumiOperationAttachments.map(({ kind, id }) => [kind, id])
+        : null,
     ]);
     if (this.conversation.sync(key)) {
       this.reset();
@@ -667,6 +684,8 @@ export class LumiPanel implements DoCheck {
     return unchangedDraft(proposal.base, this.capture());
   }
   get availableAttachments() {
+    if (this.host.view === "operations")
+      return this.host.lumiOperationAttachments;
     const items: {
       kind: "draft" | "run" | "simulation";
       id: string;
@@ -724,7 +743,7 @@ export class LumiPanel implements DoCheck {
     )
       return;
     this.keepFocus();
-    this.host.flushInspector();
+    if (this.host.view !== "operations") this.host.flushInspector();
     const base = this.capture();
     const generation = this.conversation.generation;
     const message = this.message.trim();
@@ -735,7 +754,7 @@ export class LumiPanel implements DoCheck {
         .filter((item) => this.attachments.has(item.kind + item.id))
         .map(({ kind, id }) => ({ kind, id })),
     };
-    if (this.includeSource)
+    if (this.includeSource && this.host.view !== "operations")
       body["draft"] = {
         format: this.host.model.format,
         source: this.host.sourceBuffer || this.host.model.source,
@@ -754,12 +773,14 @@ export class LumiPanel implements DoCheck {
       this.conversation.turns.push({
         role: "assistant",
         content: reply.answer,
-        proposals: reply.proposals.map((proposal) => ({
-          ...proposal,
-          base,
-          validated: null,
-          problems: [],
-        })),
+        proposals: (this.host.view === "operations" ? [] : reply.proposals).map(
+          (proposal) => ({
+            ...proposal,
+            base,
+            validated: null,
+            problems: [],
+          }),
+        ),
         followUps: reply.followUps,
       });
     } catch (error) {

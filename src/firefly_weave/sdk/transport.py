@@ -56,7 +56,7 @@ class WorkerTransport:
         return [TaskLease.model_validate_json(json.dumps(value)) for value in response.json()]
 
     async def heartbeat(self, lease: LeaseProof) -> TaskLease:
-        response = await self._post_rejected("/tasks/heartbeat", lease.model_dump(mode="json"))
+        response = await self._post_rejected("/tasks/heartbeat", lease.model_dump(mode="json"), lease=lease)
         response.raise_for_status()
         return TaskLease.model_validate_json(response.content)
 
@@ -106,8 +106,9 @@ class WorkerTransport:
         # Only explicit rollback/admission rejection permits replay. Wire errors remain ambiguous.
         # Direct callers retain a finite retry window. The owning Worker can wait
         # through a longer rejection burst while its current lease watchdog remains authoritative.
+        # Renewal owns a separate retry scope bounded by the current lease expiry.
         attempts, seconds = (48, 10) if settlement else (3, 1)
-        deadline = settlement_deadline(lease) if settlement else None
+        deadline = settlement_deadline(lease)
         if deadline is None:
             window = asyncio.timeout(seconds)
         else:

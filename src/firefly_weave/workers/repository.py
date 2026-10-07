@@ -23,9 +23,10 @@ from uuid import UUID
 
 from sqlalchemy import text
 
-from firefly_weave.contracts.workers import CompletionReceipt, WorkerInstance, WorkerRelease
+from firefly_weave.contracts.workers import CompletionReceipt, WorkerInstance, WorkerRelease, WorkerStatus
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.uow import Transaction
-from firefly_weave.workers.models import unavailable
+from firefly_weave.workers.models import observed_worker, unavailable
 
 SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
 
@@ -60,6 +61,41 @@ class WorkerRepository:
         if not rows or rows[0]["revoked"]:
             raise unavailable()
         return WorkerInstance.model_validate_json(json.dumps(rows[0]["payload"]))
+
+    async def draining(self, identifier: UUID) -> bool:
+        rows = await self.rows(f"SELECT draining FROM worker_instances WHERE {SCOPE} AND id=:id", id=identifier)
+        if not rows:
+            raise unavailable()
+        return bool(rows[0]["draining"])
+
+    async def observe(self, identifier: UUID) -> None:
+        # Idle polling is frequent; coalesce observations without inventing liveness.
+        await self.execute(
+            f"UPDATE worker_instances SET last_seen_at=clock_timestamp() WHERE {SCOPE} AND id=:id "
+            "AND NOT revoked AND (last_seen_at IS NULL OR last_seen_at<clock_timestamp()-interval '5 seconds')",
+            id=identifier,
+        )
+
+    async def status(self, identifier: UUID, observed_at: datetime | None = None) -> WorkerStatus:
+        now = observed_at or await self.now()
+        rows = await self.rows(f"SELECT * FROM worker_instances WHERE {SCOPE} AND id=:id", id=identifier)
+        if not rows:
+            raise CatalogError(404, "WV-NOT-FOUND", "Worker resource not found")
+        row = rows[0]
+        active = await self.rows(
+            f"SELECT count(*) AS count FROM task_leases WHERE {SCOPE} AND owner=:id "
+            "AND status='active' AND expires_at>:now AND deadline>:now",
+            id=identifier,
+            now=now,
+        )
+        return observed_worker(
+            WorkerInstance.model_validate_json(json.dumps({**row["payload"], "revoked": row["revoked"]})),
+            last_seen_at=row["last_seen_at"],
+            draining=row["draining"],
+            revision=row["control_revision"],
+            active_leases=active[0]["count"],
+            observed_at=now,
+        )
 
     async def lease(self, task: UUID, generation: int) -> dict[str, Any]:
         rows = await self.rows(

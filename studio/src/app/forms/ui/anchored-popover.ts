@@ -82,6 +82,8 @@ function anchorVisible(anchor: HTMLElement) {
       top = Math.max(top, bounds.top);
       bottom = Math.min(bottom, bounds.bottom);
     }
+    // A viewport-fixed dialog escapes the clipping ancestors that own its DOM.
+    if (style.position === "fixed") break;
   }
   return right > left && bottom > top;
 }

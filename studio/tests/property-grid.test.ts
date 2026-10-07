@@ -21,8 +21,11 @@ import {
   PropertyDraft,
   StepPropertyGrid,
   ExpressionEditor,
+  PropertyValue,
 } from "../src/app/property-grid";
 import { createStep, freshWorkflow } from "../src/app/model";
+import { TaskForm } from "../src/app/task-form";
+import { fieldsOf } from "../src/app/forms/core/resolve";
 describe("step property draft", () => {
   it("keeps required examples out of new step values", () => {
     for (const [kind, key] of [
@@ -186,6 +189,195 @@ it("mapped expression unchanged key keeps its field", () => {
   editor.ngOnChanges();
   editor.rename("keep", "keep");
   expect(editor.current).toEqual({ object: { keep: { literal: 1 } } });
+});
+
+describe("guided expression sources", () => {
+  it("keeps null as a valid alternative to a fixed value", () => {
+    const editor = new ExpressionEditor();
+    editor.expectedSchema = {
+      anyOf: [{ const: "approved" }, { type: "null" }],
+    };
+    editor.value = { literal: null };
+    editor.ngOnChanges();
+    expect(editor.literalTypes).toEqual(["string", "null"]);
+    expect(editor.sourceWarning).toBe("");
+  });
+
+  it("uses the value schema for typed maps without overriding named fields", () => {
+    const editor = new ExpressionEditor();
+    editor.expectedSchema = {
+      type: "object",
+      properties: { attempts: { type: "integer" } },
+      additionalProperties: { type: "string" },
+    };
+    editor.value = { literal: { attempts: 1, city: "Austin" } };
+    editor.ngOnChanges();
+    expect(editor.childSchema("city")).toEqual({ type: "string" });
+    expect(editor.childSchema("attempts")).toEqual({ type: "integer" });
+  });
+
+  it.each([
+    ["number", 0],
+    ["boolean", false],
+    ["object", {}],
+    ["array", []],
+  ])("starts new %s list items with the expected type", (type, initial) => {
+    for (const mode of ["literal", "array"]) {
+      const editor = new ExpressionEditor();
+      editor.expectedSchema = { type: "array", items: { type } };
+      editor.value = {
+        [mode]: mode === "literal" ? ["preserve"] : [{ literal: "preserve" }],
+      };
+      editor.ngOnChanges();
+      editor.add();
+      expect(editor.current).toEqual({
+        [mode]:
+          mode === "literal"
+            ? ["preserve", initial]
+            : [{ literal: "preserve" }, { literal: initial }],
+      });
+    }
+  });
+
+  it("passes nullable field metadata and nested references into a formula", () => {
+    const root = {
+      type: "object",
+      $defs: { Name: { const: "approved" } },
+      properties: {
+        result: {
+          anyOf: [
+            { type: "object", properties: { name: { $ref: "#/$defs/Name" } } },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+    const field = fieldsOf(root)[0];
+    const editor = new ExpressionEditor();
+    const inputs = TaskForm.prototype.formulaSchema(field);
+    editor.expectedSchema = inputs.expectedSchema;
+    editor.schemaRoot = inputs.schemaRoot;
+    editor.value = { literal: null };
+    editor.ngOnChanges();
+    expect(editor.sourceWarning).toBe("");
+    editor.value = { literal: { name: "approved" } };
+    editor.ngOnChanges();
+    const child = new ExpressionEditor();
+    child.expectedSchema = editor.childSchema("name");
+    child.schemaRoot = editor.schemaRoot;
+    expect(child.literalTypes).toEqual(["string"]);
+  });
+
+  it("preserves nullable scalar choices and resolves nested schema references", () => {
+    const editor = new ExpressionEditor();
+    editor.expectedSchema = { type: ["string", "null"] };
+    editor.value = { literal: null };
+    editor.ngOnChanges();
+    expect(editor.literalTypes).toEqual(["string", "null"]);
+    expect(editor.sourceWarning).toBe("");
+    editor.expectedSchema = {
+      type: "object",
+      $defs: { Name: { type: "string" } },
+      properties: { name: { $ref: "#/$defs/Name" } },
+    };
+    editor.value = { literal: { name: "Kept" } };
+    editor.ngOnChanges();
+    const child = new ExpressionEditor();
+    child.expectedSchema = editor.childSchema("name");
+    child.schemaRoot = editor.expectedSchema;
+    expect(child.literalTypes).toEqual(["string"]);
+    child.expectedSchema = {
+      anyOf: [{ $ref: "#/$defs/Name" }, { type: "null" }],
+    };
+    expect(child.literalTypes).toEqual(["string", "null"]);
+    child.expectedSchema = {
+      anyOf: [{ $ref: "#/$defs/Name" }, { $ref: "#/$defs/OtherName" }],
+    };
+    child.schemaRoot = {
+      $defs: { Name: { type: "string" }, OtherName: { type: "string" } },
+    };
+    expect(child.literalTypes).toEqual(["string"]);
+    editor.value = { op: { name: "and", args: [{ literal: true }] } };
+    editor.ngOnChanges();
+    expect(editor.childSchema("0")).toEqual({ type: "boolean" });
+  });
+  it("lets authors repair an imported scalar with the receiving field's type", () => {
+    const value = new PropertyValue();
+    value.value = 12;
+    value.allowedTypes = ["string"];
+    value.ngOnChanges();
+    expect(value.typeOptions.map((item) => item.value)).toEqual([
+      "string",
+      "number",
+    ]);
+    const editor = new ExpressionEditor();
+    editor.expectedSchema = { type: "string" };
+    editor.value = { literal: 12 };
+    editor.ngOnChanges();
+    expect(editor.sourceWarning).toContain("Text");
+    expect(editor.literalTypes).toEqual(["string"]);
+  });
+  it("offers only text-producing sources and formulas for a prompt", () => {
+    const editor = new ExpressionEditor();
+    editor.expectedSchema = { type: "string" };
+    editor.value = { literal: "Summarize the request" };
+    editor.ngOnChanges();
+    expect(editor.modes.map((mode) => mode.value)).toEqual([
+      "literal",
+      "ref",
+      "op",
+    ]);
+    expect(editor.formulaOptions.map((option) => option.value)).toEqual([
+      "coalesce",
+    ]);
+    editor.setMode("array");
+    expect(editor.current).toEqual(editor.value);
+  });
+
+  it("builds objects and lists without offering an unrelated scalar source", () => {
+    const editor = new ExpressionEditor();
+    editor.expectedSchema = { type: "object" };
+    editor.value = { literal: {} };
+    editor.ngOnChanges();
+    expect(editor.modes.map((mode) => mode.value)).toEqual([
+      "ref",
+      "op",
+      "object",
+    ]);
+    editor.expectedSchema = { type: "array", items: { type: "string" } };
+    editor.value = { literal: [] };
+    editor.ngOnChanges();
+    expect(editor.modes.map((mode) => mode.value)).toEqual([
+      "ref",
+      "op",
+      "array",
+    ]);
+    expect(editor.childSchema("0")).toEqual({ type: "string" });
+  });
+
+  it("preserves an imported incompatible expression and explains how to repair it", () => {
+    const editor = new ExpressionEditor();
+    editor.expectedSchema = { type: "string" };
+    editor.value = { array: [{ literal: "keep me" }] };
+    editor.ngOnChanges();
+    expect(editor.current).toEqual(editor.value);
+    expect(editor.modes.some((mode) => mode.value === "array")).toBe(true);
+    expect(editor.sourceWarning).toContain("Text");
+    editor.setMode("literal");
+    expect(editor.modes.some((mode) => mode.value === "array")).toBe(false);
+  });
+
+  it("keeps all sources for untyped context and comparison formulas for conditions", () => {
+    const editor = new ExpressionEditor();
+    editor.value = { literal: "" };
+    editor.ngOnChanges();
+    expect(editor.modes).toHaveLength(5);
+    editor.expectedSchema = { type: "boolean" };
+    expect(editor.formulaOptions.map((option) => option.value)).toContain(
+      "notContains",
+    );
+    expect(editor.modeHelp).toContain("same");
+  });
 });
 
 it("mapped object rename preserves reserved Unicode-capable JSON keys", () => {

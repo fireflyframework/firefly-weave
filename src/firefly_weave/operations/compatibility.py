@@ -20,8 +20,8 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable
-from contextlib import suppress
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
@@ -52,6 +52,7 @@ from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.settings import Settings
 
 CATALOG_CLEANUP_SECONDS = 5.0
+CATALOG_SCAN_SECONDS = 60.0
 INVENTORY_RESCAN_SECONDS = 60.0
 INVENTORY_AGE_SECONDS = 5.0
 
@@ -172,6 +173,8 @@ class CompatibilityService:
         self._inventory: dict[str, int] = {}
         self._observed_at: float | None = None
         self._freshness_task: asyncio.Task[None] | None = None
+        self._opened_at: float | None = None
+        self._completed_at: float | None = None
         self._catalog_engine: AsyncEngine | None = None
         self.on_ready: Callable[[], Awaitable[None]] | None = None
         self.on_restricted: Callable[[], Awaitable[None]] | None = None
@@ -190,6 +193,7 @@ class CompatibilityService:
 
     async def open(self) -> None:
         if self._freshness_task is None:
+            self._opened_at = time.monotonic()
 
             async def refresh() -> None:
                 next_scan = time.monotonic() + INVENTORY_RESCAN_SECONDS
@@ -220,15 +224,60 @@ class CompatibilityService:
             self._catalog_engine = None
 
     @property
+    def completion_budget_seconds(self) -> float:
+        # A transition can drain retained owners, initialize effects, then drain a
+        # failed initialization. Include both passes without timing out their owner.
+        transition = 2 * (
+            self.settings.shutdown_timeout_seconds
+            + self.settings.database_timeout_seconds
+            + self.settings.broker.cleanup_seconds
+            + 3 * 5.0
+        )
+        return (
+            INVENTORY_RESCAN_SECONDS
+            + 2 * INVENTORY_AGE_SECONDS
+            + CATALOG_SCAN_SECONDS
+            + 2 * CATALOG_CLEANUP_SECONDS
+            + transition
+        )
+
+    def healthy(self) -> bool:
+        observed = self._completed_at if self._completed_at is not None else self._opened_at
+        return (
+            self._freshness_task is not None
+            and not self._freshness_task.done()
+            and observed is not None
+            and time.monotonic() - observed <= self.completion_budget_seconds
+        )
+
+    @property
+    def report(self) -> CompatibilityReport:
+        if self.healthy():
+            return self._report
+        return self._report.model_copy(update={"mode": "restricted", "complete": False})
+
+    @report.setter
+    def report(self, value: CompatibilityReport) -> None:
+        self._report = value
+
+    @property
     def ready(self) -> bool:
-        return self.report.mode == "ready" and self.report.complete
+        report = self.report
+        return report.mode == "ready" and report.complete
+
+    @asynccontextmanager
+    async def _completed_scan(self) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            self._completed_at = time.monotonic()
 
     async def scan(self) -> CompatibilityReport:
         if self._scan_lock.locked():
             from firefly_weave.definitions.models import CatalogError
 
             raise CatalogError(429, "WV-OPERATION-CAPACITY", "Compatibility scan already in progress")
-        async with self._scan_lock:
+        async with self._scan_lock, self._completed_scan():
             findings = FindingAccumulator()
             inspected = 0
             complete = False
@@ -259,7 +308,11 @@ class CompatibilityService:
                         connect_args={"timeout": 5},
                     )
                     self._catalog_engine = engine
-                    async with asyncio.timeout(60), engine.connect() as connection, connection.begin():
+                    async with (
+                        asyncio.timeout(CATALOG_SCAN_SECONDS),
+                        engine.connect() as connection,
+                        connection.begin(),
+                    ):
                         await connection.execute(text("SET TRANSACTION READ ONLY"))
                         await connection.execute(text("SET LOCAL statement_timeout='4000ms'"))
                         await check_inventory_authority(connection)
@@ -359,8 +412,10 @@ class CompatibilityService:
             if failure is not None:
                 raise failure
             self.report = candidate
-            self.telemetry.record("compatibility", operation="compatibility", status="ok" if self.ready else "blocked")
-            return self.report
+            self.telemetry.record(
+                "compatibility", operation="compatibility", status="ok" if candidate.mode == "ready" else "blocked"
+            )
+        return self.report
 
     async def scoped(
         self, actor: Principal, scope: Scope, *, context: AuditContext, refresh: bool = False

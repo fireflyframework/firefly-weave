@@ -74,6 +74,12 @@ STUDIO_FAMILIES = frozenset(
         "lumi",
         "connector_descriptors",
         "workers",
+        "deployment_targets",
+        "deployments",
+        "deployment_observations",
+        "deployment_plans",
+        "deployment_jobs",
+        "deployment_runners",
         "environments",
         "incidents",
         # Draft save/retire and Simulate are authorized server-side like every other family.

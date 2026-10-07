@@ -1,0 +1,54 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1070" role="img" aria-labelledby="title description">
+<title id="title">From a reviewed plan to a verified result</title><desc id="description">Observe current state, review a plan tied to revisions and image digests, approve the exact plan, then apply it through a runner. Failed or ambiguous effects stay visible and are never blindly retried.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367d68"/></marker></defs>
+<rect width="900" height="1070" rx="24" fill="#eef4f0"/>
+<g font-family="Inter,Arial,sans-serif" fill="#173d34">
+<text x="40" y="48" font-size="17" fill="#367d68">FIREFLY WEAVE · OPERATIONS</text>
+<text x="40" y="92" font-size="30" font-weight="700">From a reviewed plan to a verified result</text>
+<text x="40" y="127" font-size="18" fill="#4d655d" font-weight="400">Each stage answers a different question. Queued does not mean deployed.</text>
+<rect x="40" y="159" width="820" height="142" rx="14" fill="white" stroke="#c6d8ce"/>
+<g transform="translate(62 183)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="38" height="40" rx="5"/><path d="M10 15h20M10 25h20M10 35h11"/></g>
+<text x="124" y="202" font-size="22" fill="#173d34" font-weight="700">1. Observe what is actually there</text>
+<text x="124" y="237" font-size="18" fill="#4d655d" font-weight="400">The runner reports images, replica counts, ownership, and readiness.</text>
+<text x="124" y="264" font-size="18" fill="#4d655d" font-weight="400">Check when it was observed and whether the snapshot is complete.</text>
+<path d="M105 309v25" fill="none" stroke="#367d68" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="40" y="343" width="820" height="142" rx="14" fill="white" stroke="#c6d8ce"/>
+<g transform="translate(62 367)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="10" r="8"/><path d="M3 44v-8c0-16 34-16 34 0v8"/></g>
+<text x="124" y="386" font-size="22" fill="#173d34" font-weight="700">2. Review and approve the exact change</text>
+<text x="124" y="421" font-size="18" fill="#4d655d" font-weight="400">The plan names the desired revision, image digests, and affected resources.</text>
+<text x="124" y="448" font-size="18" fill="#4d655d" font-weight="400">Changing intent or letting the plan expire requires a new review.</text>
+<path d="M105 493v25" fill="none" stroke="#367d68" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="40" y="527" width="820" height="142" rx="14" fill="white" stroke="#c6d8ce"/>
+<g transform="translate(62 551)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="19" width="30" height="24" rx="4"/><path d="M11 19V12a9 9 0 0 1 18 0v7"/><path d="M20 28v7"/></g>
+<text x="124" y="570" font-size="22" fill="#173d34" font-weight="700">3. Apply with a renewable job lease</text>
+<text x="124" y="605" font-size="18" fill="#4d655d" font-weight="400">The runner rechecks authority and provider state before writing.</text>
+<text x="124" y="632" font-size="18" fill="#4d655d" font-weight="400">Job progress remains in Weave if Studio closes.</text>
+<path d="M105 677v25" fill="none" stroke="#367d68" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="40" y="711" width="820" height="142" rx="14" fill="white" stroke="#c6d8ce"/>
+<g transform="translate(62 735)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="21" cy="23" r="20"/><path d="M10 23l8 8 16-19"/></g>
+<text x="124" y="754" font-size="22" fill="#173d34" font-weight="700">4. Read the final observation and receipt</text>
+<text x="124" y="789" font-size="18" fill="#4d655d" font-weight="400">Succeeded: the observed resources match the reviewed intent.</text>
+<text x="124" y="816" font-size="18" fill="#4d655d" font-weight="400">Then run a product check: container readiness is not workflow acceptance.</text>
+<rect x="40" y="891" width="820" height="140" rx="14" fill="#fff5e5" stroke="#dcc18c"/>
+<text x="66" y="927" font-size="21" fill="#624b22" font-weight="700">If an external effect might still be running</text>
+<text x="66" y="960" font-size="18" fill="#624b22" font-weight="400">Reconciliation required: inspect the provider, stop any remaining operation,</text>
+<text x="66" y="989" font-size="18" fill="#624b22" font-weight="400">and obtain fresh settled evidence. Closing the incident does not retry it.</text>
+</g></svg>

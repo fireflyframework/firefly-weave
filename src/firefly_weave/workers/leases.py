@@ -101,6 +101,9 @@ class _TaskOperation:
             instance = await self.authority(enlisted, worker_id, "task.claim")
             repository = WorkerRepository(enlisted)
             claimed: list[TaskLease] = []
+            if await repository.draining(worker_id):
+                await repository.observe(worker_id)
+                return claimed
             for identifier in await self.runtime.task_candidates(enlisted, instance.release_id, instance.task_types):
                 if len(claimed) >= limit:
                     break
@@ -119,6 +122,8 @@ class _TaskOperation:
                 if capability not in instance.task_types:
                     continue
                 instance = await self.authority(enlisted, worker_id, "task.claim", capability, lock=True)
+                if await repository.draining(worker_id):
+                    break
                 if await self.runtime.observe_unavailable(enlisted, run):
                     continue
                 await RuntimeRepository(enlisted).require_work(run["id"], run["state"])
@@ -197,6 +202,9 @@ class _TaskOperation:
                     capability="task.claim",
                     context=self.context,
                 )
+            # Keep run/task -> instance lock order, including when an idle poll
+            # records presence. A drain only owns the instance row.
+            await repository.observe(worker_id)
             return claimed
 
     async def check(self, tx: Transaction, proof: LeaseProof, operation: str, *, live: bool = True) -> VerifiedTask:
@@ -249,6 +257,7 @@ class _TaskOperation:
                 generation=lease.generation,
                 expires=expires,
             )
+            await repository.observe(lease.owner)
             return TaskLease(
                 proof=lease,
                 input=verified.task["payload"]["input"],

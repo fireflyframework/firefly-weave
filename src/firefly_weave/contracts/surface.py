@@ -40,6 +40,29 @@ from firefly_weave.contracts.client_configuration import ClientConfiguration
 from firefly_weave.contracts.compatibility import CompatibilityReport
 from firefly_weave.contracts.connector_descriptors import AdapterName, ConnectorDescriptorView
 from firefly_weave.contracts.connectors import ConnectionRequest, ConnectionRevision, ConnectionTestResult
+from firefly_weave.contracts.deployments import (
+    ApplyPlanRequest,
+    Deployment,
+    DeploymentJob,
+    DeploymentLease,
+    DeploymentLeaseProof,
+    DeploymentObservation,
+    DeploymentPlan,
+    DeploymentRequest,
+    DeploymentRunner,
+    DeploymentTarget,
+    JobCancelRequest,
+    ObserveRequest,
+    PlanApproval,
+    PlanApprovalRequest,
+    PlanRequest,
+    ReconcileJobRequest,
+    RunnerClaimRequest,
+    RunnerRegistration,
+    RunnerReport,
+    TargetRequest,
+    TargetUpdate,
+)
 from firefly_weave.contracts.email import (
     EmailConversation,
     EmailConversationDetail,
@@ -154,8 +177,10 @@ from firefly_weave.contracts.workers import (
     ReleaseRequest,
     TaskExecutionContext,
     TaskLease,
+    WorkerControlRequest,
     WorkerInstance,
     WorkerRelease,
+    WorkerStatus,
 )
 from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugSession
 from firefly_weave.triggers.models import Trigger, TriggerReceipt, TriggerRequest
@@ -249,6 +274,19 @@ class Operation:
             ]
         if self.id == "whatsapp_statuses.read":
             params.append(OpenAPIParameter("message_id", "query", MessageId))
+        if self.page and self.id.startswith(
+            (
+                "deployment_targets.",
+                "deployments.",
+                "deployment_observations.",
+                "deployment_plans.",
+                "deployment_jobs.",
+                "deployment_runners.",
+            )
+        ):
+            params.append(OpenAPIParameter("target_id", "query", UUID, required=False))
+            if self.id == "deployment_plans.list":
+                params.append(OpenAPIParameter("deployment_id", "query", UUID, required=False))
         if self.page:
             params += [
                 OpenAPIParameter("limit", "query", PageLimit, required=False, default=50),
@@ -365,6 +403,226 @@ class Operation:
 OPERATIONS = {
     item.id: item
     for item in (
+        Operation(
+            "deployment_plans.approval",
+            ENVIRONMENT + "/deployment-plans/{identifier}/approval",
+            "GET",
+            PlanApproval | None,
+            "deployment.read",
+        ),
+        Operation(
+            "deployment_jobs.reconcile",
+            ENVIRONMENT + "/deployment-jobs/{identifier}/reconcile",
+            "POST",
+            DeploymentJob,
+            "deployment.apply and deployment.approve",
+            ReconcileJobRequest,
+        ),
+        Operation(
+            "deployment_targets.list",
+            ENVIRONMENT + "/deployment-targets",
+            "GET",
+            Page[DeploymentTarget],
+            "deployment.read",
+            page=True,
+        ),
+        Operation(
+            "deployment_targets.read",
+            ENVIRONMENT + "/deployment-targets/{identifier}",
+            "GET",
+            DeploymentTarget,
+            "deployment.read",
+        ),
+        Operation(
+            "deployments.list", ENVIRONMENT + "/deployments", "GET", Page[Deployment], "deployment.read", page=True
+        ),
+        Operation("deployments.read", ENVIRONMENT + "/deployments/{identifier}", "GET", Deployment, "deployment.read"),
+        Operation(
+            "deployment_observations.list",
+            ENVIRONMENT + "/deployment-observations",
+            "GET",
+            Page[DeploymentObservation],
+            "deployment.read",
+            page=True,
+        ),
+        Operation(
+            "deployment_observations.read",
+            ENVIRONMENT + "/deployment-observations/{identifier}",
+            "GET",
+            DeploymentObservation,
+            "deployment.read",
+        ),
+        Operation(
+            "deployment_plans.list",
+            ENVIRONMENT + "/deployment-plans",
+            "GET",
+            Page[DeploymentPlan],
+            "deployment.read",
+            page=True,
+        ),
+        Operation(
+            "deployment_plans.read",
+            ENVIRONMENT + "/deployment-plans/{identifier}",
+            "GET",
+            DeploymentPlan,
+            "deployment.read",
+        ),
+        Operation(
+            "deployment_jobs.list",
+            ENVIRONMENT + "/deployment-jobs",
+            "GET",
+            Page[DeploymentJob],
+            "deployment.read",
+            page=True,
+        ),
+        Operation(
+            "deployment_jobs.read",
+            ENVIRONMENT + "/deployment-jobs/{identifier}",
+            "GET",
+            DeploymentJob,
+            "deployment.read",
+        ),
+        Operation(
+            "deployment_runners.list",
+            ENVIRONMENT + "/deployment-runners",
+            "GET",
+            Page[DeploymentRunner],
+            "deployment.read",
+            page=True,
+        ),
+        Operation(
+            "deployment_runners.read",
+            ENVIRONMENT + "/deployment-runners/{identifier}",
+            "GET",
+            DeploymentRunner,
+            "deployment.read",
+        ),
+        Operation(
+            "deployment_targets.create",
+            ENVIRONMENT + "/deployment-targets",
+            "POST",
+            DeploymentTarget,
+            "target.manage",
+            TargetRequest,
+            (201,),
+            idempotency=True,
+        ),
+        Operation(
+            "deployments.create",
+            ENVIRONMENT + "/deployments",
+            "POST",
+            Deployment,
+            "target.manage",
+            DeploymentRequest,
+            (201,),
+            idempotency=True,
+        ),
+        Operation(
+            "deployment_observations.create",
+            ENVIRONMENT + "/deployment-observations",
+            "POST",
+            DeploymentJob,
+            "deployment.plan",
+            ObserveRequest,
+            (201,),
+            idempotency=True,
+        ),
+        Operation(
+            "deployment_plans.create",
+            ENVIRONMENT + "/deployment-plans",
+            "POST",
+            DeploymentPlan,
+            "deployment.plan",
+            PlanRequest,
+            (201,),
+            idempotency=True,
+        ),
+        Operation(
+            "deployment_targets.update",
+            ENVIRONMENT + "/deployment-targets/{identifier}",
+            "PUT",
+            DeploymentTarget,
+            "target.manage",
+            TargetUpdate,
+            revision="required",
+            etag=True,
+        ),
+        Operation(
+            "deployments.update",
+            ENVIRONMENT + "/deployments/{identifier}",
+            "PUT",
+            Deployment,
+            "target.manage",
+            DeploymentRequest,
+            revision="required",
+            etag=True,
+        ),
+        Operation(
+            "deployment_plans.approve",
+            ENVIRONMENT + "/deployment-plans/{identifier}/approve",
+            "POST",
+            PlanApproval,
+            "deployment.approve",
+            PlanApprovalRequest,
+        ),
+        Operation(
+            "deployment_plans.apply",
+            ENVIRONMENT + "/deployment-plans/{identifier}/apply",
+            "POST",
+            DeploymentJob,
+            "deployment.apply",
+            ApplyPlanRequest,
+            (201,),
+            idempotency=True,
+        ),
+        Operation(
+            "deployment_jobs.cancel",
+            ENVIRONMENT + "/deployment-jobs/{identifier}/cancel",
+            "POST",
+            DeploymentJob,
+            "deployment.cancel",
+            JobCancelRequest,
+        ),
+        Operation(
+            "deployment_runners.create",
+            ENVIRONMENT + "/deployment-runners",
+            "POST",
+            DeploymentRunner,
+            "runner.register",
+            RunnerRegistration,
+            (201,),
+        ),
+        Operation(
+            "deployment_runners.claim",
+            ENVIRONMENT + "/deployment-runners/claim",
+            "POST",
+            DeploymentLease | None,
+            "runner.claim",
+            RunnerClaimRequest,
+        ),
+        Operation(
+            "deployment_runners.renew",
+            ENVIRONMENT + "/deployment-runners/renew",
+            "POST",
+            DeploymentLease,
+            "runner.renew",
+            DeploymentLeaseProof,
+        ),
+        Operation(
+            "deployment_runners.report",
+            ENVIRONMENT + "/deployment-runners/report",
+            "POST",
+            DeploymentJob,
+            "runner.report",
+            RunnerReport,
+        ),
+        Operation(
+            "deployment_runners.revoke",
+            ENVIRONMENT + "/deployment-runners/{identifier}/revoke",
+            "POST",
+            DeploymentRunner,
+            "target.manage",
+        ),
         Operation(
             "human_files.create",
             ENVIRONMENT + "/human-tasks/{identifier}/files/create",
@@ -1157,8 +1415,20 @@ OPERATIONS = {
             InstanceRequest,
             (201,),
         ),
-        Operation("workers.list", ENVIRONMENT + "/workers", "GET", Page[WorkerInstance], "status.read", page=True),
-        Operation("workers.read", ENVIRONMENT + "/workers/{identifier}", "GET", WorkerInstance, "status.read"),
+        Operation("workers.list", ENVIRONMENT + "/workers", "GET", Page[WorkerStatus], "status.read", page=True),
+        Operation("workers.read", ENVIRONMENT + "/workers/{identifier}", "GET", WorkerStatus, "status.read"),
+        *(
+            Operation(
+                "workers." + action,
+                ENVIRONMENT + "/workers/{identifier}/" + action,
+                "POST",
+                WorkerStatus,
+                "worker.drain",
+                WorkerControlRequest,
+                idempotency=True,
+            )
+            for action in ("drain", "resume")
+        ),
         Operation("workers.revoke", ENVIRONMENT + "/workers/{identifier}/revoke", "POST", Revoked, "release.retire"),
         Operation(
             "workers.grant",

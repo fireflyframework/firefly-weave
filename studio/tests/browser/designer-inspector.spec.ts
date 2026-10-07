@@ -208,7 +208,7 @@ test.describe("1440x900", () => {
     const input = panel.getByLabel("Step name");
     expect((await input.boundingBox())!.width).toBeGreaterThanOrEqual(200);
     // A section folds and stays folded for this kind of step.
-    const summary = panel.locator("summary", { hasText: "Properties" });
+    const summary = panel.locator("summary", { hasText: "Transform data" });
     await summary.click();
     await expect(
       panel.locator("details.inspector-section"),
@@ -217,7 +217,9 @@ test.describe("1440x900", () => {
     await expect(
       inspector(page).locator("details.inspector-section"),
     ).not.toHaveAttribute("open", "");
-    await inspector(page).locator("summary", { hasText: "Properties" }).click();
+    await inspector(page)
+      .locator("summary", { hasText: "Transform data" })
+      .click();
     await expect(
       inspector(page).locator("details.inspector-section"),
     ).toHaveAttribute("open", "");
@@ -241,16 +243,22 @@ test.describe("1440x900", () => {
       "Fields",
       "List",
     ]);
-    // The switch sits on the field's label row, 24 px tall.
+    // The source choices may wrap below their label and contextual help.
     const label = inspector(page).locator(".expression-label").first();
     const [labelBox, modeBox] = [
       await label.boundingBox(),
       await modes.boundingBox(),
     ];
-    expect(Math.abs(labelBox!.y - modeBox!.y)).toBeLessThan(12);
+    expect(modeBox!.y).toBeGreaterThanOrEqual(labelBox!.y);
+    expect(modeBox!.y - labelBox!.y).toBeLessThanOrEqual(64);
+    const inspectorBox = (await inspector(page).boundingBox())!;
+    expect(modeBox!.x).toBeGreaterThanOrEqual(inspectorBox.x);
+    expect(modeBox!.x + modeBox!.width).toBeLessThanOrEqual(
+      inspectorBox.x + inspectorBox.width,
+    );
     expect(
       (await modes.getByRole("radio", { name: "Value" }).boundingBox())!.height,
-    ).toBeGreaterThanOrEqual(24);
+    ).toBeGreaterThanOrEqual(36);
     await modes.getByRole("radio", { name: "Formula" }).click();
     const operator = inspector(page).getByLabel("Value operator", {
       exact: true,

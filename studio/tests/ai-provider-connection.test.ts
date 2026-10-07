@@ -30,6 +30,35 @@ const draft = {
 };
 describe("AI provider connection authority", () => {
   it.each([
+    ["openai-chat", "https://api.openai.com/v1"],
+    ["openai-responses", "https://api.openai.com/v1"],
+    ["anthropic", "https://api.anthropic.com"],
+  ])("uses the standard endpoint for %s", (provider, endpoint) => {
+    const body = aiConnectionRequest(
+      { ...draft, provider, endpoint: "" },
+      "connector",
+    );
+    expect(body.config.endpoint).toBe(endpoint);
+    expect(body.allowed_destinations).toEqual([new URL(endpoint).origin]);
+  });
+  it("requires Azure's resource endpoint", () => {
+    expect(() =>
+      aiConnectionRequest({ ...draft, endpoint: "" }, "connector"),
+    ).toThrow("HTTPS endpoint");
+  });
+  it("canonicalizes the saved endpoint and destination together without removing the base path", () => {
+    const body = aiConnectionRequest(
+      { ...draft, endpoint: "https://APPROVED.openai.azure.com:443/custom/" },
+      "connector",
+    );
+    expect(body.config.endpoint).toBe(
+      "https://approved.openai.azure.com/custom/",
+    );
+    expect(body.allowed_destinations).toEqual([
+      "https://approved.openai.azure.com",
+    ]);
+  });
+  it.each([
     "http://model.invalid",
     "https://user:password@model.invalid",
     "https://model.invalid/?api-key=secret",

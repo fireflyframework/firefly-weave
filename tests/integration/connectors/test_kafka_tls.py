@@ -25,7 +25,7 @@ import struct
 from uuid import uuid4
 
 import pytest
-from test_kafka import docker
+from test_kafka import docker, kafka_data_directory
 
 pytestmark = pytest.mark.integration
 
@@ -119,7 +119,11 @@ async def tls_broker(tls_material, tmp_path):
     }
     env.write_text("\n".join(k + "=" + v for k, v in config.items()) + "\n")
     env.chmod(0o600)
-    identifier = await docker("create", "--name", name, "-p", f"127.0.0.1:{port}:9094", "--env-file", str(env), image)
+    data = kafka_data_directory()
+    storage = ("--mount", f"type=bind,source={data},target=/tmp/kafka-logs") if data is not None else ()
+    identifier = await docker(
+        "create", "--name", name, "-p", f"127.0.0.1:{port}:9094", "--env-file", str(env), *storage, image
+    )
     store.chmod(0o644)
     await docker("cp", str(store), identifier + ":/tmp/broker.p12")
     await docker("start", identifier)

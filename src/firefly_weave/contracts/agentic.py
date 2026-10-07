@@ -16,6 +16,7 @@
 
 """Pure catalog for lease-bound model workers; no provider runtime is imported here."""
 
+from collections.abc import Iterable
 from copy import deepcopy
 from typing import cast
 from urllib.parse import urlsplit
@@ -128,24 +129,43 @@ def action_definition() -> JsonObject:
     }
 
 
+def provider_origin(endpoint: str) -> str:
+    """Match the HTTPS origin serialized by Studio without changing endpoint policy."""
+    parsed = urlsplit(endpoint)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.port == 0
+    ):
+        raise ValueError("Invalid endpoint")
+    host = parsed.hostname.encode("idna").decode("ascii")
+    if ":" in host:
+        host = f"[{host}]"
+    return f"https://{host}" + (f":{parsed.port}" if parsed.port not in {None, 443} else "")
+
+
+def provider_destination_allowed(endpoint: str, destinations: Iterable[str]) -> bool:
+    origin = provider_origin(endpoint)
+    for destination in destinations:
+        try:
+            if urlsplit(destination).path in {"", "/"} and provider_origin(destination) == origin:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def validate_connection(request: ConnectionRequest) -> None:
     issues = []
     endpoint = request.config.get("endpoint")
     try:
         if not isinstance(endpoint, str):
             raise ValueError("Missing endpoint")
-        parsed = urlsplit(endpoint)
-        if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("Invalid endpoint")
-        origin = f"https://{parsed.netloc}"
-        if origin not in request.allowed_destinations:
+        if not provider_destination_allowed(endpoint, request.allowed_destinations):
             issues.append(ConnectionIssue("/allowed_destinations", "Add the provider endpoint origin.", "DESTINATION"))
     except ValueError:
         issues.append(ConnectionIssue("/config/endpoint", "Use a trusted HTTPS provider endpoint."))

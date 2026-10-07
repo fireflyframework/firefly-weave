@@ -21,6 +21,8 @@ import importlib.util
 import json
 import os
 import socket
+import stat
+import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -28,6 +30,20 @@ import pytest
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 pytestmark = pytest.mark.integration
+
+
+def kafka_data_directory():
+    location = os.environ.get("WEAVE_TEST_KAFKA_DATA_ROOT")
+    if not location:
+        return None
+    root = Path(location)
+    info = root.lstat()
+    if not root.is_absolute() or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError("Kafka host data requires an absolute private owned directory")
+    data = Path(tempfile.mkdtemp(prefix="broker-", dir=root))
+    # The bind target must be writable by the image UID; its host parent remains private.
+    data.chmod(0o777)
+    return data
 
 
 async def docker(*args):
@@ -59,7 +75,11 @@ async def kafka_backend(tmp_path_factory):
     env.write_text(f"WEAVE_KAFKA_IMAGE={image}\nWEAVE_KAFKA_PORT={port}\n")
     # Retained projects must not consume a fresh daemon subnet on every test module.
     override = env.parent / "bridge.yaml"
-    override.write_text("services:\n  kafka:\n    network_mode: bridge\n")
+    service = {"network_mode": "bridge"}
+    data = kafka_data_directory()
+    if data is not None:
+        service["volumes"] = [{"type": "bind", "source": str(data), "target": "/tmp/kafka-logs"}]
+    override.write_text(json.dumps({"services": {"kafka": service}}))
     args = (
         "compose",
         "--project-name",

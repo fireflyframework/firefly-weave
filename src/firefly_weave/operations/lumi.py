@@ -45,8 +45,10 @@ from firefly_weave.contracts.lumi import (
 from firefly_weave.contracts.schema_export import export_schemas
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.deployments.service import DeploymentService
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.history import HistoryService
+from firefly_weave.operations.lumi_deployments import COLLECTIONS, deployment_context
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.persistence.uow import Transaction
 
@@ -54,10 +56,16 @@ from firefly_weave.persistence.uow import Transaction
 @service
 class LumiService:
     def __init__(
-        self, connections: ConnectionService, history: HistoryService, debug: DebugService, gateway: LumiGatewayClient
+        self,
+        connections: ConnectionService,
+        history: HistoryService,
+        debug: DebugService,
+        gateway: LumiGatewayClient,
+        deployments: DeploymentService,
     ) -> None:
         self.connections, self.history, self.debug, self.gateway = connections, history, debug, gateway
         self.definitions = connections.definitions
+        self.deployments = deployments
 
     async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> Principal:
         if tx.scope.environment_id is None:
@@ -155,7 +163,13 @@ class LumiService:
         result: list[JsonValue] = []
         project = scope.model_copy(update={"environment_id": None})
         for attachment in request.attachments:
-            if attachment.kind == "draft":
+            data: JsonValue
+            if attachment.kind in COLLECTIONS:
+                record = await self.deployments.read(
+                    COLLECTIONS[attachment.kind], attachment.id, actor=actor, scope=scope, context=context
+                )
+                data = deployment_context(attachment.kind, record)
+            elif attachment.kind == "draft":
                 value = await self.definitions.read(actor, project, "drafts", attachment.id, context=context)
                 data = cast(JsonValue, {"document": value["document"], "revision": value["revision"]})
             elif attachment.kind == "run":
@@ -178,6 +192,15 @@ class LumiService:
         measure_value(result)
         if len(json.dumps(result, ensure_ascii=False).encode()) > 262144:
             raise CatalogError(413, "WV-LUMI-LIMIT", "Selected context is too large")
+        if request.explanation_only:
+            return {
+                "resources": result,
+                "purpose": "explain-operations",
+                "limitations": (
+                    "Saved snapshots only, not live cloud state or worker task capacity. "
+                    "Explain only; return no proposals."
+                ),
+            }
         schemas = export_schemas()
         return {
             "resources": result,
@@ -205,7 +228,7 @@ class LumiService:
                         raise CatalogError(409, "WV-LUMI-REVISION", "Lumi configuration changed; reply discarded")
                 # Recheck attachment permissions and simulation ownership before releasing output.
                 await self._attachments(actor, scope, request, context)
-                return reply
+                return reply.model_copy(update={"proposals": []}) if request.explanation_only else reply
         except TimeoutError:
             raise CatalogError(504, "WV-LUMI-TIMEOUT", "Lumi did not respond in time") from None
         except SecretUnavailable:

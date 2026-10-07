@@ -41,6 +41,12 @@ Role = Literal[
     "lumi_manager",
     "file_reader",
     "file_manager",
+    "deployment_reader",
+    "deployment_planner",
+    "deployment_approver",
+    "deployment_operator",
+    "deployment_runner",
+    "worker_operator",
 ]
 
 

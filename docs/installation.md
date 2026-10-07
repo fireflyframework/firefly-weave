@@ -27,18 +27,18 @@ The installer puts the CLI in its own Python environment, so your applications'
 packages are never affected. It includes local authoring, the API client with
 sign-in support, OpenAPI import, and the host that runs Studio. Studio's browser
 application is a separate download; see the
-[Studio guide](guides/studio.md#install-the-alpha11-browser-application).
+[Studio guide](guides/studio.md#install-the-alpha12-browser-application).
 
 ## Choose the installation path
 
-**Recommended:** install the pinned **v0.1.0a11 alpha** below. You do not need Git,
+**Recommended:** install the pinned **v0.1.0a12 alpha** below. You do not need Git,
 a source checkout, Docker, or `sudo`. An alpha is a preview release: use it to
 evaluate Weave, and check the [current limits](capabilities.md).
 
 | Your situation | Start here |
 | --- | --- |
 | You want to write, check, and simulate workflows, connect to your team's platform by its address (`weave auth setup`), or call REST APIs without code | [Install a release](#install-a-release), then [check the result](#check-the-result) |
-| You want the visual editor in your browser | [Install Studio](guides/studio.md#install-the-alpha11-browser-application) |
+| You want the visual editor in your browser | [Install Studio](guides/studio.md#install-the-alpha12-browser-application) |
 | You want a native desktop app | [Desktop installation](guides/desktop.md) |
 | You contribute code, or want to try changes made after the release | [Install the current source](#install-the-current-source) |
 | You already have the CLI | [Upgrade or select another version](#installation-locations-and-upgrades) |
@@ -89,8 +89,8 @@ explicitly:
   # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a11/install.sh \
-    | sh -s -- --version v0.1.0a11
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a12/install.sh \
+    | sh -s -- --version v0.1.0a12
 )
 ```
 
@@ -100,7 +100,7 @@ environment; and tests the new command before it makes it available. The first
 installation can take several minutes. No services start and no cloud resources
 are created.
 
-Expected, at the end: `Installed Firefly Weave 0.1.0a11: PATH`, then `Run: PATH
+Expected, at the end: `Installed Firefly Weave 0.1.0a12: PATH`, then `Run: PATH
 --help`, where `PATH` is the new command (by default `~/.local/bin/weave`). When
 that directory is not on your `PATH`, the installer also prints the `export`
 line to add. The last line says where earlier environments are kept for
@@ -112,7 +112,7 @@ instead:
 ```sh
 # Download the installer to a file instead of running it directly.
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a11/install.sh \
+  https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a12/install.sh \
   -o weave-install.sh
 ```
 
@@ -121,7 +121,7 @@ editor, then run it:
 
 ```sh
 # Install the same pinned release with the reviewed file.
-sh weave-install.sh --version v0.1.0a11
+sh weave-install.sh --version v0.1.0a12
 ```
 
 Expected: the same output as above. Keep the file if you want to reuse it for
@@ -147,7 +147,7 @@ weave version --output json
 weave docs platform
 ```
 
-Expected: `Firefly Weave 0.1.0a11`; the help with its command groups and
+Expected: `Firefly Weave 0.1.0a12`; the help with its command groups and
 examples; one JSON object with `version`, `apiVersion`, and `irVersion`; and the
 address of the platform guide. The Firefly banner appears only in the main help;
 it never appears in command results or JSON output.
@@ -183,7 +183,7 @@ remove or move the Python interpreter the environment was built with.
 
 ### Select a version or release channel
 
-The explicit `--version v0.1.0a11` makes an installation repeatable. To upgrade,
+The explicit `--version v0.1.0a12` makes an installation repeatable. To upgrade,
 use the installer URL and `--version` value of the new release shown on
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 Tags start with `v`; `weave --version` shows the package version without it.
@@ -192,7 +192,7 @@ With a downloaded `weave-install.sh`, you can select a channel instead:
 
 | Command | What it installs |
 | --- | --- |
-| `sh weave-install.sh --version v0.1.0a11` | Exactly this documented alpha |
+| `sh weave-install.sh --version v0.1.0a12` | Exactly this documented alpha |
 | `sh weave-install.sh --prerelease` | The most recently published release, including alpha previews |
 | `sh weave-install.sh` | The latest stable release only |
 
@@ -236,7 +236,7 @@ removal option:
   # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a11/install.sh \
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a12/install.sh \
     | sh -s -- --uninstall
 )
 ```
@@ -257,7 +257,7 @@ delete them yourself if you want no trace.
 | What you see | Why | What to do |
 | --- | --- | --- |
 | A Python version or `venv` error | The selected Python is older than 3.12, or lacks `venv` | Set `WEAVE_INSTALL_PYTHON` to Python 3.12 or newer; install your distribution's `venv` package |
-| No installable release was found | You asked for the latest stable release, and only alphas exist | Run the pinned `v0.1.0a11` command above, or add `--prerelease` |
+| No installable release was found | You asked for the latest stable release, and only alphas exist | Run the pinned `v0.1.0a12` command above, or add `--prerelease` |
 | Missing installer assets | The selected release is older than this installer | Choose `v0.1.0a2` or later; never mix files from different releases |
 | A checksum mismatch | A downloaded file is not the published one | Stop, and download the complete release again from the same trusted source |
 | The installer refuses to replace `weave` | Another program already uses that command path | Choose a different `--bin-dir`, or inspect the old command before replacing it yourself |
@@ -268,7 +268,7 @@ delete them yourself if you want no trace.
 
 This route installs **unreleased development source from `main`**, for
 contributors and for trying changes made after the latest release. You do not
-need it for any feature this documentation describes: the v0.1.0a11 release
+need it for any feature this documentation describes: the v0.1.0a12 release
 includes them. Behavior on `main` can change before the next release. Follow the
 documentation of the same checkout.
 

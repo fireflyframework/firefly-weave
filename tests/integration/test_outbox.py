@@ -615,7 +615,7 @@ async def test_concurrent_manual_retry_grants_only_one_extra_attempt(setup):
     assert (await s.rows("event_deliveries"))[0]["attempt_limit"] == 4
 
 
-async def test_slow_tenant_receiver_leaves_other_tenant_progress(setup, scheduler_url):
+async def test_slow_tenant_receiver_leaves_other_tenant_progress(setup, scheduler_url, monkeypatch):
     from pydantic import SecretStr
 
     from firefly_weave.connections.registry import ConnectorRegistry
@@ -671,6 +671,15 @@ async def test_slow_tenant_receiver_leaves_other_tenant_progress(setup, schedule
         context=AuditContext(),
     )
     dispatcher = graph.resolve(OutboxDispatcher)
+    settle = dispatcher._settle
+
+    async def delayed_settlement(scope, *args, **kwargs):
+        if scope == other:
+            # Receiver arrival must not be mistaken for a committed delivery receipt.
+            await asyncio.sleep(0.5)
+        return await settle(scope, *args, **kwargs)
+
+    monkeypatch.setattr(dispatcher, "_settle", delayed_settlement)
     event = IntegrationEvent(
         event_id=uuid4(),
         type="run.transition",
@@ -698,14 +707,15 @@ async def test_slow_tenant_receiver_leaves_other_tenant_progress(setup, schedule
     loop = OutboxLoop(settings, dispatcher.uow, dispatcher)
     try:
         await loop.open()
-        for _ in range(80):
-            if any(r["path"] == b"/fast" for r in s.remote.requests):
-                break
-            await asyncio.sleep(0.1)
+        async with asyncio.timeout(8):
+            while True:
+                rows = await s.rows("event_deliveries")
+                if any(row["environment_id"] == other.environment_id and row["status"] == "delivered" for row in rows):
+                    break
+                await asyncio.sleep(0.1)
         assert any(r["path"] == b"/events" for r in s.remote.requests)
         assert any(r["path"] == b"/fast" for r in s.remote.requests)
         assert not s.remote.slow.is_set()
-        rows = await s.rows("event_deliveries")
         assert any(row["environment_id"] == other.environment_id and row["status"] == "delivered" for row in rows)
         assert any(row["environment_id"] == s.scope.environment_id and row["status"] == "leased" for row in rows)
     finally:

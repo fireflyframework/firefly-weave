@@ -105,8 +105,8 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
         ),
         (
             "integration",
-            [python, "-m", "pytest", "tests/integration", "-q", "--tb=short", "--show-capture=no"],
-            1800,
+            [python, "-m", "pytest", "tests/integration", "-v", "--maxfail=1", "--tb=short", "--show-capture=no"],
+            4800,
         ),
     ]
     stages = (

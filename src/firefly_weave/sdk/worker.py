@@ -108,7 +108,10 @@ class Worker:
                 while True:
                     delay = max(0.01, (current_expiry - loop.time()) / 3)
                     await asyncio.sleep(delay)
-                    async with asyncio.timeout_at(current_expiry):
+                    async with (
+                        asyncio.timeout_at(current_expiry),
+                        lease_settlement(lease.proof, current_expiry),
+                    ):
                         renewed = await self.client.heartbeat(lease.proof)
                     # A late response cannot revive expired authority, even if a transport
                     # suppresses cancellation. Only a timely matching proof extends execution.

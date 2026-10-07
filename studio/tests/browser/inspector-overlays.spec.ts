@@ -161,7 +161,9 @@ for (const viewport of [
               : "action";
         await designer.selectStep(step);
         if (context === "last inspector field")
-          await designer.inspector.locator(".otherwise summary").click();
+          await designer.inspector
+            .locator(".otherwise > details > summary")
+            .click();
         const field =
           context === "Transform"
             ? designer.inspector.getByRole("combobox", {

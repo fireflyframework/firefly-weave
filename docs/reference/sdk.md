@@ -355,6 +355,8 @@ capability.
 | `human_tasks`, `read_human_task`, `claim_human_task`, `release_human_task`, `complete_human_task`, `reassign_human_task` | Human task inbox and decisions |
 | `assignment_bindings`, `put_assignment_binding`, `put_human_group` | Who may work on which human task |
 | `register_release`, `read_release`, `list_releases`, `register_worker`, `read_worker`, `list_workers`, `revoke_worker`, `grant_connection` | Trusted worker releases and instances |
+| `drain_worker`, `resume_worker` | Revision-checked worker controls; existing leases can settle while drained |
+| `invoke("deployment_targets.…")`, `invoke("deployments.…")`, `invoke("deployment_observations.…")`, `invoke("deployment_plans.…")`, `invoke("deployment_jobs.…")`, `invoke("deployment_runners.…")` | Typed, environment-scoped Operations contracts; operation names and required authority are in the [API inventory](api.md#operation-inventory) |
 | `claim_tasks`, `heartbeat`, `complete_task`, `fail_task`, `request_credentials` | The typed [worker protocol](worker-protocol.md); `WorkerTransport` remains supported |
 | `create_trigger`, `read_trigger`, `list_triggers`, `disable_trigger` | Immutable signed webhook triggers |
 | `save_schedule`, `read_schedule`, `list_schedules`, `schedule_history`, `change_schedule` | UTC schedules with revisions and occurrence pages |
@@ -374,6 +376,38 @@ code. Paginated methods return a typed `Page`, except run history, whose
 `EventPage` also carries its high-water mark. Resource IDs and cursors must
 belong to the client's scope. Secret leases use the `CredentialLease` model,
 whose ordinary serialization leaves out the resolved value.
+
+## Deployment Operations through the SDK
+
+Use `WeaveClient.invoke` with models from
+`firefly_weave.contracts.deployments`. It resolves only registered operations,
+validates request and response contracts, and uses the client's existing
+authentication and exact environment scope. For example, inside an active
+client context:
+
+```python
+from uuid import UUID
+from firefly_weave.contracts.deployments import ObserveRequest
+
+job = await client.invoke(
+    "deployment_observations.create",
+    body=ObserveRequest(target_id=UUID(target_id)),
+    idempotency_key=request_id,
+)
+```
+
+Retain `request_id` when retrying that same request. Poll `deployment_jobs.read`
+with `identifier=job.id`; successful observation jobs identify the persisted
+snapshot. Build a plan using its observation ID and the desired deployment's
+exact revision. Read and review the returned plan before approving its digest
+and applying it with a separate retained idempotency key. Updates use
+`revision=` for `If-Match`; lists accept bounded `query` filters and cursors.
+
+Approval and apply require explicit grants. The outbound runner uses a
+separate application identity and local provider configuration. Do not put
+cloud credentials, command strings, or raw manifests in API bodies. See
+[Operations authority and reconciliation](api.md#deployment-operations-authority)
+for the checks that still apply after a plan was approved.
 
 ## Device login, PKCE and stores
 

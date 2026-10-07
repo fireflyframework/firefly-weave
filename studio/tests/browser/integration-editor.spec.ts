@@ -46,6 +46,7 @@ const node = (page: Page, id: string) =>
 
 async function chooseLookup(page: Page) {
   await chooseAction(page, "sql.lookup@1.0.0");
+  await page.locator(".action-details > summary").click();
   await expect(
     page
       .locator(".integration-contract dl")
@@ -329,6 +330,7 @@ test("H7 overlapping catalog loads never restore a stale contract", async ({
   await expect(select).toBeEnabled({ timeout: 5000 });
   await chooseAction(page, "sql.lookup@1.0.0");
   const contract = page.locator(".integration-contract dl");
+  await page.locator(".action-details > summary").click();
   await expect(
     contract.getByText("weave-postgresql@1.0.0", { exact: true }),
   ).toBeVisible();
@@ -370,6 +372,7 @@ test("H8 a nested invalid value keeps an inline error after editing a sibling", 
   await page.getByLabel("Property value").nth(1).pressSequentially("hello");
   await expect(draftErrors(page).first()).toBeVisible();
   await expect(page.getByText("Enter a finite number.")).toBeVisible();
+  await page.getByLabel("Property value").first().fill("0");
   const source = await sourceText(page);
   expect(source).toContain("a: 0");
   expect(source).toContain("b: hello");
@@ -472,6 +475,7 @@ test("H7 a contract still loading is shown for the next step that uses it", asyn
     "Loading the action's details",
   );
   await node(page, "second").click();
+  await page.locator(".action-details > summary").click();
   await expect(page.locator(".integration-requirements")).toBeVisible();
   await expect(page.getByLabel(/^Customer ID/)).toHaveValue("second");
   await expect(page.locator(".apply-state")).toHaveCount(0);
@@ -569,6 +573,7 @@ test("a created slot can be renamed and updates its action", async ({
     .click();
   const name = page.getByLabel("Slot name", { exact: true });
   await expect(name).toHaveValue("weave-postgresql");
+  await expect(name).toBeFocused();
   // A click after the text puts the caret at its end (End doesn't move the
   // caret in a macOS text field).
   const field = (await name.boundingBox())!;

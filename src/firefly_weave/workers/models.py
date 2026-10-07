@@ -19,9 +19,10 @@
 import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timedelta
+from typing import Any, Literal
 
+from firefly_weave.contracts.workers import WorkerInstance, WorkerStatus
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import checked_deadline
@@ -41,6 +42,35 @@ def capped_extension(now: datetime, ttl: int, absolute_deadline: datetime) -> da
 
 def unavailable() -> CatalogError:
     return CatalogError(409, "WV-LEASE", "Lease or worker authority unavailable")
+
+
+def observed_worker(
+    instance: WorkerInstance,
+    *,
+    last_seen_at: datetime | None,
+    draining: bool,
+    revision: int,
+    active_leases: int,
+    observed_at: datetime,
+) -> WorkerStatus:
+    expires = last_seen_at + timedelta(seconds=60) if last_seen_at else None
+    presence: Literal["unknown", "recent", "stale"] = (
+        "unknown" if expires is None else "recent" if expires > observed_at else "stale"
+    )
+    available = None if presence != "recent" else max(0, instance.capacity - active_leases)
+    if draining or instance.revoked:
+        available = 0
+    return WorkerStatus(
+        **instance.model_dump(),
+        revision=revision,
+        draining=draining,
+        presence=presence,
+        last_seen_at=last_seen_at,
+        presence_expires_at=expires,
+        observed_at=observed_at,
+        active_leases=active_leases,
+        available_capacity=available,
+    )
 
 
 @dataclass(frozen=True)

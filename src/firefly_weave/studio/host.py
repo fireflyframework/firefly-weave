@@ -347,11 +347,51 @@ class StudioController:
         ).selection()
         return await self.connection.apply_scope(generation, selection)
 
+    @get_mapping("/studio/contracts/deployment-target")
+    async def deployment_target_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.deployments import TargetRequest
+
+        return JSONResponse(TargetRequest.model_json_schema(), headers={"Cache-Control": "no-store"})
+
+    @get_mapping("/studio/contracts/deployment-target-update")
+    async def deployment_target_update_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.deployments import TargetUpdate
+
+        return JSONResponse(TargetUpdate.model_json_schema(), headers={"Cache-Control": "no-store"})
+
+    @get_mapping("/studio/contracts/deployment")
+    async def deployment_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.deployments import DeploymentRequest
+
+        return JSONResponse(DeploymentRequest.model_json_schema(), headers={"Cache-Control": "no-store"})
+
     @get_mapping("/studio/contracts/llm-profile")
     async def llm_profile_contract(self, request: Request) -> Response:
         from firefly_weave.contracts.llm import LLMProfile
 
         return JSONResponse(LLMProfile.model_json_schema(by_alias=True), headers={"Cache-Control": "no-store"})
+
+    @post_mapping("/studio/contracts/llm-profile/validate")
+    async def validate_llm_profile(self, request: Request) -> Response:
+        from firefly_weave.contracts.llm import LLMProfile
+
+        raw = await request.body()
+        if len(raw) > 65536:
+            return problem(413, "WV-STUDIO-REQUEST", "AI profile exceeds the 64 KiB limit")
+
+        def work() -> Any:
+            try:
+                LLMProfile.model_validate_json(raw)
+            except ValidationError as exc:
+                # Return field locations and guidance without reflecting profile values.
+                errors = exc.errors(include_input=False, include_context=False, include_url=False)
+                return {
+                    "valid": False,
+                    "issues": [{"path": list(error["loc"]), "message": error["msg"]} for error in errors[:50]],
+                }
+            return {"valid": True, "issues": []}
+
+        return await local_work(work)
 
     @get_mapping("/studio/contracts/file-reference")
     async def file_reference_contract(self, request: Request) -> Response:
@@ -450,12 +490,16 @@ class StudioController:
         return await local_work(lambda: author_http_action(body.request).model_dump(by_alias=True, mode="json"))
 
 
+STATIC_WAIT_SECONDS = 10
+
+
 class StudioBoundary:
     """Reject rebinding/cross-site access before credentials or compiler work is reached."""
 
     def __init__(self, app: ASGIApp, service: StudioService) -> None:
         self.app, self.service = app, service
         self.slots = asyncio.Semaphore(8)
+        self.asset_slots = asyncio.Semaphore(8)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -504,10 +548,19 @@ class StudioBoundary:
         if protected and mutation and not secret_matches(headers.get("x-weave-csrf", ""), self.service.csrf):
             await reject(403, "WV-STUDIO-CSRF", "Refresh Studio before submitting this change")
             return
-        if self.slots.locked():
+        # Browser navigation and lazy chunks must not compete with slow API calls.
+        static = not mutation and not request.url.path.startswith("/studio/")
+        slots = self.asset_slots if static else self.slots
+        if not static and slots.locked():
             await reject(429, "WV-STUDIO-BUSY", "Studio is busy; wait for the current requests")
             return
-        async with self.slots:
+        try:
+            async with asyncio.timeout(STATIC_WAIT_SECONDS):
+                await slots.acquire()
+        except TimeoutError:
+            await reject(429, "WV-STUDIO-BUSY", "Studio is busy; wait for the current requests")
+            return
+        try:
             body = bytearray()
             try:
                 async with asyncio.timeout(10):
@@ -534,6 +587,8 @@ class StudioBoundary:
                 return await receive()
 
             await self.app(scope, bounded_receive, secure_send)
+        finally:
+            slots.release()
 
 
 @pyfly_application(name="firefly-weave-studio", scan_packages=["firefly_weave.studio.host"])

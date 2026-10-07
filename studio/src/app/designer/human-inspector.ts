@@ -111,6 +111,7 @@ const record = (value: unknown): Record<string, unknown> =>
             heading="Title"
             label="Title"
             [references]="titleReferences"
+            [expectedSchema]="textSchema"
             (valueChange)="edit('title', $event)"
             (validityChange)="validity('title', $event)"
           />
@@ -139,6 +140,7 @@ const record = (value: unknown): Record<string, unknown> =>
           heading="Context"
           label="Context"
           [references]="contextReferences"
+          [expectedSchema]="{ type: 'object' }"
           (valueChange)="edit('context', $event)"
           (validityChange)="validity('context', $event)"
         />
@@ -212,8 +214,8 @@ const record = (value: unknown): Record<string, unknown> =>
         Create a path for each answer
       </button>
     </section>
-    <section class="human-section">
-      <h3>Deadlines</h3>
+    <details class="human-section human-deadlines">
+      <summary>Deadlines <span class="hint">Optional</span></summary>
       <weave-step-property-grid
         [step]="host.propertyStep!"
         [readOnly]="host.model.readonly || host.editingLocked"
@@ -228,7 +230,7 @@ const record = (value: unknown): Record<string, unknown> =>
         Expires after: the task expires and can no longer be answered; the
         workflow receives a timeout.
       </p>
-    </section>
+    </details>
   </fieldset>`,
   styles: [
     `

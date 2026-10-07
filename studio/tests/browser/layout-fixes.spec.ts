@@ -172,8 +172,11 @@ test.describe("360x740", () => {
     );
     await page.getByRole("button", { name: "Workers", exact: true }).click();
     await page.locator(".resource-row").click();
-    const facts = page.locator(".record-detail .task-metadata").first();
-    await expect(facts).toContainText("crm-lookup");
+    await expect(page.locator(".record-detail")).toContainText(
+      "Task types: crm-lookup",
+    );
+    const facts = page.locator(".record-detail weave-worker-controls dl");
+    await expect(facts).toContainText("Claim mode");
     const label = await box(facts.locator("dt").first());
     const value = await box(facts.locator("dd").first());
     expect(Math.abs(value.x - label.x)).toBeLessThanOrEqual(1);

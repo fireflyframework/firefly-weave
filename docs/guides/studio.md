@@ -38,10 +38,10 @@ computer at `127.0.0.1`. That host keeps your saved platforms, which it shares
 with the `weave` command line, and keeps your sign-in in the operating system's
 credential store. The page never receives your tokens.
 
-**This page describes Studio 0.1.0a11.** An alpha6 or earlier browser bundle
+**This page describes Studio 0.1.0a12.** An alpha6 or earlier browser bundle
 shows an earlier connection assistant, which imports a login configuration file,
 and lacks the editor features and API actions described here. To follow this
-page, [install the alpha11 browser application](#install-the-alpha11-browser-application).
+page, [install the alpha12 browser application](#install-the-alpha12-browser-application).
 
 ![Studio and runtime boundaries](../diagrams/studio-and-runtime.svg)
 
@@ -55,7 +55,7 @@ happens on the platform and keeps running after you close Studio.
 | Your goal | What must be running | Start here |
 | --- | --- | --- |
 | Open Studio as a native desktop app | A matching desktop build for your operating system | [Install desktop](desktop.md) |
-| Draw, import, or validate a workflow on your computer | Studio's local host; no account | [Install Studio](#install-the-alpha11-browser-application), then [work locally](#work-locally-without-signing-in) |
+| Draw, import, or validate a workflow on your computer | Studio's local host; no account | [Install Studio](#install-the-alpha12-browser-application), then [work locally](#work-locally-without-signing-in) |
 | Learn the editor with a small example | Studio's local host | [Try it: draw your first workflow](#try-it-draw-your-first-workflow) |
 | Save and run workflows on your laptop | Studio plus a separate local Weave platform | [Start the platform](local-platform.md), then [connect Studio](#connect-to-a-platform) |
 | Work with your team's platform | Studio on your computer and the server address from your administrator | [Connect to a platform](#connect-to-a-platform) |
@@ -71,45 +71,45 @@ computer. You can create, import, edit, and validate workflow definitions.
 Connect when you want to save them to a shared platform, run processes, or handle
 tasks. This status does not mean your computer has lost its internet connection.
 
-## Install the alpha11 browser application
+## Install the alpha12 browser application
 
 Alpha7 includes the Studio host. Its browser assets are an optional, matching
 release bundle; the Python wheel does not embed the Angular application. Alpha4
 does not include Studio. Download all files from the same
-[v0.1.0a11 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a11).
+[v0.1.0a12 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a12).
 The CLI installer does not automatically fetch or install the Studio ZIP.
 
-Use Python 3.12 or newer. The alpha11 CLI installer includes the Studio host
+Use Python 3.12 or newer. The alpha12 CLI installer includes the Studio host
 and authentication dependencies, but downloads no browser ZIP automatically.
 These Bash/Zsh commands need neither Node nor a source checkout:
 
 ```sh
 # Install the pinned CLI into its isolated installation directory.
 # Review the installer first using the download-and-inspect alternative in Installation.
-curl --fail --location https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a11/install.sh \
-  | sh -s -- --version v0.1.0a11
+curl --fail --location https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a12/install.sh \
+  | sh -s -- --version v0.1.0a12
 # Make the installed command available in this terminal.
 export PATH="$HOME/.local/bin:$PATH"
 # Check that the host version matches the browser bundle you will install.
 weave --version
 
 # Keep the downloaded optional browser bundle and its digest together.
-mkdir weave-studio-alpha11
-cd weave-studio-alpha11
-curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a11/firefly-weave-studio-0.1.0a11.zip
-curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a11/firefly-weave-studio-0.1.0a11.zip.sha256
+mkdir weave-studio-alpha12
+cd weave-studio-alpha12
+curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a12/firefly-weave-studio-0.1.0a12.zip
+curl --fail --location --remote-name https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a12/firefly-weave-studio-0.1.0a12.zip.sha256
 # Verify the bundle on macOS. Stop if the check fails.
-shasum -a 256 --check firefly-weave-studio-0.1.0a11.zip.sha256
+shasum -a 256 --check firefly-weave-studio-0.1.0a12.zip.sha256
 # On Linux, use sha256sum --check in place of shasum -a 256 --check.
 
 # Install only the bundle whose version and verified digest match this host.
-weave studio install --bundle firefly-weave-studio-0.1.0a11.zip \
-  --sha256 "$(awk '{print $1}' firefly-weave-studio-0.1.0a11.zip.sha256)"
+weave studio install --bundle firefly-weave-studio-0.1.0a12.zip \
+  --sha256 "$(awk '{print $1}' firefly-weave-studio-0.1.0a12.zip.sha256)"
 # Start the local host without opening a browser automatically.
 weave studio --no-browser
 ```
 
-Expected: `weave --version` prints `Firefly Weave 0.1.0a11`, the checksum line
+Expected: `weave --version` prints `Firefly Weave 0.1.0a12`, the checksum line
 ends with `OK`, and the install prints `Studio installed at PATH. Start it with:
 weave studio`. The host then prints `Firefly Weave Studio · Local authoring (no
 platform selected)`, or `Firefly Weave Studio · Platform: NAME` when a saved
@@ -131,7 +131,7 @@ or the [remote deployment guide](../operations/remote-deployment.md).
 
 **This route is for contributors,** and for trying changes made after the
 latest release; the release bundle above already has everything this page
-describes. To reproduce the alpha11 release exactly, check out `v0.1.0a11`
+describes. To reproduce the alpha12 release exactly, check out `v0.1.0a12`
 instead; development `main` can differ from released assets.
 
 From the repository root, install the development dependencies first. Node 24
@@ -167,7 +167,7 @@ while you use Studio.
 
 **Already installed a release browser bundle?** Installed bundles are kept per
 version, and a checkout can report the same version as the latest release, for
-example `0.1.0a11`. A plain `weave studio` then keeps serving the installed
+example `0.1.0a12`. A plain `weave studio` then keeps serving the installed
 release screens, and `weave studio install` keeps that bundle instead of
 replacing it. Always start a source build with `--assets studio/dist/studio/browser`.
 
@@ -226,9 +226,11 @@ on this computer". You can create, import, and edit workflows, and Studio checks
 their structure, data references, and types as you type. Actions and connections
 are checked against a project catalog only after you connect. Studio keeps each
 workflow you edit in this browser and lists it on the **On this computer** tab
-of **Workflows**. In the designer, the main button is **Save to file**, next to
-the note "Saving, publishing and runs need a platform." Saving drafts,
-publishing, simulating, activating, and starting runs need a platform.
+of **Workflows**. In the designer, the main button is **Save to file**. This
+works without a platform. The nearby information button explains which
+operations need a connection and opens the connection assistant. Saving a
+shared platform draft, publishing, simulating, activating, and starting runs
+need a platform.
 
 **You can change how Studio starts.** In **Settings → Platforms**, under
 **Starting Studio** and **When Studio opens**, choose **Ask how to work** or
@@ -639,6 +641,12 @@ valid inspector edits update that workflow automatically, and Studio checks
 your work as you go. Next, [connect to a platform](#connect-to-a-platform)
 to publish and run it, or read on to learn every editor feature.
 
+If a field contains an invalid edit, Studio keeps that draft visible and asks
+you to fix it before switching views, validating, saving to a file, or
+publishing. This prevents a downloaded or published workflow from silently
+using the previous value. Hiding the inspector keeps your draft; reopen it to
+finish editing.
+
 ### Start a workflow
 
 - On Home, select **New workflow**, select **Use template** on a row under
@@ -675,21 +683,24 @@ Select a **+** on the canvas to open the step picker at that exact position; in 
 new workflow, select **Add your first step**. The picker's title says where the
 step goes, such as "Add a step here, after check". Type to filter under **Search
 steps and actions**; everyday words work too, so `approval` finds **Human
-task**. Then choose a step: **Call an action**, **Transform**, **Decision**,
-**Parallel**, **Wait for time**, **Wait for signal**, **Human task**, or
-**Fail**. When you are connected, the picker also lists **Published actions**;
+task**. Then choose a step: **Call an action**, **AI task**, **Transform**,
+**Decision**, **Decision table**, **Parallel**, **Wait for time**,
+**Wait for signal**, **Human task**, or **Fail**. When you are connected, the picker also lists **Published actions**;
 choosing one inserts a step that already calls it. Focus moves to the new step;
 Escape closes the picker and returns focus to the **+**.
 
 The **Steps** palette on the left groups the same steps under **Logic**
-(Decision, Parallel, Fail), **Data** (Transform), **Waiting** (Wait for time,
-Wait for signal), **People** (Human task), and **Actions** (Call an action).
+(Decision, Decision table, Parallel, Fail), **Data** (Transform), **Waiting**
+(Wait for time, Wait for signal), **People** (Human task), and **Actions**
+(Call an action, AI task).
 Hover a step to read what it does. Select a palette step to add it after the
 selected step, or drag it onto a **+** to place it there. Under **Actions**,
-**Published actions** lists the actions published in your project while you are
-connected; working locally, it says "Connect to a platform to use published
-actions." In a window 1024 pixels wide or narrower, the palette is hidden, and
-**Insert step** in the toolbar opens it.
+**Use an existing action** lists your project's published actions. Working
+locally, **Connect to a platform** opens the connection assistant to browse that
+catalog. The separate **Create an API action** section opens **New API action**;
+you can configure and save an action file locally before connecting to publish
+it. Each section has an information control for more detail. In a window 1024
+pixels wide or narrower, **Insert step** in the toolbar opens the palette.
 
 - **An empty branch shows a dashed card** with the path's name and **Add a
   step**. In a Decision or Parallel, select the card to add the branch's first
@@ -941,7 +952,7 @@ Any of these opens **New API action**:
 
 - In the inspector of a **Call an action** step that has no action yet, select
   **New API action** under **Action**.
-- In the palette, under **Published actions**, or in the step's action picker,
+- In the palette, under **Create an API action**, or in the step's action picker,
   select **New API action**.
 - In **Workflows**, open **More ways to start** and select **New API action**.
 
@@ -1078,6 +1089,15 @@ a failure is shown inside the dialog so you can correct the bindings. Then selec
 **Start run…**, as described in the next section.
 
 ## Save, publish, activate and run
+
+The editor header separates **where you are** from **what you can do**. Its
+first row shows the workflow name, version, save state, and Designer / Source /
+Outline views. The second row groups editing controls, validation and simulation,
+then the main save or run action. Secondary commands are in **More**; narrow
+screens move additional commands there to keep the primary controls reachable.
+Zoom, Fit all, and Tidy layout remain with the canvas because they affect only
+its presentation. The connection information button opens help when you need
+it instead of taking space away from the controls.
 
 **Why four separate steps?** A draft is work in progress that colleagues can
 open. Publishing freezes a version that can never change. Activating decides

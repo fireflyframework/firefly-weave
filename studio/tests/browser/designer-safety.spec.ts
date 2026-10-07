@@ -213,7 +213,7 @@ for (const viewport of [
       ).toHaveCount(0);
     });
 
-    test("Validate uses the last valid value while an invalid draft stays local", async ({
+    test("Validate blocks invalid visible edits and preserves them when the inspector closes", async ({
       page,
     }) => {
       await offline(page);
@@ -230,17 +230,63 @@ for (const viewport of [
       await designer.selectStep("fail-1");
       await designer.inspectorField("Error code").fill("not valid!");
       await press(page, toolbar(page, "Validate"));
-      await expect.poll(() => bodies.length).toBeGreaterThan(0);
-      expect(bodies.every((body) => !body.source.includes("not valid!"))).toBe(
-        true,
-      );
       await expect(
-        page.getByRole("dialog", { name: "Apply your changes?" }),
-      ).toHaveCount(0);
+        page.getByText(
+          "Fix the invalid fields before continuing. Your edits are still here.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      expect(bodies).toHaveLength(0);
       await designer.selectStep("fail-1");
       await expect(designer.inspectorField("Error code")).toHaveValue(
-        viewport.width < 768 ? "business-error" : "not valid!",
+        "not valid!",
       );
+      await designer.inspectorField("Error code").fill("corrected-error");
+      await press(page, toolbar(page, "Validate"));
+      await expect.poll(() => bodies.length).toBeGreaterThan(0);
+      expect(bodies.at(-1)!.source).toContain("corrected-error");
+    });
+
+    test("Save and Publish refuse a visible invalid edit in a saved draft", async ({
+      page,
+    }) => {
+      await connected(page);
+      await library(page);
+      await openFromLibrary(page, "Drafts", "draft-one");
+      const requests: Request[] = [];
+      await page.route(`${project}/drafts/*`, (route) => {
+        if (route.request().method() !== "PUT") return route.fallback();
+        requests.push(route.request());
+        return route.fulfill({
+          json: { id: draftId, revision: 4, document: {} },
+        });
+      });
+      await page.route(`${project}/workflows`, (route) => {
+        requests.push(route.request());
+        return route.fulfill({ json: { id: versionId } });
+      });
+      const designer = new DesignerPage(page);
+      await designer.selectStep("keep");
+      await designer.inspectorField("Duration").fill("0");
+      await expect(page.locator(".editor-identity .status-chip")).toHaveText(
+        "Unsaved",
+      );
+      for (const name of ["Save draft", "Publish…"]) {
+        const close = page.getByRole("button", {
+          name: "Close inspector",
+          exact: true,
+        });
+        if (await close.isVisible()) await close.click();
+        await command(page, name);
+        await expect(
+          page.getByText(
+            "Fix the invalid fields before continuing. Your edits are still here.",
+            { exact: true },
+          ),
+        ).toBeVisible();
+        await expect(designer.inspectorField("Duration")).toHaveValue("0");
+        expect(requests).toHaveLength(0);
+      }
     });
 
     test("an existing invalid field does not prevent another valid field from updating", async ({
@@ -447,10 +493,13 @@ for (const viewport of [
     }) => {
       await offline(page);
       await newWorkflow(page);
-      // Saving to a file leads; the rest needs a platform, and says so.
-      await expect(
-        page.getByRole("toolbar", { name: "Workflow commands" }),
-      ).toContainText("Saving, publishing and runs need a platform.");
+      const localHelp = page.locator(".toolbar-help");
+      await localHelp.locator(":scope > summary").click();
+      await expect(localHelp).toContainText("Save to file downloads a copy.");
+      await expect(localHelp).toContainText(
+        "Connect to a platform to publish, activate and run it.",
+      );
+      await localHelp.locator(":scope > summary").press("Escape");
       const simulate = toolbar(page, "Simulate");
       if (await simulate.isVisible())
         await expect(simulate).toHaveAccessibleDescription(

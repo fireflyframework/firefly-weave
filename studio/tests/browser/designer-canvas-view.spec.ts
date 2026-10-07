@@ -54,6 +54,19 @@ async function openLongFlow(page: Page) {
   });
   await expect(page.locator('[data-step="wait-12"]')).toBeAttached();
   await expect.poll(() => zoomOf(page)).toBeGreaterThan(0);
+  // Initial zoom is already positive before the deferred readable fit moves the graph.
+  await expect
+    .poll(() =>
+      page.locator(".canvas").evaluate((canvas) => {
+        const start = canvas.querySelector(".start-node")!;
+        return (
+          start.getBoundingClientRect().top -
+          canvas.getBoundingClientRect().top -
+          canvas.clientTop
+        );
+      }),
+    )
+    .toBeCloseTo(32, 0);
 }
 
 for (const viewport of [
@@ -486,7 +499,7 @@ test.describe("1440x900", () => {
       "Click to add after the selected step, or drag onto a + on the canvas.",
     );
     await expect(palette).toContainText(
-      "Connect to a platform to use published actions.",
+      "Connect to browse your project's actions.",
     );
     await expect(palette.locator(".drag-grip").first()).toHaveAttribute(
       "aria-hidden",

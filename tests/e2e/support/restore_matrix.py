@@ -17,7 +17,6 @@
 """Guarded complete restore with original lease/deadline authority and durable receiver."""
 
 import asyncio
-import hashlib
 import importlib.util
 import json
 import os
@@ -483,15 +482,15 @@ async def exercise(tmp_path, *, predecessor):
         "sha": os.environ["WEAVE_E2E_WHEEL_SHA256"],
     }
     selected = current
+    expected_head = SCHEMA_VERSION
     if predecessor:
         selected = {
             "python": os.environ["WEAVE_PREDECESSOR_PYTHON"],
             "wheel": os.environ["WEAVE_PREDECESSOR_WHEEL"],
             "sha": os.environ["WEAVE_PREDECESSOR_WHEEL_SHA256"],
         }
-        assert (
-            selected["sha"] != current["sha"]
-            and hashlib.sha256(Path(selected["wheel"]).read_bytes()).hexdigest() == selected["sha"]
+        expected_head = predecessor_access.artifact_head(
+            Path(selected["wheel"]), selected["sha"], current_sha=current["sha"]
         )
     directory = Path(os.environ.get("WEAVE_D5_EVIDENCE", str(tmp_path))) / (
         "restore-predecessor" if predecessor else "restore-current"
@@ -508,7 +507,7 @@ async def exercise(tmp_path, *, predecessor):
             await trial.bootstrap()
         finally:
             os.environ["WEAVE_E2E_PYTHON"] = original_python
-        assert trial.migration_head == (predecessor_access.HEAD if predecessor else SCHEMA_VERSION)
+        assert trial.migration_head == expected_head
         await providers.set_scheduler(trial, False)
         seeded = await seed_core(trial)
         provider_state = []
@@ -609,6 +608,8 @@ async def exercise(tmp_path, *, predecessor):
             "predecessor": predecessor,
             "preserved_committed_event_count": len(committed_history),
             "source_wheel_sha256": selected["sha"],
+            "source_schema": expected_head,
+            "target_schema": SCHEMA_VERSION,
             "target_wheel_sha256": current["sha"],
             "replicas": 2,
             "separate_worker": True,

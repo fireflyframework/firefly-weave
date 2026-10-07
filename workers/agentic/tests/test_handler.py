@@ -144,6 +144,27 @@ def handler(transport, model):
     )
 
 
+@pytest.mark.parametrize("destination", ["https://api.openai.com", "https://API.openai.com:443"])
+async def test_approved_endpoint_uses_the_same_canonical_origin_as_the_connection(destination):
+    endpoint = "https://API.openai.com:443/v1"
+
+    class CanonicalTransport(Transport):
+        async def context(self, proof):
+            context = await super().context(proof)
+            context.connection.config["endpoint"] = endpoint
+            context.connection.allowed_destinations = (destination,)
+            return context
+
+    transport = CanonicalTransport()
+    worker = AgenticTaskHandler(
+        transport,
+        WorkerPolicy(models=frozenset({("openai-chat", "fixture-model")}), endpoints=frozenset({endpoint})),
+        model_builder=lambda *_: fixture_model([]),
+    )
+    output = await worker(lease())
+    assert output["result"] == {"approved": True}
+
+
 @pytest.mark.parametrize("pattern", PATTERNS)
 async def test_all_patterns_use_real_agentic_and_return_only_validated_final_result(pattern):
     calls = []
@@ -242,13 +263,14 @@ async def test_unsupported_provider_options_fail_before_credential_request():
     assert [kind for kind, _ in transport.requests] == ["context"]
 
 
-async def test_context_with_foreign_endpoint_is_denied_before_credential_request():
+@pytest.mark.parametrize("endpoint", ["https://foreign.example/v1", "https://API.openai.com:443/v1"])
+async def test_context_with_foreign_endpoint_is_denied_before_credential_request(endpoint):
     transport = Transport()
     original = transport.context
 
     async def context(proof):
         result = await original(proof)
-        result.connection.config["endpoint"] = "https://foreign.example/v1"
+        result.connection.config["endpoint"] = endpoint
         return result
 
     transport.context = context

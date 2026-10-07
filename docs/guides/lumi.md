@@ -29,7 +29,7 @@ Lumi has its own configuration per environment. It never reads a workflow's
 `llmProfiles`, and changing an LLM step does not change the assistant.
 
 The Studio **AI setup** examples and named provider-connection selection
-shown here use Weave **0.1.0a11**. Use the matching **0.1.3 Agentic worker
+shown here use Weave **0.1.0a12**. Use the matching **0.1.4 Agentic worker
 package** for the independently deployed Lumi gateway.
 
 ## Follow a question through review
@@ -113,6 +113,30 @@ flag, pinned connection revision, and model profile separately from workflow AI
 profiles. Studio supplies the fixed reply schema from the canonical contract;
 changing a workflow's AI profile does not configure Lumi.
 
+## Explain Operations records
+
+![Opt-in Operations context passes current permissions and bounded summaries to Lumi for explanation only](../diagrams/lumi-operations.svg)
+
+Open a target, desired deployment, plan, or operation in **Operations**, then
+select **Explain with Lumi**. This opens the attachment choices without sending
+anything. Check the saved records to include, enter a question, and send it.
+For example: “Explain the difference between these desired replicas and this
+observation, and tell me whether the observation is still fresh.”
+
+Lumi receives a bounded summary of the selected records: adapter and permitted
+capabilities, image digests, replica counts, CPU and memory limits, ownership,
+freshness, plan risks, and safe operation receipt codes. Provider configuration,
+registry addresses, external resource identities, local paths, credentials, and
+raw logs are excluded. Each record requires `deployment.read` on its target in
+addition to `lumi.use`; access is checked again before the reply is released.
+
+Operations replies are explanations only. They do not offer draft proposals,
+create plans, approve changes, or run operations. Replica and resource counts
+describe saved deployment records, not available worker task slots or current
+cloud state. Changing the selected record or environment clears the selected
+context and conversation. To change a deployment, return to its normal review,
+approval, and apply controls.
+
 ## Deploy the private gateway
 
 The Weave API remains on its existing Python runtime. The model gateway uses the
@@ -178,11 +202,13 @@ separate from the administrator's editable environment Lumi configuration.
 
 1. Open **Settings → AI setup → Configure Lumi**, or open **Lumi settings** from
    the assistant. These settings belong to the current environment.
-2. In Studio alpha11, the **Model → Connection → Review** wizard
-   keeps changes local until **Save Lumi settings**. Alpha10 presents
-   these fields in a single form. Choose the provider and an explicit model. For Azure,
-   supply the Azure deployment name. Set the model's token, call, and time limits;
-   Studio supplies the fixed reply schema. Select **Continue to connection**.
+2. The **Model → Connection → Review** wizard keeps changes local until
+   **Save Lumi settings**. Choose the provider, an explicit model, and maximum
+   response length. For Azure, supply the Azure deployment name. Expand
+   **Advanced model settings** to change generation controls, reasoning, call
+   limits, or time limits. Studio supplies the fixed reply schema and checks
+   incompatible settings before you continue. This local validation does not
+   contact the provider. Select **Continue to connection**.
 3. Choose **Provider connection**. The list displays the connection name and
    revision and filters for the selected provider. Lumi pins the exact revision,
    so a later connection revision does not silently change the assistant.

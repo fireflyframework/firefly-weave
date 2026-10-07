@@ -26,10 +26,13 @@ import {
   inject,
 } from "@angular/core";
 import type { App } from "../app";
+import { Modal } from "../dialog";
 import { ExpressionEditor } from "../property-grid";
 import { aiConnector } from "../integrations/ai-provider-connection";
 import { compatibleSlots, slotName } from "../integrations/slot-binding";
 import { Select } from "../forms/ui/select";
+import { CatalogPicker } from "../integrations/catalog-picker";
+import type { ActionPickerChoice } from "../integrations/action-picker";
 import { AiProfileEditor } from "../integrations/ai-profile-editor";
 import { AiSetupWizard } from "../integrations/ai-setup-wizard";
 import { AiSharedContextPicker } from "../integrations/ai-shared-context-picker";
@@ -53,6 +56,8 @@ const object = (value: unknown): RecordValue =>
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [
     ExpressionEditor,
+    CatalogPicker,
+    Modal,
     AiProfileEditor,
     AiSetupWizard,
     AiSharedContextPicker,
@@ -69,17 +74,48 @@ const object = (value: unknown): RecordValue =>
         A durable worker runs this task using the selected workflow profile and
         authorized connection.
       </p>
-      <label data-field="uses"
-        >AI action version
-        <input
-          aria-label="AI action version"
-          [value]="step['uses']"
-          (input)="textField('uses', $event)"
-      /></label>
+      @if (host.profile && host.can("catalog.read")) {
+        <weave-catalog-picker
+          [host]="host"
+          label="Published AI action"
+          [canCreate]="false"
+          [value]="String(step['uses'] ?? '')"
+          [disabled]="
+            host.model.readonly || host.editingLocked || actionLoading
+          "
+          (choose)="chooseAction($event)"
+        />
+        <p class="hint">Choose an action that runs the Agentic worker.</p>
+        @if (actionLoading) {
+          <p role="status">Checking the AI action…</p>
+        }
+        @if (host.catalogState === "error") {
+          <p role="alert">{{ host.catalogError?.message }}</p>
+          <button type="button" (click)="host.loadActionCatalog(false, true)">
+            Retry action list
+          </button>
+        }
+      } @else {
+        <label data-field="uses"
+          >AI action version
+          <input
+            aria-label="AI action version"
+            [value]="step['uses']"
+            [attr.aria-invalid]="invalid.has('uses') || null"
+            (input)="textField('uses', $event)"
+          />
+        </label>
+        @if (invalid.has("uses")) {
+          <p class="field-error" role="alert">
+            Enter an action name and version, such as
+            weave-agentic-generate&#64;1.0.0.
+          </p>
+        }
+      }
       @if (host.profile && host.catalogState === "ready" && !installed) {
         <p class="hint">
-          The selected action is not published in this project. Publish the
-          Agentic worker action before activating this workflow.
+          The selected action is not in the loaded catalog. Load more actions or
+          publish the Agentic worker action before activating this workflow.
         </p>
       }
       <div data-field="profile">
@@ -91,6 +127,20 @@ const object = (value: unknown): RecordValue =>
           (choose)="selectProfile($event)"
         />
       </div>
+      @if (!profilesOpen) {
+        <weave-select
+          label="AI connection slot"
+          [options]="slotOptions"
+          [value]="String(step['connection'] ?? '')"
+          [disabled]="host.model.readonly || host.editingLocked"
+          (choose)="selectConnection($event)"
+        />
+        @if (!aiSlots.length) {
+          <p class="hint">
+            Configure a workflow AI profile to add a connection slot.
+          </p>
+        }
+      }
       @if (!profileNames.includes(String(step["profile"]))) {
         <p class="hint">
           Configure a profile below to choose its provider, model and result
@@ -104,8 +154,10 @@ const object = (value: unknown): RecordValue =>
       <div data-field="prompt">
         <weave-expression-editor
           [value]="step['prompt']"
+          [expectedSchema]="{ type: 'string' }"
           label="AI prompt"
           heading="Prompt"
+          [multiline]="true"
           [references]="promptReferences"
           (valueChange)="edit('prompt', $event)"
           (validityChange)="validity('prompt', $event)"
@@ -127,147 +179,161 @@ const object = (value: unknown): RecordValue =>
         />
       </div>
       <p class="hint">Typed result: /steps/{{ step.id }}/output/result</p>
-      <details
-        [open]="profilesOpen"
-        (toggle)="profilesOpen = $any($event.target).open"
-      >
-        <summary>Configure workflow AI profiles</summary>
-        <p class="hint">
-          Profile changes stay in this draft until you review and apply them.
-          All steps using the same named profile share its settings.
-        </p>
-        <weave-select
-          label="Profile to edit"
-          [options]="profileOptions"
-          [value]="profileName"
-          [disabled]="host.model.readonly || host.editingLocked"
-          (choose)="loadProfile($event)"
-        />
-        <button type="button" (click)="newProfile()">Add AI profile</button>
-        @if (schema) {
-          <weave-ai-setup-wizard
-            [(step)]="wizardStep"
-            [headings]="[
-              'Configure the workflow model',
-              'Choose a workflow connection slot',
-              'Review workflow AI settings',
-            ]"
-            progressLabel="Workflow AI setup"
-            finishLabel="Apply workflow AI settings"
-            [canContinue]="canContinue"
-            [navigationBlocked]="host.model.readonly || host.editingLocked"
-            (finish)="saveProfile()"
-          >
-            <div ai-model>
-              <label
-                >Profile name
-                <input
-                  aria-label="AI profile name"
-                  [value]="profileName"
-                  [readOnly]="existingProfile"
-                  (input)="profileName = value($event)"
+      <button type="button" (click)="profilesOpen = true">
+        Configure workflow AI profiles
+      </button>
+      @if (profilesOpen) {
+        <weave-modal
+          heading="Workflow AI profiles"
+          closeLabel="Close workflow AI profiles"
+          [wide]="true"
+          (dismiss)="closeProfile()"
+        >
+          <p class="hint">
+            Profile changes stay in this draft until you review and apply them.
+            All steps using the same named profile share its settings.
+          </p>
+          <weave-select
+            label="Profile to edit"
+            [options]="profileOptions"
+            [value]="profileName"
+            [disabled]="host.model.readonly || host.editingLocked"
+            (choose)="chooseProfile($event)"
+          />
+          <button type="button" (click)="newProfile()">Add AI profile</button>
+          @if (schema) {
+            <weave-ai-setup-wizard
+              [(step)]="wizardStep"
+              [headings]="[
+                'Configure the workflow model',
+                'Choose a workflow connection slot',
+                'Review workflow AI settings',
+              ]"
+              progressLabel="Workflow AI setup"
+              finishLabel="Apply workflow AI settings"
+              [canContinue]="canContinue"
+              [navigationBlocked]="host.model.readonly || host.editingLocked"
+              (finish)="saveProfile()"
+            >
+              <div
+                ai-model
+                (input)="profileTouched = true"
+                (change)="profileTouched = true"
+              >
+                <label
+                  >Profile name
+                  <input
+                    aria-label="AI profile name"
+                    [value]="profileName"
+                    [readOnly]="existingProfile"
+                    (input)="profileName = value($event)"
+                  />
+                </label>
+                @if (!nameValid) {
+                  <p class="hint">
+                    Choose a unique profile name using letters, numbers, dots,
+                    underscores or hyphens.
+                  </p>
+                }
+                <weave-ai-profile-editor
+                  [schema]="schema"
+                  [validateProfile]="validateProfile"
+                  [initialData]="initialProfile"
+                  (validityChange)="profileValid = $event"
+                  (dataChange)="profile = $event"
                 />
-              </label>
-              @if (!nameValid) {
-                <p class="hint">
-                  Choose a unique profile name using letters, numbers, dots,
-                  underscores or hyphens.
-                </p>
-              }
-              <weave-ai-profile-editor
-                [schema]="schema"
-                [initialData]="initialProfile"
-                (validityChange)="profileValid = $event"
-                (dataChange)="profile = $event"
-              />
-              <weave-schema-designer
-                [schema]="resultSchema"
-                heading="AI result fields"
-                [preview]="false"
-                (schemaChange)="resultSchema = $event"
-                (validityChange)="resultValid = $event"
-              />
-            </div>
-            <div ai-connection>
-              <div data-field="connection">
-                <weave-select
-                  label="AI connection slot"
-                  [options]="slotOptions"
-                  [value]="draftSlot"
-                  [disabled]="host.model.readonly || host.editingLocked"
-                  (choose)="draftSlot = $event"
+                <weave-schema-designer
+                  [schema]="resultSchema"
+                  heading="AI result fields"
+                  [preview]="false"
+                  (schemaChange)="resultSchema = $event; profileTouched = true"
+                  (validityChange)="resultValid = $event"
                 />
               </div>
-              <p class="hint">
-                Activation binds this slot to an approved provider connection in
-                each environment. Provider credentials are never stored in this
-                workflow.
-              </p>
-              @if (!aiSlots.length && !newSlot) {
-                <p class="hint">Add an AI connection slot to continue.</p>
-              }
-              @if (newSlot) {
+              <div ai-connection>
+                <div data-field="connection">
+                  <weave-select
+                    label="AI connection slot"
+                    [options]="slotOptions"
+                    [value]="draftSlot"
+                    [disabled]="host.model.readonly || host.editingLocked"
+                    (choose)="draftSlot = $event; profileTouched = true"
+                  />
+                </div>
                 <p class="hint">
-                  New slot {{ newSlot }} will be added when you apply these
-                  settings.
+                  Activation binds this slot to an approved provider connection
+                  in each environment. Provider credentials are never stored in
+                  this workflow.
                 </p>
-              }
-              <button type="button" (click)="addAiSlot()">
-                Add AI connection slot
-              </button>
-              @if (host.profile && host.can("connection.manage")) {
-                <button type="button" (click)="host.openAiConnectionDialog()">
-                  New AI connection
-                </button>
-              }
-              <button type="button" (click)="host.openWorkflowSettings()">
-                Manage workflow connections
-              </button>
-            </div>
-            <div ai-review>
-              <dl>
-                <dt>Profile</dt>
-                <dd>{{ profileName }}</dd>
-                <dt>Provider</dt>
-                <dd>{{ profile["provider"] }}</dd>
-                <dt>Model or Azure deployment</dt>
-                <dd>{{ profile["model"] }}</dd>
-                <dt>Connection slot</dt>
-                <dd>{{ draftSlot }}</dd>
-              </dl>
-              <p class="hint">
-                Activation binds this slot to the environment connection; this
-                edit does not activate or run the workflow.
-              </p>
-              <p>These steps will use this profile:</p>
-              <ul aria-label="Steps using this AI profile">
-                @for (id of affectedSteps; track id) {
-                  <li>{{ id }}</li>
+                @if (!aiSlots.length && !newSlot) {
+                  <p class="hint">Add an AI connection slot to continue.</p>
                 }
-              </ul>
-              @if (affectedSteps.length > 1) {
-                <p role="note">
-                  Applying changes updates the shared model, reasoning,
-                  generation limits and result fields for every listed step.
+                @if (newSlot) {
+                  <p class="hint">
+                    New slot {{ newSlot }} will be added when you apply these
+                    settings.
+                  </p>
+                }
+                <button type="button" (click)="addAiSlot()">
+                  Add AI connection slot
+                </button>
+                @if (host.profile && host.can("connection.manage")) {
+                  <button type="button" (click)="host.openAiConnectionDialog()">
+                    New AI connection
+                  </button>
+                }
+                <button type="button" (click)="host.openWorkflowSettings()">
+                  Manage workflow connections
+                </button>
+              </div>
+              <div ai-review>
+                <dl>
+                  <dt>Profile</dt>
+                  <dd>{{ profileName }}</dd>
+                  <dt>Provider</dt>
+                  <dd>{{ profile["provider"] }}</dd>
+                  <dt>Model or Azure deployment</dt>
+                  <dd>{{ profile["model"] }}</dd>
+                  <dt>Connection slot</dt>
+                  <dd>{{ draftSlot }}</dd>
+                </dl>
+                <p class="hint">
+                  Activation binds this slot to the environment connection; this
+                  edit does not activate or run the workflow.
                 </p>
-              }
-            </div>
-            <button ai-secondary type="button" (click)="cancelProfile()">
-              Cancel profile changes
+                <p>These steps will use this profile:</p>
+                <ul aria-label="Steps using this AI profile">
+                  @for (id of affectedSteps; track id) {
+                    <li>{{ id }}</li>
+                  }
+                </ul>
+                @if (affectedSteps.length > 1) {
+                  <p role="note">
+                    Applying changes updates the shared model, reasoning,
+                    generation limits and result fields for every listed step.
+                  </p>
+                }
+              </div>
+              <button ai-secondary type="button" (click)="cancelProfile()">
+                Cancel profile changes
+              </button>
+            </weave-ai-setup-wizard>
+          } @else if (loading) {
+            <p role="status">Loading profile fields…</p>
+          } @else {
+            <button type="button" (click)="loadSchema()">
+              Load profile fields
             </button>
-          </weave-ai-setup-wizard>
-        } @else if (loading) {
-          <p role="status">Loading profile fields…</p>
-        } @else {
-          <button type="button" (click)="loadSchema()">
-            Load profile fields
-          </button>
-        }
-      </details>
+          }
+          @if (error) {
+            <p class="field-error" role="alert">{{ error }}</p>
+          }
+        </weave-modal>
+      }
       @if (applied) {
         <p role="status">Workflow AI settings applied.</p>
       }
-      @if (error) {
+      @if (error && !profilesOpen) {
         <p class="field-error" role="alert">{{ error }}</p>
       }
     </fieldset>
@@ -330,8 +396,60 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
   draftSlot = "";
   newSlot = "";
   applied = false;
+  readonly validateProfile = (profile: RecordValue) =>
+    this.host.api.validateLlmProfile({ ...profile, outputSchema: {} });
   private loadedProfile = "";
-  private invalid = new Set<string>();
+  profileTouched = false;
+  private profileBaseline = "";
+  private readonly draftGuard = () =>
+    this.actionLoading
+      ? "Wait for the selected AI action to finish loading before continuing."
+      : (this.profileTouched && (!this.profileValid || !this.resultValid)) ||
+          this.profileSnapshot() !== this.profileBaseline
+        ? "Apply or cancel the workflow AI profile changes before continuing. Your draft is still here."
+        : "";
+  private profileSnapshot() {
+    return JSON.stringify([
+      this.profileName,
+      this.profile,
+      this.resultSchema,
+      this.draftSlot,
+      this.newSlot,
+    ]);
+  }
+  invalid = new Set<string>();
+  actionLoading = false;
+  async chooseAction(choice: ActionPickerChoice) {
+    if (!choice.id || this.actionLoading) return;
+    const scope = this.host.profile;
+    this.actionLoading = true;
+    this.error = "";
+    try {
+      const result = await this.host.api.request<RecordValue>(
+        `${this.host.api.project}/actions/${encodeURIComponent(choice.id)}/export`,
+      );
+      if (!this.alive || scope !== this.host.profile) return;
+      const document = object(result["document"] ?? result["definition"]);
+      const implementation = object(object(document["spec"])["implementation"]);
+      if (
+        implementation["kind"] !== "worker" ||
+        implementation["taskType"] !== "weave-agentic.generate" ||
+        implementation["taskVersion"] !== "1.0.0"
+      ) {
+        this.error =
+          "Choose an action implemented by the Agentic worker. The current action is unchanged.";
+        return;
+      }
+      this.host.cacheContract(choice.uses, document);
+      this.edit("uses", choice.uses);
+      this.validity("uses", true);
+    } catch (error) {
+      if (this.alive) this.error = describeError(error).message;
+    } finally {
+      this.actionLoading = false;
+      this.cdr.markForCheck();
+    }
+  }
   get step() {
     return JSON.parse(this.host.inspectorBuffer) as Step;
   }
@@ -352,6 +470,7 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     return compatibleSlots({ connector: aiConnector }, this.host.workflowSlots);
   }
   addAiSlot() {
+    this.profileTouched = true;
     this.newSlot = slotName(
       "ai",
       this.host.workflowSlots.map((slot) => slot.name),
@@ -416,6 +535,7 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     return (event.target as HTMLInputElement).value;
   }
   ngOnInit() {
+    this.host.inspectorDraftGuard = this.draftGuard;
     void this.loadSchema();
     void this.host.loadActionCatalog();
   }
@@ -427,6 +547,8 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
   }
   ngOnDestroy() {
     this.alive = false;
+    if (this.host.inspectorDraftGuard === this.draftGuard)
+      this.host.inspectorDraftGuard = null;
   }
   edit(key: string, value: unknown) {
     this.host.stepEdit({ ...this.step, [key]: value }, key);
@@ -438,6 +560,7 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     this.host.inspectorFieldValidity({ path, valid });
   }
   textField(key: string, event: Event) {
+    this.host.touchInspector("step");
     const text = this.value(event);
     const [name, version, extra] = text.split("@");
     const valid =
@@ -447,8 +570,21 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     this.validity(key, valid);
     if (valid) this.edit(key, text);
   }
+  private keepProfileDraft() {
+    const problem = this.draftGuard();
+    if (problem) this.error = problem;
+    return !!problem;
+  }
+  chooseProfile(name: string) {
+    if (!this.keepProfileDraft()) this.loadProfile(name);
+  }
+  selectConnection(name: string) {
+    if (!name || this.keepProfileDraft()) return;
+    this.edit("connection", name);
+    this.loadProfile(String(this.step["profile"] ?? ""));
+  }
   selectProfile(name: string) {
-    if (!name) return;
+    if (!name || this.keepProfileDraft()) return;
     this.edit("profile", name);
     this.loadProfile(name);
   }
@@ -461,7 +597,6 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     this.applied = false;
     this.resultValid = true;
     this.existingProfile = !!this.profiles[name];
-    if (!this.existingProfile) this.profilesOpen = true;
     const loaded = object(this.profiles[name]);
     this.resultSchema = object(loaded["outputSchema"]);
     if (!Object.keys(this.resultSchema).length)
@@ -471,16 +606,27 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     this.profile = structuredClone(rest);
     // TaskForm clears field errors on reload without emitting initial validity.
     this.profileValid = true;
+    this.profileTouched = false;
+    this.profileBaseline = this.profileSnapshot();
   }
   newProfile() {
+    if (this.keepProfileDraft()) return;
     let name = "default";
     let i = 1;
     while (this.profiles[name]) name = `profile-${i++}`;
     this.loadProfile(name);
+    this.profileTouched = true;
+  }
+  closeProfile() {
+    if (this.keepProfileDraft()) return;
+    this.error = "";
+    this.profilesOpen = false;
   }
   cancelProfile() {
     this.loadProfile(String(this.step["profile"] ?? ""));
     this.profilesOpen = false;
+    this.error = "";
+    this.host.error = "";
   }
   saveProfile() {
     if (
@@ -519,6 +665,10 @@ export class LlmInspector implements OnInit, DoCheck, OnDestroy {
     this.newSlot = "";
     this.profilesOpen = false;
     this.applied = true;
+    this.error = "";
+    this.profileTouched = false;
+    this.profileBaseline = this.profileSnapshot();
+    this.host.error = "";
   }
   async loadSchema() {
     this.loading = true;

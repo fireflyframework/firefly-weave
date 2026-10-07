@@ -632,3 +632,156 @@ async def test_owned_settlement_cancellation_stops_wire_and_renewal_without_reex
             await execution
     assert wire_cancelled.is_set() and calls == 2 and executions == 1
     assert not (asyncio.all_tasks() - before)
+
+
+@pytest.mark.parametrize("code", ["WV-REQUEST-CAPACITY", "WV-OPERATION-CAPACITY"])
+async def test_owned_renewal_survives_capacity_burst_during_completion(code):
+    lease = task(5).model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=1.8)})
+    heartbeats, completions = [], []
+    executions = 0
+    renewed = False
+
+    async def endpoint(request):
+        nonlocal renewed
+        if request.url.path.endswith("claim"):
+            return httpx.Response(200, json=[lease.model_dump(mode="json")])
+        if request.url.path.endswith("heartbeat"):
+            heartbeats.append(request.content)
+            if len(heartbeats) <= 3:
+                return rejected(code)
+            renewed = True
+            extension = lease.model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=2)})
+            return httpx.Response(200, json=extension.model_dump(mode="json"))
+        completions.append(request.content)
+        if not renewed:
+            return rejected(code)
+        await worker.stop()
+        return receipt(request, lease)
+
+    async def handler(_):
+        nonlocal executions
+        executions += 1
+        return {"answer": 42}
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        worker = Worker(WorkerTransport(client, "/scope", lease.proof.owner), {lease.capability: handler}, 1)
+        await asyncio.wait_for(worker.run(), 3)
+    assert executions == 1 and renewed and len(heartbeats) == 4
+    assert len(completions) > 3 and len(set(completions)) == len(set(heartbeats)) == 1
+    assert not worker.running and not worker.active
+
+
+@pytest.mark.parametrize("scope", ["none", "wrong_proof", "inherited_task"])
+async def test_heartbeat_without_matching_owned_scope_keeps_three_attempt_limit(scope):
+    from firefly_weave.sdk._settlement import lease_settlement
+
+    lease = task(3)
+    calls = 0
+
+    async def endpoint(request):
+        nonlocal calls
+        calls += 1
+        return rejected()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        transport = WorkerTransport(client, "/scope", lease.proof.owner)
+        with pytest.raises(httpx.HTTPStatusError):
+            if scope == "none":
+                await transport.heartbeat(lease.proof)
+            else:
+                proof = lease.proof.model_copy(update={"token": "other"}) if scope == "wrong_proof" else lease.proof
+                async with lease_settlement(proof, asyncio.get_running_loop().time() + 3):
+                    if scope == "inherited_task":
+                        await asyncio.create_task(transport.heartbeat(lease.proof))
+                    else:
+                        await transport.heartbeat(lease.proof)
+    assert calls == 3
+
+
+@pytest.mark.parametrize("kind", ["timeout", "disconnect", "unknown429", "auth", "server"])
+async def test_owned_heartbeat_never_retries_ambiguous_or_unknown_result(kind):
+    from firefly_weave.sdk._settlement import lease_settlement
+
+    lease = task(3)
+    calls = 0
+
+    async def endpoint(request):
+        nonlocal calls
+        calls += 1
+        if calls <= 3:
+            return rejected()
+        if kind == "timeout":
+            raise httpx.ReadTimeout("unknown outcome")
+        if kind == "disconnect":
+            raise httpx.ReadError("unknown outcome")
+        return httpx.Response({"unknown429": 429, "auth": 403, "server": 503}[kind], json={"code": "OTHER"})
+
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client,
+        lease_settlement(lease.proof, asyncio.get_running_loop().time() + 3),
+    ):
+        with pytest.raises(httpx.HTTPError):
+            await WorkerTransport(client, "/scope", lease.proof.owner).heartbeat(lease.proof)
+    assert calls == 4
+
+
+async def test_owned_heartbeat_capacity_retry_cancels_at_current_lease_expiry():
+    lease = task(3).model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.45)})
+    beats = 0
+    cancelled = asyncio.Event()
+
+    async def endpoint(request):
+        nonlocal beats
+        if request.url.path.endswith("claim"):
+            return httpx.Response(200, json=[lease.model_dump(mode="json")])
+        beats += 1
+        return rejected()
+
+    async def handler(_):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        worker = Worker(WorkerTransport(client, "/scope", lease.proof.owner), {lease.capability: handler}, 1)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(worker.run(), 0.9)
+    assert 1 <= beats <= 3 and cancelled.is_set() and datetime.now(UTC) >= lease.expires_at
+    assert not worker.running and not worker.active
+
+
+async def test_cancelling_worker_cleans_up_owned_heartbeat_retry():
+    lease = task(3).model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=1.8)})
+    beats = 0
+    retrying, wire_cancelled, handler_cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def endpoint(request):
+        nonlocal beats
+        if request.url.path.endswith("claim"):
+            return httpx.Response(200, json=[lease.model_dump(mode="json")])
+        beats += 1
+        if beats <= 3:
+            return rejected()
+        retrying.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            wire_cancelled.set()
+
+    async def handler(_):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            handler_cancelled.set()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        worker = Worker(WorkerTransport(client, "/scope", lease.proof.owner), {lease.capability: handler}, 1)
+        running = asyncio.create_task(worker.run())
+        try:
+            await asyncio.wait_for(retrying.wait(), 1.5)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+    assert beats == 4 and wire_cancelled.is_set() and handler_cancelled.is_set()
+    assert not worker.running and not worker.active

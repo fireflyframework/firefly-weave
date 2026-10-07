@@ -90,6 +90,7 @@ for (const viewport of [
           "My tasks",
           "Email",
           "Workers",
+          "Operations",
           "Settings",
           "Collapse sidebar",
         ]);

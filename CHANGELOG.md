@@ -18,6 +18,51 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a12
+
+- Add environment-scoped deployment targets, desired state, observations,
+  immutable approval plans, fenced runner jobs, and explicit reconciliation
+  for uncertain external effects. Provider credentials remain on an outbound
+  runner with local destination and image allowlists.
+- Add Operations in Studio and the CLI for reviewed container deployment
+  changes. Support trusted Compose deployment and bounded existing Kubernetes
+  and Azure Container Apps changes; provisioning cloud clusters is separate.
+- Report dated worker contact and capacity, with revision-checked drain and
+  resume controls that preserve active leases.
+- Let Lumi explain explicitly selected Operations records using bounded,
+  permission-checked context. Deployment changes retain their separate plan,
+  approval, and application process.
+- Reject unsupported component and destination changes before plan approval.
+  Mark stopped or stalled compatibility monitors unhealthy so container
+  supervisors can replace the affected API process.
+- Guide target registration with named application accounts, downloadable
+  nonsecret runner setup, observed-resource import, explicit resource capacity,
+  and admitted worker release selection.
+- Allow reviewed Compose plans to restart stopped workers, checking readiness
+  after the restart instead of during the dry run.
+- Keep worker lease renewal retrying explicit capacity rejections while the
+  current lease remains valid, including while a completed task awaits its
+  acknowledgment. Ambiguous transport failures never replay the task handler.
+- Keep invalid inspector edits and unapplied AI profile changes visible before
+  saving, publishing, or switching views. Edit workflow AI profiles in a dialog,
+  with multiline prompts and direct connection-slot selection.
+- Organize editor commands into aligned rows and step settings into purposeful
+  sections. Keep palette search visible and explain data sources through
+  keyboard-accessible information controls. Filter source modes and formulas
+  by the receiving field's type while preserving imported expressions for repair.
+- Separate reusable project actions from creating a new API action, with a
+  direct connection entry point and contextual guidance for local authoring.
+- Keep Studio pages and editor assets loading while platform requests are busy,
+  and retry temporary session-read capacity rejections within a bounded budget.
+- Use standard OpenAI and Anthropic endpoints automatically, retain explicit
+  Azure configuration, and group advanced model settings separately. Check
+  model-setting combinations with the canonical local validator before applying
+  them; configuration validation does not claim live provider readiness.
+- Add migrations `0029_deployments` and `0030_worker_presence`, with explicit
+  scoped Operations roles. Existing workflow roles gain no deployment authority.
+- Publish worker packages 0.1.4 pinned to core 0.1.0a12 and desktop alpha12.
+  Keep the verified alpha10 Azure acceptance history separate from this release.
+
 ## 0.1.0a11
 
 - Guide AI provider connections, Lumi settings, and workflow AI profiles through

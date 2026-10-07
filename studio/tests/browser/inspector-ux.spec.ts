@@ -147,7 +147,7 @@ test.describe("Mapping controls", () => {
     { width: 1440, height: 900 },
     { width: 600, height: 500 },
   ])
-    test(`typed data mapping preserves values with at most thirty input tab stops at ${viewport.width}`, async ({
+    test(`typed data mapping preserves values with thirty editing stops plus keyboard-accessible help at ${viewport.width}`, async ({
       page,
     }) => {
       await page.setViewportSize(viewport);
@@ -192,8 +192,35 @@ test.describe("Mapping controls", () => {
           .customerId,
       ).toBe("manual-customer");
       await designer.selectStep("lookup");
+      const help = form.locator(".binding-help > summary");
+      const helpCount = await help.count();
+      expect(helpCount).toBeGreaterThan(0);
+      await help.evaluateAll((nodes) =>
+        nodes.forEach((node) => {
+          node.addEventListener(
+            "focus",
+            () => node.setAttribute("data-help-visited", ""),
+            { once: true },
+          );
+        }),
+      );
       await form.getByRole("button").first().focus();
-      expect(await tabStops(page, form)).toBeLessThanOrEqual(30);
+      const total = await tabStops(page, form);
+      await expect(
+        form.locator(".binding-help > summary[data-help-visited]"),
+      ).toHaveCount(helpCount);
+      // Contextual help adds intentional keyboard stops; the editing budget stays unchanged.
+      expect(total - helpCount).toBeLessThanOrEqual(30);
+      expect(total).toBeLessThanOrEqual(30 + helpCount);
+      for (let i = 0; i < helpCount; i++) {
+        const summary = help.nth(i);
+        await summary.focus();
+        await summary.press("Enter");
+        await expect(summary.locator("..")).toHaveAttribute("open", "");
+        await summary.press("Escape");
+        await expect(summary.locator("..")).not.toHaveAttribute("open", "");
+        await expect(summary).toBeFocused();
+      }
     });
 });
 

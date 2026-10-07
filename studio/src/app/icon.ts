@@ -32,6 +32,7 @@ export const iconPaths: Readonly<Record<string, string>> = {
   tasks: "M8 4V2h8v2M5 4h14v18H5zM8 11l2 2 5-5M8 17h7",
   email: "M3 5h18v14H3zM3 6l9 7 9-7",
   connections: "M8 2v5M16 2v5M5 7h14v3a7 7 0 0 1-14 0zM12 17v5",
+  operations: "M3 3h7v6H3zM14 3h7v6h-7zM8 16h8v5H8zM6 9v4h12V9M12 13v3",
   workers:
     "M5 5h14v14H5zM9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4M9 9h6v6H9z",
   settings:

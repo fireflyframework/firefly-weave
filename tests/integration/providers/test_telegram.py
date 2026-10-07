@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.contracts.providers import ProviderSourceRequest, provider_schema_digest
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.providers.dispatcher import ProviderDispatcher
 from firefly_weave.providers.service import ProviderIngressService
 
@@ -169,12 +170,20 @@ async def test_native_two_apps_deduplicate_one_update_and_dispatch(telegram_inbo
     assert a.status_code == b.status_code == 200, (a.text, b.text)
     receipts = await rows(telegram_inbox, access_db)
     assert len(receipts) == 1
-    dispatched = await asyncio.gather(
-        *(
-            dispatcher.dispatch_one(telegram_inbox["scope"], receipts[0]["id"])
-            for dispatcher in telegram_inbox["dispatchers"]
-        )
-    )
+
+    async def dispatch(dispatcher):
+        # Concurrent project admission can return declared overload before deduplication.
+        async with asyncio.timeout(10):
+            for attempt in range(8):
+                try:
+                    return await dispatcher.dispatch_one(telegram_inbox["scope"], receipts[0]["id"])
+                except CatalogError as exc:
+                    if exc.status != 429 or exc.code != "WV-OPERATION-CAPACITY":
+                        raise
+                await asyncio.sleep(0.05 * (attempt + 1))
+        pytest.fail("Capacity did not recover within eight bounded attempts")
+
+    dispatched = await asyncio.gather(*(dispatch(dispatcher) for dispatcher in telegram_inbox["dispatchers"]))
     assert dispatched[0] == dispatched[1] and dispatched[0].state == "dispatched"
     assert len(await rows(telegram_inbox, access_db, "runs")) == 1
 
