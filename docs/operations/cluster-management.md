@@ -80,10 +80,14 @@ application, and capabilities that its local policy will support. Administrators
 can select active application accounts by their available display label. Other
 planners can expand the administrator-provided application ID option. Use
 **Settings → People and access** to create/link the application and assign roles;
-provider credentials stay outside Studio. Kubernetes and Container Apps offer
-observation, updates and worker scaling; only Compose offers deployment of its
-trusted local template. Registration
-records metadata; it does not verify provider access or deploy anything.
+provider credentials stay outside Studio. Kubernetes supports observation,
+updates and worker scaling; only Compose offers deployment of its trusted local
+template. For Azure Container Apps, start with observation only. After the
+specific environment passes acceptance, limit its target and runner policy to
+`observe` and `update`; keep `scale_workers` disabled. The
+[Azure capacity boundary](operations-runner.md#azure-container-apps) explains why.
+Registration records metadata; it does not verify provider access or deploy
+anything.
 
 The CLI equivalent uses a `TargetRequest` JSON file:
 
@@ -218,9 +222,11 @@ update. Desired-deployment edits use `deployments update` with the current
 Container Apps update plans may contain only worker and Lumi components. If a
 desired deployment includes an API component, record worker/Lumi changes in a
 separate desired deployment and upgrade the API with the
-[Azure upgrade runbook](azure.md). Studio excludes unsupported update choices;
-the API rejects them before saving a plan. Worker scaling can still select the
-worker components of a mixed desired deployment.
+[Azure maintenance boundary](azure.md#container-apps-operations-and-maintenance).
+Studio excludes unsupported update choices; the API rejects them before saving
+a plan. Worker scaling can select worker components of a mixed desired deployment
+only where the adapter, target and runner policy all permit it. Keep this
+capability disabled for Azure Container Apps.
 
 ## 6. Approve and apply that exact plan
 
@@ -292,6 +298,13 @@ lease authority.
 ## Read worker capacity correctly
 
 ![Replicas, worker presence, and task slots are different signals](../diagrams/worker-capacity.svg)
+
+For Azure Container Apps, the observation counts replicas reported for active
+revisions. It does not inventory physical replicas of inactive or historical
+revisions. A settled observation with zero active replicas therefore does not
+prove that every old process has stopped. Confirm all revisions and their
+replicas through the provider before a maintenance window or runner replacement.
+Worker presence and available task slots are separate signals in **Workers**.
 
 ## Explain a saved record with Lumi
 

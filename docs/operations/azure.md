@@ -168,6 +168,44 @@ human sign-in or qualify this AKS recipe. Read
 [Microsoft Entra ID (human sign-in not verified)](identity-and-secrets.md#microsoft-entra-id-human-sign-in-not-verified)
 before you plan Weave sign-in with it.
 
+## Container Apps Operations and maintenance
+
+Azure Container Apps is a separate deployment route from the AKS recipe above.
+Its Operations adapter works with an existing managed environment and resource
+group; follow [runner setup](operations-runner.md#azure-container-apps). Begin
+with `observe` only. Enable `update` only after acceptance in that environment,
+and leave `scale_workers` disabled in both the registered target and local
+runner policy.
+
+**Active-revision capacity is not a physical process inventory.** The alpha12
+adapter reports replicas of active revisions. Inactive historical revisions
+are outside that observation, so zero observed replicas, a stopped latest
+revision, or Single revision mode cannot establish that all older replicas have
+exited. Before a schema migration or runner replacement, inventory every
+revision of each API, worker or runner app being stopped, and verify that all
+of those revisions have zero physical replicas. Do not start a replacement
+owner while any older instance may still be running.
+
+Follow the [platform upgrade procedure](upgrades.md) with that provider-specific
+boundary. Fence every database writer and active task owner, then capture
+active-work and retained-run state again after the affected replicas have
+drained. Remote workers may remain running only when evidence proves that they
+hold no active task ownership and have no database write access; prevent them
+from acquiring new work during maintenance. Run the exact new artifact's
+explicit migration job while database writers and task acquisition remain
+fenced. Keep its exact execution identity and successful schema-check result:
+both Alembic's revision
+and Weave's schema marker must match the new artifact before it serves traffic.
+A successful image build, job submission, or old migration execution is not
+that receipt. Do not restart the older runtime against the migrated database.
+
+After starting the new artifact, verify live/readiness endpoints, a fresh
+complete compatibility report, retained-run continuity, and real execution
+before accepting the environment. See the
+[alpha12 delivery table](../capabilities.md#alpha12-delivery-and-acceptance) for
+what was published, what ran successfully, and the separately retained AI
+worker failure.
+
 ## If something goes wrong
 
 | What you see | Why | What to do |

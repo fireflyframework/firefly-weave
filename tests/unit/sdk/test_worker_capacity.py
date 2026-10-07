@@ -318,7 +318,7 @@ async def test_first_rejection_does_not_authorize_retry_after_ambiguous_or_unkno
     assert calls == 2
 
 
-async def test_credentials_do_not_retry_even_explicit_capacity_rejection():
+async def test_direct_credentials_retry_only_bounded_explicit_capacity_rejection():
     from firefly_weave.contracts.workers import CredentialRequest
 
     lease = task()
@@ -334,7 +334,7 @@ async def test_credentials_do_not_retry_even_explicit_capacity_rejection():
             await WorkerTransport(client, "/scope", lease.proof.owner).credentials(
                 CredentialRequest(lease=lease.proof, connection_revision_id=uuid4(), slot="secret")
             )
-    assert calls == 1
+    assert calls == 3
 
 
 @pytest.mark.parametrize("operation", ["complete", "fail"])
@@ -450,6 +450,7 @@ async def test_completion_retries_obey_last_renewed_lease_after_heartbeat_failur
     completions, executions, heartbeats = [], 0, 0
     wire_cancelled = asyncio.Event()
     last_expiry = None
+    completion_times = []
 
     async def endpoint(request):
         nonlocal heartbeats, last_expiry
@@ -464,6 +465,7 @@ async def test_completion_retries_obey_last_renewed_lease_after_heartbeat_failur
                 )
             return httpx.Response(403, json={"code": "WV-FORBIDDEN"})
         completions.append(request.content)
+        completion_times.append(datetime.now(UTC))
         if stall and len(completions) > 1:
             try:
                 await asyncio.Event().wait()
@@ -481,7 +483,9 @@ async def test_completion_retries_obey_last_renewed_lease_after_heartbeat_failur
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(worker.run(), 0.65)
     assert executions == 1 and heartbeats == 2 and len(set(completions)) == 1
-    assert last_expiry is not None and datetime.now(UTC) >= last_expiry
+    assert last_expiry is not None and max(completion_times) < last_expiry
+    if stall:
+        assert datetime.now(UTC) >= last_expiry
     assert not worker.running and not worker.active and wire_cancelled.is_set() == stall
 
 
@@ -785,3 +789,144 @@ async def test_cancelling_worker_cleans_up_owned_heartbeat_retry():
             await asyncio.gather(running, return_exceptions=True)
     assert beats == 4 and wire_cancelled.is_set() and handler_cancelled.is_set()
     assert not worker.running and not worker.active
+
+
+def admission_response(operation, lease):
+    if operation == "context":
+        return httpx.Response(200, json={"connection": None, "expires_at": lease.deadline.isoformat()})
+    return httpx.Response(200, json={"value": "private-canary", "expires_at": lease.deadline.isoformat()})
+
+
+async def read_admission(transport, operation, lease):
+    from firefly_weave.contracts.workers import CredentialRequest
+
+    if operation == "context":
+        return await transport.context(lease.proof)
+    return await transport.credentials(
+        CredentialRequest(lease=lease.proof, connection_revision_id=uuid4(), slot="apiKey")
+    )
+
+
+@pytest.mark.parametrize("operation", ["context", "credentials"])
+@pytest.mark.parametrize("code", ["WV-REQUEST-CAPACITY", "WV-OPERATION-CAPACITY"])
+async def test_handler_admission_recovers_after_initial_expiry_with_validated_renewal(operation, code):
+    lease = task(4).model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.6)})
+    bodies, completed, failed, beats = [], [], [], []
+
+    async def endpoint(request):
+        if request.url.path.endswith(operation):
+            bodies.append(request.content)
+            return rejected(code) if len(bodies) <= 6 else admission_response(operation, lease)
+        if request.url.path.endswith("heartbeat"):
+            beats.append(True)
+            renewed = lease.model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.6)})
+            return httpx.Response(200, json=renewed.model_dump(mode="json"))
+        (failed if request.url.path.endswith("fail") else completed).append(True)
+        return receipt(request, lease)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        transport = WorkerTransport(client, "/scope", lease.proof.owner)
+
+        async def handler(_):
+            await read_admission(transport, operation, lease)
+            return 7
+
+        await Worker(transport, {lease.capability: handler}, 1)._execute(lease)
+    assert len(bodies) == 7 and len(set(bodies)) == 1
+    assert len(beats) >= 2 and datetime.now(UTC) > lease.expires_at
+    assert completed == [True] and not failed
+
+
+@pytest.mark.parametrize("operation", ["context", "credentials"])
+@pytest.mark.parametrize("scope", ["none", "wrong_proof", "inherited_task"])
+async def test_admission_without_owned_scope_keeps_direct_attempt_bound(operation, scope):
+    from firefly_weave.sdk._settlement import lease_settlement
+
+    lease = task()
+    calls = []
+
+    async def endpoint(request):
+        calls.append(request.content)
+        return rejected()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        transport = WorkerTransport(client, "/scope", lease.proof.owner)
+        with pytest.raises(httpx.HTTPStatusError):
+            if scope == "none":
+                await read_admission(transport, operation, lease)
+            else:
+                proof = lease.proof.model_copy(update={"token": "wrong"}) if scope == "wrong_proof" else lease.proof
+                async with lease_settlement(proof, asyncio.get_running_loop().time() + 3):
+                    call = read_admission(transport, operation, lease)
+                    await (asyncio.create_task(call) if scope == "inherited_task" else call)
+    assert len(calls) == 3 and len(set(calls)) == 1
+
+
+@pytest.mark.parametrize("operation", ["context", "credentials"])
+@pytest.mark.parametrize("kind", ["unknown429", "malformed429", "timeout", "disconnect", "auth"])
+async def test_admission_never_replays_unclassified_response(operation, kind):
+    calls = 0
+    lease = task()
+
+    async def endpoint(request):
+        nonlocal calls
+        calls += 1
+        if kind == "timeout":
+            raise httpx.ReadTimeout("private transport detail")
+        if kind == "disconnect":
+            raise httpx.ReadError("private transport detail")
+        if kind == "malformed429":
+            return httpx.Response(429, text="private malformed body")
+        return httpx.Response(403 if kind == "auth" else 429, json={"code": "OTHER"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        with pytest.raises(httpx.HTTPError):
+            await read_admission(WorkerTransport(client, "/scope", lease.proof.owner), operation, lease)
+    assert calls == 1
+
+
+@pytest.mark.parametrize("operation", ["context", "credentials"])
+@pytest.mark.parametrize("end", ["cancel", "expiry", "renewal_failure"])
+@pytest.mark.parametrize("late_response", ["success", "capacity"])
+async def test_handler_admission_rejects_late_response_even_when_transport_swallows_cancellation(
+    operation, end, late_response
+):
+    lease = task(3).model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.3)})
+    entered = asyncio.Event()
+    consumed, calls, cancelled = [], [], []
+    before = asyncio.all_tasks()
+
+    async def endpoint(request):
+        if request.url.path.endswith("heartbeat"):
+            if end == "renewal_failure":
+                return httpx.Response(503)
+            await asyncio.Event().wait()
+        if request.url.path.endswith(operation):
+            calls.append(True)
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                # A non-cooperative response must not revive expired or revoked authority.
+                asyncio.current_task().uncancel()
+                cancelled.append(True)
+                return admission_response(operation, lease) if late_response == "success" else rejected()
+        raise AssertionError("No settlement may follow cancelled authority")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        transport = WorkerTransport(client, "/scope", lease.proof.owner)
+
+        async def handler(_):
+            await read_admission(transport, operation, lease)
+            consumed.append(True)
+            return 7
+
+        execution = asyncio.create_task(Worker(transport, {lease.capability: handler}, 1)._execute(lease))
+        await asyncio.wait_for(entered.wait(), 1)
+        if end == "cancel":
+            execution.cancel()
+        expected = {"cancel": asyncio.CancelledError, "expiry": TimeoutError, "renewal_failure": httpx.HTTPStatusError}
+        with pytest.raises(expected[end]):
+            await asyncio.wait_for(execution, 1)
+    assert calls == [True] and cancelled == [True] and not consumed
+    assert not (asyncio.all_tasks() - before)

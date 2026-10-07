@@ -204,9 +204,9 @@ async def test_total_timeout_cancels_model_call():
         finally:
             cancelled.set()
 
-    with pytest.raises(Exception, match="LLM_TIMEOUT"):
+    with pytest.raises(Exception, match="LLM_TIMEOUT") as failure:
         await handler(Transport(), FunctionModel(respond))(lease(timeoutSeconds=1))
-    assert cancelled.is_set()
+    assert failure.value.outcome == "unknown" and cancelled.is_set()
 
 
 async def test_provider_failure_does_not_expose_exception_or_partial_output(caplog):
@@ -343,3 +343,224 @@ async def test_real_sdk_worker_claims_context_credentials_and_completes_through_
         "/environment/tasks/credentials",
         "/environment/tasks/complete",
     ]
+
+
+@pytest.mark.parametrize("operation", ["context", "credentials"])
+@pytest.mark.parametrize("code", ["WV-REQUEST-CAPACITY", "WV-OPERATION-CAPACITY"])
+async def test_worker_recovers_preprovider_admission_without_reexecuting_model(operation, code):
+    import httpx
+    from firefly_weave.sdk.transport import WorkerTransport
+    from firefly_weave.sdk.worker import Worker
+
+    value = lease("none")
+    requests, completions, failures, model_calls = [], [], [], []
+    revision = uuid4()
+
+    async def endpoint(request):
+        body = json.loads(request.content)
+        path = request.url.path.rsplit("/", 1)[-1]
+        if path == operation:
+            requests.append(request.content)
+            if len(requests) <= 4:
+                assert not model_calls
+                return httpx.Response(429, json={"code": code})
+        if path == "context":
+            return httpx.Response(
+                200,
+                json={
+                    "connection": {
+                        "revision_id": str(revision),
+                        "connector": "weave-agentic-provider@1.0.0",
+                        "config": {
+                            "provider": "openai-chat",
+                            "endpoint": "https://api.openai.com/v1",
+                            "secretSlot": "apiKey",
+                        },
+                        "allowed_destinations": ["https://api.openai.com"],
+                        "secret_slots": ["apiKey"],
+                    },
+                    "expires_at": value.deadline.isoformat(),
+                },
+            )
+        if path == "credentials":
+            return httpx.Response(200, json={"value": "secret-canary", "expires_at": value.deadline.isoformat()})
+        if path == "heartbeat":
+            return httpx.Response(200, json=value.model_dump(mode="json"))
+        (completions if path == "complete" else failures).append(body)
+        return httpx.Response(
+            200,
+            json={
+                "task_id": str(value.proof.task_id),
+                "generation": 1,
+                "completion_id": body.get("completion_id") or body["error"]["completion_id"],
+                "accepted_output_hash": "sha256:accepted",
+                "accepted_at": datetime.now(UTC).isoformat(),
+                "status": "completed" if path == "complete" else "failed",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        transport = WorkerTransport(client, "/scope", value.proof.owner)
+        handler = AgenticTaskHandler(
+            transport,
+            WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"})),
+            model_builder=lambda *_: fixture_model(model_calls),
+        )
+        await Worker(transport, {value.capability: handler}, 1)._execute(value)
+    assert len(requests) == 5 and len(set(requests)) == 1
+    assert not failures and len(completions) == len(model_calls) == 1
+    assert completions[0]["output"]["result"] == {"approved": True}
+
+
+@pytest.mark.parametrize("operation", ["context", "credentials"])
+@pytest.mark.parametrize("code", ["WV-REQUEST-CAPACITY", "WV-OPERATION-CAPACITY"])
+async def test_exhausted_preprovider_capacity_is_not_started(operation, code):
+    import httpx
+    from firefly_weave.contracts.connectors import ConnectorFailure
+    from firefly_weave.sdk.transport import WorkerTransport
+
+    requests, model_calls = [], []
+    value = lease("none")
+
+    async def endpoint(request):
+        requests.append(request.content)
+        return httpx.Response(429, json={"code": code})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        real = WorkerTransport(client, "/scope", value.proof.owner)
+        transport = Transport()
+        if operation == "context":
+            transport.context = real.context
+        else:
+            transport.credentials = real.credentials
+        handler = AgenticTaskHandler(
+            transport,
+            WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"})),
+            model_builder=lambda *_: fixture_model(model_calls),
+        )
+        with pytest.raises(ConnectorFailure) as failure:
+            await handler(value)
+    assert failure.value.code == "LLM_CAPACITY" and failure.value.outcome == "not_started"
+    assert len(requests) == 3 and len(set(requests)) == 1 and not model_calls
+
+
+@pytest.mark.parametrize("kind", ["unknown429", "malformed429", "invalid_code", "timeout"])
+async def test_unclassified_credential_failure_remains_ambiguous_and_never_replayed(kind):
+    import httpx
+    from firefly_weave.sdk.transport import WorkerTransport
+
+    value = lease("none")
+    calls, model_calls = [], []
+
+    async def endpoint(request):
+        calls.append(True)
+        if kind == "timeout":
+            raise httpx.ReadTimeout("private wire outcome")
+        if kind == "invalid_code":
+            return httpx.Response(429, json={"code": ["WV-REQUEST-CAPACITY"]})
+        return (
+            httpx.Response(429, text="private malformed body")
+            if kind == "malformed429"
+            else httpx.Response(429, json={"code": "OTHER"})
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        transport = Transport()
+        transport.credentials = WorkerTransport(client, "/scope", value.proof.owner).credentials
+        handler = AgenticTaskHandler(
+            transport,
+            WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"})),
+            model_builder=lambda *_: fixture_model(model_calls),
+        )
+        with pytest.raises(httpx.HTTPError):
+            await handler(value)
+    assert calls == [True] and not model_calls
+
+
+@pytest.mark.parametrize("operation", ["context", "credentials"])
+async def test_owned_preprovider_profile_timeout_is_not_started(operation):
+    import httpx
+    from firefly_weave.sdk.transport import WorkerTransport
+    from firefly_weave.sdk.worker import Worker
+
+    value = lease(timeoutSeconds=1)
+    calls, failures, model_calls = [], [], []
+
+    async def endpoint(request):
+        if request.url.path.endswith(operation):
+            calls.append(True)
+            return httpx.Response(429, json={"code": "WV-REQUEST-CAPACITY"})
+        assert request.url.path.endswith("fail")
+        body = json.loads(request.content)
+        failures.append(body["error"])
+        return httpx.Response(
+            200,
+            json={
+                "task_id": str(value.proof.task_id),
+                "generation": 1,
+                "completion_id": body["error"]["completion_id"],
+                "accepted_output_hash": "sha256:accepted",
+                "accepted_at": datetime.now(UTC).isoformat(),
+                "status": "failed",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        real = WorkerTransport(client, "/scope", value.proof.owner)
+        preparation = Transport()
+        if operation == "context":
+            preparation.context = real.context
+        else:
+            preparation.credentials = real.credentials
+        instance = handler(preparation, fixture_model(model_calls))
+        await Worker(real, {value.capability: instance}, 1)._execute(value)
+    assert len(calls) > 3 and not model_calls
+    assert len(failures) == 1
+    assert failures[0]["code"] == "LLM_TIMEOUT" and failures[0]["outcome"] == "not_started"
+
+
+@pytest.mark.parametrize("end", ["cancel", "expiry"])
+async def test_owned_preprovider_timeout_never_settles_after_authority_ends(end):
+    import httpx
+    from firefly_weave.sdk.transport import WorkerTransport
+    from firefly_weave.sdk.worker import Worker
+
+    value = lease(timeoutSeconds=1).model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.25)})
+    retrying = asyncio.Event()
+    calls, model_calls, settlements = [], [], []
+
+    async def endpoint(request):
+        if request.url.path.endswith("context"):
+            calls.append(True)
+            if len(calls) == 2:
+                retrying.set()
+            return httpx.Response(429, json={"code": "WV-REQUEST-CAPACITY"})
+        if request.url.path.endswith("heartbeat"):
+            await asyncio.Event().wait()
+        settlements.append(True)
+        raise AssertionError("Ended authority cannot settle")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
+        transport = WorkerTransport(client, "/scope", value.proof.owner)
+        instance = handler(transport, fixture_model(model_calls))
+        running = asyncio.create_task(Worker(transport, {value.capability: instance}, 1)._execute(value))
+        await asyncio.wait_for(retrying.wait(), 1)
+        if end == "cancel":
+            running.cancel()
+        with pytest.raises(asyncio.CancelledError if end == "cancel" else TimeoutError):
+            await asyncio.wait_for(running, 1)
+    assert not settlements and not model_calls
+
+
+async def test_preprovider_nonbudget_timeout_remains_unknown():
+    from firefly_weave.contracts.connectors import ConnectorFailure
+
+    transport = Transport()
+
+    async def timeout(proof):
+        raise TimeoutError("private transport detail")
+
+    transport.context = timeout
+    with pytest.raises(ConnectorFailure) as failure:
+        await handler(transport, fixture_model([]))(lease())
+    assert failure.value.code == "LLM_TIMEOUT" and failure.value.outcome == "unknown"

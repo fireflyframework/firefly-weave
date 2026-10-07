@@ -36,7 +36,7 @@ from firefly_weave.contracts.workers import (
     TaskExecutionContext,
     TaskLease,
 )
-from firefly_weave.sdk._settlement import settlement_deadline
+from firefly_weave.sdk._settlement import check_settlement, settlement_deadline
 
 
 class WorkerTransport:
@@ -100,7 +100,9 @@ class WorkerTransport:
         # Freeze caller-owned values before the first attempt, including the completion identity.
         content = json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
         headers = {"Content-Type": "application/json"}
+        check_settlement(lease)
         response = await self.client.post(self.prefix + path, content=content, headers=headers)
+        check_settlement(lease)
         if not self._capacity_rejected(response):
             return response
         # Only explicit rollback/admission rejection permits replay. Wire errors remain ambiguous.
@@ -118,19 +120,23 @@ class WorkerTransport:
         async with window:
             for retry in range(attempts - 1):
                 await asyncio.sleep(min(0.05 * 2 ** min(retry, 3), 0.25))
+                check_settlement(lease)
                 response = await self.client.post(self.prefix + path, content=content, headers=headers)
+                check_settlement(lease)
+                if window.expired():
+                    raise TimeoutError("Admission retry deadline expired")
                 if not self._capacity_rejected(response):
                     return response
         return response
 
     async def context(self, lease: LeaseProof) -> TaskExecutionContext:
         """Read the activation's pinned connection through current task authority."""
-        response = await self.client.post(self.prefix + "/tasks/context", json=lease.model_dump(mode="json"))
+        response = await self._post_rejected("/tasks/context", lease.model_dump(mode="json"), lease=lease)
         response.raise_for_status()
         return TaskExecutionContext.model_validate_json(response.content)
 
     async def credentials(self, request: CredentialRequest) -> CredentialLease:
-        response = await self.client.post(self.prefix + "/tasks/credentials", json=request.model_dump(mode="json"))
+        response = await self._post_rejected("/tasks/credentials", request.model_dump(mode="json"), lease=request.lease)
         response.raise_for_status()
         return CredentialLease.model_validate_json(response.content)
 

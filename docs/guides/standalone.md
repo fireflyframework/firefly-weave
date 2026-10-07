@@ -96,18 +96,18 @@ checkout. If you do not already have it, run:
 
 ```sh
 # Clone the alpha7 release that matches the CLI, then install its locked dependencies.
-git clone --branch v0.1.0a12 --single-branch \
+git clone --branch v0.1.0a13 --single-branch \
   https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 uv sync --locked --python 3.12
 ```
 
-The clone selects the same **v0.1.0a12** release as the CLI installation guide.
+The clone selects the same **v0.1.0a13** release as the CLI installation guide.
 A detached-HEAD message is expected when Git opens a release tag; this tutorial
 does not require creating a branch or editing application source.
 
 If you already have a checkout, enter its root and run `git describe --tags --exact-match`.
-For this released walkthrough, the result must be `v0.1.0a12`. If the checkout has
+For this released walkthrough, the result must be `v0.1.0a13`. If the checkout has
 another version or local development work, preserve it and clone the release into
 a separate directory by adding a new directory name to the clone command above.
 Contributors intentionally using unreleased source should use that checkout's
