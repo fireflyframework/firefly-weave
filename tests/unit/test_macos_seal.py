@@ -72,3 +72,36 @@ def test_mounted_installer_is_detached_when_seal_fails(tmp_path, monkeypatch):
         runpy.run_path(str(script))["verify_dmg"](tmp_path / "Studio.dmg")
     assert calls[0][:4] == ["hdiutil", "attach", "-readonly", "-nobrowse"]
     assert calls[-1] == ["hdiutil", "detach", "/dev/test-owned"]
+
+
+def test_installer_runs_additional_trust_check_on_mounted_app(tmp_path, monkeypatch):
+    import plistlib
+
+    script = Path(__file__).resolve().parents[2] / "desktop/scripts/verify_macos_bundle.py"
+    app = tmp_path / "Studio.app"
+    (app / "Contents/MacOS").mkdir(parents=True)
+    (app / "Contents/_CodeSignature").mkdir()
+    (app / "Contents/_CodeSignature/CodeResources").write_bytes(b"seal")
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=plistlib.dumps(
+                {"system-entities": [{"dev-entry": "/dev/test-owned", "mount-point": str(tmp_path)}]}
+            ),
+        )
+
+    monkeypatch.setattr(subprocess, "run", run)
+    checked = []
+
+    def reject_ticket(mounted):
+        checked.append(mounted)
+        raise RuntimeError("Ticket invalid")
+
+    with pytest.raises(RuntimeError, match="Ticket invalid"):
+        runpy.run_path(str(script))["verify_dmg"](tmp_path / "Studio.dmg", trust_check=reject_ticket)
+    assert checked == [app]
+    assert calls[-1] == ["hdiutil", "detach", "/dev/test-owned"]

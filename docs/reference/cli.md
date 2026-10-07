@@ -99,7 +99,7 @@ platform; the others need the `client` extra and either a
 | Validate, compile, explain, simulate, or draw a local workflow | `workflow validate`, `compile`, `explain`, `simulate`, `graph` | Base package and explicit files; [authoring guide](../guides/workflow-authoring.md) |
 | Export the language schemas | `schema export` | Base package |
 | Describe an HTTP API without code, import OpenAPI, or build a connector package | `connector http-action`, `import-openapi`, `descriptor`, `init`, `validate`, `test`, `package` | Base package; publishing needs a platform; [no-code REST integration](../connectors/http-without-code.md) |
-| Run durable workflows on your computer | `platform doctor`, `setup`, `start`, `status`, `demo`, `user`, `token`, `stop` | Matching checkout, uv, and local Docker; [local platform](../guides/local-platform.md) |
+| Run durable workflows on your computer | `platform doctor`, `up`, `setup`, `start`, `status`, `logs`, `demo`, `user`, `token`, `stop` | Matching checkout, uv, and local Docker; [local platform](../guides/local-platform.md) |
 | Run built-in HTTP connector Actions locally | `platform integrations`, `platform secret` (new in 0.1.0a7) | A running local platform |
 | Draw workflows and work with tasks in your browser | `studio`, `studio install`, `studio configure` | The `studio` extra and a matching browser bundle; [Studio](../guides/studio.md) |
 | Connect to a platform, sign in, choose a workspace | `auth setup`, `login`, `status`, `logout`, `profiles`, `use`, `remove`, `workspace` | `client` extra; [connect the CLI](../guides/connect-to-api.md) |
@@ -352,13 +352,16 @@ without executors. See [history and replay](history-and-replay.md).
 the API, PostgreSQL, and Keycloak on your computer. The default directory is
 `.local/platform`, relative to your current folder; reuse the same absolute
 path in every terminal. Follow [the local platform guide](../guides/local-platform.md)
-before setup.
+before setup. The [Docker route](../guides/docker-development.md) combines the
+initial steps in one `up` command.
 
 | Command | Effect |
 | --- | --- |
 | `doctor [--source REPO] [--context NAME]` | Check the source version, uv, and local Docker without changing anything |
+| `up [--source REPO] [--context NAME] [--subnet CIDR] [--username NAME] [--role ROLE ...]` | New in alpha14: prepare once and leave the API running in Docker; create the demo workspace and optionally a sign-in account; repeating preserves data and the account |
+| `logs [--lines COUNT]` | Read the owned Docker API logs; default 100 lines, maximum 1,000 |
 | `setup [--source REPO] [--context NAME] [--subnet CIDR]` | Build and install an isolated server, start its own dependencies, and set up identity; `--subnet` sets an unused private (RFC 1918) IPv4 Docker subnet when the default pools are exhausted |
-| `start` | Resume the dependencies and run the API in the foreground; Ctrl+C stops only the API |
+| `start` | Resume the saved mode: detached API for a Docker installation, foreground API for a host installation |
 | `status` | Show the saved stage, API and identity readiness, URLs, whether a first run is saved, and the sign-in command |
 | `demo` | Create one authorized demo run; repeating it reuses the saved receipt |
 | `user --username NAME [--role ROLE ...]` | New in 0.1.0a7: create a development sign-in account, a linked person, and roles in the demo workspace |
@@ -368,7 +371,7 @@ before setup.
 | `secret set --handle HANDLE [--value-stdin]` | New in 0.1.0a7: create or replace a development secret value behind a handle |
 | `secret list`, `secret remove --handle HANDLE` | New in 0.1.0a7: list handle names (never values), or delete one value |
 | `token` | Refresh the verified host token in its private file and print only the path |
-| `stop` | Stop the dependencies after the foreground API exits; data is kept |
+| `stop` | Stop the Docker API and dependencies; for host mode, stop the foreground API first. Data is kept |
 
 Every command except `start` accepts `--output json`. Setup shows a spinner
 only in an interactive terminal; set `WEAVE_NO_ANIMATION=1` for plain progress
@@ -399,8 +402,10 @@ people connect with
 
 - `enable` needs the demo workspace and a running API; repeating it reuses what
   exists.
-- Restart the API (Ctrl+C, then `start`) after `enable` and after adding a new
-  handle. A replaced value applies at the next credential use.
+- Run `platform start` after `enable` or changing secret handles. In foreground
+  mode, first stop the API with Ctrl+C; a replaced value applies at its next use.
+  In Docker mode, also run `start` after replacing or removing a value: the running
+  container retains its previous secret snapshot until the restart succeeds.
 - Handles match `[a-z0-9][a-z0-9_.-]{0,63}`. `secret set` reads the value from
   a hidden prompt, or from piped standard input with `--value-stdin`, never
   from arguments; `--value-stdin` refuses a terminal.
@@ -415,10 +420,10 @@ people connect with
 weave platform secret set --handle pets-api-key --value-stdin < "$HOME/.weave-secrets/pets-api-key"
 ```
 
-Expected: `Handle: pets-api-key`, then `Stored privately. Restart the API
-(Ctrl-C, then start) so the demo environment can use this handle.` When the
-handle already had a value, the second line starts with `Replaced privately.`
-and no restart is needed.
+Expected: `Handle: pets-api-key`, followed by mode-specific restart instructions.
+When the handle already had a value, the message starts with `Replaced privately.`
+Foreground mode reads the replacement at its next use; Docker mode requires
+`platform start` to refresh the mounted copy.
 
 ## Studio commands
 

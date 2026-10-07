@@ -40,6 +40,13 @@ and follow the [deployment guides](../operations/remote-deployment.md). For an
 offline first workflow, use the [quickstart](../quickstart.md); to use a platform
 that already exists, [connect the CLI to it](connect-to-api.md).
 
+## Prefer Docker in the background?
+
+The [Docker development guide](docker-development.md) combines setup, detached API
+startup, a demo workspace, and optional account creation in `weave platform up`.
+Use that route when you want to close the terminal and keep working in Studio.
+The steps below retain the foreground API route for developers inspecting server logs.
+
 ## The route at a glance
 
 | Step | You run | Checkpoint |
@@ -79,8 +86,8 @@ decides which features the platform has. With the alpha7 CLI from
 directory, and keep any checkout you already use for development untouched:
 
 ```sh
-# Download the alpha13 release's operator files into a new directory.
-git clone --branch v0.1.0a13 --single-branch https://github.com/fireflyframework/firefly-weave.git firefly-weave-local
+# Download the alpha14 release's operator files into a new directory.
+git clone --branch v0.1.0a14 --single-branch https://github.com/fireflyframework/firefly-weave.git firefly-weave-local
 # Run the following steps from that matching checkout.
 cd firefly-weave-local
 ```
@@ -344,8 +351,8 @@ Studio is the visual editor. Because the CLI and Studio share saved platforms,
 Studio opens already connected to the platform you saved in step 6.
 
 **First install Studio's browser application** if you have not yet: download
-the matching alpha13 bundle and install it as in
-[Install the alpha13 browser application](studio.md#install-the-alpha13-browser-application).
+the matching alpha14 bundle and install it as in
+[Install the alpha14 browser application](studio.md#install-the-alpha14-browser-application).
 Then start Studio:
 
 ```sh
@@ -421,7 +428,10 @@ from step 5. Or, in Studio: [Call a REST API from a step](studio.md#call-a-rest-
 **The local executor has fixed limits.** It runs only the built-in HTTP connector,
 never connector packages. It calls only public HTTPS destinations: an API on your
 own computer or private network is refused. A new secret handle needs a restart;
-replacing an existing handle's value does not. A connection whose secret handles
+replacing an existing handle's value does not in this foreground mode.
+For a [Docker installation](docker-development.md), run `platform start` after
+adding, replacing, or removing a secret: its running container retains the
+previous mounted copy until that restart succeeds. A connection whose secret handles
 it must read needs `weave platform integrations grant --connection
 REVISION_ID --access read` (or `write`). To stop running connector actions, run
 `weave platform integrations disable` and restart; the server keeps the release

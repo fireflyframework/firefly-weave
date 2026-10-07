@@ -20,7 +20,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "firefly-weave"
-version = "0.1.0a13"
+version = "0.1.0a14"
 description = "API-first workflow orchestration and integration platform built on PyFly"
 readme = "README.md"
 license = "Apache-2.0"
@@ -123,7 +123,7 @@ include = [
   "/pyproject.toml", "/uv.lock", "/README.md", "/LICENSE", "/NOTICE",
   "/studio", "/desktop", "/CONTRIBUTING.md", "/SECURITY.md", "/CHANGELOG.md", "/Makefile", "/Dockerfile", "/install.sh",
   "/.dockerignore", "/.gitignore", "/.github/workflows/ci.yml", "/.github/workflows/docs.yml", "/mkdocs.yml",
-  "/.github/workflows/desktop.yml",
+  "/.github/workflows/desktop.yml", "/.github/workflows/desktop-notarized.yml",
   "/alembic.ini", "/pyfly.yaml", "/compose.yaml", "/compose.identity.yaml",
   "/compose.kafka.yaml", "/compose.runtime.yaml", "/compose.local-runtime.yaml",
   "/src", "/workers", "/migrations", "/examples", "/infra", "/docker", "/scripts", "/tests", "/assets", "/deploy",

@@ -51,8 +51,11 @@ permissions, and real delivery still need checking in your deployment.
 ## Which release this page describes
 
 Weave is an alpha workflow and integration platform. This documentation targets
-**`0.1.0a13`**, with PyFly 26.9.15 and database schema revision
-`0030_worker_presence`, unchanged from alpha12. Alpha13 corrects worker context
+**`0.1.0a14`**, with PyFly 26.9.15 and database schema revision
+`0030_worker_presence`, unchanged from alpha12. Alpha14 adds the detached Docker
+development launcher and a credential-gated macOS notarization path. Actual Apple
+notarization requires a Developer ID certificate and an accepted submission.
+Alpha13 corrects worker context
 and credential admission retries. The alpha13 checks and historical alpha12
 delivery evidence below are separate. Download packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
@@ -64,6 +67,19 @@ and [execution management](guides/execution-management.md).
 Rows marked **new in 0.1.0a7** describe features that alpha6 and earlier
 releases do not have. Alpha8 adds three migrations; see the
 [upgrade procedure](operations/upgrades.md).
+
+## Alpha14 local development verification
+
+The Docker launcher was exercised on October 7, 2026, on macOS Apple Silicon
+with Docker Desktop. This is a separate local environment from the Azure
+deployment recorded below.
+
+| Verification | Verified scope | Limit |
+| --- | --- | --- |
+| Docker platform lifecycle | Built the retained server image, started the API and identity services, created a person and a successful saved run, then stopped and resumed the installation; account, run, and unrelated container identities were unchanged | One Docker Desktop context on one computer; no production high-availability or cloud provisioning claim |
+| CLI sign-in | Installed CLI completed browser PKCE S256 against real local Keycloak, checked the authenticated person's workspace, and revoked and removed its isolated test credential | The private file credential store was used; the user's existing profile was not changed |
+| Studio sign-in | Browser tests completed setup, real Keycloak sign-in, workspace selection, run and workflow reads, silent recovery after a Studio host restart, and sign-out with revocation; native test credentials were removed | Browser Studio on macOS with the system credential store; this does not establish the same interaction in every native desktop installer |
+| Signing preparation | Unit tests exercise release-tag guards, credential cleanup, signature and ticket requirements, and mounted DMG verification | No Apple Developer ID identity or notarization submission was available; ordinary macOS installers remain ad-hoc signed |
 
 ## Alpha13 verification
 

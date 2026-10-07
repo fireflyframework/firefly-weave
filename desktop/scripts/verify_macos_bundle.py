@@ -19,6 +19,7 @@
 import argparse
 import plistlib
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 
@@ -34,7 +35,7 @@ def verify(app: Path) -> None:
         raise RuntimeError("Missing outer macOS resource seal")
 
 
-def verify_dmg(dmg: Path) -> None:
+def verify_dmg(dmg: Path, *, trust_check: Callable[[Path], None] | None = None) -> None:
     result = subprocess.run(
         ["hdiutil", "attach", "-readonly", "-nobrowse", "-plist", str(dmg)],
         check=True,
@@ -48,6 +49,8 @@ def verify_dmg(dmg: Path) -> None:
         if len(apps) != 1:
             raise RuntimeError("Installer must contain exactly one application")
         verify(apps[0])
+        if trust_check is not None:
+            trust_check(apps[0])
     finally:
         subprocess.run(["hdiutil", "detach", device], check=True)
 
