@@ -44,31 +44,31 @@ start them:
 ## Choose an installer
 
 Choose a matching installer **actually attached** to the
-[v0.1.0a13 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a13).
-The desktop product version is `0.1.0-alpha.13`; its bundled Python host is
-`0.1.0a13`. macOS bundles use **ad-hoc signing** for resource integrity; they are
+[v0.1.0a14 release](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a14).
+The desktop product version is `0.1.0-alpha.14`; its bundled Python host is
+`0.1.0a14`. macOS bundles use **ad-hoc signing** for resource integrity; they are
 **not Developer ID signed and not notarized**. Windows installers remain unsigned.
 Build and frozen-host smoke checks do not establish interactive GUI testing on
 every operating system. Your organization's installation policy still applies.
 
 | Computer | Target | Installer filename |
 | --- | --- | --- |
-| macOS Apple silicon | `aarch64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.13-aarch64-apple-darwin.dmg` |
-| macOS Intel | `x86_64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.13-x86_64-apple-darwin.dmg` |
-| Windows x64 | `x86_64-pc-windows-msvc` | `firefly-weave-studio-0.1.0-alpha.13-x86_64-pc-windows-msvc.exe` or `.msi` |
-| Linux x64 | `x86_64-unknown-linux-gnu` | `firefly-weave-studio-0.1.0-alpha.13-x86_64-unknown-linux-gnu.deb` or `.AppImage` |
+| macOS Apple silicon | `aarch64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.14-aarch64-apple-darwin.dmg` |
+| macOS Intel | `x86_64-apple-darwin` | `firefly-weave-studio-0.1.0-alpha.14-x86_64-apple-darwin.dmg` |
+| Windows x64 | `x86_64-pc-windows-msvc` | `firefly-weave-studio-0.1.0-alpha.14-x86_64-pc-windows-msvc.exe` or `.msi` |
+| Linux x64 | `x86_64-unknown-linux-gnu` | `firefly-weave-studio-0.1.0-alpha.14-x86_64-unknown-linux-gnu.deb` or `.AppImage` |
 
 Download the chosen installer and its target's checksum inventory,
 `weave-studio-TARGET-SHA256SUMS`, from that same release. The matrix describes
 filenames, not a promise that every asset is already available. If your matching
-asset is absent, use the [browser installation](studio.md#install-the-alpha13-browser-application)
+asset is absent, use the [browser installation](studio.md#install-the-alpha14-browser-application)
 instead. Alpha4 Python releases do not contain Studio or desktop installers.
 
 **Do not use the alpha5 macOS installers.** Their outer application bundle lacked
 its resource seal, causing macOS to report that the application was damaged.
 Alpha6 added explicit ad-hoc bundle signing and a strict verification gate for both
-the built application and the application enclosed in its DMG, and alpha13 keeps
-them. Download the matching alpha13 asset rather than attempting to bypass the
+the built application and the application enclosed in its DMG, and alpha14 keeps
+them. Download the matching alpha14 asset rather than attempting to bypass the
 alpha5 failure.
 Ad-hoc integrity does not establish publisher trust or Gatekeeper acceptance.
 
@@ -110,9 +110,9 @@ This follows Tauri's [sidecar model](https://v2.tauri.app/develop/sidecar/) and
     ```sh
     # Inspect the downloaded installer without opening it.
     cd ~/Downloads
-    shasum -a 256 firefly-weave-studio-0.1.0-alpha.13-aarch64-apple-darwin.dmg
+    shasum -a 256 firefly-weave-studio-0.1.0-alpha.14-aarch64-apple-darwin.dmg
     # Show the expected digest for this exact filename.
-    grep 'firefly-weave-studio-0.1.0-alpha.13-aarch64-apple-darwin.dmg$' weave-studio-aarch64-apple-darwin-SHA256SUMS
+    grep 'firefly-weave-studio-0.1.0-alpha.14-aarch64-apple-darwin.dmg$' weave-studio-aarch64-apple-darwin-SHA256SUMS
     ```
 
     Both displayed digests must match. For Intel, replace `aarch64-apple-darwin`
@@ -149,9 +149,9 @@ matching `weave-studio-x86_64-pc-windows-msvc-SHA256SUMS` inventory first.
 ```powershell
 # Inspect the downloaded EXE before running it.
 Set-Location "$HOME\Downloads"
-Get-FileHash .\firefly-weave-studio-0.1.0-alpha.13-x86_64-pc-windows-msvc.exe -Algorithm SHA256
+Get-FileHash .\firefly-weave-studio-0.1.0-alpha.14-x86_64-pc-windows-msvc.exe -Algorithm SHA256
 # Compare the digest with the line for this exact filename.
-Select-String -Path .\weave-studio-x86_64-pc-windows-msvc-SHA256SUMS -Pattern 'firefly-weave-studio-0.1.0-alpha.13-x86_64-pc-windows-msvc.exe$'
+Select-String -Path .\weave-studio-x86_64-pc-windows-msvc-SHA256SUMS -Pattern 'firefly-weave-studio-0.1.0-alpha.14-x86_64-pc-windows-msvc.exe$'
 ```
 
 Expected: `Get-FileHash` prints a `Hash` value, and `Select-String` prints the
@@ -159,8 +159,8 @@ inventory line for the same file. For MSI, substitute `.msi` in both commands.
 Compare the two digests without regard to letter case; stop on a mismatch. Double-click the verified installer, complete its
 setup, then open **Firefly Weave Studio** from the Start menu. The installer may
 need network access to provision WebView2. Unsigned-installation warnings remain
-subject to your organization's policy. The MSI's internal version is `0.1.13`, a
-monotonic Windows Installer counter; the displayed product remains alpha13.
+subject to your organization's policy. The MSI's internal version is `0.1.14`, a
+monotonic Windows Installer counter; the displayed product remains alpha14.
 
 ## Install on Linux
 
@@ -171,8 +171,8 @@ application where your distribution supports its runtime. Download the matching
 ```sh
 # Enter the download directory, verify this exact file, then install only on success.
 cd ~/Downloads &&
-  grep 'firefly-weave-studio-0.1.0-alpha.13-x86_64-unknown-linux-gnu.deb$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
-  sudo apt install ./firefly-weave-studio-0.1.0-alpha.13-x86_64-unknown-linux-gnu.deb
+  grep 'firefly-weave-studio-0.1.0-alpha.14-x86_64-unknown-linux-gnu.deb$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
+  sudo apt install ./firefly-weave-studio-0.1.0-alpha.14-x86_64-unknown-linux-gnu.deb
 ```
 
 Expected: `sha256sum` prints the file name followed by `OK`, and only then does
@@ -182,9 +182,9 @@ application launcher. For AppImage:
 ```sh
 # Verify this exact portable file; a failed or missing checksum prevents launch.
 cd ~/Downloads &&
-  grep 'firefly-weave-studio-0.1.0-alpha.13-x86_64-unknown-linux-gnu.AppImage$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
-  chmod +x firefly-weave-studio-0.1.0-alpha.13-x86_64-unknown-linux-gnu.AppImage &&
-  ./firefly-weave-studio-0.1.0-alpha.13-x86_64-unknown-linux-gnu.AppImage
+  grep 'firefly-weave-studio-0.1.0-alpha.14-x86_64-unknown-linux-gnu.AppImage$' weave-studio-x86_64-unknown-linux-gnu-SHA256SUMS | sha256sum --check &&
+  chmod +x firefly-weave-studio-0.1.0-alpha.14-x86_64-unknown-linux-gnu.AppImage &&
+  ./firefly-weave-studio-0.1.0-alpha.14-x86_64-unknown-linux-gnu.AppImage
 ```
 
 Linux requires the distribution's WebKitGTK runtime, and AppImage execution may
@@ -479,7 +479,7 @@ with a text editor.
 **Untested platform cases.** On macOS 11.0 to 11.2 the webview lacks the
 download support the app relies on, so an export may save nothing even though
 the confirmation appears; use macOS 11.3 or later, or the
-[browser installation](studio.md#install-the-alpha13-browser-application). macOS
+[browser installation](studio.md#install-the-alpha14-browser-application). macOS
 may ask whether Firefly Weave Studio can use your Downloads folder the first
 time you export. On Windows, WebView2 may ask whether to allow the second of the
 two files.
@@ -633,8 +633,8 @@ source checkout, you can run that same gate on an explicitly downloaded DMG:
 
 ```sh
 # Verify resource integrity without launching the application.
-# Replace the path with the actual alpha13 installer you downloaded.
-.venv/bin/python desktop/scripts/verify_macos_bundle.py /path/to/firefly-weave-studio-0.1.0-alpha.13-aarch64-apple-darwin.dmg
+# Replace the path with the actual alpha14 installer you downloaded.
+.venv/bin/python desktop/scripts/verify_macos_bundle.py /path/to/firefly-weave-studio-0.1.0-alpha.14-aarch64-apple-darwin.dmg
 ```
 
 The build also smoke-tests the frozen host after Tauri signs it. Hardened runtime
@@ -646,14 +646,91 @@ This is a packaging-integrity check, not a Gatekeeper or notarization test. A
 source checkout is needed only for this contributor verification command; ordinary
 installation follows the checksum and platform steps above.
 
-For a production macOS release, configure the application and sidecar signing
-identity plus notarization credentials through the release environment, following
-[Tauri macOS signing](https://v2.tauri.app/distribute/sign/macos/).
-`APPLE_SIGNING_IDENTITY` is passed to PyInstaller for the frozen host as well as
-Tauri's own signing configuration. Use Tauri's documented Apple certificate,
-password and notarization environment variables rather than committing credentials.
-For Windows, configure a trusted signing certificate or an approved signing service
-following [Tauri Windows signing](https://v2.tauri.app/distribute/sign/windows/).
-Developer ID signing, Windows publisher signing, and notarization have not been
-performed or verified by this implementation. Ad-hoc signing only protects bundle
-integrity; it does not make a CI artifact a trusted production download.
+### Opt-in Developer ID signing and notarization
+
+The regular **Desktop installers** workflow continues to build ad-hoc macOS
+installers. The separate **Notarized macOS installers** workflow is prepared for
+trusted release tags only. It is opt-in and retains verified artifacts; it does
+not publish a release or replace existing downloads. The published alpha13
+installers remain ad-hoc signed and unnotarized. Preparing this workflow does not
+change their trust status, and no Apple submission has been verified yet.
+
+An organization maintainer must first have an active Apple Developer Program
+membership, a **Developer ID Application** certificate with its private key,
+and an App Store Connect API key permitted to use notarization. An Apple
+Development certificate, an App Store distribution certificate, or a certificate
+without its private key is not sufficient. See [Apple's notarization
+requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
+and [Tauri's macOS signing guide](https://v2.tauri.app/distribute/sign/macos/).
+
+Create the GitHub environment `macos-release-signing`, require a release
+maintainer's approval, prevent self-approval where available, and restrict its
+deployment rules to reviewed release tags. Keep these credentials in that
+**environment**, not repository-wide secrets, source files, issue comments, or
+workflow inputs:
+
+| Environment secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Base64-encoded `.p12` containing the Developer ID Application certificate and private key |
+| `APPLE_CERTIFICATE_PASSWORD` | Password protecting that `.p12` |
+| `APPLE_SIGNING_IDENTITY` | Exact `Developer ID Application: Organization (TEAMID)` identity |
+| `APPLE_TEAM_ID` | The certificate's ten-character Apple team ID |
+| `APPLE_API_ISSUER` | App Store Connect team API issuer UUID |
+| `APPLE_API_KEY` | App Store Connect API key ID |
+| `APPLE_API_PRIVATE_KEY` | Full private `.p8` key contents |
+
+The workflow deliberately supports team API keys with an issuer. It does not
+silently fall back to Apple ID/password authentication. Missing credentials name
+only the missing variables and stop the build. Never print the private key or
+certificate password while diagnosing a failed run.
+
+After this workflow exists on `main` and on the reviewed release tag, dispatch it
+**at that tag** and explicitly enable `notarize`:
+
+```sh
+# Replace this example with the exact reviewed tag that contains the workflow.
+gh workflow run desktop-notarized.yml --ref v0.1.0a14 -f notarize=true
+```
+
+Approve the protected environment only after checking the tag and commit. Both
+macOS jobs independently require the canonical repository, a manual dispatch,
+the version-matching tag, and identical workflow, checkout, and tag commit IDs.
+Branch dispatches, pull requests, and fork workflows cannot enter the signing
+job. The ordinary installer workflow never receives these secrets.
+
+Each native job imports exactly the expected Developer ID identity into a unique
+temporary keychain. It preserves the original keychain search list and removes
+the keychain, certificate, and private key on completion or failure; an
+`always()` cleanup step also handles interrupted jobs on the disposable runner.
+Secrets are passed only to the signing step and are excluded from retained
+artifacts. Do not run this workflow on persistent self-hosted runners.
+
+The frozen PyInstaller host is signed during freezing, including the binaries
+embedded in its one-file archive. The pinned PyInstaller enables hardened
+runtime and secure timestamps with the supplied identity; the build passes the
+existing entitlements explicitly. Tauri signs the nested host and application
+with the same Developer ID, notarizes the app, and staples its ticket before
+creating the DMG. The helper then signs and submits the DMG separately, requires
+Apple's `Accepted` result, and staples the installer ticket. An uncertain or
+failed submission stops the job; it is not automatically retried.
+
+Before collection, the gate verifies both executable signatures, the outer
+resource seal, the expected team, secure timestamps, hardened runtime, and the
+absence of a debugging entitlement. It validates the app and DMG tickets,
+assesses both with Gatekeeper, and repeats the app checks inside the read-only
+DMG mount. The mounted app must contain the exact verified executable bytes.
+The signed frozen host must also pass its offline startup smoke test.
+
+Only then can the separate `*-notarized` artifact contain build metadata with
+`signing: developer-id`, `unsigned: false`, and `notarized: true`, alongside the
+commit, tag, team, DMG submission ID, hashes, and checksum inventory. Verify both
+native target jobs and their receipts before publishing. Never infer that an
+existing `*-unsigned` artifact or download became notarized because a newer
+workflow exists. If Apple rejects a submission, inspect its submission ID through
+Apple's notarization tools privately, correct the reported cause, and start a
+new reviewed run; do not bypass the ticket gate.
+
+For Windows, configure a trusted signing certificate or an approved signing
+service following [Tauri Windows signing](https://v2.tauri.app/distribute/sign/windows/).
+Windows publisher signing is not implemented here. Ad-hoc signing protects
+bundle integrity but does not make an installer a trusted production download.

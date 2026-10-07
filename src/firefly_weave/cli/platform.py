@@ -78,7 +78,8 @@ def platform(ctx: click.Context, directory: Path) -> None:
     """Set up and run a local API with PostgreSQL and Keycloak.
 
     Requires a matching source checkout, uv, and local Docker with Compose.
-    Start with setup; then start holds the API in the foreground. In another
+    Use up for a persistent Docker API and demo workspace. For a foreground API,
+    start with setup; then start holds the API in the foreground. In another
     terminal, run demo to save your first real workflow execution, then user
     to create a development person who can sign in to Studio and the CLI.
     To run built-in HTTP connector actions, use integrations and secret.
@@ -128,12 +129,18 @@ def setup(directory: Path, source: Path, context: str | None, subnet: str | None
 @platform.command()
 @click.pass_obj
 def start(directory: Path) -> None:
-    """Resume dependencies and run the API here; Ctrl-C stops only the API.
+    """Resume the saved platform: detached Docker or foreground host API.
 
     Reuses the existing runtime and identity. Never migrates or provisions again.
     """
-    click.echo("Starting the local API. Keep this terminal open; Ctrl-C stops the API.")
-    _call(lambda: lifecycle.start(directory, click.echo), "text")
+
+    def operation() -> None:
+        mode = lifecycle._load(directory).get("mode", "host")
+        if mode == "host":
+            click.echo("Starting the local API. Keep this terminal open; Ctrl-C stops the API.")
+        lifecycle.start(directory, click.echo)
+
+    _call(operation, "text")
 
 
 @platform.command()
@@ -148,7 +155,7 @@ def status(directory: Path, output: str) -> None:
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
 @click.pass_obj
 def stop(directory: Path, output: str) -> None:
-    """Stop only this installation's dependencies after Ctrl-C stops its API.
+    """Stop this Docker platform, or host dependencies after Ctrl-C stops its API.
 
     Keeps containers, volumes, databases, credentials, and workflow data.
     """
@@ -344,7 +351,8 @@ def _show_secret(value: dict[str, Any]) -> None:
 def secret_set(directory: Path, handle: str, value_stdin: bool, output: str) -> None:
     """Create or replace the value behind a handle in the demo environment.
 
-    A new handle applies after the API restarts; a replaced value applies at
+    Docker handles and replacements apply after platform start refreshes the
+    API. In host mode, a new handle needs a restart; a replacement applies at
     the next credential use.
     """
 
@@ -393,3 +401,65 @@ def secret_list(directory: Path, output: str) -> None:
 def secret_remove(directory: Path, handle: str, output: str) -> None:
     """Delete the value behind a handle; a restart withdraws the handle."""
     _call(lambda: lifecycle.secret_remove(directory, handle), output, _show_secret)
+
+
+@platform.command()
+@click.option("--source", type=click.Path(path_type=Path), default=Path("."), show_default=True)
+@click.option("--context", help="Named local Docker context; existing installations keep their saved context.")
+@click.option("--subnet", help="Optional unused RFC1918 IPv4 subnet for a new installation.")
+@click.option("--username", help="Create the initial development sign-in account once.")
+@click.option(
+    "--role",
+    "roles",
+    multiple=True,
+    type=click.Choice(lifecycle.PERSON_ROLES),
+    help="Role for the initial account; repeat for several roles. Requires --username.",
+)
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def up(
+    directory: Path,
+    source: Path,
+    context: str | None,
+    subnet: str | None,
+    username: str | None,
+    roles: tuple[str, ...],
+    output: str,
+) -> None:
+    """Set up once and leave a Docker API, database and identity provider running.
+
+    Saves a successful demo workflow. Repeating up resumes retained services;
+    it never resets an account, password, or database. Credentials are shown
+    only when creating the initial development account.
+    """
+    from firefly_weave.cli.progress import progress
+
+    def operation() -> dict[str, Any]:
+        with progress("Preparing the local Docker platform", enabled=output == "text") as update:
+            return lifecycle.up(
+                directory, source, context, subnet=subnet, username=username, roles=roles, progress=update
+            )
+
+    def render(value: dict[str, Any]) -> None:
+        click.echo("Docker platform is running; you can close this terminal.")
+        click.echo("API: " + value["api_url"])
+        click.echo("Data and configuration: " + str(directory))
+        account = value.get("account")
+        if account and not account.get("existing"):
+            _show_person(account)
+        elif account:
+            click.echo("Existing account retained: " + account["username"] + ". Its password was not reset.")
+        click.echo("Connect: weave auth setup " + value["api_url"])
+        click.echo("Open Studio: weave studio")
+        click.echo("Logs: weave platform --directory " + shlex.quote(str(directory)) + " logs")
+
+    _call(operation, output, render)
+
+
+@platform.command()
+@click.option("--lines", type=click.IntRange(1, 1000), default=100, show_default=True)
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def logs(directory: Path, lines: int, output: str) -> None:
+    """Show recent logs from this installation's Docker API."""
+    _call(lambda: lifecycle.logs(directory, lines), output, lambda value: click.echo(value["logs"], nl=False))

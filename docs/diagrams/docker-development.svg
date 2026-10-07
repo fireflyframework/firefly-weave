@@ -1,0 +1,49 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="760" viewBox="0 0 960 760" role="img" aria-labelledby="title desc">
+<title id="title">Your Docker development platform</title>
+<desc id="desc">Studio and the CLI run on your computer. Sign in through local Keycloak, then use the token to call the Weave API. The API runs workflows and the scheduler and stores durable state in PostgreSQL. Keycloak has a separate database. Docker keeps the four services running in the background. Only loopback ports are exposed; stopping the platform retains its volumes.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:28px;font-weight:700}.heading{font-size:22px;font-weight:700}.body{font-size:18px}.note{font-size:16px;fill:#45685C}.line{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="960" height="760" rx="24" fill="#FAFCFB"/>
+<rect x="34" y="32" width="6" height="52" rx="3" fill="#367D68"/>
+<text x="56" y="60" class="title">One command. A platform you can sign in to.</text>
+<text x="56" y="91" class="body">Docker keeps the services running after you close the terminal.</text>
+<rect x="40" y="122" width="880" height="118" rx="18" fill="white" stroke="#BFD2C8"/>
+<g class="icon"><rect x="64" y="144" width="54" height="38" rx="4"/><path d="M59 194h64M83 182v12M101 182v12"/></g>
+<text x="145" y="158" class="heading">Your computer: Studio and the CLI</text>
+<text x="145" y="187" class="body">Create workflows, inspect runs, and complete human tasks.</text>
+<text x="145" y="214" class="note">Start here: weave platform up --username developer</text>
+<path class="line" d="M262 240v81"/><path class="line" d="M698 240v81"/>
+<rect x="83" y="262" width="359" height="32" rx="16" fill="#EEF4F0"/><text x="105" y="284" class="body">1. Sign in with your local account</text>
+<rect x="515" y="262" width="360" height="32" rx="16" fill="#EEF4F0"/><text x="536" y="284" class="body">2. Use your authorized workspace</text>
+<rect x="40" y="314" width="880" height="362" rx="20" fill="#F0F6F2" stroke="#BFD2C8"/>
+<rect x="60" y="336" width="405" height="149" rx="16" fill="white" stroke="#BFD2C8"/>
+<g class="icon"><path d="M88 356l16-6 16 6v14c0 15-16 22-16 22s-16-7-16-22zM96 368l6 6 11-13"/></g>
+<text x="138" y="374" class="heading">Keycloak</text><text x="84" y="413" class="body">Checks your username and password.</text><text x="84" y="443" class="note">Development identity provider only.</text><text x="84" y="468" class="note">Other installations can use your CIAM.</text>
+<rect x="495" y="336" width="405" height="149" rx="16" fill="white" stroke="#BFD2C8"/>
+<g class="icon"><rect x="520" y="351" width="34" height="37" rx="6"/><path d="M529 363h16M529 375h16"/></g>
+<text x="571" y="374" class="heading">Weave API</text><text x="519" y="413" class="body">Checks your roles and runs workflows.</text><text x="519" y="443" class="note">Scheduler and execution history included.</text><text x="519" y="468" class="note">Interactive API reference at /docs.</text>
+<path class="line" d="M262 485v52"/><path class="line" d="M698 485v52"/>
+<rect x="60" y="539" width="405" height="94" rx="16" fill="white" stroke="#BFD2C8"/><rect x="495" y="539" width="405" height="94" rx="16" fill="white" stroke="#BFD2C8"/>
+<g class="icon"><ellipse cx="104" cy="563" rx="17" ry="6"/><path d="M87 563v30c0 8 34 8 34 0v-30M87 578c0 8 34 8 34 0"/><ellipse cx="539" cy="563" rx="17" ry="6"/><path d="M522 563v30c0 8 34 8 34 0v-30M522 578c0 8 34 8 34 0"/></g>
+<text x="138" y="574" class="heading">Identity database</text><text x="138" y="602" class="note">Accounts and sign-in settings.</text><text x="572" y="574" class="heading">Workflow database</text><text x="572" y="602" class="note">Definitions, runs, tasks, and grants.</text>
+<text x="65" y="658" class="note">ONE OWNED DOCKER PROJECT  ·  Private volumes  ·  Ports available only on localhost</text>
+<rect x="40" y="697" width="880" height="40" rx="12" fill="#FFF7E5"/>
+<text x="61" y="723" class="body">Stop with weave platform stop. Resume with weave platform up. Your data stays.</text>
+</svg>

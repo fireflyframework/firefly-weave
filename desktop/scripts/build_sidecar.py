@@ -26,6 +26,17 @@ import sys
 from pathlib import Path
 
 
+def signing_arguments(identity: str | None, root: Path) -> list[str]:
+    if not identity:
+        return []
+    return [
+        "--codesign-identity",
+        identity,
+        "--osx-entitlements-file",
+        str(root / "desktop/src-tauri/entitlements.plist"),
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target")
@@ -74,7 +85,7 @@ def main() -> None:
     ]
     identity = os.environ.get("APPLE_SIGNING_IDENTITY")
     if sys.platform == "darwin" and identity:
-        command[3:3] = ["--codesign-identity", identity]
+        command[3:3] = signing_arguments(identity, root)
     subprocess.run(command, check=True, cwd=root)
     extension = ".exe" if sys.platform == "win32" else ""
     source = work / "dist" / ("weave-studio-host" + extension)

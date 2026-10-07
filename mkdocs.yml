@@ -95,7 +95,8 @@ nav:
       - Your first workflow: quickstart.md
       - Who does what: guides/roles-and-lifecycle.md
       - Deploy, start, and use the platform: guides/platform-overview.md
-      - Start a local platform: guides/local-platform.md
+      - Start a development platform with Docker: guides/docker-development.md
+      - Local setup in individual steps: guides/local-platform.md
       - Visual guide: visual-guide.md
       - Capabilities and limits: capabilities.md
   - Workflows and runs:

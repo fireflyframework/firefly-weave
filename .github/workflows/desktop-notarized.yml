@@ -1,0 +1,107 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+name: Notarized macOS installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      notarize:
+        description: 'Sign and submit this exact release tag to Apple (requires protected environment approval)'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.notarize == true &&
+      github.repository == 'fireflyframework/firefly-weave' && startsWith(github.ref, 'refs/tags/v')
+    environment: macos-release-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.19'
+          python-version: '3.12.13'
+      - name: Verify exact release source without credentials
+        run: uv run --no-project python desktop/scripts/notarize_macos.py --verify-source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: |
+            studio/package-lock.json
+            desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt,clippy
+          targets: ${{ matrix.target }}
+      - name: Prepare locked tools
+        run: |
+          uv sync --locked --extra studio
+          uv pip install pyinstaller==6.16.0
+          npm ci --prefix studio
+          npm ci --prefix desktop
+      - name: Verify source and compile Studio before loading credentials
+        run: |
+          uv run --no-sync python -m pytest tests/unit/test_macos_seal.py tests/unit/test_macos_notarization.py -q
+          npm run check --prefix studio
+          npm test --prefix studio
+          npm run build --prefix studio
+          cargo fmt --check --manifest-path desktop/src-tauri/Cargo.toml
+          cargo clippy --locked --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Sign, notarize, verify and collect exact installers
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: uv run --no-sync python desktop/scripts/notarize_macos.py --target ${{ matrix.target }}
+      - name: Remove temporary signing credentials even after interruption
+        if: always()
+        run: uv run --no-project python desktop/scripts/notarize_macos.py --cleanup
+      - name: Retain verified notarized installers only
+        uses: actions/upload-artifact@v4
+        with:
+          name: weave-studio-${{ github.ref_name }}-${{ matrix.target }}-notarized
+          if-no-files-found: error
+          path: desktop/work/notarized-assets/**
+# This opt-in workflow retains artifacts; it never creates or modifies a release.

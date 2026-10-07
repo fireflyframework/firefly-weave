@@ -49,6 +49,7 @@ _SOURCE_FILES = (
     "uv.lock",
     "compose.yaml",
     "compose.identity.yaml",
+    "compose.local-runtime.yaml",
     "infra/postgres/init.sql",
     "scripts/setup-local.py",
     "scripts/setup-identity.py",
@@ -297,6 +298,8 @@ def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
     state = strict_json(read_file(directory / "platform.json", 65536, private=True))
     if not isinstance(state, dict) or state.get("format") != _FORMAT:
         raise PlatformError("This is not a local platform installation directory.")
+    if state.get("mode", "host") not in {"host", "docker"}:
+        raise PlatformError("Installation mode is invalid.")
     identifier = state.get("id", "")
     if not isinstance(identifier, str) or re.fullmatch(r"[a-f0-9]{24}", identifier) is None:
         raise PlatformError("Installation ownership metadata is invalid.")
@@ -374,6 +377,10 @@ def _compose(state: dict[str, Any]) -> list[str]:
         if read_file(override, 4096, private=True) != _network_override(state):
             raise PlatformError("The saved network configuration has changed; no services were modified.")
         command.extend(["-f", str(override)])
+    if state.get("mode") == "docker":
+        from firefly_weave.sdk import platform_docker
+
+        command.extend(["-f", str(platform_docker.dependencies(state))])
     return command
 
 
@@ -486,7 +493,10 @@ def setup(
     *,
     subnet: str | None = None,
     progress: Callable[[str], None] | None = None,
+    mode: str = "host",
 ) -> dict[str, Any]:
+    if mode not in {"host", "docker"}:
+        raise PlatformError("Installation mode is invalid.")
     directory = real_path(directory)
     if directory.exists():
         raise PlatformError(
@@ -497,6 +507,7 @@ def setup(
     if subnet is not None:
         subnet = _check_subnet(state["context"], subnet)
     state["subnet"] = subnet
+    state["mode"] = mode
     directory.parent.mkdir(parents=True, exist_ok=True)
     directory.mkdir(mode=0o700)
     state.update(format=_FORMAT, id=uuid4().hex[:24], directory=str(directory), ports=_ports(), stage="reserved")
@@ -659,7 +670,7 @@ def _session(state: dict[str, Any]) -> None:
         "WEAVE_POSTGRES_VOLUME": "weave-local-" + state["id"] + "-postgres",
         "WEAVE_KEYCLOAK_VOLUME": "weave-local-" + state["id"] + "-keycloak",
         "WEAVE_KEYCLOAK_TEST_URL": f"http://localhost:{ports['keycloak']}",
-        "WEAVE_API_URL": f"http://127.0.0.1:{ports['api']}",
+        "WEAVE_API_URL": _summary(state)["api_url"],
     }
     with os.fdopen(
         os.open(directory / "session.env", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "w"
@@ -695,11 +706,14 @@ def _demo_receipt(directory: Path) -> dict[str, Any]:
 
 
 def _summary(state: dict[str, Any]) -> dict[str, Any]:
-    url = f"http://127.0.0.1:{state['ports']['api']}"
+    mode = state.get("mode", "host")
+    port = state["ports"]["container_api" if mode == "docker" else "api"]
+    url = f"http://127.0.0.1:{port}"
     return {
         "ok": True,
         "directory": state["directory"],
         "stage": state["stage"],
+        "mode": mode,
         "api_url": url,
         "docs_url": url + "/docs",
         "context": state["context"],
@@ -711,7 +725,12 @@ def status(directory: Path) -> dict[str, Any]:
     state = _load(directory, complete=False)
     _check_engine(state)
     result = _summary(state)
-    result["api_ready"] = _probe(result["api_url"] + "/health/ready")
+    if state.get("mode") == "docker":
+        from firefly_weave.sdk import platform_docker
+
+        result["api_container"] = platform_docker.inspect(state)
+    owned_running = state.get("mode") != "docker" or result["api_container"]["state"] == "running"
+    result["api_ready"] = owned_running and _probe(result["api_url"] + "/health/ready")
     result["identity_ready"] = _probe(
         f"http://localhost:{state['ports']['keycloak']}/realms/weave/.well-known/openid-configuration",
         f"http://localhost:{state['ports']['keycloak']}/realms/weave",
@@ -753,6 +772,11 @@ def start(directory: Path, notice: Callable[[str], None] | None = None) -> None:
         state = _load(directory)
         _check_engine(state)
         _verify_runtime(state)
+        if state.get("mode") == "docker":
+            from firefly_weave.sdk import platform_docker
+
+            platform_docker.start(state, notice or (lambda message: None))
+            return
         _check_api_port(state["ports"]["api"])
         # Static server settings: handles and executors added later apply at the next start.
         execution = _execution_environment(state, notice or (lambda message: None))
@@ -820,6 +844,10 @@ def start(directory: Path, notice: Callable[[str], None] | None = None) -> None:
 
 def _runtime_build(state: dict[str, Any]) -> dict[str, Any]:
     """Ask the installed runtime for its build identity and built-in HTTP descriptor."""
+    if state.get("mode") == "docker":
+        from firefly_weave.sdk import platform_docker
+
+        return platform_docker.build_identity(state)
     return _parse_build(_run(state, "build-identity", [_python(state), "-I", "-c", _BUILD_PROBE]))
 
 
@@ -931,7 +959,7 @@ def _execution_environment(state: dict[str, Any], notice: Callable[[str], None])
             "release_id": integration["release_id"],
             "task_types": integration["task_types"],
             "capacity": integration["capacity"],
-            "build": "local-development",
+            "build": "image" if state.get("mode") == "docker" else "local-development",
         }
         env["WEAVE_NATIVE_IMAGE_DIGEST"] = integration["image_digest"]
         env["WEAVE_NATIVE_EXECUTORS"] = json.dumps([executor], separators=(",", ":"))
@@ -1245,6 +1273,7 @@ def secret_set(directory: Path, handle: str, value: bytes) -> dict[str, Any]:
     The value is never printed, logged, or passed to a process; connections reference the handle.
     """
     scope = secret_preflight(directory, handle)
+    docker = _load(directory).get("mode") == "docker"
     secret = _secret_value(value)
     with _exclusive(directory, ".secrets.lock", "Another secret command is active; retry after it ends."):
         store = cast(Path, _secret_store(directory, create=True))
@@ -1272,9 +1301,13 @@ def secret_set(directory: Path, handle: str, value: bytes) -> dict[str, Any]:
         "provider": "file",
         "scope": scope,
         "created": created,
-        "restart_required": created,
+        "restart_required": created or docker,
         "message": (
-            "Stored privately. Restart the API (Ctrl-C, then start) so the demo environment can use this handle."
+            "Stored privately. The running Docker API keeps its previous mounted snapshot until "
+            + _command(directory, "start")
+            + " succeeds."
+            if docker
+            else "Stored privately. Restart the API (Ctrl-C, then start) so the demo environment can use this handle."
             if created
             else "Replaced privately. An API started after this handle existed reads the new value at its next use."
         ),
@@ -1290,7 +1323,7 @@ def secret_list(directory: Path) -> dict[str, Any]:
 def secret_remove(directory: Path, handle: str) -> dict[str, Any]:
     """Delete one stored development secret value; a restart withdraws its grant."""
     _check_handle(handle)
-    _load(directory)
+    docker = _load(directory).get("mode") == "docker"
     with _exclusive(directory, ".secrets.lock", "Another secret command is active; retry after it ends."):
         if handle not in _secret_handles(directory):
             raise PlatformError(f"No local secret named {handle} exists in this installation.")
@@ -1300,7 +1333,13 @@ def secret_remove(directory: Path, handle: str) -> dict[str, Any]:
         "handle": handle,
         "removed": True,
         "restart_required": True,
-        "message": "Deleted the value. Restart the API (Ctrl-C, then start) to withdraw the handle.",
+        "message": (
+            "Removed the stored handle. The running Docker API retains its mounted value until "
+            + _command(directory, "start")
+            + " succeeds. Prior snapshots remain in this private installation directory."
+            if docker
+            else "Deleted the value. Restart the API (Ctrl-C, then start) to withdraw the handle."
+        ),
     }
 
 
@@ -1310,6 +1349,10 @@ def stop(directory: Path) -> dict[str, Any]:
         _check_engine(state)
         if not (directory / "postgres.env").is_file() or not (directory / "identity.env").is_file():
             raise PlatformError("Setup did not reach dependency creation; no services need stopping.")
+        if state.get("mode") == "docker":
+            from firefly_weave.sdk import platform_docker
+
+            platform_docker.stop(state)
         _run(
             state,
             "dependencies-stop",
@@ -1649,3 +1692,67 @@ def user(
         "api_url": api,
         "next": ["weave auth setup " + api, "weave studio"],
     }
+
+
+def up(
+    directory: Path,
+    source: Path,
+    context: str | None,
+    *,
+    subnet: str | None = None,
+    username: str | None = None,
+    roles: Sequence[str] = (),
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Prepare once, then resume the retained Docker platform and its demo workspace."""
+    if roles and username is None:
+        raise PlatformError("Account roles require --username.")
+    selected = _person_roles(roles)
+    if username is not None:
+        _check_username(username)
+    if not directory.exists():
+        setup(directory, source, context, subnet=subnet, progress=progress, mode="docker")
+    state = _load(directory)
+    if state.get("mode", "host") != "docker":
+        raise PlatformError("This installation uses foreground host mode. Use start, or up with a new directory.")
+    if context is not None and context != state["context"] or subnet is not None and subnet != state.get("subnet"):
+        raise PlatformError("Use the installation's saved Docker context and subnet.")
+    with _exclusive(directory, ".up.lock", "Another platform up command is active."):
+        start(directory, progress)
+        first = demo(directory)
+        result = {**_summary(state), "first_run_saved": True, "run": first["receipt"]}
+        if username is not None:
+            path = directory / "up-user.json"
+            if path.exists():
+                account = strict_json(read_file(path, 65536, private=True))
+                if account.get("username") != username or account.get("stage") != "ready":
+                    raise PlatformError(
+                        "The initial account receipt differs or is incomplete. "
+                        "Inspect it; use user for another account."
+                    )
+                saved_roles = account.get("roles", list(DEFAULT_PERSON_ROLES))
+                if roles and list(selected) != saved_roles:
+                    raise PlatformError(
+                        "The existing account roles differ. They were not changed; review its access explicitly."
+                    )
+                result["account"] = {"username": username, "existing": True, "roles": saved_roles}
+            else:
+                _write(path, {"stage": "attempted", "username": username, "roles": list(selected)})
+                account = user(directory, username, selected)
+                _write(path, {"stage": "ready", "username": username, "roles": list(selected)}, replace=True)
+                result["account"] = account
+        return result
+
+
+def logs(directory: Path, lines: int = 100) -> dict[str, Any]:
+    """Read bounded API logs from this installation's exact Docker context/project."""
+    if not 1 <= lines <= 1000:
+        raise PlatformError("Choose 1 through 1000 log lines.")
+    with _lock(directory):
+        state = _load(directory)
+        _check_engine(state)
+        if state.get("mode") != "docker":
+            raise PlatformError("Host mode prints API logs in its foreground terminal.")
+        from firefly_weave.sdk import platform_docker
+
+        return {"ok": True, "logs": platform_docker.logs(state, lines)}

@@ -230,7 +230,7 @@ wheels = [
 
 [[package]]
 name = "firefly-weave"
-version = "0.1.0a13"
+version = "0.1.0a14"
 source = { directory = "../../" }
 dependencies = [
     { name = "click" },
@@ -1295,7 +1295,7 @@ wheels = [
 
 [[package]]
 name = "weave-files-worker"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "." }
 dependencies = [
     { name = "aioftp" },

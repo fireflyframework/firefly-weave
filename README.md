@@ -53,7 +53,7 @@ maps service tasks, user tasks, gateways, and timers to Weave steps.
 
 ## What you get
 
-The **v0.1.0a13 alpha** release provides the **API, CLI, Python SDK, and Studio**
+The **v0.1.0a14 alpha** release provides the **API, CLI, Python SDK, and Studio**
 visual workspace, with human-task inboxes, email conversations, execution
 management, and administration of people and access. Run Weave as a standalone
 service or embed it in another product.
@@ -81,7 +81,7 @@ See the illustrated [AI workflow guide](docs/guides/ai-workers.md) and
 Read the [capability matrix](docs/capabilities.md) for tested boundaries and
 live-provider checks that remain environment-specific.
 
-Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha13-browser-application)
+Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha14-browser-application)
 or as a [desktop app](docs/guides/desktop.md). The macOS desktop bundles
 are ad-hoc signed, not Developer ID signed or notarized, so macOS may ask you to
 approve them; do not use the alpha5 macOS installers, which were damaged. The
@@ -119,7 +119,7 @@ integration code. Each has its own guide, so you can stop at the result you need
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a13 alpha**
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a14 alpha**
 into your user account without `sudo`, Git, or Docker:
 
 ```sh
@@ -127,12 +127,12 @@ into your user account without `sudo`, Git, or Docker:
   # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a13/install.sh \
-    | sh -s -- --version v0.1.0a13
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a14/install.sh \
+    | sh -s -- --version v0.1.0a14
 )
 ```
 
-Expected: `Installed Firefly Weave 0.1.0a13:` followed by the command's path. Then
+Expected: `Installed Firefly Weave 0.1.0a14:` followed by the command's path. Then
 make the default command directory available in this terminal and look around:
 
 ```sh
@@ -146,7 +146,7 @@ weave help workflow
 weave docs platform
 ```
 
-Expected: `Firefly Weave 0.1.0a13`, the command overview, the `workflow`
+Expected: `Firefly Weave 0.1.0a14`, the command overview, the `workflow`
 commands, and the address of the platform guide. You do not need to learn every
 command first: help explains each family and its next steps. The
 [installation guide](docs/installation.md) covers choosing Python, a permanent
@@ -179,27 +179,27 @@ Compose files and setup helpers. Clone the tag that matches the CLI:
 
 ```sh
 # Keep the platform files at the same version as the CLI.
-git clone --branch v0.1.0a13 --single-branch https://github.com/fireflyframework/firefly-weave.git
+git clone --branch v0.1.0a14 --single-branch https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 
-# Check prerequisites, then prepare private settings and dependencies once.
+# Check prerequisites, then start a persistent Docker platform and a sign-in account.
 weave platform doctor
-weave platform setup
+weave platform up --username developer
 
-# Keep this terminal open while the API runs.
-weave platform start
+# Confirm readiness and copy the printed sign-in command.
+weave platform status
 ```
 
-Expected: `doctor` reports your CLI version, the checkout, and the Docker
-context; `setup` finishes without errors; and `start` keeps printing API logs.
-In a second terminal at that checkout, run `weave platform status`, then
-`weave platform demo` to save a first real run, and open the printed `/docs`
-address to explore the API.
+Expected: the API and Keycloak are ready, the example workflow succeeded, and
+`up` prints a generated password once. Docker keeps the API running after you
+close the terminal. Follow the printed `weave auth setup` command, sign in with
+your new account, then run `weave studio`.
 
-To sign in as a person, open Studio against it, and run REST calls, follow
-steps 5 to 8 of [the local platform guide](docs/guides/local-platform.md). For a
-shared installation, start with
-[the deployment map](docs/operations/remote-deployment.md).
+The [Docker development guide](docs/guides/docker-development.md) explains each
+step, the architecture, stopping and resuming, and administrator roles. Existing
+foreground installations continue to use `weave platform start`; see the
+[individual setup steps](docs/guides/local-platform.md). For a shared
+installation, start with [the deployment map](docs/operations/remote-deployment.md).
 
 ## Continue when you need more
 
@@ -265,7 +265,7 @@ path, and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a13**, an **alpha** release. Download
+The recommended installation is **v0.1.0a14**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The documentation on a branch describes the source on that branch; a release tag

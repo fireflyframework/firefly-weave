@@ -119,7 +119,7 @@ function setup(): Setup {
   if (cached) return cached;
   const state = JSON.parse(
     readFileSync(join(platformDir, "platform.json"), "utf8"),
-  ) as { ports: Record<string, number> };
+  ) as { mode?: "host" | "docker"; ports: Record<string, number> };
   const identity = readFileSync(join(platformDir, "identity.env"), "utf8");
   const secret = identity
     .split("\n")
@@ -133,7 +133,7 @@ function setup(): Setup {
     ?.scope as Setup["environment"] | undefined;
   if (!environment) throw Error("The person has no environment grant");
   cached = {
-    api: `http://127.0.0.1:${state.ports["api"]}`,
+    api: `http://127.0.0.1:${state.ports[state.mode === "docker" ? "container_api" : "api"]}`,
     keycloak: `http://localhost:${state.ports["keycloak"]}`,
     keycloakHost: `localhost:${state.ports["keycloak"]}`,
     adminSecret: secret,

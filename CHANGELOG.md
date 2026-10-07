@@ -18,6 +18,16 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a14
+
+- Add a detached Docker development platform through `weave platform up`,
+  reusing owned databases, identity setup, workspace creation, and user roles.
+  Keep the foreground API mode available for existing installations.
+- Prepare an explicit Developer ID signing and notarization path for macOS
+  releases. Apple credentials are required; ordinary builds remain ad-hoc signed.
+- Pin the Agentic and Files 0.1.6 packages to core 0.1.0a14 without changing their
+  execution behavior or the database schema.
+
 ## 0.1.0a13
 
 - Retry explicit platform capacity rejections while a worker reads its task
