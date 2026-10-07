@@ -90,11 +90,16 @@ class Worker:
             raise TimeoutError("Claim lease has expired")
         absolute_deadline = loop.time() + (lease.deadline - now).total_seconds()
         expires_at = loop.time() + remaining
+        current_expiry = expires_at
+        authority_active = True
+
+        def valid_until() -> float:
+            return current_expiry if authority_active else 0
 
         # The watchdog belongs to execution, independently of a potentially stalled renewal.
         async with (
             asyncio.timeout_at(expires_at) as validity,
-            lease_settlement(lease.proof, absolute_deadline),
+            lease_settlement(lease.proof, absolute_deadline, valid_until=valid_until),
         ):
             handler = self.handlers.get(lease.capability)
             if handler is None:
@@ -104,28 +109,35 @@ class Worker:
                 return
 
             async def heartbeat() -> None:
-                current_expiry = expires_at
-                while True:
-                    delay = max(0.01, (current_expiry - loop.time()) / 3)
-                    await asyncio.sleep(delay)
-                    async with (
-                        asyncio.timeout_at(current_expiry),
-                        lease_settlement(lease.proof, current_expiry),
-                    ):
-                        renewed = await self.client.heartbeat(lease.proof)
-                    # A late response cannot revive expired authority, even if a transport
-                    # suppresses cancellation. Only a timely matching proof extends execution.
-                    if loop.time() >= current_expiry:
-                        raise TimeoutError("Lease renewal arrived after expiry")
-                    if renewed.proof != lease.proof:
-                        raise RuntimeError("Lease renewal proof mismatch")
-                    extension = (min(renewed.expires_at, lease.deadline) - datetime.now(UTC)).total_seconds()
-                    if extension <= 0:
-                        raise TimeoutError("Renewed lease has expired")
-                    current_expiry = min(absolute_deadline, loop.time() + extension)
-                    validity.reschedule(current_expiry)
+                nonlocal current_expiry, authority_active
+                try:
+                    while True:
+                        delay = max(0.01, (current_expiry - loop.time()) / 3)
+                        await asyncio.sleep(delay)
+                        async with (
+                            asyncio.timeout_at(current_expiry),
+                            lease_settlement(lease.proof, current_expiry),
+                        ):
+                            renewed = await self.client.heartbeat(lease.proof)
+                        # A late response cannot revive expired authority, even if a transport
+                        # suppresses cancellation. Only a timely matching proof extends execution.
+                        if loop.time() >= current_expiry:
+                            raise TimeoutError("Lease renewal arrived after expiry")
+                        if renewed.proof != lease.proof:
+                            raise RuntimeError("Lease renewal proof mismatch")
+                        extension = (min(renewed.expires_at, lease.deadline) - datetime.now(UTC)).total_seconds()
+                        if extension <= 0:
+                            raise TimeoutError("Renewed lease has expired")
+                        current_expiry = min(absolute_deadline, loop.time() + extension)
+                        validity.reschedule(current_expiry)
+                finally:
+                    authority_active = False
 
-            execution = asyncio.ensure_future(handler(lease))
+            async def execute_handler() -> JsonValue:
+                async with lease_settlement(lease.proof, absolute_deadline, valid_until=valid_until):
+                    return await handler(lease)
+
+            execution = asyncio.create_task(execute_handler())
             renewal = asyncio.create_task(heartbeat())
             try:
                 done, _ = await asyncio.wait({execution, renewal}, return_when=asyncio.FIRST_COMPLETED)
@@ -145,6 +157,7 @@ class Worker:
                 # A failed completion transport is ambiguous; never re-execute the handler.
                 await self.client.complete(lease.proof, uuid4(), output)
             finally:
+                authority_active = False
                 execution.cancel()
                 renewal.cancel()
                 await asyncio.gather(execution, renewal, return_exceptions=True)

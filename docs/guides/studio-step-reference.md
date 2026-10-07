@@ -31,13 +31,13 @@ Studio writes the same versioned definition language that you can edit as YAML
 or build with the CLI and the Python SDK, so every choice here is visible in
 the **Source** tab.
 
-**This page describes the Studio 0.1.0a12 editor.** The step kinds and native
+**This page describes the Studio 0.1.0a13 editor.** The step kinds and native
 human tasks are also part of alpha6, but several controls described here, such
 as the canvas step picker, the searchable action picker, the **Value** /
 typed input rows with **Use data** and **Calculate…**, the schema designer, the API action builder,
 and the simulation setup and panel, are new in 0.1.0a7. An alpha6 or earlier
 browser bundle does not have them; to see the same screens,
-[install the alpha12 browser application](studio.md#install-the-alpha12-browser-application).
+[install the alpha13 browser application](studio.md#install-the-alpha13-browser-application).
 
 **How to use this page:**
 

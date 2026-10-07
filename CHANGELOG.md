@@ -18,6 +18,19 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## 0.1.0a13
+
+- Retry explicit platform capacity rejections while a worker reads its task
+  context or credentials, using the current validated lease. Reject late
+  responses after cancellation, renewal failure, or expiry; unrelated HTTP
+  errors and ambiguous network failures are not replayed.
+- Classify an Agentic preparation timeout as not started when its own time
+  budget expires before provider execution. Failures after provider execution
+  begins retain their ambiguous outcome classification.
+- Publish Agentic and Files worker packages 0.1.5 pinned to core 0.1.0a13.
+  Files has a dependency update only. The worker protocol and database schema
+  remain unchanged from alpha12 (`0030_worker_presence`).
+
 ## 0.1.0a12
 
 - Add environment-scoped deployment targets, desired state, observations,

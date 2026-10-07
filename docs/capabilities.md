@@ -50,9 +50,11 @@ permissions, and real delivery still need checking in your deployment.
 
 ## Which release this page describes
 
-Weave is an alpha workflow and integration platform. This branch prepares release
-**`0.1.0a12`**, with PyFly 26.9.15 and database schema revision
-`0030_worker_presence`; published packages are on
+Weave is an alpha workflow and integration platform. This documentation targets
+**`0.1.0a13`**, with PyFly 26.9.15 and database schema revision
+`0030_worker_presence`, unchanged from alpha12. Alpha13 corrects worker context
+and credential admission retries; the dated alpha12 delivery evidence below
+remains separate. Download packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 It includes [Studio](guides/studio.md), [human tasks and operator
 pause and resume](guides/human-tasks.md), [email conversations and
@@ -63,6 +65,27 @@ Rows marked **new in 0.1.0a7** describe features that alpha6 and earlier
 releases do not have. Alpha8 adds three migrations; see the
 [upgrade procedure](operations/upgrades.md).
 
+## Alpha12 delivery and acceptance
+
+The published tag is `v0.1.0a12`, commit
+`230a3aba17a4da76a5197edeec15fb4ceb6428c9`. Publication and environment
+acceptance have separate evidence:
+
+| Delivery | Verified scope | Limit |
+| --- | --- | --- |
+| API, CLI, SDK, worker packages, dependency locks and Studio bundle | 14 published assets downloaded again and checked against their hashes | Installing clients does not migrate a server |
+| Desktop installers | Six installers across Apple Silicon macOS, Intel macOS, Windows x64 and Linux x64; all 18 native assets downloaded and checked | macOS is ad-hoc signed and not notarized; Windows installers are unsigned; packaging checks do not establish interactive sign-in on every platform |
+| Core and installed packages | All 17 normal check stages passed, including 3,622 unit/contract cases and installed-artifact checks | Local fixtures do not certify external provider accounts |
+| Backend acceptance | Exact combined coverage of 629 integration and 69 process cases; four fresh queue cases completed 400 tasks with 400 effects and zero task retries | Coverage combines retained passing cases with reviewed affected-case reruns; it is not one successful full release command |
+| Studio | 914 browser cases passed | Six opt-in authentication cases were skipped in this run |
+| Azure preproduction | Alpha12 API migrated to schema 0030; real HTTP run and replay passed; separate Lumi request passed; the Operations runner observed three applications and applied a reviewed same-image Lumi adoption | Alpha12 AI workflow acceptance found a credential-capacity retry defect; its suspended run was retained. Alpha13 corrects that worker path; separate acceptance is required |
+
+The [exact-tag desktop build](https://github.com/fireflyframework/firefly-weave/actions/runs/37595716933)
+verified all four target builds and their installer manifests. Both downloaded
+macOS apps passed nested and outer bundle seal checks. None of this extends the
+earlier AI or human identity evidence to later versions. The alpha12 AI failure
+is retained as evidence; it is not counted as a successful model run.
+
 ## Capability matrix
 
 | Capability | Implementation | Local verification | Live-provider verification | Main boundary |
@@ -71,7 +94,7 @@ releases do not have. Alpha8 adds three migrations; see the
 | [File integrations](guides/file-connectors.md) | FTP, FTPS, SFTP, SharePoint/OneDrive and Google Drive workers | Real local FTP/FTPS/SFTP servers; simulated Graph and Drive responses | Microsoft and Google accounts not exercised | Six explicit operations; no standalone change-feed trigger yet |
 | [Decision tables](reference/decision-tables.md) | Versioned decision definitions and a dedicated workflow step | Compiler, API and PostgreSQL execution tests | Not applicable | Deterministic rule evaluation; no arbitrary expression execution |
 | [AI tasks](guides/ai-workers.md) | Per-workflow model profiles executed by an independent Agentic worker | Real Agentic library with controlled model transport; PostgreSQL completion/replay and secret classification | Azure OpenAI workflow completed on alpha10 through an independent Agentic worker; accepted result and consistent replay checked | Exact operator model/endpoint policy; external requests can be ambiguous |
-| [Lumi assistant](guides/lumi.md) | Separate environment profile and private gateway; opt-in context and reviewed Studio draft proposals | API authorization tests; 7-size Studio browser checks | Azure OpenAI response through the separate Lumi gateway on alpha10; installed alpha10 Studio configuration readback against Azure preproduction | No autonomous publish, activation, or execution; conversation stays in memory |
+| [Lumi assistant](guides/lumi.md) | Separate environment profile and private gateway; opt-in context and reviewed Studio draft proposals | API authorization tests; 7-size Studio browser checks | Azure OpenAI response through the separate Lumi gateway on alpha12; installed alpha10 Studio configuration readback against Azure preproduction | No autonomous publish, activation, or execution; conversation stays in memory |
 | [Compiler and schemas](reference/compiler.md) | Implemented | Compiler, schema, expression, and canonical-artifact suites | Not applicable | Validation without a catalog is partial and produces no artifact |
 | [Definition lifecycle](reference/api.md) | Implemented | Publication, activation, revision, and scoped API suites | Not applicable | Compiling is separate from authorization and admission |
 | [Durable runtime](reference/schedules-and-timers.md) | Implemented | PostgreSQL, lease, wait, signal, parallel, schedule, and recovery scenarios | Not applicable | External effects can repeat after a crash |
@@ -97,6 +120,7 @@ releases do not have. Alpha8 adds three migrations; see the
 | [WhatsApp Cloud API](connectors/whatsapp.md) | Implemented | Wire fixtures, status history, and owned PostgreSQL; composed provider gate passed | Not run | Account policies, templates, and live delivery need separate verification |
 | [Telegram webhook text](connectors/telegram.md) | Implemented | Local TLS fixtures and owned PostgreSQL; composed provider gate passed | Not run | Source-local deduplication; bot and group permissions are provider prerequisites |
 | [Operational limits](operations/configuration.md), [telemetry](operations/observability.md), [retention](operations/retention.md), and [compatibility](operations/upgrades.md) | Implemented | Policy, accounting, contention, telemetry, retention, and upgrade suites | Not applicable | Logical accounting is separate from physical storage; compatibility checks gate readiness |
+| [Container deployment Operations](operations/cluster-management.md) | New in alpha12: scoped targets, observations, immutable reviewed plans and outbound runners | Local Compose lifecycle, adapter policy tests, authorization and reconciliation scenarios | Azure alpha12: complete three-application observation and reviewed same-image Lumi adoption; preserved configuration and verified all historical replicas | Azure target and runner policies keep `scale_workers` disabled; active-revision observations do not prove historical replicas have stopped |
 | [Deployment](operations/deployment.md), [backup and restore](operations/backup-restore.md), and distribution | Implemented | Installed-package, container, process recovery, restore, and queue suites | Not applicable | Restore ownership, grants, schema compatibility, and external systems must be checked in each environment |
 | [AWS, Azure, and GCP deployment recipes](operations/cloud-deployment.md) | Reference guides and Kubernetes manifests | Source review and offline Kubernetes object-shape validation | A separate Azure Container Apps deployment has been exercised; these Kubernetes recipes and AWS/GCP remain unverified | Operator-provisioned infrastructure; database migrations, identity, networking, and recovery need acceptance in the target |
 | Slack and Salesforce | Deferred | Not run | Not run | Not part of this delivery |

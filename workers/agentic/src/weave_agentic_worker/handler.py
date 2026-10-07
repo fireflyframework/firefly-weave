@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import Protocol, cast
 from urllib.parse import urlsplit
 
+import httpx
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.contracts.agentic import provider_destination_allowed
 from firefly_weave.contracts.connectors import ConnectorFailure
@@ -77,6 +78,17 @@ class WorkerPolicy:
         return value
 
 
+def _pre_provider_capacity(error: httpx.HTTPStatusError) -> None:
+    if error.response.status_code != 429:
+        return
+    try:
+        problem = error.response.json()
+    except ValueError:
+        return
+    if isinstance(problem, dict) and problem.get("code") in ("WV-REQUEST-CAPACITY", "WV-OPERATION-CAPACITY"):
+        raise ConnectorFailure("LLM_CAPACITY", "not_started") from None
+
+
 class AgenticTaskHandler:
     def __init__(
         self,
@@ -101,17 +113,35 @@ class AgenticTaskHandler:
         remaining = min(profile.timeout_seconds, (lease.deadline - datetime.now(UTC)).total_seconds())
         if remaining <= 0:
             raise ConnectorFailure("LLM_TIMEOUT", "not_started")
+        provider_started = False
+
+        def starting_provider() -> None:
+            nonlocal provider_started
+            provider_started = True
+
+        budget = asyncio.timeout(remaining)
         try:
-            async with asyncio.timeout(remaining):
-                return await self._execute(lease, invocation, options, remaining)
+            async with budget:
+                return await self._execute(lease, invocation, options, remaining, starting_provider)
         except TimeoutError:
-            raise ConnectorFailure("LLM_TIMEOUT", "unknown") from None
+            raise ConnectorFailure(
+                "LLM_TIMEOUT", "not_started" if budget.expired() and not provider_started else "unknown"
+            ) from None
 
     async def _execute(
-        self, lease: TaskLease, invocation: Invocation, options: ModelOptions, remaining_seconds: float
+        self,
+        lease: TaskLease,
+        invocation: Invocation,
+        options: ModelOptions,
+        remaining_seconds: float,
+        starting_provider: Callable[[], None],
     ) -> JsonValue:
         profile = invocation.profile
-        context = await self.transport.context(lease.proof)
+        try:
+            context = await self.transport.context(lease.proof)
+        except httpx.HTTPStatusError as error:
+            _pre_provider_capacity(error)
+            raise
         connection = context.connection
         if connection is None or context.expires_at <= datetime.now(UTC):
             raise ConnectorFailure("LLM_CONNECTION", "not_started")
@@ -144,15 +174,20 @@ class AgenticTaskHandler:
             raise ConnectorFailure("LLM_OPTIONS", "not_started") from None
         if profile.provider in {"openai-responses", "azure-responses"}:
             settings["openai_store"] = False
-        credential = await self.transport.credentials(
-            CredentialRequest(
-                lease=lease.proof,
-                connection_revision_id=connection.revision_id,
-                slot=slot,
+        try:
+            credential = await self.transport.credentials(
+                CredentialRequest(
+                    lease=lease.proof,
+                    connection_revision_id=connection.revision_id,
+                    slot=slot,
+                )
             )
-        )
+        except httpx.HTTPStatusError as error:
+            _pre_provider_capacity(error)
+            raise
         if credential.expires_at <= datetime.now(UTC):
             raise ConnectorFailure("LLM_CONNECTION", "not_started")
+        starting_provider()
         owned = self.model_builder(spec, credential.value, remaining_seconds)
         model = owned.model if isinstance(owned, ProviderModel) else owned
         try:

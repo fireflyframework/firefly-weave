@@ -242,18 +242,30 @@ Set `context` to the subscription UUID, `boundary` to the resource group,
 shared private path, and each component's `container` to its existing container
 name. Use the Azure public cloud management endpoint.
 
-Observation supports API, worker, and Lumi components. Mutation supports
-existing **worker and Lumi apps in Single revision mode**. Apps with custom
-scale rules are rejected because this interface configures fixed capacity.
-API/scheduler upgrades continue to use the
-[Azure deployment runbook](azure.md): Single revision mode alone does not prove
-that API revisions cannot overlap during an upgrade.
+Observation supports API, worker, and Lumi components. Configure new Azure
+targets and runner policies with `observe` only. After environment-specific
+acceptance, enable `update` for existing **worker and Lumi apps in Single
+revision mode**. Keep `scale_workers` disabled in both policies for alpha12
+Azure deployments. The implemented scaling path has not established an
+all-revision physical shutdown guarantee.
 
-Positive worker capacity sets both replica bounds to the reviewed value.
-Scaling a worker to zero deactivates its active revisions. Updating an image at
-zero replicas is not supported; keep that as a separate reviewed change.
+The observation queries active revisions and sums their reported replicas;
+`ready_replicas` counts replicas in healthy, provisioned active revisions. It
+does not enumerate physical replicas belonging to inactive or historical
+revisions. Even a settled `stopped` observation with zero replicas is therefore
+an active-revision result, not proof that every previous process has exited.
+Deactivating a revision and draining its replicas are separate checkpoints.
+
+For updates, positive capacity sets both replica bounds to the reviewed value.
+Apps with custom scale rules and image updates at zero replicas are rejected.
 The adapter preserves the app's existing environment, mounts, and other template
-configuration while updating the requested fields.
+configuration while updating the requested fields. This update behavior does
+not make automatic scale-to-zero safe to enable.
+
+API/scheduler upgrades and replacement of the runner itself require the
+[Azure maintenance boundary](azure.md#container-apps-operations-and-maintenance).
+Single revision mode alone does not prove that API revisions cannot overlap
+during an upgrade.
 
 Container Apps PATCH has no documented atomic resource-version precondition.
 The runner serializes its own operations and checks for drift immediately before

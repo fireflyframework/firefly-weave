@@ -151,6 +151,8 @@ the request before admitting it:
 | --- | --- |
 | Claim | Returns no leases; the worker polls again later without cancelling active handlers |
 | Heartbeat through `Worker` | Retries until the current lease expires, waiting 50, 100, and 200 ms, then 250 ms each time; renewal continues while completion awaits acknowledgment |
+| Context or credentials through the owning `Worker` handler | Retries known capacity rejections while the lease remains valid; heartbeats may extend the lease, but never the task deadline or handler budget |
+| Direct `WorkerTransport.context` or `.credentials` | At most 3 attempts in total within one second of the first rejection |
 | Direct `WorkerTransport.heartbeat` | At most 3 attempts in total, waiting 50 and then 100 ms, within one second of the first rejection |
 | Complete or fail through `Worker` | Retries within the task deadline while the owning worker's lease watchdog remains active, waiting 50, 100, and 200 ms, then 250 ms each time |
 | Direct `WorkerTransport.complete` or `.fail` | At most 48 attempts within ten seconds of the first rejection, using the same backoff; the initial request uses the caller's HTTP timeout |
@@ -159,10 +161,12 @@ The lease and deadline watchdog can stop these retries sooner. Every retry
 sends identical bytes (proof, completion ID, and payload), and the handler never
 runs again. Any other 429, authorization errors, server errors, disconnects,
 timeouts, and malformed successful answers fail without automatic retry.
-Credential requests are never retried. These retries cannot resolve an
-ambiguous outcome or renew expired authority.
+Context and credential retries require alpha13 or newer. These retries cannot
+resolve an ambiguous outcome or renew expired authority.
 The extended settlement window belongs to the exact lease proof and execution
-task. The worker's renewal task owns a separate window that ends at the current
+task. The owning handler has an explicit window that tracks the currently
+validated lease; an unrelated child task cannot inherit that authority. The
+worker's renewal task owns a separate window that ends at the current
 lease expiry. Unrelated calls and other child tasks retain the direct transport
 limits. A successful heartbeat received before expiry can extend the current
 lease, but never the task deadline.

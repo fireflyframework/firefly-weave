@@ -17,20 +17,22 @@
 """Bind settlement retries to the task that owns the live lease watchdog."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 
 from firefly_weave.contracts.workers import LeaseProof
 
-_scope: ContextVar[tuple[LeaseProof, float, asyncio.Task[object] | None] | None] = ContextVar(
-    "weave_lease_settlement", default=None
+_scope: ContextVar[tuple[LeaseProof, float, asyncio.Task[object] | None, Callable[[], float] | None] | None] = (
+    ContextVar("weave_lease_settlement", default=None)
 )
 
 
 @asynccontextmanager
-async def lease_settlement(proof: LeaseProof, deadline: float) -> AsyncIterator[None]:
-    token = _scope.set((proof.model_copy(deep=True), deadline, asyncio.current_task()))
+async def lease_settlement(
+    proof: LeaseProof, deadline: float, *, valid_until: Callable[[], float] | None = None
+) -> AsyncIterator[None]:
+    token = _scope.set((proof.model_copy(deep=True), deadline, asyncio.current_task(), valid_until))
     try:
         yield
     finally:
@@ -42,3 +44,19 @@ def settlement_deadline(proof: LeaseProof | None) -> float | None:
     if scope is None or scope[0] != proof or scope[2] is not asyncio.current_task():
         return None
     return scope[1]
+
+
+def check_settlement(proof: LeaseProof | None) -> None:
+    """Reject late responses even when a transport suppresses watchdog cancellation."""
+    deadline = settlement_deadline(proof)
+    if deadline is None:
+        return
+    scope = _scope.get()
+    assert scope is not None
+    task = asyncio.current_task()
+    if task is not None and task.cancelling():
+        raise asyncio.CancelledError()
+    if scope[3] is not None:
+        deadline = min(deadline, scope[3]())
+    if asyncio.get_running_loop().time() >= deadline:
+        raise TimeoutError("Lease retry authority expired")
