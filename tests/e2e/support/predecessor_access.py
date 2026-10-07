@@ -17,20 +17,65 @@
 """Test-only administration bridge for a verified installed predecessor."""
 
 import argparse
+import ast
 import asyncio
 import hashlib
 import importlib.util
+import io
 import json
 import os
+import re
 import stat
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
+from zipfile import ZipFile
 
 CHILD = Path(__file__).resolve()
-HEAD = "0012_secret_admission"
 LIMIT = 256 * 1024
+
+
+def artifact_head(wheel, sha, *, current_sha=None):
+    if sha == current_sha:
+        raise ValueError("Predecessor artifact must differ from the current artifact")
+    with Path(wheel).open("rb") as stream:
+        raw = stream.read(32 * 1024 * 1024 + 1)
+    if len(raw) > 32 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != sha:
+        raise ValueError("Bounded pinned predecessor artifact required")
+    with ZipFile(io.BytesIO(raw)) as archive:
+        members = [item for item in archive.infolist() if item.filename == "firefly_weave/persistence/migrations.py"]
+        if len(members) != 1 or members[0].file_size > LIMIT:
+            raise ValueError("Unique bounded predecessor schema metadata required")
+        with archive.open(members[0]) as source:
+            raw = source.read(LIMIT + 1)
+    if len(raw) > LIMIT:
+        raise ValueError("Unique bounded predecessor schema metadata required")
+    assignments = [
+        node
+        for node in ast.parse(raw).body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and any(
+            isinstance(target, ast.Name) and target.id == "SCHEMA_VERSION"
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        )
+    ]
+    if (
+        len(assignments) != 1
+        or not isinstance(assignments[0], ast.Assign)
+        or len(assignments[0].targets) != 1
+        or not isinstance(assignments[0].value, ast.Constant)
+        or not isinstance(assignments[0].value.value, str)
+        or re.fullmatch(r"[0-9]{4}_[a-z][a-z0-9_]*", assignments[0].value.value) is None
+    ):
+        raise ValueError("Unique literal predecessor schema metadata required")
+    return assignments[0].value.value
+
+
+def verify_expected_head(wheel, sha, expected_head):
+    if artifact_head(wheel, sha) != expected_head:
+        raise ValueError("Selected predecessor expected schema does not match pinned artifact")
+    return expected_head
 
 
 def load(name, filename):
@@ -77,6 +122,7 @@ def validate_receipt(value, expected):
 
 
 async def invoke(python, wheel, sha, directory, request):
+    expected_head = artifact_head(wheel, sha)
     name = "access-" + uuid4().hex
     request_path, output = directory / (name + ".input.json"), directory / (name + ".output.json")
     digest = write_private(request_path, request)
@@ -98,6 +144,8 @@ async def invoke(python, wheel, sha, directory, request):
             str(wheel),
             "--wheel-sha256",
             sha,
+            "--expected-head",
+            expected_head,
             "--request",
             str(request_path),
             "--output",
@@ -106,13 +154,13 @@ async def invoke(python, wheel, sha, directory, request):
             timeout=60,
         )
         return validate_receipt(
-            json.loads(read_private(output)), {"wheel_sha256": sha, "request_sha256": digest, "head": HEAD}
+            json.loads(read_private(output)), {"wheel_sha256": sha, "request_sha256": digest, "head": expected_head}
         )
     finally:
         await owner.close()
 
 
-async def dispatch(request):
+async def dispatch(request, expected_head):
     # Import after verify_install: every domain class below belongs to this child.
     import inspect
 
@@ -120,7 +168,7 @@ async def dispatch(request):
     from firefly_weave.persistence.migrations import SCHEMA_VERSION
     from firefly_weave.persistence.uow import UnitOfWork
 
-    if SCHEMA_VERSION != HEAD:
+    if expected_head != SCHEMA_VERSION:
         raise ValueError("Retained predecessor schema required")
     if request["operation"] == "inspect":
         return {
@@ -141,7 +189,7 @@ async def dispatch(request):
     try:
         async with owner.connect() as connection:
             head = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if head != HEAD:
+            if head != expected_head:
                 raise ValueError("Provisioning database is not the selected predecessor schema")
     finally:
         await owner.dispose()
@@ -189,20 +237,22 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--wheel", type=Path, required=True)
     parser.add_argument("--wheel-sha256", required=True)
+    parser.add_argument("--expected-head", required=True)
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not sys.flags.isolated:
         raise ValueError("Isolated installed interpreter required")
     proof = load("predecessor_artifact", "installed_api.py").verify_install(args.wheel, args.wheel_sha256)
+    expected_head = verify_expected_head(args.wheel, args.wheel_sha256, args.expected_head)
     raw = read_private(args.request)
-    result = await dispatch(json.loads(raw))
+    result = await dispatch(json.loads(raw), expected_head)
     write_private(
         args.output,
         {
             **proof,
             "request_sha256": hashlib.sha256(raw).hexdigest(),
-            "head": HEAD,
+            "head": expected_head,
             "pid": os.getpid(),
             "result": result,
         },
