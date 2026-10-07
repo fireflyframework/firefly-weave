@@ -40,6 +40,9 @@ SPDX-License-Identifier: Apache-2.0
   and admitted worker release selection.
 - Allow reviewed Compose plans to restart stopped workers, checking readiness
   after the restart instead of during the dry run.
+- Keep worker lease renewal retrying explicit capacity rejections while the
+  current lease remains valid, including while a completed task awaits its
+  acknowledgment. Ambiguous transport failures never replay the task handler.
 - Keep invalid inspector edits and unapplied AI profile changes visible before
   saving, publishing, or switching views. Edit workflow AI profiles in a dialog,
   with multiline prompts and direct connection-slot selection.
