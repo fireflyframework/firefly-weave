@@ -119,6 +119,9 @@ for (const size of sizes) {
     if (size.width < 768)
       await page.locator('[data-step="call-action-1"] .node-body').click();
     await chooseAction(page, "sql.lookup@1.0.0");
+    await page
+      .locator("weave-action-inspector summary", { hasText: "Action details" })
+      .click();
     await expect(page.locator(".integration-requirements")).toBeVisible();
     await expectGeometry(page, "designer");
     await expectReachable(page, "Step actions");

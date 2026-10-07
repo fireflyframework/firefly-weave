@@ -69,7 +69,7 @@ class TargetUpdate(ContractModel):
 
 class ComponentSpec(ContractModel):
     name: DeploymentName
-    kind: Literal["api", "worker", "lumi", "migration"]
+    kind: Literal["api", "worker", "lumi"]
     image: ImageReference
     configuration: DeploymentName
     replicas: int = Field(default=1, ge=0, le=100)
@@ -79,8 +79,8 @@ class ComponentSpec(ContractModel):
 
     @model_validator(mode="after")
     def singleton_and_release(self) -> Self:
-        if self.kind in {"api", "migration"} and self.replicas != 1:
-            raise ValueError("API/scheduler and migration components require exactly one instance")
+        if self.kind == "api" and self.replicas != 1:
+            raise ValueError("API/scheduler components require exactly one instance")
         if self.kind != "worker" and self.worker_release_id is not None:
             raise ValueError("Only worker components have a worker release")
         if self.kind == "worker" and self.worker_release_id is None:

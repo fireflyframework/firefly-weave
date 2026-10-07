@@ -59,7 +59,7 @@ export interface Target extends TargetRequest {
 }
 export interface ComponentSpec {
   name: string;
-  kind: "api" | "worker" | "lumi" | "migration";
+  kind: "api" | "worker" | "lumi";
   image: string;
   configuration: string;
   replicas: number;
@@ -82,7 +82,7 @@ export interface Deployment extends DeploymentRequest {
 export interface ObservedResource {
   name: string;
   external_identity: string;
-  kind: ComponentSpec["kind"] | "unknown";
+  kind: ComponentSpec["kind"] | "migration" | "unknown";
   image: string | null;
   replicas: number;
   ready_replicas: number;

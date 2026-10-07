@@ -452,6 +452,12 @@ class DeploymentService:
             ]
             if not selected:
                 raise CatalogError(422, "WV-DEPLOYMENT-UNSUPPORTED", "No worker component selected")
+            if target.adapter == "azure-container-apps" and any(c.kind not in {"worker", "lumi"} for c in selected):
+                raise CatalogError(
+                    422,
+                    "WV-DEPLOYMENT-UNSUPPORTED",
+                    "Container Apps plans support worker and Lumi components only; use the API upgrade runbook",
+                )
             by_name = {r.name: r for r in observed.resources}
             if request.intent == "scale_workers" and any(
                 c.name not in by_name or by_name[c.name].image != c.image for c in selected

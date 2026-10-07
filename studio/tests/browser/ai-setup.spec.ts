@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { execFileSync } from "node:child_process";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 import { parse } from "yaml";
 import {
   allCapabilities,
@@ -55,6 +55,9 @@ async function setup(
   );
   await page.route("**/studio/contracts/llm-profile", (r) =>
     r.fulfill({ json: llmSchema }),
+  );
+  await page.route("**/studio/contracts/llm-profile/validate", (r) =>
+    r.fulfill({ json: { valid: true, issues: [] } }),
   );
   await page.route("**/projects/project/connectors?*", (r) =>
     r.fulfill({
@@ -226,6 +229,12 @@ for (const width of [1440, 600])
         .click();
       await designer.selectStep("ask-ai-1");
       const form = page.locator("weave-llm-inspector");
+      await form
+        .getByRole("button", {
+          name: "Configure workflow AI profiles",
+          exact: true,
+        })
+        .click();
       await selectChoice(
         form.getByLabel("Provider", { exact: true }),
         "azure-responses",
@@ -254,7 +263,7 @@ for (const width of [1440, 600])
         .click();
       await form
         .locator('[data-field="prompt"]')
-        .getByLabel("Property value", { exact: true })
+        .getByLabel("AI prompt", { exact: true })
         .fill("Summarize input");
       await expect(
         form.getByLabel("Workflow AI profile", { exact: true }),
@@ -351,6 +360,115 @@ test("viewers see setup guidance without manager controls", async ({
   expect(capture.configurations).toEqual([]);
 });
 
+test("AI model basics and advanced options preserve edits, invalid drafts and explicit clears", async ({
+  page,
+}) => {
+  const capture = await setup(page);
+  capture.connections.push({
+    id: connectionId,
+    name: "approved-ai",
+    revision: 1,
+    connector: "weave-agentic-provider@1.0.0",
+    config: {
+      provider: "openai-responses",
+      endpoint: "https://api.openai.com/v1",
+    },
+  });
+  const profile = {
+    provider: "openai-responses",
+    model: "approved-model",
+    options: { max_tokens: 1024, temperature: 0.5, top_p: 0.8 },
+    reasoning: { pattern: "none", maxSteps: 7 },
+    maxCalls: 9,
+    timeoutSeconds: 90,
+    outputSchema: lumiSchema.$defs.LumiProfile.properties.outputSchema.const,
+  };
+  let saved = {
+    enabled: true,
+    connection_revision_id: connectionId,
+    profile,
+    revision: 1,
+  };
+  await page.route("**/lumi/configuration", async (route) => {
+    if (route.request().method() === "PUT") {
+      const body = route.request().postDataJSON();
+      capture.configurations.push(body);
+      saved = { ...body, revision: saved.revision + 1 };
+    }
+    await route.fulfill({ json: saved });
+  });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Configure Lumi", exact: true })
+    .click();
+  const lumi = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+  await expect(lumi.getByLabel("Model", { exact: true })).toHaveValue(
+    "approved-model",
+  );
+  await expect(lumi.getByLabel("Max tokens", { exact: true })).toHaveValue(
+    "1024",
+  );
+  await expect(
+    lumi.getByRole("spinbutton", {
+      name: "Temperature (optional)",
+      exact: true,
+    }),
+  ).not.toBeVisible();
+  await page.screenshot({
+    path: "../.superpowers/editor-ux/ai-profile-basic.png",
+  });
+  const advanced = lumi.getByText("Advanced model settings", { exact: true });
+  await advanced.click();
+  await page.screenshot({
+    path: "../.superpowers/editor-ux/ai-profile-advanced.png",
+  });
+  await lumi
+    .getByRole("spinbutton", { name: "Temperature (optional)", exact: true })
+    .fill("3");
+  await advanced.click();
+  await lumi.getByLabel("Model", { exact: true }).fill("updated-model");
+  await expect(
+    lumi.getByRole("button", { name: "Continue to connection", exact: true }),
+  ).toBeDisabled();
+  await advanced.click();
+  await expect(
+    lumi.getByRole("spinbutton", {
+      name: "Temperature (optional)",
+      exact: true,
+    }),
+  ).toHaveValue("3");
+  await lumi
+    .getByRole("spinbutton", { name: "Temperature (optional)", exact: true })
+    .fill("");
+  await advanced.click();
+  await lumi.getByLabel("Max tokens", { exact: true }).fill("2048");
+  await lumi
+    .getByRole("button", { name: "Continue to connection", exact: true })
+    .click();
+  await lumi
+    .getByRole("button", { name: "Review settings", exact: true })
+    .click();
+  await lumi
+    .getByRole("button", { name: "Save Lumi settings", exact: true })
+    .click();
+  await expect(lumi.getByLabel("Message to Lumi")).toBeVisible();
+  expect(capture.configurations[0].profile).toEqual({
+    ...profile,
+    model: "updated-model",
+    options: { max_tokens: 2048, top_p: 0.8 },
+  });
+  await lumi
+    .getByRole("button", { name: "Lumi settings", exact: true })
+    .click();
+  await lumi.getByText("Advanced model settings", { exact: true }).click();
+  await expect(
+    lumi.getByRole("spinbutton", {
+      name: "Temperature (optional)",
+      exact: true,
+    }),
+  ).toHaveValue("");
+});
+
 test("provider setup explains missing catalog permission without creating a connection", async ({
   page,
 }) => {
@@ -374,6 +492,54 @@ test("provider setup explains missing catalog permission without creating a conn
     form.getByRole("button", { name: "Continue", exact: true }),
   ).toBeDisabled();
   expect(capture.creates).toEqual([]);
+});
+
+test("canonical model validation blocks pending and invalid settings and ignores stale replies", async ({
+  page,
+}) => {
+  await setup(page);
+  const requests: Route[] = [];
+  await page.route("**/studio/contracts/llm-profile/validate", (route) => {
+    requests.push(route);
+  });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Configure Lumi", exact: true })
+    .click();
+  const lumi = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+  await selectChoice(
+    lumi.getByLabel("Provider", { exact: true }),
+    "openai-responses",
+  );
+  await lumi.getByLabel("Model", { exact: true }).fill("first-model");
+  await expect.poll(() => requests.length).toBe(1);
+  const next = lumi.getByRole("button", {
+    name: "Continue to connection",
+    exact: true,
+  });
+  await expect(next).toBeDisabled();
+  await lumi.getByLabel("Model", { exact: true }).fill("second-model");
+  await expect.poll(() => requests.length).toBe(2);
+  const message =
+    "A model call timeout cannot exceed the total AI step timeout";
+  await requests[1].fulfill({
+    json: { valid: false, issues: [{ path: [], message }] },
+  });
+  await expect(lumi.getByRole("alert")).toContainText(message);
+  await requests[0].fulfill({ json: { valid: true, issues: [] } });
+  await expect(next).toBeDisabled();
+  await expect(lumi.getByRole("alert")).toContainText(message);
+  await lumi.getByLabel("Model", { exact: true }).fill("corrected-model");
+  await expect.poll(() => requests.length).toBe(3);
+  expect(requests[2].request().postDataJSON()).toMatchObject({
+    provider: "openai-responses",
+    model: "corrected-model",
+    outputSchema: {},
+  });
+  expect(requests[2].request().postDataJSON()).not.toHaveProperty("profile");
+  await requests[2].fulfill({ json: { valid: true, issues: [] } });
+  await expect(next).toBeEnabled();
+  await expect(lumi.getByRole("alert")).toHaveCount(0);
 });
 
 test("retrying an uncertain connection create reuses the same idempotency key", async ({
@@ -410,9 +576,10 @@ test("retrying an uncertain connection create reuses the same idempotency key", 
     "openai-responses",
   );
   await form.getByRole("button", { name: "Continue", exact: true }).click();
+  await form.getByText("Advanced: custom endpoint", { exact: true }).click();
   await form
     .getByLabel("Provider endpoint", { exact: true })
-    .fill("https://api.openai.com/v1");
+    .fill("https://APPROVED.example.com:443/v1/");
   await form
     .getByLabel("API key secret handle", { exact: true })
     .fill("model-key");
@@ -430,11 +597,72 @@ test("retrying an uncertain connection create reuses the same idempotency key", 
   expect(requests).toHaveLength(2);
   expect(requests[0].key).toBeTruthy();
   expect(requests[1]).toEqual(requests[0]);
+  expect(requests[0].body).toMatchObject({
+    config: { endpoint: "https://approved.example.com/v1/" },
+    allowed_destinations: ["https://approved.example.com"],
+  });
 });
 
 for (const width of [1440, 360])
   test.describe(`AI connection wizard at ${width}`, () => {
     test.use({ viewport: { width, height: 800 } });
+    test("standard providers need no endpoint entry and distinguish saving from testing", async ({
+      page,
+    }) => {
+      const capture = await setup(page);
+      await page
+        .getByRole("button", { name: "Connections", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "New AI connection", exact: true })
+        .click();
+      const form = page.getByRole("dialog", {
+        name: "New AI connection",
+        exact: true,
+      });
+      await form.getByLabel("Connection name", { exact: true }).fill("team-ai");
+      await selectChoice(
+        form.getByLabel("Provider", { exact: true }),
+        "openai-responses",
+      );
+      await form.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(
+        form.getByRole("heading", { name: "Provider access", exact: true }),
+      ).toBeVisible();
+      await expect(
+        form.getByLabel("Provider endpoint", { exact: true }),
+      ).not.toBeVisible();
+      await expect(form).toContainText("https://api.openai.com/v1");
+      await form
+        .getByLabel("API key secret handle", { exact: true })
+        .fill("model-key");
+      await form.getByRole("button", { name: "Back", exact: true }).click();
+      await selectChoice(
+        form.getByLabel("Provider", { exact: true }),
+        "anthropic",
+      );
+      await form.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(form).toContainText("https://api.anthropic.com");
+      await form
+        .getByRole("button", { name: "Review connection", exact: true })
+        .click();
+      await form
+        .getByRole("button", { name: "Create AI connection", exact: true })
+        .click();
+      await expect(form).toContainText("Connection created");
+      await expect(form).toContainText("Not tested");
+      expect(capture.creates[0].config.endpoint).toBe(
+        "https://api.anthropic.com",
+      );
+      expect(capture.creates[0].allowed_destinations).toEqual([
+        "https://api.anthropic.com",
+      ]);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+    });
     test("wizard guides keyboard review without creating early and retains Back edits", async ({
       page,
     }) => {
@@ -469,7 +697,7 @@ for (const width of [1440, 360])
       await form.getByLabel("Connection name", { exact: true }).press("Enter");
       await expect(
         form.getByRole("heading", {
-          name: "Endpoint and secret handle",
+          name: "Provider access",
           exact: true,
         }),
       ).toBeFocused();
@@ -482,7 +710,7 @@ for (const width of [1440, 360])
         "placeholder",
         "https://your-resource.openai.azure.com",
       );
-      await expect(form).toContainText("operator-approved endpoint");
+      await expect(form).toContainText("base endpoint for your Azure resource");
       await form
         .getByLabel("Provider endpoint", { exact: true })
         .fill("https://approved.openai.azure.com");

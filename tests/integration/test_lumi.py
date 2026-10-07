@@ -33,6 +33,7 @@ from firefly_weave.contracts.connectors import ConnectionRequest
 from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfigurationRequest, LumiReply
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
+from firefly_weave.deployments.service import DeploymentService
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.history import HistoryService
 from firefly_weave.operations.lumi import LumiService
@@ -94,7 +95,13 @@ async def lumi(services, access_db, provisioned, monkeypatch):
         context=AuditContext(),
     )
     gateway = Gateway()
-    service = LumiService(connections, graph.resolve(HistoryService), graph.resolve(DebugService), gateway)
+    service = LumiService(
+        connections,
+        graph.resolve(HistoryService),
+        graph.resolve(DebugService),
+        gateway,
+        graph.resolve(DeploymentService),
+    )
     config = LumiConfigurationRequest(
         connection_revision_id=revision.id,
         profile={
@@ -242,3 +249,65 @@ async def test_inline_and_saved_context_share_one_byte_budget(lumi, monkeypatch)
     with pytest.raises(CatalogError) as failure:
         await service.ask(actor, scope, request, context=AuditContext())
     assert failure.value.status == 413 and not gateway.calls
+
+
+@pytest.mark.parametrize("revoke", [False, True])
+async def test_operations_attachment_requires_target_read_and_rechecks_it(lumi, access_db, provisioned, revoke):
+    from firefly_weave.contracts.deployments import TargetRequest
+
+    service, actor, scope, config, gateway = lumi
+    admin = provisioned[0]
+    await access_db[2].grant(admin, actor.id, Grant(role="deployment_planner", scope=scope))
+    actor = await access_db[2].load_principal(actor.id)
+    runner = await access_db[2].create_principal(admin, "application")
+    target = await service.deployments.create_target(
+        TargetRequest(
+            name="lumi-target",
+            adapter="docker-compose",
+            external_identity="private-provider-path",
+            boundary="private-boundary",
+            runner_principal_id=runner,
+            capabilities=["observe"],
+        ),
+        str(uuid4()),
+        actor=actor,
+        scope=scope,
+        context=AuditContext(),
+    )
+    await service.configure(actor, scope, config, None, context=AuditContext())
+    user_id = await access_db[2].create_principal(admin, "application")
+    await access_db[2].grant(admin, user_id, Grant(role="lumi_user", scope=scope))
+    user = await access_db[2].load_principal(user_id)
+    request = LumiAskRequest(
+        message="Explain this saved target", attachments=[{"kind": "deployment-target", "id": target.id}]
+    )
+    with pytest.raises(AccessDenied):
+        await service.ask(user, scope, request, context=AuditContext())
+    assert not gateway.calls
+    await access_db[2].grant(admin, user_id, Grant(role="deployment_reader", scope=scope, resources=(str(target.id),)))
+    user = await access_db[2].load_principal(user_id)
+    if revoke:
+
+        async def remove_reader():
+            async with access_db[1].begin() as session:
+                await session.execute(
+                    text("DELETE FROM role_bindings WHERE principal_id=:id AND role='deployment_reader'"),
+                    {"id": user_id},
+                )
+
+        gateway.callback = remove_reader
+        with pytest.raises(AccessDenied):
+            await service.ask(user, scope, request, context=AuditContext())
+    else:
+        result = await service.ask(user, scope, request, context=AuditContext())
+        assert result.answer and result.proposals == []
+    assert len(gateway.calls) == 1
+    context = gateway.calls[0][2]
+    assert context["resources"][0]["data"] == {
+        "name": "lumi-target",
+        "adapter": "docker-compose",
+        "revision": 1,
+        "disabled": False,
+        "capabilities": ["observe"],
+    }
+    assert "private-" not in json.dumps(context)

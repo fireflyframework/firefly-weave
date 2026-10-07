@@ -39,6 +39,11 @@ export const aiProviders = [
   { value: "azure-chat", label: "Azure OpenAI Chat" },
   { value: "anthropic", label: "Anthropic" },
 ];
+export function aiProviderEndpoint(provider: string): string {
+  if (provider === "openai-chat" || provider === "openai-responses")
+    return "https://api.openai.com/v1";
+  return provider === "anthropic" ? "https://api.anthropic.com" : "";
+}
 export function aiConnectionRequest(
   draft: AiConnectionDraft,
   connector: string,
@@ -50,8 +55,10 @@ export function aiConnectionRequest(
   if (!aiProviders.some((p) => p.value === draft.provider))
     throw Error("Choose a provider.");
   let endpoint: URL;
+  const endpointValue =
+    draft.endpoint.trim() || aiProviderEndpoint(draft.provider);
   try {
-    endpoint = new URL(draft.endpoint.trim());
+    endpoint = new URL(endpointValue);
   } catch {
     throw Error("Enter the provider's trusted HTTPS endpoint.");
   }
@@ -82,7 +89,11 @@ export function aiConnectionRequest(
     connector_version_id: connector,
     config: {
       provider: draft.provider,
-      endpoint: draft.endpoint.trim(),
+      endpoint:
+        endpoint.origin +
+        (endpoint.pathname === "/" && !endpointValue.endsWith("/")
+          ? ""
+          : endpoint.pathname),
       secretSlot: "apiKey",
       ...(draft.provider.startsWith("azure-")
         ? { apiVersion: draft.apiVersion.trim() }

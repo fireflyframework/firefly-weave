@@ -15,6 +15,10 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import {
+  supportedCapabilities,
+  supportedPlanComponents,
+} from "./deployment-onboarding";
 import { Component, input, output } from "@angular/core";
 import { Select } from "../forms/ui/select";
 import type {
@@ -42,6 +46,15 @@ export interface PlanRequest {
       complete, unexpired observation of target revision
       {{ target().revision }}.
     </p>
+    @if (
+      target().adapter === "azure-container-apps" &&
+      !supportsComponents("update")
+    ) {
+      <p class="notice">
+        Container Apps updates support worker and Lumi apps. Upgrade the API
+        separately with the Azure deployment runbook to preserve one scheduler.
+      </p>
+    }
     <weave-select
       label="Operation"
       [options]="operations"
@@ -97,6 +110,13 @@ export class DeploymentPlanBuilder {
   cancel = output<void>();
   intent: Plan["intent"] = "deploy";
   observationId = "";
+  supportsComponents(intent: Plan["intent"]) {
+    return supportedPlanComponents(
+      this.target().adapter,
+      intent,
+      this.deployment().components,
+    );
+  }
   get operations() {
     const labels = {
       deploy: "Deploy / adopt deployment",
@@ -107,6 +127,10 @@ export class DeploymentPlanBuilder {
       .filter(
         ([value]) =>
           this.target().capabilities.includes(value as Plan["intent"]) &&
+          supportedCapabilities(this.target().adapter).includes(
+            value as Plan["intent"],
+          ) &&
+          this.supportsComponents(value as Plan["intent"]) &&
           (value !== "scale_workers" ||
             this.deployment().components.some((c) => c.kind === "worker")),
       )

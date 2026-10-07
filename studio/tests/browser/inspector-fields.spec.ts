@@ -83,9 +83,14 @@ for (const viewport of [
         .click();
       await expect(names).toHaveCount(2);
       await expect(names.nth(1)).toBeFocused();
-      await expect(field.getByLabel("Value type", { exact: true })).toHaveCount(
-        0,
-      );
+      await field.getByLabel("Value type", { exact: true }).click();
+      await expect(page.getByRole("listbox").getByRole("option")).toHaveText([
+        "Text",
+        "Number",
+        "Yes/No",
+        "Empty",
+      ]);
+      await page.keyboard.press("Escape");
     });
     test("Fields reorders and removes rows, with literal JSON only in Advanced", async ({
       page,
@@ -151,9 +156,14 @@ for (const viewport of [
       );
       await designer.selectStep("map");
       const field = designer.inspector.locator('[data-field="value"]');
-      await expect(field.getByLabel("Value type", { exact: true })).toHaveCount(
-        0,
-      );
+      await field.getByLabel("Value type", { exact: true }).click();
+      await expect(page.getByRole("listbox").getByRole("option")).toHaveText([
+        "Text",
+        "Number",
+        "Yes/No",
+        "Empty",
+      ]);
+      await page.keyboard.press("Escape");
       const names = field.getByRole("textbox", {
         name: "Field name",
         exact: true,
@@ -178,9 +188,9 @@ for (const viewport of [
       const result = designer.inspector.locator(
         '[data-field="cases/0/output"]',
       );
-      await expect(result.locator("summary")).toBeVisible();
+      await expect(result.locator(":scope > summary")).toBeVisible();
       await expect(result.locator("weave-expression-editor")).toBeHidden();
-      await result.locator("summary").click();
+      await result.locator(":scope > summary").click();
       await expect(
         result.getByRole("button", { name: "+ Add field", exact: true }),
       ).toBeVisible();

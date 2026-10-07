@@ -449,16 +449,17 @@ export class IntegrationReadiness implements OnInit {
   expanded = signal<boolean | null>(null);
   readonly id = `readiness-${++sequence}`;
   readiness = computed(() =>
-    integrationReadiness(
-      this.facts() ?? {
-        identity: this.identity(),
-        profile: this.api().session.profile,
+    integrationReadiness({
+      ...(this.facts() ?? {
         adapters: { state: "pending" },
         descriptor: { state: "pending" },
         connectorVersions: { state: "pending" },
         releases: { state: "pending" },
-      },
-    ),
+      }),
+      // Identity can finish loading after the connector inventory does.
+      identity: this.identity(),
+      profile: this.api().session.profile,
+    }),
   );
   open = computed(() => {
     const readiness = this.readiness();

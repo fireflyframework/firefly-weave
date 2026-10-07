@@ -32,8 +32,11 @@ class HealthController:
         self.database = database
 
     @operation("health.live")
-    async def live(self) -> dict[str, str]:
-        return {"status": "up"}
+    async def live(self, request: Request) -> JSONResponse:
+        compatibility = getattr(request.app.state, "compatibility", None)
+        if compatibility is not None and compatibility.healthy():
+            return JSONResponse({"status": "up"})
+        return JSONResponse({"status": "unavailable"}, status_code=503)
 
     @operation("health.ready")
     async def ready(self, request: Request) -> JSONResponse:

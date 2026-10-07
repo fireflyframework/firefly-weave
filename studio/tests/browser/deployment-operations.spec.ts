@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { test, expect } from "@playwright/test";
 import { connected, offline, selectChoice } from "./support";
@@ -210,6 +211,11 @@ for (const width of [1440, 390])
           exact: true,
         }),
       ).toBeFocused();
+      await wizard
+        .getByText("Use an administrator-provided application ID", {
+          exact: true,
+        })
+        .click();
       await wizard
         .getByLabel("Runner principal ID", { exact: true })
         .fill("44444444-4444-4444-8444-444444444444");
@@ -1045,3 +1051,382 @@ for (const width of [1440, 390])
       ).not.toContainText("Active");
     });
   });
+
+for (const width of [1440, 390])
+  test(`existing target onboarding at ${width} selects applications, limits adapter actions and supplies local setup`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await connected(page, {
+      capabilities: [
+        "deployment.read",
+        "target.manage",
+        "deployment.plan",
+        "grant.admin",
+      ],
+    });
+    await page.route("**/admin/principals?*", (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: target.runner_principal_id,
+              kind: "application",
+              active: true,
+              display_name: "Preproduction runner",
+            },
+            {
+              id: "human",
+              kind: "human",
+              active: true,
+              display_name: "Person",
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route("**/deployment-targets", async (route) =>
+      route.fulfill({ json: { ...target, ...route.request().postDataJSON() } }),
+    );
+    await page.getByRole("button", { name: "Operations", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Register target", exact: true })
+      .click();
+    const wizard = page.locator("weave-target-wizard");
+    await wizard
+      .getByLabel("Target name", { exact: true })
+      .fill("existing-cluster");
+    await selectChoice(
+      wizard.getByRole("combobox", { name: "Container runtime" }),
+      "kubernetes",
+    );
+    await wizard
+      .getByLabel("External identity", { exact: true })
+      .fill("namespace-uid");
+    await wizard.getByLabel("Allowed boundary", { exact: true }).fill("weave");
+    await wizard
+      .getByRole("button", { name: "Continue to authority", exact: true })
+      .click();
+    await selectChoice(
+      wizard.getByRole("combobox", { name: "Runner application" }),
+      target.runner_principal_id,
+    );
+    await expect(
+      wizard.getByRole("checkbox", { name: "Deploy", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      wizard.getByLabel("Runner principal ID", { exact: true }),
+    ).not.toBeVisible();
+    await wizard
+      .getByRole("button", { name: "Review target", exact: true })
+      .click();
+    await expect(
+      wizard.getByText("Preproduction runner", { exact: true }),
+    ).toBeVisible();
+    await wizard
+      .getByRole("button", { name: "Register target", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", {
+        name: "Connect the outbound runner",
+        exact: true,
+      }),
+    ).toBeVisible();
+    const downloaded = page.waitForEvent("download");
+    await page
+      .getByRole("button", { name: "Download setup template", exact: true })
+      .click();
+    const download = await downloaded;
+    const templatePath = testInfo.outputPath("runner-template.json");
+    await download.saveAs(templatePath);
+    const template = JSON.parse(readFileSync(templatePath, "utf8"));
+    expect(template.destination.target_id).toBe(targetId);
+    expect(template.destination.capabilities).toEqual(["observe"]);
+    expect(template.scope.environment_id).toBe("development");
+    await page.getByText("Local setup template", { exact: true }).click();
+    await expect(
+      page.getByLabel("Nonsecret runner configuration"),
+    ).toContainText("namespace-uid");
+    await expect(
+      page.getByLabel("Nonsecret runner configuration"),
+    ).toContainText("development");
+    await expect(
+      page.getByText(
+        "weave operations runner check --config /opt/weave/private/runner.json",
+        { exact: true },
+      ),
+    ).toBeVisible();
+  });
+
+for (const width of [1440, 390])
+  test(`observed worker import at ${width} keeps the local alias explicit and offers admitted releases`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await connected(page, {
+      capabilities: [
+        "deployment.read",
+        "target.manage",
+        "deployment.plan",
+        "catalog.read",
+      ],
+    });
+    const image = "example/worker@sha256:" + "a".repeat(64);
+    const release = "66666666-6666-4666-8666-666666666666";
+    let saved: any;
+    await page.route("**/deployments", async (route) => {
+      saved = route.request().postDataJSON();
+      await route.fulfill({ json: { ...deployment, ...saved } });
+    });
+    await page.route("**/studio/contracts/deployment", (route) =>
+      route.fulfill({ json: schema }),
+    );
+    await page.route("**/deployment-targets?*", (route) =>
+      route.fulfill({ json: { items: [target], next_cursor: null } }),
+    );
+    await page.route("**/deployment-targets/" + targetId, (route) =>
+      route.fulfill({ json: target }),
+    );
+    await page.route("**/deployment-observations?*", (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              ...observation(),
+              resources: [
+                {
+                  name: "integration-worker",
+                  kind: "worker",
+                  image,
+                  replicas: 2,
+                  ready_replicas: 2,
+                  external_identity: "worker-external",
+                  version: "v1",
+                  ownership: "imported",
+                  state: "ready",
+                },
+              ],
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route("**/worker-releases?*", (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: release,
+              image_digest: "sha256:" + "b".repeat(64),
+              capabilities: [
+                { taskType: "integration.execute", taskVersion: "1.0.0" },
+              ],
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.getByRole("button", { name: "Operations", exact: true }).click();
+    await page.getByRole("button", { name: target.name, exact: true }).click();
+    await page
+      .getByRole("button", { name: "Record desired deployment", exact: true })
+      .click();
+    const editor = page.locator("weave-deployment-editor");
+    await editor.getByLabel("Name", { exact: true }).fill("imported-workers");
+    await editor
+      .getByRole("button", { name: "Continue to components", exact: true })
+      .click();
+    await editor
+      .getByRole("checkbox", { name: "Import integration-worker", exact: true })
+      .check();
+    await editor
+      .getByRole("button", {
+        name: "Use selected observed components",
+        exact: true,
+      })
+      .click();
+    await expect(
+      editor.getByLabel("Configuration", { exact: true }),
+    ).toHaveValue("");
+    await selectChoice(
+      editor.getByRole("combobox", { name: "Admitted worker release" }),
+      release,
+    );
+    await expect(
+      editor.getByRole("combobox", { name: "Admitted worker release" }),
+    ).toHaveValue(/integration\.execute@1\.0\.0/);
+    await expect(
+      editor.getByRole("button", { name: "Review desired state", exact: true }),
+    ).toBeDisabled();
+    await editor
+      .getByLabel("Image", { exact: true })
+      .fill("example/worker@sha256:" + "c".repeat(64));
+    await expect(
+      editor.getByRole("combobox", { name: "Admitted worker release" }),
+    ).toHaveValue("");
+    await editor.getByLabel("Image", { exact: true }).fill(image);
+    await selectChoice(
+      editor.getByRole("combobox", { name: "Admitted worker release" }),
+      release,
+    );
+    await editor.getByLabel("Configuration", { exact: true }).fill("pre");
+    await expect(
+      editor.getByRole("button", { name: "Review desired state", exact: true }),
+    ).toBeDisabled();
+    await editor.getByRole("spinbutton", { name: "CPU millis" }).fill("750");
+    await expect(
+      editor.getByRole("button", { name: "Review desired state", exact: true }),
+    ).toBeDisabled();
+    await editor.getByRole("spinbutton", { name: "Memory mib" }).fill("1536");
+    await editor
+      .getByRole("button", { name: "Review desired state", exact: true })
+      .click();
+    await page.screenshot({
+      path: testInfo.outputPath("observed-import-review.png"),
+      fullPage: true,
+    });
+    await editor
+      .getByRole("button", { name: "Save desired deployment", exact: true })
+      .click();
+    await expect
+      .poll(() => saved?.components?.[0]?.worker_release_id)
+      .toBe(release);
+    expect(saved.components[0]).toMatchObject({
+      name: "integration-worker",
+      configuration: "pre",
+      replicas: 2,
+      cpu_millis: 750,
+      memory_mib: 1536,
+      image,
+    });
+  });
+
+for (const width of [1440, 390]) {
+  test(`unsupported migration and ACA API changes stop before review at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await connected(page, {
+      capabilities: ["deployment.read", "deployment.plan", "target.manage"],
+    });
+    const azure = {
+      ...target,
+      adapter: "azure-container-apps",
+      capabilities: ["observe", "update", "scale_workers"],
+    };
+    await page.route("**/studio/contracts/deployment", (route) =>
+      route.fulfill({ json: schema }),
+    );
+    await page.route("**/deployment-targets?*", (route) =>
+      route.fulfill({ json: { items: [azure], next_cursor: null } }),
+    );
+    await page.route("**/deployment-targets/" + targetId, (route) =>
+      route.fulfill({ json: azure }),
+    );
+    await page.route("**/deployments?*", (route) =>
+      route.fulfill({ json: { items: [deployment], next_cursor: null } }),
+    );
+    await page.route("**/studio/api/**/deployments/" + deploymentId, (route) =>
+      route.fulfill({ json: deployment }),
+    );
+    await page.route("**/deployment-observations?*", (route) =>
+      route.fulfill({ json: { items: [observation()], next_cursor: null } }),
+    );
+    let requests = 0;
+    await page.route("**/deployment-plans", (route) => {
+      requests++;
+      return route.fulfill({ json: {} });
+    });
+    await page.goto("/operations/deployments/" + deploymentId);
+    await page
+      .getByRole("button", { name: "Create plan", exact: true })
+      .click();
+    const planner = page.locator("weave-deployment-plan-builder");
+    await expect(
+      planner.getByText(/Container Apps updates support worker and Lumi apps/),
+    ).toBeVisible();
+    await expect(
+      planner.getByRole("button", {
+        name: "Generate reviewable plan",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    expect(requests).toBe(0);
+    await planner
+      .getByRole("button", { name: "Cancel plan", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Edit desired deployment", exact: true })
+      .click();
+    const editor = page.locator("weave-deployment-editor");
+    await editor
+      .getByRole("button", { name: "Continue to components", exact: true })
+      .click();
+    await editor.getByRole("combobox", { name: "Kind", exact: true }).click();
+    await expect(
+      page.getByRole("option", { name: "migration", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("option", { name: "api", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Explain with Lumi", exact: true }),
+    ).toHaveCount(0);
+  });
+
+  test(`Explain with Lumi offers only unchecked selected target context at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await connected(page, { capabilities: ["deployment.read", "lumi.use"] });
+    await page.route("**/deployment-targets?*", (route) =>
+      route.fulfill({ json: { items: [target], next_cursor: null } }),
+    );
+    await page.route("**/deployment-targets/" + targetId, (route) =>
+      route.fulfill({ json: target }),
+    );
+    await page.route("**/deployment-observations?*", (route) =>
+      route.fulfill({ json: { items: [observation()], next_cursor: null } }),
+    );
+    await page.route("**/lumi/status", (route) =>
+      route.fulfill({
+        json: {
+          configured: true,
+          provider: "openai",
+          model: "test",
+          revision: 1,
+        },
+      }),
+    );
+    let asks = 0;
+    await page.route("**/lumi/ask", (route) => {
+      asks++;
+      return route.fulfill({
+        json: { answer: "test", proposals: [], followUps: [] },
+      });
+    });
+    await page.goto("/operations/targets/" + targetId);
+    await page
+      .getByRole("button", { name: "Explain with Lumi", exact: true })
+      .click();
+    await expect(
+      page.getByRole("checkbox", {
+        name: "Include selected target",
+        exact: true,
+      }),
+    ).not.toBeChecked();
+    await expect(
+      page.getByRole("checkbox", {
+        name: "Include selected observation",
+        exact: true,
+      }),
+    ).not.toBeChecked();
+    await expect(
+      page.getByRole("checkbox", { name: /draft|source|selected run/i }),
+    ).toHaveCount(0);
+    expect(asks).toBe(0);
+  });
+}

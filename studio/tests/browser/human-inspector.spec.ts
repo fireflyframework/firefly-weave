@@ -47,7 +47,6 @@ for (const viewport of [
         "Who",
         "What they see",
         "How they answer",
-        "Deadlines",
       ]);
       await expect(inspector).toContainText(
         "Choose the people or groups when activating this workflow.",
@@ -61,6 +60,7 @@ for (const viewport of [
         .click();
       await form.getByLabel("Field name", { exact: true }).fill("comment");
       await expect(form.locator(".sd-preview")).toContainText("Comment");
+      await inspector.locator(".human-deadlines > summary").click();
       const due = inspector.getByLabel("Due after", { exact: true });
       await due.fill("2");
       await selectChoice(

@@ -83,7 +83,7 @@ for (const viewport of [
       );
       expect(errors).toEqual([]);
     });
-    test("invalid edits stay inline and navigation uses the last valid source with Go back", async ({
+    test("invalid edits block navigation and remain available until corrected", async ({
       page,
     }) => {
       await offline(page);
@@ -108,21 +108,37 @@ for (const viewport of [
         designer.inspector.locator('[data-field="durationSeconds"]'),
       ).toContainText("Enter a positive number of minutes.");
       await closeSheet(page);
-      // Closing the narrow inspector already emits the navigation notice.
-      if (viewport.width > 767) await designer.selectStep("fail-1");
+      await page.getByRole("tab", { name: "Source", exact: true }).click();
       await expect(
-        page.getByRole("dialog", { name: "Apply your changes?" }),
-      ).toHaveCount(0);
+        page.getByRole("tab", { name: "Designer", exact: true }),
+      ).toHaveAttribute("aria-selected", "true");
+      await expect(
+        page.getByText(
+          "Fix the invalid fields before continuing. Your edits are still here.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expect(designer.inspector.getByLabel("Step name")).toHaveValue(
+        "bad name",
+      );
+      await expect(
+        designer.inspector.getByLabel("Duration", { exact: true }),
+      ).toHaveValue("0");
       await expect(
         page.getByRole("button", { name: "Go back", exact: true }),
-      ).toBeVisible();
-      await page.getByRole("button", { name: "Go back", exact: true }).click();
-      await expect(designer.inspector.getByLabel("Step name")).toHaveValue(
-        "wait-1",
-      );
+      ).toHaveCount(0);
+      await designer.inspector.getByLabel("Step name").fill("pause");
+      await designer.inspector.getByRole("heading").click();
+      await expect(designer.node("pause")).toHaveCount(1);
+      await expect(
+        designer.inspector.getByLabel("Duration", { exact: true }),
+      ).toHaveValue("0");
+      await designer.inspector
+        .getByLabel("Duration", { exact: true })
+        .fill("2");
       const source = parse(await sourceText(page));
-      expect(source.spec.steps[0].id).toBe("wait-1");
-      expect(source.spec.steps[0].durationSeconds).toBe(60);
+      expect(source.spec.steps[0].id).toBe("pause");
+      expect(source.spec.steps[0].durationSeconds).toBe(120);
       await closeSheet(page);
       await page
         .getByRole("toolbar", { name: "Workflow commands" })
@@ -145,13 +161,17 @@ for (const viewport of [
       await designer.inspector
         .getByLabel("Message", { exact: true })
         .fill("Payment rejected");
-      await expect(page.locator(".status-chip")).toHaveText(/Draft saved/);
+      await expect(page.locator(".status-chip")).toHaveText(/Unsaved/);
       await expect(code).toHaveValue("bad code");
       await expect(
         designer.inspector.locator('[data-field="code"]'),
       ).toContainText("Use letters");
+      await expect(
+        designer.inspector.getByLabel("Message", { exact: true }),
+      ).toHaveValue("Payment rejected");
+      await code.fill("payment-rejected");
       const source = parse(await sourceText(page));
-      expect(source.spec.steps[0].code).not.toBe("bad code");
+      expect(source.spec.steps[0].code).toBe("payment-rejected");
       expect(source.spec.steps[0].message).toBe("Payment rejected");
     });
     test("choosing an action updates the graph before filling its required inputs", async ({

@@ -215,3 +215,17 @@ def test_integration_allocates_its_own_private_native_image_proof(runner, monkey
     assert runner.run(ROOT, evidence, release=False, integration=True, context=None) == 0
     proof = runner.os.environ.get("WEAVE_IMAGE_PROOF_PATH")
     assert proof == str(evidence / "native-image.json")
+
+
+@pytest.mark.parametrize("release", [False, True])
+def test_integration_has_bounded_full_suite_budget_and_actionable_failure_output(
+    runner, monkeypatch, tmp_path, release
+):
+    evidence = tmp_path / "checks"
+    calls = capture(runner, monkeypatch, evidence)
+    assert runner.run(ROOT, evidence, release=release, integration=not release, context=None) == 0
+    _, command, options = next(call for call in calls if call[0] == "integration")
+    assert options["timeout"] == 4800
+    assert "-v" in command and "--maxfail=1" in command
+    assert "--tb=short" in command and "--show-capture=no" in command
+    assert "--showlocals" not in command

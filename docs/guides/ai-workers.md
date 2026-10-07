@@ -90,6 +90,19 @@ used, which is separate from changing the grant list. Follow
 for the supported file and environment providers. Saving a handle in Studio does
 not provision its secret or grant access to it.
 
+Studio's **New AI connection** uses the standard OpenAI or Anthropic endpoint
+automatically. **Advanced: custom endpoint** is available for an approved proxy
+or compatible service. Azure requires the resource endpoint and API version
+from its administrator. Review shows the exact saved endpoint; hostname case
+and the default HTTPS port are normalized, while the base path and trailing
+slash are preserved. The worker or Lumi gateway must still allow that exact
+endpoint. Existing endpoint policies are not changed by saving a connection.
+
+**Saved · Not tested** means that the connection configuration passed validation.
+It does not prove provider access, model availability, or worker/gateway readiness.
+Workflow AI profiles and Lumi settings remain separate and select their own model
+or Azure deployment using the approved connection.
+
 **Hosting Weave in Azure does not select an AI provider.** The Azure operator
 still deploys the worker, supplies its configuration and token file, permits its
 network traffic, and sets up the API's secret grants. An Azure model endpoint is
@@ -104,9 +117,11 @@ After the administrator has prepared the environment:
 
 1. Add an **AI task** in Studio and select the canonical AI Action from the
    connected catalog. If it is missing, the administrator must publish it first.
-2. Create a named **workflow AI profile**. Choose an explicit provider and model,
-   set token and time limits, and describe the expected result with the schema
-   designer. Start with the `none` reasoning pattern for a single structured answer.
+2. Open **Configure workflow AI profiles** and create a named profile. The first
+   fields choose the provider, model and maximum response tokens. Describe the
+   expected result with the schema designer. **Advanced model settings** contains
+   optional generation controls, reasoning strategies and execution limits.
+   Start with the `none` reasoning pattern for a single structured answer.
 3. Select that profile on the step. A name such as `summarizer` is local to this
    workflow; it is not a provider credential or a Lumi setting.
 4. Supply the **prompt** (the instruction) and **context** (the data to use).
@@ -116,6 +131,13 @@ After the administrator has prepared the environment:
    activation binds it to an authorized environment connection revision.
 6. Validate the workflow, resolve readiness problems, then publish and activate
    through the normal workflow process. Starting a run is a separate action.
+
+Studio checks model settings against the same profile contract as the API before
+allowing you to continue. Errors such as a per-call timeout longer than the total
+step timeout must be corrected first. This is a configuration check, not proof
+that the selected model is approved or reachable. Expanding or collapsing
+advanced settings preserves edits; clearing an optional control omits that value.
+Lumi uses the same basic and advanced presentation for its separate profile.
 
 The [AI task inspector reference](studio-step-reference.md#ai-task) explains the
 Studio controls. The following complete source example summarizes a supplied

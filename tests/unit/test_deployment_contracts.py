@@ -155,3 +155,16 @@ def test_ambiguous_receipt_cannot_unlock_target_as_an_ordinary_failure():
             state="failed",
             receipt=SafeDeploymentReceipt(code="provider_failed", external_effects_may_continue=True),
         )
+
+
+def test_migration_is_not_an_executable_deployment_component_or_schema_choice():
+    from uuid import uuid4
+
+    from firefly_weave.contracts.deployments import DeploymentRequest
+
+    with pytest.raises(ValidationError):
+        DeploymentRequest.model_validate(
+            {"target_id": uuid4(), "name": "runtime", "components": [component(kind="migration")]}
+        )
+    schema = DeploymentRequest.model_json_schema()
+    assert schema["$defs"]["ComponentSpec"]["properties"]["kind"]["enum"] == ["api", "worker", "lumi"]

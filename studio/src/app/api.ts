@@ -44,6 +44,10 @@ export interface Validation {
   partial?: boolean;
   artifact?: unknown;
 }
+export interface ProfileValidation {
+  valid: boolean;
+  issues: { path: (string | number)[]; message: string }[];
+}
 export class ApiError extends Error {
   readonly plain: PlainError;
   constructor(
@@ -58,8 +62,12 @@ export class ApiError extends Error {
     return this.plain.code;
   }
 }
-/** The platform's admission rejections: nothing ran, so the request may be sent again. */
-const capacityCodes = new Set(["WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"]);
+/** Host/platform admission rejections: nothing ran, so a safe request may be sent again. */
+const capacityCodes = new Set([
+  "WV-OPERATION-CAPACITY",
+  "WV-REQUEST-CAPACITY",
+  "WV-STUDIO-BUSY",
+]);
 const capacityAttempts = 4;
 /** `Retry-After` in seconds, kept between a quarter second and five seconds. */
 const retryDelay = (header: string | null) => {
@@ -77,7 +85,7 @@ export class StudioApi {
   };
   /** Called when the local host no longer recognizes this window's pairing. */
   onSessionEnded: (() => void) | null = null;
-  /** Pauses before replaying a request the platform turned away for capacity. */
+  /** Pauses before replaying a request the host or platform turned away for capacity. */
   wait = (milliseconds: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
   /**
@@ -97,7 +105,7 @@ export class StudioApi {
     if (body !== undefined) h["Content-Type"] = "application/json";
     if (method !== "GET" && this.session.csrfToken)
       h["X-Weave-CSRF"] = this.session.csrfToken;
-    // A capacity rejection means the platform did not admit the request, so a
+    // A capacity rejection means the host or platform did not admit the request, so a
     // read, or a change that carries an idempotency key, can be sent again.
     const replayable = method === "GET" || "Idempotency-Key" in h;
     for (let attempt = 1; ; attempt++) {
@@ -165,6 +173,13 @@ export class StudioApi {
       source,
       format,
     });
+  }
+  validateLlmProfile(profile: Record<string, unknown>) {
+    return this.request<ProfileValidation>(
+      "/studio/contracts/llm-profile/validate",
+      "POST",
+      profile,
+    );
   }
   async page(
     collection: string,

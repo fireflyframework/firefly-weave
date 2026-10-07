@@ -91,3 +91,19 @@ def test_inline_unsaved_source_is_explicit_untrusted_text_even_when_not_valid_ya
 def test_configuration_schema_publishes_the_same_fixed_reply_schema_as_validation():
     schema = LumiConfigurationRequest.model_json_schema(by_alias=True)
     assert schema["$defs"]["LumiProfile"]["properties"]["outputSchema"]["const"] == LUMI_REPLY_SCHEMA
+
+
+@pytest.mark.parametrize(
+    "kind", ["deployment-target", "deployment", "deployment-observation", "deployment-plan", "deployment-job"]
+)
+def test_operations_context_is_identifier_only_and_explanation_only(kind):
+    from uuid import uuid4
+
+    attachment = {"kind": kind, "id": str(uuid4())}
+    assert LumiAskRequest(message="Explain capacity", attachments=[attachment]).explanation_only
+    with pytest.raises(ValidationError):
+        LumiAskRequest(message="Explain", attachments=[attachment | {"data": {"replicas": 3}}])
+    with pytest.raises(ValidationError):
+        LumiAskRequest(message="Explain", attachments=[attachment], draft={"format": "yaml", "source": "private"})
+    with pytest.raises(ValidationError):
+        LumiAskRequest(message="Explain", attachments=[attachment, {"kind": "run", "id": str(uuid4())}])

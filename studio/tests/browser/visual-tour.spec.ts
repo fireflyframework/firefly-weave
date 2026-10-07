@@ -1914,8 +1914,12 @@ spec:
       "Who",
       "What they see",
       "How they answer",
-      "Deadlines",
     ]);
+    const deadlines = designer.inspector.locator(".human-deadlines");
+    await expect(deadlines.locator(":scope > summary")).toHaveText(
+      "Deadlines Optional",
+    );
+    await expect(deadlines).not.toHaveAttribute("open", "");
     await shot("human-task-who", { end: ".inspector-body" });
     const answers = designer.inspector.getByRole("heading", {
       name: "How they answer",
@@ -1997,6 +2001,7 @@ spec:
 `);
     await designer.selectStep("action-1");
     await chooseAction(page, "sql.lookup@1.0.0");
+    await page.locator(".action-details > summary").click();
     await expect(page.locator(".integration-requirements")).toBeVisible();
     await shot("48-inspector-action-contract", { end: ".inspector-body" });
   },

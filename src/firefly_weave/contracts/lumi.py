@@ -96,7 +96,16 @@ class LumiMessage(BaseModel):
 
 class LumiAttachment(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
-    kind: Literal["draft", "run", "simulation"]
+    kind: Literal[
+        "draft",
+        "run",
+        "simulation",
+        "deployment-target",
+        "deployment",
+        "deployment-observation",
+        "deployment-plan",
+        "deployment-job",
+    ]
     id: UUID
 
 
@@ -118,3 +127,15 @@ class LumiAskRequest(BaseModel):
     draft: LumiDraft | None = Field(default=None, exclude_if=lambda value: value is None)
     history: list[LumiMessage] = Field(default_factory=list, max_length=16)
     attachments: list[LumiAttachment] = Field(default_factory=list, max_length=4)
+
+    @property
+    def explanation_only(self) -> bool:
+        return any(item.kind.startswith("deployment") for item in self.attachments)
+
+    @model_validator(mode="after")
+    def separate_operations_context(self) -> Self:
+        if self.explanation_only and (
+            self.draft is not None or any(not item.kind.startswith("deployment") for item in self.attachments)
+        ):
+            raise ValueError("Operations explanations accept only Operations attachments")
+        return self

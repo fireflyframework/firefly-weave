@@ -30,6 +30,9 @@ import {
 } from "@angular/core";
 import { Step, Workflow } from "./model";
 import { typeLabels } from "./forms/core/type-labels";
+import { schemaTypes, typeLabel, type Schema } from "./forms/core/scope";
+import type { Schema as FormSchema } from "./task-schema";
+import { resolveSchema } from "./forms/core/resolve";
 import { FieldsDraft, type FieldRow } from "./forms/core/fields";
 import { decode, encode, set } from "./forms/core/binding";
 import { Select } from "./forms/ui/select";
@@ -113,15 +116,38 @@ export const operatorGroups = [
  * form uses too: Value, Data, Formula, Fields, List.
  */
 export const expressionModes = [
-  { value: "literal", label: "Value", hint: "Type the value" },
+  {
+    value: "literal",
+    label: "Value",
+    hint: "Type a fixed value. It stays the same on every run.",
+    example: 'For example: "Ready for review", 3, or Yes.',
+  },
   {
     value: "ref",
     label: "Data",
-    hint: "Use the workflow input or a step's output",
+    hint: "Read this run's workflow input or an earlier step's result.",
+    example: "For example: the customer ID from Workflow input.",
   },
-  { value: "op", label: "Formula", hint: "Combine data with an operation" },
-  { value: "object", label: "Fields", hint: "Build an object field by field" },
-  { value: "array", label: "List", hint: "Build a list item by item" },
+  {
+    value: "op",
+    label: "Formula",
+    hint: "Apply a supported rule or choose a fallback value.",
+    example:
+      "For example: check an amount, or use the first available value. Formulas do not run JavaScript or Python.",
+  },
+  {
+    value: "object",
+    label: "Fields",
+    hint: "Build a record with named properties. Each field has its own value or data source.",
+    example:
+      "For example: customerId from the request and channel set to email.",
+  },
+  {
+    value: "array",
+    label: "List",
+    hint: "Build an ordered collection. Each item has its own value or data source.",
+    example: "For example: a list of recipients, with one item per recipient.",
+  },
 ];
 /** A formula whose operation isn't chosen yet ("Choose a formula…"). */
 export const unchosenFormula = { op: { name: "", args: [] } };
@@ -440,7 +466,7 @@ export class PropertyDraft {
         ></textarea>
       </details>
     } @else {
-      @if (!simple) {
+      @if (!simple || !types.includes(type)) {
         <weave-select
           label="Value type"
           [hideLabel]="true"
@@ -526,13 +552,23 @@ export class PropertyDraft {
           <span>No value</span>
         }
         @default {
-          <input
-            [disabled]="readOnly"
-            [type]="type === 'number' ? 'number' : 'text'"
-            [value]="buffer"
-            (input)="scalar($event)"
-            aria-label="Property value"
-          />
+          @if (multiline && type === "string") {
+            <textarea
+              rows="6"
+              [disabled]="readOnly"
+              [value]="buffer"
+              (input)="scalar($event)"
+              [attr.aria-label]="label"
+            ></textarea>
+          } @else {
+            <input
+              [disabled]="readOnly"
+              [type]="type === 'number' ? 'number' : 'text'"
+              [value]="buffer"
+              (input)="scalar($event)"
+              aria-label="Property value"
+            />
+          }
         }
       }
     }
@@ -543,6 +579,9 @@ export class PropertyDraft {
   styleUrl: "./property-grid.css",
 })
 export class PropertyValue implements OnChanges {
+  @Input() allowedTypes: string[] | null = null;
+  @Input() multiline = false;
+  @Input() label = "Property value";
   @Input() value: unknown = null;
   @Input() depth = 0;
   @Input() simple = false;
@@ -550,7 +589,18 @@ export class PropertyValue implements OnChanges {
   @Output() valueChange = new EventEmitter<unknown>();
   @Output() validityChange = new EventEmitter<boolean>();
   typeLabels = typeLabels;
-  types = ["string", "number", "boolean", "object", "array", "null"];
+  get types() {
+    return (
+      this.allowedTypes ?? [
+        "string",
+        "number",
+        "boolean",
+        "object",
+        "array",
+        "null",
+      ]
+    );
+  }
   buffer = "";
   advanced = "";
   error = "";
@@ -591,7 +641,10 @@ export class PropertyValue implements OnChanges {
   /** What each value type held, so switching back restores it (F8). */
   private memory = new Map<string, unknown>();
   get typeOptions() {
-    return this.types.map((value) => ({ value, label: typeLabels[value] }));
+    return [...new Set([...this.types, this.type])].map((value) => ({
+      value,
+      label: typeLabels[value],
+    }));
   }
   booleanOptions = [
     { value: "true", label: "Yes" },
@@ -707,6 +760,32 @@ let expressionSequence = 0;
           }}</span>
         }
         @if (!compact && !conditionOnly) {
+          <details class="source-help" (keydown.escape)="closeHelp($event)">
+            <summary
+              [attr.aria-label]="'Help for ' + label + ': data sources'"
+              title="When should I use each source?"
+            >
+              <span aria-hidden="true">i</span><span>Data source</span>
+            </summary>
+            <div class="source-help-content">
+              <strong>Choose a data source</strong>
+              <p>
+                Expected: {{ expectedType }}. Choose how to provide it below.
+              </p>
+              <dl>
+                @for (option of allowedModes; track option.value) {
+                  <dt>{{ option.label }}</dt>
+                  <dd>{{ option.hint }} {{ sourceExample(option.value) }}</dd>
+                }
+              </dl>
+              <p>
+                Validate the workflow after mapping data. A source choice alone
+                does not check the whole workflow.
+              </p>
+            </div>
+          </details>
+        }
+        @if (!compact && !conditionOnly) {
           <span
             class="mode-switch"
             role="radiogroup"
@@ -732,13 +811,16 @@ let expressionSequence = 0;
           <button
             type="button"
             [disabled]="readOnly"
-            (click)="setMode(mode === 'ref' ? 'literal' : 'ref')"
+            (click)="setMode(mode === 'ref' ? valueMode : 'ref')"
           >
-            {{ mode === "ref" ? "Use value" : "Use data" }}
+            {{ mode === "ref" ? "Use " + valueModeLabel : "Use data" }}
           </button>
         }
         <weave-row-menu [label]="label + ' options'" [items]="menuItems" />
       </div>
+    }
+    @if (sourceWarning) {
+      <p class="property-error" role="status">{{ sourceWarning }}</p>
     }
     @if (advancedOpen) {
       <label
@@ -773,6 +855,8 @@ let expressionSequence = 0;
               heading="Value"
               [label]="row.name || 'Field'"
               [references]="references"
+              [expectedSchema]="childSchema(row.name)"
+              [schemaRoot]="schemaRoot ?? expectedSchema"
               [readOnly]="readOnly"
               (valueChange)="updateField(row, $event)"
               (validityChange)="childValidity('field-' + row.id, $event)"
@@ -817,7 +901,10 @@ let expressionSequence = 0;
     } @else if (mode === "literal" && !isList) {
       <weave-property-value
         [value]="body"
-        [simple]="true"
+        [simple]="literalTypes.length === 1"
+        [allowedTypes]="literalTypes"
+        [multiline]="multiline"
+        [label]="label"
         [readOnly]="readOnly"
         (valueChange)="replaceBody($event)"
         (validityChange)="validityChange.emit($event)"
@@ -826,10 +913,11 @@ let expressionSequence = 0;
       <weave-reference-combobox
         [value]="refText"
         [options]="references"
+        [target]="receivingSchema"
         [ariaLabel]="label + ' reference'"
         [placeholder]="compact ? 'Choose data or type a value' : 'Choose data…'"
         [removable]="true"
-        (removed)="setMode('literal')"
+        (removed)="setMode(valueMode)"
         [disabled]="readOnly"
         (valueChange)="replaceBody($event)"
       />
@@ -863,6 +951,8 @@ let expressionSequence = 0;
             [value]="entry.value"
             [readOnly]="readOnly"
             [references]="references"
+            [expectedSchema]="childSchema(entry.key)"
+            [schemaRoot]="schemaRoot ?? expectedSchema"
             [compact]="true"
             [heading]="
               isList
@@ -896,6 +986,10 @@ let expressionSequence = 0;
   </div>`,
 })
 export class ExpressionEditor implements OnChanges, AfterViewChecked {
+  /** The receiving field's contract; unknown types retain every source. */
+  @Input() expectedSchema: Schema | null = null;
+  @Input() schemaRoot: Schema | null = null;
+  @Input() multiline = false;
   @Input() value: unknown = { literal: null };
   @Input() readOnly = false;
   @Input() compact = false;
@@ -952,7 +1046,137 @@ export class ExpressionEditor implements OnChanges, AfterViewChecked {
       ?.querySelector<HTMLElement>(`[data-mode="${next.value}"]`)
       ?.focus();
   }
-  modes = expressionModes;
+  get expectedType() {
+    return typeLabel(this.receivingSchema);
+  }
+  get receivingSchema(): Schema {
+    const resolved = resolveSchema(this.expectedSchema ?? {}, {
+      root: this.schemaRoot ?? this.expectedSchema ?? {},
+    });
+    // Preserve the null alternative even when the other branch has const/enum.
+    const schema = resolved.nullable
+      ? { anyOf: [resolved.schema, { type: "null" }] }
+      : resolved.schema;
+    const types = schemaTypes(
+      schema,
+      this.schemaRoot ?? this.expectedSchema ?? {},
+    );
+    return types.length
+      ? {
+          ...schema,
+          type: types,
+        }
+      : schema;
+  }
+  sourceExample(mode: string) {
+    const types = schemaTypes(this.receivingSchema);
+    if (mode === "op" && types.length && !types.includes("boolean"))
+      return "Choose first available of to use data when it is present, or a fallback of the same type.";
+    if (mode === "literal" && types.length === 1)
+      return types[0] === "string"
+        ? 'For example: "Ready for review".'
+        : types[0] === "boolean"
+          ? "For example: Yes or No."
+          : ["integer", "number"].includes(types[0])
+            ? "For example: 3."
+            : "Use an empty value (null).";
+    return expressionModes.find((entry) => entry.value === mode)?.example ?? "";
+  }
+  get literalTypes() {
+    const types = schemaTypes(this.receivingSchema);
+    return [
+      ...new Set(
+        (types.length ? types : ["string", "number", "boolean", "null"])
+          .filter((type) => !["object", "array"].includes(type))
+          .map((type) => (type === "integer" ? "number" : type)),
+      ),
+    ];
+  }
+  get allowedModes() {
+    const types = schemaTypes(this.receivingSchema);
+    return expressionModes.filter(
+      ({ value }) =>
+        !types.length ||
+        value === "ref" ||
+        value === "op" ||
+        (value === "object" && types.includes("object")) ||
+        (value === "array" && types.includes("array")) ||
+        (value === "literal" &&
+          types.some((type) => !["object", "array"].includes(type))),
+    );
+  }
+  get modes() {
+    // Imported values remain editable even when their type needs repair.
+    return expressionModes.filter(
+      (mode) =>
+        this.allowedModes.includes(mode) || mode.value === this.displayMode,
+    );
+  }
+  get modeHelp() {
+    return (
+      expressionModes.find((mode) => mode.value === this.displayMode)?.hint ??
+      ""
+    );
+  }
+  get sourceWarning() {
+    const incompatible =
+      !this.allowedModes.some((mode) => mode.value === this.displayMode) ||
+      (this.mode === "literal" &&
+        !this.isFields &&
+        !this.isList &&
+        !this.literalTypes.includes(
+          this.body === null ? "null" : typeof this.body,
+        )) ||
+      (this.mode === "op" &&
+        !!this.operator &&
+        !this.allowedOperators.includes(this.operator));
+    return incompatible
+      ? `This field expects ${this.expectedType}. Your imported expression is preserved. Choose a compatible source or correct it in Source, then validate.`
+      : "";
+  }
+  get valueMode() {
+    return (
+      this.allowedModes.find((mode) =>
+        ["literal", "object", "array"].includes(mode.value),
+      )?.value ?? "literal"
+    );
+  }
+  get valueModeLabel() {
+    return (
+      expressionModes
+        .find((mode) => mode.value === this.valueMode)
+        ?.label.toLowerCase() ?? "value"
+    );
+  }
+  closeHelp(event: Event) {
+    const details = event.currentTarget as HTMLDetailsElement;
+    details.open = false;
+    details.querySelector("summary")?.focus();
+    event.stopPropagation();
+  }
+  childSchema(key: string): Schema | null {
+    if (this.mode === "op") {
+      if (["and", "or", "not"].includes(this.operator))
+        return { type: "boolean" };
+      return this.operator === "coalesce" ? this.receivingSchema : null;
+    }
+    const schema = resolveSchema(this.expectedSchema ?? {}, {
+      root: this.schemaRoot ?? this.expectedSchema ?? {},
+    }).schema;
+    const candidate = this.isList
+      ? schema["items"]
+      : object(schema["properties"]) && Object.hasOwn(schema["properties"], key)
+        ? schema["properties"][key]
+        : schema["additionalProperties"];
+    // Keep nullable and reference metadata for the child's receivingSchema.
+    return object(candidate) ? candidate : null;
+  }
+  get allowedOperators() {
+    const types = schemaTypes(this.receivingSchema);
+    return !types.length || types.includes("boolean")
+      ? supportedOperators
+      : ["coalesce"];
+  }
   readonly prefix = `expression-${++expressionSequence}`;
   operatorLabel(name: string) {
     return operatorLabels[name] ?? name;
@@ -1127,7 +1351,12 @@ export class ExpressionEditor implements OnChanges, AfterViewChecked {
     this.setMode(this.text(event));
   }
   setMode(mode: string) {
-    if (this.readOnly || mode === this.displayMode) return;
+    if (
+      this.readOnly ||
+      mode === this.displayMode ||
+      !this.allowedModes.some((option) => option.value === mode)
+    )
+      return;
     this.advancedOpen = false;
     this.touched = false;
     this.memory.set(
@@ -1149,7 +1378,7 @@ export class ExpressionEditor implements OnChanges, AfterViewChecked {
               ? {}
               : mode === "array"
                 ? []
-                : "",
+                : this.defaultLiteral(),
     };
     if ((mode === "object" || mode === "array") && this.memory.has(mode))
       this.current = structuredClone(this.memory.get(mode)) as RecordValue;
@@ -1158,12 +1387,37 @@ export class ExpressionEditor implements OnChanges, AfterViewChecked {
   }
   get formulaOptions() {
     return this.operatorGroups.flatMap((group) =>
-      group.names.map((value) => ({
-        value,
-        label: this.operatorLabel(value),
-        group: group.label,
-      })),
+      group.names
+        .filter(
+          (value) =>
+            this.allowedOperators.includes(value) || value === this.operator,
+        )
+        .map((value) => ({
+          value,
+          label: this.operatorLabel(value),
+          group: group.label,
+        })),
     );
+  }
+  private defaultLiteral(
+    schema: Schema = this.receivingSchema,
+    containers = false,
+  ) {
+    const type = schemaTypes(
+      schema,
+      this.schemaRoot ?? this.expectedSchema ?? schema,
+    ).find((type) => containers || !["object", "array"].includes(type));
+    return type === "boolean"
+      ? false
+      : type === "number" || type === "integer"
+        ? 0
+        : type === "null"
+          ? null
+          : type === "object"
+            ? {}
+            : type === "array"
+              ? []
+              : "";
   }
   changeOperator(event: Event | string) {
     if (this.readOnly) return;
@@ -1216,8 +1470,15 @@ export class ExpressionEditor implements OnChanges, AfterViewChecked {
       next[`field${n}`] = { literal: null };
     } else if (this.mode === "op" && object(next))
       (next["args"] as unknown[]).push({ ref: "" });
-    else
-      (next as unknown[]).push(this.mode === "literal" ? "" : { literal: "" });
+    else {
+      const initial = this.defaultLiteral(
+        this.childSchema(String((next as unknown[]).length)) ?? {},
+        true,
+      );
+      (next as unknown[]).push(
+        this.mode === "literal" ? initial : { literal: initial },
+      );
+    }
     this.replaceBody(next);
   }
   remove(key: string) {
@@ -1365,6 +1626,7 @@ let gridSequence = 0;
             } @else {
               <weave-expression-editor
                 [value]="draft.get(field.path)"
+                [expectedSchema]="schemaFor(field)"
                 [readOnly]="readOnly"
                 [references]="referencesFor(field)"
                 [label]="field.label"
@@ -1491,6 +1753,26 @@ let gridSequence = 0;
   }`,
 })
 export class StepPropertyGrid implements OnChanges {
+  @Input() expressionSchema: Schema | FormSchema | null = null;
+  schemaFor(field: Field): Schema | null {
+    if (conditionPath(field.path)) return { type: "boolean" };
+    if (
+      this.step.kind === "Workflow" &&
+      field.path.join("/") === "spec/output"
+    ) {
+      const schema = this.draft.get(["spec", "outputSchema"]);
+      return object(schema) ? schema : null;
+    }
+    if (this.step.kind === "llm" && field.path[0] === "prompt")
+      return { type: "string" };
+    if (this.step.kind === "humanTask") {
+      if (field.path[0] === "title") return { type: "string" };
+      if (field.path[0] === "context") return { type: "object" };
+    }
+    return field.path[0] === "with" && this.expressionSchema
+      ? { ...this.expressionSchema }
+      : null;
+  }
   @Input({ required: true }) step!: EditableDocument;
   @Input() readOnly = false;
   @Input() hiddenFields: string[] = [];

@@ -26,6 +26,7 @@ from typing import Protocol, cast
 from urllib.parse import urlsplit
 
 from firefly_weave.compiler.expressions import measure_value
+from firefly_weave.contracts.agentic import provider_destination_allowed
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.llm import LLMProfile
 from firefly_weave.contracts.values import JsonData, JsonValue
@@ -125,7 +126,7 @@ class AgenticTaskHandler:
         ):
             raise ConnectorFailure("LLM_CONNECTION", "not_started")
         endpoint = self.policy.endpoint(endpoint)
-        if f"https://{urlsplit(endpoint).netloc}" not in connection.allowed_destinations:
+        if not provider_destination_allowed(endpoint, connection.allowed_destinations):
             raise ConnectorFailure("LLM_POLICY", "not_started")
         api_version = config.get("apiVersion")
         if profile.provider.startswith("azure-") and (not isinstance(api_version, str) or not api_version):

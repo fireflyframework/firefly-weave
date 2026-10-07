@@ -34,6 +34,7 @@ import { Select } from "../forms/ui/select";
 import {
   aiConnector,
   aiConnectionRequest,
+  aiProviderEndpoint,
   aiProviders,
   aiSetupRows,
   type AiConnection,
@@ -54,11 +55,12 @@ import {
     } @else if (done) {
       <h3 class="wizard-title" tabindex="-1">Connection created</h3>
       <p>{{ done.name }} · revision {{ done.revision }}</p>
+      <p role="status">Saved · Not tested</p>
       <p>
-        The platform checked this configuration. No model request was sent. A
-        platform operator must authorize the worker release to use this
-        connection before a workflow can run; Lumi uses its separately
-        configured gateway.
+        The configuration was validated. Provider access has not been tested. No
+        model request was sent. A platform operator must authorize the worker
+        release to use this connection before a workflow can run; Lumi uses its
+        separately configured gateway.
       </p>
       <button type="button" (click)="finished.emit()">Done</button>
     } @else {
@@ -104,35 +106,30 @@ import {
               label="Provider"
               [options]="providers"
               [value]="draft.provider"
-              (choose)="draft.provider = $event"
+              (choose)="chooseProvider($event)"
               [disabled]="busy || loading"
             />
           } @else if (step === 1) {
-            <h3 class="wizard-title" tabindex="-1">
-              Endpoint and secret handle
-            </h3>
+            <h3 class="wizard-title" tabindex="-1">Provider access</h3>
             <p class="hint">
-              Use the operator-approved endpoint and secret handle for
-              {{ providerLabel }} in this environment.
-            </p>
-            <label
-              >Provider endpoint
-              <input
-                aria-label="Provider endpoint"
-                [value]="draft.endpoint"
-                (input)="draft.endpoint = value($event)"
-                [placeholder]="endpointHint"
-                autocomplete="off"
-                spellcheck="false"
-                aria-describedby="ai-endpoint-help"
-              />
-            </label>
-            <p class="hint" id="ai-endpoint-help">
-              Copy the exact base endpoint approved by your operator. The worker
-              or Lumi gateway must allow this endpoint; this connection permits
-              only its HTTPS origin.
+              Choose the credential handle approved for {{ providerLabel }} in
+              this environment.
             </p>
             @if (draft.provider.startsWith("azure-")) {
+              <label
+                >Provider endpoint
+                <input
+                  aria-label="Provider endpoint"
+                  [value]="draft.endpoint"
+                  (input)="draft.endpoint = value($event)"
+                  placeholder="https://your-resource.openai.azure.com"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </label>
+              <p class="hint">
+                Enter the base endpoint for your Azure resource.
+              </p>
               <label
                 >Azure API version
                 <input
@@ -145,6 +142,26 @@ import {
               <p class="hint">
                 Use the API version approved for your deployment.
               </p>
+            } @else {
+              <p class="hint">Standard endpoint: {{ standardEndpoint }}</p>
+              <details>
+                <summary>Advanced: custom endpoint</summary>
+                <label
+                  >Provider endpoint
+                  <input
+                    aria-label="Provider endpoint"
+                    [value]="draft.endpoint"
+                    (input)="draft.endpoint = value($event)"
+                    [placeholder]="standardEndpoint"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                </label>
+                <p class="hint">
+                  Override only for an approved proxy or compatible service. The
+                  worker or Lumi gateway must allow the exact endpoint.
+                </p>
+              </details>
             }
             <label
               >API key secret handle
@@ -179,7 +196,7 @@ import {
               </div>
               <div>
                 <dt>Endpoint</dt>
-                <dd>{{ draft.endpoint.trim() }}</dd>
+                <dd>{{ reviewedEndpoint }}</dd>
               </div>
               @if (draft.provider.startsWith("azure-")) {
                 <div>
@@ -282,6 +299,14 @@ import {
       display: grid;
       gap: 6px;
     }
+    details[open] {
+      display: grid;
+      gap: 10px;
+    }
+    summary {
+      cursor: pointer;
+      padding: 8px 0;
+    }
     input {
       min-width: 0;
       width: 100%;
@@ -364,12 +389,17 @@ export class AiProviderConnectionForm implements OnInit, OnDestroy {
         ?.label ?? "your provider"
     );
   }
-  get endpointHint() {
-    return this.draft.provider.startsWith("azure-")
-      ? "https://your-resource.openai.azure.com"
-      : this.draft.provider === "anthropic"
-        ? "https://api.anthropic.com"
-        : "https://api.openai.com/v1";
+  get standardEndpoint() {
+    return aiProviderEndpoint(this.draft.provider);
+  }
+  get reviewedEndpoint() {
+    return aiConnectionRequest(this.draft, this.connectorId).config.endpoint;
+  }
+  chooseProvider(provider: string) {
+    if (provider === this.draft.provider) return;
+    this.draft.provider = provider;
+    this.draft.endpoint = aiProviderEndpoint(provider);
+    this.draft.apiVersion = "";
   }
   connectorId = "";
   loading = false;

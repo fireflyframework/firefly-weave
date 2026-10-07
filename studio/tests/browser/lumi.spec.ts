@@ -205,6 +205,9 @@ for (const viewport of [
     await page.route("**/studio/contracts/lumi-configuration", (r) =>
       r.fulfill({ json: schema }),
     );
+    await page.route("**/studio/contracts/llm-profile/validate", (r) =>
+      r.fulfill({ json: { valid: true, issues: [] } }),
+    );
     const original = {
       enabled: true,
       connection_revision_id: "11111111-1111-4111-8111-111111111111",
@@ -259,6 +262,9 @@ for (const viewport of [
     await panel
       .getByRole("button", { name: "Lumi settings", exact: true })
       .click();
+    await expect(
+      panel.getByRole("button", { name: "New conversation", exact: true }),
+    ).toBeHidden();
     await panel.getByLabel("Model", { exact: true }).fill("configured-model");
     await panel.getByLabel("Max tokens", { exact: true }).fill("1024");
     await expect(panel.getByText("Output schema", { exact: true })).toHaveCount(
@@ -314,15 +320,21 @@ for (const viewport of [
       .click();
     await expect(
       panel.getByRole("button", { name: "Lumi settings", exact: true }),
-    ).toBeDisabled();
+    ).toBeHidden();
     await expect(
       panel.getByRole("button", { name: "New conversation", exact: true }),
-    ).toBeDisabled();
+    ).toBeHidden();
     await expect(
       panel.getByRole("button", { name: "Reload settings", exact: true }),
     ).toBeDisabled();
     finishSave();
     await expect(panel.getByLabel("Message to Lumi")).toBeVisible();
+    await expect(
+      panel.getByRole("button", { name: "Lumi settings", exact: true }),
+    ).toBeVisible();
+    await expect(
+      panel.getByRole("button", { name: "New conversation", exact: true }),
+    ).toBeEnabled();
     expect(etag).toBe('"7"');
     expect(saved.profile.model).toBe("configured-model");
     expect(saved.profile.options.max_tokens).toBe(1024);

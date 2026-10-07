@@ -486,7 +486,7 @@ test.describe("1440x900", () => {
       "Click to add after the selected step, or drag onto a + on the canvas.",
     );
     await expect(palette).toContainText(
-      "Connect to a platform to use published actions.",
+      "Connect to browse your project's actions.",
     );
     await expect(palette.locator(".drag-grip").first()).toHaveAttribute(
       "aria-hidden",

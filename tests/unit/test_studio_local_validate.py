@@ -19,6 +19,7 @@
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 from starlette.testclient import TestClient
 
@@ -214,6 +215,40 @@ def test_local_llm_contract_is_canonical_and_requires_paired_session(tmp_path):
         assert response.status_code == 200
         assert response.json() == LLMProfile.model_json_schema(by_alias=True)
         assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"options": {"max_tokens": 100, "reasoning": "high", "reasoning_budget_tokens": 100}}, "not both"),
+        ({"options": {"max_tokens": 100, "request_timeout": 200}, "timeoutSeconds": 120}, "cannot exceed"),
+        ({"reasoning": {"pattern": "react"}, "maxCalls": 1}, "at least two calls"),
+    ],
+)
+def test_profile_check_reports_canonical_cross_field_errors_before_saving(tmp_path, changes, message):
+    profile = {"provider": "openai-chat", "model": "test-model", "options": {"max_tokens": 100}, "outputSchema": {}}
+    with client(tmp_path) as browser:
+        headers = pair(browser)
+        response = browser.post("/studio/contracts/llm-profile/validate", json={**profile, **changes}, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert any(message in issue["message"] for issue in response.json()["issues"])
+    assert all(set(issue) == {"path", "message"} for issue in response.json()["issues"])
+
+
+def test_profile_check_is_offline_paired_bounded_and_does_not_echo_values(tmp_path):
+    path = "/studio/contracts/llm-profile/validate"
+    profile = {"provider": "openai-chat", "model": "test-model", "options": {"max_tokens": 100}, "outputSchema": {}}
+    with client(tmp_path) as browser:
+        assert browser.post(path, json=profile, headers={"Origin": ORIGIN}).status_code == 401
+        headers = pair(browser)
+        assert browser.post(path, json=profile, headers={"Origin": ORIGIN}).status_code == 403
+        response = browser.post(path, json=profile, headers=headers)
+        assert response.status_code == 200 and response.json() == {"valid": True, "issues": []}
+        invalid = browser.post(path, json={**profile, "provider": "private-input-must-not-be-echoed"}, headers=headers)
+        assert invalid.json()["valid"] is False
+        assert "private-input-must-not-be-echoed" not in invalid.text
+        assert browser.post(path, content=b"x" * 65537, headers=headers).status_code == 413
 
 
 def test_file_and_lumi_contracts_require_pairing_and_match_canonical_models(tmp_path):

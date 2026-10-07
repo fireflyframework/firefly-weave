@@ -544,3 +544,69 @@ async def test_runner_restarts_reuse_authority_without_reviving_revoked_registra
         )
     with pytest.raises(AccessDenied):
         await s.service.register_runner(request, **s.authority)
+
+
+@pytest.mark.parametrize(
+    ("adapter", "kind", "allowed"),
+    [("azure-container-apps", "api", False), ("azure-container-apps", "lumi", True), ("kubernetes", "api", True)],
+)
+async def test_plan_rejects_unsupported_component_before_persisting_review(operations, adapter, kind, allowed):
+    from firefly_weave.definitions.models import CatalogError
+
+    service, authority = operations
+    target = await service.create_target(
+        TargetRequest(
+            name="owned",
+            adapter=adapter,
+            external_identity="owned-destination",
+            boundary="weave",
+            runner_principal_id=authority["actor"].id,
+            capabilities=["observe", "update"],
+        ),
+        "target",
+        **authority,
+    )
+    runner = await service.register_runner(
+        RunnerRegistration(target_id=target.id, adapter=adapter, capabilities=["observe", "update"]), **authority
+    )
+    await service.observe(ObserveRequest(target_id=target.id), "observe", **authority)
+    lease = await service.claim(RunnerClaimRequest(runner_id=runner.id), **authority)
+    observed = await service.report(
+        RunnerReport(
+            lease=lease.proof,
+            report_id=uuid4(),
+            state="succeeded",
+            observation=observation(),
+            receipt=SafeDeploymentReceipt(code="observed"),
+        ),
+        **authority,
+    )
+    deployment = await service.create_deployment(
+        DeploymentRequest(
+            target_id=target.id,
+            name="runtime",
+            components=[
+                ComponentSpec(
+                    name="runtime",
+                    kind=kind,
+                    image="registry.example/runtime@sha256:" + "a" * 64,
+                    configuration="production",
+                )
+            ],
+        ),
+        "deployment",
+        **authority,
+    )
+    request = PlanRequest(
+        deployment_id=deployment.id, deployment_revision=1, observation_id=observed.observation_id, intent="update"
+    )
+    if allowed:
+        plan = await service.plan(request, "plan", **authority)
+        assert plan.steps[0].component.kind == kind
+    else:
+        with pytest.raises(CatalogError) as failure:
+            await service.plan(request, "plan", **authority)
+        assert failure.value.status == 422
+        assert failure.value.code == "WV-DEPLOYMENT-UNSUPPORTED"
+        assert "API" in str(failure.value)
+        assert (await service.list("plans", **authority))["items"] == []

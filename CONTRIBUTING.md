@@ -49,7 +49,9 @@ update lock or upstream framework provenance casually to resolve an unrelated
 failure.
 
 **Studio and desktop changes need their own checks.** Python-only contributors do
-not need Node.js. If you change `studio/`, run the same steps as the Studio CI
+not need Node.js. Use Node 24 LTS; CI pins 24.15.0. Check `node --version`
+before installing dependencies so local builds and browser tests use the same
+major version as CI. If you change `studio/`, run the same steps as the Studio CI
 job. Many unit and browser tests run Weave's Python code, including the real
 Studio host, from the repository's `.venv`, so run the `uv sync` command above
 first.

@@ -16,12 +16,20 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { Component, Input, OnChanges, output } from "@angular/core";
+import {
+  observedComponents,
+  type AdmittedWorkerRelease,
+  type ComponentDraft,
+} from "./deployment-onboarding";
+import { Select } from "../forms/ui/select";
 import { AiSetupWizard } from "../integrations/ai-setup-wizard";
 import { TaskForm } from "../task-form";
+import { missingBound } from "../forms/core/form-model";
 import { fieldsOf } from "../forms/core/resolve";
 import type { Schema } from "../task-schema";
 import { missingRequired } from "../task-schema";
 import type {
+  Observation,
   Deployment,
   DeploymentRequest,
   Target,
@@ -30,7 +38,7 @@ import type {
 @Component({
   selector: "weave-deployment-editor",
   standalone: true,
-  imports: [AiSetupWizard, TaskForm],
+  imports: [AiSetupWizard, TaskForm, Select],
   template: `
     <weave-ai-setup-wizard
       [(step)]="step"
@@ -64,21 +72,63 @@ import type {
         </p>
       </div>
       <div ai-connection>
+        @if (!existing && importable.length) {
+          <fieldset>
+            <legend>Choose observed components</legend>
+            @for (item of importable; track item.name) {
+              <label
+                ><input
+                  type="checkbox"
+                  [attr.aria-label]="'Import ' + item.name"
+                  [checked]="selectedNames.has(item.name)"
+                  (change)="selectObserved(item.name, $event)"
+                />{{ item.name }} · {{ item.kind }} ·
+                {{ item.replicas }} replicas</label
+              >
+            }
+          </fieldset>
+          <button
+            type="button"
+            [disabled]="!selectedNames.size"
+            (click)="importSelected()"
+          >
+            Use selected observed components
+          </button>
+          <p class="hint">
+            This copies the selected names, immutable images and replica counts
+            into your draft. Enter the local configuration alias, CPU and memory
+            limits explicitly. Observations do not report those limits. Other
+            resources require manual review.
+          </p>
+        }
         <p>
           Use immutable image digests and named configuration references already
           allowed by the runner. Keep secrets in the runner environment. Unset
-          optional limits use the canonical defaults shown in review.
+          optional limits for new components use the canonical defaults shown in
+          review. Imported components require an explicit CPU and memory choice.
         </p>
         <weave-task-form
           [schema]="componentsSchema"
           [initialData]="componentsInitial"
-          (dataChange)="components = $event"
+          (dataChange)="changeComponents($event)"
           (validityChange)="componentsValid = $event"
         />
+        <p class="hint">{{ releaseMessage }}</p>
+        @for (item of items; track $index; let index = $index) {
+          @if (item.kind === "worker") {
+            <weave-select
+              [label]="'Admitted worker release for ' + item.name"
+              [options]="releaseOptions()"
+              [value]="item.worker_release_id ?? ''"
+              (choose)="chooseRelease(index, $event)"
+            />
+          }
+        }
         <p class="hint">
-          API/scheduler and migrations require exactly one instance. Workers
-          require an admitted worker release. Reducing replicas terminates
-          containers; drain worker instances before reducing a pool.
+          API/scheduler requires exactly one instance. Workers require an
+          admitted worker release. Reducing replicas terminates containers;
+          drain worker instances before reducing a pool. Run database migrations
+          separately with the deployment upgrade runbook.
         </p>
       </div>
       <div ai-review>
@@ -140,6 +190,82 @@ export class DeploymentEditor implements OnChanges {
   @Input({ required: true }) schema!: Schema;
   @Input({ required: true }) target!: Target;
   @Input() existing: Deployment | null = null;
+  @Input() observation: Observation | null = null;
+  @Input() releases: AdmittedWorkerRelease[] = [];
+  @Input() releaseMessage = "";
+  selectedNames = new Set<string>();
+  get importable() {
+    return this.observation?.complete &&
+      this.observation.target_id === this.target.id &&
+      this.observation.target_revision === this.target.revision &&
+      Date.parse(this.observation.expires_at) > Date.now()
+      ? observedComponents(this.observation.resources)
+      : [];
+  }
+  selectObserved(name: string, event: Event) {
+    if ((event.target as HTMLInputElement).checked)
+      this.selectedNames.add(name);
+    else this.selectedNames.delete(name);
+  }
+  importSelected() {
+    const selected = this.importable.filter((item) =>
+      this.selectedNames.has(item.name),
+    );
+    const existing = this.items.filter(
+      (item) => !this.selectedNames.has(item.name),
+    );
+    this.componentsSchema = structuredClone(this.componentsSchema);
+    const definition = (
+      this.componentsSchema as Schema & { $defs?: Record<string, Schema> }
+    ).$defs?.["ComponentSpec"];
+    if (definition?.properties) {
+      definition.required = [
+        ...new Set([
+          ...(definition.required ?? []),
+          "cpu_millis",
+          "memory_mib",
+        ]),
+      ];
+      for (const name of ["cpu_millis", "memory_mib"]) {
+        delete (definition.properties[name] as Schema & { default?: unknown })
+          .default;
+        delete this.componentDefaults[name];
+      }
+    }
+    this.setComponents([...existing, ...selected]);
+  }
+  releaseOptions() {
+    return this.releases.map((release) => ({
+      value: release.id,
+      label:
+        release.capabilities
+          .map((c) => c.taskType + "@" + c.taskVersion)
+          .join(", ") +
+        " · configuration digest " +
+        release.image_digest.slice(0, 19) +
+        " · " +
+        release.id.slice(0, 8),
+    }));
+  }
+  chooseRelease(index: number, id: string) {
+    const items = this.items;
+    if (!this.releaseOptions().some((option) => option.value === id)) return;
+    items[index] = { ...items[index], worker_release_id: id };
+    this.setComponents(items);
+  }
+  private setComponents(items: ComponentDraft[]) {
+    this.componentsInitial = {
+      components: items.map((item) =>
+        Object.fromEntries(
+          Object.entries(item).filter(
+            ([key, value]) =>
+              !(["cpu_millis", "memory_mib"].includes(key) && value == null),
+          ),
+        ),
+      ),
+    };
+    this.components = structuredClone(this.componentsInitial);
+  }
   @Input() busy = false;
   @Input() error = "";
   submit = output<DeploymentRequest>();
@@ -174,10 +300,15 @@ export class DeploymentEditor implements OnChanges {
       required: ["name", "ownership"],
     };
     this.componentsSchema = {
-      ...this.schema,
+      ...structuredClone(this.schema),
       properties: { components: properties["components"] },
       required: ["components"],
     };
+    const componentDefinition = (
+      this.componentsSchema as Schema & { $defs?: Record<string, Schema> }
+    ).$defs?.["ComponentSpec"];
+    if (componentDefinition?.properties)
+      delete componentDefinition.properties["worker_release_id"];
     this.identityInitial = {
       name: this.existing?.name ?? "",
       ownership: this.existing?.ownership ?? "imported",
@@ -193,10 +324,26 @@ export class DeploymentEditor implements OnChanges {
     this.identityValid = true;
     this.componentsValid = true;
   }
+  changeComponents(value: Record<string, unknown>) {
+    const prior = this.items;
+    const items = (value["components"] ?? []) as ComponentDraft[];
+    this.components = {
+      ...value,
+      components: items.map((item) => ({
+        ...item,
+        worker_release_id:
+          item.kind === "worker"
+            ? (prior.find(
+                (old) => old.name === item.name && old.image === item.image,
+              )?.worker_release_id ?? null)
+            : null,
+      })),
+    };
+  }
   get items() {
-    return (
-      (this.components["components"] ?? []) as DeploymentRequest["components"]
-    ).map((item) => ({ ...this.componentDefaults, ...item }));
+    return ((this.components["components"] ?? []) as ComponentDraft[]).map(
+      (item) => ({ ...this.componentDefaults, ...item }),
+    );
   }
   get valid() {
     const identity =
@@ -204,7 +351,20 @@ export class DeploymentEditor implements OnChanges {
       !missingRequired(this.identitySchema, this.identity).length;
     return (
       identity &&
-      (this.step === 0 || (this.componentsValid && this.items.length > 0))
+      (this.step === 0 ||
+        (this.componentsValid &&
+          this.items.length > 0 &&
+          this.items.every(
+            (item) =>
+              item.cpu_millis != null &&
+              item.memory_mib != null &&
+              !missingBound(
+                this.schema.properties?.["components"]?.items,
+                { literal: item },
+                { root: this.schema },
+              ).length &&
+              (item.kind !== "worker" || !!item.worker_release_id),
+          )))
     );
   }
   save() {
@@ -213,7 +373,11 @@ export class DeploymentEditor implements OnChanges {
         target_id: this.target.id,
         name: String(this.identity["name"]),
         ownership: this.identity["ownership"] as DeploymentRequest["ownership"],
-        components: structuredClone(this.items),
+        components: this.items.map((item) => ({
+          ...item,
+          cpu_millis: Number(item.cpu_millis),
+          memory_mib: Number(item.memory_mib),
+        })),
       });
   }
 }

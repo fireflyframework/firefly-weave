@@ -47,6 +47,7 @@ independent receipts to establish an outcome, even when export is incomplete.
 
 | Question | Start here | What it can establish |
 | --- | --- | --- |
+| Is this replica's compatibility monitor still progressing? | `/health/live` | The monitor is running and has completed a scan within its allowed time |
 | Can this replica accept work? | `/health/ready` and the scoped compatibility report | Runtime readiness and blocking requirements |
 | How is the service behaving over time? | Collector metrics and traces | Bounded operational observations, subject to export loss |
 | Did a run or effect complete? | Authorized run history and receiver or provider receipts | Durable recorded outcome and external acceptance evidence |
@@ -58,6 +59,29 @@ that an operation never happened. See
 [local runtime](../reference/local-runtime.md#telemetry-and-authorization-audit)
 for authorization logging and [history and replay](../reference/history-and-replay.md)
 for run evidence.
+
+### Read liveness and readiness together
+
+Configure your container platform's liveness probe against `/health/live` and
+its readiness probe against `/health/ready`. They answer different operational
+questions:
+
+| Liveness | Readiness | What to do |
+| --- | --- | --- |
+| HTTP 200 | HTTP 200 | The monitor is progressing and this replica can accept work. |
+| HTTP 200 | HTTP 503 | The monitor is progressing but found a blocking requirement. Inspect the scoped compatibility report and resolve that requirement. |
+| HTTP 503 | HTTP 503 | The monitor stopped or has not completed its work within the allowed time. The container platform can replace the unhealthy process according to its probe policy. |
+
+The completion allowance includes the scan interval, database scan and cleanup,
+and the configured time needed to shut down or initialize runtime effects. A
+scan counts as completed only after its callbacks finish. This prevents a stuck
+callback from indefinitely reporting a live replica. The watchdog does not
+start a second set of runtime effects inside the same process.
+
+After a replacement, verify that readiness returns to HTTP 200 and the
+compatibility report's `checked_at` advances. Inspect affected runs and external
+receipts before retrying uncertain work; a process restart alone does not
+establish whether an external action finished.
 
 ## Enable export to a collector
 

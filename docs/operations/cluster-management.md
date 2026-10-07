@@ -76,7 +76,13 @@ does not grant deployment authority.
 
 In Studio, open **Operations → Register target**. Choose the adapter, the
 existing destination's pinned identity and boundary, the dedicated runner
-principal, and capabilities that its local policy will support. Registration
+application, and capabilities that its local policy will support. Administrators
+can select active application accounts by their available display label. Other
+planners can expand the administrator-provided application ID option. Use
+**Settings → People and access** to create/link the application and assign roles;
+provider credentials stay outside Studio. Kubernetes and Container Apps offer
+observation, updates and worker scaling; only Compose offers deployment of its
+trusted local template. Registration
 records metadata; it does not verify provider access or deploy anything.
 
 The CLI equivalent uses a `TargetRequest` JSON file:
@@ -106,6 +112,13 @@ chosen adapter; a backend enum is not proof a destination supports an action.
 
 ## 3. Configure and start the outbound runner
 
+The target page shows setup steps and **Download setup template**, containing
+its known API origin, workspace, pinned destination and target ID. Save it privately
+on the runner host, then complete the local context, component allowlist, image
+repositories and credential-file references there. It is an incomplete,
+observation-only template, not a credential or installation bundle. Studio never
+executes these commands or treats registration as provider readiness.
+
 On the runner host, use the same package version as the platform:
 
 ```sh
@@ -128,7 +141,15 @@ shows presence, not container health or worker task capacity.
 
 Open the target in Studio and select **Observe target**. Wait for its durable
 operation to succeed. Inspect the dated observation, its completeness, and
-resource ownership before choosing **Record desired deployment**.
+resource ownership before choosing **Record desired deployment**. Select observed
+components to copy their names, immutable images and replica counts into the draft.
+Enter local configuration aliases, CPU and memory limits explicitly: observations
+do not report them. Worker components offer admitted releases when you have
+`catalog.read`; select the release paired with the image in your build receipt.
+A release configuration digest and a registry manifest digest are different
+identities; Studio does not verify that pairing. Without catalog access, ask an
+administrator for that access or use the CLI. Selecting an observed component does not grant ownership or
+apply any change.
 
 The CLI starts the same read-only job using an `ObserveRequest`:
 
@@ -147,11 +168,16 @@ weave operations deployments create --request deployment.json \
 
 Use the actual returned IDs. `deployment.json` follows the canonical
 `DeploymentRequest` schema: target ID, name, declared `imported` or `managed`
-ownership, and bounded components. Each component has its role, an immutable
+ownership, and bounded API, worker, or Lumi components. Each component has its role, an immutable
 `repository@sha256:…` image, local configuration alias, replica count, CPU and
 memory limits. Worker components additionally require an admitted worker
 release ID. Configuration aliases must match the runner's local allowlist;
 they are not environment-variable or secret payloads.
+
+Database migrations are not executable deployment components. Run the release's
+migration job separately using the destination's upgrade runbook, then verify
+schema compatibility before resuming the API and workers. A deployment plan
+does not perform or replace that migration step.
 
 An API/scheduler component must have exactly one replica. Scaling workers to
 zero stops containers; it does not perform graceful worker draining. Use the
@@ -188,6 +214,13 @@ template. `update` changes supported existing components; `scale_workers`
 requires the same observed worker image. It cannot silently become an image
 update. Desired-deployment edits use `deployments update` with the current
 `--revision`; conflicts require reloading and reviewing the current intent.
+
+Container Apps update plans may contain only worker and Lumi components. If a
+desired deployment includes an API component, record worker/Lumi changes in a
+separate desired deployment and upgrade the API with the
+[Azure upgrade runbook](azure.md). Studio excludes unsupported update choices;
+the API rejects them before saving a plan. Worker scaling can still select the
+worker components of a mixed desired deployment.
 
 ## 6. Approve and apply that exact plan
 
@@ -259,6 +292,23 @@ lease authority.
 ## Read worker capacity correctly
 
 ![Replicas, worker presence, and task slots are different signals](../diagrams/worker-capacity.svg)
+
+## Explain a saved record with Lumi
+
+![Explicit record selection and current permission checks produce an explanation without deployment actions](../diagrams/lumi-operations.svg)
+
+When Lumi is configured, **Explain with Lumi** opens the assistant from a
+selected Operations record. Choose which saved records to include and send a
+question; nothing is sent automatically. A target, desired deployment,
+observation, plan, or operation can provide context. Both `lumi.use` and the
+record's normal `deployment.read` permission are required.
+
+The explanation uses bounded summaries with image digests, replica and resource
+counts, freshness, ownership, risks, and safe receipt codes. It excludes provider
+configuration, external identities, credentials, paths, and raw logs. It cannot
+create or apply an Operations plan. Treat it as an explanation of saved evidence,
+not proof of live cloud health or available worker task capacity. See the
+[Lumi guide](../guides/lumi.md#explain-operations-records) for the opt-in flow.
 
 See [Install an Operations runner](operations-runner.md) for local configuration,
 provider setup, capability limits, and recovery after an uncertain operation.

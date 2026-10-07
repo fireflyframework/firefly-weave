@@ -553,10 +553,10 @@ async def test_different_content_race_and_scoped_foreign_keys(
 
     other_request = {**publication_request, "source": publication_request["source"].replace("literal: 7", "literal: 9")}
     results = await asyncio.gather(
-        publish(author, headers, project_url, publication_request, "original"),
-        publish(author, headers, project_url, other_request, "changed"),
+        retry_capacity(lambda: publish(author, headers, project_url, publication_request, "original")),
+        retry_capacity(lambda: publish(author, headers, project_url, other_request, "changed")),
     )
-    assert sorted(r.status_code for r in results) == [201, 409]
+    assert sorted(r.status_code for r in results) == [201, 409], [r.text for r in results]
     version = next(r.json() for r in results if r.status_code == 201)
     async with access_db[0].begin() as session:
         await session.execute(text("SELECT set_config('weave.tenant_id',:id,true)"), {"id": str(author[2].tenant_id)})

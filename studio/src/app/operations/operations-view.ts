@@ -29,6 +29,7 @@ import {
 import { NgTemplateOutlet } from "@angular/common";
 import { Router } from "@angular/router";
 import type { App } from "../app";
+import type { LumiOperationAttachment } from "../lumi/lumi-state";
 import { describeError } from "../errors";
 import {
   DeploymentReconciliation,
@@ -40,6 +41,11 @@ import {
   type PlanRequest,
 } from "./deployment-plan-builder";
 import type { Schema } from "../task-schema";
+import { RunnerSetup } from "./runner-setup";
+import type {
+  RunnerApplication,
+  AdmittedWorkerRelease,
+} from "./deployment-onboarding";
 import { TargetWizard } from "./target-wizard";
 import { OperationsStore } from "./deployment-store";
 import {
@@ -63,6 +69,7 @@ import {
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [
     TargetWizard,
+    RunnerSetup,
     NgTemplateOutlet,
     DeploymentEditor,
     DeploymentPlanBuilder,
@@ -80,6 +87,11 @@ import {
         </p>
       </div>
       @if (host.profile && canRead) {
+        @if (host.can("lumi.use") && lumiAttachments.length) {
+          <button type="button" (click)="host.lumiOpen = true">
+            Explain with Lumi
+          </button>
+        }
         <button type="button" [disabled]="store.mutating" (click)="refresh()">
           Refresh Operations
         </button>
@@ -175,6 +187,9 @@ import {
             [schema]="deploymentSchema"
             [target]="editorTarget"
             [existing]="deployment"
+            [observation]="latestObservation"
+            [releases]="workerReleases"
+            [releaseMessage]="releaseMessage"
             [busy]="store.mutating"
             [error]="store.mutationError"
             (submit)="saveDeployment($event)"
@@ -185,6 +200,9 @@ import {
         <section class="operations-panel">
           <h2>Register an existing target</h2>
           <weave-target-wizard
+            [applications]="applications"
+            [applicationsMessage]="applicationsMessage"
+            (administration)="host.navigate('settings')"
             [busy]="store.mutating"
             [error]="store.mutationError"
             (submit)="createTarget($event)"
@@ -231,6 +249,15 @@ import {
               Observe target
             </button>
           }
+        </section>
+        <section class="operations-panel">
+          <weave-runner-setup
+            [target]="target"
+            [baseUrl]="host.profile!.baseUrl"
+            [registered]="runnerPresent"
+            [observed]="observationState(latestObservation) === 'current'"
+            (administration)="host.navigate('settings')"
+          />
         </section>
         <section class="operations-panel">
           <h2>Observed resources</h2>
@@ -586,7 +613,7 @@ import {
               <p>Existing container runtimes and their explicit boundaries.</p>
             </div>
             @if (can("target.manage")) {
-              <button class="primary" (click)="registering = true">
+              <button class="primary" (click)="startRegistration()">
                 Register target
               </button>
             }
@@ -692,6 +719,68 @@ export class OperationsView implements DoCheck, OnDestroy {
   job: Job | null = null;
   approval: Approval | null = null;
   registering = false;
+  applications: RunnerApplication[] = [];
+  applicationsMessage = "";
+  workerReleases: AdmittedWorkerRelease[] = [];
+  releaseMessage = "";
+  get runnerPresent() {
+    return this.store.runners.some(
+      (r) =>
+        r.target_id === this.target?.id &&
+        !r.revoked &&
+        this.fresh(r.expires_at),
+    );
+  }
+  async startRegistration() {
+    this.registering = true;
+    this.applications = [];
+    this.applicationsMessage = this.host.can("grant.admin")
+      ? "Loading application accounts…"
+      : "An administrator can select an application account. Ask them to prepare its identity link and give you its application ID.";
+    if (!this.host.can("grant.admin")) return;
+    const seq = this.detailSequence;
+    try {
+      let cursor: string | null = null;
+      const applications: RunnerApplication[] = [];
+      let pages = 0;
+      do {
+        pages++;
+        const page: {
+          items: Record<string, unknown>[];
+          next_cursor: string | null;
+        } = await this.host.api.request(
+          `/studio/api/api/v1/admin/principals?limit=100${cursor ? "&cursor=" + encodeURIComponent(cursor) : ""}`,
+        );
+        if (seq !== this.detailSequence || !this.registering) return;
+        applications.push(
+          ...page.items
+            .filter(
+              (item) =>
+                item["kind"] === "application" && item["active"] === true,
+            )
+            .map((item) => ({
+              value: String(item["id"]),
+              label: String(
+                item["display_name"] ||
+                  item["name"] ||
+                  `Application ${String(item["id"]).slice(0, 8)}`,
+              ),
+            })),
+        );
+        cursor = page.next_cursor;
+      } while (cursor && pages < 10);
+      this.applications = applications;
+      this.applicationsMessage = cursor
+        ? "Showing the first 1,000 accounts. Use an administrator-provided ID if the dedicated application is not listed."
+        : applications.length
+          ? "Choose the dedicated machine application. Its provider credentials stay on the runner."
+          : "No active application accounts are available. Create and link a dedicated application in account setup, then return here.";
+    } catch (error) {
+      if (seq === this.detailSequence)
+        this.applicationsMessage = describeError(error).message;
+    }
+    this.cdr.markForCheck();
+  }
   editingAuthority = false;
   targetUpdateSchema: Schema | null = null;
   editing = false;
@@ -733,6 +822,53 @@ export class OperationsView implements DoCheck, OnDestroy {
         this.job?.target_id,
     );
   }
+  get lumiAttachments(): LumiOperationAttachment[] {
+    if (!this.canRead || !this.can("deployment.read")) return [];
+    const targetId =
+      this.target?.id ??
+      this.deployment?.target_id ??
+      this.plan?.target_id ??
+      this.job?.target_id;
+    if (!targetId) return [];
+    const items: LumiOperationAttachment[] = [
+      {
+        kind: "deployment-target",
+        id: targetId,
+        label: "Include selected target",
+      },
+    ];
+    if (this.deployment)
+      items.push({
+        kind: "deployment",
+        id: this.deployment.id,
+        label: "Include desired deployment",
+      });
+    if (this.plan)
+      items.push({
+        kind: "deployment-plan",
+        id: this.plan.id,
+        label: "Include reviewed plan",
+      });
+    if (this.job)
+      items.push({
+        kind: "deployment-job",
+        id: this.job.id,
+        label: "Include selected operation",
+      });
+    const observationId =
+      this.plan?.observation_id ??
+      this.job?.observation_id ??
+      [...this.store.observations]
+        .filter((item) => item.target_id === targetId)
+        .sort((a, b) => b.observed_at.localeCompare(a.observed_at))[0]?.id;
+    if (observationId)
+      items.push({
+        kind: "deployment-observation",
+        id: observationId,
+        label: "Include selected observation",
+      });
+    return items;
+  }
   fresh(expires: string) {
     return Date.parse(expires) > Date.now();
   }
@@ -765,6 +901,8 @@ export class OperationsView implements DoCheck, OnDestroy {
     this.editingAuthority = false;
     this.planning = false;
     this.relatedTarget = null;
+    this.applications = [];
+    this.workerReleases = [];
     this.editorTarget = null;
     this.error = "";
     this.store.setScope(scope, this.canRead, authority);
@@ -1054,6 +1192,36 @@ export class OperationsView implements DoCheck, OnDestroy {
       const schema = await this.host.api.request<Schema>(
         "/studio/contracts/deployment",
       );
+      if (seq !== this.detailSequence) return;
+      this.workerReleases = [];
+      this.releaseMessage =
+        "Selecting admitted worker releases requires catalog.read in this environment. Ask an administrator if you need worker components.";
+      if (this.host.can("catalog.read")) {
+        try {
+          let cursor: string | undefined;
+          let pages = 0;
+          do {
+            pages++;
+            const page = await this.host.api.page(
+              "worker-releases",
+              true,
+              cursor,
+            );
+            if (seq !== this.detailSequence) return;
+            this.workerReleases.push(
+              ...(page.items as unknown as AdmittedWorkerRelease[]),
+            );
+            cursor = page.next_cursor ?? undefined;
+          } while (cursor && pages < 20);
+          this.releaseMessage = cursor
+            ? "Only the first 1,000 admitted releases are shown. Use the CLI for a release outside this list."
+            : this.workerReleases.length
+              ? "Select the admitted worker release paired with this image in your build receipt. Its configuration digest differs from the registry manifest digest; Studio cannot verify that pairing."
+              : "No worker releases have been admitted in this environment. Admit a release before adding worker components.";
+        } catch (error) {
+          this.releaseMessage = describeError(error).message;
+        }
+      }
       if (seq !== this.detailSequence) return;
       this.deploymentSchema = schema;
       this.editorTarget = target;

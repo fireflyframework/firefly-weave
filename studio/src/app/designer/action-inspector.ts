@@ -19,7 +19,15 @@ SPDX-License-Identifier: Apache-2.0
 // connection slot, its input and its output. Loaded lazily (@defer) so the
 // initial bundle stays small; the shell passes itself as the host and keeps
 // owning the state.
-import { ChangeDetectionStrategy, Component, input } from "@angular/core";
+import {
+  afterNextRender,
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  inject,
+  Injector,
+  input,
+} from "@angular/core";
 import { Icon } from "../icon";
 import { CatalogPicker } from "../integrations/catalog-picker";
 import { ConnectionSlotList } from "../integrations/connection-slot-list";
@@ -50,7 +58,9 @@ import type { App } from "../app";
           [open]="h.sectionOpen('action')"
           (toggle)="h.sectionToggled('action', $event)"
         >
-          <summary id="integration-heading" tabindex="-1">Action</summary>
+          <summary id="integration-heading" tabindex="-1">
+            <span class="section-step" aria-hidden="true">1</span>Choose action
+          </summary>
           <section class="section-body" aria-labelledby="integration-heading">
             @if (h.integrationState !== "ready") {
               <weave-step-property-grid
@@ -163,14 +173,28 @@ import type { App } from "../app";
             @if (
               !h.model.readonly && h.bufferReadable && h.canCreateIntegration()
             ) {
-              <div class="integration-state integration-create">
-                <p>
-                  No action yet? Describe the API request, or import an OpenAPI
-                  document, and Studio builds the action with no code.
-                </p>
+              <div class="integration-create">
                 <button type="button" (click)="h.openApiBuilder('step')">
                   <weave-icon name="action" />New API action
                 </button>
+                <details
+                  #actionHelp
+                  class="inspector-help"
+                  (keydown.escape)="
+                    actionHelp.open = false; $event.stopPropagation()
+                  "
+                >
+                  <summary
+                    aria-label="About creating API actions"
+                    title="About creating API actions"
+                  >
+                    i
+                  </summary>
+                  <p class="hint">
+                    Describe the API request, or import an OpenAPI document, and
+                    Studio builds the action with no code.
+                  </p>
+                </details>
               </div>
             }
             @if (h.contractState === "loading") {
@@ -190,42 +214,44 @@ import type { App } from "../app";
               </div>
             }
             @if (h.actionContract) {
-              <h4>What this action needs</h4>
-              <dl class="integration-requirements">
-                <dt>Runs on</dt>
-                <dd>
-                  {{
-                    h.actionImplementation()["kind"] === "worker"
-                      ? "Worker"
-                      : "Connector"
-                  }}
-                  <code>{{
-                    h.actionImplementation()["kind"] === "worker"
-                      ? h.actionImplementation()["taskType"] +
-                        " " +
-                        h.actionImplementation()["taskVersion"]
-                      : h.actionImplementation()["uses"]
-                  }}</code>
-                </dd>
-                @if (h.actionImplementation()["kind"] !== "worker") {
-                  <dt>Operation</dt>
+              <details class="action-details">
+                <summary>Action details</summary>
+                <dl class="integration-requirements">
+                  <dt>Runs on</dt>
                   <dd>
-                    <code>{{ h.actionImplementation()["action"] }}</code>
+                    {{
+                      h.actionImplementation()["kind"] === "worker"
+                        ? "Worker"
+                        : "Connector"
+                    }}
+                    <code>{{
+                      h.actionImplementation()["kind"] === "worker"
+                        ? h.actionImplementation()["taskType"] +
+                          " " +
+                          h.actionImplementation()["taskVersion"]
+                        : h.actionImplementation()["uses"]
+                    }}</code>
                   </dd>
-                }
-                <dt>Connection</dt>
-                <dd>{{ h.connectionRequirementLabel() }}</dd>
-                <dt>Side effect</dt>
-                <dd>{{ h.sideEffectLabel() }}</dd>
-                <dt>Timeout</dt>
-                <dd>{{ h.actionSpec()["timeoutSeconds"] }} seconds</dd>
-                <dt>Retry</dt>
-                <dd>{{ h.retryLabel() }}</dd>
-              </dl>
-              <p class="hint">
-                Timeout and retry belong to this published action version.
-                Publish a new version to change them.
-              </p>
+                  @if (h.actionImplementation()["kind"] !== "worker") {
+                    <dt>Operation</dt>
+                    <dd>
+                      <code>{{ h.actionImplementation()["action"] }}</code>
+                    </dd>
+                  }
+                  <dt>Connection</dt>
+                  <dd>{{ h.connectionRequirementLabel() }}</dd>
+                  <dt>Side effect</dt>
+                  <dd>{{ h.sideEffectLabel() }}</dd>
+                  <dt>Timeout</dt>
+                  <dd>{{ h.actionSpec()["timeoutSeconds"] }} seconds</dd>
+                  <dt>Retry</dt>
+                  <dd>{{ h.retryLabel() }}</dd>
+                </dl>
+                <p class="hint">
+                  Timeout and retry belong to this published action version.
+                  Publish a new version to change them.
+                </p>
+              </details>
             }
             @if (h.integrationIssues(); as issues) {
               @if (issues.length) {
@@ -246,7 +272,9 @@ import type { App } from "../app";
           [open]="h.sectionOpen('connection')"
           (toggle)="h.sectionToggled('connection', $event)"
         >
-          <summary>Connection</summary>
+          <summary>
+            <span class="section-step" aria-hidden="true">2</span>Connection
+          </summary>
           <div class="section-body">
             <weave-select
               label="Connection slot"
@@ -291,13 +319,19 @@ import type { App } from "../app";
               <button
                 type="button"
                 [disabled]="h.editingLocked || h.model.readonly"
-                (click)="h.addConnectionSlot()"
+                (click)="addConnectionSlot()"
               >
                 {{ h.connectionSlotButton() }}
               </button>
             }
             @if (!h.actionContract || h.actionRequirement()) {
-              <weave-connection-slots [host]="h" />
+              <details
+                class="slot-management"
+                [open]="slotsOpen || !h.actionContract"
+              >
+                <summary>Manage workflow connection slots</summary>
+                <weave-connection-slots [host]="h" />
+              </details>
             }
           </div>
         </details>
@@ -306,7 +340,9 @@ import type { App } from "../app";
           [open]="h.sectionOpen('input')"
           (toggle)="h.sectionToggled('input', $event)"
         >
-          <summary>Input</summary>
+          <summary>
+            <span class="section-step" aria-hidden="true">3</span>Input
+          </summary>
           <div class="section-body">
             @if (h.actionContract && h.actionInputFields()) {
               @if (h.actionInputMode === "fields") {
@@ -325,7 +361,7 @@ import type { App } from "../app";
                     class="action-input-fields"
                     [disabled]="!h.bufferReadable"
                   >
-                    @for (key of [selected.step.id]; track key) {
+                    @for (session of [h.inspectorSession]; track session) {
                       @defer (on immediate) {
                         <weave-task-form
                           [fileAccess]="h.fileAccess"
@@ -382,7 +418,9 @@ import type { App } from "../app";
           [open]="h.sectionOpen('output')"
           (toggle)="h.sectionToggled('output', $event)"
         >
-          <summary>Output</summary>
+          <summary>
+            <span class="section-step" aria-hidden="true">4</span>Output
+          </summary>
           <div class="section-body">
             <p class="hint">
               Later steps can read this action's result at
@@ -425,6 +463,27 @@ import type { App } from "../app";
 export class ActionInspector {
   /** The editor shell. */
   host = input.required<App>();
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
+  slotsOpen = false;
+  addConnectionSlot() {
+    const h = this.host();
+    h.addConnectionSlot();
+    if (h.slotError || h.error) return;
+    this.slotsOpen = true;
+    const name = h.bufferedConnection();
+    afterNextRender(
+      () => {
+        const field = [
+          ...this.element.nativeElement.querySelectorAll<HTMLInputElement>(
+            ".slot-management .slot-row input",
+          ),
+        ].find((input) => input.value === name);
+        field?.focus();
+      },
+      { injector: this.injector },
+    );
+  }
   readonly manualHiddenFields = ["connection", "with"];
   connectionOptions(): SelectOption[] {
     const h = this.host();

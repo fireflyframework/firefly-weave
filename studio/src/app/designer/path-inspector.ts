@@ -79,6 +79,7 @@ const object = (value: unknown): Record<string, unknown> =>
               [references]="refs(index, 'when')"
               [readOnly]="locked"
               [conditionOnly]="true"
+              [expectedSchema]="{ type: 'boolean' }"
               [label]="'Path ' + (index + 1) + ' rule'"
               (valueChange)="edit(index, 'when', $event)"
               (validityChange)="validity(index, 'when', $event)"

@@ -225,6 +225,7 @@ async def test_safe_retry_one_extra_attempt_same_operation_key(
         )
 
 
+@pytest.mark.parametrize("hold_for_capacity", [False, True])
 async def test_cancel_race_and_linked_retry_preserve_history(
     client,
     operation_headers,
@@ -236,6 +237,7 @@ async def test_cancel_race_and_linked_retry_preserve_history(
     access_db,
     replica_apps,
     worker_setup,
+    hold_for_capacity,
 ):
     import asyncio
 
@@ -246,18 +248,40 @@ async def test_cancel_race_and_linked_retry_preserve_history(
     from firefly_weave.persistence.uow import UnitOfWork
     from firefly_weave.workers.leases import TaskService
 
+    completion_held = asyncio.Event()
+    capacity_rejected = asyncio.Event()
+
     async def complete():
         context = replica_apps[1].state.pyfly.context
         async with context.get_bean(UnitOfWork).open(worker_setup[4]) as tx:
-            return await context.get_bean(TaskService).complete(
+            result = await context.get_bean(TaskService).complete(
                 tx, lease.proof, uuid4(), 7, actor=worker_setup[3], scope=worker_setup[4], context=AuditContext()
             )
+            if hold_for_capacity:
+                completion_held.set()
+                async with asyncio.timeout(5):
+                    await capacity_rejected.wait()
+            return result
 
-    cancel, receipt = await asyncio.gather(
-        client.post(f"{env_url}/runs/{queued_task.id}/cancel", headers=operation_headers, json={"reason": "stop"}),
-        complete(),
-    )
-    assert cancel.status_code in {200, 409}
+    async def cancel_run():
+        async with asyncio.timeout(10):
+            if hold_for_capacity:
+                await completion_held.wait()
+            for attempt in range(8):
+                response = await client.post(
+                    f"{env_url}/runs/{queued_task.id}/cancel", headers=operation_headers, json={"reason": "stop"}
+                )
+                if response.status_code != 429:
+                    return response
+                assert response.json()["code"] == "WV-OPERATION-CAPACITY", response.text
+                capacity_rejected.set()
+                await asyncio.sleep(0.05 * (attempt + 1))
+        pytest.fail("Cancellation capacity did not recover within eight bounded attempts")
+
+    cancel, receipt = await asyncio.gather(cancel_run(), complete())
+    assert cancel.status_code in {200, 409}, cancel.text
+    if hold_for_capacity:
+        assert capacity_rejected.is_set()
     assert receipt.status in {"completed", "ignored"}
     old = (await client.get(f"{env_url}/runs/{queued_task.id}", headers=operation_headers)).json()
     if cancel.status_code == 200:

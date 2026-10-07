@@ -138,6 +138,9 @@ for (const width of [1440, 600])
       page,
     }) => {
       await offline(page);
+      await page.route("**/studio/contracts/llm-profile/validate", (route) =>
+        route.fulfill({ json: { valid: true, issues: [] } }),
+      );
       await page.route("**/studio/contracts/llm-profile", (route) =>
         route.fulfill({ json: profileSchema }),
       );
@@ -165,7 +168,7 @@ for (const width of [1440, 600])
         .fill("weave-agentic-generate@1.1.0");
       await inspector
         .locator('[data-field="prompt"]')
-        .getByLabel("Property value", { exact: true })
+        .getByLabel("AI prompt", { exact: true })
         .fill("Summarize the payment");
       await inspector
         .getByText("Configure workflow AI profiles", { exact: true })

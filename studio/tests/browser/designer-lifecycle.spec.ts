@@ -99,12 +99,14 @@ for (const viewport of [
         /Draft saved \d{2}:\d{2}/,
       );
       await expect(await primary(page)).toHaveText(/Save to file/);
+      await toolbar(page).locator(".toolbar-help > summary").click();
       await expect(toolbar(page)).toContainText(
-        "Saving, publishing and runs need a platform.",
+        "Save to file downloads a copy.",
       );
       await expect(
         toolbar(page).getByRole("button", { name: "Connect to a platform" }),
       ).toBeVisible();
+      await toolbar(page).locator(".toolbar-help > summary").click();
       // Simulate stays focusable and says why it can't run.
       await command(page, "Simulate");
       await expect(page.locator(".command-note")).toHaveText(
@@ -219,7 +221,7 @@ for (const viewport of [
 test.describe("1280x720", () => {
   test.use({ viewport: { width: 1280, height: 720 } });
   for (const mode of ["local", "connected"] as const)
-    test(`the canvas keeps at least 520 px of height (${mode})`, async ({
+    test(`the two-row toolbar keeps at least 470 px of canvas height (${mode})`, async ({
       page,
     }) => {
       if (mode === "local") await offline(page);
@@ -245,8 +247,8 @@ test.describe("1280x720", () => {
         views!.y < commands!.y + commands!.height &&
         commands!.y < views!.y + views!.height;
       expect(overlap).toBe(false);
-      expect(canvas!.height).toBeGreaterThanOrEqual(520);
-      expect(bar!.height).toBeLessThanOrEqual(53);
+      expect(canvas!.height).toBeGreaterThanOrEqual(470);
+      expect(bar!.height).toBeLessThanOrEqual(100);
       // The navigation is the 64 px rail while a workflow is open.
       const rail = await page.locator(".sidebar").boundingBox();
       expect(rail!.width).toBe(64);
@@ -254,33 +256,30 @@ test.describe("1280x720", () => {
 });
 
 for (const width of [1280, 1440])
-  test(`working locally, the note's link stays visible and its reason readable at ${width}`, async ({
+  test(`working locally, the info control explains saving and connecting at ${width}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 800 });
     await offline(page);
     await newWorkflow(page);
-    const note = page.locator(".lifecycle-note");
+    const note = page.locator(".toolbar-help");
+    await expect(note).not.toHaveAttribute("open", "");
+    await note.locator("summary").click();
     const link = note.getByRole("button", { name: "Connect to a platform" });
     await expect(link).toBeVisible();
-    await expect(note).toHaveAttribute(
-      "title",
-      "Saving, publishing and runs need a platform.",
-    );
-    // Screen readers always get the reason; sighted people below 1366 px
-    // find it in the tooltip.
+    await expect(note).toContainText("Save to file downloads a copy.");
     await expect(note).toContainText(
-      "Saving, publishing and runs need a platform.",
+      "Connect to a platform to publish, activate and run it.",
     );
-    const reason = note.locator(".lifecycle-reason");
-    const box = await reason.boundingBox();
-    if (width <= 1366) expect(box!.width).toBeLessThanOrEqual(1);
-    else expect(box!.width).toBeGreaterThan(100);
     const inside = await link.evaluate((e) => {
       const r = e.getBoundingClientRect();
       return r.left >= 0 && r.right <= innerWidth;
     });
     expect(inside).toBe(true);
+    await link.focus();
+    await link.press("Escape");
+    await expect(note).not.toHaveAttribute("open", "");
+    await expect(note.locator("summary")).toBeFocused();
   });
 
 test("the views are a tab list; Source gives the text the whole width", async ({

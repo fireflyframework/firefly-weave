@@ -22,6 +22,10 @@ import {
   input,
   output,
 } from "@angular/core";
+import {
+  supportedCapabilities,
+  type RunnerApplication,
+} from "./deployment-onboarding";
 import { AiSetupWizard } from "../integrations/ai-setup-wizard";
 import { TaskForm } from "../task-form";
 import type { Schema } from "../task-schema";
@@ -103,8 +107,13 @@ import {
               (input)="external = value($event)"
           /></label>
           <p class="hint">
-            Use the exact non-secret runtime identity configured in the runner
-            policy. Kubernetes also covers local clusters, AKS, EKS and GKE.
+            {{
+              adapter === "kubernetes"
+                ? "Use the namespace UID from kubectl get namespace NAME -o jsonpath={.metadata.uid}. AKS, EKS and GKE use this adapter."
+                : adapter === "docker-compose"
+                  ? "Use the Docker daemon ID from docker --context CONTEXT info (the ID field)."
+                  : "Use the existing Container Apps managed environment ARM resource ID."
+            }}
           </p>
           <label
             >Allowed boundary<input
@@ -133,13 +142,26 @@ import {
             operations.
           </p>
         } @else {
-          <label
-            >Runner principal ID<input
-              aria-label="Runner principal ID"
-              maxlength="36"
-              [value]="principal"
-              (input)="principal = value($event)"
-          /></label>
+          <weave-select
+            label="Runner application"
+            [options]="applications()"
+            [value]="principal"
+            (choose)="principal = $event"
+          />
+          <p class="hint">{{ applicationsMessage() }}</p>
+          <button type="button" (click)="administration.emit()">
+            Open settings — People and access
+          </button>
+          <details>
+            <summary>Use an administrator-provided application ID</summary>
+            <label
+              >Runner principal ID<input
+                aria-label="Runner principal ID"
+                maxlength="36"
+                [value]="principal"
+                (input)="principal = value($event)"
+            /></label>
+          </details>
           <p class="hint">
             An administrator creates a dedicated application principal with
             runner grants. Install its outbound runner near this target. Keep
@@ -203,7 +225,7 @@ import {
             <dt>Identity / boundary</dt>
             <dd>{{ external }} / {{ boundary }}</dd>
             <dt>Runner principal</dt>
-            <dd>{{ principal }}</dd>
+            <dd>{{ principalLabel }}</dd>
             <dt>Permitted operations</dt>
             <dd>{{ allowed.join(", ") }}</dd>
           </dl>
@@ -260,6 +282,15 @@ import {
   `,
 })
 export class TargetWizard implements OnChanges {
+  applications = input<RunnerApplication[]>([]);
+  applicationsMessage = input("");
+  administration = output<void>();
+  get principalLabel() {
+    return (
+      this.applications().find((item) => item.value === this.principal)
+        ?.label ?? this.principal
+    );
+  }
   existing = input<Target | null>(null);
   canonicalUpdateSchema = input<Schema | null>(null);
   blocked = input(false);
@@ -275,6 +306,16 @@ export class TargetWizard implements OnChanges {
     const schema = this.canonicalUpdateSchema();
     this.editSchema = {
       ...schema,
+      properties: {
+        ...schema?.properties,
+        capabilities: {
+          ...schema?.properties?.["capabilities"],
+          items: {
+            type: "string",
+            enum: supportedCapabilities(target.adapter),
+          },
+        },
+      },
       required: [...new Set([...(schema?.required ?? []), "disabled"])],
     };
     this.authorityInitial = {
@@ -310,16 +351,26 @@ export class TargetWizard implements OnChanges {
     value,
     label,
   }));
-  readonly capabilities: { value: Capability; label: string }[] = [
+  private readonly allCapabilities: { value: Capability; label: string }[] = [
     { value: "deploy", label: "Deploy" },
     { value: "update", label: "Update" },
     { value: "scale_workers", label: "Scale workers" },
   ];
+  get capabilities() {
+    return this.allCapabilities.filter((item) =>
+      supportedCapabilities(this.adapter).includes(item.value),
+    );
+  }
   value(event: Event) {
     return (event.target as HTMLInputElement).value;
   }
   chooseAdapter(value: string) {
-    if (value in adapterLabels) this.adapter = value as Adapter;
+    if (value in adapterLabels) {
+      this.adapter = value as Adapter;
+      this.allowed = this.allowed.filter((item) =>
+        supportedCapabilities(this.adapter).includes(item),
+      );
+    }
   }
   toggle(capability: Capability, event: Event) {
     this.allowed = (event.target as HTMLInputElement).checked

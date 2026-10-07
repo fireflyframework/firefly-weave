@@ -21,6 +21,16 @@ export interface DraftRevision {
   source: string;
   buffer: string;
 }
+export interface LumiOperationAttachment {
+  kind:
+    | "deployment-target"
+    | "deployment"
+    | "deployment-observation"
+    | "deployment-plan"
+    | "deployment-job";
+  id: string;
+  label: string;
+}
 export interface LumiProposal {
   title: string;
   kind: "workflow" | "decisionTable" | "action" | "connector";

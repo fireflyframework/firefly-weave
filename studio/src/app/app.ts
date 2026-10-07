@@ -23,12 +23,13 @@ import {
   afterEveryRender,
   afterNextRender,
   signal,
+  viewChild,
   inject,
   ChangeDetectorRef,
 } from "@angular/core";
 import type { FileAccess } from "./forms/core/file-reference";
 import { Title } from "@angular/platform-browser";
-import { Router } from "@angular/router";
+import { NavigationEnd, Router } from "@angular/router";
 import { Icon } from "./icon";
 import { AnchoredPopover } from "./forms/ui/anchored-popover";
 import { type Schema, missingRequired } from "./task-schema";
@@ -329,6 +330,9 @@ const sideEffects: Record<string, string> = {
 export class App {
   private cdr = inject(ChangeDetectorRef);
   private router = inject(Router);
+  private historyPosition: number = history.state?.weavePosition ?? 0;
+  private historyUrl = location.href;
+  private restoringHistory = false;
   private injector = inject(Injector);
   dialogs = inject(DialogService);
   crypto = crypto;
@@ -356,6 +360,12 @@ export class App {
     detail?: string;
   } | null = null;
   lumiOpen = false;
+  private readonly operationsView = viewChild(OperationsView);
+  get lumiOperationAttachments() {
+    return this.view === "operations"
+      ? (this.operationsView()?.lumiAttachments ?? [])
+      : [];
+  }
   lumiSettingsRequested = false;
   platformMenuOpen = false;
   platformBusy = "";
@@ -663,6 +673,12 @@ export class App {
     { value: "file_manager", label: "File manager" },
     { value: "lumi_user", label: "Lumi user" },
     { value: "lumi_manager", label: "Lumi manager" },
+    { value: "deployment_reader", label: "Deployment viewer" },
+    { value: "deployment_planner", label: "Deployment planner" },
+    { value: "deployment_approver", label: "Deployment approver" },
+    { value: "deployment_operator", label: "Deployment operator" },
+    { value: "deployment_runner", label: "Deployment runner" },
+    { value: "worker_operator", label: "Worker operator" },
   ];
   // Published action catalog, loaded once per workspace and shared by every action step.
   actionVersions: Record<string, unknown>[] = [];
@@ -707,6 +723,7 @@ export class App {
   // The model step JSON the inspector buffers were loaded from.
   private inspectorBase = "";
   private inspectorStepId = "";
+  inspectorSession = 0;
   private scopeCache: { key: string; value: ReferenceContext | null } = {
     key: "",
     value: null,
@@ -920,6 +937,26 @@ export class App {
   } | null = null;
   showTemplates = false;
   constructor() {
+    history.replaceState(
+      { ...history.state, weavePosition: this.historyPosition },
+      "",
+    );
+    this.router.events.subscribe((event) => {
+      if (!(event instanceof NavigationEnd)) return;
+      const navigation = this.router.currentNavigation();
+      if (
+        navigation?.trigger !== "imperative" ||
+        navigation.extras.skipLocationChange
+      )
+        return;
+      if (!navigation.extras.replaceUrl && location.href !== this.historyUrl)
+        this.historyPosition++;
+      this.historyUrl = location.href;
+      history.replaceState(
+        { ...history.state, weavePosition: this.historyPosition },
+        "",
+      );
+    });
     this.api.onSessionEnded = () => this.sessionEnded();
     this.loginWatcher.subscribe((event) => this.backgroundLogin(event));
     afterEveryRender(() => {
@@ -1294,7 +1331,9 @@ export class App {
   }
   /** Loads the inspector buffers from the selected model step. */
   loadInspector() {
+    this.inspectorSession++;
     this.cancelInspectorCommit();
+    this.invalidInspectorFields.clear();
     this.actionChoiceRevision = null;
     this.renameDraft = this.selected?.step.id ?? "";
     this.renameError = "";
@@ -1384,7 +1423,12 @@ export class App {
     return true;
   }
   async navigate(view: View) {
-    if (this.view === "designer" && view !== "designer") this.leaveInspector();
+    if (
+      this.view === "designer" &&
+      view !== "designer" &&
+      !this.leaveInspector()
+    )
+      return;
     if (
       this.view === "designer" &&
       view !== "designer" &&
@@ -1525,6 +1569,7 @@ export class App {
   }
   /** Edits not yet kept anywhere: on this computer or on the platform. */
   get unsavedWork() {
+    if (this.inspectorProblem) return true;
     if (!this.dirty) return false;
     if (this.profile || this.draftRevision !== undefined || this.published)
       return true;
@@ -1654,6 +1699,7 @@ export class App {
     });
   }
   newWorkflow() {
+    if (this.view === "designer" && !this.leaveInspector()) return;
     this.flushLocalSave();
     this.importGeneration++;
     this.keptLocally = false;
@@ -1701,7 +1747,7 @@ export class App {
       }
       return;
     }
-    this.leaveInspector();
+    if (!this.leaveInspector()) return;
     if (reveal) this.showInspector = true;
     this.message = `Selected ${node.step.id}, ${this.label(node.step.kind)}, ${ownerLabel(node.owner, this.stepsById()).replace(/^Main sequence$/, "main sequence")}.`;
     this.model.selected = node.step.id;
@@ -1783,10 +1829,11 @@ export class App {
       return;
     this.touched[scope] = true;
   }
-  /** Commands use the last valid fields and never interrupt with an edit dialog. */
+  /** A specialized inspector may own an explicit Apply/Cancel draft. */
+  inspectorDraftGuard: (() => string) | null = null;
+  private invalidInspectorFields = new Set<string>();
   async ensureApplied(): Promise<boolean> {
-    this.flushInspector();
-    return true;
+    return this.leaveInspector();
   }
   private cancelInspectorCommit() {
     if (this.inspectorTimer) clearTimeout(this.inspectorTimer);
@@ -1826,9 +1873,14 @@ export class App {
         this.model.renameStep(pending.id, pending.text);
         this.inspectorStepId = this.model.selected;
         this.renameDraft = this.model.selected;
-        const step = this.selected?.step;
-        this.inspectorBuffer = step ? JSON.stringify(step, null, 2) : "";
-        this.propertyStep = step ? structuredClone(step) : null;
+        // Renaming must not remount the grid and erase invalid sibling text.
+        try {
+          const draft = this.bufferStep();
+          draft.id = this.model.selected;
+          this.inspectorBuffer = JSON.stringify(draft, null, 2);
+        } catch {
+          // Advanced JSON may still contain an unfinished edit.
+        }
       } else if (pending.scope === "step") {
         const step = this.model
           .nodes()
@@ -1875,6 +1927,8 @@ export class App {
     }
   }
   inspectorFieldValidity(change: { path: string; valid: boolean }) {
+    if (change.valid) this.invalidInspectorFields.delete(change.path);
+    else this.invalidInspectorFields.add(change.path);
     if (!change.valid && this.pendingInspector?.key === change.path)
       this.cancelInspectorCommit();
   }
@@ -1917,49 +1971,45 @@ export class App {
       this.cancelInspectorCommit();
     }
   }
-  private leaveInspector() {
-    this.flushInspector();
-    if (!this.renameError && !this.editsPending) return;
-    const id = this.model.selected;
-    const opened = this.model.opened;
-    const field =
-      document
-        .querySelector<HTMLElement>(
-          ".inspector [aria-invalid=true], .inspector .property-error",
-        )
-        ?.closest<HTMLElement>("[data-field]")?.dataset["field"] ??
-      (this.renameError ? "id" : "");
-    this.notify(
-      "The invalid edit wasn't saved. The last valid value is kept.",
-      {
-        label: "Go back",
-        run: () => {
-          if (opened !== this.model.opened) return;
-          this.flushInspector();
-          this.model.selected = id;
-          this.loadInspector();
-          this.showInspector = true;
-          this.tab = "Designer";
-          this.focusLater(
-            () =>
-              document.querySelector<HTMLElement>(
-                '.inspector [data-field="' + CSS.escape(field) + '"] input',
-              ) ?? document.querySelector<HTMLElement>(".inspector-header h2"),
-          );
-        },
-      },
+  private get inspectorProblem(): string {
+    return (
+      this.inspectorDraftGuard?.() ||
+      (this.renameError ||
+      this.invalidInspectorFields.size ||
+      this.inspectorDirty ||
+      (this.touched.step &&
+        this.actionInputMode === "fields" &&
+        !!this.actionContract &&
+        !this.actionInputValid()) ||
+      (!this.selected && this.editsPending)
+        ? "Fix the invalid fields before continuing. Your edits are still here."
+        : "")
     );
-    this.loadInspector();
-    this.loadWorkflowSettings();
+  }
+  private inspectorNotice = "";
+  private leaveInspector(): boolean {
+    this.flushInspector();
+    const problem = this.inspectorProblem;
+    if (!problem) {
+      if (this.error === this.inspectorNotice) this.error = "";
+      this.inspectorNotice = "";
+      return true;
+    }
+    this.inspectorNotice = problem;
+    this.error = problem;
+    this.errorCode = "";
+    this.showInspector = true;
+    this.cdr.markForCheck();
+    return false;
   }
   closeInspector() {
-    this.leaveInspector();
+    this.flushInspector();
     this.showInspector = false;
   }
   /** Returns the inspector to the workflow settings. */
   async deselect() {
     if (!this.model.selected) return true;
-    this.leaveInspector();
+    if (!this.leaveInspector()) return false;
     this.model.selected = "";
     this.loadInspector();
     this.loadWorkflowSettings();
@@ -2090,6 +2140,7 @@ export class App {
    * "Active in Production". Null for a new local workflow with no edits.
    */
   get statusChip(): { text: string; tone: string } | null {
+    if (this.inspectorProblem) return { text: "Unsaved", tone: "warning" };
     const version = String(
       this.published?.["version"] ?? this.model.definition.metadata.version,
     );
@@ -2882,7 +2933,7 @@ export class App {
   }
   readonly editorViews = ["Designer", "Source", "Outline"];
   selectTab(tab: string) {
-    if (tab !== this.tab) this.leaveInspector();
+    if (tab !== this.tab && !this.leaveInspector()) return;
     this.tab = tab;
     if (tab === "Designer") this.outlineNotice = false;
     if (tab !== "Designer" && window.innerWidth <= 1280)
@@ -3034,6 +3085,7 @@ export class App {
     );
   }
   switchPropertyMode() {
+    if (!this.leaveInspector()) return;
     if (this.advancedProperties) {
       try {
         const step = JSON.parse(this.inspectorBuffer) as Step;
@@ -3352,6 +3404,8 @@ export class App {
   }
   stepEdit(value: unknown, field = "step") {
     const step = value as Step;
+    // A mounted grid can retain the ID from before a live rename.
+    if (this.selected) step.id = this.selected.step.id;
     // Fields edited outside the property table keep their buffered values.
     if (step.kind === "action") {
       const buffer = this.bufferStep();
@@ -3859,7 +3913,9 @@ export class App {
   }
   slotUseCount(name: string) {
     return this.nodes.filter(
-      (node) => node.step.kind === "action" && node.step["connection"] === name,
+      (node) =>
+        ["action", "llm"].includes(node.step.kind) &&
+        node.step["connection"] === name,
     ).length;
   }
   slotConnectorOptions() {
@@ -5844,6 +5900,7 @@ export class App {
     if (file) await this.importWorkflow(file);
   }
   async importWorkflow(file: File) {
+    if (this.view === "designer" && !this.leaveInspector()) return;
     this.flushLocalSave();
     if (file.size > 1024 * 1024) {
       this.error = "Workflow source is limited to 1 MiB.";
@@ -7255,7 +7312,34 @@ export class App {
   runNodes() {
     return this.runCanvas?.nodes() ?? [];
   }
-  @HostListener("window:popstate") popstate() {
+  @HostListener("window:popstate", ["$event"]) popstate(event: PopStateEvent) {
+    const position = event.state?.weavePosition;
+    if (this.restoringHistory && position === this.historyPosition) {
+      this.restoringHistory = false;
+      return;
+    }
+    if (this.view === "designer" && !this.leaveInspector()) {
+      if (Number.isInteger(position) && position !== this.historyPosition) {
+        // Return to the existing entry: replacing the URL would erase the
+        // destination, and pushing a replacement would discard Forward entries.
+        this.restoringHistory = true;
+        history.go(this.historyPosition - position);
+      } else {
+        // Entries from an older Studio have no position. Keep that destination
+        // available through Back while restoring the current draft's URL.
+        history.pushState(
+          { weavePosition: this.historyPosition },
+          "",
+          this.historyUrl,
+        );
+        void this.router.navigateByUrl(new URL(this.historyUrl).pathname, {
+          replaceUrl: true,
+        });
+      }
+      return;
+    }
+    this.historyPosition = Number.isInteger(position) ? position : 0;
+    this.historyUrl = location.href;
     this.releaseWizard();
     this.platformMenuOpen = false;
     const designer = designerPath.exec(location.pathname);
@@ -7263,6 +7347,8 @@ export class App {
       // Back to the workflow that is open, or to another kept one.
       if (designer[1] === this.draftId) {
         this.view = "designer";
+        this.loadInspector();
+        this.loadWorkflowSettings();
         this.scheduleFit();
       } else void this.restoreWorkflow(designer[1]);
       return;

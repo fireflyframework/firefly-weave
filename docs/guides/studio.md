@@ -226,9 +226,11 @@ on this computer". You can create, import, and edit workflows, and Studio checks
 their structure, data references, and types as you type. Actions and connections
 are checked against a project catalog only after you connect. Studio keeps each
 workflow you edit in this browser and lists it on the **On this computer** tab
-of **Workflows**. In the designer, the main button is **Save to file**, next to
-the note "Saving, publishing and runs need a platform." Saving drafts,
-publishing, simulating, activating, and starting runs need a platform.
+of **Workflows**. In the designer, the main button is **Save to file**. This
+works without a platform. The nearby information button explains which
+operations need a connection and opens the connection assistant. Saving a
+shared platform draft, publishing, simulating, activating, and starting runs
+need a platform.
 
 **You can change how Studio starts.** In **Settings → Platforms**, under
 **Starting Studio** and **When Studio opens**, choose **Ask how to work** or
@@ -639,6 +641,12 @@ valid inspector edits update that workflow automatically, and Studio checks
 your work as you go. Next, [connect to a platform](#connect-to-a-platform)
 to publish and run it, or read on to learn every editor feature.
 
+If a field contains an invalid edit, Studio keeps that draft visible and asks
+you to fix it before switching views, validating, saving to a file, or
+publishing. This prevents a downloaded or published workflow from silently
+using the previous value. Hiding the inspector keeps your draft; reopen it to
+finish editing.
+
 ### Start a workflow
 
 - On Home, select **New workflow**, select **Use template** on a row under
@@ -686,10 +694,12 @@ The **Steps** palette on the left groups the same steps under **Logic**
 Wait for signal), **People** (Human task), and **Actions** (Call an action).
 Hover a step to read what it does. Select a palette step to add it after the
 selected step, or drag it onto a **+** to place it there. Under **Actions**,
-**Published actions** lists the actions published in your project while you are
-connected; working locally, it says "Connect to a platform to use published
-actions." In a window 1024 pixels wide or narrower, the palette is hidden, and
-**Insert step** in the toolbar opens it.
+**Use an existing action** lists your project's published actions. Working
+locally, **Connect to a platform** opens the connection assistant to browse that
+catalog. The separate **Create an API action** section opens **New API action**;
+you can configure and save an action file locally before connecting to publish
+it. Each section has an information control for more detail. In a window 1024
+pixels wide or narrower, **Insert step** in the toolbar opens the palette.
 
 - **An empty branch shows a dashed card** with the path's name and **Add a
   step**. In a Decision or Parallel, select the card to add the branch's first
@@ -941,7 +951,7 @@ Any of these opens **New API action**:
 
 - In the inspector of a **Call an action** step that has no action yet, select
   **New API action** under **Action**.
-- In the palette, under **Published actions**, or in the step's action picker,
+- In the palette, under **Create an API action**, or in the step's action picker,
   select **New API action**.
 - In **Workflows**, open **More ways to start** and select **New API action**.
 
@@ -1078,6 +1088,15 @@ a failure is shown inside the dialog so you can correct the bindings. Then selec
 **Start run…**, as described in the next section.
 
 ## Save, publish, activate and run
+
+The editor header separates **where you are** from **what you can do**. Its
+first row shows the workflow name, version, save state, and Designer / Source /
+Outline views. The second row groups editing controls, validation and simulation,
+then the main save or run action. Secondary commands are in **More**; narrow
+screens move additional commands there to keep the primary controls reachable.
+Zoom, Fit all, and Tidy layout remain with the canvas because they affect only
+its presentation. The connection information button opens help when you need
+it instead of taking space away from the controls.
 
 **Why four separate steps?** A draft is work in progress that colleagues can
 open. Publishing freezes a version that can never change. Activating decides

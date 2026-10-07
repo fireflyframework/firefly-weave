@@ -62,8 +62,7 @@ import type { App } from "../app";
   // shell's main column.
   styles: [":host { display: contents; }"],
   template: `@let h = host();
-    <!-- One 52 px editor bar: where you are, the three views, and the
-         commands, with one primary that follows the lifecycle. -->
+    <!-- Identity and views above an aligned command row. -->
     <div class="editor-bar">
       <div class="editor-heading">
         <div class="editor-identity">
@@ -128,110 +127,140 @@ import type { App } from "../app";
         }
       </div>
       <div class="editor-toolbar" role="toolbar" aria-label="Workflow commands">
-        <button
-          type="button"
-          class="insert-popover-button"
-          [attr.aria-expanded]="h.showPalette"
-          [attr.aria-disabled]="h.editingLocked || null"
-          (click)="!h.editingLocked && (h.showPalette = !h.showPalette)"
-        >
-          <weave-icon name="plus" />Insert step
-        </button>
-        <button
-          type="button"
-          class="icon-button wide-only"
-          aria-label="Undo"
-          title="Undo (⌘/Ctrl Z)"
-          [disabled]="!h.model.canUndo || h.editingLocked"
-          (click)="h.undo()"
-        >
-          <weave-icon name="undo" /></button
-        ><button
-          type="button"
-          class="icon-button wide-only"
-          aria-label="Redo"
-          title="Redo (⌘/Ctrl Shift Z)"
-          [disabled]="!h.model.canRedo || h.editingLocked"
-          (click)="h.redo()"
-        >
-          <weave-icon name="redo" />
-        </button>
-        <span class="toolbar-divider wide-only"></span>
-        <button
-          type="button"
-          [attr.aria-disabled]="h.busy !== '' || null"
-          (click)="h.runCommand('validate')"
-        >
-          <weave-icon name="check" />{{
-            h.busy === "validate" ? "Validating…" : "Validate"
-          }}
-        </button>
-        <button
-          type="button"
-          class="wide-only"
-          [attr.aria-disabled]="!!h.blocker('simulate') || null"
-          [attr.aria-describedby]="
-            h.blocker('simulate') ? 'simulate-blocked' : null
-          "
-          (click)="h.runCommand('simulate')"
-        >
-          {{ h.busy === "simulate" ? "Simulating…" : "Simulate" }}
-        </button>
-        <span class="toolbar-divider wide-only"></span>
-        @if (h.profile) {
+        <div class="toolbar-group" role="group" aria-label="Edit workflow">
           <button
             type="button"
-            class="primary"
-            [attr.aria-disabled]="h.primaryBlocker ? true : null"
-            [attr.aria-describedby]="
-              h.primaryBlocker ? 'primary-blocked' : null
-            "
-            (click)="h.runCommand(h.primaryCommand)"
+            class="insert-popover-button"
+            aria-label="Insert step"
+            [attr.aria-expanded]="h.showPalette"
+            [attr.aria-disabled]="h.editingLocked || null"
+            (click)="!h.editingLocked && (h.showPalette = !h.showPalette)"
           >
-            {{ h.primaryLabel }}
-          </button>
-        } @else {
-          <button
-            type="button"
-            class="primary"
-            title="Save to file (⌘/Ctrl S)"
-            (click)="h.runCommand('export')"
-          >
-            <weave-icon name="download" />Save to file
-          </button>
-          <p
-            class="lifecycle-note"
-            title="Saving, publishing and runs need a platform."
-          >
-            <span class="lifecycle-reason"
-              >Saving, publishing and runs need a platform.</span
+            <weave-icon name="plus" /><span class="insert-label"
+              >Insert step</span
             >
+          </button>
+          <button
+            type="button"
+            class="icon-button wide-only"
+            aria-label="Undo"
+            title="Undo (⌘/Ctrl Z)"
+            [disabled]="!h.model.canUndo || h.editingLocked"
+            (click)="h.undo()"
+          >
+            <weave-icon name="undo" /></button
+          ><button
+            type="button"
+            class="icon-button wide-only"
+            aria-label="Redo"
+            title="Redo (⌘/Ctrl Shift Z)"
+            [disabled]="!h.model.canRedo || h.editingLocked"
+            (click)="h.redo()"
+          >
+            <weave-icon name="redo" />
+          </button>
+        </div>
+        <div class="toolbar-group" role="group" aria-label="Check workflow">
+          <button
+            type="button"
+            [attr.aria-disabled]="h.busy !== '' || null"
+            [attr.aria-label]="
+              h.busy === 'validate' ? 'Validating…' : 'Validate'
+            "
+            title="Validate"
+            (click)="h.runCommand('validate')"
+          >
+            <weave-icon name="check" /><span class="validate-label">{{
+              h.busy === "validate" ? "Validating…" : "Validate"
+            }}</span>
+          </button>
+          <button
+            type="button"
+            class="wide-only"
+            [attr.aria-disabled]="!!h.blocker('simulate') || null"
+            [attr.aria-describedby]="
+              h.blocker('simulate') ? 'simulate-blocked' : null
+            "
+            (click)="h.runCommand('simulate')"
+          >
+            {{ h.busy === "simulate" ? "Simulating…" : "Simulate" }}
+          </button>
+        </div>
+        @if (!h.profile) {
+          <details
+            #localHelp
+            class="toolbar-help"
+            (keydown.escape)="closeHelp(localHelp, $event)"
+          >
+            <summary
+              aria-label="About local authoring"
+              title="About local authoring"
+            >
+              i
+            </summary>
+            <div class="toolbar-help-content">
+              <p>
+                Your draft is kept on this computer. Save to file downloads a
+                copy. Connect to a platform to publish, activate and run it.
+              </p>
+              <button
+                type="button"
+                class="text-link"
+                (click)="h.menuChoice('connect')"
+              >
+                Connect to a platform
+              </button>
+            </div>
+          </details>
+        }
+        <div
+          class="toolbar-group toolbar-lifecycle"
+          role="group"
+          aria-label="Save and run"
+        >
+          @if (h.profile) {
             <button
               type="button"
-              class="text-link"
-              (click)="h.menuChoice('connect')"
+              class="primary"
+              [attr.aria-disabled]="h.primaryBlocker ? true : null"
+              [attr.aria-describedby]="
+                h.primaryBlocker ? 'primary-blocked' : null
+              "
+              (click)="h.runCommand(h.primaryCommand)"
             >
-              Connect to a platform
+              {{ h.primaryLabel }}
             </button>
-          </p>
-        }
-        @if (h.moreItems.length) {
-          <weave-row-menu label="More" text="More" [items]="h.moreItems" />
-        }
-        <button
-          type="button"
-          class="icon-button inspector-toggle wide-only"
-          aria-controls="inspector"
-          [attr.aria-label]="
-            h.showInspector ? 'Hide inspector' : 'Show inspector'
-          "
-          [attr.title]="h.showInspector ? 'Hide inspector' : 'Show inspector'"
-          [attr.aria-pressed]="h.showInspector"
-          [attr.aria-expanded]="h.showInspector"
-          (click)="h.toggleInspector()"
-        >
-          <weave-icon name="panel" />
-        </button>
+          } @else {
+            <button
+              type="button"
+              class="primary"
+              title="Save to file (⌘/Ctrl S)"
+              aria-label="Save to file"
+              (click)="h.runCommand('export')"
+            >
+              <weave-icon name="download" /><span class="save-label"
+                >Save to file</span
+              ><span class="compact-save-label">Save</span>
+            </button>
+          }
+          @if (h.moreItems.length) {
+            <weave-row-menu label="More" text="More" [items]="h.moreItems" />
+          }
+          <button
+            type="button"
+            class="icon-button inspector-toggle wide-only"
+            aria-controls="inspector"
+            [attr.aria-label]="
+              h.showInspector ? 'Hide inspector' : 'Show inspector'
+            "
+            [attr.title]="h.showInspector ? 'Hide inspector' : 'Show inspector'"
+            [attr.aria-pressed]="h.showInspector"
+            [attr.aria-expanded]="h.showInspector"
+            (click)="h.toggleInspector()"
+          >
+            <weave-icon name="panel" />
+          </button>
+        </div>
       </div>
     </div>
 
@@ -276,17 +305,31 @@ import type { App } from "../app";
           (pointerup)="h.resizing = null"
           (keydown)="h.paneKey($event, 'palette')"
         ></button>
-        <h2 id="palette-title">Steps</h2>
-        <label class="search-field"
-          ><weave-icon name="search" /><input
-            aria-label="Search steps"
-            placeholder="Search steps"
-            [value]="h.paletteQuery"
-            (input)="h.paletteQuery = h.value($event)"
-        /></label>
-        <p class="pane-help">
-          Click to add after the selected step, or drag onto a + on the canvas.
-        </p>
+        <header class="palette-header">
+          <div class="palette-heading-row">
+            <h2 id="palette-title">Steps</h2>
+            <details
+              #paletteHelp
+              class="palette-help"
+              (keydown.escape)="closeHelp(paletteHelp, $event)"
+            >
+              <summary aria-label="How to add steps" title="How to add steps">
+                i
+              </summary>
+              <p class="pane-help">
+                Click to add after the selected step, or drag onto a + on the
+                canvas.
+              </p>
+            </details>
+          </div>
+          <label class="search-field"
+            ><weave-icon name="search" /><input
+              aria-label="Search steps"
+              placeholder="Search steps"
+              [value]="h.paletteQuery"
+              (input)="h.paletteQuery = h.value($event)"
+          /></label>
+        </header>
         @for (group of h.palette; track group.label) {
           <div
             class="palette-group"
@@ -324,6 +367,7 @@ import type { App } from "../app";
               @defer (on immediate) {
                 <weave-palette-integrations
                   [host]="h"
+                  (connect)="h.showPalette = false; h.menuChoice('connect')"
                   [query]="h.paletteQuery"
                 />
               }
@@ -941,114 +985,119 @@ import type { App } from "../app";
                 <p class="hint">Loading the action…</p>
               }
             }
-            <details
-              class="inspector-section"
-              [open]="h.sectionOpen('properties')"
-              (toggle)="h.sectionToggled('properties', $event)"
-            >
-              <summary class="properties-heading">
-                {{
-                  h.selected.step.kind === "switch"
-                    ? "Paths"
-                    : h.selected.step.kind === "parallel"
-                      ? "Branches"
-                      : "Properties"
-                }}
-              </summary>
-              @if (!h.advancedProperties) {
-                @for (stepId of [h.selected.step.id]; track stepId) {
-                  @if (h.selected.step.kind === "switch") {
-                    @defer (on immediate) {
-                      <weave-path-inspector [host]="h" />
-                    }
-                  } @else if (h.selected.step.kind === "humanTask") {
-                    @defer (on immediate) {
-                      <weave-human-inspector [host]="h" />
-                    } @placeholder {
-                      <p class="hint">Loading the human task…</p>
-                    }
-                  } @else if (h.selected.step.kind === "decisionTable") {
-                    @defer (on immediate) {
-                      <weave-decision-inspector [host]="h" />
-                    } @placeholder {
-                      <p class="hint">Loading the decision table…</p>
-                    }
-                  } @else if (h.selected.step.kind === "llm") {
-                    @defer (on immediate) {
-                      <weave-llm-inspector [host]="h" />
-                    } @placeholder {
-                      <p class="hint">Loading the AI task…</p>
-                    }
-                  } @else {
-                    @defer (on immediate) {
-                      <weave-step-property-grid
-                        [step]="h.propertyStep || h.selected.step"
-                        [readOnly]="h.model.readonly || h.editingLocked"
-                        [hiddenFields]="h.inspectorHiddenFields"
-                        [scope]="h.referenceContext"
-                        [inferSchema]="h.inferSchema"
-                        (fieldChange)="h.stepEdit($event.value, $event.path)"
-                        (fieldValidity)="h.inspectorFieldValidity($event)"
-                        (validityChange)="h.propertyValid.set($event)"
-                        (input)="h.touchInspector('step')"
-                        (change)="h.touchInspector('step')"
-                        (click)="h.touchInspector('step', $event)"
-                      />
-                    } @placeholder {
-                      <p class="hint">Loading the properties…</p>
+            @if (
+              h.selected.step.kind !== "action" ||
+              h.advancedProperties ||
+              !h.inspectorHiddenFields.includes("with")
+            ) {
+              <details
+                class="inspector-section"
+                [open]="h.sectionOpen('properties')"
+                (toggle)="h.sectionToggled('properties', $event)"
+              >
+                <summary class="properties-heading">
+                  {{ sectionTitle() }}
+                </summary>
+                @if (!h.advancedProperties) {
+                  @for (session of [h.inspectorSession]; track session) {
+                    @if (h.selected.step.kind === "switch") {
+                      @defer (on immediate) {
+                        <weave-path-inspector [host]="h" />
+                      }
+                    } @else if (h.selected.step.kind === "humanTask") {
+                      @defer (on immediate) {
+                        <weave-human-inspector [host]="h" />
+                      } @placeholder {
+                        <p class="hint">Loading the human task…</p>
+                      }
+                    } @else if (h.selected.step.kind === "decisionTable") {
+                      @defer (on immediate) {
+                        <weave-decision-inspector [host]="h" />
+                      } @placeholder {
+                        <p class="hint">Loading the decision table…</p>
+                      }
+                    } @else if (h.selected.step.kind === "llm") {
+                      @defer (on immediate) {
+                        <weave-llm-inspector [host]="h" />
+                      } @placeholder {
+                        <p class="hint">Loading the AI task…</p>
+                      }
+                    } @else {
+                      @defer (on immediate) {
+                        <weave-step-property-grid
+                          [step]="h.propertyStep || h.selected.step"
+                          [readOnly]="h.model.readonly || h.editingLocked"
+                          [hiddenFields]="h.inspectorHiddenFields"
+                          [expressionSchema]="
+                            h.selected.step.kind === 'action'
+                              ? h.actionInputSchema()
+                              : null
+                          "
+                          [scope]="h.referenceContext"
+                          [inferSchema]="h.inferSchema"
+                          (fieldChange)="h.stepEdit($event.value, $event.path)"
+                          (fieldValidity)="h.inspectorFieldValidity($event)"
+                          (validityChange)="h.propertyValid.set($event)"
+                          (input)="h.touchInspector('step')"
+                          (change)="h.touchInspector('step')"
+                          (click)="h.touchInspector('step', $event)"
+                        />
+                      } @placeholder {
+                        <p class="hint">Loading the properties…</p>
+                      }
                     }
                   }
-                }
-              } @else {
-                <label
-                  >Step configuration<textarea
-                    class="step-editor"
-                    spellcheck="false"
-                    [value]="h.inspectorBuffer"
-                    (input)="h.editInspectorJson($event)"
-                    aria-label="Step configuration JSON"
-                  ></textarea>
-                </label>
-                @if (!h.propertyValid()) {
-                  <p class="field-error" role="alert">
-                    Enter valid step JSON, keeping the step name and kind
-                    unchanged.
-                  </p>
-                }
-              }
-              @if (h.selected.step.kind === "parallel") {
-                <section class="branch-management">
-                  <h3>Parallel branches</h3>
-                  <p class="hint">
-                    Every branch runs. Move contained steps before removing a
-                    branch.
-                  </p>
-                  @for (name of h.branchNames(); track name) {
-                    <div class="branch-row">
-                      <input
-                        [value]="name"
-                        [disabled]="h.model.readonly || !h.propertyValid()"
-                        [attr.aria-label]="'Rename branch ' + name"
-                        (change)="h.manageBranch('rename', name, $event)"
-                      />
-                      <button
-                        (click)="h.manageBranch('remove', name)"
-                        [disabled]="h.model.readonly || !h.propertyValid()"
-                        [attr.aria-label]="'Remove branch ' + name"
-                      >
-                        Remove
-                      </button>
-                    </div>
+                } @else {
+                  <label
+                    >Step configuration<textarea
+                      class="step-editor"
+                      spellcheck="false"
+                      [value]="h.inspectorBuffer"
+                      (input)="h.editInspectorJson($event)"
+                      aria-label="Step configuration JSON"
+                    ></textarea>
+                  </label>
+                  @if (!h.propertyValid()) {
+                    <p class="field-error" role="alert">
+                      Enter valid step JSON, keeping the step name and kind
+                      unchanged.
+                    </p>
                   }
-                  <button
-                    (click)="h.manageBranch('add')"
-                    [disabled]="h.model.readonly || !h.propertyValid()"
-                  >
-                    Add branch
-                  </button>
-                </section>
-              }
-            </details>
+                }
+                @if (h.selected.step.kind === "parallel") {
+                  <section class="branch-management">
+                    <h3>Parallel branches</h3>
+                    <p class="hint">
+                      Every branch runs. Move contained steps before removing a
+                      branch.
+                    </p>
+                    @for (name of h.branchNames(); track name) {
+                      <div class="branch-row">
+                        <input
+                          [value]="name"
+                          [disabled]="h.model.readonly || !h.propertyValid()"
+                          [attr.aria-label]="'Rename branch ' + name"
+                          (change)="h.manageBranch('rename', name, $event)"
+                        />
+                        <button
+                          (click)="h.manageBranch('remove', name)"
+                          [disabled]="h.model.readonly || !h.propertyValid()"
+                          [attr.aria-label]="'Remove branch ' + name"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    }
+                    <button
+                      (click)="h.manageBranch('add')"
+                      [disabled]="h.model.readonly || !h.propertyValid()"
+                    >
+                      Add branch
+                    </button>
+                  </section>
+                }
+              </details>
+            }
             <button
               type="button"
               class="text-link property-mode"
@@ -1174,4 +1223,28 @@ import type { App } from "../app";
 export class DesignerView {
   /** The editor shell. */
   host = input.required<App>();
+  closeHelp(details: HTMLDetailsElement, event: Event) {
+    details.open = false;
+    details.querySelector("summary")?.focus();
+    event.stopPropagation();
+  }
+  sectionTitle() {
+    const kind = this.host().selected?.step.kind ?? "";
+    return (
+      (
+        {
+          action: "Custom input",
+          transform: "Transform data",
+          wait: "Wait time",
+          signal: "Signal settings",
+          fail: "Failure details",
+          humanTask: "Human task setup",
+          llm: "AI task setup",
+          decisionTable: "Decision table setup",
+          switch: "Paths",
+          parallel: "Branches",
+        } as Record<string, string>
+      )[kind] ?? "Step settings"
+    );
+  }
 }

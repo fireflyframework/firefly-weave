@@ -153,6 +153,49 @@ describe("capacity rejections", () => {
     expect(fetch).toHaveBeenCalledTimes(4);
     expect(client.wait).toHaveBeenCalledWith(5000);
   });
+  it("recovers paired session bootstrap after local admission is temporarily full", async () => {
+    const session = {
+      paired: true,
+      csrfToken: "kept",
+      version: "1",
+      mode: "offline",
+      profile: null,
+    };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(busy("WV-STUDIO-BUSY"))
+      .mockResolvedValueOnce(busy("WV-STUDIO-BUSY"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(session), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetch);
+    const client = api();
+    await expect(client.pair()).resolves.toEqual(session);
+    expect(client.session.paired).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(client.wait).toHaveBeenCalledTimes(2);
+    expect(
+      fetch.mock.calls.every(
+        ([path, init]) => path === "/studio/session" && init.method === "GET",
+      ),
+    ).toBe(true);
+  });
+  it("bounds local admission retries and never replays a pairing mutation", async () => {
+    const fetch = vi
+      .fn()
+      .mockImplementation(async () => busy("WV-STUDIO-BUSY"));
+    vi.stubGlobal("fetch", fetch);
+    await expect(api().pair()).rejects.toMatchObject({
+      status: 429,
+      code: "WV-STUDIO-BUSY",
+    });
+    expect(fetch).toHaveBeenCalledTimes(4);
+    fetch.mockClear();
+    await expect(api().pair("one-use-code")).rejects.toMatchObject({
+      status: 429,
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("does not replay other 429 answers", async () => {
     const fetch = vi.fn().mockResolvedValue(busy("WV-PAGE-LIMIT"));
     vi.stubGlobal("fetch", fetch);

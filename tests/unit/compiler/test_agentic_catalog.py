@@ -78,3 +78,18 @@ def test_result_schema_local_references_keep_their_scope_inside_output_envelope(
     assert not validate_payload(schema, value, {})
     value["result"] = "true"
     assert validate_payload(schema, value, {})
+
+
+@pytest.mark.parametrize("endpoint", ["https://API.openai.com:443/v1", "https://api.openai.com/v1/"])
+@pytest.mark.parametrize("destination", ["https://api.openai.com", "https://API.openai.com:443"])
+def test_provider_connection_matches_the_canonical_https_origin(endpoint, destination):
+    from uuid import uuid4
+
+    request = ConnectionRequest(
+        name="provider",
+        connector_version_id=uuid4(),
+        config={"provider": "openai-chat", "endpoint": endpoint, "secretSlot": "apiKey"},
+        secretRef={"apiKey": "provider-key"},
+        allowed_destinations=(destination,),
+    )
+    AGENTIC_DESCRIPTOR.validate_connection(request)

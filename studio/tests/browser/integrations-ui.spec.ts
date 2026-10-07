@@ -64,13 +64,17 @@ const connection = {
 };
 
 /** The Connections view with one weave-http connection revision. */
-async function connectionsView(page: Page, capabilities = allCapabilities) {
+async function connectionsView(
+  page: Page,
+  capabilities = allCapabilities,
+  identityDelay = 0,
+) {
   const tests: Request[] = [];
   let answer: { status: number; json: unknown } = {
     status: 200,
     json: { ok: true, code: "ok" },
   };
-  await connected(page, { capabilities });
+  await connected(page, { capabilities, identityDelay });
   await page.route(`${environment}/connections?*`, (r) =>
     r.fulfill({ json: { items: [connection], next_cursor: null } }),
   );
@@ -440,6 +444,32 @@ spec:
       ).toHaveCount(0);
     });
 
+    test("connection guidance updates when identity arrives after the dialog opens", async ({
+      page,
+    }) => {
+      await connectionsView(
+        page,
+        allCapabilities.filter((c) => c !== "connection.manage"),
+        2500,
+      );
+      await page.getByRole("button", { name: "New connection" }).click();
+      const dialog = page.getByRole("dialog", { name: "New API connection" });
+      await expect(dialog).toContainText(
+        "Sign in to this platform to check your access.",
+      );
+      await expect(
+        dialog.getByRole("button", {
+          name: "Prepare the request for an administrator",
+        }),
+      ).toBeVisible();
+      await expect(dialog).toContainText(
+        "An administrator creates the connection",
+      );
+      await expect(dialog).not.toContainText(
+        "Sign in to this platform to check your access.",
+      );
+    });
+
     test("Workflows: New API action opens the builder without insert buttons", async ({
       page,
     }) => {
@@ -544,7 +574,7 @@ spec:
       await newWorkflow(page);
       const palette = await openPaletteIntegrations(page);
       await expect(palette).toContainText(
-        "Connect to a platform to use published actions.",
+        "Connect to browse your project's actions.",
       );
       await palette.getByRole("button", { name: "New API action" }).click();
       const builder = page.getByRole("dialog", { name: "New API action" });

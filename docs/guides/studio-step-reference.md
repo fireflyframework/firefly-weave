@@ -113,18 +113,25 @@ Select a step to edit it. The inspector heading shows the kind's palette label.
   that the name is unique and updates every expression that reads the step;
   values inside a literal are data and stay unchanged. The hint under the field
   says where the step sits, such as "Main sequence" or "Case 1 of decision-1".
-- **Sections.** The step's fields follow in sections you can fold: **Action**,
-  **Connection**, **Input**, and **Output** for **Call an action**, then
-  **Properties**, which a Decision calls **Paths** and a Parallel calls
-  **Branches**. Studio remembers which sections you folded for each kind.
+- **Sections.** The step's fields follow in sections you can fold. A **Call an
+  action** step starts with choosing the action, its connection, and its input;
+  technical contract metadata is under **Action details**, and changing the
+  workflow's slots is under **Manage workflow connection slots**. Other steps
+  use purpose-specific headings such as **Transform data**, **Wait time**,
+  **AI task setup**, **Paths**, and **Branches**. Studio remembers which
+  sections you folded for each kind. Optional human-task deadlines stay folded
+  until you need them; folding a section preserves its controls and drafts.
   **Advanced JSON**, at the end, shows the same step as JSON, and **Properties
   table** switches back. Fields Studio does not edit are listed under
   **Additional properties preserved**; change those in the Source tab.
 - **Automatic edits.** Valid fields update the local definition after a short
   pause or on leaving the field, with one Undo for the edit. Invalid drafts stay
   inline and preserve the last valid graph; valid sibling edits still save.
-  Leaving an invalid draft offers **Go back** to continue it. The Source editor
-  retains its separate **Apply changes** action.
+  Fix an invalid field before switching steps or views, validating, saving to a
+  file, or publishing. Studio keeps the field visible and explains what needs
+  attention; it does not export an older value behind your back. Hiding the
+  inspector keeps its draft. The Source editor retains its separate **Apply
+  changes** action.
 - **Workflow settings.** The link in the inspector header opens the workflow's
   own properties. Selecting empty canvas, selecting **Start**, or pressing
   Escape does the same.
@@ -187,13 +194,18 @@ Choose **AI task** from the Actions palette. The built-in action reference is
 in the connected catalog. Select a **Workflow AI profile** and an **AI connection
 slot**, then map **AI prompt** and **AI context** using Value, Data or Formula.
 
-Open **Configure workflow AI profiles** to create or edit a named profile.
-Studio alpha11 uses the same **Model → Connection → Review** structure as Lumi,
-but saves only to this workflow.
+Open **Configure workflow AI profiles** to create or edit a named profile in a
+dialog with room for the form. It uses the same **Model → Connection → Review**
+structure as Lumi, but saves only to this workflow. To use another connection
+slot without changing the model, select that slot directly in the inspector.
 
-1. **Model:** choose the provider and model explicitly, configure time and token
-   limits, and describe the expected result with the schema designer. For Azure,
-   **Model** is the deployment name. Select **Continue to connection**.
+1. **Model:** choose the provider, model, and maximum response length, then
+   describe the expected result with the schema designer. For Azure, **Model**
+   is the deployment name. Expand **Advanced model settings** only when you need
+   generation controls, a reasoning strategy, or different execution limits.
+   Studio checks combinations of settings against the platform's model contract
+   before enabling **Continue to connection**. This check runs locally; it does
+   not contact the model or verify credentials.
 2. **Connection:** choose the **AI connection slot**, or select **Add AI connection
    slot** to include a new slot when you apply. An authorized administrator can
    also open **New AI connection** to create an environment connection using an
@@ -202,8 +214,9 @@ but saves only to this workflow.
 3. **Review:** check the profile, provider, model, slot, and list of affected AI
    steps. **Apply workflow AI settings** applies the profile, slot, and current
    step's references together. **Back** keeps the draft; **Cancel profile
-   changes** discards unapplied profile edits. Existing named profiles affect
-   every step listed in the review.
+   changes** discards unapplied profile edits. Apply or cancel these edits before
+   switching to another step. Existing named profiles affect every step listed
+   in the review.
 
 Use **Shared AI context** to select results from earlier AI steps available on
 this path. Existing context stays under `data`; selected results appear under
@@ -392,7 +405,7 @@ Choosing an action loads its contract. If exactly one workflow slot fits the
 action's connection, Studio selects it. Studio never declares a new slot from
 this list; use **Add connection slot** for that.
 
-The palette's **Published actions** list, under **Actions**, shows up to six
+The palette's **Use an existing action** list, under **Actions**, shows up to six
 published actions that match the palette search. Selecting one inserts the step
 and its slot as one undoable change: Studio reuses the workflow's only compatible
 slot or, when none fits, declares one named after the connector. When several
@@ -400,7 +413,13 @@ slots fit, choose one in the inspector. Screen readers announce what happened,
 for example "Inserted call-action-1, which calls get-pet@1.0.0, and added the
 connection slot petstore."
 
-The section shows a different state when the catalog is unavailable:
+Working locally, **Connect to a platform** opens the connection assistant so you
+can browse the project's catalog. The separate **Create an API action** section
+opens **New API action**. You can configure and save an action file locally;
+publishing it for the project requires a platform connection and permission.
+The information controls explain each choice and support Enter and Escape.
+
+The action picker and inspector show a different state when the catalog is unavailable:
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
@@ -567,11 +586,49 @@ field menu. Conditions keep rule rows, with **Edit as formula** for complex logi
 
 | Mode | Writes | Use it for |
 | --- | --- | --- |
-| **Value** | `literal` | Fixed data of any JSON type |
-| **Data** | `ref` | Workflow input or an earlier step's output |
-| **Formula** | `op` | Comparing or combining values with an operation; it starts at "Choose a formula…"; fixed-arity operations have labelled operands, while combining operations can add inputs |
-| **Fields** | `object` | An object whose fields are expressions (**Add field**) |
-| **List** | `array` | A list whose items are expressions |
+| **Value** | `literal` | Type something that stays the same on every run, such as the message "Ready for review" or the number `3`. |
+| **Data** | `ref` | Read a value that can change on each run, such as the customer ID in the workflow input or a previous step's result. |
+| **Formula** | `op` | Apply a supported rule to values: compare an amount, check whether a list contains an item, or choose the first available value. This is not a JavaScript or Python editor. |
+| **Fields** | `object` | Build one record with named properties, such as `customerId` and `channel`. Each property can use a fixed value, data, or a formula. |
+| **List** | `array` | Build an ordered collection, such as two recipients. Each item can use its own value or data source. |
+
+Start by asking **“Does this value change between runs?”** If not, choose
+**Value**. If it comes from the request or an earlier step, choose **Data**.
+Choose **Fields** when the receiving system expects a record with several named
+properties, and **List** when it expects several items. Use **Formula** only
+when you need a supported operation to produce the value.
+
+The **ⓘ Data source** chip opens a **When should I use each source?** guide
+with explanations and examples. Click it or focus it and press Enter; Escape
+closes it and returns focus. Help stays collapsed until you need it. The editor uses the expected field type to
+offer relevant sources:
+
+- An **AI prompt** or **human-task title** needs text. It offers Value, Data,
+  and Formula. Its formula list offers **first available of**, which selects
+  a value or fallback; comparisons produce Yes/No and do not belong in a prompt.
+- **Human-task context** needs an object. Use Fields to assemble it, Data to
+  reuse an object, or Formula to select a fallback object.
+- **Workflow output** follows the workflow's output schema. A list output
+  offers List; a record output offers Fields.
+- A **Transform** or untyped **AI context** can hold any JSON value, so all
+  sources remain available. For action input, the published action's schema
+  determines each field's controls.
+
+An imported expression is never removed just because it does not match the
+expected type. Studio retains it and shows a repair hint. Choosing a source
+does not prove the complete workflow is valid: use **Validate** after mapping
+data, and check the connection and worker requirements before running it.
+
+For example, to send a customer record to an integration:
+
+1. Select the integration step and open its **Input** section.
+2. If the published action provides input fields, use those rows. Otherwise,
+   choose **Fields** for the whole input and add a field named `customerId`.
+3. Choose **Use data** for `customerId`, then select the customer ID under
+   **Workflow input**. This reads the current request's ID on every run.
+4. Add `channel` and type `email` as a **Value**. It remains the same on every run.
+5. Validate the workflow. If a required input is missing, fill it before
+   publishing. The YAML example below shows the resulting mapping.
 
 **Fields** is the object builder for Transform values, human-task context, and
 results. Each row has a name and a value. **Use data** reads another field;
