@@ -202,9 +202,14 @@ that receipt. Do not restart the older runtime against the migrated database.
 After starting the new artifact, verify live/readiness endpoints, a fresh
 complete compatibility report, retained-run continuity, and real execution
 before accepting the environment. See the
-[alpha12 delivery table](../capabilities.md#alpha12-delivery-and-acceptance) for
-what was published, what ran successfully, and the separately retained AI
-worker failure.
+[capability verification](../capabilities.md#alpha13-verification) for the
+alpha13 worker checks, separate live AI acceptance and historical alpha12
+delivery table. The accepted Azure deployment used Agentic 0.1.5 and the alpha13
+SDK against the unchanged alpha12 API, Lumi and Operations services with schema
+0030. One new Azure OpenAI workflow succeeded with a consistent replay;
+authorization was not verified by replay. The earlier suspended AI run and
+successful HTTP and Lumi evidence were preserved, with no new Lumi call. This
+acceptance applies to that exact deployment, not arbitrary mixed versions.
 
 ## If something goes wrong
 

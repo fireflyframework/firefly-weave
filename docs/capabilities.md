@@ -53,8 +53,8 @@ permissions, and real delivery still need checking in your deployment.
 Weave is an alpha workflow and integration platform. This documentation targets
 **`0.1.0a13`**, with PyFly 26.9.15 and database schema revision
 `0030_worker_presence`, unchanged from alpha12. Alpha13 corrects worker context
-and credential admission retries; the dated alpha12 delivery evidence below
-remains separate. Download packages and checksums from
+and credential admission retries. The alpha13 checks and historical alpha12
+delivery evidence below are separate. Download packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 It includes [Studio](guides/studio.md), [human tasks and operator
 pause and resume](guides/human-tasks.md), [email conversations and
@@ -65,9 +65,32 @@ Rows marked **new in 0.1.0a7** describe features that alpha6 and earlier
 releases do not have. Alpha8 adds three migrations; see the
 [upgrade procedure](operations/upgrades.md).
 
+## Alpha13 verification
+
+The published tag is [`v0.1.0a13`](https://github.com/fireflyframework/firefly-weave/releases/tag/v0.1.0a13),
+commit `2434ba5386e4f1557e07474245805833543965c3`. The following checks
+were completed on October 7, 2026:
+
+| Verification | Verified scope | Limit |
+| --- | --- | --- |
+| Published packages and desktop installers | All 32 release assets were downloaded again and hash-checked: 14 core assets and 18 native assets, including six installers across Apple Silicon macOS, Intel macOS, Windows x64 and Linux x64; all five checksum manifests verified | The [exact-tag desktop build](https://github.com/fireflyframework/firefly-weave/actions/runs/37609308896) passed all four targets; macOS is ad-hoc signed and not notarized, Windows and Linux are unsigned, and packaging checks do not establish interactive sign-in on every platform |
+| Remote release checks | [Main Checks](https://github.com/fireflyframework/firefly-weave/actions/runs/37609221831), [tag Checks](https://github.com/fireflyframework/firefly-weave/actions/runs/37609308918) and [Documentation](https://github.com/fireflyframework/firefly-weave/actions/runs/37609221845) completed successfully for the exact commit above | Remote checks do not establish Azure deployment or paid model acceptance |
+| Core and installed packages | All 17 normal check stages passed, including 3,654 unit/contract cases, 76 Agentic worker cases, 29 Files worker cases, and installed-artifact checks | These counts describe the alpha13 source and packages; they do not repeat the historical alpha12 browser or desktop acceptance |
+| Affected backend paths | All 94 selected integration cases passed without skips, including native HTTP, PostgreSQL and Kafka execution in fresh alpha13 images | This is affected-case verification, not a fresh full integration, process-recovery or queue-load run |
+| Installed worker interoperability | Installed Agentic 0.1.5 with the alpha13 SDK completed a task against the unchanged alpha12 API: claim, context, credentials, heartbeat and completion; four controlled capacity rejections recovered; an unauthorized connection was denied | One simulated model response and no paid provider call; this proves the tested package combination, not arbitrary mixed-version compatibility |
+| Schema and protocol | The tested core artifacts have identical API, worker-contract and persistence payloads; schema remains `0030_worker_presence` | Installing a client or worker does not migrate the API or database |
+| Azure AI acceptance | Agentic 0.1.5 with the alpha13 SDK completed one new workflow against the alpha12 API using Azure OpenAI `gpt-4o-mini` through `azure-chat`; exactly one model request returned the expected `{"ok": true}` result; replay was consistent through sequence 2 | Replay reported `authorization_verified: false`; this is one tested deployment and model, not general mixed-version or provider certification |
+
+This accepted deployment combines the alpha13 SDK and Agentic 0.1.5 with the
+alpha12 API, Lumi and Operations services; its database remains at schema 0030.
+Only the workflow's Agentic release pin changed. The new successful run did not
+replace the suspended alpha12 AI run or alter retained histories. The existing
+Lumi configuration and acceptance were preserved, with no new Lumi call. The
+successful HTTP, Lumi and Operations receipts below remain historical evidence.
+
 ## Alpha12 delivery and acceptance
 
-The published tag is `v0.1.0a12`, commit
+This historical delivery used tag `v0.1.0a12`, commit
 `230a3aba17a4da76a5197edeec15fb4ceb6428c9`. Publication and environment
 acceptance have separate evidence:
 
@@ -78,7 +101,7 @@ acceptance have separate evidence:
 | Core and installed packages | All 17 normal check stages passed, including 3,622 unit/contract cases and installed-artifact checks | Local fixtures do not certify external provider accounts |
 | Backend acceptance | Exact combined coverage of 629 integration and 69 process cases; four fresh queue cases completed 400 tasks with 400 effects and zero task retries | Coverage combines retained passing cases with reviewed affected-case reruns; it is not one successful full release command |
 | Studio | 914 browser cases passed | Six opt-in authentication cases were skipped in this run |
-| Azure preproduction | Alpha12 API migrated to schema 0030; real HTTP run and replay passed; separate Lumi request passed; the Operations runner observed three applications and applied a reviewed same-image Lumi adoption | Alpha12 AI workflow acceptance found a credential-capacity retry defect; its suspended run was retained. Alpha13 corrects that worker path; separate acceptance is required |
+| Azure preproduction | Alpha12 API migrated to schema 0030; real HTTP run and replay passed; separate Lumi request passed; the Operations runner observed three applications and applied a reviewed same-image Lumi adoption | Alpha12 AI workflow acceptance found a credential-capacity retry defect; its suspended run was retained. The corrected worker's separate alpha13 acceptance is recorded above |
 
 The [exact-tag desktop build](https://github.com/fireflyframework/firefly-weave/actions/runs/37595716933)
 verified all four target builds and their installer manifests. Both downloaded
@@ -93,7 +116,7 @@ is retained as evidence; it is not counted as a successful model run.
 | [Files](guides/files.md) | New in alpha8: scoped, resumable transfer API, SDK/CLI helpers, Studio fields and human-task attachments | PostgreSQL lease/claim/retention checks; checksum and chunk tests; Studio browser tests | Not applicable to platform storage | 25 MiB per file; content stored in PostgreSQL; no automatic abandoned-upload cleanup |
 | [File integrations](guides/file-connectors.md) | FTP, FTPS, SFTP, SharePoint/OneDrive and Google Drive workers | Real local FTP/FTPS/SFTP servers; simulated Graph and Drive responses | Microsoft and Google accounts not exercised | Six explicit operations; no standalone change-feed trigger yet |
 | [Decision tables](reference/decision-tables.md) | Versioned decision definitions and a dedicated workflow step | Compiler, API and PostgreSQL execution tests | Not applicable | Deterministic rule evaluation; no arbitrary expression execution |
-| [AI tasks](guides/ai-workers.md) | Per-workflow model profiles executed by an independent Agentic worker | Real Agentic library with controlled model transport; PostgreSQL completion/replay and secret classification | Azure OpenAI workflow completed on alpha10 through an independent Agentic worker; accepted result and consistent replay checked | Exact operator model/endpoint policy; external requests can be ambiguous |
+| [AI tasks](guides/ai-workers.md) | Per-workflow model profiles executed by an independent Agentic worker | Real Agentic library with controlled model transport; PostgreSQL completion/replay and secret classification | Agentic 0.1.5 with the alpha13 SDK completed one Azure OpenAI workflow against the alpha12 API; accepted result and consistent replay checked | Replay did not verify authorization; exact operator model/endpoint policy applies, and external requests can be ambiguous |
 | [Lumi assistant](guides/lumi.md) | Separate environment profile and private gateway; opt-in context and reviewed Studio draft proposals | API authorization tests; 7-size Studio browser checks | Azure OpenAI response through the separate Lumi gateway on alpha12; installed alpha10 Studio configuration readback against Azure preproduction | No autonomous publish, activation, or execution; conversation stays in memory |
 | [Compiler and schemas](reference/compiler.md) | Implemented | Compiler, schema, expression, and canonical-artifact suites | Not applicable | Validation without a catalog is partial and produces no artifact |
 | [Definition lifecycle](reference/api.md) | Implemented | Publication, activation, revision, and scoped API suites | Not applicable | Compiling is separate from authorization and admission |
