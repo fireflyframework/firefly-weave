@@ -26,6 +26,7 @@ import pytest
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.deployments import ComponentSpec, DeploymentPlan, PlanStep
+from firefly_weave.deployment_runner.command import CommandError
 from firefly_weave.deployment_runner.compose import ComposeAdapter
 from firefly_weave.deployment_runner.policy import DestinationPolicy
 from firefly_weave.deployment_runner.runtime import RunnerPolicyError
@@ -247,3 +248,31 @@ async def test_apply_adopts_unlabelled_resources(tmp_path, missing_container_own
     result = await adapter.apply(project.plan(config), project.before_write)
     assert result.settled and result.resources[0].ownership == "managed"
     assert project.writes == project.renewals == 1
+
+
+async def test_restart_preflight_does_not_wait_for_a_stopped_container(tmp_path):
+    config = policy(tmp_path)
+    project = ComposeProject(config, container_owner=str(config.target_id), configuration_owner=str(config.target_id))
+    project.container["state"] = "exited"
+    calls = []
+
+    async def command(argv, **kwargs):
+        if "up" in argv:
+            calls.append((argv, kwargs))
+            # Compose dry-run does not start the existing container before its wait check.
+            if "--dry-run" in argv and "--wait" in argv:
+                raise CommandError()
+            if "--dry-run" not in argv:
+                assert project.renewals == 1
+                assert "--wait" in argv
+                assert argv[argv.index("--wait-timeout") + 1] == "90"
+                project.container["state"] = "running"
+        return await project.command(argv, **kwargs)
+
+    adapter = ComposeAdapter(config, command=command)
+    result = await adapter.apply(project.plan(config), project.before_write)
+    assert result.settled and result.resources[0].ready_replicas == 1
+    assert project.writes == project.renewals == 1
+    assert len(calls) == 2
+    assert "--dry-run" in calls[0][0] and "--wait" not in calls[0][0]
+    assert all(kwargs["timeout"] == 120 for _, kwargs in calls)

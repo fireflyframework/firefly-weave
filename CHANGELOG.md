@@ -38,6 +38,8 @@ SPDX-License-Identifier: Apache-2.0
 - Guide target registration with named application accounts, downloadable
   nonsecret runner setup, observed-resource import, explicit resource capacity,
   and admitted worker release selection.
+- Allow reviewed Compose plans to restart stopped workers, checking readiness
+  after the restart instead of during the dry run.
 - Keep invalid inspector edits and unapplied AI profile changes visible before
   saving, publishing, or switching views. Edit workflow AI profiles in a dialog,
   with multiline prompts and direct connection-slot selection.

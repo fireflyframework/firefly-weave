@@ -206,19 +206,17 @@ class ComposeAdapter:
                 "up",
                 "--detach",
                 "--no-deps",
-                "--wait",
-                "--wait-timeout",
-                "90",
                 *scales,
                 *[step.component.name for step in plan.steps],
             ]
+            # Dry-run cannot make a stopped container ready; only the real command waits.
             await self.command([*self._files(candidate), "--dry-run", *arguments], timeout=120)
             latest = await self.observe()
             if latest != current:
                 raise RunnerPolicyError()
             await before_write()
             os.replace(candidate, self.overrides)
-            await self.command([*self._files(), *arguments], timeout=120)
+            await self.command([*self._files(), *arguments, "--wait", "--wait-timeout", "90"], timeout=120)
             result = await self.observe()
             facts = {fact.name: fact for fact in result.resources}
             if not result.settled or any(

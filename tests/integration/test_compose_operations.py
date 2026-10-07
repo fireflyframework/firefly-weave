@@ -123,9 +123,16 @@ async def test_compose_deploy_scale_and_zero_replica_observation(tmp_path):
         # The stale first observation cannot be reused after creating a container.
         with pytest.raises(RunnerPolicyError):
             await adapter.apply(first, before_write)
+        await run_command([*adapter._files(), "stop", "--timeout", "5", "worker"], timeout=30)
+        interrupted = await adapter.observe()
+        assert interrupted.resources[0].replicas == 1
+        assert interrupted.resources[0].ready_replicas == 0
+        assert not interrupted.settled
+        running = await adapter.apply(plan(interrupted, 1, "deploy"), before_write)
+        assert running.settled and running.resources[0].ready_replicas == 1
         stopped = await adapter.apply(plan(running, 0, "scale_workers"), before_write)
         assert stopped.settled and stopped.resources[0].replicas == 0
         assert stopped.resources[0].image == image
-        assert effects == 2
+        assert effects == 3
     finally:
         await run_command([*adapter._files(), "down", "--timeout", "5"], timeout=30)

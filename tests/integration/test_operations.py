@@ -630,9 +630,12 @@ async def test_inventory_checks_its_own_role_and_endpoint_with_scheduler_disable
             telemetry,
         )
         try:
+            assert not service.healthy()
+            await service.open()
             assert (await service.scan()).mode == ("ready" if expected else "restricted")
         finally:
             await service.close()
+        assert not service.healthy()
     from sqlalchemy import make_url
 
     other_database = make_url(scheduler_url).set(database="unrelated_database").render_as_string(hide_password=False)
@@ -643,7 +646,11 @@ async def test_inventory_checks_its_own_role_and_endpoint_with_scheduler_disable
         None,
         telemetry,
     )
-    assert (await service.scan()).findings[0].code == "authority_missing"
+    try:
+        await service.open()
+        assert (await service.scan()).findings[0].code == "authority_missing"
+    finally:
+        await service.close()
 
 
 async def test_inventory_rejects_column_only_privilege_on_new_owned_login(access_db, scheduler_url):
@@ -677,6 +684,7 @@ async def test_inventory_rejects_column_only_privilege_on_new_owned_login(access
         SimpleNamespace(record=lambda *a, **k: None, inventory=lambda *a, **k: None),
     )
     try:
+        await service.open()
         report = await service.scan()
         assert report.mode == "restricted"
         assert report.findings[0].code == "authority_missing"
