@@ -54,6 +54,19 @@ async function openLongFlow(page: Page) {
   });
   await expect(page.locator('[data-step="wait-12"]')).toBeAttached();
   await expect.poll(() => zoomOf(page)).toBeGreaterThan(0);
+  // Initial zoom is already positive before the deferred readable fit moves the graph.
+  await expect
+    .poll(() =>
+      page.locator(".canvas").evaluate((canvas) => {
+        const start = canvas.querySelector(".start-node")!;
+        return (
+          start.getBoundingClientRect().top -
+          canvas.getBoundingClientRect().top -
+          canvas.clientTop
+        );
+      }),
+    )
+    .toBeCloseTo(32, 0);
 }
 
 for (const viewport of [

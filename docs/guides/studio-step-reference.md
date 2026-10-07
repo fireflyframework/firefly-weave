@@ -74,8 +74,9 @@ output; it does not need an artificial Transform just to be a workflow.
 ## Add a step
 
 - **From the palette.** The **Steps** pane groups the kinds under **Logic**
-  (Decision, Parallel, Fail), **Data** (Transform), **Waiting** (Wait for time,
-  Wait for signal), **People** (Human task), and **Actions** (Call an action);
+  (Decision, Decision table, Parallel, Fail), **Data** (Transform), **Waiting**
+  (Wait for time, Wait for signal), **People** (Human task), and **Actions**
+  (Call an action, AI task);
   hover a kind to read its one-line description. Select a kind to insert it
   after the selected step, or at the end of the main sequence when nothing is
   selected. You can also drag it onto a **+** on the canvas. **Search steps**

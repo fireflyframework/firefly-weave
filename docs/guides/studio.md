@@ -683,15 +683,16 @@ Select a **+** on the canvas to open the step picker at that exact position; in 
 new workflow, select **Add your first step**. The picker's title says where the
 step goes, such as "Add a step here, after check". Type to filter under **Search
 steps and actions**; everyday words work too, so `approval` finds **Human
-task**. Then choose a step: **Call an action**, **Transform**, **Decision**,
-**Parallel**, **Wait for time**, **Wait for signal**, **Human task**, or
-**Fail**. When you are connected, the picker also lists **Published actions**;
+task**. Then choose a step: **Call an action**, **AI task**, **Transform**,
+**Decision**, **Decision table**, **Parallel**, **Wait for time**,
+**Wait for signal**, **Human task**, or **Fail**. When you are connected, the picker also lists **Published actions**;
 choosing one inserts a step that already calls it. Focus moves to the new step;
 Escape closes the picker and returns focus to the **+**.
 
 The **Steps** palette on the left groups the same steps under **Logic**
-(Decision, Parallel, Fail), **Data** (Transform), **Waiting** (Wait for time,
-Wait for signal), **People** (Human task), and **Actions** (Call an action).
+(Decision, Decision table, Parallel, Fail), **Data** (Transform), **Waiting**
+(Wait for time, Wait for signal), **People** (Human task), and **Actions**
+(Call an action, AI task).
 Hover a step to read what it does. Select a palette step to add it after the
 selected step, or drag it onto a **+** to place it there. Under **Actions**,
 **Use an existing action** lists your project's published actions. Working
