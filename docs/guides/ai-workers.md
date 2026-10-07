@@ -66,6 +66,17 @@ source and locked environment are in `workers/agentic`. This independent Python
 3.13 process uses Firefly Agentic 26.9.0, pinned to the verified `v26.09.0` release
 wheel and its SHA-256. Weave retains its Python 3.12 server requirement.
 
+Agentic worker 0.1.5 uses the alpha13 SDK. Its installed task protocol was checked
+against an unchanged alpha12 API, including recovery from explicit admission
+capacity rejections before the model starts. That check used a simulated model.
+A separate Azure acceptance completed one new workflow with `gpt-4o-mini` through
+`azure-chat`: one model request returned the expected `{"ok": true}` result, and
+replay was consistent. Replay did not verify authorization. The API, Lumi and
+Operations services remained on alpha12 with schema 0030; no new Lumi call was
+made. This verifies the tested deployment, not general compatibility between
+different versions or providers. See [alpha13 verification](../capabilities.md#alpha13-verification)
+for the exact scope and the separately retained alpha12 acceptance evidence.
+
 ## Set up the responsibilities before authoring
 
 ![Operator deploys services and scoped secrets, administrator approves connections and access, then the author configures a workflow or asks Lumi](../diagrams/ai-configuration-roles.svg)
