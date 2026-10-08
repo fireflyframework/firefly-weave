@@ -22,7 +22,6 @@ SPDX-License-Identifier: Apache-2.0
 import { test, expect, type Page } from "@playwright/test";
 import { expectHitTarget, insertStep, newWorkflow, offline } from "./support";
 import { DesignerPage } from "./designer-po";
-import { iconPaths } from "../../src/app/icon";
 /** A workflow of twelve steps in the main sequence. */
 const twelve = `apiVersion: weave/v1alpha1
 kind: Workflow
@@ -307,10 +306,10 @@ test.describe("1440x900", () => {
     );
     // The icon follows the result: a failure mark, never a check.
     await expect(
-      strip.locator(`svg path[d="${iconPaths["failCircle"]}"]`).first(),
+      strip.locator('weave-icon[data-icon="failCircle"]').first(),
     ).toBeAttached();
     await expect(
-      strip.locator(`.diagnostics-title svg path[d="${iconPaths["check"]}"]`),
+      strip.locator('.diagnostics-title weave-icon[data-icon="check"]'),
     ).toHaveCount(0);
     // The steps say it too.
     await expect(page.locator('[data-step="wait-1"] .node-chip')).toHaveText(

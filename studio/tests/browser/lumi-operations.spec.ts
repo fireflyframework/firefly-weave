@@ -86,7 +86,7 @@ for (const width of [1440, 390]) {
       .getByRole("button", { name: "First target", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Explain with Lumi", exact: true })
+      .getByRole("button", { name: "Explain with Weave AI", exact: true })
       .click();
     const panel = page.locator("weave-lumi-panel");
     await expect(
@@ -97,7 +97,7 @@ for (const width of [1440, 390]) {
     ).toBeVisible();
     expect(sent).toEqual([]);
     await panel
-      .getByLabel("Message to Lumi", { exact: true })
+      .getByLabel("Message to Weave AI", { exact: true })
       .fill("Explain generally");
     await panel
       .getByRole("button", { name: "Send message", exact: true })
@@ -111,7 +111,7 @@ for (const width of [1440, 390]) {
     ).toHaveCount(0);
     await panel.getByLabel("Include selected target", { exact: true }).check();
     await panel
-      .getByLabel("Message to Lumi", { exact: true })
+      .getByLabel("Message to Weave AI", { exact: true })
       .fill("Explain this target");
     await panel
       .getByRole("button", { name: "Send message", exact: true })
@@ -125,7 +125,7 @@ for (const width of [1440, 390]) {
     ]);
     expect(JSON.stringify(sent[1])).not.toContain("private-");
     await panel
-      .getByRole("button", { name: "Close Lumi", exact: true })
+      .getByRole("button", { name: "Close Weave AI", exact: true })
       .click();
     await page
       .getByRole("button", { name: "Back to Operations", exact: true })
@@ -134,7 +134,7 @@ for (const width of [1440, 390]) {
       .getByRole("button", { name: "Second target", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Explain with Lumi", exact: true })
+      .getByRole("button", { name: "Explain with Weave AI", exact: true })
       .click();
     await expect(
       panel.getByLabel("Include selected target", { exact: true }),

@@ -18,11 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # Learn and use Firefly Weave
 
-![Lumi, a firefly with translucent mint wings](../assets/lumi.png){ .lumi-guide }
-
-Meet **Lumi**, your guide through Firefly Weave. Start small: create a workflow,
-see how it runs, then connect it to your systems and your people.
-[Meet the mascot](visual-assets.md#meet-lumi).
+Start small: create a workflow, see how it runs, then connect it to your
+systems and your people.
 
 Firefly Weave is a durable workflow orchestration and integration platform with
 human tasks. You describe a business process once, as a **workflow**. Weave runs

@@ -19,7 +19,13 @@ SPDX-License-Identifier: Apache-2.0
 // holds one fix at the size where the defect showed.
 import { selectChoice } from "./support";
 import { test, expect, Locator, Page } from "@playwright/test";
-import { allCapabilities, connected, newWorkflow, offline } from "./support";
+import {
+  allCapabilities,
+  connected,
+  newWorkflow,
+  offline,
+  tokenColor,
+} from "./support";
 import { DesignerPage } from "./designer-po";
 import { acmePlatform, platformHost } from "./platform-host";
 
@@ -394,7 +400,7 @@ test.describe("1440x900", () => {
       (e) => getComputedStyle(e).backgroundColor,
     );
     // --success-bg, the success tone, not the caution gold of a plain notice.
-    expect(background).toBe("rgb(226, 241, 233)");
+    expect(background).toBe(await tokenColor(page, "--success-bg"));
   });
 
   test("a selected row keeps a visible status pill", async ({ page }) => {

@@ -27,7 +27,7 @@ SPDX-License-Identifier: Apache-2.0
   padding: var(--space-6) 40px var(--space-8);
 }
 /* Connected: the title, with New workflow and Import on the right. Local:
-   a compact welcome with the ways to start under it and Lumi beside. */
+   a compact welcome with the ways to start under it, in one column. */
 .home-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -47,6 +47,7 @@ SPDX-License-Identifier: Apache-2.0
   justify-content: flex-end;
 }
 .local .home-header {
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 .local .home-header h1 {
@@ -60,10 +61,6 @@ SPDX-License-Identifier: Apache-2.0
 }
 .local .home-tools .home-actions {
   justify-content: flex-start;
-}
-.local .lumi {
-  grid-column: 2;
-  grid-row: 1 / span 2;
 }
 .home-header.dragging {
   background: var(--selected);
@@ -82,10 +79,11 @@ h1 {
   letter-spacing: -0.01em;
   text-wrap: balance;
   margin: 0 0 var(--space-4);
-  color: var(--forest);
+  color: var(--text);
 }
 h1.display {
   font: var(--type-display);
+  letter-spacing: -0.02em;
   margin-bottom: var(--space-2);
 }
 .welcome-description {
@@ -116,12 +114,6 @@ h1.display {
 .file-picker {
   display: none;
 }
-.lumi {
-  flex: 0 0 auto;
-  width: 96px;
-  height: 96px;
-  object-fit: contain;
-}
 .continue-row {
   display: flex;
   width: 100%;
@@ -132,7 +124,7 @@ h1.display {
   padding: var(--space-2) var(--space-4);
   margin-bottom: var(--space-6);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--jade);
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius-md);
   background: var(--surface);
   text-align: left;
@@ -168,7 +160,7 @@ h1.display {
 }
 h2 {
   font: var(--type-title-sm);
-  color: var(--forest);
+  color: var(--text);
   margin: 0;
 }
 button.text-button {
@@ -210,11 +202,11 @@ button.preview-row:hover {
   background: var(--hover);
 }
 .row-icon {
-  color: var(--jade-strong);
+  color: var(--muted);
   display: inline-flex;
   padding: var(--space-2);
   border-radius: var(--radius-md);
-  background: var(--mist);
+  background: var(--raised);
   flex: none;
 }
 .row-copy {
@@ -271,10 +263,6 @@ button.preview-row:hover {
   }
   .home-tools .home-actions {
     justify-content: flex-start;
-  }
-  .lumi {
-    width: 56px;
-    height: 56px;
   }
   h1.display {
     font-size: 26px;

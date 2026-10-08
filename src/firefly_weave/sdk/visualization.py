@@ -22,7 +22,6 @@ import html
 from collections import defaultdict, deque
 from typing import Literal
 
-from firefly_weave.branding import LUMI_SVG_BODY
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.ir import ArtifactEnvelope, WorkflowIR
 from firefly_weave.contracts.values import JsonObject
@@ -204,8 +203,6 @@ def render_graph(artifact: CompiledArtifact, format: Literal["text", "mermaid", 
         )
     parts.append(
         f'<text x="32" y="{height - 25}" font-size="14">Firefly Weave · compiled topology · no '
-        f"external systems contacted</text></g>"
-        f'<g aria-label="Lumi, your guide" transform="translate({width - 90} {height - 80}) scale(.28)">'
-        f"{LUMI_SVG_BODY}</g></svg>"
+        "external systems contacted</text></g></svg>"
     )
     return "\n".join(parts) + "\n"

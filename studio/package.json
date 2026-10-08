@@ -9,7 +9,8 @@
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:browser": "playwright test",
-    "format:check": "prettier --check \"src/**/*.{ts,html,css}\" \"tests/**/*.ts\" \"*.json\" \"*config.ts\""
+    "icons": "node scripts/build-icons.mjs",
+    "format:check": "prettier --check \"src/**/*.{ts,html,css}\" \"tests/**/*.ts\" \"scripts/**/*.mjs\" \"*.json\" \"*config.ts\""
   },
   "dependencies": {
     "@angular/common": "22.2.1",
@@ -31,6 +32,7 @@
     "@angular/compiler-cli": "22.2.1",
     "@playwright/test": "1.55.1",
     "@types/node": "24.3.0",
+    "lucide-static": "1.52.0",
     "prettier": "3.6.2",
     "typescript": "6.0.2",
     "vitest": "4.0.8"

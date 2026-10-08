@@ -79,7 +79,7 @@ platform behaves; a generated workflow graph explains your own definition.
   platform, or an external system. Credentials appear only on the side that
   needs them.
 - **A shaded note** gives a rule or a boundary that applies to the whole picture.
-  **Lumi's takeaway**, at the bottom, is the one idea to remember.
+  **Takeaway**, at the bottom, is the one idea to remember.
 - **Database diagrams** show selected relationships, not a complete schema or
   permission to delete referenced records.
 

@@ -19,9 +19,23 @@
 import base64
 import json
 import re
+from functools import cache
+from types import NoneType, UnionType
+from typing import Annotated, Literal, NoReturn, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
+from pydantic import BaseModel, ValidationError
+
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.values import JsonValue, validate_json_value, validate_unicode
+from firefly_weave.definitions.models import CatalogError
+
+CURSOR_V2_LIMIT = 2048
+
+
+def _reject_constant(_: str) -> NoReturn:
+    # json.loads accepts NaN and Infinity by default; the JSON domain does not.
+    raise ValueError("JSON numbers must be finite")
 
 
 def canonical_path(path: str) -> bool:
@@ -98,3 +112,95 @@ def decode_sequence_cursor(value: str | None, scope: Scope, collection: str) -> 
         return result
     except (ValueError, TypeError, KeyError):
         raise ValueError("Invalid scope-bound sequence cursor") from None
+
+
+def encode_cursor_v2(scope: Scope, collection: str, sort_value: JsonValue, identifier: str) -> str:
+    """Time-ordered cursor: base64url of [2, scope, collection, sort value, identifier]."""
+    raw = json.dumps([2, scope.model_dump(mode="json"), collection, sort_value, identifier], separators=(",", ":"))
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def decode_cursor_v2(value: str | None, scope: Scope, collection: str) -> tuple[JsonValue, str] | None:
+    """The collection carries the filter hash and order, so a changed filter rejects old cursors."""
+    if value is None:
+        return None
+    try:
+        if len(value) > CURSOR_V2_LIMIT or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+            raise ValueError()
+        version, bound, selected, sort_value, identifier = json.loads(
+            base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True),
+            parse_constant=_reject_constant,
+        )
+        if version != 2 or bound != scope.model_dump(mode="json") or selected != collection:
+            raise ValueError()
+        validate_json_value(sort_value)
+        validate_unicode(identifier)
+        if not isinstance(identifier, str) or encode_cursor_v2(scope, collection, sort_value, identifier) != value:
+            raise ValueError()
+        return sort_value, identifier
+    except (ValueError, TypeError, KeyError):
+        raise ValueError("Invalid scope-bound cursor") from None
+
+
+def _query_kind(annotation: object) -> Literal["array", "boolean", "integer", "string"]:
+    while True:
+        if isinstance(annotation, TypeAliasType):
+            annotation = annotation.__value__
+        elif get_origin(annotation) is Annotated:
+            annotation = get_args(annotation)[0]
+        elif get_origin(annotation) in (Union, UnionType):
+            choices = [item for item in get_args(annotation) if item is not NoneType]
+            if len(choices) != 1:
+                return "string"
+            annotation = choices[0]
+        else:
+            break
+    if annotation is list or get_origin(annotation) is list:
+        return "array"
+    if annotation is bool:
+        return "boolean"
+    return "integer" if annotation is int else "string"
+
+
+@cache
+def _query_kinds(model: type[BaseModel]) -> dict[str, Literal["array", "boolean", "integer", "string"]]:
+    return {name: _query_kind(field.annotation) for name, field in model.model_fields.items()}
+
+
+def parse_query[M: BaseModel](params: object, model: type[M]) -> M:
+    """Strict query decoding: known names only, one value per scalar, JSON-typed values.
+
+    Filter combinations rejected by the model answer 422 WV-FILTER, naming the rule that failed (the model's own
+    messages are fixed, safe strings); other invalid values answer WV-VALIDATION.
+    """
+    from starlette.datastructures import QueryParams
+
+    assert isinstance(params, QueryParams)
+    kinds = _query_kinds(model)
+    values: dict[str, object] = {}
+    for name in dict.fromkeys(key for key, _ in params.multi_items()):
+        if name not in kinds:
+            raise ValueError("Unknown query parameter")
+        raw = params.getlist(name)
+        if kinds[name] == "array":
+            values[name] = raw
+            continue
+        if len(raw) != 1:
+            raise ValueError("Repeated query parameter")
+        if kinds[name] == "boolean":
+            if raw[0] not in {"true", "false"}:
+                raise ValueError("A boolean query parameter must be true or false")
+            values[name] = raw[0] == "true"
+        elif kinds[name] == "integer":
+            if not re.fullmatch(r"-?[0-9]{1,9}", raw[0]):
+                raise ValueError("An integer query parameter is required")
+            values[name] = int(raw[0])
+        else:
+            values[name] = raw[0]
+    try:
+        return model.model_validate_json(json.dumps(values))
+    except ValidationError as error:
+        for item in error.errors(include_url=False, include_context=False, include_input=False):
+            if item["type"] == "weave_filter":
+                raise CatalogError(422, "WV-FILTER", item["msg"]) from None
+        raise

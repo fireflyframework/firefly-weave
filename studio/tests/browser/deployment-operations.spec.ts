@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { test, expect } from "@playwright/test";
-import { connected, offline, selectChoice } from "./support";
+import { connected, offline, selectChoice, tokenColor } from "./support";
 import { python } from "../python-path";
 
 const schema = JSON.parse(
@@ -846,6 +846,24 @@ for (const width of [1440, 390])
       await expect(
         page.getByText("Fixture reload unavailable", { exact: true }),
       ).toBeVisible();
+      // A failure is a danger notice: red bar, red ink on the red tint. The
+      // amber bar stays on the plain notices (it is the current-item cue).
+      const alert = page.getByRole("alert").filter({
+        hasText: "Fixture reload unavailable",
+      });
+      const look = await alert.evaluate((e) => {
+        const style = getComputedStyle(e);
+        return {
+          bar: style.borderLeftColor,
+          color: style.color,
+          background: style.backgroundColor,
+        };
+      });
+      expect(look).toEqual({
+        bar: await tokenColor(page, "--danger"),
+        color: await tokenColor(page, "--danger-ink"),
+        background: await tokenColor(page, "--danger-bg"),
+      });
       await expect(
         page.getByRole("button", {
           name: "Save target authority",
@@ -1347,7 +1365,9 @@ for (const width of [1440, 390]) {
       .click();
     const planner = page.locator("weave-deployment-plan-builder");
     await expect(
-      planner.getByText(/Container Apps updates support worker and Lumi apps/),
+      planner.getByText(
+        /Container Apps updates support worker and Weave AI apps/,
+      ),
     ).toBeVisible();
     await expect(
       planner.getByRole("button", {
@@ -1374,11 +1394,11 @@ for (const width of [1440, 390]) {
       page.getByRole("option", { name: "api", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Explain with Lumi", exact: true }),
+      page.getByRole("button", { name: "Explain with Weave AI", exact: true }),
     ).toHaveCount(0);
   });
 
-  test(`Explain with Lumi offers only unchecked selected target context at ${width}`, async ({
+  test(`Explain with Weave AI offers only unchecked selected target context at ${width}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -1411,7 +1431,7 @@ for (const width of [1440, 390]) {
     });
     await page.goto("/operations/targets/" + targetId);
     await page
-      .getByRole("button", { name: "Explain with Lumi", exact: true })
+      .getByRole("button", { name: "Explain with Weave AI", exact: true })
       .click();
     await expect(
       page.getByRole("checkbox", {

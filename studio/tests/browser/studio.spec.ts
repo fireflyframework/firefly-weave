@@ -15,7 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { selectChoice } from "./support";
+import { selectChoice, tokenColor } from "./support";
 import { test, expect } from "@playwright/test";
 async function offline(page: any) {
   await page.route("**/studio/session", async (route: any) =>
@@ -283,7 +283,7 @@ test("parallel branches can be added and renamed while populated deletion is gua
   ).not.toHaveValue(/audit:/);
 });
 
-test("Home disconnected badge remains light and visible with expanded and collapsed navigation", async ({
+test("Home disconnected badge stays visible with expanded and collapsed navigation", async ({
   page,
 }) => {
   await offline(page);
@@ -295,8 +295,14 @@ test("Home disconnected badge remains light and visible with expanded and collap
     await expect(badge).toHaveText("Local authoring");
     await expect(badge).toBeVisible();
     // The neutral status pill (--neutral-bg) with its tone border.
-    await expect(badge).toHaveCSS("background-color", "rgb(237, 241, 238)");
-    await expect(badge).toHaveCSS("border-top-color", "rgb(195, 208, 201)");
+    await expect(badge).toHaveCSS(
+      "background-color",
+      await tokenColor(page, "--neutral-bg"),
+    );
+    await expect(badge).toHaveCSS(
+      "border-top-color",
+      await tokenColor(page, "--neutral-bd"),
+    );
     await expect(badge).not.toHaveCSS("min-height", "64px");
     await page.screenshot({
       path: `test-results/home-${width}.png`,

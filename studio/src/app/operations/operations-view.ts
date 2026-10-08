@@ -89,7 +89,7 @@ import {
       @if (host.profile && canRead) {
         @if (host.can("lumi.use") && lumiAttachments.length) {
           <button type="button" (click)="host.lumiOpen = true">
-            Explain with Lumi
+            Explain with Weave AI
           </button>
         }
         <button type="button" [disabled]="store.mutating" (click)="refresh()">
@@ -134,7 +134,9 @@ import {
         >
       </div>
       @if (error || store.mutationError) {
-        <p class="notice" role="alert">{{ error || store.mutationError }}</p>
+        <p class="notice" data-tone="danger" role="alert">
+          {{ error || store.mutationError }}
+        </p>
       }
       @if (store.mutationUncertain) {
         <p class="notice">

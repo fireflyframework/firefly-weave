@@ -51,7 +51,7 @@ export interface PlanRequest {
       !supportsComponents("update")
     ) {
       <p class="notice">
-        Container Apps updates support worker and Lumi apps. Upgrade the API
+        Container Apps updates support worker and Weave AI apps. Upgrade the API
         separately with the Azure deployment runbook to preserve one scheduler.
       </p>
     }

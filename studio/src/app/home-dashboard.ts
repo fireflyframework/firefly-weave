@@ -101,15 +101,6 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
           <p class="import-error" role="alert">{{ importError }}</p>
         }
       </div>
-      @if (!connected()) {
-        <img
-          class="lumi"
-          src="/assets/lumi.png"
-          alt="Lumi, the Firefly guide"
-          width="96"
-          height="96"
-        />
-      }
     </header>
     @if (resume(); as latest) {
       <button

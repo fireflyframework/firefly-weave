@@ -148,8 +148,8 @@ const object = (value: unknown): RecordValue =>
         </p>
       }
       <p class="hint">
-        Workflow profiles do not change Lumi. A platform operator must install
-        and authorize the Agentic worker before these tasks can run.
+        Workflow profiles do not change Weave AI. A platform operator must
+        install and authorize the Agentic worker before these tasks can run.
       </p>
       <div data-field="prompt">
         <weave-expression-editor

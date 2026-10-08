@@ -17,21 +17,172 @@
 version = 1
 
 [[exceptions]]
-path = "assets/lumi.png"
+path = "assets/brand/weave-lockup-reversed.svg"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs compact logo, composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "assets/brand/weave-lockup-color.svg"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs compact logo, composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "assets/brand/weave-lockup-small-reversed.svg"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs compact logo with a solid chevron, composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "assets/brand/firefly-icon.svg"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs icon(), written by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "assets/brand/firefly-icon-small.svg"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs icon({ solid: true }), written by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "assets/brand/firefly-mark.svg"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs icon({ background: none }), written by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "studio/public/assets/weave-lockup-reversed.svg"
+kind = "third-party"
+source = "Byte-identical copy of assets/brand/weave-lockup-reversed.svg"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "studio/public/assets/weave-lockup-small-reversed.svg"
+kind = "third-party"
+source = "Byte-identical copy of assets/brand/weave-lockup-small-reversed.svg"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "studio/public/assets/firefly-mark.svg"
+kind = "third-party"
+source = "Byte-identical copy of assets/brand/firefly-mark.svg"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "studio/public/favicon.svg"
+kind = "third-party"
+source = "Byte-identical copy of assets/brand/firefly-icon.svg"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "studio/public/favicon.ico"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private), npm run build -- --only logo, 02-Logo/favicon/favicon.ico (16, 32, 48)"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "studio/public/apple-touch-icon.png"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private), npm run build -- --only logo, 02-Logo/favicon/apple-touch-icon.png (180)"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "assets/fonts/manrope/manrope-latin-wght-normal.woff2"
+kind = "third-party"
+source = "@fontsource-variable/manrope 5.3.0, files/manrope-latin-wght-normal.woff2"
+reason = "Manrope variable font file (binary), unmodified; see NOTICE."
+copyright = "Copyright 2019 The Manrope Project Authors (https://github.com/sharanda/manrope)"
+license = "OFL-1.1"
+
+[[exceptions]]
+path = "assets/fonts/manrope/manrope-latin-ext-wght-normal.woff2"
+kind = "third-party"
+source = "@fontsource-variable/manrope 5.3.0, files/manrope-latin-ext-wght-normal.woff2"
+reason = "Manrope variable font file (binary), unmodified; see NOTICE."
+copyright = "Copyright 2019 The Manrope Project Authors (https://github.com/sharanda/manrope)"
+license = "OFL-1.1"
+
+[[exceptions]]
+path = "studio/public/fonts/manrope/manrope-latin-wght-normal.woff2"
+kind = "third-party"
+source = "@fontsource-variable/manrope 5.3.0, files/manrope-latin-wght-normal.woff2"
+reason = "Manrope variable font file (binary), unmodified; see NOTICE."
+copyright = "Copyright 2019 The Manrope Project Authors (https://github.com/sharanda/manrope)"
+license = "OFL-1.1"
+
+[[exceptions]]
+path = "studio/public/fonts/manrope/manrope-latin-ext-wght-normal.woff2"
+kind = "third-party"
+source = "@fontsource-variable/manrope 5.3.0, files/manrope-latin-ext-wght-normal.woff2"
+reason = "Manrope variable font file (binary), unmodified; see NOTICE."
+copyright = "Copyright 2019 The Manrope Project Authors (https://github.com/sharanda/manrope)"
+license = "OFL-1.1"
+
+[[exceptions]]
+path = "assets/fonts/manrope/OFL.txt"
+kind = "third-party"
+source = "@fontsource-variable/manrope 5.3.0, LICENSE"
+reason = "SIL Open Font License text that must accompany the Manrope files."
+copyright = "Copyright 2019 The Manrope Project Authors (https://github.com/sharanda/manrope)"
+license = "OFL-1.1"
+
+[[exceptions]]
+path = "studio/public/licenses/manrope-OFL.txt"
+kind = "third-party"
+source = "Byte-identical copy of assets/fonts/manrope/OFL.txt"
+reason = "SIL Open Font License text shipped in the Studio bundle with the Manrope files."
+copyright = "Copyright 2019 The Manrope Project Authors (https://github.com/sharanda/manrope)"
+license = "OFL-1.1"
+
+[[exceptions]]
+path = "studio/public/licenses/NOTICE.txt"
 kind = "commentless"
-reason = "Apache-licensed Lumi mascot master documented in docs/visual-assets.md; PNG cannot carry a source comment header."
+reason = "Byte-identical copy of NOTICE shipped in the Studio bundle; a plain-text notice cannot carry a comment header."
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
-path = "studio/public/assets/lumi.png"
-kind = "commentless"
-source = "assets/lumi.png"
-reason = "Byte-identical Studio distribution copy of the Apache-licensed Lumi mascot master."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
+path = "studio/public/licenses/lucide-LICENSE.txt"
+kind = "third-party"
+source = "lucide-static 1.52.0, LICENSE"
+reason = "ISC and MIT license text that must accompany the Lucide-derived icon geometry."
+copyright = "Copyright (c) 2026 Lucide Icons and Contributors; Copyright (c) 2013-present Cole Bemis"
+license = "ISC AND MIT"
+
+[[exceptions]]
+path = "studio/src/app/icon-data.ts"
+kind = "third-party"
+source = "lucide-static 1.52.0 via studio/scripts/build-icons.mjs"
+reason = "Generated Lucide icon geometry; regenerate with npm run icons, never edit."
+copyright = "Copyright (c) 2026 Lucide Icons and Contributors; Copyright (c) 2013-present Cole Bemis"
+license = "ISC AND MIT"
 
 [[exceptions]]
 path = "tests/fixtures/definitions/invalid/duplicate-key.yaml"
@@ -117,6 +268,14 @@ license = "Apache-2.0"
 
 [[exceptions]]
 path = "tests/fixtures/compiler/corpus.json"
+kind = "commentless"
+reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/fixtures/contracts/run-views.snapshot.json"
 kind = "commentless"
 reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
 copyright = "Copyright 2026 Firefly Software Foundation."

@@ -38,7 +38,7 @@ h3 {
 }
 .eyebrow {
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0.09em;
   color: var(--muted);
   margin: 0 0 8px;
@@ -109,8 +109,14 @@ dd {
 .notice {
   padding: 14px;
   border: 1px solid var(--line);
-  border-left: 3px solid var(--forest);
+  border-left: 3px solid var(--accent);
   border-radius: 6px;
+}
+.notice[data-tone="danger"] {
+  background: var(--danger-bg);
+  border-color: var(--danger-bd);
+  border-left-color: var(--danger);
+  color: var(--danger-ink);
 }
 @media (max-width: 600px) {
   .operations-heading,

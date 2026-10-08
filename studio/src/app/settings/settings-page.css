@@ -52,7 +52,7 @@ SPDX-License-Identifier: Apache-2.0
   bottom: -1px;
   height: 3px;
   border-radius: 2px 2px 0 0;
-  background: var(--jade);
+  background: var(--accent);
 }
 .people-layout {
   display: grid;

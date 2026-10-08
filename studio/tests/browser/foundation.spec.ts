@@ -15,9 +15,11 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The design foundation (UX plan wave 1): field borders that pass 3:1, flat
-// disabled buttons, one focus ring, status pills with a tone border, control
-// heights, and one drawing per icon.
+// The design foundation (brand PR 1, contract C1): field borders that pass
+// 3:1, flat disabled buttons, one amber focus ring, status pills in the tone
+// tokens, Lucide icons at a 1.5px stroke, Manrope from Studio's own origin,
+// and the Firefly Weave lockup, mark and favicons. Colors are read from the
+// tokens at run time; only the amber accent is a fixed brand anchor.
 import { test, expect, Locator, Page } from "@playwright/test";
 import {
   allCapabilities,
@@ -25,8 +27,12 @@ import {
   insertStep,
   newWorkflow,
   offline,
+  tokenColor,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+/** The brand amber (--accent, --focus): a fixed anchor, not read from CSS. */
+const amber = "rgb(255, 179, 74)";
 
 /** WCAG contrast of two computed colors ("rgb(r, g, b)"). */
 function contrast(a: string, b: string) {
@@ -62,8 +68,6 @@ async function tabTo(page: Page, selector: string, limit = 40) {
   }
   throw Error(`Tab never reached ${selector}`);
 }
-const white = "rgb(255, 255, 255)";
-const mist = "rgb(238, 244, 240)";
 
 test.describe("1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
@@ -74,10 +78,13 @@ test.describe("1440x900", () => {
     await offline(page);
     await newWorkflow(page);
     const name = new DesignerPage(page).inspectorField("Name");
-    const rest = await css(name, "border-top-color");
-    expect(rest["border-top-color"]).toBe("rgb(115, 140, 128)");
-    expect(contrast(rest["border-top-color"], white)).toBeGreaterThanOrEqual(3);
-    expect(contrast(rest["border-top-color"], mist)).toBeGreaterThanOrEqual(3);
+    const rest = (await css(name, "border-top-color"))["border-top-color"];
+    expect(rest).toBe(await tokenColor(page, "--field-border"));
+    for (const surface of ["--sunken", "--surface", "--raised", "--hover"])
+      expect(
+        contrast(rest, await tokenColor(page, surface)),
+        surface,
+      ).toBeGreaterThanOrEqual(3);
     await name.click();
     const focused = await css(
       name,
@@ -90,10 +97,37 @@ test.describe("1440x900", () => {
     expect(focused).toEqual({
       "outline-style": "solid",
       "outline-width": "2px",
-      "outline-color": "rgb(44, 106, 87)",
+      "outline-color": amber,
       "outline-offset": "1px",
-      "border-top-color": "rgb(44, 106, 87)",
+      "border-top-color": amber,
     });
+  });
+
+  test("placeholders are drawn in --subtle at 4.5:1, not Chromium's grey", async ({
+    page,
+  }) => {
+    await offline(page);
+    await newWorkflow(page);
+    const search = page.getByPlaceholder("Search steps");
+    await expect(search).toBeVisible();
+    const look = await search.evaluate((input) => ({
+      color: getComputedStyle(input, "::placeholder").color,
+      opacity: getComputedStyle(input, "::placeholder").opacity,
+      background: getComputedStyle(input).backgroundColor,
+    }));
+    expect(look.color).toBe(await tokenColor(page, "--subtle"));
+    expect(look.opacity).toBe("1");
+    expect(contrast(look.color, look.background)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test("a misspelled token fails the test instead of passing by inheritance", async ({
+    page,
+  }) => {
+    await offline(page);
+    await expect(tokenColor(page, "--sutble")).rejects.toThrow(
+      "Design token --sutble is not defined on :root",
+    );
+    await expect(tokenColor(page, "--subtle")).resolves.toMatch(/^rgb\(/);
   });
 
   test("a disabled primary is flat and legible, never a pressed slab", async ({
@@ -111,26 +145,27 @@ test.describe("1440x900", () => {
     await expect(activate).toBeDisabled();
     await expect(activate).toHaveAttribute("aria-disabled", "true");
     await expect(activate).toHaveClass(/\bprimary\b/);
-    const look = await css(activate, "background-color", "color", "opacity");
-    expect(look).toEqual({
-      "background-color": "rgb(238, 242, 239)",
-      color: "rgb(92, 112, 106)",
+    const flat = {
+      "background-color": await tokenColor(page, "--disabled-bg"),
+      color: await tokenColor(page, "--disabled-ink"),
       opacity: "1",
-    });
+    };
+    const look = await css(activate, "background-color", "color", "opacity");
+    expect(look).toEqual(flat);
     expect(contrast(look.color, look["background-color"])).toBeGreaterThan(4.5);
     // Hovering changes nothing.
     await activate.hover({ force: true });
     expect((await css(activate, "background-color"))["background-color"]).toBe(
-      "rgb(238, 242, 239)",
+      flat["background-color"],
     );
   });
 
-  test("one 2px focus ring, mint in the forest sidebar", async ({ page }) => {
+  test("one 2px amber focus ring, in the sidebar too", async ({ page }) => {
     await offline(page);
     // The first stops are in the sidebar.
     const sidebar = await tabTo(page, ".sidebar button");
     expect(await css(sidebar, "outline-color", "outline-width")).toEqual({
-      "outline-color": "rgb(161, 209, 185)",
+      "outline-color": amber,
       "outline-width": "2px",
     });
     const content = await tabTo(page, ".main-shell button");
@@ -145,7 +180,7 @@ test.describe("1440x900", () => {
     ).toEqual({
       "outline-style": "solid",
       "outline-width": "2px",
-      "outline-color": "rgb(44, 106, 87)",
+      "outline-color": amber,
       "outline-offset": "2px",
     });
   });
@@ -155,7 +190,6 @@ test.describe("1440x900", () => {
   }) => {
     await offline(page);
     await expect(page.locator(".dashboard-status")).toBeVisible();
-    // Waves 2 and 3 apply these classes; their look is defined now.
     const looks = await page.evaluate(() => {
       const host = document.createElement("div");
       host.innerHTML = `
@@ -191,37 +225,45 @@ test.describe("1440x900", () => {
       return result;
     });
     const by = (text: string) => looks.find((l) => l.text === text)!;
+    const token = (name: string) => tokenColor(page, name);
     expect(by("Failed")).toMatchObject({
-      color: "rgb(150, 37, 49)",
-      background: "rgb(251, 232, 233)",
+      color: await token("--danger-ink"),
+      background: await token("--danger-bg"),
       borderWidth: "1px",
       height: "22px",
       font: "600 12px",
       dot: '""',
     });
-    expect(by("Succeeded").color).toBe("rgb(29, 96, 71)");
-    expect(by("Running").color).toBe("rgb(36, 90, 107)");
-    expect(by("Waiting").color).toBe("rgb(115, 80, 15)");
+    expect(by("Succeeded").color).toBe(await token("--success-ink"));
+    expect(by("Running").color).toBe(await token("--info-ink"));
+    expect(by("Waiting").color).toBe(await token("--warning-ink"));
     // The old class name is the neutral pill.
     expect(by("Queued")).toMatchObject({
-      color: "rgb(70, 93, 85)",
-      background: "rgb(237, 241, 238)",
+      color: await token("--neutral-ink"),
+      background: await token("--neutral-bg"),
     });
     for (const text of ["Failed", "Succeeded", "Running", "Waiting", "Queued"])
       expect(
         contrast(by(text).color, by(text).background),
       ).toBeGreaterThanOrEqual(6);
-    // "Production" is a forest outline, never gold.
+    // "Production" is a paper outline: never amber, never a status tone.
     expect(by("Production")).toMatchObject({
-      color: "rgb(23, 61, 52)",
-      border: "rgb(23, 61, 52)",
+      color: await token("--text"),
+      border: await token("--text"),
     });
-    expect(by("Created pets.").background).toBe("rgb(226, 241, 233)");
-    expect(by("Not saved.").color).toBe("rgb(150, 37, 49)");
-    expect(by("Task claimed.").background).toBe("rgb(23, 61, 52)");
+    expect(by("Created pets.").background).toBe(await token("--success-bg"));
+    expect(by("Not saved.").color).toBe(await token("--danger-ink"));
+    // Toasts are raised surfaces with paper text and a graphite edge.
+    expect(by("Task claimed.")).toMatchObject({
+      background: await token("--raised"),
+      color: await token("--text"),
+      border: await token("--border"),
+    });
   });
 
-  test("each icon has its own drawing, at 16 and 20 px", async ({ page }) => {
+  test("icons draw Lucide geometry at a 1.5px stroke, 16 and 20 px", async ({
+    page,
+  }) => {
     await offline(page);
     await newWorkflow(page);
     await insertStep(page, "Wait for signal");
@@ -229,44 +271,185 @@ test.describe("1440x900", () => {
     const icons = await page
       .locator("weave-icon[data-icon]")
       .evaluateAll((elements) =>
-        elements.map((e) => ({
-          name: e.getAttribute("data-icon")!,
-          d: e.querySelector("path")!.getAttribute("d")!,
-          rings: e.querySelectorAll("circle").length,
-          size: Math.round(e.getBoundingClientRect().width),
-          stroke: getComputedStyle(e.querySelector("svg")!).strokeWidth,
-          scaling: getComputedStyle(e.querySelector("path")!).vectorEffect,
-        })),
+        elements.map((e) => {
+          const svg = e.querySelector("svg")!;
+          return {
+            name: e.getAttribute("data-icon")!,
+            missing: e.hasAttribute("data-icon-missing"),
+            // Angular's control-flow anchors are comments; the drawing is the rest.
+            drawing: svg.innerHTML.replace(/<!--[\s\S]*?-->/g, ""),
+            first: svg.firstElementChild?.getAttribute("d") ?? "",
+            size: Math.round(e.getBoundingClientRect().width),
+            stroke: getComputedStyle(svg).strokeWidth,
+            scaling: [...svg.children].map(
+              (c) => getComputedStyle(c).vectorEffect,
+            ),
+          };
+        }),
       );
+    expect(icons.filter((i) => i.missing).map((i) => i.name)).toEqual([]);
     const drawings = new Map<string, string>();
     for (const icon of icons) {
-      const drawing = `${icon.d}|${icon.rings}`;
-      const other = drawings.get(drawing);
+      const other = drawings.get(icon.drawing);
       if (other)
         expect(other, `${icon.name} draws like ${other}`).toBe(icon.name);
-      drawings.set(drawing, icon.name);
+      drawings.set(icon.drawing, icon.name);
     }
-    // The gear, the radio waves and a whole head.
-    const settings = icons.find((i) => i.name === "settings")!;
-    expect(settings.d.startsWith("M12 15a3 3 0 1 0 0-6")).toBe(true);
-    expect(settings.rings).toBe(0);
-    expect(icons.find((i) => i.name === "signal")!.d).not.toBe(
-      icons.find((i) => i.name === "email")!.d,
-    );
-    // Sizes and strokes: 20 px at 1.75, 16 px at 1.5, never scaled.
+    // Lucide's gear; the signal's radio tower is not the email envelope.
+    const named = (name: string) => icons.find((i) => i.name === name)!;
+    expect(named("settings").first).toMatch(/^M9\.671 4\.136/);
+    expect(named("signal").drawing).not.toBe(named("email").drawing);
+    // One stroke at every size (16, 20 and CSS-sized), never scaled with the drawing.
+    expect(icons.some((i) => i.size === 16)).toBe(true);
+    expect(icons.some((i) => i.size === 20)).toBe(true);
     for (const icon of icons) {
-      expect(icon.scaling, icon.name).toBe("non-scaling-stroke");
-      if (icon.size === 20) expect(icon.stroke, icon.name).toBe("1.75px");
+      expect(icon.stroke, icon.name).toBe("1.5px");
+      expect(new Set(icon.scaling), icon.name).toEqual(
+        new Set(["non-scaling-stroke"]),
+      );
     }
-    const chevron = page.locator(".platform-indicator .menu-chevron");
-    expect(await chevron.evaluate((e) => e.getBoundingClientRect().width)).toBe(
-      16,
-    );
+  });
+
+  test("renders Manrope from Studio's own origin", async ({ page }) => {
+    const fonts: string[] = [];
+    page.on("request", (request) => {
+      if (request.resourceType() === "font") fonts.push(request.url());
+    });
+    await offline(page);
+    await page.evaluate(() => document.fonts.ready);
     expect(
-      await chevron.evaluate(
-        (e) => getComputedStyle(e.querySelector("svg")!).strokeWidth,
+      await page.evaluate(() => document.fonts.check("14px Manrope")),
+    ).toBe(true);
+    expect(
+      await page.evaluate(() => getComputedStyle(document.body).fontFamily),
+    ).toMatch(/^"?Manrope"?,/);
+    const origin = new URL(page.url()).origin;
+    expect(fonts.length).toBeGreaterThan(0);
+    for (const url of fonts)
+      expect(url.startsWith(`${origin}/fonts/manrope/`), url).toBe(true);
+    const latin = await page.request.get(
+      "/fonts/manrope/manrope-latin-wght-normal.woff2",
+    );
+    expect(latin.headers()["content-type"]).toMatch(/^font\/woff2/);
+  });
+
+  test("asks the browser for dark native controls", async ({ page }) => {
+    await offline(page);
+    expect(
+      await page.evaluate(() => ({
+        root: getComputedStyle(document.documentElement).colorScheme,
+        meta: document
+          .querySelector('meta[name="color-scheme"]')
+          ?.getAttribute("content"),
+      })),
+    ).toEqual({ root: "dark", meta: "dark" });
+  });
+
+  test("loads the brand files on a nested route", async ({ page }) => {
+    await offline(page);
+    await page.goto("/operations/targets/example");
+    const lockup = page
+      .getByRole("link", { name: "Firefly Weave Studio home" })
+      .locator("img.brand-lockup");
+    await expect(lockup).toBeVisible();
+    expect(
+      await lockup.evaluate(
+        (e: HTMLImageElement) => e.complete && e.naturalWidth > 0,
       ),
-    ).toBe("1.5px");
+    ).toBe(true);
+    await page.evaluate(() => document.fonts.ready);
+    expect(
+      await page.evaluate(() => document.fonts.check("14px Manrope")),
+    ).toBe(true);
+  });
+
+  test("shows the lockup, the mark when narrow, and the favicon set", async ({
+    page,
+  }) => {
+    await offline(page);
+    const home = page.getByRole("link", { name: "Firefly Weave Studio home" });
+    const lockup = home.locator("img.brand-lockup");
+    const mark = home.locator("img.brand-mark");
+    const drawn = (image: Locator) =>
+      image.evaluate((e: HTMLImageElement) => ({
+        loaded: e.complete && e.naturalWidth > 0,
+        width: e.getBoundingClientRect().width,
+        padding: getComputedStyle(e).paddingLeft,
+      }));
+    await expect(lockup).toBeVisible();
+    await expect(mark).toBeHidden();
+    expect(await drawn(lockup)).toMatchObject({ loaded: true, width: 200 });
+    // The box is reserved before the SVG loads (200 x 248.25/1427.4 = 34.8).
+    await expect(lockup).toHaveAttribute("width", "200");
+    await expect(lockup).toHaveAttribute("height", "35");
+    // At 1280px and below the sidebar narrows: the 32px mark in a 44px box.
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(lockup).toBeHidden();
+    await expect(mark).toBeVisible();
+    expect(await drawn(mark)).toEqual({
+      loaded: true,
+      width: 44,
+      padding: "6px",
+    });
+    const head = await page.evaluate(() => ({
+      icons: [
+        ...document.querySelectorAll(
+          'link[rel="icon"], link[rel="apple-touch-icon"]',
+        ),
+      ].map((link) => link.getAttribute("href")),
+      manifests: document.querySelectorAll('link[rel="manifest"]').length,
+      theme: document
+        .querySelector('meta[name="theme-color"]')
+        ?.getAttribute("content"),
+      scheme: document
+        .querySelector('meta[name="color-scheme"]')
+        ?.getAttribute("content"),
+    }));
+    expect(head).toEqual({
+      icons: ["favicon.ico", "favicon.svg", "apple-touch-icon.png"],
+      manifests: 0,
+      theme: "#10110f",
+      scheme: "dark",
+    });
+    for (const file of [
+      "/favicon.ico",
+      "/favicon.svg",
+      "/apple-touch-icon.png",
+    ])
+      expect(
+        (await page.request.get(file)).headers()["content-type"],
+        file,
+      ).toMatch(/^image\//);
+  });
+
+  test("pairing shows the lockup on charcoal", async ({ page }) => {
+    await page.route("**/studio/session", (r) =>
+      r.fulfill({
+        json: { paired: false, version: "1", mode: "offline", profile: null },
+      }),
+    );
+    await page.goto("/");
+    const lockup = page.getByRole("img", {
+      name: "Firefly Weave",
+      exact: true,
+    });
+    await expect(lockup).toBeVisible();
+    expect(
+      await lockup.evaluate((e: HTMLImageElement) => ({
+        src: new URL(e.src).pathname,
+        loaded: e.complete && e.naturalWidth > 0,
+        width: e.getBoundingClientRect().width,
+      })),
+    ).toEqual({
+      src: "/assets/weave-lockup-reversed.svg",
+      loaded: true,
+      width: 240,
+    });
+    expect(
+      await page.evaluate(
+        () => getComputedStyle(document.documentElement).backgroundColor,
+      ),
+    ).toBe(await tokenColor(page, "--bg"));
   });
 });
 

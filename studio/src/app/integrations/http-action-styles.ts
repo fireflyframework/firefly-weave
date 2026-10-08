@@ -117,7 +117,7 @@ export const builderStyles = `
     width: 16px;
     height: 16px;
     margin: 0;
-    accent-color: var(--forest);
+    accent-color: var(--accent);
   }
   .hb-effect {
     display: flex;
@@ -127,7 +127,7 @@ export const builderStyles = `
     padding: 10px 12px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--line);
-    background: var(--mist);
+    background: var(--raised);
     font-size: 12px;
     line-height: 1.45;
   }
@@ -152,7 +152,7 @@ export const builderStyles = `
     border: 1px solid var(--neutral-bd);
     padding: 1px 8px;
     background: var(--neutral-bg);
-    color: var(--forest);
+    color: var(--text);
     white-space: nowrap;
   }
   .hb-chip.write {
@@ -169,7 +169,7 @@ export const builderStyles = `
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 700;
-    color: var(--forest);
+    color: var(--text);
   }
   .hb-rows {
     list-style: none;
@@ -232,7 +232,7 @@ export const builderStyles = `
     flex: none;
   }
   .hb-status.ok weave-icon {
-    color: var(--jade);
+    color: var(--success-ink);
   }
   .hb-status.bad {
     color: var(--danger-ink);

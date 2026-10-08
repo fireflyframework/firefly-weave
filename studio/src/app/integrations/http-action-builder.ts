@@ -208,7 +208,7 @@ let sequence = 0;
         min-height: 40px;
       }
       .hb-tabs button.selected {
-        color: var(--forest);
+        color: var(--text);
         font-weight: 600;
       }
       .hb-tabs button.selected::after {
@@ -218,7 +218,7 @@ let sequence = 0;
         right: 0;
         bottom: 0;
         height: 3px;
-        background: var(--jade);
+        background: var(--accent);
       }
       .hb-panel[hidden] {
         display: none;

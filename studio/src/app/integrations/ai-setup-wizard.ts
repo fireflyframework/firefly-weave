@@ -110,8 +110,8 @@ import {
       color: var(--muted);
     }
     .settings-progress [aria-current] {
-      color: var(--forest);
-      font-weight: 650;
+      color: var(--text);
+      font-weight: 600;
     }
     .step-number {
       display: grid;
@@ -122,9 +122,9 @@ import {
       border: 1px solid var(--field-border);
     }
     [aria-current] .step-number {
-      color: var(--on-dark);
-      background: var(--forest);
-      border-color: var(--forest);
+      color: var(--on-accent);
+      background: var(--accent);
+      border-color: var(--accent);
     }
     .complete .step-number {
       background: var(--selected);

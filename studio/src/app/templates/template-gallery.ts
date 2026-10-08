@@ -210,7 +210,7 @@ let sequence = 0;
         align-items: center;
         width: 120px;
         height: 32px;
-        color: var(--jade-strong);
+        color: var(--muted);
       }
       .glyph-line {
         width: 12px;
