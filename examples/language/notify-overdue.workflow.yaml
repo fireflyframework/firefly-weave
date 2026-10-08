@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Loop over items with a text template. The compiler reports "not yet supported" for forEach and concat
-# until their language milestones land; the document shape is final.
+# until a later release adds them; the document shape is final.
 apiVersion: weave/v1alpha1
 kind: Workflow
 metadata:

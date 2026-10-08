@@ -525,3 +525,28 @@ def test_inventory_never_echoes_credentials_or_control_characters():
     assert rows["/ids"].operation_id is None and rows["/ids"].key == "GET /ids"
     assert rows["/c1"].summary == "a31mb" and rows["/c1"].tags == ["t", "ok"]
     assert listing.servers == ["https://api.petstore.test/v1"]
+
+
+def plain_http(document: bytes) -> bytes:
+    return document.replace(b"https://api.petstore.test", b"http://api.petstore.test")
+
+
+def test_builtin_import_accepts_a_plain_http_server():
+    rules = json.loads(json.dumps(policy(ALL)).replace("https://api.petstore.test", "http://api.petstore.test"))
+    result = import_openapi(plain_http(source()), None, rules, source_format="yaml", target="builtin")
+    assert result.ok, result.diagnostics
+    assert result.connection_example["config"]["baseUrl"] == "http://api.petstore.test"
+    assert result.connection_example["allowed_destinations"] == ["http://api.petstore.test"]
+
+
+def test_scaffolding_prefers_an_https_server_when_both_are_declared():
+    both = source().replace(
+        b"  - url: https://api.petstore.test/v1",
+        b"  - url: http://api.petstore.test/v1\n  - url: https://api.petstore.test/v1",
+    )
+    scaffold = init_policy(both, source_format="yaml", relaxations=ALL)
+    assert scaffold.ok, scaffold.diagnostics
+    assert {rule["server"] for rule in scaffold.policy["operations"].values()} == {"https://api.petstore.test/v1"}
+    only_http = init_policy(plain_http(source()), source_format="yaml", relaxations=ALL)
+    assert only_http.ok, only_http.diagnostics
+    assert {rule["server"] for rule in only_http.policy["operations"].values()} == {"http://api.petstore.test/v1"}

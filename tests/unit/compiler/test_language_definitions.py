@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Definition models frozen in language milestone M0: forEach, callWorkflow, callable, concat and join."""
+"""Definition models for the language constructs forEach, callWorkflow, callable, concat and join."""
 
 import json
 from pathlib import Path

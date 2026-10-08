@@ -304,10 +304,15 @@ accepts it. The rules for using a key:
   different body fails with HTTP 409.
 - Clients never retry a change on their own after a timeout or another
   outcome they cannot know. If you retry, send the exact same body and key. The
-  one exception is a capacity rejection: HTTP 429 with `WV-OPERATION-CAPACITY`
-  or `WV-REQUEST-CAPACITY` means the platform did not admit the request, so
-  Studio sends a read, or a change that carries a key, again with the same key,
-  honoring `Retry-After`, for at most four attempts in all.
+  exceptions are rejections that mean the platform did not admit the request:
+  HTTP 429 with `WV-OPERATION-CAPACITY` or `WV-REQUEST-CAPACITY`, and HTTP 503
+  with `WV-COMPATIBILITY`. For these, Studio sends a read, or a change that
+  carries a key, again with the same key, honoring `Retry-After`, for at most
+  four attempts in all. Studio sends a `WV-COMPATIBILITY` refusal again only
+  when its `Retry-After` is 5 seconds or less.
+- A `WV-COMPATIBILITY` refusal carries `Retry-After` with the whole seconds
+  until the server's next automatic compatibility rescan. An explicit
+  compatibility check can lift a restricted verdict sooner.
 - Creating a connection revision accepts an optional key since 0.1.0a7: with
   one, a retry returns the revision already created; without one, every request
   creates a new revision. Debug commands

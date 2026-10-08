@@ -473,7 +473,7 @@ async def test_generation_fences_old_attempt_and_claim_capacity(
 
     async with transaction_factory() as tx:
         old = (await task_service.claim(tx, worker_ids[0], 1))[0]
-    # Simulate B7's authorized requeue decision; B6 itself never makes this decision.
+    # Simulate the retry policy's authorized requeue decision; lease handling itself never makes this decision.
     async with access_db[1].begin() as tx:
         await tx.execute(
             text("UPDATE task_leases SET expires_at=clock_timestamp()-interval '1 second',status='expired'")

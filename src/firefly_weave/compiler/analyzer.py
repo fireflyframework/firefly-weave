@@ -899,7 +899,7 @@ class _Analyzer:
         existing = self.catalog.resolve(model.kind, f"{model.metadata.name}@{model.metadata.version}")
         if existing is not None and existing.digest != definition.digest:
             self.issue("IMMUTABLE_VERSION", "/metadata/version", stage="resolution")
-        # A3 preparation validates the entire supplied local bundle; lock every resource it consumes.
+        # Preparation validates the entire supplied local bundle; lock every resource it consumes.
         for name in self.catalog.schemas:
             resource = self.catalog.resolve("Schema", name)
             if resource is not None:

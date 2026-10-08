@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The compiler reports each language construct whose feature it does not compile yet (language spec 18, M0)."""
+"""The compiler reports each language construct whose feature it does not compile yet."""
 
 from collections.abc import Iterator
 from typing import get_args

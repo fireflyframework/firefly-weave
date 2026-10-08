@@ -15,10 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The canvas (W3-1, W3-2, W3-5, W3-9, W3-11): a readable zoom when a
-// workflow opens, steady zooming, Delete on the focused step with Undo,
-// problems shown on the steps themselves, and a keyboard model with a
-// ring that stays visible at any zoom.
+// The canvas: a readable zoom when a workflow opens, steady zooming, Delete
+// on the focused step with Undo, problems shown on the steps themselves, and
+// a keyboard model with a ring that stays visible at any zoom.
 import { test, expect, type Page } from "@playwright/test";
 import { expectHitTarget, insertStep, newWorkflow, offline } from "./support";
 import { DesignerPage } from "./designer-po";

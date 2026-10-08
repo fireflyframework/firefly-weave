@@ -15,8 +15,8 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The canvas viewport (W3-1): a readable fit on open, "Fit all" down to
-// 40 %, and zooming that keeps the point under the pointer in place.
+// The canvas viewport: a readable fit on open, "Fit all" down to 40 %, and
+// zooming that keeps the point under the pointer in place.
 import { describe, expect, it } from "vitest";
 import { StructuredCanvasAdapter, kinds } from "../src/app/model";
 import {

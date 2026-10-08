@@ -22,6 +22,7 @@ import json
 import logging
 import sys
 import time
+from contextvars import Context
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -179,7 +180,9 @@ class NativeDispatcher:
 
             transport = ServiceTransport(self.service, entry.scope, entry.principal_id, instance.id)
             self.workers.append(Worker(transport, {ref: execute for ref in entry.task_types}, entry.capacity))
-        self.tasks = [asyncio.create_task(self._supervise(worker)) for worker in self.workers]
+        # A request can open the dispatcher. An empty context keeps the request's execution
+        # lease and identity, which end with its response, out of the long-lived workers.
+        self.tasks = [asyncio.create_task(self._supervise(worker), context=Context()) for worker in self.workers]
 
     async def _supervise(self, worker: Worker) -> None:
         """Keep one in-process worker serving after a task it could not settle.

@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import {
   activationPins,
@@ -392,13 +392,7 @@ describe("activation pins", () => {
 // workflow with a weave-http@2.0.0 Action, a worker Action and a human task,
 // then read its envelope exactly as definitions.export returns it.
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
-const available = existsSync(python);
+const available = pythonAvailable();
 describe.skipIf(!available)("parity with a compiled artifact", () => {
   it("derives the same pins the server admits", () => {
     const output = execFileSync(

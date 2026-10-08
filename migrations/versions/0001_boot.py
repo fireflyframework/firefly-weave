@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Adopt the B1 forward-only schema boundary without replacing retained state."""
+"""Adopt the forward-only schema boundary without replacing retained state."""
 
 import sqlalchemy as sa
 from alembic import op

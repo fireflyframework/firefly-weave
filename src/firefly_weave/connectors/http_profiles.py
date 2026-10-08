@@ -33,7 +33,7 @@ from firefly_weave.compiler.parser import ParseFailure, parse_source
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.connections.machine_tokens import MachineProfile, MachineToken, MachineTokenService
 from firefly_weave.connectors.credential_output import contains_sensitive
-from firefly_weave.connectors.egress import EgressDenied, EgressPolicy
+from firefly_weave.connectors.egress import EgressDenied
 from firefly_weave.connectors.http import HttpPolicy
 from firefly_weave.connectors.http_logging import protected_http_diagnostics
 from firefly_weave.contracts.connectors import ActionContext, BoundConnection, ConnectionTestResult, ConnectorFailure
@@ -205,8 +205,10 @@ class HttpProfileConnector:
                         operation.method,
                         url,
                         max_response_bytes=min(invocation.max_response_bytes, 1048576),
-                        egress_policy=EgressPolicy(
-                            invocation.connection.allowed_destinations, self.policy.private_networks
+                        egress_policy=self.policy.egress(
+                            "http-connector",
+                            invocation.connection.allowed_destinations,
+                            sends_credentials=bool(connection.auth.slots()),
                         ),
                         content=body,
                         headers=headers,

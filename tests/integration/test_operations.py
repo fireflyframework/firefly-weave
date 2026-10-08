@@ -348,12 +348,88 @@ async def test_native_inventory_restricts_effects_but_keeps_terminal_control(
     assert (await client.get("/health/live")).status_code == 200
     assert (await client.get("/health/ready")).status_code == 503
     assert (await client.get(env_url + "/runs", headers=headers)).status_code == 200
-    assert (await client.post(env_url + "/runs", headers=headers, json={})).status_code == 503
+    refused = await client.post(env_url + "/runs", headers=headers, json={})
+    assert refused.status_code == 503 and refused.json()["code"] == "WV-COMPATIBILITY"
+    assert 1 <= int(refused.headers["retry-after"]) <= 65
     cancelled = await client.post(
         f"{env_url}/runs/{waiting_run}/cancel", headers=headers, json={"reason": "restricted owned trial"}
     )
     assert cancelled.status_code == 200, cancelled.text
     assert cancelled.json()["status"] == "cancelled" and cancelled.json()["unavailable"]
+
+
+async def test_native_rescan_stays_ready_while_requests_hold_every_control_slot(
+    waiting_run, client, headers, env_url, monkeypatch
+):
+    import asyncio
+
+    from firefly_weave.operations.execution import CONTROL_SLOTS
+
+    app = client._transport.app
+    compatibility = app.state.compatibility
+    assert compatibility.ready
+    held, release = asyncio.Event(), asyncio.Event()
+    holding = 0
+    database_ready = app.state.resources.is_ready
+
+    async def slow_probe():
+        nonlocal holding
+        holding += 1
+        if holding == CONTROL_SLOTS:
+            held.set()
+        await release.wait()
+        return await database_ready()
+
+    # Each in-flight read keeps its control slot until it answers.
+    monkeypatch.setattr(app.state.resources, "is_ready", slow_probe)
+    probes = [asyncio.create_task(client.get("/health/ready")) for _ in range(CONTROL_SLOTS)]
+    try:
+        async with asyncio.timeout(10):
+            await held.wait()
+        assert (await client.get(env_url + "/runs", headers=headers)).status_code == 429
+        report = await compatibility.scan()
+        assert report.mode == "ready" and report.complete and report.inspected > 0, report.findings
+        assert compatibility.ready
+    finally:
+        release.set()
+        answered = await asyncio.gather(*probes)
+    assert [probe.status_code for probe in answered] == [200] * CONTROL_SLOTS
+
+
+async def test_native_run_start_is_admitted_while_a_confirming_rescan_cleans_up(
+    waiting_run, author, headers, env_url, monkeypatch
+):
+    import asyncio
+
+    compatibility = author[0]._transport.app.state.compatibility
+    assert compatibility.ready
+    run = await author[0].get(f"{env_url}/runs/{waiting_run}", headers=headers)
+    activation = run.json()["activation"]["id"]
+    cleaning, release = asyncio.Event(), asyncio.Event()
+    dispose = compatibility._dispose_catalog
+
+    async def held_cleanup():
+        if compatibility._catalog_engine is not None:
+            cleaning.set()
+            await release.wait()
+        await dispose()
+
+    monkeypatch.setattr(compatibility, "_dispose_catalog", held_cleanup)
+    scan = asyncio.create_task(compatibility.scan())
+    try:
+        async with asyncio.timeout(10):
+            await cleaning.wait()
+        assert compatibility.ready
+        started = await author[0].post(
+            env_url + "/runs",
+            headers={**headers, "Idempotency-Key": "during-rescan-cleanup"},
+            json={"activation_id": activation, "input": {}},
+        )
+        assert started.status_code == 201, started.text
+    finally:
+        release.set()
+        report = await scan
+    assert report.mode == "ready" and compatibility.ready
 
 
 async def test_native_committed_transition_and_request_emit_safe_telemetry(

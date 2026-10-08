@@ -151,7 +151,7 @@ class _TaskOperation:
                         task=identifier,
                     )
                 )[0]["value"]
-                # B7 alone decides whether a failed/expired attempt may be requeued.
+                # Only the retry policy decides whether a failed/expired attempt may be requeued.
                 action = next(
                     d["document"]["spec"]
                     for d in run["artifact"]["executable"]["dependencies"]

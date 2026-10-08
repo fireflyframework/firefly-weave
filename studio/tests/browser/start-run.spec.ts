@@ -123,7 +123,7 @@ for (const viewport of [
       await customer.fill("C-104");
       await dialog(page).getByLabel("Priority").fill("2");
       // A write-only field is locked: the platform rejects secret values in
-      // run input, and Studio never enters one (F5).
+      // run input, and Studio never enters one.
       await expect(dialog(page)).toContainText(
         "Secret: Studio never enters, sends or stores this value.",
       );

@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The language manifest lists exactly what the definition models accept (language spec 14.1, contract C5)."""
+"""The language manifest lists exactly what the definition models accept."""
 
 import inspect
 from typing import get_args

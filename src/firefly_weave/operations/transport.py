@@ -164,7 +164,9 @@ class BodyBoundary:
             for path in {operation.path, operation.canonical_path}
         )
 
-    async def problem(self, send: Send, status: int, code: str, request_id: str) -> None:
+    async def problem(
+        self, send: Send, status: int, code: str, request_id: str, *, retry_after: int | None = None
+    ) -> None:
         body = json.dumps(
             {
                 "status": status,
@@ -176,8 +178,10 @@ class BodyBoundary:
         ).encode()
         headers = [(b"content-type", b"application/problem+json"), (b"content-length", str(len(body)).encode())]
         headers.extend([(b"x-weave-wire-version", b"weave/api-v1"), (b"x-weave-request-id", request_id.encode())])
-        if status == 429:
-            headers.append((b"retry-after", b"1"))
+        if retry_after is None and status == 429:
+            retry_after = 1
+        if retry_after is not None:
+            headers.append((b"retry-after", str(retry_after).encode()))
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": body})
 
@@ -237,7 +241,9 @@ class BodyBoundary:
             or "/operations/compatibility" in path
         )
         if compatibility is not None and not compatibility.ready and not restricted_safe:
-            await self.problem(send, 503, "WV-COMPATIBILITY", request_id)
+            await self.problem(
+                send, 503, "WV-COMPATIBILITY", request_id, retry_after=compatibility.retry_after_seconds()
+            )
             return
         headers = scope.get("headers", [])
         if sum(len(k) + len(v) for k, v in headers) > 16_384:
@@ -314,7 +320,7 @@ class BodyBoundary:
             except CatalogError as error:
                 if started:
                     raise
-                await self.problem(send, error.status, error.code, request_id)
+                await self.problem(send, error.status, error.code, request_id, retry_after=error.retry_after)
         except Exception:
             logging.getLogger("weave.operations").error("Request failed", extra={"error_code": "WV-INTERNAL"})
             if not started:

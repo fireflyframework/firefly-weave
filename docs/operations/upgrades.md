@@ -42,6 +42,8 @@ the desktop app never migrates a platform.
 | alpha10 | `0028_files` | No new schema migration. Restores Lumi access through the Studio host; explicit selection supersedes pending canvas fitting, and initial empty fields no longer steal focus. |
 | alpha11 | `0028_files` | Studio AI setup wizards and explicit same-execution shared AI context; no server behavior or schema change. Updating the local Studio host and assets does not require redeploying an alpha10 server. |
 | alpha12 | `0030_worker_presence` | Adds scoped deployment Operations persistence, runner fencing and reconciliation, and worker presence/drain state. Explicitly migrate the server before using Operations; new roles are never granted automatically. Provider credentials stay on separately operated runners. |
+| alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
+| alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -194,9 +196,19 @@ truncated or incomplete report is not evidence of full compatibility.
 
 **The server also rescans by itself.** Each process requests a compatibility
 rescan every 60 seconds. Automatic and explicit scans share one reservation, so
-an automatic scan that would overlap is skipped instead of queued. A failed scan
-leaves the process restricted until a later scan succeeds, and catalog cleanup
-must succeed before readiness returns.
+an automatic scan that would overlap is skipped instead of queued. A scan
+classifies retained items in its own reserved execution slot, so a burst of API
+requests cannot make it fail. A failed scan leaves the process restricted until
+a later scan succeeds, and catalog cleanup must succeed before readiness
+returns. A rescan that confirms a ready process keeps it ready while it releases
+its catalog connection; if that cleanup fails, readiness is withdrawn. While the
+process is restricted, refused changes answer HTTP 503 `WV-COMPATIBILITY` with
+`Retry-After` set to the seconds until the next automatic rescan.
+
+When a rescan withdraws readiness, the server logs the warning `Compatibility
+rescan withdrew readiness` with the finding kinds and codes and the class of
+any error the scan caught, such as `CatalogError WV-OPERATION-CAPACITY`. The
+warning never includes error messages or connection details.
 
 The capabilities response also reports the effective policy, fixed server
 ceilings, the supported worker convention, and a small readiness projection. An

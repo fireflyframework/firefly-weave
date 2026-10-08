@@ -26,11 +26,12 @@ import {
   selectChoice,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+import { python } from "../python-path";
 
 const schema = (module: string, name: string) =>
   JSON.parse(
     execFileSync(
-      ".venv/bin/python",
+      python,
       [
         "-c",
         `import json; from firefly_weave.contracts.${module} import ${name}; print(json.dumps(${name}.model_json_schema(by_alias=True)))`,

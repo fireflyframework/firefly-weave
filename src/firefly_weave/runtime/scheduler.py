@@ -20,6 +20,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import suppress
+from contextvars import Context
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -89,7 +90,9 @@ class RecoveryLoop:
                     text("SELECT has_function_privilege(current_user,'weave_scheduler_tenants(integer)','EXECUTE')")
                 ):
                     raise RuntimeError("Scheduler requires catalog traversal EXECUTE")
-            self.task = asyncio.create_task(self.poll(), name="weave-recovery")
+            # A request can open this loop. An empty context keeps the request's execution
+            # lease and identity, which end with its response, out of the long-lived task.
+            self.task = asyncio.create_task(self.poll(), name="weave-recovery", context=Context())
         except BaseException:
             await self.close()
             raise

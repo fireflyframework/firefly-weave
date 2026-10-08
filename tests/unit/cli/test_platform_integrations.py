@@ -592,7 +592,11 @@ def test_secret_handles_are_plain_lowercase_names(workspace, handle):
     assert not (directory / "secrets").exists()
 
 
-@pytest.mark.parametrize("value", [b"", b"\n", b"Q" * 65537, b"LEAKED\x00VALUE", b"LEAKED\xff\xfe"])
+@pytest.mark.parametrize(
+    "value",
+    [b"", b"\n", b"Q" * 65537, b"LEAKED\x00VALUE", b"LEAKED\xff\xfe"],
+    ids=["empty", "newline", "oversized", "nul-byte", "not-utf8"],
+)
 def test_unusable_secret_values_are_refused_without_echo(workspace, value):
     directory, _ = workspace
     with pytest.raises(platform.PlatformError) as raised:

@@ -372,7 +372,7 @@ def test_connection_request_prefills_destinations_and_uses_handles_only():
     "base,auth,secrets,allow",
     [
         ("https://api.example.com/v1", {"kind": "none"}, {}, ()),
-        ("http://api.example.com", {"kind": "none"}, {}, ()),
+        ("ftp://api.example.com", {"kind": "none"}, {}, ()),
         ("https://user:pw@api.example.com", {"kind": "none"}, {}, ()),
         ("https://api.example.com", {"kind": "bearer"}, {}, ()),
         ("https://api.example.com", {"kind": "bearer"}, {"token": "sk_live/abc=="}, ()),
@@ -456,3 +456,29 @@ def test_inference_merges_elements_into_the_common_shape():
     assert infer_schema([1, 2.5])[0] == {"type": "array", "items": {"type": "number"}}
     assert infer_schema([1, "a"])[0] == {"type": "array", "items": {"type": ["integer", "string"]}}
     assert CANARY not in json.dumps(schema)
+
+
+def test_connection_request_accepts_plain_http_origins_with_handles():
+    request = build_connection_request(
+        "acme",
+        "http://acme.acceptance.test:8080/",
+        {"kind": "api-key", "header": "X-Api-Key"},
+        {"api_key": "acme-api-key"},
+        UUID(int=9),
+        ("http://status.acme.test",),
+    )
+    assert request["config"]["baseUrl"] == "http://acme.acceptance.test:8080"
+    assert request["allowed_destinations"] == ["http://acme.acceptance.test:8080", "http://status.acme.test"]
+    example = http_actions.connection_example(
+        "acme", "http://acme.acceptance.test:8080", http_actions.AuthProfile(kind="none")
+    )
+    assert example["config"]["baseUrl"] == "http://acme.acceptance.test:8080"
+    # Machine-token endpoints stay HTTPS-only.
+    with pytest.raises(HttpActionError):
+        build_connection_request(
+            "acme",
+            "http://acme.acceptance.test:8080",
+            {"kind": "machine-token", "client_id": "weave", "endpoint": "http://login.acme.test/token"},
+            {"client_secret": "acme-client"},
+            UUID(int=9),
+        )

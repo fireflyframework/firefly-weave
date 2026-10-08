@@ -271,7 +271,7 @@ const fieldable = (input: unknown) =>
     (isRecord(input["literal"]) || isRecord(input["object"])));
 /**
  * The schema without its secret (`x-secret`, `writeOnly`) fields: no
- * workflow input may set them, so they are never "missing" (F5).
+ * workflow input may set them, so they are never "missing".
  */
 const withoutSecrets = (schema: Schema): Schema => ({
   ...schema,
@@ -452,7 +452,7 @@ export class App {
   private startQueue: Promise<unknown> = Promise.resolve();
   model = new StructuredCanvasAdapter();
   tick = signal(0);
-  /** Visible outcomes (W2-1): one toast at a time. */
+  /** Visible outcomes: one toast at a time. */
   readonly toasts = inject(ToastService);
   private title = inject(Title);
   /** Workflows kept on this computer (localStorage). */
@@ -1480,7 +1480,7 @@ export class App {
       cancelLabel: "Keep editing",
     });
   }
-  // --- local drafts (W2-2) -----------------------------------------------------
+  // --- local drafts -----------------------------------------------------
   /** Autosave: local work is kept on this computer 800 ms after a change. */
   private keepLocally() {
     if (this.profile) return;
@@ -3742,8 +3742,8 @@ export class App {
   }
   /**
    * The input of a newly chosen action: inputs its schema doesn't allow are
-   * dropped (allowed extra inputs stay, F16) and required yes/no inputs start
-   * at their default or false (F4); bound inputs keep their binding.
+   * dropped (allowed extra inputs stay) and required yes/no inputs start
+   * at their default or false; bound inputs keep their binding.
    */
   private freshInput(input: unknown): unknown {
     const schema = this.actionInputSchema() as Record<string, unknown>;
@@ -3794,7 +3794,7 @@ export class App {
   /**
    * Required, non-secret yes/no inputs start at their default or false, and
    * required constants at their value; optional ones stay unset (absent is
-   * not false) (F4).
+   * not false).
    */
   private withDefaults(literal: Record<string, unknown>) {
     const data = structuredClone(literal);
@@ -5779,7 +5779,7 @@ export class App {
             : "";
   }
   /**
-   * The live thread (W3-8): where the simulated run is (gold, one pulse per
+   * The live thread: where the simulated run is (gold, one pulse per
    * move), the steps it finished (jade check) and those it hasn't reached
    * (faded), and the edges it took.
    */

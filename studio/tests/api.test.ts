@@ -196,6 +196,58 @@ describe("capacity rejections", () => {
     });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it("replays a keyed change the platform refused while confirming compatibility", async () => {
+    const restricted = (retryAfter: string) =>
+      new Response(
+        JSON.stringify({
+          code: "WV-COMPATIBILITY",
+          message: "Request unavailable",
+        }),
+        {
+          status: 503,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": retryAfter,
+          },
+        },
+      );
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(restricted("2"))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    const client = api();
+    await expect(
+      client.mutate("/studio/api/runs", "POST", {}, undefined, "run-key"),
+    ).resolves.toEqual({ items: [] });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(client.wait).toHaveBeenCalledWith(2000);
+    const unkeyed = vi.fn().mockResolvedValue(restricted("2"));
+    vi.stubGlobal("fetch", unkeyed);
+    await expect(
+      api().request("/studio/api/runs", "POST", {}),
+    ).rejects.toMatchObject({ status: 503, code: "WV-COMPATIBILITY" });
+    expect(unkeyed).toHaveBeenCalledTimes(1);
+    // A restriction that outlasts the replay window fails at once.
+    const lasting = vi.fn().mockResolvedValue(restricted("45"));
+    vi.stubGlobal("fetch", lasting);
+    const waiting = api();
+    await expect(
+      waiting.mutate("/studio/api/runs", "POST", {}, undefined, "run-key"),
+    ).rejects.toMatchObject({ status: 503, code: "WV-COMPATIBILITY" });
+    expect(lasting).toHaveBeenCalledTimes(1);
+    expect(waiting.wait).not.toHaveBeenCalled();
+    const other = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ code: "WV-INTERNAL" }), { status: 503 }),
+      );
+    vi.stubGlobal("fetch", other);
+    await expect(api().request("/studio/api/runs")).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(other).toHaveBeenCalledTimes(1);
+  });
   it("does not replay other 429 answers", async () => {
     const fetch = vi.fn().mockResolvedValue(busy("WV-PAGE-LIMIT"));
     vi.stubGlobal("fetch", fetch);
