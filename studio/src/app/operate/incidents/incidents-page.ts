@@ -37,6 +37,13 @@ import { shortId } from "../../format";
 import { Icon } from "../../icon";
 import { ModalSheet, sheetWhen } from "../../modal-sheet";
 import { toneAttribute } from "../../status-labels";
+import { MAX_PAGES } from "../operate-limits";
+import {
+  environmentOf,
+  listFailure,
+  readPages,
+  scopeKeyOf,
+} from "../operate-list";
 import { OperateState } from "../operate-state";
 import { viewFromPath, viewPath } from "../operate-routes";
 import { Poller, browserEnvironment } from "../operate-store";
@@ -59,8 +66,6 @@ import {
 } from "./incidents-model";
 import { ResolveIncidentDialog } from "./resolve-incident-dialog";
 
-/** Polls reload at most this many pages of 50. */
-const MAX_PAGES = 10;
 /** A run's events are read 100 at a time, at most 1,000. */
 const EVENT_PAGES = 10;
 const noEvents: RecentEvents = {
@@ -358,11 +363,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     return this.host.canAnywhere("incident.read");
   }
   private get scope() {
-    try {
-      return this.host.profile ? this.host.api.environment : "";
-    } catch {
-      return "";
-    }
+    return environmentOf(this.host);
   }
   ngOnInit() {
     this.poller.start(false);
@@ -374,11 +375,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.generation++;
   }
   ngDoCheck() {
-    const key = JSON.stringify([
-      this.scope,
-      this.host.identity,
-      this.host.signInEnded,
-    ]);
+    const key = scopeKeyOf(this.host);
     if (key === this.scopeKey) return;
     this.scopeKey = key;
     this.generation++;
@@ -410,27 +407,15 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     )
       this.filters = filters;
   }
-  private query(cursor: string | null) {
-    const query = new URLSearchParams({ limit: "50" });
-    if (cursor) query.set("cursor", cursor);
-    return query.toString();
-  }
   private async load() {
     const scope = this.scope;
     if (!scope || !this.host.identity || !this.readable) return;
     const generation = this.generation;
     try {
-      const items: IncidentRecord[] = [];
-      let cursor: string | null = null;
-      let pages = 0;
-      do {
-        const page: { items: IncidentRecord[]; next_cursor: string | null } =
-          await this.host.api.request(
-            `${scope}/incidents?${this.query(cursor)}`,
-          );
-        items.push(...page.items);
-        cursor = page.next_cursor;
-      } while (cursor && ++pages < this.pages);
+      const { items, cursor } = await readPages<IncidentRecord>(
+        (query) => this.host.api.request(`${scope}/incidents?${query}`),
+        this.pages,
+      );
       if (generation !== this.generation) return;
       this.incidents = items;
       this.nextCursor = cursor;
@@ -443,8 +428,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (fresh && !isUnavailableIncident(fresh)) this.selected = fresh;
     } catch (error) {
       if (generation !== this.generation) return;
-      this.error = describeError(error);
-      this.forbidden = this.error.status === 403;
+      ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
       throw error;
     } finally {
       if (this.alive) this.cdr.markForCheck();
@@ -456,17 +440,18 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     if (!scope || !cursor) return;
     const generation = this.generation;
     try {
-      const page: { items: IncidentRecord[]; next_cursor: string | null } =
-        await this.host.api.request(`${scope}/incidents?${this.query(cursor)}`);
+      const page = await readPages<IncidentRecord>(
+        (query) => this.host.api.request(`${scope}/incidents?${query}`),
+        1,
+        cursor,
+      );
       if (generation !== this.generation) return;
       this.incidents = [...this.incidents, ...page.items];
-      this.nextCursor = page.next_cursor;
+      this.nextCursor = page.cursor;
       this.pages = Math.min(this.pages + 1, MAX_PAGES);
     } catch (error) {
-      if (generation === this.generation) {
-        this.error = describeError(error);
-        this.forbidden = this.error.status === 403;
-      }
+      if (generation === this.generation)
+        ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
     } finally {
       if (this.alive) this.cdr.markForCheck();
     }

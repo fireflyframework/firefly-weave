@@ -20,8 +20,8 @@ SPDX-License-Identifier: Apache-2.0
 import { Component, input, output } from "@angular/core";
 import { Modal } from "../../dialog";
 import type { PlainError } from "../../errors";
+import { REASON_LIMIT } from "../operate-limits";
 import {
-  REASON_LIMIT,
   checkResolution,
   resolutions,
   type DraftProblems,

@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // decisions the Resolve incident dialog offers and how it checks them before
 // sending. Pure: the page renders it, tests check it.
 import type { Tone } from "../../status-labels";
+import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
 
 export type IncidentStatus = "active" | "closed" | "resolved";
 export type ResolutionKind =
@@ -113,7 +114,6 @@ export interface ResolutionRequest {
 export type DraftProblems = Partial<
   Record<"kind" | "reason" | "evidence" | "output", string>
 >;
-export const REASON_LIMIT = 2000;
 
 /** Checks a draft; returns the request, or the problem under each field. */
 export function checkResolution(
@@ -125,9 +125,9 @@ export function checkResolution(
   if (!draft.kind) problems.kind = "Choose a decision.";
   if (!reason) problems.reason = "Enter a reason for the audit log.";
   else if (draft.reason.length > REASON_LIMIT)
-    problems.reason = `Keep the reason to ${REASON_LIMIT.toLocaleString("en-US")} characters or fewer.`;
+    problems.reason = tooLongMessage("reason");
   if (evidence.length > REASON_LIMIT)
-    problems.evidence = `Keep the evidence reference to ${REASON_LIMIT.toLocaleString("en-US")} characters or fewer.`;
+    problems.evidence = tooLongMessage("evidence reference");
   let output: unknown;
   if (draft.kind === "accept_reconciled_result") {
     if (!evidence)

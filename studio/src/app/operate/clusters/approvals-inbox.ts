@@ -24,10 +24,8 @@ import type {
   Page,
   Plan,
 } from "../../operations/deployment-contracts";
+import { MAX_PAGES } from "../operate-limits";
 import { inboxCandidates } from "./cluster-model";
-
-/** Plans are capped at 1,000 per environment: ten pages of 100. */
-const MAX_PAGES = 10;
 
 export type InboxRequest = <T>(path: string) => Promise<T>;
 

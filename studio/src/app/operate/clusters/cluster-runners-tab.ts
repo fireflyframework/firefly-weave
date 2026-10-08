@@ -19,10 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 // presence and last contact, and Revoke.
 import { ChangeDetectionStrategy, Component } from "@angular/core";
 import { Icon } from "../../icon";
-import { absoluteTime, isoTime, relativeTime, shortId } from "../../format";
+import { shortId } from "../../format";
 import { toneAttribute } from "../../status-labels";
 import type { Runner } from "../../operations/deployment-contracts";
 import { OperateState } from "../operate-state";
+import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
 import { ClusterSection } from "./cluster-section";
 import { adapterIcon, runnerLabel, runnerTone } from "./cluster-model";
 
@@ -141,6 +142,9 @@ import { adapterIcon, runnerLabel, runnerTone } from "./cluster-model";
 })
 export class ClusterRunnersTab extends ClusterSection {
   readonly short = shortId;
+  readonly iso = timeIso;
+  readonly absolute = timeAbsolute;
+  readonly relative = timeRelative;
   icon(runner: Runner) {
     return adapterIcon(runner.adapter);
   }
@@ -155,14 +159,5 @@ export class ClusterRunnersTab extends ClusterSection {
   }
   canRevoke(runner: Runner) {
     return this.host.can("target.manage", runner.target_id);
-  }
-  iso(value: string) {
-    return isoTime(value) || null;
-  }
-  absolute(value: string) {
-    return absoluteTime(value);
-  }
-  relative(value: string) {
-    return relativeTime(value) || "Unknown";
   }
 }

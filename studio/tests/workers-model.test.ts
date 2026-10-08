@@ -26,6 +26,7 @@ import {
   noWorkerFilters,
   presenceLabel,
   presenceTone,
+  workerBadges,
   workerLoad,
   workerPresence,
   type WorkerRecord,
@@ -83,6 +84,31 @@ describe("worker presence", () => {
     expect(claimsLabel(worker({ draining: true }))).toBe("Draining");
     expect(claimsLabel(worker({ revoked: true, draining: true }))).toBe(
       "Revoked",
+    );
+  });
+
+  it("shows Revoked alone, or the presence and Draining while it drains", () => {
+    expect(workerBadges(worker(), "online")).toEqual([
+      { label: "Online", tone: "success" },
+    ]);
+    expect(workerBadges(worker({ draining: true }), "offline")).toEqual([
+      { label: "Offline", tone: "danger" },
+      { label: "Draining", tone: "warning" },
+    ]);
+    expect(
+      workerBadges(worker({ revoked: true, draining: true }), "online"),
+    ).toEqual([{ label: "Revoked", tone: "neutral" }]);
+  });
+
+  it("reads the presence for the pills when it isn't given", () => {
+    expect(workerBadges(worker({ presence: "unknown" }))).toEqual([
+      { label: "Not seen yet", tone: "neutral" },
+    ]);
+    expect(workerBadges(worker({ presence: "stale", draining: true }))).toEqual(
+      [
+        { label: "Offline", tone: "danger" },
+        { label: "Draining", tone: "warning" },
+      ],
     );
   });
 

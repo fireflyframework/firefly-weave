@@ -29,6 +29,7 @@ import { shortId } from "../../format";
 import { sheetWhen } from "../../modal-sheet";
 import type { Node } from "../../model";
 import type { StartRunRequest } from "../../run/start-run-dialog";
+import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
 import { terminalRunStatuses, type RunStatus } from "../run-contracts";
 
 type Json = Record<string, unknown>;
@@ -36,12 +37,9 @@ const isRecord = (value: unknown): value is Json =>
   !!value && typeof value === "object" && !Array.isArray(value);
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 
-/** A reason the platform accepts: 2,000 characters or fewer. */
-export const REASON_LIMIT = 2000;
+/** "Keep the reason to 2,000 characters or fewer.", or "" when it fits. */
 export function reasonProblem(reason: string) {
-  return reason.length > REASON_LIMIT
-    ? "Keep the reason to 2,000 characters or fewer."
-    : "";
+  return reason.length > REASON_LIMIT ? tooLongMessage("reason") : "";
 }
 
 /** The run's own status, as the platform reports it in `state.status`. */

@@ -74,6 +74,19 @@ export function presenceTone(presence: Presence): Tone {
   return presenceWords[presence][1];
 }
 
+/** The status pills: Revoked alone, or the presence and then Draining. */
+export function workerBadges(
+  worker: WorkerStatus,
+  presence = workerPresence(worker),
+): { label: string; tone: Tone }[] {
+  if (worker.revoked) return [{ label: "Revoked", tone: "neutral" }];
+  const badges = [
+    { label: presenceLabel(presence), tone: presenceTone(presence) },
+  ];
+  if (worker.draining) badges.push({ label: "Draining", tone: "warning" });
+  return badges;
+}
+
 /** Whether the worker takes new tasks. */
 export function claimsLabel(worker: WorkerStatus) {
   return worker.revoked

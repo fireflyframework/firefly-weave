@@ -20,10 +20,11 @@ SPDX-License-Identifier: Apache-2.0
 import { Component, input, output } from "@angular/core";
 import type { App } from "../../app";
 import type { PlainError } from "../../errors";
-import { absoluteTime, isoTime, relativeTime, shortId } from "../../format";
+import { shortId } from "../../format";
 import { Icon } from "../../icon";
 import { toneAttribute } from "../../status-labels";
 import { OperateState } from "../operate-state";
+import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
 import {
   incidentStatusLabel,
   incidentTone,
@@ -185,6 +186,8 @@ export class IncidentDrawer {
   reloadEvents = output<void>();
   closed = output<void>();
   readonly short = shortId;
+  readonly iso = timeIso;
+  readonly absolute = timeAbsolute;
   canResolve() {
     return this.host().can("incident.resolve", this.incident().id);
   }
@@ -197,13 +200,8 @@ export class IncidentDrawer {
   decision(kind: Parameters<typeof resolutionLabel>[0]) {
     return resolutionLabel(kind);
   }
-  iso(value: string) {
-    return isoTime(value) || null;
-  }
-  absolute(value: string) {
-    return absoluteTime(value);
-  }
+  /** A resolution time that isn't a date shows nothing rather than "Unknown". */
   relative(value: string) {
-    return relativeTime(value) || absoluteTime(value);
+    return timeRelative(value, "");
   }
 }

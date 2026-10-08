@@ -30,13 +30,13 @@ import {
 } from "@angular/core";
 import type { App } from "../../app";
 import { describeError, type PlainError } from "../../errors";
-import { absoluteTime, isoTime, relativeTime, shortId } from "../../format";
+import { shortId } from "../../format";
 import { Icon } from "../../icon";
 import { toneAttribute } from "../../status-labels";
+import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
 import {
   claimsLabel,
-  presenceLabel,
-  presenceTone,
+  workerBadges,
   workerLoad,
   workerPresence,
   type WorkerStatus,
@@ -62,15 +62,10 @@ import {
       </button>
     </header>
     <p class="badges">
-      @if (w.revoked) {
-        <span class="status-pill">Revoked</span>
-      } @else {
-        <span class="status-pill" [attr.data-tone]="tone(presence)">{{
-          label(presence)
+      @for (badge of badges(w, presence); track badge.label) {
+        <span class="status-pill" [attr.data-tone]="tone(badge.tone)">{{
+          badge.label
         }}</span>
-        @if (w.draining) {
-          <span class="status-pill" data-tone="warning">Draining</span>
-        }
       }
     </p>
     <p class="hint">
@@ -165,6 +160,11 @@ export class WorkerDetail implements OnChanges, OnDestroy {
   problem: PlainError | null = null;
   private cdr = inject(ChangeDetectorRef);
   readonly short = shortId;
+  readonly iso = timeIso;
+  readonly absolute = timeAbsolute;
+  readonly relative = timeRelative;
+  readonly badges = workerBadges;
+  readonly tone = toneAttribute;
   /** The workers whose command is on its way; one worker's never blocks another's. */
   private running = new Set<string>();
   private alive = true;
@@ -188,12 +188,6 @@ export class WorkerDetail implements OnChanges, OnDestroy {
   presenceOf(worker: WorkerStatus) {
     return workerPresence(worker);
   }
-  label(presence: ReturnType<typeof workerPresence>) {
-    return presenceLabel(presence);
-  }
-  tone(presence: ReturnType<typeof workerPresence>) {
-    return toneAttribute(presenceTone(presence));
-  }
   claims(worker: WorkerStatus) {
     return claimsLabel(worker);
   }
@@ -202,15 +196,6 @@ export class WorkerDetail implements OnChanges, OnDestroy {
     return load.capacity === null
       ? load.text
       : `${load.text} task slots in use`;
-  }
-  iso(value: string) {
-    return isoTime(value) || null;
-  }
-  absolute(value: string) {
-    return absoluteTime(value);
-  }
-  relative(value: string) {
-    return relativeTime(value) || "Unknown";
   }
   canControl(worker: WorkerStatus) {
     const host = this.host();

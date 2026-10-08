@@ -32,13 +32,21 @@ import {
 import { NavigationEnd, Router } from "@angular/router";
 import type { App } from "../../app";
 import { describeError, type PlainError } from "../../errors";
-import { absoluteTime, isoTime, relativeTime, shortId } from "../../format";
+import { shortId } from "../../format";
 import { Icon } from "../../icon";
 import { ModalSheet, sheetWhen } from "../../modal-sheet";
 import { toneAttribute } from "../../status-labels";
+import { MAX_PAGES } from "../operate-limits";
+import {
+  environmentOf,
+  listFailure,
+  readPages,
+  scopeKeyOf,
+} from "../operate-list";
 import { OperateState } from "../operate-state";
 import { viewFromPath, viewPath } from "../operate-routes";
 import { Poller } from "../operate-store";
+import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
 import { RefreshStatus } from "../refresh-status";
 import { WorkerDetail } from "./worker-detail";
 import {
@@ -49,18 +57,13 @@ import {
   filtersToQuery,
   isUnavailableWorker,
   noWorkerFilters,
-  presenceLabel,
-  presenceTone,
+  workerBadges,
   workerLoad,
-  workerPresence,
   type Presence,
   type WorkerFilters,
   type WorkerRecord,
   type WorkerStatus,
 } from "./workers-model";
-
-/** Polls reload at most this many pages of 50. */
-const MAX_PAGES = 10;
 
 @Component({
   selector: "weave-workers-page",
@@ -258,7 +261,6 @@ const MAX_PAGES = 10;
                     </div>
                   } @else {
                     @let w = status(worker);
-                    @let presence = presenceOf(w);
                     @let load = loadOf(w);
                     <div
                       class="resource-row"
@@ -277,19 +279,12 @@ const MAX_PAGES = 10;
                           Worker {{ short(w.id) }}</button
                         ><small>{{ typesText(w) }}</small></span
                       ><span role="cell" class="badges">
-                        @if (w.revoked) {
-                          <span class="status-pill">Revoked</span>
-                        } @else {
+                        @for (badge of badges(w); track badge.label) {
                           <span
                             class="status-pill"
-                            [attr.data-tone]="tone(presence)"
-                            >{{ label(presence) }}</span
+                            [attr.data-tone]="tone(badge.tone)"
+                            >{{ badge.label }}</span
                           >
-                          @if (w.draining) {
-                            <span class="status-pill" data-tone="warning"
-                              >Draining</span
-                            >
-                          }
                         }</span
                       ><span role="cell" data-wide
                         ><code [attr.title]="w.release_id">{{
@@ -365,6 +360,11 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   });
   readonly sheetWhen = sheetWhen;
   readonly short = shortId;
+  readonly iso = timeIso;
+  readonly absolute = timeAbsolute;
+  readonly relative = timeRelative;
+  readonly badges = workerBadges;
+  readonly tone = toneAttribute;
   readonly filterCount = filterCount;
   readonly presenceOptions: [Presence | "", string][] = [
     ["", "Any status"],
@@ -392,11 +392,7 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
     return this.host.canAnywhere("status.read");
   }
   private get scope() {
-    try {
-      return this.host.profile ? this.host.api.environment : "";
-    } catch {
-      return "";
-    }
+    return environmentOf(this.host);
   }
   ngOnInit() {
     this.poller.start(false);
@@ -407,11 +403,7 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
     this.generation++;
   }
   ngDoCheck() {
-    const key = JSON.stringify([
-      this.scope,
-      this.host.identity,
-      this.host.signInEnded,
-    ]);
+    const key = scopeKeyOf(this.host);
     if (key === this.scopeKey) return;
     this.scopeKey = key;
     this.generation++;
@@ -457,15 +449,10 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
     if (!scope || !this.host.identity || !this.readable) return;
     const generation = this.generation;
     try {
-      const items: WorkerRecord[] = [];
-      let cursor: string | null = null;
-      let pages = 0;
-      do {
-        const page: { items: WorkerRecord[]; next_cursor: string | null } =
-          await this.host.api.request(`${scope}/workers?${this.query(cursor)}`);
-        items.push(...page.items);
-        cursor = page.next_cursor;
-      } while (cursor && ++pages < this.pages);
+      const { items, cursor } = await readPages<WorkerRecord>(
+        (query) => this.host.api.request(`${scope}/workers?${query}`),
+        this.pages,
+      );
       if (generation !== this.generation) return;
       this.workers = items;
       this.nextCursor = cursor;
@@ -477,17 +464,11 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
       if (fresh && !isUnavailableWorker(fresh)) this.selected = fresh;
     } catch (error) {
       if (generation !== this.generation) return;
-      this.error = describeError(error);
-      this.forbidden = this.error.status === 403;
+      ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
       throw error;
     } finally {
       this.cdr.markForCheck();
     }
-  }
-  private query(cursor: string | null) {
-    const query = new URLSearchParams({ limit: "50" });
-    if (cursor) query.set("cursor", cursor);
-    return query.toString();
   }
   async loadMore() {
     const scope = this.scope;
@@ -495,11 +476,14 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
     if (!scope || !cursor) return;
     const generation = this.generation;
     try {
-      const page: { items: WorkerRecord[]; next_cursor: string | null } =
-        await this.host.api.request(`${scope}/workers?${this.query(cursor)}`);
+      const page = await readPages<WorkerRecord>(
+        (query) => this.host.api.request(`${scope}/workers?${query}`),
+        1,
+        cursor,
+      );
       if (generation !== this.generation) return;
       this.workers = [...this.workers, ...page.items];
-      this.nextCursor = page.next_cursor;
+      this.nextCursor = page.cursor;
       this.pages = Math.min(this.pages + 1, MAX_PAGES);
     } catch (error) {
       if (generation === this.generation) this.error = describeError(error);
@@ -602,15 +586,6 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   status(worker: WorkerRecord) {
     return worker as WorkerStatus;
   }
-  presenceOf(worker: WorkerStatus) {
-    return workerPresence(worker);
-  }
-  label(presence: Presence) {
-    return presenceLabel(presence);
-  }
-  tone(presence: Presence) {
-    return toneAttribute(presenceTone(presence));
-  }
   loadOf(worker: WorkerStatus) {
     return workerLoad(worker);
   }
@@ -620,15 +595,6 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   typesText(worker: WorkerStatus) {
     const count = worker.task_types.length;
     return `${count} task ${count === 1 ? "type" : "types"}`;
-  }
-  iso(value: string) {
-    return isoTime(value) || null;
-  }
-  absolute(value: string) {
-    return absoluteTime(value);
-  }
-  relative(value: string) {
-    return relativeTime(value) || "Unknown";
   }
   value(event: Event) {
     return (event.target as HTMLSelectElement).value as never;

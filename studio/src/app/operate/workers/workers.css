@@ -45,40 +45,11 @@ weave-operate-state {
   font: var(--type-small);
   color: var(--muted);
 }
+/* The worker's name stays on one line and ends in an ellipsis. */
 .worker-table .row-open {
-  display: block;
-  min-height: 0;
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: none;
-  color: var(--text);
-  font: var(--type-body);
-  font-weight: 600;
-  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.worker-table .row-open:hover {
-  background: none;
-}
-.worker-table .row-open::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-}
-.worker-table .row-open:focus-visible {
-  outline: none;
-}
-.worker-table .row-open:focus-visible::after {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
-}
-.worker-table .resource-row {
-  position: relative;
-  cursor: pointer;
 }
 /* The five columns need about 840 px; the shared table rules that hide a
    column title on smaller screens don't apply while all five fit. */
