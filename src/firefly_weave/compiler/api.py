@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
@@ -28,7 +28,7 @@ from firefly_weave.compiler.analyzer import analyze, analyze_authoring, analyze_
 from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest
 from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.expressions import ExpressionFailure, measure_value
-from firefly_weave.compiler.ir import ArtifactEnvelope
+from firefly_weave.compiler.ir import ArtifactEnvelope, require_supported_ir
 from firefly_weave.compiler.lowering import DEFAULT_ARTIFACT_LIMITS, ArtifactLimits, ConstructionBudget, lower
 from firefly_weave.compiler.parser import ParseFailure, parse_source
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
@@ -326,16 +326,22 @@ def validate_authoring(
 
 
 def import_artifact(
-    source: str | bytes | JsonObject, *, limits: ArtifactLimits = DEFAULT_ARTIFACT_LIMITS
+    source: str | bytes | JsonObject,
+    *,
+    limits: ArtifactLimits = DEFAULT_ARTIFACT_LIMITS,
+    features: Collection[str] | None = None,
 ) -> CompiledArtifact:
     """Recheck supported IR, strict contracts, graph invariants and content hashes.
 
-    Hashes provide integrity, not provenance. Publication must recompile trusted source.
-    Source hashes/maps/diagnostics are an untrusted author envelope, outside executable identity.
+    An IR version or language feature outside ``features`` (default: the advertised ones) raises ``UnsupportedIR``
+    (``ir_unsupported``) before strict validation. Hashes provide integrity, not provenance. Publication must
+    recompile trusted source. Source hashes/maps/diagnostics are an untrusted author envelope, outside executable
+    identity.
     """
     value = parse_source(
         source, format="object" if isinstance(source, dict) else "json", limits=limits.value_limits()
     ).value
+    require_supported_ir(value.get("executable"), features)
     ArtifactEnvelope.model_validate(value)
     from firefly_weave.compiler.admission import admit_artifact
     from firefly_weave.compiler.schemas import _Failure

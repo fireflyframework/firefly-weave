@@ -49,21 +49,9 @@ from firefly_weave.cli.triggers import triggers
 from firefly_weave.cli.workers import workers
 from firefly_weave.cli.workflow import workflow
 
-# Sampled from assets/weave-logo.svg, including its diagonal underpass mask.
-# Regenerate with: python scripts/render_cli_logo.py
-_LOGO = """  ###    ###        ###    ###
- #####   ####      ####   #####
-  #####  #####    #####  #####
-   #####  #####  #####  #####
-    #####  #### #####  #####
-     #####  ## #####  #####
-      #####   #####  #####
-       ##### #####  #####
-        ######### ######
-         ####### ######
-          #####  #####
-           ###    ###
-            #      #"""
+# The product name in copy, never logo art: the brand forbids redrawing the logo as text.
+PRODUCT_NAME = "Firefly Weave"
+DESCRIPTOR = "Workflow orchestration and integration"
 
 
 LEGACY_AUTH_COMMANDS = frozenset({"login", "status", "logout"})
@@ -81,12 +69,9 @@ class OfflineGroup(click.Group):
     """Present human help while preserving value-free machine error contracts."""
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        formatter.write(PRODUCT_NAME + "\n")
         if formatter.width >= 60:
-            for index, line in enumerate(_LOGO.splitlines()):
-                title = "   Firefly Weave" if index == 1 else ""
-                formatter.write(f"{line:<32}{title}".rstrip() + "\n")
-        else:
-            formatter.write("Firefly Weave\n")
+            formatter.write(DESCRIPTOR + "\n")
         formatter.write("\n")
         super().format_help(ctx, formatter)
         with formatter.section("Quick start"):

@@ -44,7 +44,12 @@ def fixture(name: str):
 
 def test_committed_fixtures_are_what_the_generator_writes_today():
     rendered = runpy.run_path("scripts/language_fixtures.py")["render"]()
-    assert sorted(rendered) == ["instance-keys.json", "manifest.json", "text-conversion.json"]
+    assert sorted(rendered) == [
+        "instance-keys.json",
+        "manifest.json",
+        "template-segments.json",
+        "text-conversion.json",
+    ]
     for name, text in rendered.items():
         assert (FIXTURES / name).read_text(encoding="utf-8") == text, name
 

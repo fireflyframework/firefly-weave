@@ -150,6 +150,11 @@ describe("plain-language diagnostic copy", () => {
         .text,
     ).toBe("Something in this definition needs attention.");
   });
+  it("explains that decision rules cannot use text operators yet", () => {
+    const copy = describeDiagnostic({ code: "WV-DECISION-OPERATOR" });
+    expect(copy.text).toBe("Decision rules can't combine or join text yet.");
+    expect(copy.hint).toMatch(/Transform step/);
+  });
   it("covers expression, schema and parse families with a safe fallback", () => {
     expect(describeDiagnostic({ code: "WV-EXPR-ARITY" }).text).toMatch(
       /arguments/,

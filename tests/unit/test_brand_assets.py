@@ -95,12 +95,12 @@ def test_brand_svgs_are_accessible_and_inert(name):
 
 
 def test_expanded_sidebar_lockup_shows_the_firefly_logo_at_80px_or_more():
-    # The sidebar draws the lockup 200px wide; the nested <svg> is the Firefly logo.
+    # The sidebar draws the lockup 192px wide; the nested <svg> is the Firefly logo.
     root = ET.parse(ROOT / "studio/public/assets/weave-lockup-reversed.svg").getroot()
     lockup_width = float(root.attrib["viewBox"].split()[2])
     logo = root.find("{http://www.w3.org/2000/svg}svg")
     assert logo is not None
-    assert float(logo.attrib["width"]) / lockup_width * 200 >= 80
+    assert float(logo.attrib["width"]) / lockup_width * 192 >= 80
 
 
 def test_notice_separates_the_marks_from_the_apache_license():

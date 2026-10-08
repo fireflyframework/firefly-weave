@@ -29,7 +29,7 @@ type LanguageFeature = Literal["ai.agent", "ai.memory", "flow.callWorkflow", "fl
 LANGUAGE_FEATURES: Final[tuple[LanguageFeature, ...]] = tuple(sorted(get_args(LanguageFeature.__value__)))
 
 # Features whose runtime support has shipped. Capabilities.language_features and the manifest serve these.
-ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = ()
+ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = ("text.concat", "text.join")
 
 # Step kinds, operators and workflow fields that need a feature. AI steps add "agent": "ai.agent" with AgentStep.
 KIND_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(

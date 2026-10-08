@@ -65,7 +65,7 @@ class LumiProfile(LLMProfile):
     @model_validator(mode="after")
     def fixed_reply(self) -> Self:
         if self.output_schema != LUMI_REPLY_SCHEMA:
-            raise ValueError("Lumi requires its fixed proposal reply schema")
+            raise ValueError("Weave AI requires its fixed proposal reply schema")
         return self
 
 

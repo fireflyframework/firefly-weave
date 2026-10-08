@@ -175,8 +175,10 @@ Operators are `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `and`, `or`, `not`, `exists`
 `concat`, and `join`. `concat` joins one or more strings, numbers, or Booleans
 into one string; `join` takes a list of such values and a separator string. Numbers
 are written as JavaScript writes them (`2.0` becomes `2`, `1e21` stays `1e+21`).
-There are no function calls, scripts, environment variables, or
-file access. The compiler checks arity, types, and scope; the
+A workflow that uses them compiles to `weave/ir-v1alpha4` and lists `text.concat`
+or `text.join` among its [language features](#language-manifest); decision table
+rules cannot use them yet. There are no function calls, scripts, environment
+variables, or file access. The compiler checks arity, types, and scope; the
 [compiler reference](reference/compiler.md#cli-and-published-catalog-contract)
 explains evaluation rules.
 
@@ -215,9 +217,10 @@ other workflows are part of the language; compensation is not.
 
 **New language constructs.** `forEach`, `callWorkflow`, `concat`, and `join`
 each need a language feature: `flow.forEach`, `flow.callWorkflow`, `text.concat`,
-and `text.join`. Their document shape is final, so `load_definition` accepts
-them, but this version of the compiler reports `WV-COMP-UNSUPPORTED_FEATURE` at
-each use instead of compiling it. A platform runs a construct only when its
+and `text.join`. This version compiles and runs `concat` and `join`. The shape of
+`forEach` and `callWorkflow` is final, so `load_definition` accepts them, but this
+version of the compiler reports `WV-COMP-UNSUPPORTED_FEATURE` at each use instead
+of compiling it. A platform runs a construct only when its
 [language manifest](#language-manifest) lists the feature. Step IDs can never
 contain `[`, `#`, or `~`, which keeps
 [instance keys](reference/compiler.md#instance-keys) unambiguous.
@@ -228,9 +231,11 @@ output compatibility, and concurrency budgets.
 
 **Human tasks** need an environment assignment binding at activation, and
 completing one requires the current claim and task permission. A workflow with a
-human task compiles to IR version `weave/ir-v1alpha2`; other workflows keep
-`weave/ir-v1alpha1`. Follow the [human-task walkthrough](guides/human-tasks.md)
-before activating one.
+human task compiles to IR version `weave/ir-v1alpha2` or higher, because the
+version is the highest level any construct in the workflow needs; see the
+[IR version](reference/compiler.md#executable-and-source-envelope) rules.
+Follow the [human-task walkthrough](guides/human-tasks.md) before activating
+one.
 
 **Retry and timeout belong to the action, not the step.** In Studio,
 **Call an action** creates an `action` step whose `uses` selects a published
@@ -330,8 +335,8 @@ schema as `language-manifest.schema.json`.
 | Field | Meaning |
 | --- | --- |
 | `version`, `language_version` | `weave/language-manifest-v1` and `weave/v1alpha1` |
-| `ir_versions` | The executable IR versions the platform accepts |
-| `features` | The language features the platform runs; empty in this version |
+| `ir_versions` | The executable IR versions the platform accepts; `weave/ir-v1alpha4` appears once the platform runs a language feature |
+| `features` | The language features the platform runs: `text.concat` and `text.join` in this version. The capabilities response lists the same values as `language_features`; a platform that omits that field runs none |
 | `limits` | `max_loop_items`, `default_loop_max_items`, `max_loop_depth`, `max_concurrency`, `max_run_iterations`, `max_call_depth` |
 | `step_kinds`, `operators`, `workflow_fields` | One entry each, with the `feature` it needs (if any) and `studio`: `ready` when Studio edits it, `pending` until then |
 
@@ -433,7 +438,9 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | A field is rejected although it looks right | Field names are camelCase and case-sensitive; snake_case keys are rejected | Use the published name, such as `timeoutSeconds` |
 | `null` is rejected for an optional field | Optional fields may be omitted but not set to null | Remove the field |
 | A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
-| `WV-COMP-UNSUPPORTED_FEATURE` | The document uses `forEach`, `callWorkflow`, `concat`, or `join`, which this version of the compiler does not compile yet | Keep the document for a later version, or replace the construct with the steps the compiler supports |
+| `WV-COMP-UNSUPPORTED_FEATURE` | The document uses `forEach` or `callWorkflow`, which this version of the compiler does not compile yet | Keep the document for a later version, or replace the construct with the steps the compiler supports |
+| `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step before the table and pass it in as input |
+| `WV-IR-UNSUPPORTED` on activation | The platform does not list an IR version or a language feature the workflow uses; `result.missing_features` names the missing features and is empty when the IR version itself is unknown | Upgrade the platform, or activate a version that does not use the feature |
 | `onFailure` is rejected on a call step | `onFailure` applies only when the call waits for its result | Remove `onFailure`, or set `mode: wait` |
 | Partial validation passes, but there is no artifact | Partial validation never produces one | Compile with an explicit catalog |
 | Compilation passes, but the run fails to start | Compilation proves no worker, connection, or permission | Check the activation's bindings and your grants |

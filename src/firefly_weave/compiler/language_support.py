@@ -29,7 +29,7 @@ from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.contracts.language_features import KIND_FEATURES, OPERATOR_FEATURES, LanguageFeature
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
-COMPILED_FEATURES: Final[frozenset[LanguageFeature]] = frozenset()
+COMPILED_FEATURES: Final[frozenset[LanguageFeature]] = frozenset({"text.concat", "text.join"})
 
 # Expression positions per step kind; blocks are walked separately.
 _EXPRESSIONS: Final[dict[str, tuple[str, ...]]] = {

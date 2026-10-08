@@ -218,7 +218,7 @@ older server may omit this declaration; omission does not imply readiness.
 | --- | --- |
 | `authority_missing`, `inventory_incomplete` | Repair catalog connectivity or authority and rerun the scan |
 | `policy_mismatch` | Restore the policy matching the database; never edit counters or fingerprints |
-| `ir_unsupported`, `artifact_invalid` | Inspect the pinned definition and select a compatible artifact; preserve historical bytes |
+| `ir_unsupported`, `artifact_invalid` | Inspect the pinned definition and select a compatible artifact; preserve historical bytes. `ir_unsupported` also covers language features the server does not list in `language_features`, for example `text.concat` after a rollback: upgrade the server instead of editing the artifact. Runs already in progress that use such a feature are blocked as legacy unavailable on that server, and once blocked they are never released: their tasks are not offered to workers again after an upgrade, so finish or cancel them before rolling back. |
 | `action_unavailable`, `connector_unsupported`, `provider_requirement_unsupported` | Restore the exact required release or package, or use an explicit supported migration |
 | `worker_protocol_unsupported` | Use a compatible worker and server convention; never relabel an existing release |
 | `legacy_policy_blocked` | Inspect historical classification limits; preserve withheld evidence instead of bypassing policy |

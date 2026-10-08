@@ -350,6 +350,47 @@ async def test_activation_retirement_and_environment_pins(author, headers, proje
     assert detail.status_code == 200
 
 
+async def test_activation_refuses_language_features_the_platform_does_not_run(
+    author, headers, project_url, env_url, monkeypatch
+):
+    from firefly_weave.contracts import language_features
+
+    greeting = {
+        "format": "yaml",
+        "source": """apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: greeting, version: 1.0.0}
+spec:
+  inputSchema: {type: object, properties: {name: {type: string}}, required: [name]}
+  outputSchema: {type: string}
+  steps:
+    - id: hello
+      kind: transform
+      value: {op: {name: concat, args: [{literal: "Hello "}, {ref: /input/name}]}}
+  output: {ref: /steps/hello/output}
+""",
+    }
+    published = await publish(author, headers, project_url, greeting, key="publish-greeting")
+    assert published.status_code == 201, published.text
+    body = {
+        "version_id": published.json()["id"],
+        "artifact_digest": published.json()["digest"],
+        "scope": author[2].model_dump(mode="json"),
+        "connection_revision_ids": {},
+        "worker_release_ids": {},
+    }
+    url = env_url + "/activations"
+    # An older or rolled-back platform runs no language features.
+    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", ())
+    refused = await author[0].post(url, headers={**headers, "Idempotency-Key": "older-platform"}, json=body)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "WV-IR-UNSUPPORTED"
+    assert refused.json()["result"] == {"reason": "ir_unsupported", "missing_features": ["text.concat"]}
+    monkeypatch.undo()
+    accepted = await author[0].post(url, headers={**headers, "Idempotency-Key": "current-platform"}, json=body)
+    assert accepted.status_code == 201, accepted.text
+
+
 async def test_service_checks_actual_project_scope(services, author, access_db, publication_request):
     from firefly_weave.definitions.service import DefinitionService
 

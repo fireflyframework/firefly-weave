@@ -14,8 +14,8 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-# Loop over items with a text template. The compiler reports "not yet supported" for forEach and concat
-# until a later release adds them; the document shape is final.
+# Loop over items with a text template. This version compiles concat but reports "not yet supported" for
+# forEach; the document shape is final.
 apiVersion: weave/v1alpha1
 kind: Workflow
 metadata:

@@ -1,0 +1,507 @@
+{
+  "generator": "scripts/language_fixtures.py",
+  "rule": "concat template segments",
+  "cases": [
+    {
+      "name": "text and one placeholder",
+      "expression": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Hi "
+            },
+            {
+              "ref": "/item/name"
+            }
+          ]
+        }
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "text": "Hi "
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "ref": "/item/name"
+          }
+        }
+      ],
+      "saved": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Hi "
+            },
+            {
+              "ref": "/item/name"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "invoice reminder",
+      "expression": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Invoice "
+            },
+            {
+              "ref": "/item/number"
+            },
+            {
+              "literal": " is overdue by "
+            },
+            {
+              "ref": "/item/daysLate"
+            },
+            {
+              "literal": " days"
+            }
+          ]
+        }
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "text": "Invoice "
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "ref": "/item/number"
+          }
+        },
+        {
+          "kind": "text",
+          "text": " is overdue by "
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "ref": "/item/daysLate"
+          }
+        },
+        {
+          "kind": "text",
+          "text": " days"
+        }
+      ],
+      "saved": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Invoice "
+            },
+            {
+              "ref": "/item/number"
+            },
+            {
+              "literal": " is overdue by "
+            },
+            {
+              "ref": "/item/daysLate"
+            },
+            {
+              "literal": " days"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "non-string literals are placeholders",
+      "expression": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Total: "
+            },
+            {
+              "literal": 42
+            },
+            {
+              "literal": " paid: "
+            },
+            {
+              "literal": true
+            }
+          ]
+        }
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "text": "Total: "
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "literal": 42
+          }
+        },
+        {
+          "kind": "text",
+          "text": " paid: "
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "literal": true
+          }
+        }
+      ],
+      "saved": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Total: "
+            },
+            {
+              "literal": 42
+            },
+            {
+              "literal": " paid: "
+            },
+            {
+              "literal": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "adjacent and empty text is merged on save",
+      "expression": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "a"
+            },
+            {
+              "literal": ""
+            },
+            {
+              "literal": "b"
+            },
+            {
+              "ref": "/item/name"
+            },
+            {
+              "literal": ""
+            }
+          ]
+        }
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "text": "a"
+        },
+        {
+          "kind": "text",
+          "text": ""
+        },
+        {
+          "kind": "text",
+          "text": "b"
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "ref": "/item/name"
+          }
+        },
+        {
+          "kind": "text",
+          "text": ""
+        }
+      ],
+      "saved": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "ab"
+            },
+            {
+              "ref": "/item/name"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "text only saves as a plain literal",
+      "expression": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Hello "
+            },
+            {
+              "literal": "world"
+            }
+          ]
+        }
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "text": "Hello "
+        },
+        {
+          "kind": "text",
+          "text": "world"
+        }
+      ],
+      "saved": {
+        "literal": "Hello world"
+      }
+    },
+    {
+      "name": "an empty template saves as empty text",
+      "expression": {
+        "op": {
+          "name": "concat",
+          "args": []
+        }
+      },
+      "segments": [],
+      "saved": {
+        "literal": ""
+      }
+    },
+    {
+      "name": "braces in text stay text",
+      "expression": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Use {{ name }} as is: "
+            },
+            {
+              "ref": "/item/name"
+            }
+          ]
+        }
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "text": "Use {{ name }} as is: "
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "ref": "/item/name"
+          }
+        }
+      ],
+      "saved": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Use {{ name }} as is: "
+            },
+            {
+              "ref": "/item/name"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "operators and nested concat are placeholders",
+      "expression": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Tags: "
+            },
+            {
+              "op": {
+                "name": "join",
+                "args": [
+                  {
+                    "ref": "/input/tags"
+                  },
+                  {
+                    "literal": ", "
+                  }
+                ]
+              }
+            },
+            {
+              "op": {
+                "name": "concat",
+                "args": [
+                  {
+                    "literal": "!"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "text": "Tags: "
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "op": {
+              "name": "join",
+              "args": [
+                {
+                  "ref": "/input/tags"
+                },
+                {
+                  "literal": ", "
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "op": {
+              "name": "concat",
+              "args": [
+                {
+                  "literal": "!"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "saved": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "Tags: "
+            },
+            {
+              "op": {
+                "name": "join",
+                "args": [
+                  {
+                    "ref": "/input/tags"
+                  },
+                  {
+                    "literal": ", "
+                  }
+                ]
+              }
+            },
+            {
+              "op": {
+                "name": "concat",
+                "args": [
+                  {
+                    "literal": "!"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "characters beyond the Basic Multilingual Plane",
+      "expression": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "ü😀 "
+            },
+            {
+              "ref": "/item/name"
+            }
+          ]
+        }
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "text": "ü😀 "
+        },
+        {
+          "kind": "placeholder",
+          "expression": {
+            "ref": "/item/name"
+          }
+        }
+      ],
+      "saved": {
+        "op": {
+          "name": "concat",
+          "args": [
+            {
+              "literal": "ü😀 "
+            },
+            {
+              "ref": "/item/name"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a plain literal is not a template",
+      "expression": {
+        "literal": "Hi"
+      },
+      "segments": null,
+      "saved": null
+    },
+    {
+      "name": "a reference is not a template",
+      "expression": {
+        "ref": "/item/name"
+      },
+      "segments": null,
+      "saved": null
+    },
+    {
+      "name": "join is not a template",
+      "expression": {
+        "op": {
+          "name": "join",
+          "args": [
+            {
+              "ref": "/input/tags"
+            },
+            {
+              "literal": ", "
+            }
+          ]
+        }
+      },
+      "segments": null,
+      "saved": null
+    }
+  ]
+}
