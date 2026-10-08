@@ -327,8 +327,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     ["closed", "Closed"],
     ["all", "Any status"],
   ];
-  // A reload never changes the incident under an open Resolve incident: the
-  // revision the decision is sent with is the one the person looked at.
+  // A reload never changes the incident under an open Resolve incident, not
+  // even one already on its way when the dialog opened: the revision the
+  // decision is sent with is the one the person looked at. Only Refresh
+  // incident, in the dialog, reads it again.
   readonly poller = new Poller(
     () => this.load(),
     15_000,
@@ -425,7 +427,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       const fresh = this.selected
         ? items.find((item) => item.id === this.selected!.id)
         : undefined;
-      if (fresh && !isUnavailableIncident(fresh)) this.selected = fresh;
+      if (fresh && !isUnavailableIncident(fresh) && !this.resolving)
+        this.selected = fresh;
     } catch (error) {
       if (generation !== this.generation) return;
       ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
@@ -625,14 +628,16 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     await this.poller.refresh();
     if (!this.alive || this.selected?.id !== incident.id || !this.resolving)
       return;
+    const fresh = this.incidents.find((item) => item.id === incident.id);
     if (this.error) this.failure = this.error;
-    else if (!this.incidents.some((item) => item.id === incident.id))
+    else if (!fresh)
       this.failure = {
         message:
           "Studio couldn't find this incident when it read the list again. Close this dialog and look for it in the list.",
         code: "",
         status: 404,
       };
+    else if (!isUnavailableIncident(fresh)) this.selected = fresh;
     this.cdr.markForCheck();
   }
   unavailable(item: IncidentRecord) {

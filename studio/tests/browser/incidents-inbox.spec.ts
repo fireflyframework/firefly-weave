@@ -572,6 +572,57 @@ for (const viewport of [
       await expect.poll(lists).toBe(before + 2);
     });
 
+    test("a reload already on its way when Resolve incident opens never changes the incident under it", async ({
+      page,
+    }) => {
+      await page.clock.install();
+      const { items, lists } = await inbox(page, [
+        "incident.read",
+        "incident.resolve",
+      ]);
+      const matches: string[] = [];
+      await page.route(`${environment}/incidents/${active}/resolve`, (r) => {
+        matches.push(r.request().headers()["if-match"]);
+        return r.fulfill({
+          json: incident(active, { status: "resolved", revision: 8 }),
+        });
+      });
+      let hold: Promise<void> | null = null;
+      await page.route(`${environment}/incidents?*`, async (r) => {
+        await hold;
+        await r.fallback();
+      });
+      await page.goto("/operate/incidents");
+      await expect(rows(page)).toHaveCount(1);
+      await page
+        .getByRole("button", {
+          name: "Open incident WV-TASK-AMBIGUOUS at charge",
+        })
+        .click();
+      let release!: () => void;
+      hold = new Promise<void>((resolve) => (release = resolve));
+      const before = lists();
+      const requested = page.waitForRequest((request) =>
+        /\/incidents\?/.test(request.url()),
+      );
+      await page.clock.fastForward(15_500);
+      await requested;
+      // The reload is on its way when the person opens Resolve incident.
+      await page
+        .getByRole("button", { name: "Resolve incident", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Resolve incident" });
+      await expect(dialog).toBeVisible();
+      items[0] = { ...items[0], revision: 7 };
+      hold = null;
+      release();
+      await expect.poll(lists).toBe(before + 1);
+      // The decision is sent with the revision the person looked at.
+      await endTheRun(page);
+      await expect(page.getByText("Incident resolved.")).toBeVisible();
+      expect(matches).toEqual(['"3"']);
+    });
+
     test("a refused list shows the access it needs until the list answers", async ({
       page,
     }) => {
