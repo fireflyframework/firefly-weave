@@ -87,6 +87,8 @@ SPDX-License-Identifier: Apache-2.0
   does not run: `unavailable: true`, `reason: ir_unsupported`, and
   `missing_features`. SDKs and CLIs older than this release reject such a page;
   upgrade them together with the server.
+- Studio no longer marks a workflow it just opened or created as Unsaved before
+  any edit when it is not connected to a platform.
 
 ## 0.1.0a14
 
