@@ -115,6 +115,7 @@ CONVERSION_VALUES: tuple[str | bool | int | float, ...] = (
     2.0,
     -0.0,
     0.1,
+    0.30000000000000004,
     1.5,
     -2.5,
     100.0,
