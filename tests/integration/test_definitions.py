@@ -350,14 +350,9 @@ async def test_activation_retirement_and_environment_pins(author, headers, proje
     assert detail.status_code == 200
 
 
-async def test_activation_refuses_language_features_the_platform_does_not_run(
-    author, headers, project_url, env_url, monkeypatch
-):
-    from firefly_weave.contracts import language_features
-
-    greeting = {
-        "format": "yaml",
-        "source": """apiVersion: weave/v1alpha1
+GREETING = {
+    "format": "yaml",
+    "source": """apiVersion: weave/v1alpha1
 kind: Workflow
 metadata: {name: greeting, version: 1.0.0}
 spec:
@@ -369,8 +364,15 @@ spec:
       value: {op: {name: concat, args: [{literal: "Hello "}, {ref: /input/name}]}}
   output: {ref: /steps/hello/output}
 """,
-    }
-    published = await publish(author, headers, project_url, greeting, key="publish-greeting")
+}
+
+
+async def test_activation_refuses_language_features_the_platform_does_not_run(
+    author, headers, project_url, env_url, monkeypatch
+):
+    from firefly_weave.contracts import language_features
+
+    published = await publish(author, headers, project_url, GREETING, key="publish-greeting")
     assert published.status_code == 201, published.text
     body = {
         "version_id": published.json()["id"],
@@ -389,6 +391,44 @@ spec:
     monkeypatch.undo()
     accepted = await author[0].post(url, headers={**headers, "Idempotency-Key": "current-platform"}, json=body)
     assert accepted.status_code == 201, accepted.text
+
+
+async def test_catalog_reads_answer_ir_unsupported_until_the_platform_runs_the_features(
+    author, headers, project_url, monkeypatch
+):
+    from pydantic import TypeAdapter
+
+    from firefly_weave.contracts import language_features
+    from firefly_weave.contracts.surface import OPERATIONS
+
+    published = await publish(author, headers, project_url, GREETING, key="publish-greeting")
+    assert published.status_code == 201, published.text
+    identifier = published.json()["id"]
+    unsupported = {"reason": "ir_unsupported", "missing_features": ["text.concat"]}
+    # A platform rolled back to a release that does not run text.concat.
+    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", ())
+    read = await author[0].get(project_url + "/workflows/" + identifier, headers=headers)
+    assert read.status_code == 422, read.text
+    assert (read.json()["code"], read.json()["result"]) == ("WV-IR-UNSUPPORTED", unsupported)
+    listed = await author[0].get(project_url + "/workflows", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"] == [{"id": identifier, "unavailable": True, **unsupported}]
+    # Clients read the page with the published operation contract.
+    page = TypeAdapter(OPERATIONS["definitions.list"].response).validate_json(listed.text)
+    assert [type(item).__name__ for item in page.items] == ["UnsupportedResource"]
+    replay = await publish(author, headers, project_url, GREETING, key="publish-greeting")
+    assert replay.status_code == 422, replay.text
+    assert (replay.json()["code"], replay.json()["result"]) == ("WV-IR-UNSUPPORTED", unsupported)
+    # Nothing was recorded: after an upgrade the same reads answer normally.
+    monkeypatch.undo()
+    read = await author[0].get(project_url + "/workflows/" + identifier, headers=headers)
+    assert read.status_code == 200, read.text
+    listed = await author[0].get(project_url + "/workflows", headers=headers)
+    assert [item["id"] for item in listed.json()["items"]] == [identifier]
+    assert "unavailable" not in listed.json()["items"][0]
+    replay = await publish(author, headers, project_url, GREETING, key="publish-greeting")
+    assert replay.status_code == published.status_code, replay.text
+    assert replay.json() == published.json()
 
 
 async def test_service_checks_actual_project_scope(services, author, access_db, publication_request):
