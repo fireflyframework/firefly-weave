@@ -64,6 +64,11 @@ const invalidQueries = [
   "limit=101",
   "status=canceled",
   "started_after=2026-10-07T12:00:00+02:00",
+  // An offset can push the instant past year 9999 or before year 1.
+  "started_after=9999-12-31T23:59:59-23:59",
+  "started_before=9999-12-31T23:59:59-01:00",
+  "started_after=0001-01-01T00:00:00%2B23:59",
+  "started_before=0001-01-01T00:00:00%2B00:01",
 ];
 /** The cursor's payload: base64url of the issued bound and offset. */
 const decodeCursor = (cursor: string) => {
@@ -169,6 +174,25 @@ describe("run summaries", () => {
         body: { code: "WV-FILTER" },
       });
     for (const query of invalidQueries)
+      expect(answerRunViews(`/run-summaries?${query}`), query).toMatchObject({
+        status: 422,
+        body: { code: "WV-VALIDATION" },
+      });
+  });
+  it("accepts the first and last representable instants and refuses offsets that leave them", () => {
+    for (const query of [
+      "started_after=0001-01-01T00:00:00Z",
+      "started_after=0001-01-01T01:00:00%2B01:00",
+      "started_before=9999-12-31T23:59:59.999999Z",
+      "started_before=9999-12-31T22:59:59-01:00",
+    ])
+      expect(answerRunViews(`/run-summaries?${query}`)?.status, query).toBe(
+        200,
+      );
+    for (const query of [
+      "started_after=0001-01-01T00:00:00%2B00:01",
+      "started_before=9999-12-31T23:59:59-00:01",
+    ])
       expect(answerRunViews(`/run-summaries?${query}`), query).toMatchObject({
         status: 422,
         body: { code: "WV-VALIDATION" },
@@ -444,6 +468,13 @@ describe.skipIf(!pythonAvailable)("query decisions match parse_query", () => {
     "started_after=2026-01-01T00:00:00.000001Z&started_before=2027-02-05T00:00:00.000001Z",
     "started_after=2028-02-29T00:00:00Z",
     "started_after=0001-01-01T00:00:00Z",
+    "started_after=0001-01-01T01:00:00%2B01:00",
+    "started_before=9999-12-31T23:59:59.999999Z",
+    "started_before=9999-12-31T23:59:59.9999999Z",
+    "started_before=9999-12-31T22:59:59-01:00",
+    "started_after=9999-12-31T23:59:59Z&started_before=9999-12-31T23:59:59.999999Z",
+    "started_after=0001-01-01T23:59:59-23:59",
+    "started_after=0001-01-02T00:00:00%2B23:59",
     "caller_run_id=1C0D7F8A-4D66-4E7C-8B62-5A2C1D3E8F12",
     "order=started_asc&include_archived=true",
     "limit=0100",
@@ -460,6 +491,13 @@ describe.skipIf(!pythonAvailable)("query decisions match parse_query", () => {
     "started_after=2026-02-30T00:00:00Z",
     "started_after=2027-02-29T00:00:00Z",
     "started_after=0000-01-01T00:00:00Z",
+    "started_after=9999-12-31T23:59:59-23:59",
+    "started_after=9999-12-31T23:59:59-01:00",
+    "started_before=9999-12-31T23:59:59-00:01",
+    "started_after=0001-01-01T00:00:00%2B23:59",
+    "started_after=0001-01-01T00:00:00%2B00:01",
+    "started_before=0001-01-01T00:00:00%2B00:01",
+    "started_after=0001-01-01T00:00:00%2B24:00",
     "started_after=2026-04-31T00:00:00Z",
     "started_after=2026-00-10T00:00:00Z",
     "started_after=2026-10-00T00:00:00Z",

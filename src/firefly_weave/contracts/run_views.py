@@ -293,7 +293,13 @@ class RunSummaryQuery(ContractModel):
     @field_validator("started_after", "started_before")
     @classmethod
     def utc(cls, value: datetime | None) -> datetime | None:
-        return None if value is None else value.astimezone(UTC)
+        if value is None:
+            return None
+        try:
+            return value.astimezone(UTC)
+        except OverflowError:
+            # An offset can push the instant past year 9999 or before year 1; that is a bad value, not a server error.
+            raise ValueError("The time is outside the supported range") from None
 
     @model_validator(mode="after")
     def coherent(self) -> RunSummaryQuery:

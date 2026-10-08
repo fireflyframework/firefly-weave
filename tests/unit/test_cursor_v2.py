@@ -132,6 +132,11 @@ def test_contradictory_filters_answer_wv_filter(raw):
         "started_after=2026-10-07T12:00:00",
         # An unencoded "+" decodes to a space, so the offset is lost: clients must encode or send UTC.
         "started_after=2026-10-07T12:00:00+02:00",
+        # An offset that moves the instant past year 9999 or before year 1 is a bad value, not a server error.
+        "started_after=9999-12-31T23:59:59-23:59",
+        "started_before=9999-12-31T23:59:59-01:00",
+        "started_after=0001-01-01T00:00:00%2B23:59",
+        "started_before=0001-01-01T00:00:00%2B00:01",
         "&".join(["status=queued"] * 9),
     ],
 )
@@ -139,3 +144,17 @@ def test_invalid_values_answer_wv_validation(raw):
     # ValidationError is a ValueError: the error advice answers both with 422 WV-VALIDATION.
     with pytest.raises(ValueError):
         parse_query(QueryParams(raw), RunSummaryQuery)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "started_after=0001-01-01T00:00:00Z",
+        "started_after=0001-01-01T01:00:00%2B01:00",
+        "started_before=9999-12-31T23:59:59.999999Z",
+        "started_before=9999-12-31T22:59:59-01:00",
+    ],
+)
+def test_time_filters_accept_the_first_and_last_representable_instants(raw):
+    query = parse_query(QueryParams(raw), RunSummaryQuery)
+    assert (query.started_after or query.started_before) is not None

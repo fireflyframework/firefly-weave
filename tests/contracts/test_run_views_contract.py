@@ -426,6 +426,11 @@ def test_contradictory_filters_are_filter_errors(query):
         {"status": ["running"] * 9},
         {"status": ["canceled"]},
         {"started_after": "2026-10-07T12:00:00"},
+        # Offsets that push the UTC instant past year 9999 or before year 1 are bad values, not server errors.
+        {"started_after": "9999-12-31T23:59:59-23:59"},
+        {"started_before": "9999-12-31T23:59:59-01:00"},
+        {"started_after": "0001-01-01T00:00:00+23:59"},
+        {"started_before": "0001-01-01T00:00:00+00:01"},
         {"limit": 0},
         {"limit": 101},
         {"workflow": "bad name"},

@@ -63,6 +63,9 @@ const instant =
 const cursorPattern = /^[A-Za-z0-9_-]+$/;
 /** 400 days, in microseconds: the server compares instants to the microsecond. */
 const maxRange = BigInt(400 * 86_400_000) * 1000n;
+/** 0001-01-01T00:00:00Z to 9999-12-31T23:59:59.999999Z: the UTC instants the server can hold. */
+const firstMicros = -62_135_596_800_000_000n;
+const lastMicros = 253_402_300_799_999_999n;
 
 const problem = (
   status: number,
@@ -182,8 +185,9 @@ const cursorOf = (values: Values) =>
 
 /**
  * Microseconds since the epoch, with the server's rules: a real calendar
- * date, a 24-hour clock, offsets up to 23:59, and fractions past six digits
- * truncated.
+ * date, a 24-hour clock, offsets up to 23:59, fractions past six digits
+ * truncated, and a UTC instant between year 1 and year 9999 (an offset can
+ * push a local time outside it).
  */
 function instantMicros(value: string): bigint {
   const match = instant.exec(value);
@@ -212,7 +216,10 @@ function instantMicros(value: string): bigint {
       ? 0
       : (sign === "-" ? -1 : 1) * (offsetHour * 60 + offsetMinute);
   const micros = (digits ?? "").padEnd(6, "0").slice(0, 6);
-  return BigInt(local.getTime() - offset * 60_000) * 1000n + BigInt(micros);
+  const utc =
+    BigInt(local.getTime() - offset * 60_000) * 1000n + BigInt(micros);
+  if (utc < firstMicros || utc > lastMicros) throw invalid("Invalid timestamp");
+  return utc;
 }
 function timeOf(values: Values, key: string): bigint | undefined {
   const value = text(values, key, instant);
