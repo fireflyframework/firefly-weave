@@ -65,8 +65,11 @@ SPDX-License-Identifier: Apache-2.0
    1X above and below. The drawer rule repeats Material's own selector so this later stylesheet wins. */
 .md-header__button.md-logo img,
 .md-nav__title .md-nav__button.md-logo img { height: 25.28px; width: auto; }
-/* The lockup names the product; the page title still appears on scroll. */
-.md-header__title .md-header__topic:first-child { visibility: hidden; }
+/* Where the header shows the lockup, it names the product; narrower screens keep the site name. The page title still
+   appears on scroll. */
+@media screen and (min-width: 76.25em) {
+  .md-header__title .md-header__topic:first-child { visibility: hidden; }
+}
 .md-header__title { font-weight: 600; letter-spacing: -.025em; }
 .md-grid { max-width: 76rem; }
 .md-typeset { font-size: .82rem; line-height: 1.7; }
