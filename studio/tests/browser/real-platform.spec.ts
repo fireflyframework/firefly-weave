@@ -42,11 +42,13 @@ SPDX-License-Identifier: Apache-2.0
 // studio/dist/studio/browser. Every test starts its own host with a fresh
 // WEAVE_CONFIG_HOME, so the developer's saved platforms are never read.
 //
-// The wizard saves sign-ins in the native credential store (on macOS the login
-// Keychain, service "firefly-weave"). Every test removes its platform through
-// the UI, which signs out and deletes the credential, and the suite checks that
-// no credential created by this run is left behind (leftovers are deleted by
-// their account binding, and only those this run created).
+// The wizard saves sign-ins in the native credential store, service
+// "firefly-weave": the login Keychain on macOS, the Secret Service on Linux and
+// the Credential Manager on Windows (../credential-store.ts). Every test
+// removes its platform through the UI, which signs out and deletes the
+// credential, and the suite checks that no credential created by this run is
+// left behind (leftovers are deleted by their account binding, and only those
+// this run created). The audit fails when the store is unavailable.
 //
 // Keycloak changes (a 20-second access token lifetime, ended sessions, an
 // extra unlinked person) are made with the realm's admin API; the access
@@ -59,12 +61,7 @@ SPDX-License-Identifier: Apache-2.0
 // the platform was set up from: set the platform up again after changing src/.
 import { selectChoice } from "./support";
 import { test, expect, Page, TestInfo } from "@playwright/test";
-import {
-  ChildProcess,
-  execFileSync,
-  spawn,
-  spawnSync,
-} from "node:child_process";
+import { ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   copyFileSync,
@@ -76,9 +73,14 @@ import {
   rmSync,
 } from "node:fs";
 import { createServer } from "node:net";
-import { platform as os, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DesignerPage } from "./designer-po";
+import {
+  credentialAccounts as storedAccounts,
+  credentialExists as stored,
+  deleteCredential,
+} from "../credential-store";
 import { openYaml } from "./integrations-po";
 import { command } from "./support";
 import { python, pythonAvailable, repository } from "../python-path";
@@ -256,33 +258,14 @@ async function pair(page: Page, host: Host, name: string) {
 
 // --- the system credential store -------------------------------------------------
 
-/** Account bindings of this service's generic passwords (attributes only). */
+/** Account bindings of this service in the system credential store (attributes only). */
 function credentialAccounts(): Set<string> {
-  const accounts = new Set<string>();
-  if (os() !== "darwin") return accounts;
-  const dump = execFileSync("security", ["dump-keychain"], {
-    encoding: "utf8",
-    maxBuffer: 256 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  for (const block of dump.split(/^keychain: /m)) {
-    if (!block.includes(`"svce"<blob>="${service}"`)) continue;
-    const account = block.match(/"acct"<blob>="([^"]*)"/)?.[1];
-    if (account) accounts.add(account);
-  }
-  return accounts;
+  return storedAccounts(service);
 }
 
-/** True when `security find-generic-password` still finds this binding. */
+/** True when the system credential store still holds this binding. */
 function credentialExists(account: string) {
-  if (os() !== "darwin") return false;
-  return (
-    spawnSync(
-      "security",
-      ["find-generic-password", "-s", service, "-a", account],
-      { stdio: "ignore" },
-    ).status === 0
-  );
+  return stored(service, account);
 }
 
 let baseline = new Set<string>();
@@ -674,12 +657,7 @@ test.afterEach(async ({}, info) => {
 test.afterAll(() => {
   // Delete only bindings this run created, then fail if any had to be.
   const left = leftovers();
-  for (const account of left)
-    spawnSync(
-      "security",
-      ["delete-generic-password", "-s", service, "-a", account],
-      { stdio: "ignore" },
-    );
+  for (const account of left) deleteCredential(service, account);
   expect(left, "credentials this run left in the system store").toEqual([]);
 });
 
