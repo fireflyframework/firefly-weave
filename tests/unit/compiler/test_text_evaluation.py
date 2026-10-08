@@ -71,7 +71,7 @@ def test_join_of_an_empty_list_is_empty_text_and_one_item_has_no_separator():
 
 
 def test_concat_adds_no_normalization_and_no_locale():
-    assert evaluate(op("concat", lit("é"), lit(1000000), lit(-0.5)), {}) == "é1000000-0.5"
+    assert evaluate(op("concat", lit("e\u0301"), lit(1000000), lit(-0.5)), {}) == "e\u0301" + "1000000-0.5"
 
 
 @pytest.mark.parametrize(
