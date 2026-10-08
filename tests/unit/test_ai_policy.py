@@ -110,6 +110,18 @@ def test_invalid_endpoints_are_refused(change):
         ai_policy.parse(document({**OLLAMA, **change}), origins())
 
 
+@pytest.mark.parametrize(
+    "url",
+    ["https://169.254.169.254/v1", "https://[::ffff:169.254.169.254]/v1", "https://[2002:a9fe:a9fe::1]/v1"],
+)
+def test_always_refused_address_literals_are_never_model_endpoints(url):
+    with pytest.raises(ai_policy.PolicyInvalid, match="endpoints/0"):
+        ai_policy.parse(document({**OPENAI, "url": url}))
+    with pytest.raises(ai_policy.PolicyInvalid):
+        ai_policy.from_pairs({("openai-chat", "fixture")}, [url])
+    assert ai_policy.parse(document({**OPENAI, "url": "https://[2606:4700::1111]/v1"})).endpoints
+
+
 def test_duplicate_keys_large_files_and_other_versions_are_refused():
     with pytest.raises(ai_policy.PolicyInvalid, match="strict JSON"):
         ai_policy.parse(b'{"version": 2, "version": 2, "endpoints": []}')
@@ -131,6 +143,23 @@ def test_version_one_keeps_its_exact_pairs_and_warns(caplog):
         ai_policy.parse(json.dumps({**legacy, "endpoints": ["http://ollama:11434/v1"]}).encode(), origins())
     with pytest.raises(ai_policy.PolicyInvalid):
         ai_policy.parse(json.dumps({**legacy, "endpoints": ["https://metadata/v1"]}).encode())
+
+
+def test_a_repeated_version_one_endpoint_is_listed_once():
+    url = "https://api.openai.com/v1"
+    legacy = {"models": [{"provider": "openai-chat", "model": "gpt-4o"}], "endpoints": [url, url]}
+    assert [entry.url for entry in ai_policy.parse(json.dumps(legacy).encode()).endpoints] == [url]
+    assert [entry.url for entry in ai_policy.from_pairs([("openai-chat", "fixture")], [url, url]).endpoints] == [url]
+
+
+def test_unparsable_urls_and_deep_nesting_are_policy_errors():
+    legacy = {"models": [{"provider": "openai-chat", "model": "gpt-4o"}], "endpoints": ["https://[bad/v1"]}
+    with pytest.raises(ai_policy.PolicyInvalid):
+        ai_policy.parse(json.dumps(legacy).encode())
+    with pytest.raises(ai_policy.PolicyInvalid):
+        ai_policy.from_pairs([("openai-chat", "fixture")], ["https://[bad/v1"])
+    with pytest.raises(ai_policy.PolicyInvalid, match="strict JSON"):
+        ai_policy.parse(b"[" * 60000)
 
 
 def test_in_code_pairs_behave_like_version_one():
@@ -165,6 +194,32 @@ def test_the_policy_file_reloads_on_change_and_fails_closed(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_a_reload_returns_its_own_policy_while_another_caller_fails(tmp_path, monkeypatch):
+    path = tmp_path / "ai-policy.json"
+    path.write_bytes(ai_policy.render([OLLAMA]))
+    path.chmod(0o644)
+    source = ai_policy.PolicyFile(path, origins())
+    emit, raced = ai_policy._emit, []
+
+    def racing_emit(level, record):
+        emit(level, record)
+        if not raced:
+            # Another caller sees a broken edit before this reload returns.
+            raced.append(True)
+            path.write_text("{ not json")
+            os.utime(path, ns=(3, 3))
+            with pytest.raises(ai_policy.PolicyInvalid):
+                source.current()
+
+    path.write_bytes(ai_policy.render([{**OLLAMA, "models": ["qwen3:4b"]}]))
+    os.utime(path, ns=(2, 2))
+    monkeypatch.setattr(ai_policy, "_emit", racing_emit)
+    policy = source.current()
+    assert raced and policy is not None
+    assert policy.entry_for("http://ollama:11434/v1").models == ("qwen3:4b",)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
 def test_the_policy_file_must_not_be_writable_by_others_or_a_link(tmp_path):
     path = tmp_path / "ai-policy.json"
     path.write_bytes(ai_policy.render([OLLAMA]))
@@ -176,3 +231,7 @@ def test_the_policy_file_must_not_be_writable_by_others_or_a_link(tmp_path):
     link.symlink_to(path)
     with pytest.raises(ai_policy.PolicyInvalid, match="symbolic link"):
         ai_policy.read_file(link)
+    with pytest.raises(ai_policy.PolicyInvalid, match="regular file"):
+        ai_policy.read_file(tmp_path)
+    with pytest.raises(ai_policy.PolicyInvalid, match="missing or unreadable"):
+        ai_policy.read_file(tmp_path / "missing.json")

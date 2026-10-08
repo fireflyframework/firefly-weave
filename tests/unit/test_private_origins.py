@@ -294,6 +294,37 @@ def test_read_file_refuses_loose_or_linked_files(tmp_path):
             po.read_file(path)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permissions and symbolic links")
+def test_guarded_reads_raise_the_callers_error_with_its_subject(tmp_path):
+    class SampleInvalid(ValueError):
+        pass
+
+    good = tmp_path / "sample.json"
+    good.write_bytes(b"0123456789")
+    good.chmod(0o444)
+    assert po.read_guarded_file(good, 4, SampleInvalid, "sample file") == b"01234"
+    loose = tmp_path / "loose.json"
+    loose.write_bytes(b"{}")
+    loose.chmod(0o666)
+    link = tmp_path / "link.json"
+    link.symlink_to(good)
+    refusals = {
+        loose: "must not be writable by other users.",
+        link: "must not be a symbolic link.",
+        tmp_path: "must be a regular file.",
+        tmp_path / "missing.json": "is missing or unreadable.",
+    }
+    for path, reason in refusals.items():
+        with pytest.raises(SampleInvalid) as guarded:
+            po.read_guarded_file(path, 4, SampleInvalid, "sample file")
+        assert str(guarded.value) == f"The sample file {reason}"
+        with pytest.raises(po.PrivateOriginsInvalid) as private:
+            po.read_file(path)
+        assert str(private.value) == f"The private-origin file {reason}"
+    with pytest.raises(ValueError, match="Duplicate key"):
+        json.loads('{"a": 1, "a": 2}', object_pairs_hook=po.unique_keys)
+
+
 def test_plain_http_reaches_an_exact_entry_inside_its_network():
     approved = policy(entry())
     found = approved.check("http-connector", ACME + "/orders/O-1/status", [FIXTURE], local=not_local)

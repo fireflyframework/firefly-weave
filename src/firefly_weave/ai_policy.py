@@ -31,7 +31,6 @@ import json
 import logging
 import os
 import re
-import stat
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -100,8 +99,18 @@ class PolicyEndpoint(BaseModel):
             or parsed.port == 0
         ):
             raise ValueError("Use an http or https endpoint URL without credentials, query or fragment")
-        if parsed.hostname.rstrip(".") in private_origins.METADATA_HOSTS:
+        host = parsed.hostname.rstrip(".")
+        if host in private_origins.METADATA_HOSTS:
             raise ValueError("Metadata endpoints are never model endpoints")
+        try:
+            refused = private_origins.always_denied(host)
+        except ValueError:
+            # A host name: private origins check every address it resolves to before connecting.
+            refused = False
+        if refused:
+            raise ValueError(
+                "Link-local, metadata, multicast, unspecified and reserved addresses are never model endpoints"
+            )
         if parsed.scheme == "http" and self.credential != "none":
             raise ValueError("Plain HTTP endpoints use credential none")
         if self.ca_bundle is not None and (parsed.scheme != "https" or not Path(self.ca_bundle).is_absolute()):
@@ -166,21 +175,16 @@ class _VersionOne(BaseModel):
     endpoints: list[str] = Field(min_length=1, max_length=MAX_ENDPOINTS)
 
 
-def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("Duplicate key")
-        result[key] = value
-    return result
-
-
 def _version_one(pairs: frozenset[tuple[str, str]], urls: Iterable[str], sha256: str | None) -> AIPolicy:
     if not pairs or any(provider not in PROVIDERS for provider, _ in pairs):
         raise PolicyInvalid("The AI policy names an unsupported provider.")
     endpoints = []
-    for index, url in enumerate(sorted(urls)):
-        parsed = urlsplit(url)
+    # Version 1 listed endpoints as a set, so a repeated line still names one endpoint.
+    for index, url in enumerate(sorted(set(urls))):
+        try:
+            parsed = urlsplit(url)
+        except ValueError:
+            raise PolicyInvalid("Version 1 AI policy endpoints must be valid URLs.") from None
         if parsed.scheme != "https":
             raise PolicyInvalid("Version 1 AI policy endpoints must use HTTPS.")
         endpoints.append(
@@ -229,8 +233,8 @@ def parse(data: bytes, origins: private_origins.PrivateOrigins | None = None) ->
     if len(data) > MAX_FILE_BYTES:
         raise PolicyInvalid("The AI policy file is larger than 64 KiB.")
     try:
-        raw = json.loads(data, object_pairs_hook=_unique)
-    except (ValueError, UnicodeError):
+        raw = json.loads(data, object_pairs_hook=private_origins.unique_keys)
+    except (ValueError, UnicodeError, RecursionError):
         raise PolicyInvalid("The AI policy file is not strict JSON.") from None
     digest = hashlib.sha256(data).hexdigest()
     try:
@@ -261,22 +265,7 @@ def render(endpoints: Sequence[Mapping[str, Any]]) -> bytes:
 
 def read_file(path: Path) -> bytes:
     """Read the policy: a regular file, never a symbolic link, never writable by other users."""
-    if path.is_symlink():
-        raise PolicyInvalid("The AI policy file must not be a symbolic link.")
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    except OSError:
-        raise PolicyInvalid("The AI policy file is missing or unreadable.") from None
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode):
-            raise PolicyInvalid("The AI policy file must be a regular file.")
-        if os.name == "posix" and info.st_mode & 0o022:
-            raise PolicyInvalid("The AI policy file must not be writable by other users.")
-        with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            return stream.read(MAX_FILE_BYTES + 1)
-    finally:
-        os.close(descriptor)
+    return private_origins.read_guarded_file(path, MAX_FILE_BYTES, PolicyInvalid, "AI policy file")
 
 
 class PolicyFile:
@@ -297,9 +286,10 @@ class PolicyFile:
         except OSError:
             raise PolicyInvalid("The AI policy file is missing or unreadable.") from None
         stamp = (info.st_mtime_ns, info.st_size)
-        if self._policy is None or stamp != self._stamp:
+        policy = self._policy
+        if policy is None or stamp != self._stamp:
             self._policy = None
             policy = parse(read_file(self.path), self.origins)
             self._policy, self._stamp = policy, stamp
             _emit(logging.INFO, {"action": "ai_policy.loaded", "sha256": policy.sha256})
-        return self._policy
+        return policy
