@@ -1,0 +1,55 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// "Try the new editor": a per-viewer preference stored under the ui: prefix,
+// and `?editor=next` in the URL for tests. It is off unless turned on.
+import { uiKey } from "./browser-store";
+
+export const EDITOR_NEXT_KEY = uiKey("weave.editorNext");
+export type FlagStorage = Pick<Storage, "getItem" | "setItem">;
+const defaultStorage = (): FlagStorage | null =>
+  typeof localStorage === "undefined" ? null : localStorage;
+const currentSearch = () =>
+  typeof location === "undefined" ? "" : location.search;
+
+/** True when this viewer uses the new editor. */
+export function editorNextEnabled(
+  search: string = currentSearch(),
+  storage: () => FlagStorage | null = defaultStorage,
+): boolean {
+  if (new URLSearchParams(search).get("editor") === "next") return true;
+  try {
+    return storage()?.getItem(EDITOR_NEXT_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+/** Saves the preference; false when browser storage refuses it. */
+export function setEditorNext(
+  enabled: boolean,
+  storage: () => FlagStorage | null = defaultStorage,
+): boolean {
+  try {
+    const store = storage();
+    if (!store) return false;
+    store.setItem(EDITOR_NEXT_KEY, enabled ? "true" : "false");
+    return true;
+  } catch {
+    return false;
+  }
+}
