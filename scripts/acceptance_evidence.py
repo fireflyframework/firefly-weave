@@ -55,8 +55,16 @@ def _contains(path: Path, needles: Sequence[bytes], overlap: int) -> bool:
     return False
 
 
+def _unreadable(error: OSError) -> None:
+    """os.walk skips what it cannot list; a scan that gates uploads must fail instead."""
+    raise error
+
+
 def scan_tree(roots: Sequence[Path], canaries: Sequence[str], exclude: Sequence[Path] = ()) -> Scan:
-    """Count the files under ``roots`` (outside ``exclude``) and how many hold any canary."""
+    """Count the files under ``roots`` (outside ``exclude``) and how many hold any canary.
+
+    A directory or file that cannot be read raises, so a clean result always covers the whole tree.
+    """
     needles = [value.encode() for value in dict.fromkeys(canaries) if value]
     overlap = max((len(needle) for needle in needles), default=1) - 1
     skipped = {path.resolve() for path in exclude}
@@ -64,7 +72,7 @@ def scan_tree(roots: Sequence[Path], canaries: Sequence[str], exclude: Sequence[
     for root in roots:
         if not root.is_dir():
             continue
-        for current, directories, names in os.walk(root, followlinks=False):
+        for current, directories, names in os.walk(root, onerror=_unreadable, followlinks=False):
             here = Path(current)
             directories[:] = sorted(name for name in directories if (here / name).resolve() not in skipped)
             for name in sorted(names):

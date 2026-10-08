@@ -19,6 +19,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -68,6 +69,23 @@ def test_the_scan_finds_canaries_across_chunks_and_skips_excluded_trees(tmp_path
     found = evidence.scan_tree([tmp_path / "evidence", tmp_path / "private"], [CANARY], exclude=[people])
     assert found == evidence.Scan(files=2, hits=1)
     assert evidence.scan_tree([tmp_path / "evidence"], []) == evidence.Scan(files=2, hits=0)
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or os.geteuid() == 0,
+    reason="needs POSIX permissions that bind the current user",
+)
+def test_the_scan_fails_closed_on_a_directory_it_cannot_read(tmp_path):
+    locked = tmp_path / "evidence" / "locked"
+    locked.mkdir(parents=True)
+    (locked / "api.log").write_text(CANARY)
+    locked.chmod(0)
+    try:
+        with pytest.raises(PermissionError) as raised:
+            evidence.scan_tree([tmp_path / "evidence"], [CANARY])
+    finally:
+        locked.chmod(0o700)
+    assert CANARY not in str(raised.value)
 
 
 def test_journey_results_report_passes_partials_skips_and_gaps():
