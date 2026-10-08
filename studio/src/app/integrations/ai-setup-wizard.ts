@@ -111,7 +111,7 @@ import {
     }
     .settings-progress [aria-current] {
       color: var(--text);
-      font-weight: 650;
+      font-weight: 600;
     }
     .step-number {
       display: grid;

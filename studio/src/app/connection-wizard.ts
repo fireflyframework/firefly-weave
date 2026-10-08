@@ -1384,7 +1384,7 @@ const record = (value: unknown): Record<string, unknown> =>
       }
       .device-code {
         font:
-          650 28px/1.2 ui-monospace,
+          600 28px/1.2 ui-monospace,
           SFMono-Regular,
           Consolas,
           monospace;

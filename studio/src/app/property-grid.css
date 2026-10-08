@@ -112,7 +112,7 @@ SPDX-License-Identifier: Apache-2.0
   font-weight: 600;
 }
 .mode-switch button:disabled[aria-checked="true"] {
-  background: var(--disabled-ink);
+  background: var(--muted); /* 9.61:1 with --on-accent */
   color: var(--on-accent);
 }
 .expression-editor {

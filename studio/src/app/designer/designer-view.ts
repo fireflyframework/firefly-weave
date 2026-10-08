@@ -347,7 +347,6 @@ import type { App } from "../app";
             @for (kind of group.kinds; track kind) {
               <button
                 class="palette-step"
-                [class.human]="kind === 'humanTask'"
                 [draggable]="!h.model.readonly"
                 [attr.title]="h.description(kind)"
                 [attr.aria-description]="h.description(kind)"
@@ -632,7 +631,6 @@ import type { App } from "../app";
                       [fNodePosition]="h.nodePoint(node)"
                       class="graph-node"
                       [class.selected]="h.model.selected === node.step.id"
-                      [class.human]="node.step.kind === 'humanTask'"
                       [class.decision]="node.step.kind === 'switch'"
                       [class.dirty]="h.dirtyStep === node.step.id"
                       [class.has-error]="info.status === 'error'"

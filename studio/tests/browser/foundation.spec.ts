@@ -103,6 +103,33 @@ test.describe("1440x900", () => {
     });
   });
 
+  test("placeholders are drawn in --subtle at 4.5:1, not Chromium's grey", async ({
+    page,
+  }) => {
+    await offline(page);
+    await newWorkflow(page);
+    const search = page.getByPlaceholder("Search steps");
+    await expect(search).toBeVisible();
+    const look = await search.evaluate((input) => ({
+      color: getComputedStyle(input, "::placeholder").color,
+      opacity: getComputedStyle(input, "::placeholder").opacity,
+      background: getComputedStyle(input).backgroundColor,
+    }));
+    expect(look.color).toBe(await tokenColor(page, "--subtle"));
+    expect(look.opacity).toBe("1");
+    expect(contrast(look.color, look.background)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test("a misspelled token fails the test instead of passing by inheritance", async ({
+    page,
+  }) => {
+    await offline(page);
+    await expect(tokenColor(page, "--sutble")).rejects.toThrow(
+      "Design token --sutble is not defined on :root",
+    );
+    await expect(tokenColor(page, "--subtle")).resolves.toMatch(/^rgb\(/);
+  });
+
   test("a disabled primary is flat and legible, never a pressed slab", async ({
     page,
   }) => {
@@ -330,6 +357,7 @@ test.describe("1440x900", () => {
         (e: HTMLImageElement) => e.complete && e.naturalWidth > 0,
       ),
     ).toBe(true);
+    await page.evaluate(() => document.fonts.ready);
     expect(
       await page.evaluate(() => document.fonts.check("14px Manrope")),
     ).toBe(true);
@@ -351,6 +379,9 @@ test.describe("1440x900", () => {
     await expect(lockup).toBeVisible();
     await expect(mark).toBeHidden();
     expect(await drawn(lockup)).toMatchObject({ loaded: true, width: 200 });
+    // The box is reserved before the SVG loads (200 x 248.25/1427.4 = 34.8).
+    await expect(lockup).toHaveAttribute("width", "200");
+    await expect(lockup).toHaveAttribute("height", "35");
     // At 1280px and below the sidebar narrows: the 32px mark in a 44px box.
     await page.setViewportSize({ width: 1280, height: 720 });
     await expect(lockup).toBeHidden();

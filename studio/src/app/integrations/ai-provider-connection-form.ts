@@ -263,7 +263,7 @@ import {
     }
     .progress li[aria-current] {
       color: var(--text);
-      font-weight: 650;
+      font-weight: 600;
     }
     .number {
       display: grid;
@@ -349,7 +349,7 @@ import {
     dd {
       margin: 0;
       overflow-wrap: anywhere;
-      font-weight: 550;
+      font-weight: 500;
     }
     .review-note {
       border-left: 3px solid var(--accent);

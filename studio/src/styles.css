@@ -289,7 +289,7 @@ button.icon-button:hover {
   background: var(--hover);
 }
 /* Disabled is a flat token, never opacity: a disabled primary must not read
-   as pressed, and its label stays legible (4.67:1). */
+   as pressed, and its label stays legible (5.38:1 on --disabled-bg). */
 :is(button, .button):is(:disabled, [aria-disabled="true"]),
 :is(button, .button):is(:disabled, [aria-disabled="true"]):hover {
   opacity: 1;
@@ -367,6 +367,12 @@ input,
 select,
 textarea {
   accent-color: var(--accent);
+}
+/* Chromium draws a placeholder in #757575 (3.55:1 on --raised); --subtle is
+   5.44:1 on --hover, the lowest field surface. */
+::placeholder {
+  color: var(--subtle);
+  opacity: 1;
 }
 input:where(
     :not([type="checkbox"], [type="radio"], [type="range"], [type="file"])
@@ -835,7 +841,7 @@ pre {
   border-bottom: 0;
 }
 /* A selected row keeps every pill visible: pills carry a tone border, and
-   the row a jade bar. */
+   the row an amber bar (the current-item indicator). */
 .resource-row.selected {
   background: var(--selected);
   box-shadow: inset 3px 0 0 var(--accent);
@@ -947,11 +953,6 @@ pre {
   align-items: center;
   justify-content: center;
   flex: none;
-}
-.human .step-icon {
-  background: var(--warning-bg);
-  border-color: var(--warning-bd);
-  color: var(--warning-ink);
 }
 .warning {
   color: var(--warning-ink);
@@ -2443,7 +2444,7 @@ input[type="file"][hidden] {
   }
 }
 @media (max-width: 767px) {
-  /* Beside the navigation rail, never over it (both are forest). */
+  /* Beside the navigation rail, never over it. */
   .toast-region {
     left: calc(var(--shell-left, 0px) + var(--space-4));
     right: var(--space-4);
@@ -3024,7 +3025,7 @@ details.disclosure[open] > summary::before {
   position: relative;
   overflow: hidden;
   container: canvas / inline-size;
-  background-image: radial-gradient(var(--border) 0.8px, transparent 0.8px);
+  background-image: radial-gradient(var(--canvas-dot) 0.8px, transparent 0.8px);
   background-size: 24px 24px;
   touch-action: none;
 }
@@ -3070,7 +3071,7 @@ details.disclosure[open] > summary::before {
 .edges .edge-arrow {
   fill: var(--flow-line);
 }
-/* The live thread: the path the simulated run took is gold. */
+/* The live thread: the path the simulated run took is drawn in --live. */
 .edges .edge.edge-taken {
   stroke: var(--live);
   stroke-width: 2.5;
@@ -3127,12 +3128,6 @@ details.disclosure[open] > summary::before {
 .graph-node.selected .node-body {
   border: 2px solid var(--accent);
   box-shadow: 0 0 0 4px var(--accent-glow);
-}
-.graph-node.human .node-body {
-  border-color: var(--warning-bd);
-}
-.graph-node.human.selected .node-body {
-  border-color: var(--accent);
 }
 /* Edits in the inspector that aren't applied yet. */
 .graph-node.dirty .node-body {

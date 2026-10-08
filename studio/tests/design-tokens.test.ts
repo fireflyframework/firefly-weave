@@ -17,13 +17,14 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const source = (path: string) =>
   readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
+const appDir = fileURLToPath(new URL("../src/app", import.meta.url));
 /** Every component stylesheet, template and script under src/app. */
-function appFiles(dir = fileURLToPath(new URL("../src/app", import.meta.url))) {
+function appFiles(dir = appDir) {
   const found: string[] = [];
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
@@ -33,6 +34,56 @@ function appFiles(dir = fileURLToPath(new URL("../src/app", import.meta.url))) {
   return found;
 }
 const styles = source("styles.css");
+
+/**
+ * The string literals that start at `from`: one literal, or the literals of an
+ * array (the shape of a component's `styles`).
+ */
+function literals(text: string, from: number): string[] {
+  const found: string[] = [];
+  let i = from;
+  const skip = () => {
+    while (/[\s,]/.test(text[i] ?? "")) i++;
+  };
+  const read = () => {
+    const quote = text[i++];
+    let value = "";
+    while (i < text.length && text[i] !== quote) {
+      if (text[i] === "\\") i++;
+      value += text[i++];
+    }
+    i++;
+    return value;
+  };
+  skip();
+  if (/[`'"]/.test(text[i] ?? "")) found.push(read());
+  else if (text[i] === "[") {
+    i++;
+    for (skip(); i < text.length && text[i] !== "]"; skip()) {
+      if (/[`'"]/.test(text[i])) found.push(read());
+      else i++;
+    }
+  }
+  return found;
+}
+/**
+ * The CSS a component file carries: a .css file whole; a .ts file's `styles`
+ * blocks and its `const …Styles = \`…\`` stylesheets.
+ */
+function componentCss(file: string): string[] {
+  const text = readFileSync(file, "utf8");
+  if (file.endsWith(".css")) return [text];
+  if (!file.endsWith(".ts")) return [];
+  return [...text.matchAll(/\bstyles\s*:|\bconst\s+\w*[sS]tyles\s*=/g)].flatMap(
+    (m) => literals(text, m.index + m[0].length),
+  );
+}
+/** Every declaration in the component styles under src/app, by file. */
+const appDeclarations = appFiles().flatMap((file) =>
+  componentCss(file).flatMap((css) =>
+    declarations(css).map((d) => ({ file, ...d })),
+  ),
+);
 
 interface Declaration {
   /** Enclosing at-rules, outermost first. */
@@ -247,13 +298,49 @@ describe("design tokens", () => {
         expect(root.has(name), `${file} redefines ${name}`).toBe(false);
   });
 
+  it("reads the component styles under src/app (the rules below scan them)", () => {
+    const files = new Set(appDeclarations.map((d) => d.file));
+    // A .css file, a `styles: [...]` array, a `styles: \`...\`` literal and a
+    // shared `const …Styles` stylesheet: all four shapes must be found.
+    for (const name of [
+      "operations/operations-view.css",
+      "workspace-picker.ts",
+      "integrations/ai-setup-wizard.ts",
+      "integrations/http-action-styles.ts",
+    ])
+      expect([...files].some((f) => f.replace(/\\/g, "/").endsWith(name))).toBe(
+        true,
+      );
+    expect(appDeclarations.length).toBeGreaterThan(1500);
+  });
+
   it("uses only the weights Studio uses", () => {
+    const weights = ["400", "500", "600", "700"];
     const faces = all.filter((d) => d.selector !== "@font-face");
     for (const d of faces.filter((d) => d.property === "font-weight"))
-      expect(["400", "500", "600", "700", "inherit"]).toContain(d.value);
+      expect([...weights, "inherit"]).toContain(d.value);
     // Shorthands and type tokens follow the same rule.
     for (const d of faces.filter((d) => d.property.startsWith("--type-")))
       expect(d.value).toMatch(/^(400|500|600|700) /);
+    // Component styles follow it too: a weight off the scale (650, 550) would
+    // fall between the variable font's instances.
+    const component = appDeclarations.filter(
+      (d) => d.property === "font-weight",
+    );
+    expect(component.length).toBeGreaterThan(50);
+    expect(
+      component
+        .filter((d) => ![...weights, "inherit"].includes(d.value))
+        .map((d) => `${d.file}: ${d.selector} { font-weight: ${d.value} }`),
+    ).toEqual([]);
+    const shorthand = [...faces, ...appDeclarations].filter(
+      (d) => d.property === "font" && /^\d{3}\s/.test(d.value),
+    );
+    expect(
+      shorthand
+        .filter((d) => !weights.includes(d.value.slice(0, 3)))
+        .map((d) => `${d.selector} { font: ${d.value} }`),
+    ).toEqual([]);
     // The variable font covers the whole range it declares.
     for (const d of all.filter(
       (d) => d.selector === "@font-face" && d.property === "font-weight",
@@ -262,16 +349,36 @@ describe("design tokens", () => {
   });
 
   it("sets no text below 12px outside the canvas (wave 3 owns it)", () => {
-    const small = all.filter((d) => {
-      const size = /^([\d.]+)px$/.exec(d.value);
-      return (
-        d.property === "font-size" &&
-        !!size &&
-        Number(size[1]) < 12 &&
-        !/graph-flow|node-|canvas-chip/.test(d.selector)
-      );
-    });
+    const px = (d: { property: string; value: string }) => {
+      const size =
+        d.property === "font-size"
+          ? /^([\d.]+)px$/.exec(d.value)
+          : d.property === "font"
+            ? /^(?:\d{3}\s+)?([\d.]+)px\b/.exec(d.value)
+            : null;
+      return size ? Number(size[1]) : Infinity;
+    };
+    const canvas = (selector: string) =>
+      /graph-flow|node-|canvas-chip/.test(selector);
+    const small = all.filter((d) => px(d) < 12 && !canvas(d.selector));
     expect(small.map((d) => `${d.selector}: ${d.value}`)).toEqual([]);
+    // Component styles follow the rule too. These five 11px declarations
+    // predate the rule and are product sizes this change does not own: the
+    // list may only shrink, so a new one fails and a fixed one must leave it.
+    const known = [
+      "forms/ui/schema-designer.ts: .sd-json pre",
+      "operations/operations-view.css: .eyebrow",
+      "task-form.ts: .schema-map-row button, .schema-remove",
+      "task-form.ts: .schema-null",
+      "templates/new-menu.ts: .new-menu-list small",
+    ];
+    const name = (d: { file: string; selector: string }) =>
+      `${relative(appDir, d.file).replace(/\\/g, "/")}: ${d.selector.replace(/\s+/g, " ")}`;
+    const component = appDeclarations
+      .filter((d) => px(d) < 12 && !canvas(d.selector))
+      .map(name);
+    expect(component.filter((n) => !known.includes(n))).toEqual([]);
+    expect(known.filter((n) => !component.includes(n))).toEqual([]);
   });
 
   it("keeps text at 4.5:1 and boundaries at 3:1 on every surface", () => {
@@ -349,6 +456,28 @@ describe("design tokens", () => {
       expect(ratio(syntax, "--sunken"), syntax).toBeGreaterThanOrEqual(4.5);
     expect(ratio("--diff-add-ink", "--diff-add-bg")).toBeGreaterThanOrEqual(6);
     expect(ratio("--diff-del-ink", "--diff-del-bg")).toBeGreaterThanOrEqual(6);
+  });
+
+  it("draws every step kind alike, the canvas dots in --canvas-dot, and a disabled segment at 7:1", () => {
+    // Spec §2.1: no role colors. A Human task differs by icon and shape only.
+    const human = /\.human(?![\w-])/;
+    expect(all.filter((d) => human.test(d.selector))).toEqual([]);
+    expect(appDeclarations.filter((d) => human.test(d.selector))).toEqual([]);
+    // Spec §2.2: the dot grid is its own decorative token, not a border.
+    expect(
+      all.find(
+        (d) => d.selector === ".canvas" && d.property === "background-image",
+      )?.value,
+    ).toContain("var(--canvas-dot)");
+    // A checked segment of a disabled mode switch keeps 7:1 text on its fill.
+    const segment = appDeclarations.find(
+      (d) =>
+        d.file.endsWith("property-grid.css") &&
+        d.selector === '.mode-switch button:disabled[aria-checked="true"]' &&
+        d.property === "background",
+    );
+    expect(segment?.value).toMatch(/^var\(--muted\)/);
+    expect(ratio("--on-accent", "--muted")).toBeGreaterThanOrEqual(7);
   });
 
   it("styles disabled buttons with tokens, never opacity", () => {

@@ -256,6 +256,14 @@ export async function connected(
  */
 export async function tokenColor(page: Page, token: string): Promise<string> {
   return page.evaluate((name) => {
+    // An undefined token would make the probe inherit the body color, so a
+    // misspelled name could pass by accident: refuse it instead.
+    if (
+      getComputedStyle(document.documentElement)
+        .getPropertyValue(name)
+        .trim() === ""
+    )
+      throw new Error(`Design token ${name} is not defined on :root`);
     const probe = document.createElement("i");
     probe.style.color = `var(${name})`;
     document.body.append(probe);

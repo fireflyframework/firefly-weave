@@ -134,7 +134,9 @@ import {
         >
       </div>
       @if (error || store.mutationError) {
-        <p class="notice" role="alert">{{ error || store.mutationError }}</p>
+        <p class="notice" data-tone="danger" role="alert">
+          {{ error || store.mutationError }}
+        </p>
       }
       @if (store.mutationUncertain) {
         <p class="notice">

@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { test, expect } from "@playwright/test";
-import { connected, offline, selectChoice } from "./support";
+import { connected, offline, selectChoice, tokenColor } from "./support";
 
 const schema = JSON.parse(
   execFileSync(
@@ -845,6 +845,24 @@ for (const width of [1440, 390])
       await expect(
         page.getByText("Fixture reload unavailable", { exact: true }),
       ).toBeVisible();
+      // A failure is a danger notice: red bar, red ink on the red tint. The
+      // amber bar stays on the plain notices (it is the current-item cue).
+      const alert = page.getByRole("alert").filter({
+        hasText: "Fixture reload unavailable",
+      });
+      const look = await alert.evaluate((e) => {
+        const style = getComputedStyle(e);
+        return {
+          bar: style.borderLeftColor,
+          color: style.color,
+          background: style.backgroundColor,
+        };
+      });
+      expect(look).toEqual({
+        bar: await tokenColor(page, "--danger"),
+        color: await tokenColor(page, "--danger-ink"),
+        background: await tokenColor(page, "--danger-bg"),
+      });
       await expect(
         page.getByRole("button", {
           name: "Save target authority",
