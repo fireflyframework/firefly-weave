@@ -29,10 +29,11 @@ SPDX-License-Identifier: Apache-2.0
   and refuses to start when that file is malformed, a symbolic link, or writable
   by other users.
 - Parse `WEAVE_HTTP_PRIVATE_NETWORKS`, `WEAVE_MAIL_PRIVATE_NETWORKS`, and the
-  PostgreSQL private and plaintext network settings strictly at startup. A CIDR
-  with host bits set, or more than 128 networks, now stops the API; before, such
-  a value made requests fail when they used the setting. Reach is otherwise
-  unchanged.
+  PostgreSQL private and plaintext network settings strictly at startup: a CIDR
+  with host bits set, or more than 128 networks, in any of them stops the API.
+  Before, the HTTP and mail settings accepted a CIDR with host bits set and
+  failed the requests that used it, and the HTTP and PostgreSQL settings had no
+  limit. Reach is otherwise unchanged.
 - Connection test answers carry a new `encrypted` field. CLIs and SDKs older
   than this release cannot read `weave connections test` answers for HTTP
   connections from an upgraded server; upgrade the CLI and SDK together with the
