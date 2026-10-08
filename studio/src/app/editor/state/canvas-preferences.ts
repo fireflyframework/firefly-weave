@@ -18,7 +18,12 @@ SPDX-License-Identifier: Apache-2.0
 // The canvas's choices for this viewer, kept under the ui: prefix: they
 // hold no workflow data, so they stay when a platform signs out.
 import { uiKey } from "./browser-store";
-import { readUiFlag, writeUiFlag, type FlagStorage } from "./editor-flag";
+import {
+  readUiChoice,
+  readUiFlag,
+  writeUiFlag,
+  type FlagStorage,
+} from "./editor-flag";
 
 export const MINIMAP_KEY = uiKey("weave.canvas.minimap");
 
@@ -33,4 +38,27 @@ export function setMinimapPinned(
   storage?: () => FlagStorage | null,
 ): boolean {
   return writeUiFlag(MINIMAP_KEY, pinned, storage);
+}
+
+export const EDITOR_NAV_KEY = uiKey("weave.editor.navExpanded");
+/** From this window width the editor opens with the full navigation, until the viewer chooses. */
+export const EDITOR_NAV_WIDE = 1440;
+
+/**
+ * Whether the editor's app navigation is expanded: the viewer's saved
+ * choice at any width, otherwise expanded from 1440 px.
+ */
+export function editorNavExpanded(
+  width: number,
+  storage?: () => FlagStorage | null,
+): boolean {
+  return readUiChoice(EDITOR_NAV_KEY, storage) ?? width >= EDITOR_NAV_WIDE;
+}
+
+/** Saves the choice; false when browser storage refuses it. */
+export function setEditorNavExpanded(
+  expanded: boolean,
+  storage?: () => FlagStorage | null,
+): boolean {
+  return writeUiFlag(EDITOR_NAV_KEY, expanded, storage);
 }

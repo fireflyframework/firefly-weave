@@ -22,8 +22,12 @@ import {
   keyPlatform,
 } from "../src/app/editor/state/canvas-commands";
 import {
+  EDITOR_NAV_KEY,
+  EDITOR_NAV_WIDE,
   MINIMAP_KEY,
+  editorNavExpanded,
   minimapPinned,
+  setEditorNavExpanded,
   setMinimapPinned,
 } from "../src/app/editor/state/canvas-preferences";
 import type { KeyEventLike } from "../src/app/editor/state/keymap";
@@ -147,5 +151,47 @@ describe("canvas keys", () => {
       }),
     ).toBe(false);
     expect(setMinimapPinned(true, () => null)).toBe(false);
+  });
+
+  it("open the editor's navigation expanded from 1440 px unless the viewer chose", () => {
+    const values = new Map<string, string>();
+    const storage = () => ({
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+    });
+    expect(EDITOR_NAV_KEY).toBe("ui:weave.editor.navExpanded");
+    expect(EDITOR_NAV_WIDE).toBe(1440);
+    expect(editorNavExpanded(1440, storage)).toBe(true);
+    expect(editorNavExpanded(1439, storage)).toBe(false);
+    expect(editorNavExpanded(1920, storage)).toBe(true);
+    expect(editorNavExpanded(1280, storage)).toBe(false);
+    // A stored choice wins at every width.
+    values.set(EDITOR_NAV_KEY, "false");
+    expect(editorNavExpanded(1920, storage)).toBe(false);
+    values.set(EDITOR_NAV_KEY, "true");
+    expect(editorNavExpanded(1280, storage)).toBe(true);
+    // Anything else stored is no choice.
+    values.set(EDITOR_NAV_KEY, "wide");
+    expect(editorNavExpanded(1440, storage)).toBe(true);
+    expect(editorNavExpanded(1280, storage)).toBe(false);
+  });
+
+  it("save the editor's navigation choice and fall back to the width when storage refuses", () => {
+    const values = new Map<string, string>();
+    const storage = () => ({
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+    });
+    expect(setEditorNavExpanded(true, storage)).toBe(true);
+    expect(values.get("ui:weave.editor.navExpanded")).toBe("true");
+    expect(setEditorNavExpanded(false, storage)).toBe(true);
+    expect(values.get("ui:weave.editor.navExpanded")).toBe("false");
+    const blocked = () => {
+      throw new Error("blocked");
+    };
+    expect(editorNavExpanded(1440, blocked)).toBe(true);
+    expect(editorNavExpanded(1280, blocked)).toBe(false);
+    expect(setEditorNavExpanded(true, blocked)).toBe(false);
+    expect(setEditorNavExpanded(true, () => null)).toBe(false);
   });
 });

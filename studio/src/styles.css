@@ -1373,39 +1373,42 @@ dd {
 .collapsed .collapse-button {
   justify-content: center;
 }
+/* At 1280px and below the navigation is the rail, unless the editor shows it
+   in full (.nav-full, set from 900px up). :where() keeps each selector's
+   specificity, so the narrower rules below still override these. */
 @media (max-width: 1280px) {
-  .shell {
+  .shell:where(:not(.nav-full)) {
     grid-template-columns: 64px minmax(0, 1fr);
   }
-  .sidebar {
+  :where(.shell:not(.nav-full)) .sidebar {
     padding: 20px 8px;
   }
-  .brand {
+  :where(.shell:not(.nav-full)) .brand {
     padding: 0 2px 28px;
   }
-  .brand-lockup {
+  :where(.shell:not(.nav-full)) .brand-lockup {
     display: none;
   }
-  .brand-mark {
+  :where(.shell:not(.nav-full)) .brand-mark {
     display: block;
   }
-  .nav-group,
-  .sidebar nav button span,
-  .foundation,
-  .collapse-button span {
+  :where(.shell:not(.nav-full)) .nav-group,
+  :where(.shell:not(.nav-full)) .sidebar nav button span,
+  :where(.shell:not(.nav-full)) .foundation,
+  :where(.shell:not(.nav-full)) .collapse-button span {
     display: none;
   }
-  .nav-group + .nav-list {
+  :where(.shell:not(.nav-full)) .nav-group + .nav-list {
     margin-top: var(--space-2);
     padding-top: var(--space-2);
     border-top: 1px solid var(--line);
   }
-  .sidebar nav button {
+  :where(.shell:not(.nav-full)) .sidebar nav button {
     padding: 12px;
     justify-content: center;
     margin-bottom: 6px;
   }
-  .collapse-button {
+  :where(.shell:not(.nav-full)) .collapse-button {
     justify-content: center;
   }
   .resource-layout.has-detail {

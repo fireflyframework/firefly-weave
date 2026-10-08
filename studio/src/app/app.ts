@@ -143,6 +143,10 @@ import { sheetWhen } from "./modal-sheet";
 import { ToastHost, ToastService, type ToastAction } from "./toast";
 import { LocalDrafts, type LocalDraftEntry } from "./local-drafts";
 import { editorNextEnabled, setEditorNext } from "./editor/state/editor-flag";
+import {
+  editorNavExpanded,
+  setEditorNavExpanded,
+} from "./editor/state/canvas-preferences";
 import { runStatus } from "./status-labels";
 import {
   loadingWorkspace,
@@ -224,6 +228,11 @@ const busyLabels: Record<string, string> = {
   validate: "Validating…",
   simulate: "Simulating…",
 };
+/** The notice when browser storage refuses a per-viewer choice. */
+const choiceNotKept =
+  "Studio couldn't keep this choice in this browser, so it lasts until Studio closes.";
+/** The narrowest window that shows the editor's navigation in full. */
+const EDITOR_NAV_FULL_MIN = 900;
 /** The inspector's width: 360–480 px by default, at most 640 px. */
 const INSPECTOR_MIN = 360;
 const INSPECTOR_MAX = 640;
@@ -491,21 +500,42 @@ export class App implements CanvasHost {
   tab = "Designer";
   collapsed = false;
   /**
-   * The navigation shows as the 64 px rail in the designer, so the canvas
-   * gets the room, unless the person expanded it there.
+   * In the editor the navigation follows its own choice: the one this viewer
+   * saved, otherwise expanded from 1440 px and the 64 px rail below, so the
+   * canvas gets the room. Every other view uses `collapsed`.
    */
   get navCollapsed() {
+    return this.view === "designer"
+      ? !(this.editorNavChoice ?? editorNavExpanded(this.windowWidth))
+      : this.collapsed;
+  }
+  /**
+   * The editor shows its expanded navigation in full down to 900 px, even
+   * where other views narrow to the rail. Below that the editor's toolbar no
+   * longer fits beside it (Save to file is cut off), so it stays the rail.
+   */
+  get navFull() {
     return (
-      this.collapsed || (this.view === "designer" && !this.designerNavExpanded)
+      this.view === "designer" &&
+      !this.navCollapsed &&
+      this.windowWidth >= EDITOR_NAV_FULL_MIN
     );
   }
   toggleNav() {
-    if (this.view === "designer") {
-      const expand = this.navCollapsed;
-      this.designerNavExpanded = expand;
-      if (expand) this.collapsed = false;
-    } else this.collapsed = !this.collapsed;
+    if (this.view !== "designer") {
+      this.collapsed = !this.collapsed;
+      return;
+    }
+    const expand = this.navCollapsed;
+    this.editorNavChoice = expand;
+    if (!setEditorNavExpanded(expand) && !this.navNoticeShown) {
+      this.navNoticeShown = true;
+      this.notify(choiceNotKept);
+    }
   }
+  /** The editor's navigation choice made in this session; it holds when browser storage refuses to keep it. */
+  private editorNavChoice: boolean | null = null;
+  private navNoticeShown = false;
   windowWidth = window.innerWidth;
   /** Where the side panels cover the page and act as modal sheets. */
   readonly sheetWhen = sheetWhen;
@@ -539,10 +569,7 @@ export class App implements CanvasHost {
   editorNext = editorNextEnabled();
   setEditorNextPreference(enabled: boolean) {
     this.editorNext = enabled;
-    if (!setEditorNext(enabled))
-      this.notify(
-        "Studio couldn't keep this choice in this browser, so it lasts until Studio closes.",
-      );
+    if (!setEditorNext(enabled)) this.notify(choiceNotKept);
     this.cdr.markForCheck();
   }
   /**
@@ -550,8 +577,6 @@ export class App implements CanvasHost {
    * 36 px status line (it is that line when there is nothing to list).
    */
   diagnosticsOpen = true;
-  /** The navigation stays expanded in the designer once the person expands it there. */
-  designerNavExpanded = false;
   /** Narrow screens open on the outline, with a way to the canvas. */
   outlineNotice = false;
   resizing: {

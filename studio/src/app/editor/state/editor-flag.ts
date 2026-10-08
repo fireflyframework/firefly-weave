@@ -26,16 +26,28 @@ const defaultStorage = (): FlagStorage | null =>
 const currentSearch = () =>
   typeof location === "undefined" ? "" : location.search;
 
+/**
+ * The true or false choice browser storage holds under `key`; null when
+ * nothing is stored, the value is anything else, or storage refuses.
+ */
+export function readUiChoice(
+  key: string,
+  storage: () => FlagStorage | null = defaultStorage,
+): boolean | null {
+  try {
+    const value = storage()?.getItem(key);
+    return value === "true" ? true : value === "false" ? false : null;
+  } catch {
+    return null;
+  }
+}
+
 /** True when browser storage holds "true" under `key`; false for anything else, or when storage refuses. */
 export function readUiFlag(
   key: string,
   storage: () => FlagStorage | null = defaultStorage,
 ): boolean {
-  try {
-    return storage()?.getItem(key) === "true";
-  } catch {
-    return false;
-  }
+  return readUiChoice(key, storage) === true;
 }
 
 /** Saves a true/false preference under `key`; false when browser storage refuses it. */

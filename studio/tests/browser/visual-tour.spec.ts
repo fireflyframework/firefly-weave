@@ -51,6 +51,7 @@ import {
   globexPlatform,
 } from "./platform-host";
 import { DesignerPage, StepKind, stepLabels } from "./designer-po";
+import { openWorkflow, type CanvasPage } from "./canvas-po";
 import {
   chooseAction,
   openPaletteIntegrations,
@@ -2765,7 +2766,42 @@ spec:
     await expect(page.locator(".record-detail")).toContainText("crm-lookup");
     await shot("87-workers-detail");
   },
+
+  // The editor's navigation: nothing chosen (full at 1440 px and wider, the
+  // rail below), and collapsed by the person. A step is open on the right.
+  async "editor-nav-expanded"({ page, shot }) {
+    const canvas = await openWorkflow(page);
+    await openStepDetails(page, canvas);
+    await shot("88-editor-nav-expanded");
+  },
+
+  async "editor-nav-collapsed"({ page, shot }) {
+    const canvas = await openWorkflow(page);
+    const toggle = page.getByRole("button", {
+      name: /^(Collapse|Expand) navigation$/,
+    });
+    // The person collapses it: from the rail, they expand it first.
+    if ((await toggle.getAttribute("aria-expanded")) === "false")
+      await toggle.click();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await openStepDetails(page, canvas);
+    await shot("89-editor-nav-collapsed");
+  },
 };
+
+/** Selects a step on the new canvas and waits for its details on the right. */
+async function openStepDetails(page: Page, canvas: CanvasPage) {
+  await canvas.tileBody("prepare-request").click();
+  const details = new DesignerPage(page).inspector;
+  // Phones keep the panel closed until asked for: Enter opens it.
+  try {
+    await expect(details).toBeVisible({ timeout: 1500 });
+  } catch {
+    await canvas.tileBody("prepare-request").press("Enter");
+    await expect(details).toBeVisible();
+  }
+}
 
 for (const size of sizes)
   test.describe(size.tag, () => {
