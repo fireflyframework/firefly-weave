@@ -1061,6 +1061,12 @@ test("10: quick integration from Studio runs against the real platform", async (
   await expect(connect.getByLabel("API address", { exact: true })).toHaveValue(
     acme,
   );
+  // Create needs the connector version the dialog's own check finds; a click
+  // while it's still checking only says so (http-connection.spec.ts), and sends
+  // nothing.
+  await expect(connect.locator(".readiness .hint[role=status]")).toHaveText(
+    /^Looks ready\./,
+  );
   const created = page.waitForResponse(
     (r) =>
       r.request().method() === "POST" &&
