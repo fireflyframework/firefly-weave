@@ -231,25 +231,35 @@ def test_parse_reads_a_valid_document():
     assert parsed.platform == po.PLATFORM and len(parsed.file_sha256) == 64
 
 
+# Explicit IDs: pytest exports each test's ID as PYTEST_CURRENT_TEST, and Windows
+# refuses an environment variable longer than 32,767 characters (the oversized case).
 @pytest.mark.parametrize(
     "data",
     [
-        b'{"format": "weave/private-origins-v1", "format": "x", "platform": "local-development", "entries": []}',
-        document(FILE_ENTRY, extra=True),
-        document({**FILE_ENTRY, "label": "Development only"}),
-        json.dumps({"format": "weave/private-origins-v2", "platform": po.PLATFORM, "entries": []}).encode(),
-        json.dumps({"format": po.FORMAT, "platform": "production", "entries": []}).encode(),
-        document({**FILE_ENTRY, "origin": "HTTP://acme.acceptance.test:8080"}),
-        document({**FILE_ENTRY, "networks": ["8.8.8.0/24"]}),
-        document({**FILE_ENTRY, "networks": ["172.16.0.0/12"]}),
-        document({**FILE_ENTRY, "networks": ["100.64.0.0/10"]}),
-        document({**FILE_ENTRY, "networks": ["10.231.1.1/24"]}),
-        document({**FILE_ENTRY, "networks": []}),
-        document({**FILE_ENTRY, "credentials": "always"}),
-        document({**FILE_ENTRY, "origin": "smtp://acme.acceptance.test:25"}),
-        document(FILE_ENTRY, FILE_ENTRY),
-        b"not json",
-        b" " * (po.MAX_FILE_BYTES + 1),
+        pytest.param(
+            b'{"format": "weave/private-origins-v1", "format": "x", "platform": "local-development", "entries": []}',
+            id="duplicate-key",
+        ),
+        pytest.param(document(FILE_ENTRY, extra=True), id="unknown-top-level-field"),
+        pytest.param(document({**FILE_ENTRY, "label": "Development only"}), id="label-in-file"),
+        pytest.param(
+            json.dumps({"format": "weave/private-origins-v2", "platform": po.PLATFORM, "entries": []}).encode(),
+            id="other-format",
+        ),
+        pytest.param(
+            json.dumps({"format": po.FORMAT, "platform": "production", "entries": []}).encode(), id="other-platform"
+        ),
+        pytest.param(document({**FILE_ENTRY, "origin": "HTTP://acme.acceptance.test:8080"}), id="non-canonical-origin"),
+        pytest.param(document({**FILE_ENTRY, "networks": ["8.8.8.0/24"]}), id="public-network"),
+        pytest.param(document({**FILE_ENTRY, "networks": ["172.16.0.0/12"]}), id="broad-rfc1918-range"),
+        pytest.param(document({**FILE_ENTRY, "networks": ["100.64.0.0/10"]}), id="broad-cgnat-range"),
+        pytest.param(document({**FILE_ENTRY, "networks": ["10.231.1.1/24"]}), id="host-bits-set"),
+        pytest.param(document({**FILE_ENTRY, "networks": []}), id="no-networks"),
+        pytest.param(document({**FILE_ENTRY, "credentials": "always"}), id="unknown-credentials"),
+        pytest.param(document({**FILE_ENTRY, "origin": "smtp://acme.acceptance.test:25"}), id="non-http-scheme"),
+        pytest.param(document(FILE_ENTRY, FILE_ENTRY), id="duplicate-entry"),
+        pytest.param(b"not json", id="not-json"),
+        pytest.param(b" " * (po.MAX_FILE_BYTES + 1), id="oversized"),
     ],
 )
 def test_parse_refuses_documents_outside_the_format(data):
