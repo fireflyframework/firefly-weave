@@ -61,7 +61,7 @@ import {
       }
       <p class="hint">
         Only selected structured results are sent to this step's provider.
-        Conversations from Lumi and other executions are never included.
+        Conversations from Weave AI and other executions are never included.
       </p>
       @if (error) {
         <p class="field-error" role="alert">{{ error }}</p>

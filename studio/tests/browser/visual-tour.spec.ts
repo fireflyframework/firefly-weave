@@ -22,7 +22,9 @@ SPDX-License-Identifier: Apache-2.0
 // STUDIO_VISUAL_TOUR_COPY when it names a folder) and checked: no sideways
 // page scroll, no control cut off by the viewport or its container, no
 // control covered by another element, text contrast of at least 4.5:1 (3:1
-// for large text), and a visible focus indicator on Tab.
+// for large text) measured against the page's own dark ground, a visible focus
+// indicator on Tab whose outline reaches 3:1, Manrope rendering the text, and
+// no icon name without a drawing.
 // The platform and the local host are mocked; the local authoring endpoints
 // and the simulation artifact use the repository's real Python code.
 import { selectChoice } from "./support";
@@ -467,6 +469,51 @@ function focusedLooksFocused(overlays: string) {
     s.outlineStyle !== "none" &&
     parseFloat(s.outlineWidth) >= 1 &&
     !/rgba\(\d+, \d+, \d+, 0\)|transparent/.test(s.outlineColor);
+  // An outline ring reaches 3:1 against what is painted behind it (1.4.11).
+  let ringContrast: number | null = null;
+  if (ring) {
+    type Rgba = [number, number, number, number];
+    const parse = (value: string): Rgba | null => {
+      const m = value.match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const p = m[1]
+        .split(/[ ,/]+/)
+        .filter(Boolean)
+        .map(Number);
+      return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+    };
+    const over = (top: Rgba, below: Rgba): Rgba => {
+      const a = top[3] + below[3] * (1 - top[3]);
+      const mix = (i: number) =>
+        a ? (top[i] * top[3] + below[i] * below[3] * (1 - top[3])) / a : 0;
+      return [mix(0), mix(1), mix(2), a];
+    };
+    const luminance = (c: Rgba) => {
+      const [r, g, b] = c.slice(0, 3).map((v) => {
+        const k = v / 255;
+        return k <= 0.04045 ? k / 12.92 : ((k + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    // The ring is drawn outside the box, over the parent's painted layers.
+    const layers: Rgba[] = [];
+    for (let e = active.parentElement; e; e = e.parentElement) {
+      const color = parse(getComputedStyle(e).backgroundColor);
+      if (color && color[3] > 0) {
+        layers.push(color);
+        if (color[3] >= 1) break;
+      }
+    }
+    let back: Rgba = [0, 0, 0, 0];
+    for (const layer of layers.reverse()) back = over(layer, back);
+    const ink = parse(s.outlineColor);
+    if (ink && back[3] > 0) {
+      const [l1, l2] = [luminance(over(ink, back)), luminance(back)].sort(
+        (x, y) => y - x,
+      );
+      ringContrast = (l1 + 0.05) / (l2 + 0.05);
+    }
+  }
   const shown =
     concealed && (active as HTMLInputElement).labels?.[0]
       ? (active as HTMLInputElement).labels![0].getBoundingClientRect()
@@ -501,7 +548,14 @@ function focusedLooksFocused(overlays: string) {
       else obscured = what;
     }
   }
-  return { name, visible: changed || ring, onScreen, obscured, behindOverlay };
+  return {
+    name,
+    visible: changed || ring,
+    onScreen,
+    obscured,
+    behindOverlay,
+    ringContrast,
+  };
 }
 
 /**
@@ -539,6 +593,22 @@ function contrastProblems(): string[] {
     const [l1, l2] = [luminance(a), luminance(b)].sort((x, y) => y - x);
     return (l1 + 0.05) / (l2 + 0.05);
   };
+  // The page's own ground: html's background, then body's. Dark pages are
+  // never measured against an assumed white.
+  const problems: string[] = [];
+  const ground = [document.documentElement, document.body]
+    .map((e) => parse(getComputedStyle(e).backgroundColor))
+    .find((c): c is Rgba => !!c && c[3] >= 1);
+  const probe = document.createElement("i");
+  probe.style.color = "var(--bg)";
+  document.body.append(probe);
+  const token = parse(getComputedStyle(probe).color);
+  probe.remove();
+  if (!ground) problems.push("the page background (html, body) is not opaque");
+  else if (!token || ground.some((v, i) => i < 3 && v !== token[i]))
+    problems.push(
+      `the page background rgb(${ground.slice(0, 3).join(", ")}) is not --bg`,
+    );
   /** The color painted behind an element, or null when it's an image. */
   const backdrop = (start: Element): Rgba | null => {
     const layers: Rgba[] = [];
@@ -552,7 +622,7 @@ function contrastProblems(): string[] {
         if (color[3] >= 1) break;
       }
     }
-    let result: Rgba = [255, 255, 255, 1];
+    let result: Rgba = ground ?? [0, 0, 0, 1];
     for (const layer of layers.reverse()) result = over(layer, result);
     return result;
   };
@@ -590,7 +660,7 @@ function contrastProblems(): string[] {
       .join(", ")}), ${size}px)`;
     found.set(key, key);
   }
-  return [...found.values()];
+  return [...problems, ...found.values()];
 }
 
 class Tour {
@@ -604,10 +674,20 @@ class Tour {
     readonly scene: string,
   ) {}
 
-  /** Lets fonts, transitions and deferred blocks settle before a capture. */
-  async settle() {
-    await this.page.evaluate(async () => {
+  /**
+   * Lets fonts, transitions and deferred blocks settle before a capture.
+   * Resolves false when Studio's own Manrope is not what renders the text.
+   */
+  async settle(): Promise<boolean> {
+    return this.page.evaluate(async () => {
       await document.fonts.ready;
+      const manrope =
+        document.fonts.check("14px Manrope") &&
+        [...document.fonts].some(
+          (face) =>
+            face.family.replace(/["']/g, "") === "Manrope" &&
+            face.status === "loaded",
+        );
       const finite = document
         .getAnimations()
         .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
@@ -635,6 +715,7 @@ class Tour {
         if (now === last) break;
         last = now;
       }
+      return manrope;
     });
   }
 
@@ -659,9 +740,11 @@ class Tour {
     options: { end?: string; tabs?: number } = {},
   ) => {
     const page = this.page;
+    const where = `${this.size.tag} ${name}`;
     // Park the pointer on the window's edge so no hover state is captured.
     await page.mouse.move(this.size.width - 1, this.size.height - 1);
-    await this.settle();
+    if (!(await this.settle()))
+      this.problems.push(`${where}: Manrope did not render the text`);
     await this.capture(name);
     if (options.end) {
       // Page through the main scroller so every part of a long state is seen.
@@ -697,7 +780,6 @@ class Tour {
       }
     }
     const audit = await page.evaluate(auditPage, overlays);
-    const where = `${this.size.tag} ${name}`;
     if (audit.scrollDown > 1)
       this.problems.push(
         `${where}: the app shell scrolls down by ${audit.scrollDown}px (${audit.below.join("; ")})`,
@@ -714,6 +796,11 @@ class Tour {
     for (const s of audit.covered) this.problems.push(`${where}: ${s}`);
     for (const s of await page.evaluate(contrastProblems))
       this.problems.push(`${where}: low text contrast ${s}`);
+    // An icon name without a drawing falls back to "workflows" silently.
+    for (const s of await page
+      .locator("weave-icon[data-icon-missing]")
+      .evaluateAll((icons) => icons.map((i) => i.getAttribute("data-icon"))))
+      this.problems.push(`${where}: no icon named "${s}"`);
     this.report[name] = { truncated: audit.truncated };
     await this.focus(where, options.tabs ?? 3);
   };
@@ -748,6 +835,10 @@ class Tour {
       if (focused.behindOverlay)
         this.problems.push(
           `${where}: focus on ${focused.name} behind ${focused.behindOverlay}`,
+        );
+      if (focused.ringContrast !== null && focused.ringContrast < 3)
+        this.problems.push(
+          `${where}: focus ring on ${focused.name} is ${focused.ringContrast.toFixed(2)}:1, under 3:1`,
         );
     }
     await before.evaluate((element) => {
@@ -1364,10 +1455,15 @@ const scenes: Record<string, Scene> = {
       }),
     );
     await newWorkflow(page);
-    await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-    const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+    await page
+      .getByRole("button", { name: "Ask Weave AI", exact: true })
+      .click();
+    const panel = page.getByRole("dialog", {
+      name: "Ask Weave AI",
+      exact: true,
+    });
     await panel
-      .getByLabel("Message to Lumi")
+      .getByLabel("Message to Weave AI")
       .fill("Help me add a review step.");
     await panel.getByLabel("Include current source", { exact: true }).check();
     await shot("lumi-context", { end: ".modal-panel" });
@@ -1381,7 +1477,7 @@ const scenes: Record<string, Scene> = {
       .click();
     await shot("lumi-review", { end: ".modal-panel" });
     await panel
-      .getByRole("button", { name: "Lumi settings", exact: true })
+      .getByRole("button", { name: "Weave AI settings", exact: true })
       .click();
     await expect(panel.getByLabel("Model", { exact: true })).toBeVisible();
     await shot("lumi-settings", { end: ".modal-panel" });

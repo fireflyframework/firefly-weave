@@ -67,8 +67,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   ],
   template: ` @if (host.lumiOpen) {
     <weave-modal
-      heading="Ask Lumi"
-      closeLabel="Close Lumi"
+      heading="Ask Weave AI"
+      closeLabel="Close Weave AI"
       [wide]="true"
       (dismiss)="host.lumiOpen = false"
     >
@@ -90,39 +90,40 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
               [disabled]="configBusy"
               (click)="openSettings()"
             >
-              Lumi settings
+              Weave AI settings
             </button>
           }
         </div>
         @if (!host.profile) {
           <p class="hint">
-            Connect to a platform to ask Lumi. Your workflow can stay a local
-            draft.
+            Connect to a platform to ask Weave AI. Your workflow can stay a
+            local draft.
           </p>
         } @else if (!host.can("lumi.use")) {
           <p class="hint">
-            Ask an administrator for access to Lumi in this environment.
+            Ask an administrator for access to Weave AI in this environment.
           </p>
         } @else if (!settings && !status?.configured && !loading) {
           <p class="hint">
-            Lumi is unavailable in this environment. An administrator configures
-            its model and connection; a platform operator enables the Lumi
-            gateway. Saving model settings alone does not deploy the gateway.
+            Weave AI is unavailable in this environment. An administrator
+            configures its model and connection; a platform operator enables the
+            Weave AI gateway. Saving model settings alone does not deploy the
+            gateway.
           </p>
         }
         @if (loading) {
-          <p role="status">Loading Lumi…</p>
+          <p role="status">Loading Weave AI…</p>
         }
         @if (settings) {
           <section class="lumi-settings">
             <p class="hint">
-              Configure Lumi for this environment. Workflow AI profiles have
-              their own settings.
+              Choose Weave AI's model and connection for this environment.
+              Workflow AI profiles have their own settings.
             </p>
             @if (!host.can("connection.manage")) {
               <p role="status">
                 To select or save a provider connection, ask an administrator
-                for connection.manage in this environment as well as Lumi
+                for connection.manage in this environment as well as Weave AI
                 manager.
               </p>
             }
@@ -130,13 +131,13 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
               <weave-ai-setup-wizard
                 [(step)]="settingsStep"
                 [headings]="settingsHeadings"
-                progressLabel="Lumi setup progress"
+                progressLabel="Weave AI setup progress"
                 [canContinue]="
                   settingsStep === 0 ? modelComplete : configComplete
                 "
                 [busy]="configBusy"
                 [navigationBlocked]="newConnection"
-                finishLabel="Save Lumi settings"
+                finishLabel="Save Weave AI settings"
                 (finish)="saveSettings()"
               >
                 <fieldset ai-model [disabled]="configBusy">
@@ -150,8 +151,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 </fieldset>
                 <section ai-connection class="settings-connection">
                   <p class="hint">
-                    Choose Lumi's provider connection. Credentials stay with the
-                    platform operator.
+                    Choose Weave AI's provider connection. Credentials stay with
+                    the platform operator.
                   </p>
                   <weave-select
                     label="Provider connection"
@@ -161,9 +162,9 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                     (choose)="configConnection = $event"
                   />
                   <p class="hint">
-                    Lumi pins this exact revision. Choose a connection with the
-                    same provider as the profile; changing a workflow profile
-                    will not change these settings.
+                    Weave AI pins this exact revision. Choose a connection with
+                    the same provider as the profile; changing a workflow
+                    profile will not change these settings.
                   </p>
                   @if (configConnection && !selectedConnection) {
                     <p class="field-error">
@@ -212,11 +213,11 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                     }
                   </dl>
                   <p class="hint">
-                    Saving applies these settings to Lumi in the current
+                    Saving applies these settings to Weave AI in the current
                     environment. It does not change workflow AI profiles or send
-                    a model request. The platform operator must enable the Lumi
-                    gateway and authorize this connection before you can ask
-                    Lumi.
+                    a model request. The platform operator must enable the Weave
+                    AI gateway and authorize this connection before you can ask
+                    Weave AI.
                   </p>
                 </section>
                 <div ai-error>
@@ -235,7 +236,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 </div>
               </weave-ai-setup-wizard>
             } @else if (configBusy) {
-              <p role="status">Loading Lumi settings…</p>
+              <p role="status">Loading Weave AI settings…</p>
             }
             @if (!configSchema && configError) {
               <p class="field-error" role="alert">{{ configError }}</p>
@@ -283,8 +284,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
             }
             @if (item.kind === "workflow" && !current(item)) {
               <p class="field-error" role="alert">
-                The local draft changed after this request. Ask Lumi again with
-                the current source.
+                The local draft changed after this request. Ask Weave AI again
+                with the current source.
               </p>
             }
             <div class="action-row">
@@ -326,12 +327,12 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           <div
             class="lumi-conversation"
             role="log"
-            aria-label="Lumi conversation"
+            aria-label="Weave AI conversation"
             aria-live="polite"
           >
             @for (turn of conversation.turns; track $index) {
               <article [class.lumi-answer]="turn.role === 'assistant'">
-                <h3>{{ turn.role === "user" ? "You" : "Lumi" }}</h3>
+                <h3>{{ turn.role === "user" ? "You" : "Weave AI" }}</h3>
                 <p class="lumi-text">{{ turn.content }}</p>
                 @for (proposal of turn.proposals ?? []; track $index) {
                   <button type="button" (click)="openReview(proposal)">
@@ -356,7 +357,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
             >
               <label
                 >Message<textarea
-                  aria-label="Message to Lumi"
+                  aria-label="Message to Weave AI"
                   data-initial-focus
                   maxlength="20000"
                   [value]="message"
@@ -400,9 +401,10 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
               </p>
               @if (host.view === "operations") {
                 <p class="hint">
-                  Lumi explains only the saved Operations records you select.
-                  Replica and resource limits do not show worker task capacity
-                  or current cloud state. No deployment changes are made.
+                  Weave AI explains only the saved Operations records you
+                  select. Replica and resource limits do not show worker task
+                  capacity or current cloud state. No deployment changes are
+                  made.
                 </p>
               }
               <button
@@ -416,7 +418,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           </form>
         }
         @if (busy) {
-          <p role="status">Lumi is thinking…</p>
+          <p role="status">Weave AI is thinking…</p>
         }
         @if (error) {
           <p class="field-error" role="alert">{{ error }}</p>
@@ -564,9 +566,9 @@ export class LumiPanel implements DoCheck {
   settings = false;
   settingsStep = 0;
   readonly settingsHeadings = [
-    "Choose Lumi's model",
+    "Choose Weave AI's model",
     "Choose a provider connection",
-    "Review Lumi settings",
+    "Review Weave AI settings",
   ];
   get settingsSummary() {
     const profile = object(this.config["profile"]);
@@ -856,7 +858,7 @@ export class LumiPanel implements DoCheck {
     this.host.navigate("designer");
     const revision = this.host.model.revision;
     const opened = this.host.model.opened;
-    this.host.notify("Applied the reviewed Lumi draft.", {
+    this.host.notify("Applied the reviewed Weave AI draft.", {
       label: "Undo",
       run: () => {
         if (
@@ -952,7 +954,9 @@ export class LumiPanel implements DoCheck {
         "const"
       ];
       if (!this.replySchema)
-        throw Error("The host did not provide the fixed Lumi reply schema.");
+        throw Error(
+          "The host did not provide the fixed Weave AI reply schema.",
+        );
       const properties = { ...object(profile["properties"]) };
       delete properties["outputSchema"];
       const { connection_revision_id: _, ...configProperties } = object(

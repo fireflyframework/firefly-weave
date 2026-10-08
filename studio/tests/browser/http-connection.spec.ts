@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // <weave-http-connection-form>.
 import { selectChoice } from "./support";
 import { test, expect, Page, Request } from "@playwright/test";
-import { allCapabilities, connected, profile } from "./support";
+import { allCapabilities, connected, profile, tokenColor } from "./support";
 
 const digest =
   "eddfa829184f8505fd0e1bc7a84b490fc57b555a39495b9724b2728b277133d8";
@@ -267,10 +267,11 @@ test("an invalid field keeps its red border, and the focus ring clears its label
       width: parseFloat(s.outlineWidth),
     };
   });
-  // Red stays red while focused; the green ring is drawn outside it.
-  expect(look.border).toBe("rgb(161, 43, 53)");
-  expect(look.bar).toContain("rgb(161, 43, 53)");
-  expect(look.outline).toBe("solid 2px rgb(44, 106, 87)");
+  // The danger edge stays while focused; the amber ring is drawn outside it.
+  const danger = await tokenColor(page, "--danger");
+  expect(look.border).toBe(danger);
+  expect(look.bar).toContain(danger);
+  expect(look.outline).toBe(`solid 2px ${await tokenColor(page, "--focus")}`);
   // The ring's box never covers the field's label.
   const field = (await secret.boundingBox())!;
   const ring = look.offset + look.width;

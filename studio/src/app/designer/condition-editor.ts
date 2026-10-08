@@ -451,8 +451,8 @@ let sequence = 0;
         border-left: 1px solid var(--border);
       }
       .condition-join button[aria-pressed="true"] {
-        background: var(--forest);
-        color: var(--on-dark);
+        background: var(--accent);
+        color: var(--on-accent);
       }
       .condition-tools {
         display: flex;

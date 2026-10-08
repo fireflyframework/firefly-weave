@@ -95,7 +95,7 @@ async function setup(
     } else
       await r.fulfill({
         status: 404,
-        json: { code: "WV-NOT-FOUND", message: "Lumi is not configured" },
+        json: { code: "WV-NOT-FOUND", message: "Weave AI is not configured" },
       });
   });
   return { connections, configurations, creates };
@@ -103,7 +103,7 @@ async function setup(
 for (const width of [1440, 600])
   test.describe(`AI setup at ${width}`, () => {
     test.use({ viewport: { width, height: 800 } });
-    test("fresh Azure provider connection and Lumi settings use named revisions and approved handles", async ({
+    test("fresh Azure provider connection and Weave AI settings use named revisions and approved handles", async ({
       page,
     }) => {
       const capture = await setup(page);
@@ -164,10 +164,15 @@ for (const width of [1440, 600])
         allowed_destinations: ["https://approved-models.openai.azure.com"],
       });
       await form.getByRole("button", { name: "Done", exact: true }).click();
-      await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-      const lumi = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+      await page
+        .getByRole("button", { name: "Ask Weave AI", exact: true })
+        .click();
+      const lumi = page.getByRole("dialog", {
+        name: "Ask Weave AI",
+        exact: true,
+      });
       await lumi
-        .getByRole("button", { name: "Lumi settings", exact: true })
+        .getByRole("button", { name: "Weave AI settings", exact: true })
         .click();
       await selectChoice(
         lumi.getByLabel("Provider", { exact: true }),
@@ -190,9 +195,9 @@ for (const width of [1440, 600])
         .getByRole("button", { name: "Review settings", exact: true })
         .click();
       await lumi
-        .getByRole("button", { name: "Save Lumi settings", exact: true })
+        .getByRole("button", { name: "Save Weave AI settings", exact: true })
         .click();
-      await expect(lumi.getByLabel("Message to Lumi")).toBeVisible();
+      await expect(lumi.getByLabel("Message to Weave AI")).toBeVisible();
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
@@ -213,7 +218,7 @@ for (const width of [1440, 600])
       );
       await expect(lumi).toContainText("gateway");
     });
-    test("fresh workflow AI profile and connection slot remain separate from Lumi", async ({
+    test("fresh workflow AI profile and connection slot remain separate from Weave AI", async ({
       page,
     }) => {
       const capture = await setup(page);
@@ -278,14 +283,14 @@ for (const width of [1440, 600])
       expect(capture.configurations).toEqual([]);
     });
   });
-test("Lumi manager without connection management sees the required grant instead of an editable UUID", async ({
+test("Weave AI manager without connection management sees the required grant instead of an editable UUID", async ({
   page,
 }) => {
   const capture = await setup(page, ["lumi.use", "lumi.manage"]);
-  await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-  const lumi = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
+  const lumi = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
   await lumi
-    .getByRole("button", { name: "Lumi settings", exact: true })
+    .getByRole("button", { name: "Weave AI settings", exact: true })
     .click();
   await expect(lumi).toContainText("connection.manage");
   await selectChoice(
@@ -315,15 +320,15 @@ test("Settings exposes admin AI setup while viewers cannot configure or spend", 
   await setup(page);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page
-    .getByRole("button", { name: "Configure Lumi", exact: true })
+    .getByRole("button", { name: "Weave AI settings", exact: true })
     .click();
   await expect(
     page.getByRole("heading", {
-      name: "Choose Lumi's model",
+      name: "Choose Weave AI's model",
       exact: true,
     }),
   ).toBeVisible();
-  const lumi = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+  const lumi = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
   await selectChoice(
     lumi.getByLabel("Provider", { exact: true }),
     "openai-responses",
@@ -343,15 +348,15 @@ test("viewers see setup guidance without manager controls", async ({
   const capture = await setup(page, ["catalog.read"]);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Configure Lumi", exact: true }),
+    page.getByRole("button", { name: "Weave AI settings", exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "New AI connection", exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-  const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
   await expect(
-    panel.getByRole("button", { name: "Lumi settings", exact: true }),
+    panel.getByRole("button", { name: "Weave AI settings", exact: true }),
   ).toHaveCount(0);
   await expect(
     panel.getByRole("button", { name: "Send message", exact: true }),
@@ -399,9 +404,9 @@ test("AI model basics and advanced options preserve edits, invalid drafts and ex
   });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page
-    .getByRole("button", { name: "Configure Lumi", exact: true })
+    .getByRole("button", { name: "Weave AI settings", exact: true })
     .click();
-  const lumi = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+  const lumi = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
   await expect(lumi.getByLabel("Model", { exact: true })).toHaveValue(
     "approved-model",
   );
@@ -449,16 +454,16 @@ test("AI model basics and advanced options preserve edits, invalid drafts and ex
     .getByRole("button", { name: "Review settings", exact: true })
     .click();
   await lumi
-    .getByRole("button", { name: "Save Lumi settings", exact: true })
+    .getByRole("button", { name: "Save Weave AI settings", exact: true })
     .click();
-  await expect(lumi.getByLabel("Message to Lumi")).toBeVisible();
+  await expect(lumi.getByLabel("Message to Weave AI")).toBeVisible();
   expect(capture.configurations[0].profile).toEqual({
     ...profile,
     model: "updated-model",
     options: { max_tokens: 2048, top_p: 0.8 },
   });
   await lumi
-    .getByRole("button", { name: "Lumi settings", exact: true })
+    .getByRole("button", { name: "Weave AI settings", exact: true })
     .click();
   await lumi.getByText("Advanced model settings", { exact: true }).click();
   await expect(
@@ -504,9 +509,9 @@ test("canonical model validation blocks pending and invalid settings and ignores
   });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page
-    .getByRole("button", { name: "Configure Lumi", exact: true })
+    .getByRole("button", { name: "Weave AI settings", exact: true })
     .click();
-  const lumi = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+  const lumi = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
   await selectChoice(
     lumi.getByLabel("Provider", { exact: true }),
     "openai-responses",

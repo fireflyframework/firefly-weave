@@ -175,3 +175,14 @@ def test_svg_fits_wide_names_without_losing_full_hover_labels():
         half_width = len(label.text) * 13 / 2
         center = float(label.attrib["x"])
         assert 24 <= center - half_width <= center + half_width <= width - 24
+
+
+def test_svg_export_carries_no_mascot(artifact):
+    from firefly_weave.compiler.api import import_artifact
+    from firefly_weave.sdk.visualization import render_graph
+
+    svg = render_graph(import_artifact(artifact.read_bytes()), "svg")
+    assert "lumi" not in svg.lower()
+    tree = ET.fromstring(svg)
+    assert tree.find(".//{*}g[@aria-label]") is None
+    assert tree.find(".//{*}radialGradient") is None

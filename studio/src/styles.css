@@ -15,77 +15,131 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-/* Design tokens. Ratios are WCAG 2.x contrast against the named surface. */
+/* Manrope (OFL-1.1), self-hosted: public/fonts/manrope, from
+   @fontsource-variable/manrope 5.3.0. Latin and Latin Extended only. */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url("/fonts/manrope/manrope-latin-ext-wght-normal.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url("/fonts/manrope/manrope-latin-wght-normal.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+/* Design tokens (contract C1): the dark theme. Every token is named for its
+   role, never its color, and components use tokens only, so a light theme is
+   one more value set under :root[data-theme="light"] with color-scheme: light.
+   Ratios are WCAG 2.x contrast against the named surface. */
 :root {
-  color-scheme: light;
-  /* brand */
-  --forest: #173d34;
-  --forest-hover: #244b3e;
-  --forest-press: #10302a;
-  --jade: #367d68;
-  --jade-strong: #2c6a57;
-  --mint: #a1d1b9;
-  --mist: #eef4f0;
-  --gold: #b88322;
-  --gold-soft: #fbf4df;
-  /* surfaces */
-  --bg: #f5f8f5;
-  --surface: #fff;
-  --sunken: #f8faf8;
-  --canvas: #fafcf9;
-  --hover: #eef4f0;
-  --selected: #e3efe8;
-  /* the forest sidebar: active row, and quiet text (8.13 on forest) */
-  --forest-active: #315d4b;
-  --on-dark-muted: #c7d9d0;
+  color-scheme: dark;
+  /* surfaces, from darkest to lightest */
+  --bg: #10110f; /* app background, sidebar, header, page */
+  --sunken: #131412; /* inputs, wells, code blocks, table heads */
+  --surface: #1a1b17; /* panels, cards, inspector, dialogs */
+  --raised: #1f201c; /* menus, popovers, toasts, node cards, tinted blocks */
+  --hover: #272725;
+  --selected: #2c2416; /* selected rows and cards, current nav item */
+  --accent-soft: #2c2416; /* the live "now" panel, amber-tinted areas */
+  --disabled-bg: #20211e;
+  --canvas: #10110f;
+  --canvas-dot: #33342c; /* decorative, 1.50 on canvas */
+  --scrim: rgb(0 0 0 / 0.6); /* behind dialogs and side sheets */
+  /* text: 4.5:1 or more on every surface above */
+  --text: #f3f1eb; /* 16.76 bg, 13.25 hover */
+  --muted: #bfb8ab; /* 9.61 bg, 7.60 hover */
+  --subtle: #9d9c97; /* placeholders, timestamps, axis text: 5.44 hover */
+  --link: #facc8a; /* links, tertiary buttons: 10.03 hover */
+  --disabled-ink: #959590; /* 5.38 on --disabled-bg */
+  /* accent: primary fill, focus, selection, current indicator, live run */
+  --accent: #ffb34a; /* 10.64 bg, 9.21 raised */
+  --accent-hover: #fcc271;
+  --accent-press: #e69f3f;
+  --on-accent: #10110f; /* on accent and solid status fills: 7+ */
+  --accent-glow: rgb(255 179 74 / 0.25); /* decorative halo */
   /* lines */
-  --line: #dbe5df; /* dividers only */
-  --border: #ccdcd2; /* cards, tables, secondary buttons */
-  --border-hover: #9cb9aa;
-  --field-border: #738c80; /* inputs: 3.63 white, 3.39 bg, 3.25 mist */
-  --field-border-hover: #5f8a76;
-  --flow-line: #5f8a76; /* canvas edges + arrowheads: 3.78 on --canvas */
-  --node-border: #738c80;
-  /* text */
-  --text: #253e36; /* 11.5 white, 9.76 selected */
-  --muted: #4d655d; /* 6.30 white, 5.33 selected */
-  --link: #2c6a57; /* 6.35 white, 5.70 mist; jade is 4.39 on mist */
-  --on-dark: #fff;
-  --on-dark-accent: #a1d1b9; /* mint on forest 7.04 */
-  --disabled-bg: #eef2ef;
-  --disabled-ink: #5c706a; /* 4.67 */
-  /* semantic: ink on bg ratio; every border is 1.3+ on --selected */
-  --success-ink: #1d6047;
-  --success-bg: #e2f1e9;
-  --success-bd: #a9d3bd;
-  --success: #2c6a57; /* 6.39 */
-  --info-ink: #245a6b;
-  --info-bg: #e3eff2;
-  --info-bd: #b7d3dc;
-  --info: #2f6f84; /* 6.51 */
-  --warning-ink: #73500f;
-  --warning-bg: #fbf0d6;
-  --warning-bd: #e2cb96;
-  --warning: #b88322; /* 6.43 */
-  --danger-ink: #962531;
-  --danger-bg: #fbe8e9;
-  --danger-bd: #e6c2c5;
-  --danger: #a12b35; /* 6.84; white on --danger 7.21 */
-  --neutral-ink: #465d55;
-  --neutral-bg: #edf1ee;
-  --neutral-bd: #c3d0c9; /* 6.23 */
-  /* the live thread */
-  --live: #b88322;
-  --live-glow: rgb(184 131 34 / 0.28); /* 3.23 on --canvas */
-  /* focus */
-  --focus: #2c6a57;
-  --focus-on-dark: #a1d1b9;
+  --line: #2e2f2a; /* dividers, gridlines (decorative) */
+  --border: #474a42; /* cards, tables, overlays, secondary buttons */
+  --border-hover: #5b5f57;
+  --field-border: #767672; /* inputs: 3.28 on hover, 3:1 everywhere */
+  --field-border-hover: #8d8d86;
+  /* status: ink 6:1 on its own -bg; -bd is decorative */
+  --success-ink: #97c08c;
+  --success-bg: #262c23;
+  --success-bd: #4c5d46;
+  --success: #97c08c;
+  --info-ink: #9db7c6;
+  --info-bg: #272b28;
+  --info-bd: #4e595d;
+  --info: #9db7c6;
+  --warning-ink: #e8c85f;
+  --warning-bg: #2f2c1e;
+  --warning-bd: #6c6034;
+  --warning: #e8c85f;
+  --danger-ink: #f0938a;
+  --danger-bg: #2f2722;
+  --danger-bd: #704b45;
+  --danger: #f0938a;
+  --danger-hover: #f4a9a1;
+  --neutral-ink: #bfb8ab;
+  --neutral-bg: #272725;
+  --neutral-bd: #474a42;
+  /* focus and selection */
+  --focus: #ffb34a; /* 8.41 on hover, the lowest */
+  --selection: rgb(255 179 74 / 0.32);
+  /* canvas */
+  --flow-line: #767672; /* edges, arrowheads, handles: 4.15 on canvas */
+  --flow-line-dim: #62645b; /* edges a run did not take: 3.15 */
+  --node-bg: #1f201c;
+  --node-border: #767672;
+  --live: #ffb34a;
+  --live-glow: rgb(255 179 74 / 0.35);
+  --marquee-bg: rgb(255 179 74 / 0.08);
+  /* charts: categorical series in order, then "(other)" */
+  --series-1: #ffb34a;
+  --series-2: #6b8795;
+  --series-3: #b4bdb8;
+  --series-4: #7a8460;
+  --series-other: #767672;
+  /* sticky notes: text is --text, borders are decorative */
+  --note-yellow-bg: #373321;
+  --note-yellow-bd: #6c6034;
+  --note-blue-bg: #2c3130;
+  --note-blue-bd: #4e595d;
+  --note-green-bg: #2c3227;
+  --note-green-bd: #4c5d46;
+  --note-pink-bg: #382c27;
+  --note-pink-bd: #704b45;
+  --note-purple-bg: #302e31;
+  --note-purple-bd: #5a5261;
+  --note-gray-bg: #31312c;
+  --note-gray-bd: #5c5a52;
+  /* code editor, on --sunken */
+  --syntax-keyword: #b4bdb8;
+  --syntax-string: #b0b59f;
+  --syntax-number: #a8b7bc;
+  /* diffs: lines also carry + or − */
+  --diff-add-bg: #262c23;
+  --diff-add-ink: #97c08c;
+  --diff-del-bg: #2f2722;
+  --diff-del-ink: #f0938a;
+  /* loading */
+  --skeleton: #272725;
   /* type */
-  /* Avenir Next on macOS and Segoe UI on Windows; elsewhere a grotesque with
-     similar widths before system-ui, which on Linux is often much wider. */
   --font-sans:
-    "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, Arial,
-    "Liberation Sans", system-ui, sans-serif;
+    "Manrope", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --type-caption: 500 12px/16px var(--font-sans); /* pills, table heads, meta */
   --type-small: 400 13px/20px var(--font-sans); /* help, dense cells */
@@ -94,8 +148,8 @@ SPDX-License-Identifier: Apache-2.0
   --type-button: 600 14px/20px var(--font-sans);
   --type-title-sm: 600 16px/24px var(--font-sans); /* panel, dialog */
   --type-title-md: 600 20px/28px var(--font-sans); /* section, designer name */
-  --type-title-lg: 700 24px/32px var(--font-sans); /* page title */
-  --type-display: 700 32px/40px var(--font-sans); /* Home welcome, pairing */
+  --type-title-lg: 600 24px/32px var(--font-sans); /* page title */
+  --type-display: 500 32px/40px var(--font-sans); /* Home welcome, pairing */
   --type-mono: 400 12px/18px var(--font-mono);
   /* space (4-grid) */
   --space-1: 4px;
@@ -109,28 +163,35 @@ SPDX-License-Identifier: Apache-2.0
   --space-12: 48px;
   /* radius */
   --radius-xs: 4px; /* tags, checkboxes, inline code */
-  --radius-sm: 6px; /* buttons, inputs, menu items */
-  --radius-md: 8px; /* cards, tables, panels, nodes, toasts */
+  --radius-sm: 6px; /* buttons, inputs, menu items, nodes */
+  --radius-md: 8px; /* cards, tables, panels, toasts */
   --radius-lg: 12px; /* dialogs, popovers, menus */
   --radius-pill: 999px;
-  /* elevation */
-  --shadow-1: 0 1px 2px rgb(23 61 52 / 0.06); /* canvas nodes and tools */
-  --shadow-2: 0 8px 24px rgb(23 61 52 / 0.14); /* menus, popovers, toasts */
-  --shadow-3: 0 24px 64px rgb(23 61 52 / 0.22); /* modals */
-  --scrim: rgb(23 61 52 / 0.32); /* behind a modal side sheet */
+  /* elevation: overlays also draw 1px --border */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4); /* canvas nodes and tools */
+  --shadow-2: 0 8px 24px rgb(0 0 0 / 0.5); /* menus, popovers, toasts */
+  --shadow-3: 0 24px 64px rgb(0 0 0 / 0.6); /* dialogs, side sheets */
   /* controls */
   --control-sm: 32px;
   --control-md: 36px;
   --control-touch: 44px;
-  /* motion */
-  --ease: cubic-bezier(0.2, 0, 0, 1);
-  --dur-fast: 120ms;
-  --dur: 200ms;
+  /* motion (brand motion tokens) */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1); /* enter, the default */
+  --ease-move: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-exit: cubic-bezier(0.55, 0, 1, 0.45);
+  --dur-fast: 150ms; /* hover, focus */
+  --dur: 200ms; /* small state changes, toasts */
+  --dur-panel: 300ms; /* panels, menus, sheets */
+  --dur-expressive: 1200ms; /* the live pulse on real runs */
   /* layout */
   --panel-w: clamp(360px, 25vw, 480px);
   font: var(--type-body);
   color: var(--text);
   background: var(--bg);
+}
+::selection {
+  background: var(--selection);
+  color: var(--text);
 }
 * {
   box-sizing: border-box;
@@ -172,17 +233,17 @@ button:hover,
 }
 button.primary,
 .button.primary {
-  background: var(--forest);
-  border-color: var(--forest);
-  color: var(--on-dark);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 button.primary:hover,
 .button.primary:hover {
-  background: var(--forest-hover);
-  border-color: var(--forest-hover);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 button.primary:active {
-  background: var(--forest-press);
+  background: var(--accent-press);
 }
 button.tertiary {
   border-color: transparent;
@@ -206,12 +267,12 @@ button.danger.solid,
 button.danger-solid {
   background: var(--danger);
   border-color: var(--danger);
-  color: var(--on-dark);
+  color: var(--on-accent);
 }
 button.danger.solid:hover,
 button.danger-solid:hover {
-  background: var(--danger-ink);
-  border-color: var(--danger-ink);
+  background: var(--danger-hover);
+  border-color: var(--danger-hover);
 }
 button.sm {
   min-height: var(--control-sm);
@@ -228,7 +289,7 @@ button.icon-button:hover {
   background: var(--hover);
 }
 /* Disabled is a flat token, never opacity: a disabled primary must not read
-   as pressed, and its label stays legible (4.67:1). */
+   as pressed, and its label stays legible (5.38:1 on --disabled-bg). */
 :is(button, .button):is(:disabled, [aria-disabled="true"]),
 :is(button, .button):is(:disabled, [aria-disabled="true"]):hover {
   opacity: 1;
@@ -283,9 +344,6 @@ button.icon-button:hover {
   outline-offset: 1px;
   border-color: var(--focus);
 }
-:is(.sidebar, .toast, .forest-surface) :focus-visible {
-  outline-color: var(--focus-on-dark);
-}
 /* A heading or region that receives focus only to move the reading position. */
 :is(h1, h2, h3, main, section, aside)[tabindex="-1"]:focus {
   outline: none;
@@ -308,7 +366,13 @@ textarea {
 input,
 select,
 textarea {
-  accent-color: var(--jade);
+  accent-color: var(--accent);
+}
+/* Chromium draws a placeholder in #757575 (3.55:1 on --raised); --subtle is
+   5.44:1 on --hover, the lowest field surface. */
+::placeholder {
+  color: var(--subtle);
+  opacity: 1;
 }
 input:where(
     :not([type="checkbox"], [type="radio"], [type="range"], [type="file"])
@@ -447,8 +511,8 @@ pre {
   overflow: hidden;
 }
 .sidebar {
-  background: var(--forest);
-  color: var(--on-dark);
+  background: var(--bg);
+  color: var(--text);
   display: flex;
   flex-direction: column;
   padding: 20px 12px 16px;
@@ -460,22 +524,22 @@ pre {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 6px 24px;
-  color: var(--on-dark);
+  padding: 0 0 24px;
+  color: var(--text);
   text-decoration: none;
-  font: 700 16px/20px var(--font-sans);
 }
-.brand img {
+/* The lockup fills the sidebar's 200px content width; wherever the sidebar is
+   narrow, CSS shows the 32px Firefly mark in a 44px box instead. */
+.brand-lockup {
+  display: block;
+  width: 200px;
+  height: auto;
+}
+.brand-mark {
+  display: none;
   width: 44px;
   height: 44px;
-}
-.brand small {
-  display: block;
-  color: var(--mint);
-  font-size: 12px;
-  font-weight: 400;
-  margin-top: 3px;
+  padding: 6px;
 }
 /* The skip link: the first stop on every page, shown only while focused. */
 .skip-link {
@@ -485,8 +549,8 @@ pre {
   z-index: 60;
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-pill);
-  background: var(--forest);
-  color: var(--on-dark);
+  background: var(--accent);
+  color: var(--on-accent);
   font: var(--type-label);
   text-decoration: none;
   transform: translateY(-200%);
@@ -494,7 +558,7 @@ pre {
 .skip-link:focus,
 .skip-link:focus-visible {
   transform: none;
-  outline: 2px solid var(--focus-on-dark);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 .sidebar-nav {
@@ -510,7 +574,7 @@ pre {
 }
 .nav-group {
   font: var(--type-caption);
-  color: var(--on-dark-accent);
+  color: var(--muted);
   margin: 16px 16px 6px;
 }
 .sidebar nav button {
@@ -519,7 +583,7 @@ pre {
   justify-content: flex-start;
   gap: 14px;
   border: 0;
-  color: var(--on-dark-muted);
+  color: var(--muted);
   background: transparent;
   height: 44px;
   padding: 10px 16px;
@@ -528,11 +592,12 @@ pre {
   font-weight: 500;
 }
 .sidebar nav button:hover {
-  background: var(--forest-hover);
+  background: var(--hover);
+  color: var(--text);
 }
 .sidebar nav button.active {
-  background: var(--forest-active);
-  color: var(--on-dark);
+  background: var(--selected);
+  color: var(--text);
   font-weight: 600;
 }
 .sidebar nav button.active:before {
@@ -541,7 +606,7 @@ pre {
   left: 0;
   top: 10px;
   bottom: 10px;
-  background: var(--mint);
+  background: var(--accent);
   width: 3px;
   border-radius: 2px;
 }
@@ -554,14 +619,14 @@ pre {
 }
 .collapse-button {
   background: transparent !important;
-  color: var(--on-dark-muted);
+  color: var(--muted);
   border: 0;
   font-size: 12px;
   width: 100%;
   justify-content: flex-start;
 }
 .foundation {
-  color: var(--on-dark-muted);
+  color: var(--muted);
   display: block;
   font-size: 12px;
   padding: 8px 14px;
@@ -626,10 +691,10 @@ pre {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--jade);
+  background: var(--success);
 }
 .connection-dot.offline {
-  background: var(--gold);
+  background: var(--warning);
 }
 .avatar {
   width: 32px;
@@ -776,10 +841,10 @@ pre {
   border-bottom: 0;
 }
 /* A selected row keeps every pill visible: pills carry a tone border, and
-   the row a jade bar. */
+   the row an amber bar (the current-item indicator). */
 .resource-row.selected {
   background: var(--selected);
-  box-shadow: inset 3px 0 0 var(--jade);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .resource-row .secondary {
   font: var(--type-caption);
@@ -817,9 +882,9 @@ pre {
   width: 40px;
   height: 40px;
   border: 1px solid var(--line);
-  background: var(--mist);
+  background: var(--raised);
   border-radius: 8px;
-  color: var(--jade);
+  color: var(--muted);
   flex: none;
 }
 .record-ref {
@@ -880,19 +945,14 @@ pre {
 .step-icon {
   width: 32px;
   height: 32px;
-  background: var(--mist);
+  background: var(--raised);
   border: 1px solid var(--line);
-  color: var(--jade);
+  color: var(--muted);
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
-}
-.human .step-icon {
-  background: var(--warning-bg);
-  border-color: var(--warning-bd);
-  color: var(--warning-ink);
 }
 .warning {
   color: var(--warning-ink);
@@ -984,18 +1044,10 @@ dd {
 .pair-brand {
   display: flex;
   align-items: center;
-  gap: 16px;
-  font-size: 20px;
-  font-weight: 600;
 }
 .pair-brand img {
-  width: 54px;
-  height: 54px;
-}
-.pair-brand small {
-  display: block;
-  color: var(--muted);
-  font-weight: 400;
+  width: 240px;
+  height: auto;
 }
 .pair-card {
   background: var(--surface);
@@ -1007,13 +1059,9 @@ dd {
   box-shadow: var(--shadow-1);
   text-align: left;
 }
-.pair-card .lumi {
-  height: 110px;
-  display: block;
-  margin: 0 auto 24px;
-}
 .pair-card h1 {
   font: var(--type-display);
+  letter-spacing: -0.02em;
   text-align: center;
 }
 .pair-card p {
@@ -1036,7 +1084,7 @@ dd {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, var(--forest) 50%, transparent);
+  background: var(--scrim);
   z-index: 20;
   display: flex;
   align-items: center;
@@ -1152,7 +1200,7 @@ dd {
 .notice.connection-ok {
   background: var(--success-bg);
   border-color: var(--success-bd);
-  border-left-color: var(--jade);
+  border-left-color: var(--success);
   color: var(--success-ink);
 }
 .notice[data-tone="danger"],
@@ -1261,7 +1309,7 @@ dd {
 .comparison pre {
   max-height: 320px;
   overflow: auto;
-  background: var(--mist);
+  background: var(--sunken);
   padding: 16px;
   border-radius: 6px;
 }
@@ -1281,7 +1329,7 @@ dd {
   width: 28px;
   height: 28px;
   border: 3px solid var(--line);
-  border-top-color: var(--jade);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 20px;
@@ -1300,10 +1348,12 @@ dd {
 .collapsed .brand {
   padding: 0 2px 28px;
 }
-.collapsed .brand img {
-  width: 44px;
+.collapsed .brand-lockup {
+  display: none;
 }
-.collapsed .brand > span,
+.collapsed .brand-mark {
+  display: block;
+}
 .collapsed .nav-group,
 .collapsed .sidebar nav button span,
 .collapsed .foundation,
@@ -1313,7 +1363,7 @@ dd {
 .collapsed .nav-group + .nav-list {
   margin-top: var(--space-2);
   padding-top: var(--space-2);
-  border-top: 1px solid var(--forest-hover);
+  border-top: 1px solid var(--line);
 }
 .collapsed .sidebar nav button {
   padding: 12px;
@@ -1333,10 +1383,12 @@ dd {
   .brand {
     padding: 0 2px 28px;
   }
-  .brand img {
-    width: 44px;
+  .brand-lockup {
+    display: none;
   }
-  .brand > span,
+  .brand-mark {
+    display: block;
+  }
   .nav-group,
   .sidebar nav button span,
   .foundation,
@@ -1346,7 +1398,7 @@ dd {
   .nav-group + .nav-list {
     margin-top: var(--space-2);
     padding-top: var(--space-2);
-    border-top: 1px solid var(--forest-hover);
+    border-top: 1px solid var(--line);
   }
   .sidebar nav button {
     padding: 12px;
@@ -1410,9 +1462,11 @@ dd {
   .collapsed .brand {
     padding: 0 2px 24px;
   }
-  .brand img,
-  .collapsed .brand img {
+  .brand-mark,
+  .collapsed .brand-mark {
     width: 38px;
+    height: 38px;
+    padding: 3px;
   }
   .sidebar nav button {
     padding: 10px;
@@ -1524,9 +1578,10 @@ dd {
   .collapsed .brand {
     padding-bottom: 12px;
   }
-  .brand img {
+  .brand-mark {
     width: 36px;
     height: 36px;
+    padding: 2px;
   }
   .sidebar nav button {
     height: 38px;
@@ -1637,7 +1692,7 @@ dd {
   margin-bottom: 16px;
 }
 .mail-message.outbound {
-  background: var(--mist);
+  background: var(--raised);
 }
 .mail-message header {
   display: flex;
@@ -1720,7 +1775,7 @@ dd {
 }
 .pane-resizer:hover,
 .pane-resizer:focus-visible {
-  background: color-mix(in srgb, var(--mint) 31%, transparent);
+  background: var(--accent-glow);
 }
 .list-toolbar select {
   font-size: 13px;
@@ -1748,9 +1803,9 @@ dd {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 2px solid var(--jade-strong);
+  border: 2px solid var(--node-border);
   border-radius: 28px;
-  color: var(--forest);
+  color: var(--text);
   background: var(--selected);
   font-weight: 700;
   line-height: normal;
@@ -1849,7 +1904,7 @@ dd {
 }
 .integration-contract h4 {
   font-size: 12px;
-  color: var(--forest);
+  color: var(--text);
   margin: 18px 0 8px;
   text-transform: none;
 }
@@ -2121,7 +2176,7 @@ input[type="file"][hidden] {
   display: inline-block;
   flex: none;
   margin: 0;
-  accent-color: var(--forest);
+  accent-color: var(--accent);
 }
 .start-options .hint,
 .start-options .field-error {
@@ -2189,7 +2244,7 @@ input[type="file"][hidden] {
   line-height: normal;
 }
 .start-node > button:hover {
-  background: color-mix(in srgb, var(--mint) 40%, var(--surface));
+  background: var(--hover);
 }
 /* Durations: an amount and a unit. */
 .duration-field {
@@ -2235,7 +2290,7 @@ input[type="file"][hidden] {
 .split-button .new-menu-toggle {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
-  border-left: 1px solid color-mix(in srgb, var(--on-dark) 35%, transparent);
+  border-left: 1px solid var(--line);
 }
 .integration-create button {
   gap: 6px;
@@ -2313,9 +2368,9 @@ input[type="file"][hidden] {
 }
 /* "Current" marks the platform in use: emphasis, not a status. */
 .state-chip.current {
-  color: var(--on-dark);
-  background: var(--forest);
-  border-color: var(--forest);
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .state-chip.current::before {
   display: none;
@@ -2335,8 +2390,8 @@ input[type="file"][hidden] {
   white-space: nowrap;
 }
 .tag.emphasis {
-  border-color: var(--forest);
-  color: var(--forest);
+  border-color: var(--text);
+  color: var(--text);
   font-family: var(--font-sans);
   font-weight: 600;
 }
@@ -2359,8 +2414,9 @@ input[type="file"][hidden] {
   gap: var(--space-4);
   padding: 12px 16px;
   border-radius: var(--radius-md);
-  background: var(--forest);
-  color: var(--on-dark);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  color: var(--text);
   font: var(--type-body);
   box-shadow: var(--shadow-2);
   animation: toast-in var(--dur) var(--ease);
@@ -2370,11 +2426,11 @@ input[type="file"][hidden] {
   padding: 0 8px;
   background: transparent;
   border: 0;
-  color: var(--on-dark-accent);
+  color: var(--link);
   font-weight: 600;
 }
 .toast button:hover {
-  background: color-mix(in srgb, var(--on-dark) 8%, transparent);
+  background: var(--hover);
 }
 /* Over the focused control's place at the bottom: the toast shows on top. */
 .toast-region.top {
@@ -2388,7 +2444,7 @@ input[type="file"][hidden] {
   }
 }
 @media (max-width: 767px) {
-  /* Beside the navigation rail, never over it (both are forest). */
+  /* Beside the navigation rail, never over it. */
   .toast-region {
     left: calc(var(--shell-left, 0px) + var(--space-4));
     right: var(--space-4);
@@ -2517,7 +2573,7 @@ details.disclosure[open] > summary::before {
   box-shadow: 0 0 0 6px var(--live-glow);
 }
 .is-live.pulse .node-body {
-  animation: live-pulse 1.2s var(--ease) 1;
+  animation: live-pulse var(--dur-expressive) var(--ease) 1;
 }
 @keyframes live-pulse {
   0% {
@@ -2592,7 +2648,7 @@ details.disclosure[open] > summary::before {
 /* Keep the workflow name readable until its responsive maximum. */
 .editor-identity h1 {
   font: var(--type-title-sm);
-  color: var(--forest);
+  color: var(--text);
   margin: 0;
   flex: 0 1 auto;
   min-width: 0;
@@ -2638,12 +2694,12 @@ details.disclosure[open] > summary::before {
   font-size: 13px;
 }
 .editor-views button:hover {
-  color: var(--forest);
+  color: var(--text);
   background: var(--hover);
 }
 .editor-views button[aria-selected="true"] {
   background: var(--surface);
-  color: var(--forest);
+  color: var(--text);
   box-shadow: var(--shadow-1);
   outline: 1px solid var(--border);
 }
@@ -2764,7 +2820,7 @@ details.disclosure[open] > summary::before {
 .editor-toolbar .inspector-toggle[aria-pressed="true"] {
   background: var(--selected);
   border-color: var(--border-hover);
-  color: var(--forest);
+  color: var(--text);
 }
 /* Busy or blocked commands stay focusable; they look unavailable. */
 .editor-toolbar button[aria-disabled="true"],
@@ -2969,7 +3025,7 @@ details.disclosure[open] > summary::before {
   position: relative;
   overflow: hidden;
   container: canvas / inline-size;
-  background-image: radial-gradient(var(--border) 0.8px, transparent 0.8px);
+  background-image: radial-gradient(var(--canvas-dot) 0.8px, transparent 0.8px);
   background-size: 24px 24px;
   touch-action: none;
 }
@@ -3015,7 +3071,7 @@ details.disclosure[open] > summary::before {
 .edges .edge-arrow {
   fill: var(--flow-line);
 }
-/* The live thread: the path the simulated run took is gold. */
+/* The live thread: the path the simulated run took is drawn in --live. */
 .edges .edge.edge-taken {
   stroke: var(--live);
   stroke-width: 2.5;
@@ -3055,7 +3111,7 @@ details.disclosure[open] > summary::before {
 .node-title {
   display: block;
   font: 600 max(14px, calc(12px / var(--zoom, 1))) / 1.2 var(--font-sans);
-  color: var(--forest);
+  color: var(--text);
   white-space: normal;
   overflow-wrap: anywhere;
   overflow: hidden;
@@ -3070,18 +3126,12 @@ details.disclosure[open] > summary::before {
   text-overflow: ellipsis;
 }
 .graph-node.selected .node-body {
-  border: 2px solid var(--jade);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mint) 35%, transparent);
-}
-.graph-node.human .node-body {
-  border-color: var(--warning-bd);
-}
-.graph-node.human.selected .node-body {
-  border-color: var(--jade);
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-glow);
 }
 /* Edits in the inspector that aren't applied yet. */
 .graph-node.dirty .node-body {
-  outline: 2px dashed var(--jade);
+  outline: 2px dashed var(--accent);
   outline-offset: 3px;
 }
 /* Problems on the canvas: a border and a chip that names them. */
@@ -3127,12 +3177,12 @@ details.disclosure[open] > summary::before {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--jade);
-  color: var(--on-dark);
+  background: var(--success);
+  color: var(--on-accent);
   border: 2px solid var(--surface);
 }
 .graph-node.is-done .node-body {
-  border-color: var(--jade);
+  border-color: var(--node-border);
 }
 .graph-node.sim-breakpoint .node-body {
   border-left: 4px solid var(--danger);
@@ -3155,8 +3205,8 @@ details.disclosure[open] > summary::before {
   bottom: -6px;
 }
 .port.connecting {
-  background: var(--jade);
-  box-shadow: 0 0 0 4px var(--mint);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-glow);
 }
 /* A branch's first step carries the branch's name: its condition,
    "Otherwise" or the parallel branch's name. */
@@ -3168,8 +3218,8 @@ details.disclosure[open] > summary::before {
   padding: 1px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
-  background: var(--mist);
-  color: var(--forest);
+  background: var(--raised);
+  color: var(--text);
   font: 600 12px/16px var(--font-sans);
   white-space: nowrap;
   overflow: hidden;
@@ -3184,10 +3234,10 @@ details.disclosure[open] > summary::before {
   min-height: 24px;
   transform: translate(-50%, -50%);
   padding: 0;
-  border: 1.5px solid var(--jade);
+  border: 1.5px solid var(--flow-line);
   border-radius: 50%;
   background: var(--surface);
-  color: var(--jade);
+  color: var(--muted);
   line-height: normal;
   pointer-events: auto;
   display: grid;
@@ -3208,8 +3258,8 @@ details.disclosure[open] > summary::before {
 .insertion-target:focus-visible,
 .insertion-target.drop-active,
 .insertion-target[aria-expanded="true"] {
-  background: var(--jade);
-  color: var(--on-dark);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 .insertion-target:hover weave-icon,
 .insertion-target:focus-visible weave-icon,
@@ -3243,7 +3293,7 @@ details.disclosure[open] > summary::before {
 .insertion-target.branch-placeholder:focus-visible,
 .insertion-target.branch-placeholder.drop-active {
   background: var(--selected);
-  border-color: var(--jade);
+  border-color: var(--accent);
   color: var(--text);
 }
 .insertion-target.branch-placeholder weave-icon {
@@ -3261,7 +3311,7 @@ details.disclosure[open] > summary::before {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--link);
+  color: var(--muted);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -3283,8 +3333,8 @@ details.disclosure[open] > summary::before {
   width: 100%;
   justify-content: center;
   gap: 6px;
-  border-color: var(--jade);
-  color: var(--forest);
+  border-color: var(--field-border);
+  color: var(--text);
   background: var(--surface);
 }
 .canvas-empty .first-step:hover {
@@ -3380,7 +3430,7 @@ details.disclosure[open] > summary::before {
   opacity: 0.7;
 }
 .insertion-target.drop-hover {
-  outline: 3px solid var(--jade);
+  outline: 3px solid var(--accent);
   outline-offset: 4px;
 }
 .canvas-tools {
@@ -3594,7 +3644,7 @@ weave-llm-inspector .modal-panel.wide {
 .human-deadlines > summary {
   cursor: pointer;
   font: var(--type-label);
-  color: var(--forest);
+  color: var(--text);
 }
 .action-details > summary,
 .slot-management > summary {
@@ -3612,7 +3662,7 @@ weave-llm-inspector .modal-panel.wide {
 }
 .section-body h4 {
   font: var(--type-label);
-  color: var(--forest);
+  color: var(--text);
   margin: 16px 0 8px;
 }
 .inspector-section > summary {
@@ -3624,7 +3674,7 @@ weave-llm-inspector .modal-panel.wide {
   background: var(--surface);
   font: var(--type-title-sm);
   font-size: 14px;
-  color: var(--forest);
+  color: var(--text);
   cursor: pointer;
   list-style: none;
 }
@@ -3907,7 +3957,7 @@ weave-llm-inspector .modal-panel.wide {
   gap: 8px;
 }
 .outline button[aria-selected="true"] {
-  border-color: var(--jade);
+  border-color: var(--accent);
   background: var(--selected);
 }
 .outline button span {
@@ -3986,8 +4036,11 @@ kbd {
   .inspector > .pane-resizer {
     display: none;
   }
+  /* The close button's hit area reaches into the header padding so its icon
+     lines up with the content edge and a long step name stays on one line. */
   .inspector-close {
     display: flex !important;
+    margin-right: calc(-1 * var(--space-2));
   }
 }
 /* Narrower windows: the bar wraps its commands onto a second row. */
@@ -4158,7 +4211,7 @@ kbd {
 .lane-header {
   position: absolute;
   padding: 4px 8px;
-  color: var(--forest);
+  color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -4205,7 +4258,7 @@ kbd {
   margin-right: 8px;
 }
 .workflow-progress [aria-current="step"] {
-  color: var(--forest);
+  color: var(--text);
   font-weight: 700;
 }
 .canvas.tiny-overview .insertion-target,

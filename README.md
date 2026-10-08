@@ -295,8 +295,6 @@ verified scope.
 
 ## Meet Lumi
 
-![Lumi, the Firefly Weave guide, with translucent mint wings and an amber lantern](assets/lumi.png)
-
 **Lumi is Weave's firefly guide.** Translucent mint wings, a forest-green
 body, and a warm amber lantern bring Weave's colors to life. The lantern
 represents a clear next step through a complex process.
@@ -304,7 +302,7 @@ represents a clear next step through a complex process.
 You will find Lumi throughout the documentation and in Studio. Open the
 **Ask Lumi** panel for assistance, and [configure its model](docs/guides/lumi.md)
 separately from workflow AI tasks. In diagrams,
-**Lumi's takeaway** highlights the main idea to remember before moving on.
+the **Takeaway** band highlights the main idea to remember before moving on.
 Start with the [visual guide](docs/visual-guide.md) to explore the platform together.
 
 ## Contribute and learn more

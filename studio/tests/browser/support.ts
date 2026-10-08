@@ -250,6 +250,28 @@ export async function connected(
   await page.goto("/");
   return recorder;
 }
+/**
+ * A design token's color as the browser computes colors ("rgb(r, g, b)"),
+ * read from the page at run time so tests follow the token, not a copy of it.
+ */
+export async function tokenColor(page: Page, token: string): Promise<string> {
+  return page.evaluate((name) => {
+    // An undefined token would make the probe inherit the body color, so a
+    // misspelled name could pass by accident: refuse it instead.
+    if (
+      getComputedStyle(document.documentElement)
+        .getPropertyValue(name)
+        .trim() === ""
+    )
+      throw new Error(`Design token ${name} is not defined on :root`);
+    const probe = document.createElement("i");
+    probe.style.color = `var(${name})`;
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, token);
+}
 export async function offline(page: Page) {
   await page.route("**/studio/session", (r) =>
     r.fulfill({

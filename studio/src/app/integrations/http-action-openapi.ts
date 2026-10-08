@@ -521,7 +521,7 @@ let sequence = 0;
         cursor: pointer;
         font-size: 12px;
         font-weight: 600;
-        color: var(--jade);
+        color: var(--link);
       }
       .hb-relax {
         margin-top: 10px;
@@ -588,7 +588,7 @@ let sequence = 0;
         width: 16px;
         height: 16px;
         margin: 0;
-        accent-color: var(--forest);
+        accent-color: var(--accent);
       }
       .hb-op-path {
         font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -622,8 +622,8 @@ let sequence = 0;
         min-width: 0;
       }
       .hb-pick.current {
-        border-color: var(--jade);
-        background: var(--mist);
+        border-color: var(--accent);
+        background: var(--selected);
       }
       .hb-pick-name {
         font-weight: 600;

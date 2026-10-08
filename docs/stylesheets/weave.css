@@ -72,9 +72,3 @@ SPDX-License-Identifier: Apache-2.0
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
-
-/* Keep the companion illustration small enough to leave instructions in focus. */
-.md-typeset img[src$="lumi.png"] { width: 10rem; height: auto; }
-
-.md-typeset img.lumi-guide { float: right; width: 8rem; margin: 0 0 1rem 1rem; }
-.md-typeset img.lumi-guide ~ h2 { clear: both; }

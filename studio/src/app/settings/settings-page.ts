@@ -54,11 +54,11 @@ interface AccountRow {
       </div>
     </div>
     @if (h.profile) {
-      <section class="settings-card" aria-label="AI setup">
-        <h2>AI setup</h2>
+      <section class="settings-card" aria-label="AI models">
+        <h2>AI models</h2>
         <p>
-          Provider connections are shared environment resources. Lumi uses its
-          own model settings; workflow AI profiles stay in each workflow.
+          Provider connections are shared environment resources. Weave AI uses
+          its own model settings; workflow AI profiles stay in each workflow.
         </p>
         @if (h.can("connection.manage")) {
           <button type="button" (click)="h.openAiConnectionDialog()">
@@ -70,18 +70,19 @@ interface AccountRow {
             type="button"
             (click)="h.lumiSettingsRequested = true; h.lumiOpen = true"
           >
-            Configure Lumi
+            Weave AI settings
           </button>
         }
         @if (!h.can("lumi.manage") || !h.can("connection.manage")) {
           <p>
-            Ask an administrator for Lumi manager and connection.manage grants
-            in this environment to configure Lumi and its provider connection.
+            Ask an administrator for Weave AI manager and connection.manage
+            grants in this environment to set up Weave AI and its provider
+            connection.
           </p>
         }
         <p>
           For a workflow model, add an AI task and open Configure workflow AI
-          profiles. A platform operator installs the Agentic worker and Lumi
+          profiles. A platform operator installs the Agentic worker and Weave AI
           gateway and provisions approved secret handles.
         </p>
       </section>

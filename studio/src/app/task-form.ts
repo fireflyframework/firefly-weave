@@ -736,8 +736,8 @@ let sequence = 0;
         border-left: 1px solid var(--line);
       }
       .binding-mode[aria-pressed="true"] {
-        background: var(--forest);
-        color: var(--on-dark);
+        background: var(--accent);
+        color: var(--on-accent);
         font-weight: 600;
       }
       .binding-help summary {
@@ -799,7 +799,7 @@ let sequence = 0;
         border: 1px solid var(--line);
         border-radius: 999px;
         padding: 1px 8px;
-        background: var(--mist);
+        background: var(--raised);
         color: var(--text);
         font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
       }

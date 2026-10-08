@@ -41,7 +41,7 @@ for (const viewport of [
 ])
   test.describe(`${viewport.width}x${viewport.height}`, () => {
     test.use({ viewport });
-    test("Lumi requires context opt-in and a reviewed validated explicit apply", async ({
+    test("Weave AI requires context opt-in and a reviewed validated explicit apply", async ({
       page,
     }) => {
       await connected(page, { capabilities: [...allCapabilities, "lumi.use"] });
@@ -79,10 +79,15 @@ for (const viewport of [
         }),
       );
       await newWorkflow(page);
-      await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-      const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+      await page
+        .getByRole("button", { name: "Ask Weave AI", exact: true })
+        .click();
+      const panel = page.getByRole("dialog", {
+        name: "Ask Weave AI",
+        exact: true,
+      });
       await panel
-        .getByLabel("Message to Lumi", { exact: true })
+        .getByLabel("Message to Weave AI", { exact: true })
         .fill("Suggest a two-minute wait.");
       await panel.getByLabel("Include current source", { exact: true }).check();
       await panel
@@ -141,22 +146,24 @@ test("context defaults off, stale proposals cannot replace later edits, and relo
     });
   });
   await newWorkflow(page);
-  await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-  const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
   await expect(
     panel.getByLabel("Include current source", { exact: true }),
   ).not.toBeChecked();
-  await panel.getByLabel("Message to Lumi").fill("Suggest a change");
+  await panel.getByLabel("Message to Weave AI").fill("Suggest a change");
   await panel
     .getByRole("button", { name: "Send message", exact: true })
     .click();
   await expect(panel).toContainText("Private conversation");
   expect(sent.draft).toBeUndefined();
   expect(sent.attachments).toEqual([]);
-  await panel.getByRole("button", { name: "Close Lumi", exact: true }).click();
+  await panel
+    .getByRole("button", { name: "Close Weave AI", exact: true })
+    .click();
   const designer = new DesignerPage(page);
   await designer.append("wait");
-  await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
+  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
   await panel
     .getByRole("button", { name: "Review workflow", exact: true })
     .click();
@@ -167,7 +174,7 @@ test("context defaults off, stale proposals cannot replace later edits, and relo
     panel.getByRole("button", { name: "Apply to local draft", exact: true }),
   ).toBeDisabled();
   await page.reload();
-  await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
+  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
   await expect(panel).not.toContainText("Private conversation");
 });
 
@@ -175,7 +182,7 @@ for (const viewport of [
   { width: 1440, height: 900 },
   { width: 390, height: 700 },
 ])
-  test(`Lumi settings wizard preserves drafts and saves reviewed configuration at ${viewport.width}px`, async ({
+  test(`Weave AI settings wizard preserves drafts and saves reviewed configuration at ${viewport.width}px`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize(viewport);
@@ -257,10 +264,15 @@ for (const viewport of [
       return r.fulfill({ json: original });
     });
     await newWorkflow(page);
-    await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-    const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+    await page
+      .getByRole("button", { name: "Ask Weave AI", exact: true })
+      .click();
+    const panel = page.getByRole("dialog", {
+      name: "Ask Weave AI",
+      exact: true,
+    });
     await panel
-      .getByRole("button", { name: "Lumi settings", exact: true })
+      .getByRole("button", { name: "Weave AI settings", exact: true })
       .click();
     await expect(
       panel.getByRole("button", { name: "New conversation", exact: true }),
@@ -271,7 +283,10 @@ for (const viewport of [
       0,
     );
     await expect(
-      panel.getByRole("button", { name: "Save Lumi settings", exact: true }),
+      panel.getByRole("button", {
+        name: "Save Weave AI settings",
+        exact: true,
+      }),
     ).toHaveCount(0);
     await panel
       .getByRole("button", { name: "Continue to connection", exact: true })
@@ -297,7 +312,10 @@ for (const viewport of [
       .getByRole("button", { name: "Review settings", exact: true })
       .click();
     await expect(
-      panel.getByRole("heading", { name: "Review Lumi settings", exact: true }),
+      panel.getByRole("heading", {
+        name: "Review Weave AI settings",
+        exact: true,
+      }),
     ).toBeFocused();
     await expect(panel.locator(".settings-summary")).toContainText(
       "configured-model",
@@ -316,10 +334,10 @@ for (const viewport of [
       true,
     );
     await panel
-      .getByRole("button", { name: "Save Lumi settings", exact: true })
+      .getByRole("button", { name: "Save Weave AI settings", exact: true })
       .click();
     await expect(
-      panel.getByRole("button", { name: "Lumi settings", exact: true }),
+      panel.getByRole("button", { name: "Weave AI settings", exact: true }),
     ).toBeHidden();
     await expect(
       panel.getByRole("button", { name: "New conversation", exact: true }),
@@ -328,9 +346,9 @@ for (const viewport of [
       panel.getByRole("button", { name: "Reload settings", exact: true }),
     ).toBeDisabled();
     finishSave();
-    await expect(panel.getByLabel("Message to Lumi")).toBeVisible();
+    await expect(panel.getByLabel("Message to Weave AI")).toBeVisible();
     await expect(
-      panel.getByRole("button", { name: "Lumi settings", exact: true }),
+      panel.getByRole("button", { name: "Weave AI settings", exact: true }),
     ).toBeVisible();
     await expect(
       panel.getByRole("button", { name: "New conversation", exact: true }),
@@ -372,9 +390,9 @@ test("non-workflow proposals are validated before saving a reviewed file", async
     r.fulfill({ json: { validationOk: true, errorCount: 0, diagnostics: [] } }),
   );
   await newWorkflow(page);
-  await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-  const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
-  await panel.getByLabel("Message to Lumi").fill("Propose a policy");
+  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
+  await panel.getByLabel("Message to Weave AI").fill("Propose a policy");
   await panel
     .getByRole("button", { name: "Send message", exact: true })
     .click();

@@ -107,13 +107,13 @@ SPDX-License-Identifier: Apache-2.0
 }
 .mode-switch button[aria-checked="true"],
 .mode-switch button[aria-checked="true"]:hover:not(:disabled) {
-  background: var(--forest);
-  color: var(--on-dark);
+  background: var(--accent);
+  color: var(--on-accent);
   font-weight: 600;
 }
 .mode-switch button:disabled[aria-checked="true"] {
-  background: var(--disabled-ink);
-  color: var(--on-dark);
+  background: var(--muted); /* 9.61:1 with --on-accent */
+  color: var(--on-accent);
 }
 .expression-editor {
   display: grid;
@@ -226,7 +226,7 @@ textarea {
   box-shadow: inset 3px 0 0 var(--danger);
 }
 .nested-properties {
-  border-left: 2px solid var(--mist);
+  border-left: 2px solid var(--line);
   padding-left: 0.45rem;
 }
 .nested-row {
@@ -254,9 +254,9 @@ textarea {
 button {
   cursor: pointer;
   font: inherit;
-  color: var(--forest);
+  color: var(--text);
   border: 1px solid var(--border);
-  background: var(--mist);
+  background: var(--raised);
   border-radius: var(--radius-sm);
   padding: 0.3rem;
 }

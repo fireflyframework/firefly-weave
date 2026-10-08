@@ -324,7 +324,7 @@ export const freshDecisionTable = (): DecisionTableDraft => ({
         gap: 12px;
       }
       .rule {
-        border: 1px solid var(--border, #ddd);
+        border: 1px solid var(--border);
         border-radius: 8px;
         padding: 12px;
         display: grid;
