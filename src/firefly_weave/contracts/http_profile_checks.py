@@ -38,11 +38,13 @@ from firefly_weave.contracts.connectors import ConnectionIssue, ConnectionIssueC
 from firefly_weave.contracts.http_profiles import (
     HEADER_NAME,
     NAME,
+    PLAIN_HTTP,
     AuthProfile,
     HttpOperation,
     HttpParameter,
     check_profile_connection,
     fixed_server,
+    plain_http_allowed,
     protected,
 )
 from firefly_weave.contracts.values import JsonObject
@@ -540,11 +542,13 @@ def connection_issues(request: ConnectionRequest) -> list[ConnectionIssue]:
         add("/config/baseUrl", "Enter the API origin, for example https://api.example.com.")
     else:
         try:
-            origin, path = fixed_server(base)
+            origin, path = fixed_server(base, plain_http=plain_http_allowed(base))
         except ValueError:
             add(
                 "/config/baseUrl",
-                "Use an HTTPS origin such as https://api.example.com, without credentials, a query or a fragment.",
+                PLAIN_HTTP
+                if base.strip().lower().startswith("http://")
+                else "Use an HTTPS origin such as https://api.example.com, without credentials, a query or a fragment.",
             )
         else:
             if path:
@@ -578,11 +582,13 @@ def connection_issues(request: ConnectionRequest) -> list[ConnectionIssue]:
     allowed: set[str] = set()
     for index, destination in enumerate(request.allowed_destinations):
         try:
-            allowed.add(fixed_server(destination)[0])
+            allowed.add(fixed_server(destination, plain_http=plain_http_allowed(destination))[0])
         except ValueError:
             add(
                 f"/allowed_destinations/{index}",
-                "HTTP profile connections can reach only HTTPS origins such as https://api.example.com.",
+                PLAIN_HTTP
+                if destination.strip().lower().startswith("http://")
+                else "HTTP profile connections can reach only HTTPS origins such as https://api.example.com.",
                 "DESTINATION",
             )
     if origin is not None and origin not in allowed:

@@ -56,10 +56,26 @@ def protected(name: str) -> bool:
     return name.lower() in PROTECTED or name.lower().startswith(("proxy-", "x-forwarded-"))
 
 
-def fixed_server(value: str) -> tuple[str, str]:
+PLAIN_HTTP = (
+    "Plain HTTP works only for an origin the platform operator approved for development "
+    "(the private-origin policy). Use an HTTPS origin such as https://api.example.com."
+)
+
+
+def plain_http_allowed(value: str) -> bool:
+    """True when this process's private-origin policy approves ``value`` for plain HTTP connector calls."""
+    from firefly_weave import private_origins
+
+    return value.strip().lower().startswith("http://") and private_origins.active().permits_plaintext(
+        "http-connector", value
+    )
+
+
+def fixed_server(value: str, *, plain_http: bool = False) -> tuple[str, str]:
+    """The fixed server's origin and base path; ``plain_http`` also accepts an ``http`` origin."""
     parsed = urlsplit(value)
     if (
-        parsed.scheme != "https"
+        parsed.scheme not in ({"https", "http"} if plain_http else {"https"})
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
@@ -71,11 +87,11 @@ def fixed_server(value: str) -> tuple[str, str]:
         or parsed.hostname.endswith(".")
         or parsed.port == 0
     ):
-        raise ValueError("Invalid fixed HTTPS server")
+        raise ValueError("Invalid fixed server")
     path = parsed.path.rstrip("/")
     if any(part in {".", "..", ""} for part in path.split("/")[1:]) or "{" in path or "}" in path:
         raise ValueError("Invalid server path")
-    return f"https://{parsed.netloc}", path
+    return f"{parsed.scheme}://{parsed.netloc}", path
 
 
 def template_names(path: str) -> list[str]:
@@ -153,7 +169,8 @@ class ProfileConnection(ContractModel):
 
     @model_validator(mode="after")
     def checked(self) -> "ProfileConnection":
-        _, path = fixed_server(self.base_url)
+        # Execution accepts http syntactically; the egress check decides reachability (C8).
+        _, path = fixed_server(self.base_url, plain_http=True)
         if path:
             raise ValueError("Connection must contain only the fixed origin")
         return self
@@ -228,8 +245,12 @@ def validate_profile_action(check: ActionConfigCheck) -> list[ActionConfigIssue]
 def check_profile_connection(request: ConnectionRequest) -> None:
     """The authoritative connection policy; raises ``ValueError`` for anything outside it."""
     profile = ProfileConnection.model_validate(request.config)
-    allowed = {fixed_server(v)[0] for v in request.allowed_destinations}
-    if fixed_server(profile.base_url)[0] not in allowed or set(request.secret_refs) != profile.auth.slots():
+
+    def server(value: str) -> str:
+        return fixed_server(value, plain_http=plain_http_allowed(value))[0]
+
+    allowed = {server(v) for v in request.allowed_destinations}
+    if server(profile.base_url) not in allowed or set(request.secret_refs) != profile.auth.slots():
         raise ValueError("Connection authority does not match the profile")
     if profile.auth.endpoint and fixed_server(profile.auth.endpoint)[0] not in allowed:
         raise ValueError("Machine endpoint is not allowed")
