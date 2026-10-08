@@ -32,7 +32,7 @@ from firefly_weave.access.scheduler import _SchedulerScope
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.email import EmailCorrelationToken, EmailReceipt, EmailTokenRequest, NormalizedEmail
 from firefly_weave.contracts.runtime import StartRunRequest
-from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.email.mime import parse_message
 from firefly_weave.email.service import EmailService, unavailable
 from firefly_weave.email.transport import IMAPTransport
@@ -508,6 +508,9 @@ class EmailSourceService:
                         )
                         return {"state": "retained"}
             except CatalogError as error:
+                # A capacity refusal ran nothing: roll back and leave the receipt for the next pending scan.
+                if capacity_rejected(error):
+                    raise
                 state = "retained" if "TERMINAL" in error.code else "blocked"
                 await db.execute(
                     f"UPDATE email_receipts SET state=:state,reason=:reason WHERE {SCOPE} AND id=:id",
