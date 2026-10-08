@@ -26,3 +26,11 @@ class CatalogError(Exception):
         self.code = code
         self.message = message
         self.result = result
+
+
+# Admission rejections: the operation ran nothing, so the identical call may be sent again.
+CAPACITY_CODES = frozenset({"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"})
+
+
+def capacity_rejected(error: BaseException) -> bool:
+    return isinstance(error, CatalogError) and error.status == 429 and error.code in CAPACITY_CODES
