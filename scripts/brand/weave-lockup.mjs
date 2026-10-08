@@ -28,7 +28,8 @@ SPDX-License-Identifier: Apache-2.0
 // the chevron apex, and the weave wordmark 1X after the separator, where 1X is
 // the Firefly x-height (108 drawing units). The wordmark comes from its
 // committed masters, assets/brand/weave-wordmark.svg and, for the small
-// lockup, weave-wordmark-small.svg; no lockup sets live or outlined type.
+// lockup, weave-wordmark-small.svg. The composer sets no type for the lockups:
+// the wordmark's letters come as paths from those masters.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
