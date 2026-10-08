@@ -137,10 +137,11 @@ test("an opened workflow isn't marked unsaved until it's edited", async ({
   expect(await identity.textContent()).not.toContain("Unsaved");
   await page.clock.runFor(1000);
   await expect(identity).not.toContainText("Unsaved");
-  // An edit is kept on this computer and says so.
+  // An edit is kept on this computer and says so: the field applies after
+  // 300 ms, and the autosave runs 800 ms later.
   await title.fill("Approve the vendor payment");
   await title.press("Tab");
-  await page.clock.runFor(1000);
+  await page.clock.runFor(1200);
   await expect(identity.locator(".status-chip")).toContainText(
     /Draft saved \d{2}:\d{2}/,
   );
