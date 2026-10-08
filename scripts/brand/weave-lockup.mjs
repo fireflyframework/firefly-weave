@@ -188,7 +188,13 @@ function hero({ width, height, x, centered }) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="${CHARCOAL}"/>${logo}${descriptor}</svg>`;
 }
 
-/** The DMG window, 720 x 440 at 1x; Finder draws 128 px icons at (190, 236) and (530, 236). */
+// The DMG window as desktop/src-tauri/tauri.conf.json sets it (bundle.macOS.dmg.windowSize). Finder
+// draws the picture at 1x from the top left of the content area, which is the window less its title
+// bar (about 28 px), so a picture as tall as the window covers the content with no strip of window
+// color under it. The last line of text ends near y = 422, well inside the 452 px that stays visible.
+const DMG = { width: 720, height: 480 };
+
+/** The DMG window picture at 1x; Finder draws 128 px icons at (190, 236) and (530, 236). */
 function dmgBackground() {
   const x = Math.max(16, Math.ceil((80 * X) / reversed.FW)); // The Firefly part stays at least 80 px wide.
   const k = x / X;
@@ -197,8 +203,8 @@ function dmgBackground() {
   // Finder colors icon labels by appearance; black (4.60) and white (4.56) both read on this plate.
   const plate = (cx, w) => `<rect x="${cx - w / 2}" y="308" width="${w}" height="26" rx="6" fill="${PLATE}"/>`;
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="440" viewBox="0 0 720 440">`,
-    `<rect width="720" height="440" fill="${CHARCOAL}"/>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${DMG.width}" height="${DMG.height}" viewBox="0 0 ${DMG.width} ${DMG.height}">`,
+    `<rect width="${DMG.width}" height="${DMG.height}" fill="${CHARCOAL}"/>`,
     placed(reversed.drawing, 40, 32, r(reversed.width * k)),
     text("Drag Firefly Weave Studio into Applications to install.", {
       x: 40,
@@ -282,7 +288,7 @@ files["desktop/artwork/app-icon-macos.svg"] = accessible(
   "Firefly Weave Studio",
   "The Firefly icon tile at 824 by 824 pixels on a transparent 1024 by 1024 canvas, the macOS icon grid.",
 );
-files["desktop/artwork/dmg-background.png"] = await png(dmg, 720, 440);
+files["desktop/artwork/dmg-background.png"] = await png(dmg, DMG.width, DMG.height);
 files["assets/brand/social-preview.png"] = await png(hero({ width: 1280, height: 640, x: 48, centered: true }), 1280, 640);
 files["desktop/src-tauri/icons/icon.ico"] = ico(
   await Promise.all(ICO_ENTRIES.map(async ([size, drawing]) => ({ size, data: await png(drawing, size) }))),

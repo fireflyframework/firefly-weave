@@ -45,9 +45,10 @@ SPDX-License-Identifier: Apache-2.0
 - Show the product name, Firefly Weave, at the top of CLI help instead of ASCII
   logo art, and say Weave AI in CLI prompts and in server and worker messages.
   API paths, permissions, roles and error codes keep `lumi`.
-- Give the desktop app the Firefly icon, a charcoal DMG background and a
-  charcoal launch page, and draw exported workflow graphs, the API explorer, the
-  README banner, shields and badges with the Firefly identity.
+- Give the desktop app the Firefly icon, a charcoal DMG background as tall as
+  the installer window, and a charcoal launch page in a charcoal window that
+  opens without a white flash, and draw exported workflow graphs, the API
+  explorer, the README banner, shields and badges with the Firefly identity.
 
 ## 0.1.0a14
 

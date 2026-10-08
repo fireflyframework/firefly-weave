@@ -167,8 +167,17 @@ def test_dmg_background_matches_the_tauri_window_and_keeps_labels_readable():
     dmg = json.loads(text_of("desktop/src-tauri/tauri.conf.json"))["bundle"]["macOS"]["dmg"]
     assert dmg["background"] == "../artwork/dmg-background.png"
     root = svg_root("desktop/artwork/dmg-background.svg")
-    assert root.get("viewBox") == "0 0 720 440"
-    assert root.find(f"{SVG}rect").get("fill").upper() == CHARCOAL
+    # Finder draws the picture at 1x from the top left of the window's content area, which is the
+    # window less its title bar. A picture as large as the window leaves no strip of window color.
+    width, height = dmg["windowSize"]["width"], dmg["windowSize"]["height"]
+    assert (root.get("width"), root.get("height"), root.get("viewBox")) == (
+        str(width),
+        str(height),
+        f"0 0 {width} {height}",
+    )
+    ground = root.find(f"{SVG}rect")
+    assert (ground.get("width"), ground.get("height")) == (str(width), str(height))
+    assert ground.get("fill").upper() == CHARCOAL
     drops = {(float(c.get("cx")), float(c.get("cy"))) for c in root.findall(f"{SVG}circle")}
     icons = {(float(dmg[key]["x"]), float(dmg[key]["y"])) for key in ("appPosition", "applicationFolderPosition")}
     assert drops == icons
@@ -176,7 +185,7 @@ def test_dmg_background_matches_the_tauri_window_and_keeps_labels_readable():
     assert sorted(float(p.get("x")) + float(p.get("width")) / 2 for p in plates) == sorted(x for x, _ in icons)
     # Finder draws icon labels black in Light appearance and white in Dark appearance.
     assert contrast(PLATE, "#000000") >= 4.5 and contrast(PLATE, "#FFFFFF") >= 4.5
-    assert png_size((ROOT / "desktop/artwork/dmg-background.png").read_bytes()) == (720, 440)
+    assert png_size((ROOT / "desktop/artwork/dmg-background.png").read_bytes()) == (width, height)
 
 
 def test_social_preview_is_github_sized_and_under_one_megabyte():
@@ -223,7 +232,7 @@ def test_rendered_pngs_show_at_their_pixel_size_without_a_density_chunk(path):
         entries = (struct.unpack("<II", data[14 + 16 * index : 22 + 16 * index]) for index in range(count))
         images = [data[offset : offset + length] for length, offset in entries]
     # The composer renders at 4x or 8x before downscaling; a pHYs chunk would carry that density
-    # and macOS would draw the 720 x 440 DMG background at a quarter of its size.
+    # and macOS would draw the 720 x 480 DMG background at a quarter of its size.
     for image in images:
         assert set(png_chunks(image)) == {"IHDR", "IDAT", "IEND"}, "pixels only: no pHYs, iCCP or eXIf chunk"
 
@@ -249,6 +258,15 @@ def test_tauri_bundles_the_generated_icons():
         "icons/icon.icns",
         "icons/icon.ico",
     ]
+
+
+def test_launcher_window_and_page_are_charcoal_so_opening_does_not_flash_white():
+    # The window paints its own background until the page has loaded; the page then paints the same color.
+    launcher = {
+        window["label"]: window for window in json.loads(text_of("desktop/src-tauri/tauri.conf.json"))["app"]["windows"]
+    }["launcher"]
+    assert launcher["backgroundColor"].upper() == CHARCOAL
+    assert f"background:{launcher['backgroundColor']};" in text_of("desktop/bootstrap/index.html")
 
 
 def test_launch_page_is_charcoal_and_shows_the_lockup():
