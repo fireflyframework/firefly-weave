@@ -26,11 +26,24 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from firefly_weave.access.scheduler import next_scope, tenant_page
+from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.execution import ReservedSlots
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.recovery import RecoveryService
 from firefly_weave.settings import Settings
 from firefly_weave.triggers.scheduler import Scheduler
+
+# Requests can hold every work and control slot. A recovery cycle runs one pure call at a time;
+# the spare slot absorbs a call that outlived its cancelled quantum, as the work pool did.
+RECOVERY_EXECUTION = ReservedSlots(2)
+
+
+def failure_cause(error: Exception) -> str:
+    """Name a failed scan by error class and catalog code, never by message or values."""
+    if isinstance(error, CatalogError):
+        return f"{type(error).__name__} {error.code}"
+    return type(error).__name__
 
 
 class RecoveryLoop:
@@ -86,39 +99,46 @@ class RecoveryLoop:
 
     async def cycle(self) -> None:
         assert self.engine is not None
-        budget = min(self.settings.database_timeout_seconds, 5.0)
-        async with asyncio.timeout(budget):
-            tenants = await tenant_page(self.engine)
-        for tenant in tenants:
-            try:
-                async with asyncio.timeout(budget):
-                    authority = await next_scope(self.uow, tenant)
-                if authority is None:
+        async with RECOVERY_EXECUTION.execution():
+            budget = min(self.settings.database_timeout_seconds, 5.0)
+            async with asyncio.timeout(budget):
+                tenants = await tenant_page(self.engine)
+            for tenant in tenants:
+                try:
+                    async with asyncio.timeout(budget):
+                        authority = await next_scope(self.uow, tenant)
+                    if authority is None:
+                        continue
+                    # Separate transactions/time budgets reserve recovery even when
+                    # starts are backpressured. A tenant gets one environment quantum.
+                    async with asyncio.timeout(budget):
+                        if self.operational():
+                            await self.recovery._scan_scheduled(authority, 10)
+                        else:
+                            await self.recovery._scan_terminal_scheduled(authority, 10)
+                except Exception as error:
+                    logging.getLogger(__name__).error(
+                        "Tenant recovery scan failed (%s); traversal will continue", failure_cause(error)
+                    )
                     continue
-                # Separate transactions/time budgets reserve recovery even when
-                # starts are backpressured. A tenant gets one environment quantum.
-                async with asyncio.timeout(budget):
-                    if self.operational():
-                        await self.recovery._scan_scheduled(authority, 10)
-                    else:
-                        await self.recovery._scan_terminal_scheduled(authority, 10)
-            except Exception:
-                logging.getLogger(__name__).error("Tenant recovery scan failed; traversal will continue")
-                continue
-            if not self.operational():
-                continue
-            try:
-                async with asyncio.timeout(budget):
-                    await self.schedules._scan_scheduled(authority, 10)
-            except Exception:
-                logging.getLogger(__name__).error("Tenant schedule scan failed; traversal will continue")
+                if not self.operational():
+                    continue
+                try:
+                    async with asyncio.timeout(budget):
+                        await self.schedules._scan_scheduled(authority, 10)
+                except Exception as error:
+                    logging.getLogger(__name__).error(
+                        "Tenant schedule scan failed (%s); traversal will continue", failure_cause(error)
+                    )
 
     async def poll(self) -> None:
         while True:
             try:
                 await self.cycle()
-            except Exception:
-                logging.getLogger(__name__).error("Recovery catalog scan failed; retrying on next poll")
+            except Exception as error:
+                logging.getLogger(__name__).error(
+                    "Recovery catalog scan failed (%s); retrying on next poll", failure_cause(error)
+                )
             await asyncio.sleep(self.settings.scheduler_poll_seconds)
 
     async def close(self) -> None:

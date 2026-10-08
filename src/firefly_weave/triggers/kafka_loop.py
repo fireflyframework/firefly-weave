@@ -27,10 +27,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from firefly_weave.access.scheduler import next_scope
 from firefly_weave.connectors.broker import BrokerConnectionConfig
 from firefly_weave.connectors.kafka_transport import BrokerClients, BrokerOwner
+from firefly_weave.operations.execution import ReservedSlots
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.settings import Settings
 from firefly_weave.triggers.kafka import KafkaSource, KafkaTrigger
+
+# Requests can hold every work and control slot. At most `max_clients - 1` consumer turns run
+# one pure call each, and the broker policy caps `max_clients` at 8, which leaves a spare slot.
+TURN_EXECUTION = ReservedSlots(8)
 
 
 class KafkaLoop:
@@ -101,7 +106,7 @@ class KafkaLoop:
         current = asyncio.current_task()
         assert current is not None
         try:
-            async with asyncio.timeout(60):
+            async with asyncio.timeout(60), TURN_EXECUTION.execution():
                 revision, secrets = await self.triggers.credentials(source.authority)
                 import json
 
