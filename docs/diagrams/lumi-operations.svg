@@ -13,7 +13,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="830" viewBox="0 0 1200 830" role="img" aria-labelledby="title description">
-  <title id="title">Ask Lumi about a deployment</title>
+  <title id="title">Ask Weave AI about a deployment</title>
   <desc id="description">Select an Operations record, choose which facts to attach, and send a question. Weave checks access and shares a limited summary with the configured assistant. Review the explanation against current evidence. Deployment changes still require a separate plan, approval, and application.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#62645B" stroke-width="1.7"/></marker>
@@ -29,7 +29,7 @@ SPDX-License-Identifier: Apache-2.0
     </style>
   </defs>
   <rect width="1200" height="830" rx="24" fill="#F3F1EB"/>
-  <text x="40" y="59" class="title">Ask Lumi about a deployment</text>
+  <text x="40" y="59" class="title">Ask Weave AI about a deployment</text>
   <text x="40" y="96" class="body">Get help understanding what you see in Operations, with context you choose.</text>
   <g transform="translate(40 139)">
     <rect class="card" width="260" height="264" rx="18"/>
@@ -37,7 +37,7 @@ SPDX-License-Identifier: Apache-2.0
     <g class="icon" transform="translate(28 28)"><rect width="28" height="19" rx="3"/><path d="M8 25h12M14 19v6M6 7h16M6 12h10"/></g>
     <text x="18" y="103" class="heading">1. Select a record</text>
     <text x="18" y="141" class="body"><tspan x="18">Open a target,</tspan><tspan x="18" dy="29">deployment, plan,</tspan><tspan x="18" dy="29">or operation job.</tspan></text>
-    <text x="18" y="239" class="small">Choose Explain with Lumi.</text>
+    <text x="18" y="228" class="small"><tspan x="18">Choose Explain with</tspan><tspan x="18" dy="22">Weave AI.</tspan></text>
   </g>
   <path class="link" d="M304 263h19"/>
   <g transform="translate(325 139)">
@@ -54,7 +54,7 @@ SPDX-License-Identifier: Apache-2.0
     <rect x="18" y="18" width="48" height="48" rx="12" fill="#EAE7DF"/>
     <g class="icon" transform="translate(28 26)"><path d="M14 0l13 5v10c0 9-13 16-13 16S1 24 1 15V5zM7 14l5 5 9-10"/></g>
     <text x="18" y="103" class="heading">3. Weave checks</text>
-    <text x="18" y="141" class="body"><tspan x="18">Your access is checked.</tspan><tspan x="18" dy="29">Lumi receives a limited</tspan><tspan x="18" dy="29">summary of the records.</tspan></text>
+    <text x="18" y="141" class="body"><tspan x="18">Your access is checked.</tspan><tspan x="18" dy="29">Weave AI gets a short</tspan><tspan x="18" dy="29">summary of the records.</tspan></text>
     <text x="18" y="239" class="small">Credentials stay private.</text>
   </g>
   <path class="link" d="M874 263h19"/>
@@ -77,5 +77,5 @@ SPDX-License-Identifier: Apache-2.0
   <text x="876" y="698" class="heading">Apply and verify results</text>
   <path class="link" d="M367 690h65"/>
   <path class="link" d="M767 690h65"/>
-  <text x="40" y="784" class="small">Lumi provides explanations here. The Operations runner performs only separately authorized changes.</text>
+  <text x="40" y="784" class="small">Weave AI provides explanations here. The Operations runner performs only separately authorized changes.</text>
 </svg>

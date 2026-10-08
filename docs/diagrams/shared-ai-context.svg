@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 900" role="img" aria-labelledby="title description">
 <title id="title">AI steps share selected results within one execution</title>
-<desc id="description">A summarizer saves a validated result. The workflow can pause or recover. A later AI task reads the selected saved result together with its own context. Other executions and Lumi conversations remain separate.</desc>
+<desc id="description">A summarizer saves a validated result. The workflow can pause or recover. A later AI task reads the selected saved result together with its own context. Other executions and Weave AI conversations remain separate.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
 <rect width="800" height="900" rx="24" fill="#EAE7DF"/>
 <g font-family="Arial,Helvetica,sans-serif" fill="#272820">
@@ -48,6 +48,6 @@ SPDX-License-Identifier: Apache-2.0
 <text x="144" y="673" font-size="17">sharedAiResults.summarize: the saved summary</text>
 <text x="144" y="697" font-size="15" fill="#62645B">Ordinary expressions, visible in YAML and Python.</text>
 <path d="M48 816h20v22H48Z" fill="none" stroke="#62645B" stroke-width="2"/><path d="M52 816v-6a6 6 0 0 1 12 0v6" fill="none" stroke="#62645B" stroke-width="2"/>
-<text x="88" y="821" font-size="18" font-weight="600">Separate from other runs and Lumi conversations</text>
+<text x="88" y="821" font-size="18" font-weight="600">Separate from other runs and Weave AI conversations</text>
 <text x="88" y="850" font-size="17" fill="#62645B">No implicit transcript or shared provider session is added.</text>
 </g></svg>

@@ -18,6 +18,7 @@
 
 import ast
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -82,4 +83,19 @@ def test_python_messages_say_weave_ai():
         for path in python_sources("src", "workers")
         for line, value in lumi_strings(path.read_bytes().decode("utf-8"))
     ]
+    assert offenders == []
+
+
+# Diagram labels are sometimes set in capitals ("WORKFLOW AUTHOR / LUMI USER"), so this scan ignores case.
+DIAGRAM_LUMI = re.compile(r"\blumi\b", re.IGNORECASE)
+
+
+def test_diagram_text_says_weave_ai():
+    offenders = []
+    for path in sorted((ROOT / "docs/diagrams").glob("*.svg")):
+        root = ET.fromstring(path.read_bytes().decode("utf-8"))
+        for element in root.iter():
+            text = "".join(element.itertext())
+            if element.tag.rsplit("}", 1)[-1] in {"text", "title", "desc"} and DIAGRAM_LUMI.search(text):
+                offenders.append(f"{path.name}: {text.strip()}")
     assert offenders == []
