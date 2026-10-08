@@ -736,3 +736,68 @@ async def test_expiry_during_provider_io_prevents_send(setup, monkeypatch):
     monkeypatch.setattr(s.subscriptions.bindings, "resolve", expired)
     assert (await s.dispatch()).retry == 1
     assert not s.remote.requests
+
+
+async def test_capacity_refusal_before_send_leaves_the_lease_for_recovery(setup, monkeypatch):
+    s = setup
+    await s.append()
+    original = s.subscriptions.bindings.resolve
+    held, released = asyncio.Event(), asyncio.Event()
+    tasks = []
+
+    async def hold():
+        # Another writer owns the project operations fence past the 250 ms admission timeout.
+        async with s.access_db[1].begin() as session:
+            await session.execute(
+                text(
+                    "SELECT pg_advisory_xact_lock(hashtextextended('weave.operations:' "
+                    "|| cast(:tenant AS text) || ':' || cast(:project AS text),0))"
+                ),
+                {"tenant": str(s.scope.tenant_id), "project": str(s.scope.project_id)},
+            )
+            held.set()
+            await released.wait()
+
+    async def watch():
+        # Release the fence once the refused writer gives up or another transaction queues behind it.
+        first = None
+        while not released.is_set():
+            async with s.access_db[1].begin() as session:
+                waiting = set(
+                    (
+                        await session.execute(
+                            text("SELECT virtualtransaction FROM pg_locks WHERE locktype='advisory' AND NOT granted")
+                        )
+                    ).scalars()
+                )
+            if first is None:
+                first = waiting or None
+            elif waiting != first:
+                released.set()
+                return
+            await asyncio.sleep(0.01)
+
+    async def contended(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        tasks.append(asyncio.create_task(hold()))
+        async with asyncio.timeout(5):
+            await held.wait()
+        tasks.append(asyncio.create_task(watch()))
+        return result
+
+    monkeypatch.setattr(s.subscriptions.bindings, "resolve", contended)
+    report = await s.dispatch()
+    released.set()
+    async with asyncio.timeout(5):
+        await asyncio.gather(*tasks)
+    assert report.retry == 1 and report.incident == 0
+    assert not s.remote.requests
+    row = (await s.rows("event_deliveries"))[0]
+    # Nothing was settled: the fenced lease waits for expiry instead of recording a failed delivery.
+    assert row["status"] == "leased" and row["code"] is None and row["attempts"] == 1
+    assert [attempt["outcome"] for attempt in await s.rows("delivery_attempts")] == [None]
+    monkeypatch.setattr(s.subscriptions.bindings, "resolve", original)
+    await s.due()
+    assert (await s.dispatch()).delivered == 1
+    assert len(s.remote.requests) == 1
+    assert {attempt["outcome"] for attempt in await s.rows("delivery_attempts")} == {"ACK_UNKNOWN", "ACK"}

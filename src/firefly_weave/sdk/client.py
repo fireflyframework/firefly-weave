@@ -96,6 +96,7 @@ from firefly_weave.contracts.public import (
     RetiredVersion,
     Revoked,
     UnavailableResource,
+    UnsupportedResource,
     VersionExport,
     VersionView,
     catalog_lock,
@@ -415,9 +416,9 @@ class WeaveClient:
 
     async def list_definitions(
         self, collection: Collection | Literal["drafts"], *, limit: int = 50, cursor: str | None = None
-    ) -> Page[PublishedVersion | Draft | UnavailableResource]:
+    ) -> Page[PublishedVersion | Draft | UnavailableResource | UnsupportedResource]:
         return cast(
-            Page[PublishedVersion | Draft | UnavailableResource],
+            Page[PublishedVersion | Draft | UnavailableResource | UnsupportedResource],
             await self.invoke("definitions.list", collection=collection, query=self._page(limit, cursor)),
         )
 

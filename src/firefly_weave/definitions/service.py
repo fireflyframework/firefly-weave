@@ -42,7 +42,13 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation, ActivationRequest, DefinitionKind, Draft, PublishedVersion
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
-from firefly_weave.contracts.public import DecisionEvaluation, DecisionEvaluationRequest, DraftRetirement, DraftView
+from firefly_weave.contracts.public import (
+    DecisionEvaluation,
+    DecisionEvaluationRequest,
+    DraftRetirement,
+    DraftView,
+    UnsupportedResource,
+)
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.contracts.workers import ConnectorExecutionPin
 from firefly_weave.definitions.models import CatalogError, ir_unsupported
@@ -287,6 +293,8 @@ class DefinitionService:
                 pinned = await DefinitionRepository(tx).version(UUID(prior["id"]))
                 try:
                     import_artifact(pinned["artifact"])
+                except UnsupportedIR as error:
+                    raise ir_unsupported(error.missing) from None
                 except ValueError:
                     raise CatalogError(
                         409, "WV-LEGACY-UNAVAILABLE", "Legacy publication evidence is unavailable"
@@ -655,6 +663,8 @@ class DefinitionService:
                     raise CatalogError(404, "WV-NOT-FOUND", "Catalog resource not found")
                 try:
                     import_artifact(row["artifact"])
+                except UnsupportedIR as error:
+                    raise ir_unsupported(error.missing) from None
                 except ValueError:
                     raise CatalogError(
                         409,
@@ -800,6 +810,12 @@ class DefinitionService:
                     try:
                         import_artifact(row["artifact"])
                         items.append(published(row).model_dump(mode="json"))
+                    except UnsupportedIR as error:
+                        items.append(
+                            UnsupportedResource(id=row["id"], missing_features=list(error.missing)).model_dump(
+                                mode="json"
+                            )
+                        )
                     except ValueError:
                         items.append(
                             {

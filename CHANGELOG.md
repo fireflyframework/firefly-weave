@@ -38,6 +38,25 @@ SPDX-License-Identifier: Apache-2.0
   than this release cannot read `weave connections test` answers for HTTP
   connections from an upgraded server; upgrade the CLI and SDK together with the
   server.
+- Keep an integration event delivery recoverable when Weave refuses one of its
+  database transactions for capacity (`WV-OPERATION-CAPACITY`). The delivery
+  stays `leased` instead of moving to `retry` with `DELIVERY_FAILED` or to an
+  `AUTHORITY_REVOKED` incident. When the lease expires, the attempt is recorded
+  as `ACK_UNKNOWN` and the same event ID is delivered again. The attempt still
+  counts, so a delivery refused on every attempt ends in a `DELIVERY_EXHAUSTED`
+  incident.
+- Native connector tasks no longer fail with `HANDLER_FAILED` when Weave refuses
+  one of their platform calls for capacity (`WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`). The invocation check before the connector starts is
+  sent again while the task's lease is valid; authority and credential checks
+  made while the connector runs get up to three attempts within one second.
+- Native connector calls no longer share the two execution work slots of API
+  requests, so a burst of requests no longer refuses them. They run up to the
+  `capacity` configured for each `WEAVE_NATIVE_EXECUTORS` entry.
+- `email_receipts.dispatch` answers HTTP 429 (`WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`) when Weave refuses the dispatch for capacity, where it
+  used to answer HTTP 200 with state `blocked`. The receipt keeps its state, and
+  the next pending scan dispatches it.
 - Draw "weave" in the Firefly Weave logo as a wordmark whose w is woven from two
   strands, one amber, instead of typed text, in Studio, on the desktop launch
   page and installer, and in the README banner and social preview. NOTICE names
@@ -49,6 +68,25 @@ SPDX-License-Identifier: Apache-2.0
   the installer window, and a charcoal launch page in a charcoal window that
   opens without a white flash, and draw exported workflow graphs, the API
   explorer, the README banner, shields and badges with the Firefly identity.
+- Runs in progress whose workflow uses a language feature the server does not
+  run, for example after rolling back to an earlier release that lists fewer
+  language features, now wait for an upgrade instead of being blocked for good.
+  The server offers none of their tasks to workers, leaves their deadlines and
+  expired attempts pending, records nothing about them, and does not let them
+  hold back other runs. After the upgrade they continue, and deadlines that
+  passed in the meantime apply then. A server that predates language features
+  still blocks such runs permanently, so finish or cancel them before rolling
+  back that far.
+- Reading such a run, sending it a signal, or reporting a task result for it
+  answers HTTP 422 `WV-IR-UNSUPPORTED` with `result.missing_features` instead of
+  HTTP 409 `WV-LEGACY-UNAVAILABLE`. Reading a definition version the server does
+  not run, or repeating the publish request that created it, answers the same
+  way. Run and incident lists still show such runs as unavailable, and runs with
+  unavailable legacy evidence still answer `WV-LEGACY-UNAVAILABLE`.
+- Catalog list pages can contain a new kind of item for a version the server
+  does not run: `unavailable: true`, `reason: ir_unsupported`, and
+  `missing_features`. SDKs and CLIs older than this release reject such a page;
+  upgrade them together with the server.
 - Restyle the documentation site in one dark scheme with the Firefly Weave logo,
   the Firefly favicon and self-hosted Manrope, and recolor every diagram to the
   Firefly light palette on paper panels.
