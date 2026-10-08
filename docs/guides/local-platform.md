@@ -426,8 +426,10 @@ creates the connection, grants it, and runs a workflow, signed in as the person
 from step 5. Or, in Studio: [Call a REST API from a step](studio.md#call-a-rest-api-from-a-step).
 
 **The local executor has fixed limits.** It runs only the built-in HTTP connector,
-never connector packages. It calls only public HTTPS destinations: an API on your
-own computer or private network is refused. A new secret handle needs a restart;
+never connector packages. It calls only public destinations, over HTTPS or over
+HTTP with a "Not encrypted" warning: an API on your own computer or private
+network is refused, except an origin that a Docker installation approved with
+`--allow-private-origin`. A new secret handle needs a restart;
 replacing an existing handle's value does not in this foreground mode.
 For a [Docker installation](docker-development.md), run `platform start` after
 adding, replacing, or removing a secret: its running container retains the

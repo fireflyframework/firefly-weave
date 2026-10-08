@@ -387,7 +387,8 @@ platforms; production images keep the `image` build. It is new in 0.1.0a7.
   adapter, so no connector package runs this way.
 - **What start never sets.** `start` never forwards `WEAVE_HTTP_PRIVATE_NETWORKS`
   or `WEAVE_CONNECTOR_PACKAGES`, even from your shell, so local connector actions
-  reach only public HTTPS destinations. Secret handles stored with `weave platform
+  reach only public destinations, over HTTPS or over HTTP with a "Not encrypted"
+  warning. Secret handles stored with `weave platform
   secret set` become `WEAVE_SECRET_GRANTS` entries with the `file` provider and
   `WEAVE_SECRET_ROOT` pointing at the installation's `secrets/` directory, scoped to
   the demo environment.
