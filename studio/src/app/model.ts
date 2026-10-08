@@ -803,6 +803,7 @@ export class StructuredCanvasAdapter {
    * them block the deletion, as for one step.
    */
   removeSteps(ids: readonly string[]) {
+    if (this.readonly) throw Error("Fix source before editing the graph.");
     const all = this.nodes();
     const nodes = ids
       .map((id) => all.find((n) => n.step.id === id))

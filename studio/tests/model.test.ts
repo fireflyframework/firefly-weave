@@ -798,6 +798,24 @@ spec:
     expect(ids(model)).toEqual(["load", "shape", "finish"]);
   });
 
+  it("refuses to delete steps while the source does not parse, and changes nothing", () => {
+    const model = open(
+      source.replace(
+        "output: {ref: /steps/finish/output}",
+        "output: {literal: {}}",
+      ),
+    );
+    model.setSource("spec: [");
+    expect(model.readonly).toBe(true);
+    const revision = model.revision;
+    const steps = JSON.stringify(model.definition.spec.steps);
+    expect(() => model.removeSteps(["finish"])).toThrow(
+      "Fix source before editing the graph.",
+    );
+    expect(model.revision).toBe(revision);
+    expect(JSON.stringify(model.definition.spec.steps)).toBe(steps);
+  });
+
   it("deletes a group with the steps inside it, even when both are listed", () => {
     const model = new StructuredCanvasAdapter();
     model.insert("switch");
