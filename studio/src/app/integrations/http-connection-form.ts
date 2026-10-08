@@ -622,6 +622,15 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
       gap: 8px;
       margin-top: 8px;
     }
+    /* A long label ("Check configuration (no request is sent)") wraps inside
+       the dialog. On one line it is wider than a 360 px column and widens
+       every section of the grid with it. */
+    .row button {
+      max-width: 100%;
+      padding-block: var(--space-1);
+      white-space: normal;
+      text-align: center;
+    }
     .created {
       display: grid;
       gap: 8px;
