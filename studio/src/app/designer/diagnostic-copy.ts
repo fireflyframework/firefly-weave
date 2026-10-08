@@ -247,6 +247,10 @@ const families: Record<string, { copy: Record<string, Copy>; fallback: Copy }> =
           text: "No decision rule matched and there is no default result.",
           hint: "Add a default result or a rule for this input.",
         },
+        OPERATOR: {
+          text: "Decision rules can't combine or join text yet.",
+          hint: "Build the text in a Transform step before the table and pass it in as input.",
+        },
         PREDICATE: { text: "A rule condition must produce true or false." },
         INPUT: {
           text: "The data passed to this table does not match its input fields.",

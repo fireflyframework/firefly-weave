@@ -28,15 +28,11 @@ from firefly_weave.contracts.definitions import load_definition
 EXAMPLES = Path("examples/language")
 EXPECTED = {
     "notify-customer.workflow.yaml": [],
-    "notify-overdue.workflow.yaml": [
-        ("/spec/steps/0/body/steps/0/with/object/subject/op/name", "text.concat"),
-        ("/spec/steps/0/kind", "flow.forEach"),
-    ],
+    # Text operators compile; loops and workflow calls are still reported.
+    "notify-overdue.workflow.yaml": [("/spec/steps/0/kind", "flow.forEach")],
     "order-intake.workflow.yaml": [
         ("/spec/steps/0/kind", "flow.callWorkflow"),
-        ("/spec/steps/0/with/object/message/op/name", "text.concat"),
         ("/spec/steps/1/kind", "flow.callWorkflow"),
-        ("/spec/steps/1/with/object/message/op/name", "text.join"),
     ],
 }
 
