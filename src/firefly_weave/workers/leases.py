@@ -572,13 +572,18 @@ class TaskService:
         """Trusted polling port; does not claim or reexecute attempts."""
         if not 1 <= limit <= 100:
             raise ValueError("Bounded recovery page required")
+        from firefly_weave.runtime.admission import runnable, runnable_parameters
+
         rows = await WorkerRepository(tx).rows(
             f"SELECT task_id FROM task_leases WHERE {SCOPE} AND "
             "((status='active' AND expires_at<=clock_timestamp()) OR status='failed') "
             "AND task_id NOT IN (SELECT t.id FROM task_intents t JOIN runtime_capacity_blocks b ON "
             "b.run_id=t.run_id WHERE b.active) "
+            f"AND (SELECT {runnable('r')} FROM runs r WHERE r.id="
+            "(SELECT t.run_id FROM task_intents t WHERE t.id=task_leases.task_id)) "
             "ORDER BY expires_at,task_id LIMIT :limit",
             limit=limit,
+            **runnable_parameters(),
         )
         return [row["task_id"] for row in rows]
 

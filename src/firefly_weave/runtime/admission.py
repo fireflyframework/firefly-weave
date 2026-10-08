@@ -14,27 +14,70 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Retained-state provenance and metadata-only handling of uncertain legacy runs."""
+"""Retained-state provenance, metadata-only handling of uncertain legacy runs, and runs this platform cannot run."""
 
-from typing import Any
+import json
+from typing import Any, Literal
 
 from firefly_weave.compiler.api import import_artifact
+from firefly_weave.compiler.ir import UnsupportedIR, accepted_ir_versions
+from firefly_weave.contracts import language_features
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.redaction import Omission, SafeProjection, has_markers
 
 POLICY = "classified-v1"
 
+type Admission = Literal["available", "unavailable", "unsupported"]
 
-def unavailable(row: dict[str, Any]) -> bool:
+
+def admission(row: dict[str, Any]) -> Admission:
+    """How this platform may treat a retained run.
+
+    ``unsupported``: the run pins an IR version or language feature this platform does not run, for example after a
+    rollback. It is transient: scanners skip the run without recording anything, and an upgrade runs it again.
+    ``unavailable``: legacy or malformed evidence; scanners record a permanent policy block.
+    """
     if row["state"].get("unavailable"):
-        return True
+        return "unavailable"
     try:
         artifact = import_artifact(row["artifact"])
         if row["state"].get("admission_policy") == POLICY:
-            return False
-        return has_markers(artifact.executable)
+            return "available"
+        return "unavailable" if has_markers(artifact.executable) else "available"
+    except UnsupportedIR:
+        return "unsupported"
     except (ValueError, RecursionError, KeyError):
-        return True
+        return "unavailable"
+
+
+def unavailable(row: dict[str, Any]) -> bool:
+    """Whether reads and controls must withhold the run's state: unavailable or unsupported."""
+    return admission(row) != "available"
+
+
+def runnable(run: str) -> str:
+    """SQL condition: the ``run`` row pins an IR version and language features this platform runs.
+
+    It mirrors ``require_supported_ir``, so scanners never select a run they would only skip and the runs behind it
+    are not held back. Malformed shapes stay selected and are left to admission. It reads the artifact, so place it
+    where it is evaluated only for rows that passed the cheaper conditions. Bind ``runnable_parameters()``.
+    """
+    executable = f"{run}.artifact->'executable'"
+    features = f"{executable}->'features'"
+    return (
+        f"NOT coalesce(jsonb_typeof({executable})='object' AND ("
+        f"NOT coalesce(jsonb_typeof({executable}->'irVersion')='string' "
+        f"AND {executable}->>'irVersion'=ANY(cast(:ir_versions AS text[])),false) "
+        f"OR (jsonb_typeof({features})='array' AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements("
+        f"CASE WHEN jsonb_typeof({features})='array' THEN {features} ELSE '[]'::jsonb END) f "
+        f"WHERE jsonb_typeof(f)<>'string') AND NOT {features} <@ cast(:ir_features AS jsonb))),false)"
+    )
+
+
+def runnable_parameters() -> dict[str, Any]:
+    """The IR versions and language features this platform runs, for ``runnable``."""
+    features = language_features.ADVERTISED_FEATURES
+    return {"ir_versions": accepted_ir_versions(features), "ir_features": json.dumps(list(features))}
 
 
 def require_available(row: dict[str, Any]) -> None:

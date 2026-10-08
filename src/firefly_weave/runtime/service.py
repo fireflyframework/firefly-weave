@@ -294,12 +294,16 @@ class RuntimeService:
         return await RuntimeRepository(tx, self.definitions.outbox).locked_task(identifier, skip_locked=skip_locked)
 
     async def observe_unavailable(self, tx: Transaction, row: dict[str, Any]) -> bool:
-        from firefly_weave.runtime.admission import unavailable
+        """Whether a scanner must leave this run alone; only legacy evidence records a permanent policy block.
 
-        if not unavailable(row):
-            return False
-        await RuntimeRepository(tx, self.definitions.outbox).observe_policy_block(row)
-        return True
+        A run whose IR this platform does not run is skipped without a block, so an upgrade runs it again.
+        """
+        from firefly_weave.runtime.admission import admission
+
+        decision = admission(row)
+        if decision == "unavailable":
+            await RuntimeRepository(tx, self.definitions.outbox).observe_policy_block(row)
+        return decision != "available"
 
     async def set_task_status(self, tx: Transaction, identifier: UUID, status: str) -> None:
         await RuntimeRepository(tx, self.definitions.outbox).task_status(identifier, status)
