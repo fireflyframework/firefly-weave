@@ -40,7 +40,7 @@
 "sub-workflows" = false
 "editor-hardening" = false
 "language-contracts" = false
-"text-operators" = false
+"text-operators" = true
 "instance-keys" = false
 "loop-compiler" = false
 "loop-runtime" = false
