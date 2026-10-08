@@ -19,35 +19,35 @@ SPDX-License-Identifier: Apache-2.0
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 900" role="img" aria-labelledby="title description">
 <title id="title">AI steps share selected results within one execution</title>
 <desc id="description">A summarizer saves a validated result. The workflow can pause or recover. A later AI task reads the selected saved result together with its own context. Other executions and Lumi conversations remain separate.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367d68"/></marker></defs>
-<rect width="800" height="900" rx="24" fill="#eef4f0"/>
-<g font-family="Inter,Arial,sans-serif" fill="#173d34">
-<text x="36" y="48" font-size="18" fill="#367d68">Firefly Weave · Shared AI context</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
+<rect width="800" height="900" rx="24" fill="#EAE7DF"/>
+<g font-family="Arial,Helvetica,sans-serif" fill="#272820">
+<text x="36" y="48" font-size="18" fill="#855414">Firefly Weave · Shared AI context</text>
 <text x="36" y="88" font-size="28" font-weight="700">One execution. Selected, saved context.</text>
-<text x="36" y="120" font-size="18" fill="#4d655d">You choose what the next model receives.</text>
-<rect x="24" y="150" width="752" height="630" rx="16" fill="none" stroke="#9cb9aa" stroke-width="2"/>
+<text x="36" y="120" font-size="18" fill="#62645B">You choose what the next model receives.</text>
+<rect x="24" y="150" width="752" height="630" rx="16" fill="none" stroke="#BFB8AB" stroke-width="2"/>
 <text x="46" y="180" font-size="16" font-weight="600">Inside this workflow run</text>
 <rect x="46" y="202" width="708" height="118" rx="12" fill="white"/>
-<g transform="translate(66 226)" stroke="#367d68" stroke-width="2.5" fill="none"><rect width="38" height="46" rx="5"/><path d="M9 12h20M9 23h20M9 34h12"/></g>
+<g transform="translate(66 226)" stroke="#62645B" stroke-width="2.5" fill="none"><rect width="38" height="46" rx="5"/><path d="M9 12h20M9 23h20M9 34h12"/></g>
 <text x="128" y="237" font-size="22" font-weight="700">1. Summarize the request</text>
 <text x="128" y="270" font-size="18">The AI task returns a result that passes its schema.</text>
-<text x="128" y="296" font-size="18" fill="#4d655d">Weave accepts and saves that result with the run.</text>
-<path d="M85 326v29" stroke="#367d68" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="128" y="296" font-size="18" fill="#62645B">Weave accepts and saves that result with the run.</text>
+<path d="M85 326v29" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
 <rect x="46" y="363" width="708" height="118" rx="12" fill="white"/>
-<g transform="translate(65 389)" stroke="#367d68" stroke-width="2.5" fill="none"><ellipse cx="20" cy="6" rx="20" ry="7"/><path d="M0 6v32c0 10 40 10 40 0V6M0 24c0 10 40 10 40 0"/></g>
+<g transform="translate(65 389)" stroke="#62645B" stroke-width="2.5" fill="none"><ellipse cx="20" cy="6" rx="20" ry="7"/><path d="M0 6v32c0 10 40 10 40 0V6M0 24c0 10 40 10 40 0"/></g>
 <text x="128" y="398" font-size="22" font-weight="700">2. Keep the result through a pause</text>
 <text x="128" y="431" font-size="18">A timer or human task can pause the workflow.</text>
-<text x="128" y="457" font-size="18" fill="#4d655d">The saved summary does not live in worker memory.</text>
-<path d="M85 487v29" stroke="#367d68" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="128" y="457" font-size="18" fill="#62645B">The saved summary does not live in worker memory.</text>
+<path d="M85 487v29" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
 <rect x="46" y="524" width="708" height="224" rx="12" fill="white"/>
-<g transform="translate(65 550)" stroke="#367d68" stroke-width="2.5" fill="none"><path d="M0 5h40v29H14L3 44V34H0Z"/><path d="M10 15h20M10 25h15"/></g>
+<g transform="translate(65 550)" stroke="#62645B" stroke-width="2.5" fill="none"><path d="M0 5h40v29H14L3 44V34H0Z"/><path d="M10 15h20M10 25h15"/></g>
 <text x="128" y="559" font-size="22" font-weight="700">3. Write a reply with selected context</text>
 <text x="128" y="592" font-size="18">The next task reads the accepted summary.</text>
-<rect x="128" y="614" width="598" height="100" rx="8" fill="#eef4f0"/>
+<rect x="128" y="614" width="598" height="100" rx="8" fill="#EAE7DF"/>
 <text x="144" y="644" font-size="17">data: the reply instructions you supplied</text>
 <text x="144" y="673" font-size="17">sharedAiResults.summarize: the saved summary</text>
-<text x="144" y="697" font-size="15" fill="#4d655d">Ordinary expressions, visible in YAML and Python.</text>
-<path d="M48 816h20v22H48Z" fill="none" stroke="#367d68" stroke-width="2"/><path d="M52 816v-6a6 6 0 0 1 12 0v6" fill="none" stroke="#367d68" stroke-width="2"/>
+<text x="144" y="697" font-size="15" fill="#62645B">Ordinary expressions, visible in YAML and Python.</text>
+<path d="M48 816h20v22H48Z" fill="none" stroke="#62645B" stroke-width="2"/><path d="M52 816v-6a6 6 0 0 1 12 0v6" fill="none" stroke="#62645B" stroke-width="2"/>
 <text x="88" y="821" font-size="18" font-weight="600">Separate from other runs and Lumi conversations</text>
-<text x="88" y="850" font-size="17" fill="#4d655d">No implicit transcript or shared provider session is added.</text>
+<text x="88" y="850" font-size="17" fill="#62645B">No implicit transcript or shared provider session is added.</text>
 </g></svg>

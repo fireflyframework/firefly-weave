@@ -19,55 +19,55 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="848" viewBox="0 0 960 848" role="img" aria-labelledby="title desc">
 <title id="title">Learn the workflow, then connect your systems</title><desc id="desc">A learning route in four steps. 1, write and simulate: write YAML or draw the workflow in Studio, then simulate it offline with the CLI and expect a succeeded simulation. 2, run the API: weave platform setup and start create PostgreSQL, Keycloak, and the Weave API on your laptop, and weave platform demo saves one real run. Then sign in once with weave auth setup; Studio and the desktop app reuse that saved platform. On a local platform, first create a person with weave platform user. Choose what your product needs next: 3, add an external action, either a REST call without code on the built-in HTTP connector or a connector or worker you build, then run it and check the external effect; or 4, connect your product with the scoped Python client to publish, activate, and start runs; the first workflow needs no worker. Both branches depend on the running API; continue with the CLI tutorial and then an AWS, Azure, or Google Cloud deployment.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
-<rect width="960" height="748" rx="16" fill="#f7faf8"/>
-<path d="M36 99H924" stroke="#c9dacf"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#62645B}.edge{fill:none;stroke:#62645B;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="748" rx="16" fill="#F3F1EB"/>
+<path d="M36 99H924" stroke="#D8D4CA"/>
 <text x="36" y="46" class="title">Learn the workflow, then connect your systems</text>
 <text x="36" y="79" class="body muted">Keep each working checkpoint before adding the next moving part.</text>
-<circle cx="56" cy="152" r="19" fill="#367D68"/>
+<circle cx="56" cy="152" r="19" fill="#855414"/>
 <text x="56" y="159" class="body white" text-anchor="middle">1</text>
-<g transform="translate(98,134) scale(1.3461538461538463)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2H25V22H1Z M5 7L10 12L5 17 M13 17H20"/></g>
+<g transform="translate(98,134) scale(1.3461538461538463)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2H25V22H1Z M5 7L10 12L5 17 M13 17H20"/></g>
 <text x="148" y="160" class="head">Write + simulate</text>
 <text x="98" y="202" class="body">Write YAML, or draw in Studio.</text>
 <text x="98" y="231" class="body">Simulate offline with the CLI.</text>
 <text x="98" y="260" class="body">Expect a “succeeded” simulation.</text>
 <path class="edge" d="M439 179H505"/>
-<circle cx="542" cy="152" r="19" fill="#367D68"/>
+<circle cx="542" cy="152" r="19" fill="#855414"/>
 <text x="542" y="159" class="body white" text-anchor="middle">2</text>
-<g transform="translate(584,134) scale(1.3461538461538463)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
+<g transform="translate(584,134) scale(1.3461538461538463)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5C2 -1 22 -1 22 5C22 11 2 11 2 5 M2 5V20C2 26 22 26 22 20V5 M2 13C2 19 22 19 22 13"/></g>
 <text x="634" y="160" class="head">Run the API</text>
 <text x="584" y="202" class="body">PostgreSQL + Keycloak + Weave</text>
 <text x="584" y="231" class="body"><tspan class="code">weave platform setup</tspan> and <tspan class="code">start</tspan></text>
 <text x="584" y="260" class="body">The demo saves one real run.</text>
-<rect x="380" y="285" width="544" height="86" rx="12" fill="#eaf4ed"/>
+<rect x="380" y="285" width="544" height="86" rx="12" fill="#EAE7DF"/>
 <text x="400" y="312" class="small">Sign in once with <tspan class="code">weave auth setup</tspan>; Studio and the</text>
 <text x="400" y="336" class="small muted">desktop app reuse it. On a local platform, first</text>
 <text x="400" y="360" class="small muted">create a person with <tspan class="code">weave platform user</tspan>.</text>
 <path class="edge" d="M724 371V408H238V435"/>
 <path class="edge" d="M724 408V435"/>
 <text x="480" y="398" class="small muted" text-anchor="middle">Choose what your product needs</text>
-<circle cx="56" cy="468" r="19" fill="#367D68"/>
+<circle cx="56" cy="468" r="19" fill="#855414"/>
 <text x="56" y="475" class="body white" text-anchor="middle">3</text>
-<g transform="translate(98 450) scale(1.3461538461538463)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6H19V20H5Z M9 1V6 M15 1V6 M9 20V25 M15 20V25 M0 10H5 M0 16H5 M19 10H24 M19 16H24 M9 10H15V16H9Z"/></g>
+<g transform="translate(98 450) scale(1.3461538461538463)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6H19V20H5Z M9 1V6 M15 1V6 M9 20V25 M15 20V25 M0 10H5 M0 16H5 M19 10H24 M19 16H24 M9 10H15V16H9Z"/></g>
 <text x="148" y="476" class="head">Add an external action</text>
 <text x="98" y="518" class="body">Call a REST API without code,</text>
 <text x="98" y="547" class="body">or build a connector or worker.</text>
 <text x="98" y="576" class="body">Run it and check the external effect.</text>
-<circle cx="542" cy="468" r="19" fill="#367D68"/>
+<circle cx="542" cy="468" r="19" fill="#855414"/>
 <text x="542" y="475" class="body white" text-anchor="middle">4</text>
-<g transform="translate(584 450) scale(1.3461538461538463)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
+<g transform="translate(584 450) scale(1.3461538461538463)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
 <text x="634" y="476" class="head">Connect your product</text>
 <text x="584" y="518" class="body">Use the scoped Python client.</text>
 <text x="584" y="547" class="body">Publish, activate and start runs.</text>
 <text x="584" y="576" class="body">The first workflow needs no worker.</text>
-<rect x="36" y="640" width="888" height="81" rx="12" fill="#eaf4ed"/>
-<g transform="translate(54 660) scale(1.1538461538461537)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<rect x="36" y="640" width="888" height="81" rx="12" fill="#EAE7DF"/>
+<g transform="translate(54 660) scale(1.1538461538461537)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
 <text x="98" y="674" class="head">Both branches depend on the running API.</text>
 <text x="98" y="705" class="small">Continue with the CLI tutorial, then an AWS, Azure, or Google Cloud deployment.</text>
 <g id="takeaway">
-<rect x="0" y="754" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="783" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="814" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Get one working checkpoint before adding the next integration boundary.</text>
+<rect x="0" y="754" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="783" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="814" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Get one working checkpoint before adding the next integration boundary.</text>
 </g>
 </svg>

@@ -19,43 +19,43 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="860" viewBox="0 0 960 860" role="img" aria-labelledby="title desc">
 <title id="title">Teach a behavior the reader can verify</title><desc id="desc">Four steps read from top to bottom. 1, establish what really happens: read the public contract and implementation, and identify services, IDs, authority, and what the example proves. 2, explain the task in order: show the steps, the expected output, and a useful diagram, using the same names as the commands and API. 3, execute the checks: run scripts/source_coverage.py --strict, scripts/check_docs.py, mkdocs build --strict, and the real example, and keep private evidence out of published pages. 4, inspect it as a reader: render at article width, check labels, arrows, and captions, and follow the chapter using only its stated prerequisites. A passing link check cannot prove accuracy, and a diagram must not invent a guarantee.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
-<rect width="960" height="760" rx="16" fill="#f7faf8"/>
-<path d="M36 99H924" stroke="#c9dacf"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#62645B}.edge{fill:none;stroke:#62645B;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="760" rx="16" fill="#F3F1EB"/>
+<path d="M36 99H924" stroke="#D8D4CA"/>
 <text x="36" y="46" class="title">Teach a behavior the reader can verify</text>
 <text x="36" y="79" class="body muted">Keep the source, explanation, example, and picture in agreement.</text>
-<circle cx="58" cy="144" r="19" fill="#367D68"/>
+<circle cx="58" cy="144" r="19" fill="#855414"/>
 <text x="58" y="151" class="body white" text-anchor="middle">1</text>
-<g transform="translate(111,126) scale(1.3846153846153846)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3A7 7 0 1 1 10 17A7 7 0 1 1 10 3Z M15 15L22 22"/></g>
+<g transform="translate(111,126) scale(1.3846153846153846)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3A7 7 0 1 1 10 17A7 7 0 1 1 10 3Z M15 15L22 22"/></g>
 <text x="170" y="154" class="head">Establish what really happens</text>
 <text x="111" y="194" class="body">Read the public contract and implementation.</text>
 <text x="111" y="223" class="body">Identify services, IDs, authority, and what the example proves.</text>
 <path class="edge" d="M58 170V233"/>
-<circle cx="58" cy="278" r="19" fill="#367D68"/>
+<circle cx="58" cy="278" r="19" fill="#855414"/>
 <text x="58" y="285" class="body white" text-anchor="middle">2</text>
-<g transform="translate(111,260) scale(1.3846153846153846)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1H15L21 7V23H5Z M15 1V7H21 M9 12H17 M9 17H17"/></g>
+<g transform="translate(111,260) scale(1.3846153846153846)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1H15L21 7V23H5Z M15 1V7H21 M9 12H17 M9 17H17"/></g>
 <text x="170" y="288" class="head">Explain the task in order</text>
 <text x="111" y="328" class="body">Show the steps, the expected output, and a useful diagram.</text>
 <text x="111" y="357" class="body">Use the same names as the commands and API.</text>
 <path class="edge" d="M58 304V367"/>
-<circle cx="58" cy="412" r="19" fill="#367D68"/>
+<circle cx="58" cy="412" r="19" fill="#855414"/>
 <text x="58" y="419" class="body white" text-anchor="middle">3</text>
-<g transform="translate(111,394) scale(1.3846153846153846)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<g transform="translate(111,394) scale(1.3846153846153846)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
 <text x="170" y="422" class="head">Execute the checks</text>
 <text x="111" y="462" class="body">Run source_coverage.py --strict, check_docs.py, mkdocs build --strict,</text>
 <text x="111" y="491" class="body">and the real example. Keep private evidence out of published pages.</text>
 <path class="edge" d="M58 438V501"/>
-<circle cx="58" cy="546" r="19" fill="#367D68"/>
+<circle cx="58" cy="546" r="19" fill="#855414"/>
 <text x="58" y="553" class="body white" text-anchor="middle">4</text>
-<g transform="translate(111,528) scale(1.3846153846153846)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
+<g transform="translate(111,528) scale(1.3846153846153846)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
 <text x="170" y="556" class="head">Inspect it as a reader</text>
 <text x="111" y="596" class="body">Render at article width; check labels, arrows, and captions.</text>
 <text x="111" y="625" class="body">Follow the chapter using only its stated prerequisites.</text>
 <text x="36" y="715" class="small muted">A passing link check cannot prove accuracy. A diagram must not invent a guarantee.</text>
 <g id="takeaway">
-<rect x="0" y="766" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="795" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="826" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Run the example and inspect the picture before publishing the guide.</text>
+<rect x="0" y="766" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="795" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="826" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Run the example and inspect the picture before publishing the guide.</text>
 </g>
 </svg>

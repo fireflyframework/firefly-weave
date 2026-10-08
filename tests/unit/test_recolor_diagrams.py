@@ -84,3 +84,7 @@ def test_recolor_rewrites_in_place_keeps_line_endings_and_then_checks_clean(tmp_
     assert RECOLOR["main"]([str(path)]) == 0
     assert path.read_bytes() == SVG.format('\r\n<rect fill="#272820"/>\r\n').encode()
     assert RECOLOR["main"](["--check", str(path)]) == 0
+
+
+def test_every_documentation_diagram_uses_the_palette():
+    assert RECOLOR["main"](["--check"]) == 0

@@ -18,12 +18,12 @@ SPDX-License-Identifier: Apache-2.0
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1330" viewBox="0 0 1120 1330" role="img" aria-labelledby="title desc">
 <title id="title">Studio edits the process. The platform remembers and runs it.</title>
 <desc id="desc">Two parts. On your computer, the Studio page in a browser tab or the desktop window is paired with the Studio host on 127.0.0.1, using a one-time code in a browser; the desktop app pairs itself, so you type no code. Pairing is not a sign-in and grants nothing on a platform. The host validates and imports workflows locally and works without a platform; saving, publishing, simulating, and running need a platform. It shares the saved platforms file, profiles.json, with the weave CLI and the desktop app; that file holds each server address, its sign-in settings, and the chosen workspace, never passwords or tokens. Tokens stay in the credential store: Keychain, Credential Locker, Secret Service, or KWallet, or a private file you chose. You sign in at your identity provider in a browser or with a code; Weave never sees your password. The host calls the active platform over HTTPS with your access token, or plain HTTP only to a platform on the same computer. On the platform, the Weave API verifies the token and its own grants decide what you may do; it saves drafts, publishes versions, activates them, and starts runs. PostgreSQL remembers progress, workers and built-in connectors call external systems, and an assigned person submits task decisions. Sending an email reply and approving a task are separate actions, and closing Studio does not stop a running workflow.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.b{font-size:20px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.trust{fill:none;stroke:#367D68;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
-<rect width="1120" height="1330" rx="24" fill="#EEF4F0"/>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.b{font-size:20px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#62645B}.arrow{fill:none;stroke:#62645B;stroke-width:3;marker-end:url(#arrow)}.trust{fill:none;stroke:#62645B;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.icon{fill:none;stroke:#62645B;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="1120" height="1330" rx="24" fill="#EAE7DF"/>
 <text class="title" x="40" y="55">Draw locally. Run on your platform.</text>
 <text class="p" x="40" y="90">Studio is another client of the same API that the CLI, the SDK, and your products use.</text>
-<rect x="30" y="115" width="1060" height="495" rx="18" fill="none" stroke="#A8C8B9" stroke-width="2" stroke-dasharray="8 6"/>
+<rect x="30" y="115" width="1060" height="495" rx="18" fill="none" stroke="#BFB8AB" stroke-width="2" stroke-dasharray="8 6"/>
 <text class="small" x="50" y="145">YOUR COMPUTER</text>
 <rect x="50" y="165" width="370" height="165" rx="14" fill="white"/>
 <g class="icon" transform="translate(72 188)"><rect width="44" height="32" rx="4"/><path d="M0 10h44M13 40h18M22 32v8"/></g>
@@ -57,7 +57,7 @@ SPDX-License-Identifier: Apache-2.0
 <text class="small" x="392" y="482">address, its sign-in settings,</text>
 <text class="small" x="392" y="508">and your workspace.</text>
 <text class="small" x="392" y="534">No passwords or tokens.</text>
-<rect x="720" y="375" width="350" height="165" rx="14" fill="#FFF7E5"/>
+<rect x="720" y="375" width="350" height="165" rx="14" fill="#FFF0D8"/>
 <g class="icon" transform="translate(742 396)"><circle cx="10" cy="10" r="9"/><path d="M16 16l16 16M24 24l5-5M29 29l5-5"/></g>
 <text class="b" x="790" y="418">Credential store</text>
 <text class="small" x="742" y="456">Holds your tokens: Keychain,</text>
@@ -79,10 +79,10 @@ SPDX-License-Identifier: Apache-2.0
 <text class="small" x="664" y="758">Weave never sees your password.</text>
 <path class="trust" d="M855 772V826"/>
 <text class="small" x="870" y="806">Its keys verify your token</text>
-<rect x="50" y="830" width="1020" height="150" rx="16" fill="#173D34"/>
+<rect x="50" y="830" width="1020" height="150" rx="16" fill="#272820"/>
 <text class="h" x="78" y="872" style="fill:white">3. The Weave API checks and coordinates</text>
 <text class="p" x="78" y="914" style="fill:white">Save a draft → publish a version → activate it → start a run.</text>
-<text class="small" x="78" y="956" style="fill:#CEE4D8">It verifies your token. Its own grants then decide what you may do in each workspace.</text>
+<text class="small" x="78" y="956" style="fill:#D8D4CA">It verifies your token. Its own grants then decide what you may do in each workspace.</text>
 <path class="arrow" d="M210 980V1036"/><path class="arrow" d="M560 980V1036"/><path class="arrow" d="M905 980V1036"/>
 <rect x="50" y="1045" width="315" height="190" rx="14" fill="white"/>
 <g class="icon" transform="translate(74 1069)"><ellipse cx="21" cy="7" rx="21" ry="7"/><path d="M0 7v29c0 10 42 10 42 0V7M0 22c0 10 42 10 42 0"/></g>
@@ -94,7 +94,7 @@ SPDX-License-Identifier: Apache-2.0
 <text class="h" x="486" y="1098">Execute</text>
 <text class="p" x="424" y="1143">Workers and connectors</text><text class="p" x="424" y="1171">call your other systems.</text>
 <text class="small" x="424" y="1211">Email keeps its thread.</text>
-<rect x="750" y="1045" width="320" height="190" rx="14" fill="#FFF7E5"/>
+<rect x="750" y="1045" width="320" height="190" rx="14" fill="#FFF0D8"/>
 <g class="icon" transform="translate(774 1069)"><circle cx="20" cy="10" r="9"/><path d="M2 43V31c0-15 36-15 36 0v12"/></g>
 <text class="h" x="836" y="1098">Decide</text>
 <text class="p" x="774" y="1143">An assigned person</text><text class="p" x="774" y="1171">submits a decision.</text>

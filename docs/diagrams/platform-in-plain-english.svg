@@ -18,9 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1150" viewBox="0 0 960 1150" role="img" aria-labelledby="title desc">
 <title id="title">What runs when you use Firefly Weave?</title>
 <desc id="desc">Your product, Studio, the CLI, or the Python SDK sends a request to the Weave API, and the client can exit after it receives the run ID. The API checks identity and permissions, saves progress in PostgreSQL, and queues integration tasks. Integration code, a built-in connector run by a native executor or your own remote worker, claims the task, contacts the external system, and reports the result. An internal transform needs no worker, and a human task waits for a person in My tasks with no worker involved. Local simulation uses files and mocks without these services.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.p{font-size:20px}.note{font-size:18px}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
-<rect width="960" height="1050" rx="24" fill="#EEF4F0"/>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.p{font-size:20px}.note{font-size:18px}.arrow{fill:none;stroke:#62645B;stroke-width:3;marker-end:url(#arrow)}.icon{fill:none;stroke:#62645B;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="960" height="1050" rx="24" fill="#EAE7DF"/>
 <text class="title" x="40" y="55">One process, several clear responsibilities</text>
 <text class="p" x="40" y="90">Follow the numbered path of an order through the running platform.</text>
 <rect x="40" y="125" width="880" height="130" rx="16" fill="white"/>
@@ -29,14 +29,14 @@ SPDX-License-Identifier: Apache-2.0
 <text class="p" x="145" y="204">Studio, the CLI, the SDK, or any HTTP client sends order 123.</text>
 <text class="note" x="145" y="234">The client can exit after receiving the run ID.</text>
 <path class="arrow" d="M480 255v65"/><text class="note" x="500" y="295">HTTP request + access token</text>
-<rect x="40" y="325" width="880" height="160" rx="16" fill="#173D34"/>
-<g transform="translate(65 362)" fill="none" stroke="#A8D5BE" stroke-width="3"><rect width="56" height="55" rx="6"/><path d="M8 17h40M8 35h40"/><circle cx="12" cy="8" r="1"/></g>
+<rect x="40" y="325" width="880" height="160" rx="16" fill="#272820"/>
+<g transform="translate(65 362)" fill="none" stroke="#D8D4CA" stroke-width="3"><rect width="56" height="55" rx="6"/><path d="M8 17h40M8 35h40"/><circle cx="12" cy="8" r="1"/></g>
 <text x="145" y="370" fill="white" style="fill:white" class="h">2. The Weave API coordinates the work</text>
 <text x="145" y="408" fill="white" style="fill:white" class="p">Check permission → validate input → choose the next step.</text>
-<text x="145" y="447" style="fill:#CEE4D8" class="note">Your identity provider identifies callers. Weave grants authorize actions.</text>
+<text x="145" y="447" style="fill:#D8D4CA" class="note">Your identity provider identifies callers. Weave grants authorize actions.</text>
 <path class="arrow" d="M270 485v65"/><text class="note" x="65" y="525">Save progress</text>
 <path class="arrow" d="M690 485v65"/><text class="note" x="710" y="525">Queue a task</text>
-<rect x="40" y="555" width="425" height="190" rx="16" fill="#DCEBE3"/>
+<rect x="40" y="555" width="425" height="190" rx="16" fill="#EAE7DF"/>
 <g class="icon" transform="translate(65 580)"><ellipse cx="22" cy="8" rx="22" ry="8"/><path d="M0 8v37c0 11 44 11 44 0V8M0 27c0 11 44 11 44 0"/></g>
 <text class="h" x="128" y="609">3. PostgreSQL remembers</text>
 <text class="p" x="65" y="657">Definitions, runs, waits, and history</text>
@@ -49,7 +49,7 @@ SPDX-License-Identifier: Apache-2.0
 <text class="note" x="520" y="699">A built-in connector or a worker</text>
 <text class="note" x="520" y="725">claims the task and reports back.</text>
 <path class="arrow" d="M710 745v60"/><text class="note" x="510" y="785">Integration request</text>
-<rect x="495" y="815" width="425" height="100" rx="16" fill="#FFF7E5"/>
+<rect x="495" y="815" width="425" height="100" rx="16" fill="#FFF0D8"/>
 <g class="icon" transform="translate(520 840)"><path d="M0 40V0h44v40M-5 40h54M10 10h6M28 10h6M10 22h6M28 22h6M18 40V30h9v10"/></g>
 <text class="h" x="583" y="853">Your external system</text>
 <text class="note" x="583" y="884">Its response returns to that code.</text>
@@ -57,12 +57,12 @@ SPDX-License-Identifier: Apache-2.0
 <text class="note" x="65" y="860">A native executor runs built-in connectors.</text>
 <text class="note" x="65" y="890">A remote worker runs your Python handler.</text>
 <text class="note" x="65" y="920">A human task waits for a person, not a worker.</text>
-<path d="M40 947H920" stroke="#B7CFC1"/>
+<path d="M40 947H920" stroke="#D8D4CA"/>
 <text class="h" x="40" y="983">Just learning? Start with local simulation.</text>
 <text class="note" x="40" y="1017">YAML + sample input + mocks → a result, without API, database, or external calls.</text>
 <g id="takeaway">
-<rect x="0" y="1056" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1085" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1116" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">The API coordinates, the database remembers, and integration code calls other systems.</text>
+<rect x="0" y="1056" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1085" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1116" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">The API coordinates, the database remembers, and integration code calls other systems.</text>
 </g>
 </svg>

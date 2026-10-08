@@ -21,67 +21,67 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1650" viewBox="0 0 960 1650" role="img" aria-labelledby="title desc">
 <title id="title">Fix one boundary at a time</title><desc id="desc">Five steps read from top to bottom: write the workflow source; validate it without a catalog, which is only a partial check (validationOk true, partial true, ok false, artifact null); compile it with an explicit catalog, even an empty one (ok true, partial false, and an artifact); simulate a fixed input with Action mocks and a fixed clock; and use a diagnostic such as WV-COMP-TYPE_MISMATCH at /spec/output to repair the source. A dashed arrow returns from the last step to the first: edit the source, then validate and compile again.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1550" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Fix one boundary at a time</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">A valid-looking file, a compiled workflow, and a successful run are three</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">different results.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Solid arrows move forward; the dashed arrow returns to the source</text>
-<rect x="40" y="232" width="840" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
-<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Write the workflow</text>
-<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Keep echo.workflow.yaml editable while you work.</text>
-<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">YAML, JSON, and Python-built documents use the same language.</text>
-<text x="168" y="372" font-size="18" font-weight="600" fill="#326B88">SOURCE • Your editable definition</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1550" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Fix one boundary at a time</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">A valid-looking file, a compiled workflow, and a successful run are three</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">different results.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">READ DOWN  •  Solid arrows move forward; the dashed arrow returns to the source</text>
+<rect x="40" y="232" width="840" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="249" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 264) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="168" y="275" font-size="25" font-weight="700" fill="#272820">1. Write the workflow</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#272820">Keep echo.workflow.yaml editable while you work.</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#272820">YAML, JSON, and Python-built documents use the same language.</text>
+<text x="168" y="372" font-size="18" font-weight="600" fill="#4A5D65">SOURCE • Your editable definition</text>
 <path class="edge" d="M460 394v35"/>
-<rect x="40" y="442" width="840" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="459" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 474) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="168" y="485" font-size="25" font-weight="700" fill="#173D34">2. Check the shape first</text>
-<text x="168" y="524" font-size="22" font-weight="400" fill="#173D34">Without a catalog, validation checks parsing and schemas.</text>
-<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">validationOk: true with partial: true is only a partial check.</text>
-<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">ok: false and artifact: null mean there is no executable yet.</text>
-<text x="168" y="611" font-size="18" font-weight="600" fill="#326B88">PARTIAL CHECK • Supply dependencies to continue</text>
+<rect x="40" y="442" width="840" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="459" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 474) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="168" y="485" font-size="25" font-weight="700" fill="#272820">2. Check the shape first</text>
+<text x="168" y="524" font-size="22" font-weight="400" fill="#272820">Without a catalog, validation checks parsing and schemas.</text>
+<text x="168" y="553" font-size="22" font-weight="400" fill="#272820">validationOk: true with partial: true is only a partial check.</text>
+<text x="168" y="582" font-size="22" font-weight="400" fill="#272820">ok: false and artifact: null mean there is no executable yet.</text>
+<text x="168" y="611" font-size="18" font-weight="600" fill="#4A5D65">PARTIAL CHECK • Supply dependencies to continue</text>
 <path class="edge" d="M460 633v35"/>
-<rect x="40" y="681" width="840" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="698" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 713) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m19 35-5 5c-14 14-28-1-14-14l10-10c10-10 23-2 19 7 M36 21l5-5c14-14 28 1 14 14L45 40c-10 10-23 2-19-7 M18 36l19-17" transform="translate(1 0) scale(.94)"/></g>
-<text x="168" y="724" font-size="25" font-weight="700" fill="#173D34">3. Compile with an explicit catalog</text>
-<text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">The compiler resolves exact dependencies and checks types.</text>
-<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">Even a workflow with no dependencies needs an empty catalog.</text>
-<text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">Success: ok: true, partial: false, and an artifact.</text>
-<text x="168" y="850" font-size="18" font-weight="600" fill="#326B88">FULL CHECK • The artifact can now be simulated</text>
+<rect x="40" y="681" width="840" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="698" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 713) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m19 35-5 5c-14 14-28-1-14-14l10-10c10-10 23-2 19 7 M36 21l5-5c14-14 28 1 14 14L45 40c-10 10-23 2-19-7 M18 36l19-17" transform="translate(1 0) scale(.94)"/></g>
+<text x="168" y="724" font-size="25" font-weight="700" fill="#272820">3. Compile with an explicit catalog</text>
+<text x="168" y="763" font-size="22" font-weight="400" fill="#272820">The compiler resolves exact dependencies and checks types.</text>
+<text x="168" y="792" font-size="22" font-weight="400" fill="#272820">Even a workflow with no dependencies needs an empty catalog.</text>
+<text x="168" y="821" font-size="22" font-weight="400" fill="#272820">Success: ok: true, partial: false, and an artifact.</text>
+<text x="168" y="850" font-size="18" font-weight="600" fill="#4A5D65">FULL CHECK • The artifact can now be simulated</text>
 <path class="edge" d="M460 872v35"/>
-<rect x="40" y="920" width="840" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="937" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 952) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
-<text x="168" y="963" font-size="25" font-weight="700" fill="#173D34">4. Try a fixed input in the simulator</text>
-<text x="168" y="1002" font-size="22" font-weight="400" fill="#173D34">Provide explicit Action mocks and a fixed clock.</text>
-<text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">A successful simulation checks local behavior, not worker</text>
-<text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">availability.</text>
-<text x="168" y="1089" font-size="18" font-weight="600" fill="#326B88">SIMULATION • External services still need separate checks</text>
+<rect x="40" y="920" width="840" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="937" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 952) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
+<text x="168" y="963" font-size="25" font-weight="700" fill="#272820">4. Try a fixed input in the simulator</text>
+<text x="168" y="1002" font-size="22" font-weight="400" fill="#272820">Provide explicit Action mocks and a fixed clock.</text>
+<text x="168" y="1031" font-size="22" font-weight="400" fill="#272820">A successful simulation checks local behavior, not worker</text>
+<text x="168" y="1060" font-size="22" font-weight="400" fill="#272820">availability.</text>
+<text x="168" y="1089" font-size="18" font-weight="600" fill="#4A5D65">SIMULATION • External services still need separate checks</text>
 <path class="edge" d="M460 1111v35"/>
-<rect x="40" y="1159" width="840" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="1176" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1191) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19A22 22 0 1 1 7 37 M8 6v14h14"/></g>
-<text x="168" y="1202" font-size="25" font-weight="700" fill="#173D34">5. Use the diagnostic to repair the source</text>
-<text x="168" y="1241" font-size="22" font-weight="400" fill="#173D34">Example: WV-COMP-TYPE_MISMATCH at /spec/output.</text>
-<text x="168" y="1270" font-size="22" font-weight="400" fill="#173D34">A string cannot satisfy an object schema. Fix the value, then</text>
-<text x="168" y="1299" font-size="22" font-weight="400" fill="#173D34">validate and compile again.</text>
-<text x="168" y="1328" font-size="18" font-weight="600" fill="#326B88">CORRECTION LOOP • Return to your editable source</text>
-<path d="M880 1252H898V311H884" fill="none" stroke="#367D68" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
-<text x="922" y="781" transform="rotate(-90 922 781)" text-anchor="middle" font-size="17" font-weight="700" fill="#367D68">Edit the source, then validate and compile again</text>
-<rect x="40" y="1370" width="880" height="136" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1390) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1414" font-size="23" font-weight="700" fill="#326B88">What this tells you</text>
-<text x="60" y="1453" font-size="21" font-weight="400" fill="#173D34">Move forward only when the boundary you need has passed. Keep source</text>
-<text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">location and diagnostic code together when explaining a failure.</text><g id="takeaway">
-<rect x="0" y="1556" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1585" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1616" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Fix the first reported boundary, then check the definition again.</text>
+<rect x="40" y="1159" width="840" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="1176" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 1191) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19A22 22 0 1 1 7 37 M8 6v14h14"/></g>
+<text x="168" y="1202" font-size="25" font-weight="700" fill="#272820">5. Use the diagnostic to repair the source</text>
+<text x="168" y="1241" font-size="22" font-weight="400" fill="#272820">Example: WV-COMP-TYPE_MISMATCH at /spec/output.</text>
+<text x="168" y="1270" font-size="22" font-weight="400" fill="#272820">A string cannot satisfy an object schema. Fix the value, then</text>
+<text x="168" y="1299" font-size="22" font-weight="400" fill="#272820">validate and compile again.</text>
+<text x="168" y="1328" font-size="18" font-weight="600" fill="#4A5D65">CORRECTION LOOP • Return to your editable source</text>
+<path d="M880 1252H898V311H884" fill="none" stroke="#62645B" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
+<text x="922" y="781" transform="rotate(-90 922 781)" text-anchor="middle" font-size="17" font-weight="700" fill="#855414">Edit the source, then validate and compile again</text>
+<rect x="40" y="1370" width="880" height="136" rx="16" fill="#E6E8E6"/>
+<g transform="translate(59 1390) scale(0.7)" stroke="#4A5D65" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1414" font-size="23" font-weight="700" fill="#4A5D65">What this tells you</text>
+<text x="60" y="1453" font-size="21" font-weight="400" fill="#272820">Move forward only when the boundary you need has passed. Keep source</text>
+<text x="60" y="1482" font-size="21" font-weight="400" fill="#272820">location and diagnostic code together when explaining a failure.</text><g id="takeaway">
+<rect x="0" y="1556" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1585" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1616" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Fix the first reported boundary, then check the definition again.</text>
 </g>
 </svg>

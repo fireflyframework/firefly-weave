@@ -83,7 +83,14 @@ LEGACY_HEX = frozenset(
         "#65766B", "#123229", "#28644F", "#162A24", "#B9CEC4", "#20382F", "#91D3B5", "#A7E6C9",
     }
 )  # fmt: skip
-LEGACY_SCAN_ROOTS = ("assets", "src/firefly_weave", "desktop/bootstrap", "desktop/artwork", "studio/src")
+LEGACY_SCAN_ROOTS = (
+    "assets",
+    "src/firefly_weave",
+    "desktop/bootstrap",
+    "desktop/artwork",
+    "studio/src",
+    "docs/diagrams",
+)
 # Deleted when the documentation header and favicon switch to the Firefly files.
 LEGACY_SCAN_EXEMPT = frozenset(
     {"assets/weave-logo.svg", "assets/weave-logo-mono.svg", "assets/weave-logo-reversed.svg"}

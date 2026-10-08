@@ -19,60 +19,60 @@ SPDX-License-Identifier: Apache-2.0
 <title id="title">Two separate ways to use AI in Weave</title>
 <desc id="description">A workflow uses a versioned model profile and a leased Agentic worker task. A person asks Lumi through a separate environment configuration and private gateway. Lumi proposes edits for review and never publishes or runs workflows itself.</desc>
 <defs>
- <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker>
+ <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker>
  <g id="flow" stroke="currentColor" stroke-width="2" fill="none"><rect width="18" height="12" rx="3"/><rect x="26" y="26" width="18" height="12" rx="3"/><path d="M9 12v20h17M18 6h16v20"/></g>
  <g id="chat" stroke="currentColor" stroke-width="2" fill="none"><path d="M3 0h33a3 3 0 0 1 3 3v21a3 3 0 0 1-3 3H15L4 36v-9H3a3 3 0 0 1-3-3V3a3 3 0 0 1 3-3Z"/><path d="M9 9h22M9 17h15"/></g>
  <g id="check" stroke="currentColor" stroke-width="2.5" fill="none"><circle cx="18" cy="18" r="17"/><path d="m9 18 6 6 13-14"/></g>
 </defs>
-<rect width="1200" height="840" rx="24" fill="#EEF4F0"/>
-<g font-family="Inter,Arial,sans-serif">
- <text x="40" y="48" font-size="13" font-weight="700" letter-spacing="1.8" fill="#367D68">FIREFLY WEAVE · AI ARCHITECTURE</text>
- <text x="40" y="94" font-size="32" font-weight="700" fill="#173D34">Your workflow's AI. Your Studio assistant.</text>
- <text x="40" y="128" font-size="17" fill="#4D655D">Choose their models independently. Each has its own purpose and access boundary.</text>
- <rect x="30" y="163" width="1140" height="256" rx="18" fill="#E3ECDD"/>
- <use href="#flow" x="53" y="184" color="#367D68"/>
- <text x="111" y="202" font-size="20" font-weight="700" fill="#173D34">AI inside a business process</text>
- <text x="111" y="230" font-size="15" fill="#4D655D">The run needs a model result before the next step can continue.</text>
+<rect width="1200" height="840" rx="24" fill="#EAE7DF"/>
+<g font-family="Arial,Helvetica,sans-serif">
+ <text x="40" y="48" font-size="13" font-weight="700" letter-spacing="1.8" fill="#855414">FIREFLY WEAVE · AI ARCHITECTURE</text>
+ <text x="40" y="94" font-size="32" font-weight="700" fill="#272820">Your workflow's AI. Your Studio assistant.</text>
+ <text x="40" y="128" font-size="17" fill="#62645B">Choose their models independently. Each has its own purpose and access boundary.</text>
+ <rect x="30" y="163" width="1140" height="256" rx="18" fill="#EAE7DF"/>
+ <use href="#flow" x="53" y="184" color="#62645B"/>
+ <text x="111" y="202" font-size="20" font-weight="700" fill="#272820">AI inside a business process</text>
+ <text x="111" y="230" font-size="15" fill="#62645B">The run needs a model result before the next step can continue.</text>
  <rect x="52" y="252" width="307" height="138" rx="14" fill="white"/>
- <text x="73" y="284" font-size="19" font-weight="700" fill="#173D34">Workflow AI step</text>
- <text x="73" y="316" font-size="15" fill="#4D655D">Named profile: provider + model</text>
- <text x="73" y="340" font-size="15" fill="#4D655D">Prompt, data, pattern and budgets</text>
- <text x="73" y="364" font-size="15" fill="#4D655D">Pinned when the workflow compiles</text>
- <path d="M371 320h31" stroke="#367D68" stroke-width="2.5" marker-end="url(#arrow)"/>
+ <text x="73" y="284" font-size="19" font-weight="700" fill="#272820">Workflow AI step</text>
+ <text x="73" y="316" font-size="15" fill="#62645B">Named profile: provider + model</text>
+ <text x="73" y="340" font-size="15" fill="#62645B">Prompt, data, pattern and budgets</text>
+ <text x="73" y="364" font-size="15" fill="#62645B">Pinned when the workflow compiles</text>
+ <path d="M371 320h31" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
  <rect x="414" y="252" width="335" height="138" rx="14" fill="white"/>
- <text x="435" y="284" font-size="19" font-weight="700" fill="#173D34">Leased Agentic worker task</text>
- <text x="435" y="316" font-size="15" fill="#4D655D">Worker calls the approved provider.</text>
- <text x="435" y="340" font-size="15" fill="#4D655D">A current lease fences completion.</text>
- <text x="435" y="364" font-size="15" fill="#4D655D">Output must match its contract.</text>
- <path d="M762 320h31" stroke="#367D68" stroke-width="2.5" marker-end="url(#arrow)"/>
- <rect x="805" y="252" width="341" height="138" rx="14" fill="#173D34"/>
+ <text x="435" y="284" font-size="19" font-weight="700" fill="#272820">Leased Agentic worker task</text>
+ <text x="435" y="316" font-size="15" fill="#62645B">Worker calls the approved provider.</text>
+ <text x="435" y="340" font-size="15" fill="#62645B">A current lease fences completion.</text>
+ <text x="435" y="364" font-size="15" fill="#62645B">Output must match its contract.</text>
+ <path d="M762 320h31" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
+ <rect x="805" y="252" width="341" height="138" rx="14" fill="#272820"/>
  <text x="827" y="284" font-size="19" font-weight="700" fill="white">Accepted run evidence</text>
- <text x="827" y="316" font-size="15" fill="#DDEAE3">The next step uses the result.</text>
- <text x="827" y="340" font-size="15" fill="#DDEAE3">Replay uses accepted evidence.</text>
- <text x="827" y="364" font-size="15" fill="#DDEAE3">Classified results are rejected.</text>
- <rect x="30" y="439" width="1140" height="256" rx="18" fill="#E4EFEC"/>
- <use href="#chat" x="53" y="462" color="#367D68"/>
- <text x="111" y="478" font-size="20" font-weight="700" fill="#173D34">Lumi helps the person using Studio</text>
- <text x="111" y="506" font-size="15" fill="#4D655D">Ask for an explanation or a draft change; choose the context to share.</text>
+ <text x="827" y="316" font-size="15" fill="#EAE7DF">The next step uses the result.</text>
+ <text x="827" y="340" font-size="15" fill="#EAE7DF">Replay uses accepted evidence.</text>
+ <text x="827" y="364" font-size="15" fill="#EAE7DF">Classified results are rejected.</text>
+ <rect x="30" y="439" width="1140" height="256" rx="18" fill="#EAE7DF"/>
+ <use href="#chat" x="53" y="462" color="#62645B"/>
+ <text x="111" y="478" font-size="20" font-weight="700" fill="#272820">Lumi helps the person using Studio</text>
+ <text x="111" y="506" font-size="15" fill="#62645B">Ask for an explanation or a draft change; choose the context to share.</text>
  <rect x="52" y="528" width="307" height="138" rx="14" fill="white"/>
- <text x="73" y="560" font-size="19" font-weight="700" fill="#173D34">Ask Lumi</text>
- <text x="73" y="592" font-size="15" fill="#4D655D">Optional draft, run or simulation</text>
- <text x="73" y="616" font-size="15" fill="#4D655D">Your existing access still applies.</text>
- <text x="73" y="640" font-size="15" fill="#4D655D">Conversation stays in memory.</text>
- <path d="M371 596h31" stroke="#367D68" stroke-width="2.5" marker-end="url(#arrow)"/>
+ <text x="73" y="560" font-size="19" font-weight="700" fill="#272820">Ask Lumi</text>
+ <text x="73" y="592" font-size="15" fill="#62645B">Optional draft, run or simulation</text>
+ <text x="73" y="616" font-size="15" fill="#62645B">Your existing access still applies.</text>
+ <text x="73" y="640" font-size="15" fill="#62645B">Conversation stays in memory.</text>
+ <path d="M371 596h31" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
  <rect x="414" y="528" width="335" height="138" rx="14" fill="white"/>
- <text x="435" y="560" font-size="19" font-weight="700" fill="#173D34">Private assistant gateway</text>
- <text x="435" y="592" font-size="15" fill="#4D655D">Separate environment model profile</text>
- <text x="435" y="616" font-size="15" fill="#4D655D">Authenticated API-to-service call</text>
- <text x="435" y="640" font-size="15" fill="#4D655D">No workflow execution is created.</text>
- <path d="M762 596h31" stroke="#367D68" stroke-width="2.5" marker-end="url(#arrow)"/>
+ <text x="435" y="560" font-size="19" font-weight="700" fill="#272820">Private assistant gateway</text>
+ <text x="435" y="592" font-size="15" fill="#62645B">Separate environment model profile</text>
+ <text x="435" y="616" font-size="15" fill="#62645B">Authenticated API-to-service call</text>
+ <text x="435" y="640" font-size="15" fill="#62645B">No workflow execution is created.</text>
+ <path d="M762 596h31" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
  <rect x="805" y="528" width="341" height="138" rx="14" fill="white"/>
- <text x="827" y="560" font-size="19" font-weight="700" fill="#173D34">You review the proposal</text>
- <text x="827" y="592" font-size="15" fill="#4D655D">Validate, then apply to a local draft.</text>
- <text x="827" y="616" font-size="15" fill="#4D655D">Undo restores the previous draft.</text>
- <text x="827" y="640" font-size="15" fill="#4D655D">Publishing is a separate action.</text>
- <rect x="30" y="717" width="1140" height="93" rx="18" fill="#173D34"/>
- <use href="#check" x="53" y="745" color="#DDEAE3"/>
+ <text x="827" y="560" font-size="19" font-weight="700" fill="#272820">You review the proposal</text>
+ <text x="827" y="592" font-size="15" fill="#62645B">Validate, then apply to a local draft.</text>
+ <text x="827" y="616" font-size="15" fill="#62645B">Undo restores the previous draft.</text>
+ <text x="827" y="640" font-size="15" fill="#62645B">Publishing is a separate action.</text>
+ <rect x="30" y="717" width="1140" height="93" rx="18" fill="#272820"/>
+ <use href="#check" x="53" y="745" color="#EAE7DF"/>
  <text x="110" y="753" font-size="18" font-weight="700" fill="white">Changing Lumi's model never rewrites a workflow profile.</text>
- <text x="110" y="781" font-size="16" fill="#DDEAE3">Operators approve endpoints and models. Credentials stay outside workflow data and browser state.</text>
+ <text x="110" y="781" font-size="16" fill="#EAE7DF">Operators approve endpoints and models. Credentials stay outside workflow data and browser state.</text>
 </g></svg>

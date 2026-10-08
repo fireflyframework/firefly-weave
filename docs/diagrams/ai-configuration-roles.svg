@@ -19,37 +19,37 @@ SPDX-License-Identifier: Apache-2.0
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 724" role="img" aria-labelledby="title description">
 <title id="title">Who configures which part of AI?</title>
 <desc id="description">Operator, administrator and author responsibilities are separate. Operators deploy and restrict services and provision startup secret grants. Administrators create provider connections, grant worker access and configure Lumi separately. Authors define workflow profiles and typed AI steps, and individually choose Lumi context. Azure hosting is an operator responsibility and does not select a model provider.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
-<rect width="800" height="724" rx="24" fill="#EEF4F0"/>
-<g font-family="Inter,Arial,sans-serif">
-<text x="32" y="42" font-size="13" font-weight="700" letter-spacing="1.7" fill="#367D68">FIREFLY WEAVE · AI GUIDE</text>
-<text x="32" y="82" font-size="28" font-weight="700" fill="#173D34">Who configures which part of AI?</text>
-<text x="32" y="116" font-size="18" fill="#4D655D">Follow this setup order for workflow AI, Lumi, or both.</text>
-<text x="32" y="141" font-size="18" fill="#4D655D">An Azure-hosted Weave API does not automatically deploy either service.</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
+<rect width="800" height="724" rx="24" fill="#EAE7DF"/>
+<g font-family="Arial,Helvetica,sans-serif">
+<text x="32" y="42" font-size="13" font-weight="700" letter-spacing="1.7" fill="#855414">FIREFLY WEAVE · AI GUIDE</text>
+<text x="32" y="82" font-size="28" font-weight="700" fill="#272820">Who configures which part of AI?</text>
+<text x="32" y="116" font-size="18" fill="#62645B">Follow this setup order for workflow AI, Lumi, or both.</text>
+<text x="32" y="141" font-size="18" fill="#62645B">An Azure-hosted Weave API does not automatically deploy either service.</text>
 <rect x="32" y="166" width="736" height="126" rx="16" fill="white"/>
-<circle cx="66" cy="200" r="18" fill="#173D34"/>
+<circle cx="66" cy="200" r="18" fill="#272820"/>
 <text x="66" y="206" text-anchor="middle" font-size="18" font-weight="700" fill="white">1</text>
-<text x="99" y="195" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">DEPLOYMENT OPERATOR · AZURE OR OTHER HOST</text>
-<text x="99" y="223" font-size="22" font-weight="700" fill="#173D34">Make the execution services available</text>
-<text x="99" y="250" font-size="18" fill="#4D655D">Deploy the Agentic worker and/or private Lumi gateway.</text>
-<text x="99" y="275" font-size="18" fill="#4D655D">Set policy, network access, identity, and scoped secret grants.</text>
-<path d="M66 295v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="99" y="195" font-size="12" font-weight="700" letter-spacing="1.1" fill="#855414">DEPLOYMENT OPERATOR · AZURE OR OTHER HOST</text>
+<text x="99" y="223" font-size="22" font-weight="700" fill="#272820">Make the execution services available</text>
+<text x="99" y="250" font-size="18" fill="#62645B">Deploy the Agentic worker and/or private Lumi gateway.</text>
+<text x="99" y="275" font-size="18" fill="#62645B">Set policy, network access, identity, and scoped secret grants.</text>
+<path d="M66 295v18" stroke="#62645B" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="32" y="316" width="736" height="126" rx="16" fill="white"/>
-<circle cx="66" cy="350" r="18" fill="#173D34"/>
+<circle cx="66" cy="350" r="18" fill="#272820"/>
 <text x="66" y="356" text-anchor="middle" font-size="18" font-weight="700" fill="white">2</text>
-<text x="99" y="345" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">ENVIRONMENT ADMINISTRATOR</text>
-<text x="99" y="373" font-size="22" font-weight="700" fill="#173D34">Approve connections and access</text>
-<text x="99" y="400" font-size="18" fill="#4D655D">Create provider connections that refer to secret handles.</text>
-<text x="99" y="425" font-size="18" fill="#4D655D">Grant worker access; configure Lumi and its users separately.</text>
-<path d="M66 445v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="99" y="345" font-size="12" font-weight="700" letter-spacing="1.1" fill="#855414">ENVIRONMENT ADMINISTRATOR</text>
+<text x="99" y="373" font-size="22" font-weight="700" fill="#272820">Approve connections and access</text>
+<text x="99" y="400" font-size="18" fill="#62645B">Create provider connections that refer to secret handles.</text>
+<text x="99" y="425" font-size="18" fill="#62645B">Grant worker access; configure Lumi and its users separately.</text>
+<path d="M66 445v18" stroke="#62645B" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="32" y="466" width="736" height="126" rx="16" fill="white"/>
-<circle cx="66" cy="500" r="18" fill="#173D34"/>
+<circle cx="66" cy="500" r="18" fill="#272820"/>
 <text x="66" y="506" text-anchor="middle" font-size="18" font-weight="700" fill="white">3</text>
-<text x="99" y="495" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">WORKFLOW AUTHOR / LUMI USER</text>
-<text x="99" y="523" font-size="22" font-weight="700" fill="#173D34">Choose the task or the question</text>
-<text x="99" y="550" font-size="18" fill="#4D655D">Workflow: profile, prompt, context, and expected result.</text>
-<text x="99" y="575" font-size="18" fill="#4D655D">Lumi: opt-in context, then review, validate, Apply, or Undo.</text>
-<rect x="32" y="616" width="736" height="78" rx="16" fill="#173D34"/>
+<text x="99" y="495" font-size="12" font-weight="700" letter-spacing="1.1" fill="#855414">WORKFLOW AUTHOR / LUMI USER</text>
+<text x="99" y="523" font-size="22" font-weight="700" fill="#272820">Choose the task or the question</text>
+<text x="99" y="550" font-size="18" fill="#62645B">Workflow: profile, prompt, context, and expected result.</text>
+<text x="99" y="575" font-size="18" fill="#62645B">Lumi: opt-in context, then review, validate, Apply, or Undo.</text>
+<rect x="32" y="616" width="736" height="78" rx="16" fill="#272820"/>
 <text x="52" y="646" font-size="18" fill="white">Workflow profile ≠ Lumi profile ≠ deployment policy.</text>
 <text x="52" y="671" font-size="18" fill="white">API hosting in Azure and choosing an Azure model are separate decisions.</text>
 </g></svg>

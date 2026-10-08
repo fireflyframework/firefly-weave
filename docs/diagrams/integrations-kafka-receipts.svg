@@ -21,54 +21,54 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1353" viewBox="0 0 960 1353" role="img" aria-labelledby="title desc">
 <title id="title">Save the receipt before committing the offset</title><desc id="desc">Four steps read top to bottom. 1, the consumer reads a Kafka record that carries an event UUID and checks current authority and event identity; the offset is not committed yet. 2, Weave commits the durable receipt together with the runtime run or signal, and an accepted duplicate recovers the existing identity. 3, only after that database result is durable does the consumer commit the accepted offset prefix to Kafka. 4, after a crash before the database commit no partial run remains and admission is retried; after the commit but before the offset commit the receipt and run are reused, and a changed payload under the same ID conflicts. Rejected records follow explicit policy: receipt policy may advance after the rejection is persisted, and halt policy leaves the offset uncommitted.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1253" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Save the receipt before committing the offset</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Kafka and Weave do not share a transaction. The durable receipt makes</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">redelivery understandable.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
-<rect x="40" y="232" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
-<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Read the Kafka record</text>
-<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">The record carries an event UUID.</text>
-<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">The consumer checks current authority and event identity.</text>
-<text x="168" y="372" font-size="18" font-weight="600" fill="#367D68">BROKER • The offset is not committed yet</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1253" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Save the receipt before committing the offset</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">Kafka and Weave do not share a transaction. The durable receipt makes</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">redelivery understandable.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">READ DOWN  •  Each arrow carries the result into the next step</text>
+<rect x="40" y="232" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="249" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 264) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
+<text x="168" y="275" font-size="25" font-weight="700" fill="#272820">1. Read the Kafka record</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#272820">The record carries an event UUID.</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#272820">The consumer checks current authority and event identity.</text>
+<text x="168" y="372" font-size="18" font-weight="600" fill="#855414">BROKER • The offset is not committed yet</text>
 <path class="edge" d="M480 394v35"/>
-<rect x="40" y="442" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="459" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 474) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
-<text x="168" y="485" font-size="25" font-weight="700" fill="#173D34">2. Admit or reuse the event in Weave</text>
-<text x="168" y="524" font-size="22" font-weight="400" fill="#173D34">Commit the durable receipt and runtime run or signal together.</text>
-<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">An accepted duplicate recovers the existing identity.</text>
-<text x="168" y="582" font-size="18" font-weight="600" fill="#367D68">DATABASE • This is the durable admission boundary</text>
+<rect x="40" y="442" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="459" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 474) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="168" y="485" font-size="25" font-weight="700" fill="#272820">2. Admit or reuse the event in Weave</text>
+<text x="168" y="524" font-size="22" font-weight="400" fill="#272820">Commit the durable receipt and runtime run or signal together.</text>
+<text x="168" y="553" font-size="22" font-weight="400" fill="#272820">An accepted duplicate recovers the existing identity.</text>
+<text x="168" y="582" font-size="18" font-weight="600" fill="#855414">DATABASE • This is the durable admission boundary</text>
 <path class="edge" d="M480 604v35"/>
-<rect x="40" y="652" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="669" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 684) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
-<text x="168" y="695" font-size="25" font-weight="700" fill="#173D34">3. Commit the accepted offset prefix</text>
-<text x="168" y="734" font-size="22" font-weight="400" fill="#173D34">Only after the database result is durable does the consumer</text>
-<text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">commit accepted offsets to Kafka.</text>
-<text x="168" y="792" font-size="18" font-weight="600" fill="#367D68">BROKER • Manual offset commit follows the receipt</text>
+<rect x="40" y="652" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="669" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 684) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
+<text x="168" y="695" font-size="25" font-weight="700" fill="#272820">3. Commit the accepted offset prefix</text>
+<text x="168" y="734" font-size="22" font-weight="400" fill="#272820">Only after the database result is durable does the consumer</text>
+<text x="168" y="763" font-size="22" font-weight="400" fill="#272820">commit accepted offsets to Kafka.</text>
+<text x="168" y="792" font-size="18" font-weight="600" fill="#855414">BROKER • Manual offset commit follows the receipt</text>
 <path class="edge" d="M480 814v35"/>
-<rect x="40" y="862" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="879" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 894) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19A22 22 0 1 1 7 37 M8 6v14h14"/></g>
-<text x="168" y="905" font-size="25" font-weight="700" fill="#173D34">4. Handle redelivery after a crash</text>
-<text x="168" y="944" font-size="22" font-weight="400" fill="#173D34">Before DB commit: no partial run remains; retry admission.</text>
-<text x="168" y="973" font-size="22" font-weight="400" fill="#173D34">After DB commit but before offset commit: reuse the receipt</text>
-<text x="168" y="1002" font-size="22" font-weight="400" fill="#173D34">and run. A changed payload under the same ID conflicts.</text>
-<text x="168" y="1031" font-size="18" font-weight="600" fill="#367D68">RECOVERY • Redelivery does not imply a new run</text>
-<rect x="40" y="1073" width="880" height="136" rx="16" fill="#FFF7E5"/>
-<g transform="translate(59 1093) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1117" font-size="23" font-weight="700" fill="#367D68">Rejected records follow explicit policy</text>
-<text x="60" y="1156" font-size="21" font-weight="400" fill="#173D34">Receipt policy may advance after rejection is persisted. Halt policy leaves</text>
-<text x="60" y="1185" font-size="21" font-weight="400" fill="#173D34">the rejected offset uncommitted.</text><g id="takeaway">
-<rect x="0" y="1259" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1288" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1319" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Keep the durable receipt before advancing the broker offset.</text>
+<rect x="40" y="862" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="879" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 894) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19A22 22 0 1 1 7 37 M8 6v14h14"/></g>
+<text x="168" y="905" font-size="25" font-weight="700" fill="#272820">4. Handle redelivery after a crash</text>
+<text x="168" y="944" font-size="22" font-weight="400" fill="#272820">Before DB commit: no partial run remains; retry admission.</text>
+<text x="168" y="973" font-size="22" font-weight="400" fill="#272820">After DB commit but before offset commit: reuse the receipt</text>
+<text x="168" y="1002" font-size="22" font-weight="400" fill="#272820">and run. A changed payload under the same ID conflicts.</text>
+<text x="168" y="1031" font-size="18" font-weight="600" fill="#855414">RECOVERY • Redelivery does not imply a new run</text>
+<rect x="40" y="1073" width="880" height="136" rx="16" fill="#FFF0D8"/>
+<g transform="translate(59 1093) scale(0.7)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1117" font-size="23" font-weight="700" fill="#855414">Rejected records follow explicit policy</text>
+<text x="60" y="1156" font-size="21" font-weight="400" fill="#272820">Receipt policy may advance after rejection is persisted. Halt policy leaves</text>
+<text x="60" y="1185" font-size="21" font-weight="400" fill="#272820">the rejected offset uncommitted.</text><g id="takeaway">
+<rect x="0" y="1259" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1288" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1319" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Keep the durable receipt before advancing the broker offset.</text>
 </g>
 </svg>
