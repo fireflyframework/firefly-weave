@@ -221,7 +221,9 @@ test.describe("1440x900", () => {
     expect(by("Task claimed.").background).toBe("rgb(23, 61, 52)");
   });
 
-  test("each icon has its own drawing, at 16 and 20 px", async ({ page }) => {
+  test("icons draw Lucide geometry at a 1.5px stroke, 16 and 20 px", async ({
+    page,
+  }) => {
     await offline(page);
     await newWorkflow(page);
     await insertStep(page, "Wait for signal");
@@ -229,44 +231,43 @@ test.describe("1440x900", () => {
     const icons = await page
       .locator("weave-icon[data-icon]")
       .evaluateAll((elements) =>
-        elements.map((e) => ({
-          name: e.getAttribute("data-icon")!,
-          d: e.querySelector("path")!.getAttribute("d")!,
-          rings: e.querySelectorAll("circle").length,
-          size: Math.round(e.getBoundingClientRect().width),
-          stroke: getComputedStyle(e.querySelector("svg")!).strokeWidth,
-          scaling: getComputedStyle(e.querySelector("path")!).vectorEffect,
-        })),
+        elements.map((e) => {
+          const svg = e.querySelector("svg")!;
+          return {
+            name: e.getAttribute("data-icon")!,
+            missing: e.hasAttribute("data-icon-missing"),
+            // Angular's control-flow anchors are comments; the drawing is the rest.
+            drawing: svg.innerHTML.replace(/<!--[\s\S]*?-->/g, ""),
+            first: svg.firstElementChild?.getAttribute("d") ?? "",
+            size: Math.round(e.getBoundingClientRect().width),
+            stroke: getComputedStyle(svg).strokeWidth,
+            scaling: [...svg.children].map(
+              (c) => getComputedStyle(c).vectorEffect,
+            ),
+          };
+        }),
       );
+    expect(icons.filter((i) => i.missing).map((i) => i.name)).toEqual([]);
     const drawings = new Map<string, string>();
     for (const icon of icons) {
-      const drawing = `${icon.d}|${icon.rings}`;
-      const other = drawings.get(drawing);
+      const other = drawings.get(icon.drawing);
       if (other)
         expect(other, `${icon.name} draws like ${other}`).toBe(icon.name);
-      drawings.set(drawing, icon.name);
+      drawings.set(icon.drawing, icon.name);
     }
-    // The gear, the radio waves and a whole head.
-    const settings = icons.find((i) => i.name === "settings")!;
-    expect(settings.d.startsWith("M12 15a3 3 0 1 0 0-6")).toBe(true);
-    expect(settings.rings).toBe(0);
-    expect(icons.find((i) => i.name === "signal")!.d).not.toBe(
-      icons.find((i) => i.name === "email")!.d,
-    );
-    // Sizes and strokes: 20 px at 1.75, 16 px at 1.5, never scaled.
+    // Lucide's gear; the signal's radio tower is not the email envelope.
+    const named = (name: string) => icons.find((i) => i.name === name)!;
+    expect(named("settings").first).toMatch(/^M9\.671 4\.136/);
+    expect(named("signal").drawing).not.toBe(named("email").drawing);
+    // One stroke at every size (16, 20 and CSS-sized), never scaled with the drawing.
+    expect(icons.some((i) => i.size === 16)).toBe(true);
+    expect(icons.some((i) => i.size === 20)).toBe(true);
     for (const icon of icons) {
-      expect(icon.scaling, icon.name).toBe("non-scaling-stroke");
-      if (icon.size === 20) expect(icon.stroke, icon.name).toBe("1.75px");
+      expect(icon.stroke, icon.name).toBe("1.5px");
+      expect(new Set(icon.scaling), icon.name).toEqual(
+        new Set(["non-scaling-stroke"]),
+      );
     }
-    const chevron = page.locator(".platform-indicator .menu-chevron");
-    expect(await chevron.evaluate((e) => e.getBoundingClientRect().width)).toBe(
-      16,
-    );
-    expect(
-      await chevron.evaluate(
-        (e) => getComputedStyle(e.querySelector("svg")!).strokeWidth,
-      ),
-    ).toBe("1.5px");
   });
 });
 
