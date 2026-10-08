@@ -31,9 +31,11 @@ export const kindRegistrations: readonly KindRegistrationLoader[] = [
 ];
 
 /**
- * Loads and registers each module once. A module that fails to load (a lost
- * chunk) is tried again on the next call; modules that registered stay
- * registered and are not registered twice.
+ * Loads the modules in parallel and registers them in list order, so the
+ * registry lists kinds the same way however the chunks arrive. A module that
+ * fails to load (a lost chunk) is tried again on the next call; the failure is
+ * rethrown after the modules that loaded have registered. Modules that
+ * registered stay registered and are not registered twice.
  */
 export function createKindLoader(
   modules: readonly KindRegistrationLoader[],
@@ -43,15 +45,23 @@ export function createKindLoader(
   return () => {
     loading ??= Promise.allSettled(
       modules.map(async (load, index) => {
-        if (registered.has(index)) return;
-        (await load()).register();
-        registered.add(index);
+        if (registered.has(index)) return undefined;
+        return load();
       }),
-    ).then((results) => {
-      const failure = results.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
-      );
+    ).then((loaded) => {
+      let failure: { reason: unknown } | undefined;
+      loaded.forEach((result, index) => {
+        if (result.status === "rejected") {
+          failure ??= result;
+        } else if (result.value) {
+          try {
+            result.value.register();
+            registered.add(index);
+          } catch (error) {
+            failure ??= { reason: error };
+          }
+        }
+      });
       if (failure) {
         loading = null;
         throw failure.reason;

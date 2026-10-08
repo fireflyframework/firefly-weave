@@ -263,4 +263,17 @@ describe("registration modules", () => {
     await load();
     expect(calls).toEqual({ first: 1, second: 1 });
   });
+
+  it("registers in list order when a later module loads first", async () => {
+    const order: string[] = [];
+    const load = createKindLoader([
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { register: () => void order.push("first") };
+      },
+      async () => ({ register: () => void order.push("second") }),
+    ]);
+    await load();
+    expect(order).toEqual(["first", "second"]);
+  });
 });
