@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { delimiter, resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import {
   WORKFLOW,
@@ -517,12 +517,6 @@ describe("typed reference suggestions", () => {
 // with a reference to every step. The compiler is the authority on which of
 // those references are available.
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
 const COMPILER_PROBE = `
 import json, sys, time
 from dataclasses import replace
@@ -704,7 +698,7 @@ const probes = Object.entries(fixtures).flatMap(([name, definition]) => {
     return { position, candidates, document };
   });
 });
-const available = existsSync(python);
+const available = pythonAvailable();
 const compiled = available
   ? (JSON.parse(
       execFileSync(python, ["-c", COMPILER_PROBE], {

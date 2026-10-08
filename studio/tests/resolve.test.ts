@@ -16,9 +16,10 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import {
   describeField,
@@ -453,17 +454,11 @@ describe("shipped schema corpus", () => {
   });
 });
 
-const python = resolvePath(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
 // The corpus covers every first-party connector, including Teams, whose
 // descriptor needs the optional `teams` extra. An environment without it, such
 // as the desktop build's `--extra studio` install, cannot regenerate the corpus.
 const connectorExtras =
-  existsSync(python) &&
+  pythonAvailable() &&
   spawnSync(
     python,
     [

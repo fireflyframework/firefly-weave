@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""C3 recurring starts and duration waits on real, scoped PostgreSQL."""
+"""Recurring starts and duration waits on real, scoped PostgreSQL."""
 
 import asyncio
 from uuid import UUID

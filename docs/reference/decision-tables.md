@@ -102,6 +102,9 @@ and needs no decision-table mock.
 
 Decision table artifacts and workflows containing `decisionTable` require
 `weave/ir-v1alpha3`. Earlier IR versions remain valid for their original features.
+Decision rules cannot use the text operators `concat` and `join` yet: compilation
+and evaluation report `WV-DECISION-OPERATOR`. Build the text in a Transform step
+and pass it to the table as input.
 Apply migration `0026_decision_tables` before serving table publication. It widens
 the catalog kind constraint while preserving existing catalog rows and RLS.
 

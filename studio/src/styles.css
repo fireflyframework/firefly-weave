@@ -39,7 +39,7 @@ SPDX-License-Identifier: Apache-2.0
     U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
     U+2215, U+FEFF, U+FFFD;
 }
-/* Design tokens (contract C1): the dark theme. Every token is named for its
+/* Design tokens: the dark theme. Every token is named for its
    role, never its color, and components use tokens only, so a light theme is
    one more value set under :root[data-theme="light"] with color-scheme: light.
    Ratios are WCAG 2.x contrast against the named surface. */
@@ -528,11 +528,12 @@ pre {
   color: var(--text);
   text-decoration: none;
 }
-/* The lockup fills the sidebar's 200px content width; wherever the sidebar is
-   narrow, CSS shows the 32px Firefly mark in a 44px box instead. */
+/* The lockup sits in the sidebar's 200px content width at 192px, the scale
+   that draws its Firefly part 86.9px wide; wherever the sidebar is narrow,
+   CSS shows the 32px Firefly mark in a 44px box instead. */
 .brand-lockup {
   display: block;
-  width: 200px;
+  width: 192px;
   height: auto;
 }
 .brand-mark {
@@ -2565,8 +2566,8 @@ details.disclosure[open] > summary::before {
   }
 }
 
-/* The live thread: where the work is now, on a workflow graph. Waves 2 and 3
-   apply these classes to the run detail graph and the simulation. */
+/* The live thread: where the work is now, on a workflow graph. The run detail
+   graph and the simulation apply these classes. */
 .is-live .node-body,
 .run-node.is-live {
   border: 2px solid var(--live);

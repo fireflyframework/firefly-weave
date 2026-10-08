@@ -16,22 +16,20 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import { propertyFields, supportedOperators } from "../src/app/property-grid";
 import { createStep, freshWorkflow, kinds } from "../src/app/model";
+import { readyKinds } from "../src/app/editor/language-manifest";
+import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
+import { ndvRegistry } from "../src/app/editor/ndv/registry";
+import { loadLanguageManifest } from "./support/language-manifest";
 
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
 
-/** The language manifest's entries (language spec 14.1); Studio compares only `ready` ones. */
+/** The language manifest's entries; Studio compares only `ready` ones. */
 interface Marked {
   studio: "ready" | "pending";
   feature?: string;
@@ -46,7 +44,7 @@ const ready = <T extends Marked>(entries: T[]) =>
 
 // CI installs the repository environment. Frontend-only contributors can still
 // run UI tests; this cross-language contract check explicitly reports a skip.
-const available = existsSync(python);
+const available = pythonAvailable();
 const schema = available
   ? JSON.parse(
       execFileSync(
@@ -138,6 +136,34 @@ describe.skipIf(!available)(
           .map((entry) => entry.name)
           .sort(),
       );
+    });
+  },
+);
+
+// Step details need a descriptor for every kind the language marks ready;
+// kinds still marked pending may lack one.
+const registryManifest = loadLanguageManifest();
+describe.skipIf(!registryManifest)(
+  "step details registry against the language manifest",
+  () => {
+    it("has a descriptor for every kind marked ready", async () => {
+      await loadKindRegistrations();
+      const registered = new Set(ndvRegistry.kinds().map((d) => d.kind));
+      expect(
+        readyKinds(registryManifest!).filter((kind) => !registered.has(kind)),
+      ).toEqual([]);
+    });
+    it("registers only kinds the manifest lists, with their features", async () => {
+      await loadKindRegistrations();
+      const listed = new Map(
+        registryManifest!.step_kinds.map((entry) => [entry.kind, entry]),
+      );
+      for (const descriptor of ndvRegistry.kinds()) {
+        expect(listed.has(descriptor.kind), descriptor.kind).toBe(true);
+        expect(descriptor.feature ?? null, descriptor.kind).toBe(
+          listed.get(descriptor.kind)?.feature ?? null,
+        );
+      }
     });
   },
 );

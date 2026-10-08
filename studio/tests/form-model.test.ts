@@ -16,8 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import {
   fieldable,
@@ -59,7 +60,7 @@ const schema = {
   },
 };
 
-describe("form start values (F3, F4, F5)", () => {
+describe("form start values", () => {
   it("fills required booleans and constants and never keeps a secret", () => {
     const { data, changed } = prepareData(schema, {
       token: "s3cret",
@@ -227,9 +228,8 @@ describe("small helpers", () => {
 });
 
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(root, ".venv/bin/python");
 
-describe.skipIf(!existsSync(python))("parity with the compiler", () => {
+describe.skipIf(!pythonAvailable())("parity with the compiler", () => {
   it("start values for a secret boolean compile without a secret value", () => {
     const input = {
       type: "object",

@@ -118,6 +118,7 @@ was checked locally, and what you must still verify with your own providers.
 | Python clients and builders | [SDK reference](reference/sdk.md) |
 | Workflow language and expressions | [Definition contracts](contracts.md) and [compiler](reference/compiler.md) |
 | Worker execution | [Worker protocol](reference/worker-protocol.md) |
+| Studio editor extension points, test data and Execute step | [Studio editor contracts](reference/studio-editor-contracts.md) |
 | Server and client settings | [Configuration](operations/configuration.md) |
 
 The **API and SDKs** tab holds the browser playground, the Python tutorial, every

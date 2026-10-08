@@ -25,10 +25,11 @@ import {
   selectChoice,
   tokenColor,
 } from "./support";
+import { python } from "../python-path";
 
 const schema = JSON.parse(
   execFileSync(
-    ".venv/bin/python",
+    python,
     [
       "-c",
       "import json; from firefly_weave.contracts.deployments import DeploymentRequest; print(json.dumps(DeploymentRequest.model_json_schema()))",
@@ -38,7 +39,7 @@ const schema = JSON.parse(
 );
 const targetUpdateSchema = JSON.parse(
   execFileSync(
-    ".venv/bin/python",
+    python,
     [
       "-c",
       "import json; from firefly_weave.contracts.deployments import TargetUpdate; print(json.dumps(TargetUpdate.model_json_schema()))",

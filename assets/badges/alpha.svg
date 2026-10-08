@@ -16,4 +16,4 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" width="150" height="28" viewBox="0 0 150 28" role="img" aria-labelledby="title desc"><title id="title">Maturity: alpha</title><desc id="desc">Current source metadata: Maturity alpha.</desc><rect width="150" height="28" rx="4" fill="#173D34"/><text x="10" y="19" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="13">Maturity: alpha</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="28" viewBox="0 0 120 28" role="img" aria-labelledby="title desc"><title id="title">Maturity: alpha</title><desc id="desc">Current source metadata: Maturity alpha.</desc><rect width="120" height="28" rx="4" fill="#10110F"/><path d="M68 0H116a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H68Z" fill="#855414"/><g font-family="Arial,Helvetica,sans-serif" font-size="13"><text x="10" y="19" fill="#F3F1EB">Maturity</text><text x="78" y="19" fill="#FFFFFF">alpha</text></g></svg>

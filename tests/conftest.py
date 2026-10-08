@@ -20,6 +20,25 @@ from pathlib import Path
 
 import pytest
 
+# pytest exports each running test's node ID as PYTEST_CURRENT_TEST ("<node ID> (teardown)"),
+# and Windows refuses an environment variable whose "NAME=value" exceeds 32,767 UTF-16 units.
+# Checking the IDs on every platform stops a long generated ID from failing only on Windows.
+WINDOWS_ENVIRONMENT_LIMIT = 32_767
+
+
+def windows_environment_length(nodeid: str) -> int:
+    """UTF-16 length of the longest PYTEST_CURRENT_TEST assignment pytest makes for ``nodeid``."""
+    return len(f"PYTEST_CURRENT_TEST={nodeid} (teardown)".encode("utf-16-le")) // 2
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    too_long = [item.nodeid for item in items if windows_environment_length(item.nodeid) > WINDOWS_ENVIRONMENT_LIMIT]
+    if too_long:
+        named = "\n".join(f"  {nodeid[:100]}..." for nodeid in too_long)
+        raise pytest.UsageError(
+            f"Give these parametrized tests short explicit IDs; Windows can't run tests with IDs this long:\n{named}"
+        )
+
 
 @pytest.fixture
 def fixture_dir() -> Path:
@@ -42,7 +61,7 @@ def catalog():
 
 @pytest.fixture
 def worker_runtime_fixture():
-    """Trusted kernel/storage fixture only; B6 must create an admitted release for live starts."""
+    """Trusted kernel/storage fixture only; worker admission must create an admitted release for live starts."""
     import json
     from uuid import UUID
 

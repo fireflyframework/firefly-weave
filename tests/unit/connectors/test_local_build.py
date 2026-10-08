@@ -268,6 +268,28 @@ async def test_local_development_executor_uses_local_attestation_not_the_image(a
     }
 
 
+async def test_native_handlers_execute_through_the_dispatcher_reservation(admission):
+    digest = "sha256:" + "f" * 64
+    service = _Service(_release(digest))
+    executions = []
+
+    async def execute(scope, principal_id, lease, *, reservation=None):
+        executions.append(reservation)
+        return {"ok": True}
+
+    service.execute = execute  # type: ignore[attr-defined]
+    native = NativeDispatcher(service, (_executor(),), digest, 1)  # type: ignore[arg-type]
+    await native.open()
+    try:
+        [worker] = native.workers
+        [handler] = set(worker.handlers.values())  # type: ignore[attr-defined]
+        assert await handler(object()) == {"ok": True}
+    finally:
+        await native.close()
+    # Connector calls take the native reservation, never a request work slot.
+    assert executions == [native.reservation]
+
+
 async def test_image_executor_keeps_the_packaged_image_check(admission):
     digest = "sha256:" + "b" * 64
     native = NativeDispatcher(_Service(_release(digest)), (_executor("image"),), digest, 1)

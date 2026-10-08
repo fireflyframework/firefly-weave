@@ -32,10 +32,14 @@ TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
 
 async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal_only: bool = False) -> int:
     repository.tx.session.info["weave_runtime_candidate"] = row["id"]
-    from firefly_weave.runtime.admission import unavailable
+    from firefly_weave.runtime.admission import admission
     from firefly_weave.runtime.service import view_of
 
-    if unavailable(row):
+    decision = admission(row)
+    if decision == "unsupported":
+        # Due deadlines stay pending until a platform that runs this IR applies them.
+        return 0
+    if decision == "unavailable":
         return await _unavailable_timeout(repository, row)
     view = view_of(row)
     if view.state.status in TERMINAL:

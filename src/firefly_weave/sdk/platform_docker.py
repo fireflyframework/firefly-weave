@@ -93,6 +93,10 @@ def environment(state: dict[str, Any], execution: dict[str, str]) -> dict[str, s
     values.update(execution)
     if "WEAVE_SECRET_ROOT" in values:
         values["WEAVE_SECRET_ROOT"] = "/run/weave-secrets"
+    if state.get("private_origins"):
+        from firefly_weave.sdk import platform_origins
+
+        values["WEAVE_PRIVATE_ORIGINS_FILE"] = platform_origins.CONTAINER_PATH
     return values
 
 
@@ -247,6 +251,18 @@ def _configuration(state: dict[str, Any], execution: dict[str, str]) -> Path:
             )
         local._write(index_path, index, replace=index_path.exists())
         service["volumes"] = mounts
+    if state.get("private_origins"):
+        from firefly_weave.sdk import platform_origins
+
+        # The API reads a read-only copy; the installation's own file stays private (0600).
+        service.setdefault("volumes", []).append(
+            {
+                "type": "bind",
+                "source": str(platform_origins.container_copy(state)),
+                "target": platform_origins.CONTAINER_PATH,
+                "read_only": True,
+            }
+        )
     path = directory / "compose.api.json"
     local._write(path, {"services": {"api": service}}, replace=path.exists())
     return path

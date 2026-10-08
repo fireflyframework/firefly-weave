@@ -172,6 +172,7 @@ nav:
       - Schedules and timers: reference/schedules-and-timers.md
       - History and replay: reference/history-and-replay.md
       - Local runtime: reference/local-runtime.md
+      - Studio editor contracts: reference/studio-editor-contracts.md
   - Project:
       - Project overview: project/overview.md
       - Architecture: architecture.md

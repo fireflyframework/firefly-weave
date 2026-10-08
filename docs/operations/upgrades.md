@@ -42,6 +42,8 @@ the desktop app never migrates a platform.
 | alpha10 | `0028_files` | No new schema migration. Restores Lumi access through the Studio host; explicit selection supersedes pending canvas fitting, and initial empty fields no longer steal focus. |
 | alpha11 | `0028_files` | Studio AI setup wizards and explicit same-execution shared AI context; no server behavior or schema change. Updating the local Studio host and assets does not require redeploying an alpha10 server. |
 | alpha12 | `0030_worker_presence` | Adds scoped deployment Operations persistence, runner fencing and reconciliation, and worker presence/drain state. Explicitly migrate the server before using Operations; new roles are never granted automatically. Provider credentials stay on separately operated runners. |
+| alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
+| alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -194,9 +196,19 @@ truncated or incomplete report is not evidence of full compatibility.
 
 **The server also rescans by itself.** Each process requests a compatibility
 rescan every 60 seconds. Automatic and explicit scans share one reservation, so
-an automatic scan that would overlap is skipped instead of queued. A failed scan
-leaves the process restricted until a later scan succeeds, and catalog cleanup
-must succeed before readiness returns.
+an automatic scan that would overlap is skipped instead of queued. A scan
+classifies retained items in its own reserved execution slot, so a burst of API
+requests cannot make it fail. A failed scan leaves the process restricted until
+a later scan succeeds, and catalog cleanup must succeed before readiness
+returns. A rescan that confirms a ready process keeps it ready while it releases
+its catalog connection; if that cleanup fails, readiness is withdrawn. While the
+process is restricted, refused changes answer HTTP 503 `WV-COMPATIBILITY` with
+`Retry-After` set to the seconds until the next automatic rescan.
+
+When a rescan withdraws readiness, the server logs the warning `Compatibility
+rescan withdrew readiness` with the finding kinds and codes and the class of
+any error the scan caught, such as `CatalogError WV-OPERATION-CAPACITY`. The
+warning never includes error messages or connection details.
 
 The capabilities response also reports the effective policy, fixed server
 ceilings, the supported worker convention, and a small readiness projection. An
@@ -206,7 +218,7 @@ older server may omit this declaration; omission does not imply readiness.
 | --- | --- |
 | `authority_missing`, `inventory_incomplete` | Repair catalog connectivity or authority and rerun the scan |
 | `policy_mismatch` | Restore the policy matching the database; never edit counters or fingerprints |
-| `ir_unsupported`, `artifact_invalid` | Inspect the pinned definition and select a compatible artifact; preserve historical bytes |
+| `ir_unsupported`, `artifact_invalid` | Inspect the pinned definition and select a compatible artifact; preserve historical bytes. `ir_unsupported` also covers language features the server does not list in `language_features`, for example `text.concat` after a rollback: upgrade the server instead of editing the artifact. Runs in progress that use such a feature [wait for a server that runs it](#runs-that-need-a-newer-server), unless the server predates language features. |
 | `action_unavailable`, `connector_unsupported`, `provider_requirement_unsupported` | Restore the exact required release or package, or use an explicit supported migration |
 | `worker_protocol_unsupported` | Use a compatible worker and server convention; never relabel an existing release |
 | `legacy_policy_blocked` | Inspect historical classification limits; preserve withheld evidence instead of bypassing policy |
@@ -219,6 +231,43 @@ Restricted mode never permits arbitrary execution, and you must not rewrite
 retained definitions to silence findings. See
 [incident operations](../reference/incident-operations.md) and
 [retention](retention.md) for the supported controls.
+
+### Runs that need a newer server
+
+A server that lists `language_features` in its capabilities, but not a feature
+that a run in progress uses, cannot run that run. This happens, for example,
+after you roll back from a release that added `flow.forEach` to one that did
+not. The server leaves the run waiting and records nothing about it:
+
+- It never offers the run's tasks to workers, applies its deadlines, or retries
+  its attempts, and it never blocks the run. The run does not hold back the
+  deadlines of other runs.
+- Compatibility reports the run as `ir_unsupported`, so the server stays
+  restricted while the run is in progress. Other runs then advance only through
+  cancellation and terminal deadlines, such as overall timeouts, and workers
+  cannot claim tasks, renew leases, or report results.
+- Reading the run, sending it a signal, or reporting a task result for it
+  answers HTTP 422 `WV-IR-UNSUPPORTED` with `result.missing_features`, and run
+  lists show it, and incident lists its incidents, as unavailable. Reading its
+  pinned definition version answers the same way, and catalog lists show that
+  version as an unavailable item with `reason: ir_unsupported` and the same
+  `missing_features`. Runs with unavailable legacy evidence still answer HTTP
+  409 `WV-LEGACY-UNAVAILABLE`.
+
+Upgrade the server again to resume the run. Deadlines that passed in the
+meantime apply then, and an expired lease is recovered like any lost attempt:
+an action that is safe to repeat is retried while it has attempts and time
+left, and otherwise an incident opens for you to reconcile. Cancelling the run
+on the older server records only the cancellation, as for
+[runs with unavailable legacy evidence](../reference/incident-operations.md#runs-with-unavailable-legacy-evidence),
+and its state stays withheld after you upgrade. To keep a run's full record,
+let it finish or cancel it before you roll back.
+
+**A server whose capabilities do not list `language_features` predates
+language features.** It cannot recognize such a run, treats it as legacy
+evidence, and can block it permanently; a blocked run's tasks are never offered
+to workers again, even after you upgrade. Before you roll back to such a
+server, let every run that uses a language feature finish, or cancel it.
 
 ## Verify before admitting traffic
 

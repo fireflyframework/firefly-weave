@@ -245,3 +245,38 @@ async def test_control_body_reservations_survive_ordinary_saturation_and_cancell
         await asyncio.gather(*held, return_exceptions=True)
     assert reservations.requests == reservations.bytes == reservations.debug == 0
     assert (await invoke(app, [b"{}"], path="/compiler/compile"))[0]["status"] == 200
+
+
+async def test_compatibility_refusals_tell_clients_when_a_rescan_can_lift_them():
+    from types import SimpleNamespace
+
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.operations.transport import BodyBoundary
+
+    compatibility = SimpleNamespace(ready=False, retry_after_seconds=lambda: 17)
+
+    async def refused(scope, receive, send):
+        await receive()
+        raise CatalogError(503, "WV-COMPATIBILITY", "Execution compatibility unavailable", retry_after=9)
+
+    async def call(method):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"{}", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {"type": "http", "method": method, "path": "/runs", "headers": []}
+        scope["app"] = SimpleNamespace(state=SimpleNamespace(compatibility=compatibility))
+        await BodyBoundary(refused)(scope, receive, send)
+        return sent[0]["status"], dict(sent[0]["headers"]), json.loads(sent[-1]["body"])["code"]
+
+    # Restricted: the boundary refuses before the body and names the next rescan.
+    status, headers, code = await call("POST")
+    assert (status, code, headers[b"retry-after"]) == (503, "WV-COMPATIBILITY", b"17")
+    # Ready at admission, refused inside the request: the refusal keeps its own hint.
+    compatibility.ready = True
+    status, headers, code = await call("POST")
+    assert (status, code, headers[b"retry-after"]) == (503, "WV-COMPATIBILITY", b"9")

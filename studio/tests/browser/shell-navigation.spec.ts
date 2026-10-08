@@ -15,10 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The shell (W2-1, W2-5, W2-6, W2-9, W2-10, W2-11): landmarks, a skip link,
-// a title per page, Build/Operate navigation, the platform indicator and
-// menu, Home's "Needs you", template rows, connections, Start a run and
-// Settings.
+// The shell: landmarks, a skip link, a title per page, Build/Operate
+// navigation, the platform indicator and menu, Home's "Needs you", template
+// rows, connections, Start a run and Settings.
 import { selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import { allCapabilities, connected, offline } from "./support";
@@ -36,183 +35,193 @@ for (const viewport of [
   { width: 1440, height: 900 },
   { width: 600, height: 500 },
 ])
-  test.describe(`${viewport.width}x${viewport.height}`, () => {
-    test.use({ viewport });
+  test.describe(
+    `${viewport.width}x${viewport.height}`,
+    { tag: "@xplat" },
+    () => {
+      test.use({ viewport });
 
-    test("one main landmark, a skip link first and a title per page", async ({
-      page,
-    }) => {
-      await offline(page);
-      await expect(page.locator("main#main")).toHaveCount(1);
-      await expect(page.locator("aside.sidebar")).toHaveCount(0);
-      await expect(
-        page.getByRole("link", { name: "Firefly Weave Studio home" }),
-      ).toBeVisible();
-      await expect(page).toHaveTitle("Home | Firefly Weave Studio");
-      // The skip link is the first stop and lands on the page heading.
-      await page.keyboard.press("Tab");
-      const skip = page.getByRole("link", { name: "Skip to content" });
-      await expect(skip).toBeFocused();
-      await expect(skip).toBeVisible();
-      await page.keyboard.press("Enter");
-      await expect(page.locator("#main h1")).toBeFocused();
-      // A view change names the page and moves focus to its heading.
-      await page.getByRole("button", { name: "Runs", exact: true }).click();
-      await expect(page).toHaveTitle("Runs | Firefly Weave Studio");
-      await expect(page.locator("#main h1")).toHaveText("Runs");
-      await expect(page.locator("#main h1")).toBeFocused();
-      await page.getByRole("button", { name: "My tasks", exact: true }).click();
-      await expect(page).toHaveTitle("My tasks | Firefly Weave Studio");
-      await page.getByRole("button", { name: "Settings", exact: true }).click();
-      await expect(page).toHaveTitle("Settings | Firefly Weave Studio");
-    });
-
-    test("navigation groups Build, Work and Operate, with Settings at the bottom", async ({
-      page,
-    }) => {
-      await offline(page);
-      const nav = page.getByRole("navigation", { name: "Main navigation" });
-      const labels = await nav
-        .locator("button span, .nav-group")
-        .evaluateAll((items) =>
-          items
-            .filter((item) => getComputedStyle(item).display !== "none")
-            .map((item) => item.textContent?.trim()),
-        );
-      if (viewport.width > 1280)
-        expect(labels).toEqual([
-          "Home",
-          "Build",
-          "Workflows",
-          "Connections",
-          "Work",
-          "My tasks",
-          "Email",
-          "Operate",
-          "Runs",
-          "Incidents",
-          "Workers",
-          "Clusters",
-          "Settings",
-          "Collapse sidebar",
-        ]);
-      await expect(nav).not.toContainText("Build a clear path.");
-      await expect(page.locator(".breadcrumbs")).toHaveCount(0);
-      const settings = (await nav
-        .getByRole("button", { name: "Settings" })
-        .boundingBox())!;
-      const workers = (await nav
-        .getByRole("button", { name: "Workers" })
-        .boundingBox())!;
-      expect(settings.y).toBeGreaterThan(workers.y + workers.height);
-    });
-
-    test("Home leads with what needs you, and templates are rows", async ({
-      page,
-    }) => {
-      await page.setViewportSize(
-        viewport.width === 1440 ? { width: 1280, height: 720 } : viewport,
-      );
-      await connected(page, {
-        capabilities: [...allCapabilities, "human_task.claim"],
+      test("one main landmark, a skip link first and a title per page", async ({
+        page,
+      }) => {
+        await offline(page);
+        await expect(page.locator("main#main")).toHaveCount(1);
+        await expect(page.locator("aside.sidebar")).toHaveCount(0);
+        await expect(
+          page.getByRole("link", { name: "Firefly Weave Studio home" }),
+        ).toBeVisible();
+        await expect(page).toHaveTitle("Home | Firefly Weave Studio");
+        // The skip link is the first stop and lands on the page heading.
+        await page.keyboard.press("Tab");
+        const skip = page.getByRole("link", { name: "Skip to content" });
+        await expect(skip).toBeFocused();
+        await expect(skip).toBeVisible();
+        await page.keyboard.press("Enter");
+        await expect(page.locator("#main h1")).toBeFocused();
+        // A view change names the page and moves focus to its heading.
+        await page.getByRole("button", { name: "Runs", exact: true }).click();
+        await expect(page).toHaveTitle("Runs | Firefly Weave Studio");
+        await expect(page.locator("#main h1")).toHaveText("Runs");
+        await expect(page.locator("#main h1")).toBeFocused();
+        await page
+          .getByRole("button", { name: "My tasks", exact: true })
+          .click();
+        await expect(page).toHaveTitle("My tasks | Firefly Weave Studio");
+        await page
+          .getByRole("button", { name: "Settings", exact: true })
+          .click();
+        await expect(page).toHaveTitle("Settings | Firefly Weave Studio");
       });
-      await page.route(`${environment}/human-tasks?*`, (r) => {
-        const status = new URL(r.request().url()).searchParams.get("status");
-        return r.fulfill({
-          json: {
-            items:
-              status === "ready"
-                ? [
-                    {
-                      id: "task-1",
-                      run_id: "run-1",
-                      status: "ready",
-                      title: "Review expense 104",
-                    },
-                  ]
-                : [],
-            next_cursor: null,
-          },
+
+      test("navigation groups Build, Work and Operate, with Settings at the bottom", async ({
+        page,
+      }) => {
+        await offline(page);
+        const nav = page.getByRole("navigation", { name: "Main navigation" });
+        const labels = await nav
+          .locator("button span, .nav-group")
+          .evaluateAll((items) =>
+            items
+              .filter((item) => getComputedStyle(item).display !== "none")
+              .map((item) => item.textContent?.trim()),
+          );
+        if (viewport.width > 1280)
+          expect(labels).toEqual([
+            "Home",
+            "Build",
+            "Workflows",
+            "Connections",
+            "Work",
+            "My tasks",
+            "Email",
+            "Operate",
+            "Runs",
+            "Incidents",
+            "Workers",
+            "Clusters",
+            "Settings",
+            "Collapse sidebar",
+          ]);
+        await expect(nav).not.toContainText("Build a clear path.");
+        await expect(page.locator(".breadcrumbs")).toHaveCount(0);
+        const settings = (await nav
+          .getByRole("button", { name: "Settings" })
+          .boundingBox())!;
+        const workers = (await nav
+          .getByRole("button", { name: "Workers" })
+          .boundingBox())!;
+        expect(settings.y).toBeGreaterThan(workers.y + workers.height);
+      });
+
+      test("Home leads with what needs you, and templates are rows", async ({
+        page,
+      }) => {
+        await page.setViewportSize(
+          viewport.width === 1440 ? { width: 1280, height: 720 } : viewport,
+        );
+        await connected(page, {
+          capabilities: [...allCapabilities, "human_task.claim"],
         });
-      });
-      await page.route(`${environment}/runs?*`, (r) =>
-        r.fulfill({
-          json: {
-            items: [
-              { id: "run-failed", state: { status: "failed" } },
-              { id: "run-ok", state: { status: "succeeded" } },
-            ],
-            next_cursor: null,
-          },
-        }),
-      );
-      await page.getByRole("button", { name: "Runs", exact: true }).click();
-      await page.getByRole("button", { name: "Home", exact: true }).click();
-      const needs = page.getByRole("region", { name: "Needs you" });
-      const first = needs.locator(".preview-row").first();
-      await expect(first).toContainText("Review expense 104");
-      await expect(first.locator(".status-pill")).toHaveText("Ready to claim");
-      await expect(needs.locator(".preview-row")).toHaveCount(2);
-      await expect(needs.locator(".preview-row").last()).toContainText(
-        "Failed",
-      );
-      if (viewport.width === 1440)
-        expect((await first.boundingBox())!.y).toBeLessThan(400);
-      await expect(page.locator("weave-home-dashboard")).not.toContainText(
-        "Welcome to Weave Studio",
-      );
-      await expect(
-        page.getByRole("button", { name: "Platform settings" }),
-      ).toHaveCount(0);
-      await expect(page.locator("weave-home-dashboard")).not.toContainText(
-        "Ready To Claim",
-      );
-      const gallery = page.locator("weave-template-gallery");
-      await expect(gallery.locator("[data-template]")).toHaveCount(5);
-      await expect(gallery.locator("button.primary")).toHaveCount(0);
-      await expect(
-        gallery
-          .locator('[data-template="api-call"]')
-          .locator('.status-pill[data-tone="warning"]'),
-      ).toHaveText("You choose the action");
-      // The row opens the task itself.
-      await first.click();
-      await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-        "My tasks",
-      );
-    });
-
-    test("the platform indicator and menu name the workspace and account", async ({
-      page,
-    }) => {
-      await platformHost(page, {
-        platforms: [acmePlatform(), globexPlatform()],
-        active: "Acme",
-      });
-      const indicator = page.locator(".platform-indicator");
-      if (viewport.width > 767) {
-        await expect(indicator).toContainText("Payments / Production");
-        // The top bar has the room: the account line shows whole on a laptop.
-        const line = indicator.locator("small");
-        await expect(line).toContainText("jane@acme.example");
-        expect(await line.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(
-          true,
+        await page.route(`${environment}/human-tasks?*`, (r) => {
+          const status = new URL(r.request().url()).searchParams.get("status");
+          return r.fulfill({
+            json: {
+              items:
+                status === "ready"
+                  ? [
+                      {
+                        id: "task-1",
+                        run_id: "run-1",
+                        status: "ready",
+                        title: "Review expense 104",
+                      },
+                    ]
+                  : [],
+              next_cursor: null,
+            },
+          });
+        });
+        await page.route(`${environment}/runs?*`, (r) =>
+          r.fulfill({
+            json: {
+              items: [
+                { id: "run-failed", state: { status: "failed" } },
+                { id: "run-ok", state: { status: "succeeded" } },
+              ],
+              next_cursor: null,
+            },
+          }),
         );
-      }
-      await expect(indicator).not.toContainText("Selected");
-      await indicator.click();
-      const menu = page.locator("#platform-menu");
-      await expect(menu.locator(".platform-menu-heading")).toContainText(
-        "Payments / Production · jane@acme.example",
-      );
-      await expect(menu.getByRole("button")).toHaveText([
-        "Switch workspace",
-        "Switch account",
-        "Sign out",
-        "Platform settings",
-      ]);
-    });
-  });
+        await page.getByRole("button", { name: "Runs", exact: true }).click();
+        await page.getByRole("button", { name: "Home", exact: true }).click();
+        const needs = page.getByRole("region", { name: "Needs you" });
+        const first = needs.locator(".preview-row").first();
+        await expect(first).toContainText("Review expense 104");
+        await expect(first.locator(".status-pill")).toHaveText(
+          "Ready to claim",
+        );
+        await expect(needs.locator(".preview-row")).toHaveCount(2);
+        await expect(needs.locator(".preview-row").last()).toContainText(
+          "Failed",
+        );
+        if (viewport.width === 1440)
+          expect((await first.boundingBox())!.y).toBeLessThan(400);
+        await expect(page.locator("weave-home-dashboard")).not.toContainText(
+          "Welcome to Weave Studio",
+        );
+        await expect(
+          page.getByRole("button", { name: "Platform settings" }),
+        ).toHaveCount(0);
+        await expect(page.locator("weave-home-dashboard")).not.toContainText(
+          "Ready To Claim",
+        );
+        const gallery = page.locator("weave-template-gallery");
+        await expect(gallery.locator("[data-template]")).toHaveCount(5);
+        await expect(gallery.locator("button.primary")).toHaveCount(0);
+        await expect(
+          gallery
+            .locator('[data-template="api-call"]')
+            .locator('.status-pill[data-tone="warning"]'),
+        ).toHaveText("You choose the action");
+        // The row opens the task itself.
+        await first.click();
+        await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+          "My tasks",
+        );
+      });
+
+      test("the platform indicator and menu name the workspace and account", async ({
+        page,
+      }) => {
+        await platformHost(page, {
+          platforms: [acmePlatform(), globexPlatform()],
+          active: "Acme",
+        });
+        const indicator = page.locator(".platform-indicator");
+        if (viewport.width > 767) {
+          await expect(indicator).toContainText("Payments / Production");
+          // The top bar has the room: the account line shows whole on a laptop.
+          const line = indicator.locator("small");
+          await expect(line).toContainText("jane@acme.example");
+          expect(
+            await line.evaluate((e) => e.scrollWidth <= e.clientWidth),
+          ).toBe(true);
+        }
+        await expect(indicator).not.toContainText("Selected");
+        await indicator.click();
+        const menu = page.locator("#platform-menu");
+        await expect(menu.locator(".platform-menu-heading")).toContainText(
+          "Payments / Production · jane@acme.example",
+        );
+        await expect(menu.getByRole("button")).toHaveText([
+          "Switch workspace",
+          "Switch account",
+          "Sign out",
+          "Platform settings",
+        ]);
+      });
+    },
+  );
 
 test("at 360 px a signed-out platform keeps a word beside the dot", async ({
   page,

@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The IR feature set's frozen shape (language spec 3.1); language milestone M1 computes and checks it."""
+"""The IR version and feature set a workflow needs, and the validator that recomputes them."""
 
 import json
 from pathlib import Path
@@ -24,16 +24,133 @@ from pydantic import ValidationError
 
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.canonical import canonical_digest
-from firefly_weave.compiler.ir import IR_VERSION_EXTENSIONS, WorkflowIR
-from firefly_weave.contracts.language_features import ADVERTISED_FEATURES, LANGUAGE_FEATURES
+from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.compiler.ir import (
+    COMPARISON_IR_VERSION,
+    HUMAN_IR_VERSION,
+    IR_LEVELS,
+    IR_VERSION,
+    IR_VERSION_EXTENSIONS,
+    ActionIR,
+    ConnectorIR,
+    DecisionTableIR,
+    IRGraph,
+    WorkflowIR,
+    accepted_ir_versions,
+    workflow_requirements,
+)
+from firefly_weave.contracts.language_features import LANGUAGE_FEATURES
 from firefly_weave.contracts.schema_export import export_schemas
 
 EXECUTABLE = json.loads(Path("tests/fixtures/canonical/empty-workflow.executable.json").read_text())
 
 
-def test_the_ir_version_extensions_is_named_but_nothing_is_advertised_yet():
+def op(name, *args):
+    return {"op": {"name": name, "args": list(args)}}
+
+
+def lit(value):
+    return {"literal": value}
+
+
+CONCAT = op("concat", lit("Invoice "), {"ref": "/input/number"})
+JOIN = op("join", lit(["a", 1, True]), lit(", "))
+CONTAINS = op("contains", lit("approved"), lit("ok"))
+
+
+def transform(identifier, value):
+    return {"id": identifier, "kind": "transform", "value": value}
+
+
+def human(identifier, title=None, context=None):
+    return {
+        "id": identifier,
+        "kind": "humanTask",
+        "assignment": "reviewers",
+        "title": title or lit("Review"),
+        "context": context or {"object": {}},
+        "formSchema": {"type": "object"},
+        "decisions": ["approve", "reject"],
+    }
+
+
+def action(identifier, value):
+    return {"id": identifier, "kind": "action", "dependency": "0" * 64, "with": value, "connection": None}
+
+
+def ai_task(identifier, value):
+    profile = {
+        "provider": "openai-responses",
+        "model": "fixture-model",
+        "options": {"max_tokens": 500},
+        "outputSchema": {"type": "string"},
+    }
+    return {**action(identifier, value), "llmProfile": profile}
+
+
+def graph(*steps, output=None):
+    nodes = [
+        {"id": "@start", "kind": "start", "scope": [], "path": "/spec"},
+        {"id": "@end", "kind": "end", "scope": [], "path": "/spec/output", "output": output or lit(None)},
+    ]
+    edges = []
+    previous = "@start"
+    for index, step in enumerate(steps):
+        nodes.append({"scope": [], "path": f"/spec/steps/{index}", **step})
+        edges.append({"source": previous, "target": step["id"], "kind": "next", "branch": None})
+        previous = step["id"]
+    edges.append({"source": previous, "target": "@end", "kind": "next", "branch": None})
+    return {"entry": "@start", "exit": "@end", "nodes": nodes, "edges": edges}
+
+
+def test_ir_levels_are_ordered_and_v1alpha4_is_accepted_with_the_first_feature():
+    assert IR_LEVELS == (IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION, IR_VERSION_EXTENSIONS)
     assert IR_VERSION_EXTENSIONS == "weave/ir-v1alpha4"
-    assert ADVERTISED_FEATURES == ()
+    assert accepted_ir_versions([]) == [IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION]
+    assert accepted_ir_versions(["text.join"]) == list(IR_LEVELS)
+
+
+@pytest.mark.parametrize(
+    ("steps", "output", "version", "features"),
+    [
+        pytest.param([transform("t", lit(1))], None, IR_VERSION, [], id="plain"),
+        pytest.param([human("h")], None, HUMAN_IR_VERSION, [], id="human-task"),
+        pytest.param([transform("t", CONTAINS)], None, COMPARISON_IR_VERSION, [], id="collection-operator"),
+        pytest.param(
+            [human("h"), transform("t", CONTAINS)], None, COMPARISON_IR_VERSION, [], id="human-and-collection"
+        ),
+        pytest.param([transform("t", CONCAT)], None, IR_VERSION_EXTENSIONS, ["text.concat"], id="concat"),
+        pytest.param([transform("t", JOIN)], None, IR_VERSION_EXTENSIONS, ["text.join"], id="join"),
+        pytest.param(
+            [transform("t", op("concat", JOIN))],
+            None,
+            IR_VERSION_EXTENSIONS,
+            ["text.concat", "text.join"],
+            id="join-inside-concat",
+        ),
+        pytest.param(
+            [transform("t", CONTAINS), human("h", title=JOIN)],
+            None,
+            IR_VERSION_EXTENSIONS,
+            ["text.join"],
+            id="every-level-at-once",
+        ),
+        pytest.param([human("h", context={"object": {"a": CONCAT}})], None, IR_VERSION_EXTENSIONS, ["text.concat"]),
+        pytest.param([action("a", {"array": [JOIN]})], None, IR_VERSION_EXTENSIONS, ["text.join"], id="action-input"),
+        pytest.param([], CONCAT, IR_VERSION_EXTENSIONS, ["text.concat"], id="workflow-output"),
+        pytest.param([transform("t", lit(CONCAT))], None, IR_VERSION, [], id="operator-shaped-literal-data"),
+        pytest.param([ai_task("a", lit("Summarize"))], None, COMPARISON_IR_VERSION, [], id="ai-task"),
+        pytest.param(
+            [ai_task("a", {"object": {"prompt": CONCAT}})],
+            None,
+            IR_VERSION_EXTENSIONS,
+            ["text.concat"],
+            id="ai-task-with-text-operator",
+        ),
+    ],
+)
+def test_requirements_are_the_highest_level_and_every_feature_used(steps, output, version, features):
+    assert workflow_requirements(IRGraph.model_validate(graph(*steps, output=output))) == (version, features)
 
 
 def test_an_empty_feature_set_is_omitted():
@@ -51,28 +168,127 @@ def test_compiled_workflows_keep_their_ir_version_and_digest(catalog, workflow_s
     assert canonical_digest(WorkflowIR.model_validate(executable).model_dump(by_alias=True)) == result.artifact.digest
 
 
+def with_graph(value, *, version=IR_VERSION_EXTENSIONS, features=("text.concat",)):
+    executable = {**EXECUTABLE, "graph": value, "irVersion": version}
+    if features:
+        executable["features"] = list(features)
+    return executable
+
+
+def test_a_v1alpha4_workflow_lists_exactly_the_features_its_graph_uses():
+    model = WorkflowIR.model_validate(with_graph(graph(output=CONCAT)))
+    assert model.ir_version == IR_VERSION_EXTENSIONS
+    assert model.model_dump(by_alias=True)["features"] == ["text.concat"]
+
+
 @pytest.mark.parametrize(
-    ("features", "message"),
+    ("executable", "message"),
     [
-        (["text.join", "text.concat"], "sorted and unique"),
-        (["text.concat", "text.concat"], "sorted and unique"),
-        (["text.concat"], "require weave/ir-v1alpha4"),
-        (["loops"], "Input should be"),
+        (with_graph(graph(output=CONCAT), features=["text.join", "text.concat"]), "sorted and unique"),
+        (with_graph(graph(output=CONCAT), features=["text.concat", "text.concat"]), "sorted and unique"),
+        (with_graph(graph(output=CONCAT), features=["loops"]), "Input should be"),
+        (with_graph(graph(output=CONCAT), version=COMPARISON_IR_VERSION), "require weave/ir-v1alpha4"),
+        (with_graph(graph(output=CONCAT), features=()), "requires language features"),
+        (with_graph(graph(output=lit(None))), "exactly the features"),
+        (with_graph(graph(output=CONCAT), features=["text.concat", "text.join"]), "exactly the features"),
+        (with_graph(graph(output=op("concat", JOIN))), "exactly the features"),
+        (
+            with_graph(graph(transform("t", CONTAINS)), version=HUMAN_IR_VERSION, features=()),
+            "requires weave/ir-v1alpha3",
+        ),
+        (with_graph(graph(human("h")), version=IR_VERSION, features=()), "requires weave/ir-v1alpha2"),
     ],
 )
-def test_features_are_sorted_known_and_need_the_ir_version_extensions(features, message):
+def test_the_validator_recomputes_the_version_and_features(executable, message):
     with pytest.raises(ValidationError, match=message):
-        WorkflowIR.model_validate({**EXECUTABLE, "features": features})
+        WorkflowIR.model_validate(executable)
 
 
-@pytest.mark.parametrize("features", [[], ["text.concat"]])
-def test_the_ir_version_extensions_is_not_accepted_until_a_later_milestone_widens_the_model(features):
-    # M0 names weave/ir-v1alpha4 but the model still lists v1alpha1 to v1alpha3 only, so no executable can use it yet.
-    with pytest.raises(ValidationError, match="Input should be 'weave/ir-v1alpha1'"):
-        WorkflowIR.model_validate({**EXECUTABLE, "irVersion": IR_VERSION_EXTENSIONS, "features": features})
+def test_an_over_versioned_workflow_without_features_stays_valid():
+    # Earlier platforms accepted v1alpha3 for a plain graph; only v1alpha4 is tied to features.
+    assert WorkflowIR.model_validate({**EXECUTABLE, "irVersion": COMPARISON_IR_VERSION}).ir_version == (
+        COMPARISON_IR_VERSION
+    )
 
 
-def test_exported_executable_schema_carries_the_feature_vocabulary():
+def test_decision_table_executables_carry_no_features():
+    table = {
+        "irVersion": IR_VERSION_EXTENSIONS,
+        "features": ["text.concat"],
+        "apiVersion": "weave/v1alpha1",
+        "kind": "DecisionTable",
+        "metadata": {"name": "t", "version": "1.0.0"},
+        "dependencies": [],
+        "schemas": {},
+        "guards": [],
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "hitPolicy": "first",
+            "rules": [{"id": "r", "when": lit(True), "output": lit("x")}],
+        },
+    }
+    with pytest.raises(ValidationError, match="Decision tables require ir-v1alpha3"):
+        DecisionTableIR.model_validate(table)
+
+
+TASK = {
+    "taskType": "echo",
+    "taskVersion": "1.0.0",
+    "inputSchema": {},
+    "outputSchema": {},
+    "sideEffect": "read_only",
+    "timeoutSeconds": 1,
+}
+ACTION_DEFINITION = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Action",
+    "metadata": {"name": "echo", "version": "1.0.0"},
+    "spec": {
+        "implementation": {"kind": "worker", "taskType": "echo", "taskVersion": "1.0.0"},
+        "inputSchema": {},
+        "outputSchema": {},
+        "sideEffect": "read_only",
+        "timeoutSeconds": 1,
+    },
+}
+CONNECTOR_DEFINITION = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Connector",
+    "metadata": {"name": "service", "version": "1.0.0"},
+    "spec": {
+        "adapter": "http",
+        "configSchema": {},
+        "authSchema": {},
+        "compatibility": {"apiVersion": "weave/v1alpha1"},
+        "limits": {"maxRequestBytes": 100, "maxResponseBytes": 100, "maxTimeoutSeconds": 10},
+        "actions": {"get": {"inputSchema": {}, "outputSchema": {}, "sideEffect": "read_only", "timeoutSeconds": 10}},
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("model", "definition", "message"),
+    [
+        pytest.param(ActionIR, ACTION_DEFINITION, "Action executables use no language features", id="action"),
+        pytest.param(
+            ConnectorIR, CONNECTOR_DEFINITION, "Connector executables use no language features", id="connector"
+        ),
+    ],
+)
+def test_action_and_connector_executables_refuse_language_features(model, definition, message):
+    catalog = CatalogSnapshot.from_definitions([], tasks=[TASK], adapters=["http"])
+    result = compile_source(definition, format="object", catalog=catalog)
+    assert result.ok, result.diagnostics
+    executable = result.artifact.executable
+    assert "features" not in executable
+    assert model.model_validate(executable).features == []
+    with pytest.raises(ValidationError, match=message):
+        model.model_validate({**executable, "irVersion": IR_VERSION_EXTENSIONS, "features": ["text.concat"]})
+
+
+def test_exported_executable_schema_carries_the_feature_vocabulary_and_v1alpha4():
     schema = export_schemas()["executable"]
     assert schema["$defs"]["WorkflowIR"]["properties"]["features"]["uniqueItems"] is True
     assert schema["$defs"]["LanguageFeature"]["enum"] == list(LANGUAGE_FEATURES)
+    assert IR_VERSION_EXTENSIONS in schema["$defs"]["WorkflowIR"]["properties"]["irVersion"]["enum"]

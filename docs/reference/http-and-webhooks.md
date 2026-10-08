@@ -271,10 +271,14 @@ These rules belong to the v1 adapter; v2 shares the same destination policy, and
 
 - **Destinations.** Port 0, non-numeric ports, and out-of-range ports are
   invalid. Hostnames with a trailing root dot are rejected in origins and
-  redirects. The connection's administrator can narrow destinations; only the
-  operator's `WEAVE_HTTP_PRIVATE_NETWORKS` permits private CIDRs. Link-local and
-  metadata addresses, multicast, unspecified or reserved addresses, and
-  Kubernetes service hostnames stay denied even under broad CIDRs.
+  redirects. The connection's administrator can narrow destinations. Public
+  addresses are reachable over HTTPS and plain HTTP without any private-origin
+  entry, as before. Private, loopback and CGNAT addresses need an entry of the
+  private-origin policy: an exact development origin that
+  `weave platform up --allow-private-origin` approved, or the CIDRs of the
+  legacy `WEAVE_HTTP_PRIVATE_NETWORKS`. Link-local and metadata addresses
+  (including `100.100.100.200`), multicast, unspecified or reserved addresses,
+  and Kubernetes service hostnames stay denied even under broad CIDRs.
 - **Connections.** Each request has its own connection pool. DNS resolves once to
   validated addresses; the actual peer is checked before anything is written, and
   TLS verifies the original hostname. Ambient proxies are ignored
@@ -286,7 +290,8 @@ These rules belong to the v1 adapter; v2 shares the same destination policy, and
 - **Redirects.** GET and HEAD redirects stay on the same origin and revalidate DNS
   and the peer on every hop; writes never redirect. A cross-origin redirect is
   rejected even when both origins are allowed, so credentials cannot move to
-  another origin.
+  another origin. Requests to an approved development origin never follow
+  redirects.
 
 ## Release and activation pins
 
@@ -332,7 +337,8 @@ shared platform, the operator sets it up once per image:
 | --- | --- |
 | `WEAVE_NATIVE_EXECUTORS` | JSON array of `{scope, principal_id, release_id, task_types, capacity, build}`; `build` is `image` (default) or `local-development`; an empty array disables dispatch |
 | `WEAVE_NATIVE_IMAGE_DIGEST` | The actual image identity that matches each configured release |
-| `WEAVE_HTTP_PRIVATE_NETWORKS` | JSON array of operator-approved private CIDRs |
+| `WEAVE_PRIVATE_ORIGINS_FILE` | Read-only private-origin file written by `weave platform` (development only) |
+| `WEAVE_HTTP_PRIVATE_NETWORKS` | Legacy JSON array of operator-approved private CIDRs, mapped to private-origin entries |
 | `WEAVE_SECRET_GRANTS` | JSON array of `{scope, handle, provider, locator}`; `provider` is `env` (the locator names a `WEAVE_CONNECTION_SECRET_*` variable) or `file` |
 | `WEAVE_SECRET_ROOT` | Root directory for the mounted-file secret provider |
 
@@ -349,6 +355,18 @@ claiming, drains up to the configured bound, then cancels remaining I/O. While
 startup compatibility checks still report the runtime as restricted, an
 in-process executor claims nothing and keeps polling; tasks queued in that window
 are claimed once the API becomes operational.
+
+**Busy platform.** In-process executors run connector calls up to the
+`capacity` configured for each entry, apart from the execution capacity that API
+requests share, so a burst of requests does not refuse them. A capacity rejection
+(`WV-OPERATION-CAPACITY` or `WV-REQUEST-CAPACITY`) of a platform call no longer
+fails a claimed task at once. If one turns away the invocation check before the
+connector starts, the executor tries again while the task's lease stays valid,
+as the SDK does for context and credentials (see
+[the worker protocol](worker-protocol.md#retries-and-lost-responses)). Authority
+and credential checks made while the connector runs make at most three attempts
+within one second, so a refusal cannot hold the connector's own resources open.
+If the lease or deadline runs out first, the task fails as before.
 
 **Replicas.** API-only replicas may disable dispatch while a compatible peer runs
 connector actions. Lease recovery is a separate scheduler with limited database
@@ -381,7 +399,8 @@ platforms; production images keep the `image` build. It is new in 0.1.0a7.
   adapter, so no connector package runs this way.
 - **What start never sets.** `start` never forwards `WEAVE_HTTP_PRIVATE_NETWORKS`
   or `WEAVE_CONNECTOR_PACKAGES`, even from your shell, so local connector actions
-  reach only public HTTPS destinations. Secret handles stored with `weave platform
+  reach only public destinations, over HTTPS or over HTTP with a "Not encrypted"
+  warning. Secret handles stored with `weave platform
   secret set` become `WEAVE_SECRET_GRANTS` entries with the `file` provider and
   `WEAVE_SECRET_ROOT` pointing at the installation's `secrets/` directory, scoped to
   the demo environment.

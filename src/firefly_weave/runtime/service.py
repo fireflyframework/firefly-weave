@@ -254,7 +254,7 @@ class RuntimeService:
         tx: Transaction | None = None,
     ) -> RunView:
         self.require(actor, scope, "run.start", context)
-        # B6/B7 must supply fenced completion/inbox authority before enabling these events.
+        # Worker leases and retries must supply fenced completion/inbox authority before enabling these events.
         # An event DTO or operator grant is never worker-completion proof.
         if event.type != "started":
             raise AccessDenied()
@@ -294,12 +294,16 @@ class RuntimeService:
         return await RuntimeRepository(tx, self.definitions.outbox).locked_task(identifier, skip_locked=skip_locked)
 
     async def observe_unavailable(self, tx: Transaction, row: dict[str, Any]) -> bool:
-        from firefly_weave.runtime.admission import unavailable
+        """Whether a scanner must leave this run alone; only legacy evidence records a permanent policy block.
 
-        if not unavailable(row):
-            return False
-        await RuntimeRepository(tx, self.definitions.outbox).observe_policy_block(row)
-        return True
+        A run whose IR this platform does not run is skipped without a block, so an upgrade runs it again.
+        """
+        from firefly_weave.runtime.admission import admission
+
+        decision = admission(row)
+        if decision == "unavailable":
+            await RuntimeRepository(tx, self.definitions.outbox).observe_policy_block(row)
+        return decision != "available"
 
     async def set_task_status(self, tx: Transaction, identifier: UUID, status: str) -> None:
         await RuntimeRepository(tx, self.definitions.outbox).task_status(identifier, status)
@@ -601,7 +605,8 @@ class RuntimeService:
                         (await self.read(actor, scope, identifier, context=context, tx=tx)).model_dump(mode="json")
                     )
                 except CatalogError as error:
-                    if error.code != "WV-LEGACY-UNAVAILABLE":
+                    # A run waiting for an upgrade (ir_unsupported) is listed like legacy evidence.
+                    if error.code not in {"WV-LEGACY-UNAVAILABLE", "WV-IR-UNSUPPORTED"}:
                         raise
                     items.append(
                         {

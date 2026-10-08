@@ -16,4 +16,4 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" width="178" height="28" viewBox="0 0 178 28" role="img" aria-labelledby="title desc"><title id="title">License: Apache 2.0</title><desc id="desc">Current source metadata: License Apache 2.0.</desc><rect width="178" height="28" rx="4" fill="#173D34"/><text x="10" y="19" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="13">License: Apache 2.0</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="152" height="28" viewBox="0 0 152 28" role="img" aria-labelledby="title desc"><title id="title">License: Apache 2.0</title><desc id="desc">Current source metadata: License Apache 2.0.</desc><rect width="152" height="28" rx="4" fill="#10110F"/><path d="M66 0H148a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H66Z" fill="#474A42"/><g font-family="Arial,Helvetica,sans-serif" font-size="13"><text x="10" y="19" fill="#F3F1EB">License</text><text x="76" y="19" fill="#F3F1EB">Apache 2.0</text></g></svg>

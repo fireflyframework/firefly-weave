@@ -16,9 +16,10 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it, vi } from "vitest";
 // The component's module imports dialog.ts, which registers a document focus
 // listener when it loads; Node has no document, and the model needs none.
@@ -52,13 +53,7 @@ const fixture = JSON.parse(
     "utf8",
   ),
 ) as { schemas: { id: string; schema: Record<string, unknown> }[] };
-const python = resolve(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
-const hasPython = existsSync(python);
+const hasPython = pythonAvailable();
 
 const row = (model: DesignerModel, name: string): DesignerRow => {
   const found = model.rows.find((r) => r.name === name);

@@ -625,9 +625,10 @@ keep these points in mind:
 - **Register before you restart.** Register the release and grant the executor's
   principal before you replace the API pods: the executor checks them at
   startup, and a failed check keeps the API from becoming ready.
-- **Allow the egress.** The connector calls only public HTTPS destinations unless
-  `WEAVE_HTTP_PRIVATE_NETWORKS` allows a private range, and it always refuses
-  Kubernetes service names. Your network policy must allow the destinations.
+- **Allow the egress.** The connector calls public destinations over HTTPS, or
+  over HTTP with a "Not encrypted" warning. A private, loopback or CGNAT address
+  needs a range in `WEAVE_HTTP_PRIVATE_NETWORKS`, and Kubernetes service names
+  are always refused. Your network policy must allow the destinations.
 
 This path has not been run on Kubernetes; it follows the code and the local
 platform's verified run.

@@ -22,13 +22,13 @@ SPDX-License-Identifier: Apache-2.0
 
 **Define a business process, connect its steps to other systems and to people, and follow every case.**
 
-[![Release](https://img.shields.io/github/v/release/fireflyframework/firefly-weave?include_prereleases&label=release&color=367D68)](https://github.com/fireflyframework/firefly-weave/releases)
+[![Release](https://img.shields.io/github/v/release/fireflyframework/firefly-weave?include_prereleases&label=release&color=474A42)](https://github.com/fireflyframework/firefly-weave/releases)
 [![Checks](https://github.com/fireflyframework/firefly-weave/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fireflyframework/firefly-weave/actions/workflows/ci.yml)
 [![Documentation](https://github.com/fireflyframework/firefly-weave/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/fireflyframework/firefly-weave/actions/workflows/docs.yml)
-[![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-367D68?logo=python&logoColor=white)](pyproject.toml)
-[![Built with PyFly](https://img.shields.io/badge/Built_with-PyFly-173D34)](https://github.com/fireflyframework/fireflyframework-pyfly)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-173D34)](LICENSE)
-[![Maturity: alpha](https://img.shields.io/badge/Status-alpha-D6A646)](docs/capabilities.md)
+[![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-474A42?logo=python&logoColor=white)](pyproject.toml)
+[![Built with PyFly](https://img.shields.io/badge/Built_with-PyFly-474A42)](https://github.com/fireflyframework/fireflyframework-pyfly)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-474A42)](LICENSE)
+[![Maturity: alpha](https://img.shields.io/badge/Status-alpha-855414)](docs/capabilities.md)
 
 [Read the documentation](https://fireflyframework.github.io/firefly-weave/) ·
 [Start the platform](https://fireflyframework.github.io/firefly-weave/guides/platform-overview/) ·

@@ -1,0 +1,137 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+# Step enablement for acceptance journeys. A step ("J0.3") or check ("J0.3/owner-roles")
+# runs when every requirement holds. A requirement names a product capability, which
+# holds once that capability has landed; "ai-models-screen|compose-operations" holds when
+# either has. The change that delivers a capability sets its entry to true and adds the
+# steps and checks it enables, with their tests.
+
+[capabilities]
+"studio-brand" = false
+"brand-assets" = false
+"docs-brand" = false
+"editor-contracts" = false
+"editor-canvas" = false
+"add-step-panel" = false
+"step-details" = false
+"formula-editor" = false
+"test-data" = false
+"step-execution" = false
+"decision-table-editor" = false
+"editor-runs" = false
+"step-tests" = false
+"activation-dialog" = false
+"text-templates" = false
+"loops" = false
+"sub-workflows" = false
+"editor-hardening" = false
+"language-contracts" = false
+"text-operators" = true
+"instance-keys" = false
+"loop-compiler" = false
+"loop-runtime" = false
+"loop-simulation" = false
+"workflow-call-compiler" = false
+"workflow-call-runtime" = false
+"workflow-call-simulation" = false
+"workflow-call-fast-path" = false
+"language-docs" = false
+"ai-gateway" = false
+"ai-setup" = false
+"ai-models-screen" = false
+"ai-task" = false
+"weave-ai-ollama" = false
+"agents" = false
+"agent-editor" = false
+"ai-acceptance" = false
+"agent-memory" = false
+"run-view-contracts" = false
+"operations-studio" = false
+"run-views" = false
+"compose-operations" = false
+"kubernetes-operations" = false
+"metrics" = false
+"logs" = false
+"alerts" = false
+"operations-explanations" = false
+"acceptance-foundations" = true
+"real-platform-journeys" = false
+"ai-and-cluster-profiles" = false
+"quality-gates" = false
+"release-verification" = false
+
+[profiles]
+pr = ["J0", "J1", "J2", "J3", "J5", "J8", "J9"]
+ai = ["J0", "J4", "J7"]
+cluster = ["J0", "J6"]
+k3d = ["J0", "J6"]
+nightly = ["J0", "J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10", "J11", "J12", "J13", "J14", "J15"]
+release = ["J0", "J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10", "J11", "J12", "J13", "J14", "J15"]
+docs-shots = ["J0"]
+
+# Success criteria each journey proves.
+[criteria]
+J0 = ["SC7"]
+J1 = ["SC1", "SC7"]
+J2 = ["SC2", "SC7"]
+J3 = ["SC1", "SC3", "SC7"]
+J4 = ["SC1", "SC7"]
+J5 = ["SC4", "SC7"]
+J6 = ["SC4", "SC7"]
+J7 = ["SC5", "SC7"]
+J8 = ["SC6", "SC7"]
+J9 = ["SC7"]
+J10 = ["SC7"]
+J11 = ["SC6", "SC7"]
+J12 = ["SC7"]
+J13 = ["SC7"]
+J14 = ["SC1", "SC7"]
+J15 = ["SC1", "SC7"]
+
+[steps]
+# J0 clean-machine bring-up.
+"J0.1" = ["acceptance-foundations"]
+"J0.2" = ["acceptance-foundations"]
+"J0.2/cluster-tools" = ["kubernetes-operations"]
+"J0.3" = ["acceptance-foundations"]
+"J0.3/owner-roles" = ["ai-models-screen|compose-operations"]
+"J0.3/operations" = ["compose-operations"]
+"J0.3/event-fixtures" = ["quality-gates"]
+"J0.4" = ["acceptance-foundations"]
+"J0.4/step-tester" = ["step-tests", "ai-models-screen"]
+"J0.4/deployment-log-reader" = ["logs"]
+"J0.4/alert-manager" = ["alerts"]
+"J0.5" = ["real-platform-journeys"]
+"J0.6" = ["acceptance-foundations"]
+"J0.7" = ["acceptance-foundations"]
+"J0.7/sftp-password" = ["quality-gates"]
+"J0.8" = ["acceptance-foundations"]
+"J0.8/catalog" = ["real-platform-journeys"]
+"J0.8/child-workflow" = ["real-platform-journeys", "workflow-call-compiler"]
+"J0.9" = ["real-platform-journeys", "workflow-call-compiler"]
+"J0.10" = ["real-platform-journeys", "compose-operations"]
+"J0.11" = ["real-platform-journeys", "step-tests"]
+"J0.12" = ["ai-and-cluster-profiles", "ai-gateway"]
+"J0.13" = ["ai-and-cluster-profiles", "kubernetes-operations"]
+"J0.14" = ["acceptance-foundations"]
+
+[step_profiles]
+"J0.2/cluster-tools" = ["cluster", "k3d", "nightly", "release"]
+"J0.3/event-fixtures" = ["nightly", "release"]
+"J0.7/sftp-password" = ["nightly", "release"]
+"J0.12" = ["ai", "nightly", "release"]
+"J0.13" = ["cluster", "k3d", "nightly", "release"]

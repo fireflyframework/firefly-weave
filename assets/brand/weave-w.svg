@@ -1,0 +1,23 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+
+The woven w of the weave wordmark on its own, for places that need a Weave-only glyph.
+The Weave name and logo are trademarks of the Firefly Software Foundation;
+the Apache License 2.0 grants no trademark rights in them (see NOTICE).
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" role="img" aria-labelledby="title desc"><title id="title">Weave</title><desc id="desc">The woven w alone, charcoal with its gold strand.</desc><path class="weave-ink" d="M10 11.47L22 44.53L22 29.79L15.35 11.47ZM32.26 16.27L34 11.47L30.52 11.47ZM22 29.79L22 44.53L26.42 32.36L23.74 24.99ZM34 29.79L34 44.53L46 11.47L40.65 11.47Z" fill="#10110f"/><path class="weave-thread" d="M22 11.47L34 44.53L34 29.79L27.35 11.47Z" fill="#855414"/></svg>
