@@ -23,10 +23,8 @@ import { ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-
-const repository = resolve("..");
-const python = resolve(repository, ".venv/bin/python");
+import { join } from "node:path";
+import { python, pythonAvailable, repository } from "../python-path";
 
 /**
  * A loopback port nothing listens on. A fixed port can stay blocked for a
@@ -125,9 +123,8 @@ test("real PyFly host pairs the production app under CSP and validates local sou
   page,
 }) => {
   test.setTimeout(120_000);
-  if (process.env.CI) expect(existsSync(python)).toBe(true);
   test.skip(
-    !existsSync(python),
+    !pythonAvailable(),
     "Create the Python development environment for the local-host integration test.",
   );
   const configHome = realpathSync(

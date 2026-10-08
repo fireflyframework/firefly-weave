@@ -15,9 +15,10 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { delimiter, resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import {
@@ -391,13 +392,7 @@ describe("canonical examples stay byte-identical when unedited", () => {
 
 // Encoded inputs must satisfy the platform's Expression contract.
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
-describe.skipIf(!existsSync(python))(
+describe.skipIf(!pythonAvailable())(
   "encoded expressions against the Python contract",
   () => {
     it("every edited and re-encoded expression validates as an Expression", () => {

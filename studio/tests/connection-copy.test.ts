@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import {
   checkDraft,
@@ -407,13 +407,7 @@ describe("administrator hand-off", () => {
 // module builds must pass connection_issues and the profile check, and a
 // request missing the token endpoint origin must fail at the same pointer.
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
-describe.skipIf(!existsSync(python))(
+describe.skipIf(!pythonAvailable())(
   "parity with the platform's connection check",
   () => {
     it("accepts what the form builds and rejects at the same pointers", () => {

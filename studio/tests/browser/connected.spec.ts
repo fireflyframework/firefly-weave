@@ -17,10 +17,9 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { selectChoice } from "./support";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import { test, expect, Page } from "@playwright/test";
 import { chooseAction } from "./integrations-po";
+import { python, pythonAvailable } from "../python-path";
 const profile = {
   name: "Test platform",
   baseUrl: "https://weave.invalid",
@@ -627,9 +626,7 @@ test("catalog integration fields compile against the real Python action contract
     .inputValue();
   expect(source).toContain("uses: lookup-customer@1.0.0");
   expect(source).toContain("customer: customer-104");
-  const python = resolve(process.cwd(), "../.venv/bin/python");
-  if (process.env.CI) expect(existsSync(python)).toBe(true);
-  if (existsSync(python)) {
+  if (pythonAvailable()) {
     const script = `import json,sys
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot

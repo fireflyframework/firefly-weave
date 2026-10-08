@@ -20,10 +20,11 @@ import { test, expect } from "@playwright/test";
 import { parse } from "yaml";
 import { execFileSync } from "node:child_process";
 import { offline, sourceText, connected, allCapabilities } from "./support";
+import { python } from "../python-path";
 
 const profileSchema = JSON.parse(
   execFileSync(
-    ".venv/bin/python",
+    python,
     [
       "-c",
       "import json; from firefly_weave.contracts.llm import LLMProfile; print(json.dumps(LLMProfile.model_json_schema()))",

@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/app/api";
 import {
@@ -56,8 +56,7 @@ import {
 } from "../src/app/integrations/http-action-model";
 
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(root, ".venv/bin/python");
-const available = existsSync(python);
+const available = pythonAvailable();
 
 /** Runs a Python snippet that prints JSON, with the repository on the path. */
 function py<T>(source: string, input: unknown): T {

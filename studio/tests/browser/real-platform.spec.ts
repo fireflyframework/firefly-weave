@@ -81,6 +81,7 @@ import { join, resolve } from "node:path";
 import { DesignerPage } from "./designer-po";
 import { openYaml } from "./integrations-po";
 import { command } from "./support";
+import { python, pythonAvailable, repository } from "../python-path";
 
 const platformDir = process.env["WEAVE_E2E_PLATFORM_DIR"]?.trim() ?? "";
 const personFile = process.env["WEAVE_E2E_PERSON_FILE"]?.trim() ?? "";
@@ -89,8 +90,6 @@ test.skip(
   "Set WEAVE_E2E_PLATFORM_DIR and WEAVE_E2E_PERSON_FILE to run against a real local platform.",
 );
 
-const repository = resolve("..");
-const python = resolve(repository, ".venv/bin/python");
 const shots = resolve("test-results/real-platform");
 const service = "firefly-weave";
 
@@ -654,7 +653,7 @@ async function expectRunsLoad(page: Page) {
 test.beforeAll(() => {
   rmSync(shots, { recursive: true, force: true });
   mkdirSync(shots, { recursive: true });
-  expect(existsSync(python), "the repository's .venv").toBe(true);
+  expect(pythonAvailable(), "the repository's Python environment").toBe(true);
   expect(
     existsSync(join(repository, "studio/dist/studio/browser/index.html")),
     "run `npm run build` first",
