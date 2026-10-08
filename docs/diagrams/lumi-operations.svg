@@ -73,7 +73,7 @@ SPDX-License-Identifier: Apache-2.0
   <text x="40" y="624" class="heading">Deployment changes keep their existing review process</text>
   <g class="card"><rect x="40" y="652" width="320" height="75" rx="14"/><rect x="440" y="652" width="320" height="75" rx="14"/><rect x="840" y="652" width="320" height="75" rx="14"/></g>
   <text x="65" y="698" class="heading">Create and review a plan</text>
-  <text x="469" y="698" class="heading">Approve the exact change</text>
+  <text x="457" y="698" class="heading">Approve the exact change</text>
   <text x="876" y="698" class="heading">Apply and verify results</text>
   <path class="link" d="M367 690h65"/>
   <path class="link" d="M767 690h65"/>
