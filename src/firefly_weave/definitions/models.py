@@ -38,6 +38,16 @@ class CatalogError(Exception):
         self.retry_after = retry_after
 
 
+def ir_unsupported(missing: tuple[str, ...]) -> CatalogError:
+    """The answer when this platform does not run an artifact's IR version or language features."""
+    return CatalogError(
+        422,
+        "WV-IR-UNSUPPORTED",
+        "This platform does not run the IR version or language features of this workflow",
+        result={"reason": "ir_unsupported", "missing_features": list(missing)},
+    )
+
+
 # Admission rejections: the operation ran nothing, so the identical call may be sent again.
 CAPACITY_CODES = frozenset({"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"})
 

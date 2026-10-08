@@ -17,9 +17,10 @@
 """Write the shared language fixtures that the Python suite and Studio's vitest suite both run.
 
 The fixtures pin the stable language contracts: instance-key parse and format cases with the
-``INSTANCE_KEY_PATTERN`` expression, the text conversion table for ``concat`` and ``join``, and the language
-manifest snapshot. Expected values are written here by hand; the generator refuses to write a fixture that the
-implementation disagrees with. Later releases add template segments and ``scope_at`` cases.
+``INSTANCE_KEY_PATTERN`` expression, the text conversion table for ``concat`` and ``join``, template segments
+with their saved form, and the language manifest snapshot. Expected values are written here by hand; the
+generator refuses to write a fixture that the implementation disagrees with. Later releases add ``scope_at``
+cases.
 
 Run ``uv run --locked --all-extras python scripts/language_fixtures.py`` to regenerate the files, or add
 ``--check`` to fail when they are out of date.
@@ -34,6 +35,9 @@ from typing import Any
 
 import rfc8785
 
+from firefly_weave.compiler.expressions import text_of as evaluator_text
+from firefly_weave.compiler.templates import Segment, template_expression
+from firefly_weave.compiler.templates import segments as template_segments
 from firefly_weave.contracts.instance_keys import (
     INSTANCE_KEY_PATTERN,
     InstanceKey,
@@ -111,6 +115,7 @@ CONVERSION_VALUES: tuple[str | bool | int | float, ...] = (
     2.0,
     -0.0,
     0.1,
+    0.30000000000000004,
     1.5,
     -2.5,
     100.0,
@@ -121,6 +126,109 @@ CONVERSION_VALUES: tuple[str | bool | int | float, ...] = (
     123456789012345680000.0,
     5e-324,
     1.7976931348623157e308,
+)
+
+
+def _concat(*args: dict[str, Any]) -> dict[str, Any]:
+    return {"op": {"name": "concat", "args": list(args)}}
+
+
+_HI = {"literal": "Hi "}
+_NAME = {"ref": "/item/name"}
+# (name, expression, segments as (kind, text or expression) or None, saved expression or None)
+TEMPLATE_CASES: tuple[tuple[str, Any, list[tuple[str, Any]] | None, Any], ...] = (
+    (
+        "text and one placeholder",
+        _concat(_HI, _NAME),
+        [("text", "Hi "), ("placeholder", _NAME)],
+        _concat(_HI, _NAME),
+    ),
+    (
+        "invoice reminder",
+        _concat(
+            {"literal": "Invoice "},
+            {"ref": "/item/number"},
+            {"literal": " is overdue by "},
+            {"ref": "/item/daysLate"},
+            {"literal": " days"},
+        ),
+        [
+            ("text", "Invoice "),
+            ("placeholder", {"ref": "/item/number"}),
+            ("text", " is overdue by "),
+            ("placeholder", {"ref": "/item/daysLate"}),
+            ("text", " days"),
+        ],
+        _concat(
+            {"literal": "Invoice "},
+            {"ref": "/item/number"},
+            {"literal": " is overdue by "},
+            {"ref": "/item/daysLate"},
+            {"literal": " days"},
+        ),
+    ),
+    (
+        "non-string literals are placeholders",
+        _concat({"literal": "Total: "}, {"literal": 42}, {"literal": " paid: "}, {"literal": True}),
+        [
+            ("text", "Total: "),
+            ("placeholder", {"literal": 42}),
+            ("text", " paid: "),
+            ("placeholder", {"literal": True}),
+        ],
+        _concat({"literal": "Total: "}, {"literal": 42}, {"literal": " paid: "}, {"literal": True}),
+    ),
+    (
+        "adjacent and empty text is merged on save",
+        _concat({"literal": "a"}, {"literal": ""}, {"literal": "b"}, _NAME, {"literal": ""}),
+        [("text", "a"), ("text", ""), ("text", "b"), ("placeholder", _NAME), ("text", "")],
+        _concat({"literal": "ab"}, _NAME),
+    ),
+    (
+        "text only saves as a plain literal",
+        _concat({"literal": "Hello "}, {"literal": "world"}),
+        [("text", "Hello "), ("text", "world")],
+        {"literal": "Hello world"},
+    ),
+    ("an empty template saves as empty text", _concat(), [], {"literal": ""}),
+    (
+        "braces in text stay text",
+        _concat({"literal": "Use {{ name }} as is: "}, _NAME),
+        [("text", "Use {{ name }} as is: "), ("placeholder", _NAME)],
+        _concat({"literal": "Use {{ name }} as is: "}, _NAME),
+    ),
+    (
+        "operators and nested concat are placeholders",
+        _concat(
+            {"literal": "Tags: "},
+            {"op": {"name": "join", "args": [{"ref": "/input/tags"}, {"literal": ", "}]}},
+            _concat({"literal": "!"}),
+        ),
+        [
+            ("text", "Tags: "),
+            ("placeholder", {"op": {"name": "join", "args": [{"ref": "/input/tags"}, {"literal": ", "}]}}),
+            ("placeholder", _concat({"literal": "!"})),
+        ],
+        _concat(
+            {"literal": "Tags: "},
+            {"op": {"name": "join", "args": [{"ref": "/input/tags"}, {"literal": ", "}]}},
+            _concat({"literal": "!"}),
+        ),
+    ),
+    (
+        "characters beyond the Basic Multilingual Plane",
+        _concat({"literal": "ü😀 "}, _NAME),
+        [("text", "ü😀 "), ("placeholder", _NAME)],
+        _concat({"literal": "ü😀 "}, _NAME),
+    ),
+    ("a plain literal is not a template", {"literal": "Hi"}, None, None),
+    ("a reference is not a template", _NAME, None, None),
+    (
+        "join is not a template",
+        {"op": {"name": "join", "args": [{"ref": "/input/tags"}, {"literal": ", "}]}},
+        None,
+        None,
+    ),
 )
 
 
@@ -167,7 +275,7 @@ def instance_key_cases() -> dict[str, Any]:
             raise SystemExit(f"Implementation accepts the invalid key {key!r}")
     return {
         "generator": GENERATOR,
-        "grammar": "instance key grammar",
+        "grammar": "instance keys",
         "pattern": INSTANCE_KEY_PATTERN,
         "valid": valid,
         "invalid": invalid,
@@ -175,11 +283,38 @@ def instance_key_cases() -> dict[str, Any]:
 
 
 def conversion_cases() -> dict[str, Any]:
+    for value in CONVERSION_VALUES:
+        if evaluator_text(value) != text_of(value):
+            raise SystemExit(f"The evaluator disagrees with the conversion of {value!r}")
     return {
         "generator": GENERATOR,
-        "rule": "text conversion for concat and join",
+        "rule": "concat and join text conversion",
         "cases": [{"value": value, "text": text_of(value)} for value in CONVERSION_VALUES],
     }
+
+
+def template_cases() -> dict[str, Any]:
+    cases = []
+    for name, expression, expected, saved in TEMPLATE_CASES:
+        parts = (
+            None
+            if expected is None
+            else [
+                Segment("text", text=value) if kind == "text" else Segment("placeholder", expression=value)
+                for kind, value in expected
+            ]
+        )
+        if template_segments(expression) != parts or (parts is not None and template_expression(parts) != saved):
+            raise SystemExit(f"Implementation disagrees with the template case {name!r}")
+        cases.append(
+            {
+                "name": name,
+                "expression": expression,
+                "segments": None if parts is None else [part.to_json() for part in parts],
+                "saved": saved,
+            }
+        )
+    return {"generator": GENERATOR, "rule": "concat template segments", "cases": cases}
 
 
 def manifest_snapshot() -> dict[str, Any]:
@@ -190,6 +325,7 @@ def render() -> dict[str, str]:
     files = {
         "instance-keys.json": instance_key_cases(),
         "text-conversion.json": conversion_cases(),
+        "template-segments.json": template_cases(),
         "manifest.json": manifest_snapshot(),
     }
     return {name: json.dumps(value, indent=2, ensure_ascii=False) + "\n" for name, value in files.items()}

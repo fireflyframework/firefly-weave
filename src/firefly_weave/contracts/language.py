@@ -27,7 +27,7 @@ from typing import Final, Literal
 
 from pydantic import Field, model_validator
 
-from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, HUMAN_IR_VERSION, IR_VERSION
+from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, HUMAN_IR_VERSION, IR_VERSION, accepted_ir_versions
 from firefly_weave.contracts.definitions import (
     ContractModel,
     OmissionOnly,
@@ -54,6 +54,7 @@ type StudioMark = Literal["ready", "pending"]
 type KindGroup = Literal["actions", "ai", "data", "flow", "wait", "human"]
 
 MANIFEST_VERSION: Final = "weave/language-manifest-v1"
+# IR versions every target accepts; weave/ir-v1alpha4 joins them with the first advertised feature (ir_versions).
 IR_VERSIONS: Final[tuple[str, ...]] = (IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION)
 # The compiler's default parallel concurrency ceiling (compile_source's max_parallel_concurrency).
 MAX_PARALLEL_CONCURRENCY: Final = 1000
@@ -269,12 +270,17 @@ STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
 )
 
 
+def ir_versions(features: Sequence[LanguageFeature] = ADVERTISED_FEATURES) -> list[str]:
+    """The IR versions a target running ``features`` accepts."""
+    return accepted_ir_versions(features)
+
+
 def language_manifest(features: Sequence[LanguageFeature] = ADVERTISED_FEATURES) -> LanguageManifest:
     """The manifest of a target that runs ``features``; limits are this platform's language ceilings."""
     return LanguageManifest(
         version=MANIFEST_VERSION,
         language_version="weave/v1alpha1",
-        ir_versions=list(IR_VERSIONS),
+        ir_versions=ir_versions(features),
         features=sorted(set(features)),
         limits=ManifestLimits(
             max_loop_items=MAX_LOOP_ITEMS,
