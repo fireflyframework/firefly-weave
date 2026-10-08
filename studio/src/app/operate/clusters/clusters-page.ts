@@ -70,7 +70,7 @@ import {
   clustersTabPath,
   type ClusterTab,
 } from "../operate-routes";
-import { Poller } from "../operate-store";
+import { Poller, browserEnvironment } from "../operate-store";
 import { RefreshStatus } from "../refresh-status";
 
 @Component({
@@ -373,7 +373,12 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   private detailSequence = 0;
   private jobReadSequence = 0;
   /** Clusters reloads every 15 s, and every 2 s while a job runs. */
-  readonly poller = new Poller(() => this.pollOnce(), 15000);
+  readonly poller = new Poller(
+    () => this.pollOnce(),
+    15000,
+    browserEnvironment,
+    () => this.waiting,
+  );
   tab: ClusterTab = "targets";
   readonly tabs: [ClusterTab, string][] = [
     ["targets", "Targets"],
@@ -579,24 +584,32 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       document.getElementById(`clusters-tab-${order[next]}`)?.focus(),
     );
   }
-  /** One poll: skipped while a form is open, so a reload never resets it. */
-  private async pollOnce() {
-    if (
+  /**
+   * Scheduled reloads wait while a form is open, a command is running or
+   * there is nothing to read, so a reload never resets what a person is
+   * typing and never claims a load that did not happen.
+   */
+  private get waiting() {
+    return (
+      !this.host.profile ||
+      !this.canRead ||
       this.editing ||
       this.editingAuthority ||
       this.registering ||
       this.planning ||
       this.store.mutating
-    )
-      return;
-    await this.refresh();
+    );
+  }
+  /** One load of what is on screen; throws when any of it failed. */
+  private async pollOnce() {
+    const loaded = await this.refresh();
+    // 2 s while an open job runs, else 15 s: kept right after every load.
     this.poller.setInterval(
       this.screen === "job" && this.job && !terminalJobs.has(this.job.state)
         ? 2000
         : 15000,
     );
-    if (this.error || Object.keys(this.store.errors).length)
-      throw new Error("Clusters could not load every section.");
+    if (!loaded) throw new Error("Clusters could not load every section.");
   }
   /** A target's name, or "Target 1a2b3c4d" while targets are loading. */
   targetName(id: string) {
@@ -630,7 +643,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     if (navigate)
       await this.router.navigateByUrl(clustersRecordPath("targets", value.id));
     this.focusDetail();
-    await this.refresh();
+    await this.poller.refresh();
   }
   async openDeployment(value: Deployment, navigate = true) {
     this.resetDetails();
@@ -641,7 +654,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
         clustersRecordPath("deployments", value.id),
       );
     this.focusDetail();
-    await this.refresh();
+    await this.poller.refresh();
   }
   async openPlan(value: Plan, navigate = true) {
     this.resetDetails();
@@ -650,7 +663,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     if (navigate)
       await this.router.navigateByUrl(clustersRecordPath("plans", value.id));
     this.focusDetail();
-    await this.refresh();
+    await this.poller.refresh();
   }
   async openJob(value: Job, navigate = true) {
     this.resetDetails();
@@ -659,7 +672,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     if (navigate)
       await this.router.navigateByUrl(clustersRecordPath("jobs", value.id));
     this.focusDetail();
-    await this.refresh();
+    await this.poller.refresh();
   }
   private focusDetail() {
     const seq = this.detailSequence;
@@ -682,17 +695,22 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
         this.error = describeError(error).message;
     }
   }
-  async refresh() {
-    if (!this.canRead || !this.host.profile) return;
-    if (this.target)
+  /** Loads what is on screen; false when any section of it failed. */
+  async refresh(): Promise<boolean> {
+    if (!this.canRead || !this.host.profile) return false;
+    let failed = false;
+    const arrived = (...names: Collection[]) => {
+      if (names.some((name) => this.store.errors[name])) failed = true;
+    };
+    if (this.target) {
+      const names: Collection[] = ["observations", "runners", "deployments"];
       await Promise.all(
-        ["observations", "runners", "deployments"].map((c) =>
-          this.store.load(c as Collection, false, {
-            target_id: this.target!.id,
-          }),
+        names.map((c) =>
+          this.store.load(c, false, { target_id: this.target!.id }),
         ),
       );
-    else if (this.deployment) {
+      arrived(...names);
+    } else if (this.deployment) {
       const deployment = this.deployment;
       const seq = this.detailSequence;
       await Promise.all([
@@ -709,10 +727,12 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
             if (seq === this.detailSequence) this.relatedTarget = value;
           })
           .catch((error) => {
+            failed = true;
             if (seq === this.detailSequence)
               this.error = describeError(error).message;
           }),
       ]);
+      arrived("plans", "observations");
     } else if (this.job) {
       const selected = this.job;
       const seq = this.detailSequence;
@@ -726,13 +746,14 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
         )
           this.job = result;
       } catch (error) {
+        failed = true;
         if (seq === this.detailSequence)
           this.error = describeError(error).message;
       }
       if (
         this.job?.state === "reconciliation_required" &&
         seq === this.detailSequence
-      )
+      ) {
         await Promise.all([
           this.store.load("observations", false, {
             target_id: selected.target_id,
@@ -743,31 +764,37 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
               if (seq === this.detailSequence) this.relatedTarget = value;
             })
             .catch((error) => {
+              failed = true;
               if (seq === this.detailSequence)
                 this.error = describeError(error).message;
             }),
         ]);
+        arrived("observations");
+      }
     } else if (this.plan) {
       const seq = this.detailSequence;
       try {
         const result = await this.store.approval(this.plan.id);
         if (seq === this.detailSequence) this.approval = result;
       } catch (error) {
+        failed = true;
         if (seq === this.detailSequence)
           this.error = describeError(error).message;
       }
-    } else if (!this.plan)
-      await Promise.all(
-        (
-          {
-            targets: ["targets", "deployments", "runners"],
-            jobs: ["jobs"],
-            runners: ["runners", "targets"],
-            approvals: [],
-          } as Record<ClusterTab, Collection[]>
-        )[this.tab].map((c) => this.store.load(c)),
-      );
+    } else {
+      const names = (
+        {
+          targets: ["targets", "deployments", "runners"],
+          jobs: ["jobs"],
+          runners: ["runners", "targets"],
+          approvals: [],
+        } as Record<ClusterTab, Collection[]>
+      )[this.tab];
+      await Promise.all(names.map((c) => this.store.load(c)));
+      arrived(...names);
+    }
     this.cdr.markForCheck();
+    return !failed;
   }
   loadMore(collection: Collection) {
     const target_id =

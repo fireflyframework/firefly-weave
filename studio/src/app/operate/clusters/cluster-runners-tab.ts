@@ -40,12 +40,21 @@ import { adapterIcon, runnerLabel, runnerTone } from "./cluster-model";
         presence, not container health or worker capacity.
       </p>
       @if (store.errors.runners) {
-        <weave-operate-state
-          kind="partial"
-          [message]="store.errors.runners"
-          (retry)="page.poller.refresh()"
-        />
-      } @else if (store.loading.has("runners") && !store.runners.length) {
+        @if (store.errorInfo.runners?.status === 403) {
+          <weave-operate-state
+            kind="access"
+            heading="You don't have access to runners"
+            capability="deployment.read"
+          />
+        } @else {
+          <weave-operate-state
+            kind="partial"
+            [message]="store.errors.runners"
+            [code]="store.errorInfo.runners?.code ?? ''"
+            (retry)="page.poller.refresh()"
+          />
+        }
+      } @else if (!store.loaded("runners")) {
         <weave-operate-state kind="loading" noun="runners" />
       } @else if (!store.runners.length) {
         <weave-operate-state
@@ -80,6 +89,15 @@ import { adapterIcon, runnerLabel, runnerTone } from "./cluster-model";
                     ><small
                       >{{ targetName(runner.target_id) }} ·
                       {{ adapterLabels[runner.adapter] }}</small
+                    ><small class="runner-contact"
+                      >Last contact
+                      <time
+                        [attr.datetime]="iso(runner.last_seen)"
+                        [attr.title]="absolute(runner.last_seen)"
+                        >{{ relative(runner.last_seen) }}</time
+                      >
+                      · Reported operations:
+                      {{ runner.capabilities.join(", ") }}</small
                     ></span
                   ></span
                 ><span role="cell"

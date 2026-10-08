@@ -167,33 +167,127 @@ describe("Poller", () => {
     poller.stop();
   });
 
-  it("refreshes now, restarts the wait and never overlaps loads", async () => {
+  it("refreshes now and restarts the wait", async () => {
     const browser = new FakeBrowser();
     let loads = 0;
-    let release: () => void = () => undefined;
+    const poller = new Poller(async () => void loads++, 10_000, browser);
+    poller.start();
+    await settle();
+    await browser.advance(4_000);
+    await poller.refresh();
+    expect(loads).toBe(2);
+    expect(browser.pending()).toBe(10_000);
+    poller.setInterval(2_000);
+    expect(browser.pending()).toBe(2_000);
+    poller.stop();
+  });
+
+  it("never loads twice at once: a refresh during a load queues one follow-up that every caller shares", async () => {
+    const browser = new FakeBrowser();
+    const releases: (() => void)[] = [];
+    let started = 0;
     const poller = new Poller(
       () =>
         new Promise<void>((resolve) => {
-          loads++;
-          release = resolve;
+          started++;
+          releases.push(resolve);
         }),
       10_000,
       browser,
     );
     poller.start();
     expect(poller.busy).toBe(true);
-    void poller.refresh();
-    expect(loads).toBe(1);
-    release();
+    expect(started).toBe(1);
+    const settled: string[] = [];
+    const first = poller.refresh().then(() => settled.push("first"));
+    const second = poller.refresh().then(() => settled.push("second"));
+    // Nothing overlaps: the follow-up waits for the load in flight.
+    expect(started).toBe(1);
+    releases[0]();
     await settle();
-    await browser.advance(4_000);
-    const refreshed = poller.refresh();
-    expect(loads).toBe(2);
-    release();
-    await refreshed;
+    expect(started).toBe(2);
+    expect(settled).toEqual([]);
+    // A call during the follow-up queues the next one, not a third at once.
+    const third = poller.refresh().then(() => settled.push("third"));
+    expect(started).toBe(2);
+    releases[1]();
+    await Promise.all([first, second]);
+    expect(settled).toEqual(["first", "second"]);
+    expect(started).toBe(3);
+    releases[2]();
+    await third;
+    expect(settled).toEqual(["first", "second", "third"]);
+    expect(started).toBe(3);
+    expect(poller.busy).toBe(false);
     expect(browser.pending()).toBe(10_000);
-    poller.setInterval(2_000);
-    expect(browser.pending()).toBe(2_000);
+    poller.stop();
+  });
+
+  it("does not load, stamp or fail while paused, and keeps its schedule", async () => {
+    const browser = new FakeBrowser();
+    let loads = 0;
+    let paused = true;
+    const poller = new Poller(
+      async () => void loads++,
+      15_000,
+      browser,
+      () => paused,
+    );
+    poller.start(false);
+    await settle();
+    await browser.advance(15_000);
+    expect(loads).toBe(0);
+    expect(poller.lastSuccessAt).toBeNull();
+    expect(poller.failures).toBe(0);
+    expect(browser.pending()).toBe(15_000);
+    await browser.advance(45_000);
+    expect(loads).toBe(0);
+    expect(poller.lastSuccessAt).toBeNull();
+    paused = false;
+    await browser.advance(15_000);
+    expect(loads).toBe(1);
+    expect(poller.lastSuccessAt).toBe(browser.time);
+    poller.stop();
+  });
+
+  it("does not catch up on showing the page while paused", async () => {
+    const browser = new FakeBrowser();
+    let loads = 0;
+    let paused = false;
+    const poller = new Poller(
+      async () => void loads++,
+      15_000,
+      browser,
+      () => paused,
+    );
+    poller.start();
+    await settle();
+    browser.setVisible(false);
+    paused = true;
+    await browser.advance(120_000);
+    browser.setVisible(true);
+    await settle();
+    expect(loads).toBe(1);
+    expect(browser.pending()).toBe(15_000);
+    paused = false;
+    await browser.advance(15_000);
+    expect(loads).toBe(2);
+    poller.stop();
+  });
+
+  it("still loads on an explicit refresh while paused", async () => {
+    const browser = new FakeBrowser();
+    let loads = 0;
+    const poller = new Poller(
+      async () => void loads++,
+      15_000,
+      browser,
+      () => true,
+    );
+    poller.start(false);
+    await poller.refresh();
+    expect(loads).toBe(1);
+    expect(poller.lastSuccessAt).toBe(browser.time);
     poller.stop();
   });
 });

@@ -48,7 +48,7 @@ import {
           </button>
         }
       </div>
-      @if (store.loading.has("targets") && !store.targets.length) {
+      @if (!store.loaded("targets") && !store.errors.targets) {
         <p role="status">Loading targets…</p>
       }
       @if (store.errors.targets) {
@@ -65,15 +65,17 @@ import {
                 {{ item.name }}
               </button></span
             ><span>{{ adapterLabels[item.adapter] }} · {{ item.boundary }}</span
-            ><span>{{ item.disabled ? "Disabled" : "Registered" }}</span
-            ><span
-              class="status-pill runner-line"
-              [attr.data-tone]="presenceTone(runner)"
-              >{{ line(runner) }}</span
-            >
+            ><span>{{ item.disabled ? "Disabled" : "Registered" }}</span>
+            @if (store.loaded("runners")) {
+              <span
+                class="status-pill runner-line"
+                [attr.data-tone]="presenceTone(runner)"
+                >{{ line(runner) }}</span
+              >
+            }
           </li>
         } @empty {
-          @if (!store.loading.has("targets") && !store.errors.targets) {
+          @if (store.loaded("targets") && !store.errors.targets) {
             <li>No deployment target has been returned in this environment.</li>
           }
         }

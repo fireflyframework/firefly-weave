@@ -38,7 +38,11 @@ import { ClusterSection } from "./cluster-section";
             ><span>{{ item.state.replaceAll("_", " ") }}</span>
           </li>
         } @empty {
-          <li>No job has been returned.</li>
+          @if (store.loaded("jobs")) {
+            <li>No job has been returned.</li>
+          } @else if (!store.errors.jobs) {
+            <li role="status">Loading jobs…</li>
+          }
         }
       </ul>
       @if (store.cursors.jobs) {

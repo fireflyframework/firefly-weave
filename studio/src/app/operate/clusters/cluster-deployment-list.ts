@@ -38,7 +38,11 @@ import { ClusterSection } from "./cluster-section";
           >
         </li>
       } @empty {
-        <li>No deployment has been returned.</li>
+        @if (loaded) {
+          <li>No deployment has been returned.</li>
+        } @else if (!store.errors.deployments) {
+          <li role="status">Loading deployments…</li>
+        }
       }
     </ul>
     @if (store.cursors.deployments) {
@@ -46,4 +50,12 @@ import { ClusterSection } from "./cluster-section";
     }
   `,
 })
-export class ClusterDeploymentList extends ClusterSection {}
+export class ClusterDeploymentList extends ClusterSection {
+  /** Whether the deployments on screen are the ones this view asked for. */
+  get loaded() {
+    return this.store.loaded(
+      "deployments",
+      this.target ? { target_id: this.target.id } : {},
+    );
+  }
+}

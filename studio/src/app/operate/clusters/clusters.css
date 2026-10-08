@@ -183,6 +183,10 @@ dd {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* Where the columns are hidden, last contact and operations sit in the row. */
+.runner-main .runner-contact {
+  display: none;
+}
 .runner-actions {
   display: flex;
   justify-content: flex-end;
@@ -193,6 +197,9 @@ dd {
   }
   .runner-table [data-wide] {
     display: none;
+  }
+  .runner-main .runner-contact {
+    display: block;
   }
 }
 @media (max-width: 600px) {

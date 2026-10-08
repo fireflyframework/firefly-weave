@@ -54,6 +54,10 @@ export function pollDelay(intervalMs: number, failures: number): number {
 /**
  * Loads a page now and then on an interval while the page is visible. The
  * load throws to report a failure; the page shows the failure itself.
+ *
+ * While `paused` says so (a form is open), a scheduled load is skipped: it
+ * does not load, does not count as a success and does not count as a failure.
+ * A person's own Refresh still loads.
  */
 export class Poller {
   /** When the last load succeeded (epoch milliseconds). */
@@ -62,6 +66,8 @@ export class Poller {
   failures = 0;
   private timer: number | null = null;
   private loading = false;
+  private current: Promise<void> | null = null;
+  private followUp: Promise<void> | null = null;
   private stopped = true;
   private unsubscribe: (() => void) | null = null;
 
@@ -69,6 +75,7 @@ export class Poller {
     private readonly load: () => Promise<void>,
     private intervalMs: number,
     private readonly env: PollEnvironment = browserEnvironment,
+    private readonly paused: () => boolean = () => false,
   ) {}
 
   get interval() {
@@ -105,15 +112,31 @@ export class Poller {
     if (!this.stopped && !this.loading) this.schedule();
   }
 
-  /** Loads now (Refresh, Try again) and restarts the wait. */
+  /**
+   * Loads now (Refresh, Try again, a changed tab) and restarts the wait. A
+   * load never overlaps another: asked during one, it runs once more right
+   * after it, so what the person just changed is what loads. Every caller
+   * during the same load shares that one follow-up.
+   */
   refresh(): Promise<void> {
-    return this.run();
+    if (this.current === null) return this.run();
+    this.followUp ??= this.current.then(() => {
+      this.followUp = null;
+      return this.current ?? this.run();
+    });
+    return this.followUp;
   }
 
-  private async run() {
-    if (this.loading) return;
+  private run(): Promise<void> {
     this.clear();
     this.loading = true;
+    this.current = this.execute().finally(() => {
+      this.current = null;
+    });
+    return this.current;
+  }
+
+  private async execute() {
     try {
       await this.load();
       this.failures = 0;
@@ -126,13 +149,20 @@ export class Poller {
     }
   }
 
+  /** A scheduled load, or the catch-up on showing the page. */
+  private tick() {
+    if (this.loading) return;
+    if (this.paused()) return this.schedule();
+    void this.run();
+  }
+
   private schedule() {
     this.clear();
     if (!this.env.visible()) return;
     this.timer = this.env.setTimeout(
       () => {
         this.timer = null;
-        void this.run();
+        this.tick();
       },
       pollDelay(this.intervalMs, this.failures),
     );
@@ -150,7 +180,7 @@ export class Poller {
       this.lastSuccessAt === null
         ? Infinity
         : this.env.now() - this.lastSuccessAt;
-    if (age >= this.intervalMs) void this.run();
+    if (age >= this.intervalMs) this.tick();
     else if (!this.loading) this.schedule();
   }
 }
