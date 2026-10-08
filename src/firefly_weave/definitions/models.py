@@ -36,3 +36,11 @@ class CatalogError(Exception):
         self.result = result
         # Whole seconds a client should wait before sending a refused request again.
         self.retry_after = retry_after
+
+
+# Admission rejections: the operation ran nothing, so the identical call may be sent again.
+CAPACITY_CODES = frozenset({"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"})
+
+
+def capacity_rejected(error: BaseException) -> bool:
+    return isinstance(error, CatalogError) and error.status == 429 and error.code in CAPACITY_CODES
