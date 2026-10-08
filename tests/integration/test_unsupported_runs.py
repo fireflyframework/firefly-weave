@@ -69,6 +69,9 @@ async def plain_run(worker_setup, worker_runtime_fixture, services, access_db):
     )
 
 
+UNSUPPORTED = {"reason": "ir_unsupported", "missing_features": ["text.concat"]}
+
+
 def roll_back(monkeypatch):
     """Simulate a server rolled back to a release that lists no language features; ``undo`` upgrades it again."""
     monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", ())
@@ -171,6 +174,7 @@ async def test_recovery_leaves_expired_attempts_of_unsupported_runs_for_an_upgra
 async def test_expired_ready_tasks_of_unsupported_runs_wait_for_an_upgrade(
     queued_task, transaction_factory, worker_setup, services, access_db, monkeypatch
 ):
+    from firefly_weave.operations.incidents import IncidentService
     from firefly_weave.runtime.recovery import RecoveryService
     from firefly_weave.runtime.repository import RuntimeRepository
 
@@ -194,30 +198,64 @@ async def test_expired_ready_tasks_of_unsupported_runs_wait_for_an_upgrade(
     assert report.incidents == 1
     async with access_db[1]() as session:
         assert await session.scalar(text("SELECT status FROM task_intents")) == "incident"
+    # Rolled back again, incident lists show the waiting run's incident as unavailable instead of failing.
+    roll_back(monkeypatch)
+    incidents = services(access_db[0]).resolve(IncidentService)
+    listed = await incidents.list_all(worker_setup[3], worker_setup[4], context=AuditContext())
+    assert [(item.get("unavailable"), item.get("omissions")) for item in listed["items"]] == [
+        (True, [{"path": "", "reason": "classification_unavailable"}])
+    ]
 
 
 async def test_workers_and_reads_of_an_unsupported_run_wait_for_an_upgrade(
-    queued_task, task_service, transaction_factory, worker_ids, worker_setup, access_db, monkeypatch
+    queued_task, task_service, transaction_factory, worker_ids, worker_setup, services, access_db, monkeypatch
 ):
     from uuid import uuid4
 
     from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.runtime.signals import SignalService
 
     _, runtime, _, actor, scope, _, _ = worker_setup
     async with transaction_factory() as tx:
         lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
     roll_back(monkeypatch)
-    with pytest.raises(CatalogError, match="Legacy execution evidence is unavailable"):
+
+    def ir_unsupported(refused):
+        error = refused.value
+        return (error.status, error.code, error.result) == (422, "WV-IR-UNSUPPORTED", UNSUPPORTED)
+
+    # Reads, signals and workers answer ir_unsupported, not the permanent legacy answer.
+    with pytest.raises(CatalogError) as refused:
         await runtime.read(actor, scope, queued_task.id, context=AuditContext())
-    with pytest.raises(CatalogError):
+    assert ir_unsupported(refused)
+    signals = services(access_db[0]).resolve(SignalService)
+    with pytest.raises(CatalogError) as refused:
+        async with transaction_factory() as tx:
+            await signals.deliver(
+                tx, queued_task.id, "rolled-back", "approve", {}, actor=actor, scope=scope, context=AuditContext()
+            )
+    assert ir_unsupported(refused)
+    with pytest.raises(CatalogError) as refused:
         async with transaction_factory() as tx:
             await task_service.heartbeat(tx, lease.proof)
-    with pytest.raises(CatalogError):
+    assert ir_unsupported(refused)
+    with pytest.raises(CatalogError) as refused:
         async with transaction_factory() as tx:
             await task_service.complete(tx, lease.proof, uuid4(), 7)
+    assert ir_unsupported(refused)
+    # Run lists still show the run as an unavailable item instead of failing.
+    listed = await runtime.list(actor, scope, context=AuditContext())
+    assert [item for item in listed["items"] if item["id"] == str(queued_task.id)] == [
+        {
+            "id": str(queued_task.id),
+            "unavailable": True,
+            "omissions": [{"path": "", "reason": "classification_unavailable"}],
+        }
+    ]
     async with access_db[1]() as session:
         assert await session.scalar(text("SELECT status FROM task_leases")) == "active"
         assert await session.scalar(text("SELECT count(*) FROM completion_receipts")) == 0
+        assert await session.scalar(text("SELECT count(*) FROM signal_receipts")) == 0
     assert await policy_blocks(access_db) == 0
     monkeypatch.undo()
     async with transaction_factory() as tx:
@@ -268,6 +306,19 @@ async def test_the_scanner_condition_agrees_with_artifact_import(access_db, monk
         {"executable": {**current, "features": ["text.concat", 1]}},
         {"executable": []},
         {},
+        # Duplicate or non-string features, features that are not a list, odd IR versions and executables.
+        {"executable": {**current, "features": ["text.concat", "text.concat"]}},
+        {"executable": {**current, "features": [None]}},
+        {"executable": {**current, "features": [["text.concat"]]}},
+        {"executable": {**current, "features": {"text.concat": True}}},
+        {"executable": {**current, "features": None}},
+        {"executable": {**current, "irVersion": None}},
+        {"executable": {**current, "irVersion": {"version": "weave/ir-v1alpha4"}}},
+        {"executable": {"irVersion": "weave/ir-v1alpha1", "features": ["text.join"]}},
+        {"executable": {"irVersion": "weave/ir-v1alpha2", "features": "flow.forEach"}},
+        {"executable": "weave/ir-v1alpha4"},
+        {"executable": None},
+        {"executable": {}},
     ]
     async with access_db[1]() as session:
         for artifact in artifacts:
@@ -281,3 +332,29 @@ async def test_the_scanner_condition_agrees_with_artifact_import(access_db, monk
                 {"artifact": json.dumps(artifact), **runnable_parameters()},
             )
             assert actual is expected, artifact
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT {runnable} FROM runs",
+        # Task offering, expired ready tasks and lease recovery evaluate it per task.
+        "SELECT id FROM task_intents WHERE status='ready' AND (SELECT {runnable} FROM runs r WHERE r.id=run_id)",
+        # The deadline scanner evaluates it only for a due run.
+        "SELECT id FROM runs WHERE CASE WHEN state->>'status'='waiting' THEN {runnable} ELSE false END",
+    ],
+    ids=["run", "per-task", "due-run"],
+)
+async def test_the_scanner_condition_reads_the_artifact_once_per_row(access_db, query):
+    from firefly_weave.runtime.admission import runnable, runnable_parameters
+
+    run = "r" if "runs r" in query else "runs"
+    async with access_db[1]() as session:
+        plan = "\n".join(
+            await session.scalars(
+                text("EXPLAIN (VERBOSE, COSTS OFF) " + query.format(runnable=runnable(run))), runnable_parameters()
+            )
+        )
+    # Each reference to the column fetches and decompresses the whole stored artifact again; the fenced subquery
+    # extracts the executable once and every check reads that copy.
+    assert plan.count(f"{run}.artifact") == 1, plan

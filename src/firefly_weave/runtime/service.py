@@ -605,7 +605,8 @@ class RuntimeService:
                         (await self.read(actor, scope, identifier, context=context, tx=tx)).model_dump(mode="json")
                     )
                 except CatalogError as error:
-                    if error.code != "WV-LEGACY-UNAVAILABLE":
+                    # A run waiting for an upgrade (ir_unsupported) is listed like legacy evidence.
+                    if error.code not in {"WV-LEGACY-UNAVAILABLE", "WV-IR-UNSUPPORTED"}:
                         raise
                     items.append(
                         {

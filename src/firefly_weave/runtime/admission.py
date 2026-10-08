@@ -22,7 +22,7 @@ from typing import Any, Literal
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.ir import UnsupportedIR, accepted_ir_versions
 from firefly_weave.contracts import language_features
-from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.models import CatalogError, ir_unsupported
 from firefly_weave.operations.redaction import Omission, SafeProjection, has_markers
 
 POLICY = "classified-v1"
@@ -37,17 +37,22 @@ def admission(row: dict[str, Any]) -> Admission:
     rollback. It is transient: scanners skip the run without recording anything, and an upgrade runs it again.
     ``unavailable``: legacy or malformed evidence; scanners record a permanent policy block.
     """
+    return _admit(row)[0]
+
+
+def _admit(row: dict[str, Any]) -> tuple[Admission, tuple[str, ...]]:
+    """``admission``, with the features this platform does not list for an ``unsupported`` run."""
     if row["state"].get("unavailable"):
-        return "unavailable"
+        return "unavailable", ()
     try:
         artifact = import_artifact(row["artifact"])
         if row["state"].get("admission_policy") == POLICY:
-            return "available"
-        return "unavailable" if has_markers(artifact.executable) else "available"
-    except UnsupportedIR:
-        return "unsupported"
+            return "available", ()
+        return ("unavailable" if has_markers(artifact.executable) else "available"), ()
+    except UnsupportedIR as error:
+        return "unsupported", error.missing
     except (ValueError, RecursionError, KeyError):
-        return "unavailable"
+        return "unavailable", ()
 
 
 def unavailable(row: dict[str, Any]) -> bool:
@@ -59,18 +64,22 @@ def runnable(run: str) -> str:
     """SQL condition: the ``run`` row pins an IR version and language features this platform runs.
 
     It mirrors ``require_supported_ir``, so scanners never select a run they would only skip and the runs behind it
-    are not held back. Malformed shapes stay selected and are left to admission. It reads the artifact, so place it
-    where it is evaluated only for rows that passed the cheaper conditions. Bind ``runnable_parameters()``.
+    are not held back. Malformed shapes stay selected and are left to admission. Bind ``runnable_parameters()``.
+
+    It reads the stored artifact once per row: a subquery fenced with ``OFFSET 0``, which the planner cannot inline,
+    extracts the executable, and every check reads that copy. Without the fence each reference would fetch and
+    decompress the whole artifact again. Place it where it is evaluated only for rows that passed the cheaper
+    conditions.
     """
-    executable = f"{run}.artifact->'executable'"
-    features = f"{executable}->'features'"
+    features = "pinned.executable->'features'"
     return (
-        f"NOT coalesce(jsonb_typeof({executable})='object' AND ("
-        f"NOT coalesce(jsonb_typeof({executable}->'irVersion')='string' "
-        f"AND {executable}->>'irVersion'=ANY(cast(:ir_versions AS text[])),false) "
+        "NOT coalesce((SELECT jsonb_typeof(pinned.executable)='object' AND ("
+        "NOT coalesce(jsonb_typeof(pinned.executable->'irVersion')='string' "
+        "AND pinned.executable->>'irVersion'=ANY(cast(:ir_versions AS text[])),false) "
         f"OR (jsonb_typeof({features})='array' AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements("
         f"CASE WHEN jsonb_typeof({features})='array' THEN {features} ELSE '[]'::jsonb END) f "
-        f"WHERE jsonb_typeof(f)<>'string') AND NOT {features} <@ cast(:ir_features AS jsonb))),false)"
+        f"WHERE jsonb_typeof(f)<>'string') AND NOT {features} <@ cast(:ir_features AS jsonb))) "
+        f"FROM (SELECT {run}.artifact->'executable' AS executable OFFSET 0) pinned),false)"
     )
 
 
@@ -81,7 +90,16 @@ def runnable_parameters() -> dict[str, Any]:
 
 
 def require_available(row: dict[str, Any]) -> None:
-    if unavailable(row):
+    """Refuse to show or change a run whose state this platform withholds.
+
+    A run waiting for a platform that runs its IR answers ``ir_unsupported`` (422 ``WV-IR-UNSUPPORTED`` naming the
+    missing features), as catalog reads of its version do; legacy or malformed evidence answers 409
+    ``WV-LEGACY-UNAVAILABLE``.
+    """
+    decision, missing = _admit(row)
+    if decision == "unsupported":
+        raise ir_unsupported(missing)
+    if decision == "unavailable":
         projection = SafeProjection(
             available=False,
             value={"id": str(row["id"]), "status": row["state"]["status"]},

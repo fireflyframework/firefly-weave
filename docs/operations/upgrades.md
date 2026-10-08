@@ -246,11 +246,13 @@ not. The server leaves the run waiting and records nothing about it:
   restricted while the run is in progress. Other runs then advance only through
   cancellation and terminal deadlines, such as overall timeouts, and workers
   cannot claim tasks, renew leases, or report results.
-- Reading the run answers HTTP 409 `WV-LEGACY-UNAVAILABLE`, and run lists show
-  it as unavailable. Reading its pinned definition version answers HTTP 422
-  `WV-IR-UNSUPPORTED` with `result.missing_features`, and catalog lists show
-  that version as an unavailable item with `reason: ir_unsupported` and the
-  same `missing_features`.
+- Reading the run, sending it a signal, or reporting a task result for it
+  answers HTTP 422 `WV-IR-UNSUPPORTED` with `result.missing_features`, and run
+  lists show it, and incident lists its incidents, as unavailable. Reading its
+  pinned definition version answers the same way, and catalog lists show that
+  version as an unavailable item with `reason: ir_unsupported` and the same
+  `missing_features`. Runs with unavailable legacy evidence still answer HTTP
+  409 `WV-LEGACY-UNAVAILABLE`.
 
 Upgrade the server again to resume the run. Deadlines that passed in the
 meantime apply then, and an expired lease is recovered like any lost attempt:

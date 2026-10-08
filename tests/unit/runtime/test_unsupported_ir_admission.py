@@ -25,6 +25,7 @@ import pytest
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.contracts import language_features
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.runtime import admission as policy
 from firefly_weave.runtime.repository import RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
@@ -95,7 +96,19 @@ def test_an_unsupported_run_is_available_again_after_an_upgrade(monkeypatch):
     assert policy.admission(current) == "available"
 
 
-@pytest.mark.parametrize(
+@pytest.mark.parametrize("features", [(), ("text.join",)], ids=["no-features", "other-feature"])
+def test_reads_and_controls_of_an_unsupported_run_answer_ir_unsupported(monkeypatch, features):
+    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", features)
+    with pytest.raises(CatalogError) as refused:
+        policy.require_available(run(envelope(GREETING)))
+    assert (refused.value.status, refused.value.code, refused.value.result) == (
+        422,
+        "WV-IR-UNSUPPORTED",
+        {"reason": "ir_unsupported", "missing_features": ["text.concat"]},
+    )
+
+
+LEGACY = pytest.mark.parametrize(
     "current",
     [
         run(envelope({"literal": "plain"}), unavailable=True),
@@ -104,8 +117,19 @@ def test_an_unsupported_run_is_available_again_after_an_upgrade(monkeypatch):
     ],
     ids=["unavailable-state", "malformed", "tampered"],
 )
+
+
+@LEGACY
 def test_legacy_or_malformed_evidence_stays_unavailable(rolled_back, current):
     assert policy.admission(current) == "unavailable"
+
+
+@LEGACY
+def test_reads_and_controls_of_legacy_evidence_still_answer_legacy_unavailable(rolled_back, current):
+    with pytest.raises(CatalogError) as refused:
+        policy.require_available(current)
+    assert (refused.value.status, refused.value.code) == (409, "WV-LEGACY-UNAVAILABLE")
+    assert refused.value.result["value"] == {"id": str(current["id"]), "status": "waiting"}
 
 
 async def test_scanners_skip_an_unsupported_run_without_a_policy_block(rolled_back, policy_blocks):

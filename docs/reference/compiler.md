@@ -375,7 +375,8 @@ re-checks an artifact before you trust it:
   answer it as `WV-IR-UNSUPPORTED`, and compatibility scans as `ir_unsupported`.
   A platform that lists language features leaves runs in progress that need
   one it does not list waiting, never blocked, until a platform that runs it
-  picks them up again.
+  picks them up again. Meanwhile, reading such a run, signalling it, or
+  reporting a task result for it also answers `WV-IR-UNSUPPORTED`.
 - Strict model and schema invariants, and the executable, dependency, and schema
   hashes.
 - Unique IDs, referenced nodes, edge kinds, joins, lexical scopes, branch
@@ -529,7 +530,7 @@ is not classified. Safe ordinary artifacts keep their canonical digests.
 | `WV-COMP-UNKNOWN_ACTION` (or `_CONNECTOR`, `_TASK`, `_ADAPTER`) | The catalog does not contain that exact reference | Add the exact version to the catalog, or fix the reference |
 | `WV-COMP-UNSUPPORTED_FEATURE` | The workflow uses a construct whose language feature this compiler does not compile yet (`forEach` or `callWorkflow`); the message names the feature | Keep the document for a later version, or use the steps and operators this version compiles |
 | `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step and pass it to the table as input |
-| `UnsupportedIR` on import, `WV-IR-UNSUPPORTED` on activation or a catalog read | The artifact needs an IR version or language feature this platform does not list; `missing` names the missing features and is empty when the IR version itself is unknown | Upgrade the platform, or use an artifact without that feature |
+| `UnsupportedIR` on import, `WV-IR-UNSUPPORTED` on activation, a catalog read, or a run read | The artifact needs an IR version or language feature this platform does not list; `missing` names the missing features and is empty when the IR version itself is unknown. A run that needs it waits for an upgrade, and signals and task results for it answer the same way | Upgrade the platform, or use an artifact without that feature |
 | `WV-COMP-CATALOG_PENDING` notes in Studio | Studio works without the catalog and checks references later | Nothing; connect and **Validate** against the project catalog |
 | `WV-COMP-CONNECTION` | A step names a connection slot the workflow does not declare, omits a slot its action requires, or uses a slot declared for a different connector | Declare the slot in `spec.connections` with the action's exact connector, or fix the step's `connection` |
 | `WV-COMP-CONFIG_CONTRACT` | An action's `config` does not fit its connector | Fix the configuration; [HTTP profiles](../connectors/http-profiles.md) lists the built-in HTTP rules |

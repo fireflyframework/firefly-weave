@@ -38,6 +38,25 @@ SPDX-License-Identifier: Apache-2.0
   than this release cannot read `weave connections test` answers for HTTP
   connections from an upgraded server; upgrade the CLI and SDK together with the
   server.
+- Runs in progress whose workflow uses a language feature the server does not
+  run, for example after rolling back to an earlier release that lists fewer
+  language features, now wait for an upgrade instead of being blocked for good.
+  The server offers none of their tasks to workers, leaves their deadlines and
+  expired attempts pending, records nothing about them, and does not let them
+  hold back other runs. After the upgrade they continue, and deadlines that
+  passed in the meantime apply then. A server that predates language features
+  still blocks such runs permanently, so finish or cancel them before rolling
+  back that far.
+- Reading such a run, sending it a signal, or reporting a task result for it
+  answers HTTP 422 `WV-IR-UNSUPPORTED` with `result.missing_features` instead of
+  HTTP 409 `WV-LEGACY-UNAVAILABLE`. Reading a definition version the server does
+  not run, or repeating the publish request that created it, answers the same
+  way. Run and incident lists still show such runs as unavailable, and runs with
+  unavailable legacy evidence still answer `WV-LEGACY-UNAVAILABLE`.
+- Catalog list pages can contain a new kind of item for a version the server
+  does not run: `unavailable: true`, `reason: ir_unsupported`, and
+  `missing_features`. SDKs and CLIs older than this release reject such a page;
+  upgrade them together with the server.
 
 ## 0.1.0a14
 
