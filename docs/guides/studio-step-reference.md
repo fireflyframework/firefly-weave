@@ -506,9 +506,11 @@ touch keep their original expression. A secret field is locked and reads
 "Supplied by the connection's credentials; workflows can't set it."
 
 **Write one expression for the whole input** replaces the rows with one
-**Input** expression under **Properties**. **Edit the input field by field**
-switches back; if the expression cannot be shown as fields, Studio asks first
-(**Replace with fields** or **Keep the expression**). Without a contract, for
+**Input** expression under **Properties**, starting from the values you typed.
+**Edit the input field by field** switches back; if the expression cannot be
+shown as fields, Studio asks first (**Replace with fields** or **Keep the
+expression**). While a value is invalid, Studio keeps it in view and asks you
+to fix it before switching. Without a contract, for
 example while working locally, map the input with the **Input** expression.
 
 Field-by-field input is stored as an ordinary expression:

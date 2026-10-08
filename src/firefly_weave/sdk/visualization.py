@@ -41,6 +41,11 @@ LABELS = {
     "fail": "Stop with a failure",
 }
 
+# The light diagram palette of the documentation: an exported file is opened outside the product, on paper.
+GROUND, INK, LINE, NUMERAL = "#F3F1EB", "#272820", "#62645B", "#FFFFFF"
+NODE_FILLS = {"start": "#EAE7DF", "end": "#EAE7DF", "switch": "#FFF0D8", "parallel": "#FFF0D8", "join": "#FFF0D8"}
+TASK_FILL = "#FFFFFF"
+
 
 def clean(value: str) -> str:
     """Remove terminal controls without interpreting workflow text as markup."""
@@ -153,9 +158,9 @@ def render_graph(artifact: CompiledArtifact, format: Literal["text", "mermaid", 
         "Branches are possible paths; this is not a live execution trace.</desc>",
         "<defs>"
         '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
-        'orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>',
-        f'<rect width="{width}" height="{height}" fill="#EEF4F0"/>',
-        '<g font-family="Arial,Helvetica,sans-serif" fill="#173D34">',
+        f'orient="auto"><path d="M0 0L10 5L0 10Z" fill="{LINE}"/></marker></defs>',
+        f'<rect width="{width}" height="{height}" fill="{GROUND}"/>',
+        f'<g font-family="Arial,Helvetica,sans-serif" fill="{INK}">',
         f'<text x="32" y="42" font-size="26" font-weight="700">{esc(visible_title)}</text>',
         '<text x="32" y="72" font-size="15">Read top to bottom. Arrows show possible paths; boxes '
         "describe the work.</text>",
@@ -170,7 +175,7 @@ def render_graph(artifact: CompiledArtifact, format: Literal["text", "mermaid", 
         label = edge.kind + (": " + edge.branch if edge.branch else "")
         parts.append(
             f'<path data-edge="{index}" d="M{x1} {y1} C{x1} {middle} {x2} {middle} {x2} {y2}" '
-            f'fill="none" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)">'
+            f'fill="none" stroke="{LINE}" stroke-width="2" marker-end="url(#arrow)">'
             f"<title>{esc(edge.source)} → {esc(edge.target)}: {esc(label)}</title></path>"
         )
         center = (x1 + x2) / 2
@@ -181,21 +186,15 @@ def render_graph(artifact: CompiledArtifact, format: Literal["text", "mermaid", 
         )
     for index, node in enumerate(nodes):
         x, y = positions[node.id]
-        fill = (
-            "#D9EBDF"
-            if node.kind in {"start", "end"}
-            else "#FFF3D6"
-            if node.kind in {"switch", "parallel", "join"}
-            else "#FFFFFF"
-        )
+        fill = NODE_FILLS.get(node.kind, TASK_FILL)
         parts.extend(
             [
                 f'<g data-node="{esc(node.id)}">'
                 f"<title>{esc(node.id)} — {LABELS[node.kind]} — source {esc(node.path or '/')}</title>",
-                f'<rect x="{x}" y="{y}" width="260" height="96" rx="12" fill="{fill}" stroke="#367D68"/>',
-                f'<circle cx="{x + 24}" cy="{y + 28}" r="13" fill="#173D34"/>'
+                f'<rect x="{x}" y="{y}" width="260" height="96" rx="12" fill="{fill}" stroke="{LINE}"/>',
+                f'<circle cx="{x + 24}" cy="{y + 28}" r="13" fill="{INK}"/>'
                 f'<text x="{x + 24}" y="{y + 33}" text-anchor="middle" font-size="12" '
-                f'fill="#fff">{index + 1}</text>',
+                f'fill="{NUMERAL}">{index + 1}</text>',
                 f'<text x="{x + 46}" y="{y + 33}" font-size="17" font-weight="700">{LABELS[node.kind]}</text>',
                 f'<text x="{x + 16}" y="{y + 60}" font-size="14">{esc(_fit_label(node.id, 228, 14))}</text>',
                 f'<text x="{x + 16}" y="{y + 81}" font-size="12">Hover for details</text></g>',

@@ -38,6 +38,17 @@ SPDX-License-Identifier: Apache-2.0
   than this release cannot read `weave connections test` answers for HTTP
   connections from an upgraded server; upgrade the CLI and SDK together with the
   server.
+- Draw "weave" in the Firefly Weave logo as a wordmark whose w is woven from two
+  strands, one amber, instead of typed text, in Studio, on the desktop launch
+  page and installer, and in the README banner and social preview. NOTICE names
+  the Weave name and logo as trademarks of the Firefly Software Foundation.
+- Show the product name, Firefly Weave, at the top of CLI help instead of ASCII
+  logo art, and say Weave AI in CLI prompts and in server and worker messages.
+  API paths, permissions, roles and error codes keep `lumi`.
+- Give the desktop app the Firefly icon, a charcoal DMG background as tall as
+  the installer window, and a charcoal launch page in a charcoal window that
+  opens without a white flash, and draw exported workflow graphs, the API
+  explorer, the README banner, shields and badges with the Firefly identity.
 - Runs in progress whose workflow uses a language feature the server does not
   run, for example after rolling back to an earlier release that lists fewer
   language features, now wait for an upgrade instead of being blocked for good.

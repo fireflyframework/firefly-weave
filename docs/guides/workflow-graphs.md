@@ -111,8 +111,8 @@ were executed.`
 
 Open `diagrams/workflow.svg` in your browser and read it from top to bottom:
 
-- **Green boxes** are the start (your input) and the end (the result).
-- **Amber boxes** choose a branch, run branches, or join them again.
+- **Shaded boxes** are the start (your input) and the end (the result).
+- **Light amber boxes** choose a branch, run branches, or join them again.
 - **White boxes** are individual steps, plus the compiler's branch-result nodes.
 - **Arrow labels** name each possible route, such as `next` or `case: case:0`.
 - **The number in each box** is its position in the compiled artifact, not the

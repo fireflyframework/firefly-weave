@@ -46,3 +46,11 @@ def ir_unsupported(missing: tuple[str, ...]) -> CatalogError:
         "This platform does not run the IR version or language features of this workflow",
         result={"reason": "ir_unsupported", "missing_features": list(missing)},
     )
+
+
+# Admission rejections: the operation ran nothing, so the identical call may be sent again.
+CAPACITY_CODES = frozenset({"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"})
+
+
+def capacity_rejected(error: BaseException) -> bool:
+    return isinstance(error, CatalogError) and error.status == 429 and error.code in CAPACITY_CODES

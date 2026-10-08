@@ -157,7 +157,9 @@ Choose the kind that matches the file:
   authorship.
 
 Most inventory entries are `commentless`: strict JSON, the Python, npm, and
-Cargo lockfiles, the desktop icons and installer background, and `py.typed`. Two
+Cargo lockfiles, and `py.typed`. Firefly marks (the logo, icon, and lockup
+artwork and every file generated from them) are `third-party` entries with
+`license = "LicenseRef-Firefly-Marks"`, and `NOTICE` states their terms. Two
 YAML files are `immutable-fixture` entries because parser and CLI tests assert
 their source positions. `generated` entries name their generator in `source`. Examples are
 Studio's schema test corpus, produced by
