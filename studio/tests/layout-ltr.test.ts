@@ -22,6 +22,7 @@ import {
   LTR,
   edgePath,
   fitView,
+  labelScale,
   layoutLtr,
   levelOfDetail,
   midpoint,
@@ -758,6 +759,29 @@ describe("the left-to-right layout", () => {
     ]);
   });
 
+  it("draws label text larger as the zoom drops, so names never show below 12 px and subtitles below 11 px", () => {
+    expect(labelScale(2)).toBe(1);
+    expect(labelScale(1)).toBe(1);
+    expect(labelScale(12 / 13)).toBe(1);
+    expect(labelScale(0.923)).toBeCloseTo(1, 3);
+    expect(labelScale(0.5)).toBeCloseTo(1.846, 3);
+    expect(labelScale(0.4)).toBeCloseTo(2.308, 3);
+    // A name is 13 px (--type-label), a subtitle 12 px (--type-caption).
+    for (const zoom of [0.3, 0.4, 0.45, 0.5, 0.6, 0.75, 0.9, 1, 1.5, 2]) {
+      const scale = labelScale(zoom);
+      expect(scale).toBeGreaterThanOrEqual(1);
+      expect(13 * scale * zoom).toBeGreaterThanOrEqual(12 - 1e-9);
+      expect(12 * scale * zoom).toBeGreaterThanOrEqual(11);
+    }
+    // At 40%, the lowest zoom that shows labels, the two 16 px lines still
+    // end above the tile of the next path down.
+    const drawn = 2 * 16 * labelScale(0.4);
+    expect(LTR.tile + LTR.labelGap + drawn).toBeLessThan(LTR.lane);
+    expect(LTR.tile + LTR.subNodeRow + LTR.labelGap + drawn).toBeLessThan(
+      LTR.agentLane,
+    );
+  });
+
   it("opens a workflow fitted when it fits at 50% or more, else at 50% from the trigger at the left margin", () => {
     const size = { width: 1440, height: 900 };
     const small = { minX: 60, minY: 96, maxX: 1060, maxY: 496 };
@@ -784,7 +808,8 @@ describe("the left-to-right layout", () => {
       (trigger.x + trigger.width / 2 - LTR.label / 2) * view.zoom + view.pan.x,
     ).toBe(48);
     expect(levelOfDetail(view.zoom)).toBe("full");
-    // Fit view still shows everything, down to 25%.
+    // fitView alone would go below 50% for it; the canvas's Fit view uses
+    // openView, so it chooses 50% too.
     expect(
       fitView(layout.bounds, { width: 766, height: 670 }).zoom,
     ).toBeLessThan(0.5);

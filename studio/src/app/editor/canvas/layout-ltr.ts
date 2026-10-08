@@ -819,13 +819,26 @@ export function midpoint(edge: LtrEdge): Point {
 export type LevelOfDetail = "full" | "compact" | "minimal";
 /**
  * Below 40% tiles drop their labels; below 30% they are plain rectangles.
- * A workflow opens at 50% or more (openView), so it opens with its names.
+ * The canvas never chooses less than 50% itself (opening and Fit view both
+ * use openView), so names go only when the person zooms out below 40%.
  */
 export function levelOfDetail(zoom: number): LevelOfDetail {
   return zoom < 0.3 ? "minimal" : zoom < 0.4 ? "compact" : "full";
 }
 
-/** The whole workflow in view, 48 px from the edges, between `min` and `max` zoom. */
+/**
+ * How much larger the text under a tile is drawn, so a name (13 px) never
+ * shows below 12 px on screen and its subtitle (12 px) never below 11 px.
+ * 1 from 12/13 (about 92%) up. The text grows, its block's column doesn't.
+ */
+export function labelScale(zoom: number): number {
+  return Math.max(1, 12 / (13 * zoom));
+}
+
+/**
+ * The whole workflow in view, 48 px from the edges, between `min` and `max`
+ * zoom. The canvas uses it through openView, never below 50%.
+ */
 export function fitView(
   bounds: LtrBounds,
   size: { width: number; height: number },
@@ -857,10 +870,11 @@ export function fitView(
 }
 
 /**
- * The view a workflow opens with: fitted when it fits at 50% or more;
- * otherwise 50%, the trigger column at the left margin and the workflow
- * centered vertically when its height fits (else its top at the top
- * margin). The rest is a pan away; Fit view still shows everything.
+ * The view a workflow opens with, and the one Fit view brings back: fitted
+ * when it fits at 50% or more; otherwise 50%, the trigger column at the
+ * left margin and the workflow centered vertically when its height fits
+ * (else its top at the top margin). The rest is a pan away, and names stay
+ * readable at every zoom the canvas chooses.
  */
 export function openView(
   bounds: LtrBounds,

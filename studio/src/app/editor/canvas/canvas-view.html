@@ -44,6 +44,7 @@ SPDX-License-Identifier: Apache-2.0
     <f-flow
       class="graph-flow"
       [style.--zoom]="view.zoom"
+      [style.--label-scale]="labelScale()"
       (fFullRendered)="fitIfNew()"
       (scroll)="scrolled($event)"
     >

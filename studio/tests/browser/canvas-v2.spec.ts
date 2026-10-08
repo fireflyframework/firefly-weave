@@ -17,8 +17,118 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test, type Locator } from "@playwright/test";
 import { DesignerPage } from "./designer-po";
-import { openNewWorkflow, openWorkflow } from "./canvas-po";
+import { openNewWorkflow, openWorkflow, type CanvasPage } from "./canvas-po";
 import { newWorkflow, offline } from "./support";
+
+/** How each step's label block draws on screen at the canvas's zoom. */
+async function labelBlocks(canvas: CanvasPage) {
+  return canvas.root.evaluate((root) => {
+    const flow = root.querySelector("f-flow")!;
+    const zoom = Number(getComputedStyle(flow).getPropertyValue("--zoom"));
+    const line = (element: HTMLElement) => {
+      const box = element.getBoundingClientRect();
+      return {
+        // The font size times the scale the line is drawn at.
+        px:
+          parseFloat(getComputedStyle(element).fontSize) *
+          (box.height / element.offsetHeight),
+        width: box.width,
+      };
+    };
+    const blocks = [...root.querySelectorAll<HTMLElement>(".tile-label")].map(
+      (block) => {
+        const tile = block.closest<HTMLElement>("[data-tile]")!;
+        const card = tile.querySelector(".tile-body")!.getBoundingClientRect();
+        const box = block.getBoundingClientRect();
+        return {
+          id: tile.dataset["tile"]!,
+          name: line(block.querySelector("strong")!),
+          subtitle: line(block.querySelector("span")!),
+          width: box.width,
+          offset: box.x + box.width / 2 - (card.x + card.width / 2),
+        };
+      },
+    );
+    return { zoom, blocks };
+  });
+}
+
+/**
+ * Names draw at 12 px or more on screen and subtitles at 11 px or more, and
+ * each label block keeps to its 168-unit column centered under its tile.
+ */
+async function expectReadableLabels(canvas: CanvasPage) {
+  const { zoom, blocks } = await labelBlocks(canvas);
+  expect(blocks.length).toBeGreaterThan(8);
+  for (const block of blocks) {
+    expect(block.name.px, `${block.id}: name`).toBeGreaterThanOrEqual(11.99);
+    expect(block.subtitle.px, `${block.id}: subtitle`).toBeGreaterThan(11);
+    expect(block.width, `${block.id}: block`).toBeLessThanOrEqual(
+      168 * zoom + 1,
+    );
+    expect(block.name.width, `${block.id}: name`).toBeLessThanOrEqual(
+      168 * zoom + 1,
+    );
+    expect(Math.abs(block.offset), `${block.id}: centered`).toBeLessThan(1);
+  }
+}
+
+/**
+ * Every label under a tile or an empty-path slot that overlaps a step, a
+ * slot, a handle, a "+", a path label, a join or another such label; and
+ * every slot label an edge line runs through.
+ */
+async function labelCollisions(canvas: CanvasPage): Promise<string[]> {
+  return canvas.root.evaluate((root) => {
+    const describe = (element: Element) =>
+      `${element.className} ${
+        element.closest("[data-tile]")?.getAttribute("data-tile") ??
+        element.getAttribute("data-handle") ??
+        element.getAttribute("data-owner") ??
+        element
+          .closest("[data-insert-owner]")
+          ?.getAttribute("data-insert-owner") ??
+        ""
+      }`;
+    const overlap = (a: DOMRect, b: DOMRect) =>
+      a.left < b.right - 0.5 &&
+      b.left < a.right - 0.5 &&
+      a.top < b.bottom - 0.5 &&
+      b.top < a.bottom - 0.5;
+    const labels = [...root.querySelectorAll(".tile-label, .lane-slot-label")];
+    const others = [
+      ...root.querySelectorAll(
+        ".tile-body, .lane-slot, .handle, .insert-plus, .branch-label, .join-bar, .join-label, .lane-end",
+      ),
+    ];
+    const found: string[] = [];
+    labels.forEach((label, i) => {
+      const box = label.getBoundingClientRect();
+      for (const other of [...labels.slice(i + 1), ...others])
+        if (overlap(box, other.getBoundingClientRect()))
+          found.push(`${describe(label)} overlaps ${describe(other)}`);
+    });
+    for (const label of root.querySelectorAll(".lane-slot-label")) {
+      const box = label.getBoundingClientRect();
+      for (const path of root.querySelectorAll<SVGPathElement>("path.edge")) {
+        const m = path.getScreenCTM()!;
+        const length = path.getTotalLength();
+        for (let at = 0; at <= length; at += 2) {
+          const p = path.getPointAtLength(at);
+          const x = p.x * m.a + p.y * m.c + m.e;
+          const y = p.x * m.b + p.y * m.d + m.f;
+          if (x > box.left && x < box.right && y > box.top && y < box.bottom) {
+            found.push(
+              `${describe(label)} touches ${path.getAttribute("data-edge-line")}`,
+            );
+            break;
+          }
+        }
+      }
+    }
+    return found;
+  });
+}
 
 test.describe("the left-to-right canvas", () => {
   test.beforeEach(async ({ page }) => {
@@ -219,6 +329,82 @@ test.describe("the left-to-right canvas", () => {
       "aria-label",
       name!,
     );
+  });
+
+  test("keeps step names and subtitles readable at every zoom the canvas chooses", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    expect(await canvas.zoomPercent()).toBe(50);
+    await expectReadableLabels(canvas);
+    // A name too long for its column ends in an ellipsis; its tooltip and
+    // the step's accessible name keep it whole.
+    const long = canvas.tile("post-ledger-entry").locator(".tile-label strong");
+    expect(
+      await long.evaluate((name) => name.scrollWidth > name.clientWidth),
+    ).toBe(true);
+    await expect(long).toHaveAttribute("title", "post-ledger-entry");
+    await expect(canvas.tileBody("post-ledger-entry")).toHaveAccessibleName(
+      /^post-ledger-entry, /,
+    );
+    // An empty path's "Add a step" shows whole, at 11 px or more.
+    const slot = canvas.root.locator(".lane-slot-label");
+    const drawn = await slot.evaluate((label: HTMLElement) => ({
+      px:
+        parseFloat(getComputedStyle(label).fontSize) *
+        (label.getBoundingClientRect().height / label.offsetHeight),
+      cut: label.scrollWidth > label.clientWidth,
+    }));
+    expect(drawn.px).toBeGreaterThan(11);
+    expect(drawn.cut).toBe(false);
+    // Fit view chooses no less than 50% either: this workflow doesn't fit
+    // above it, so Fit view brings back the view it opened with.
+    const zoomOut = canvas.root.getByRole("button", {
+      name: "Zoom out",
+      exact: true,
+    });
+    await zoomOut.click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(42);
+    await canvas.root
+      .getByRole("button", { name: "Fit view", exact: true })
+      .click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(50);
+    await expectReadableLabels(canvas);
+    // At 100% the text draws at its own size: 13 px names, 12 px subtitles.
+    await canvas.root
+      .getByRole("button", { name: /^Reset zoom to 100%/ })
+      .click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(100);
+    for (const block of (await labelBlocks(canvas)).blocks) {
+      expect(block.name.px).toBeCloseTo(13, 1);
+      expect(block.subtitle.px).toBeCloseTo(12, 1);
+    }
+    // Zoomed out on purpose, names still show at 40% and drop below it.
+    for (let i = 0; i < 5; i++) await zoomOut.click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(40);
+    await expect(canvas.tile("approval").locator(".tile-label")).toBeVisible();
+    await expectReadableLabels(canvas);
+    await zoomOut.click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(33);
+    await expect(canvas.tile("approval").locator(".tile-label")).toBeHidden();
+  });
+
+  test("keeps each label clear of other steps, labels, handles and + at 50% and 40%", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    expect(await canvas.zoomPercent()).toBe(50);
+    expect(await labelCollisions(canvas)).toEqual([]);
+    await canvas.root
+      .getByRole("button", { name: /^Reset zoom to 100%/ })
+      .click();
+    const zoomOut = canvas.root.getByRole("button", {
+      name: "Zoom out",
+      exact: true,
+    });
+    for (let i = 0; i < 5; i++) await zoomOut.click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(40);
+    expect(await labelCollisions(canvas)).toEqual([]);
   });
 
   test("keeps Outline and Source working", async ({ page }) => {

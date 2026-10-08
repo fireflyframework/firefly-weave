@@ -231,14 +231,18 @@ weave-canvas-view,
 /* Label block. Each line sits on the canvas color, so an edge that
    crosses it never runs through the text. The block lets the pointer
    through; its lines take it, so a cut-off name or subtitle shows in full
-   in its tooltip. */
+   in its tooltip. Below about 92% zoom the text draws larger by
+   --label-scale, so names never show below 12 px on screen, while the
+   block keeps to its 168-unit column: a longer line ends in an ellipsis. */
 .canvas-v2 .tile-label {
   position: absolute;
   left: calc(50% - 84px);
-  width: 168px;
+  width: calc(168px / var(--label-scale, 1));
   display: grid;
   text-align: center;
   pointer-events: none;
+  transform: scale(var(--label-scale, 1));
+  transform-origin: top left;
 }
 .canvas-v2 .tile-label strong,
 .canvas-v2 .tile-label span {
@@ -342,14 +346,17 @@ weave-canvas-view,
   background: var(--hover);
   color: var(--text);
 }
+/* Centered under the slot, drawn larger like a step's label: the room
+   below an empty path's slot is free, so it always shows whole. */
 .canvas-v2 .lane-slot-label {
   position: absolute;
   top: calc(100% + 4px);
-  left: -16px;
-  width: 96px;
+  left: 50%;
+  width: max-content;
+  transform: translateX(-50%) scale(var(--label-scale, 1));
+  transform-origin: top center;
   font: var(--type-caption);
   color: var(--muted);
-  text-align: center;
   white-space: nowrap;
 }
 

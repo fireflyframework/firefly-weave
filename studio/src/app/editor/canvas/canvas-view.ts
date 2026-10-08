@@ -51,7 +51,7 @@ import { EdgeLayer, type EdgeView, type InsertView } from "./edge-layer";
 import {
   LTR,
   edgePath,
-  fitView,
+  labelScale,
   layoutLtr,
   levelOfDetail,
   midpoint,
@@ -202,6 +202,10 @@ export class CanvasView implements OnInit, DoCheck {
   }
   level() {
     return levelOfDetail(this.view.zoom);
+  }
+  /** Text under tiles draws this much larger, so names stay readable. */
+  labelScale() {
+    return labelScale(this.view.zoom);
   }
   /** The tile that takes Tab: the selected step, else the first tile. */
   active(): string {
@@ -552,26 +556,26 @@ export class CanvasView implements OnInit, DoCheck {
       }),
     );
   }
-  /** Fit view: the whole workflow, down to 25%. */
+  /**
+   * Fit view, also the view a workflow opens with: the whole workflow when
+   * it fits at 50% or more, else 50% from the trigger (openView).
+   */
   fit(): boolean {
-    return this.frame(fitView);
-  }
-  /** Opens a workflow the canvas hasn't shown yet, at 50% or more (openView). */
-  fitIfNew() {
-    const opened = this.host().model.opened;
-    if (this.ready && this.fitted !== opened && this.frame(openView))
-      this.fitted = opened;
-  }
-  private frame(place: typeof openView): boolean {
     const root = this.root().nativeElement;
     if (!root.clientWidth || !root.clientHeight) return false;
     this.setView(
-      place(this.layout().bounds, {
+      openView(this.layout().bounds, {
         width: root.clientWidth,
         height: root.clientHeight,
       }),
     );
     return true;
+  }
+  /** Opens a workflow the canvas hasn't shown yet with Fit view. */
+  fitIfNew() {
+    const opened = this.host().model.opened;
+    if (this.ready && this.fitted !== opened && this.fit())
+      this.fitted = opened;
   }
   /** Pans so a tile and its label sit at least `margin` px inside the canvas. */
   revealTile(id: string, margin = 64) {
