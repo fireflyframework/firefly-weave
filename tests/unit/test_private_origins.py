@@ -404,6 +404,47 @@ def test_legacy_plain_text_networks_limit_plain_text_only():
         legacy.check("database", url, ["10.1.0.5"], plaintext=True, local=not_local)
 
 
+def test_the_postgres_settings_keep_todays_reach_and_plain_text_rule():
+    # As PostgresConnector does today: reach comes from the private networks only, and the
+    # plain-text networks are an extra condition for plain text, never a second source of reach.
+    url = "postgresql://db.internal.test:5432"
+
+    def database(private, plaintext):
+        return po.load(
+            {
+                "WEAVE_POSTGRES_PRIVATE_NETWORKS": json.dumps(private),
+                "WEAVE_POSTGRES_PLAINTEXT_NETWORKS": json.dumps(plaintext),
+            }
+        )
+
+    only_plain = database([], ["10.0.0.0/8"])
+    for plain in (False, True):
+        with pytest.raises(po.PrivateOriginDenied) as refused:
+            only_plain.check("database", url, ["10.1.2.3"], plaintext=plain, local=not_local)
+        assert refused.value.reason == "outside-networks"
+    both = database(["10.0.0.0/8"], ["8.8.8.0/24", "10.9.0.0/16"])
+    (mapped,) = both.for_purpose("database")
+    assert mapped.networks == ("10.0.0.0/8",) and mapped.plaintext_networks == ("8.8.8.0/24", "10.9.0.0/16")
+    assert both.check("database", url, ["10.9.0.5"], plaintext=True, local=not_local)
+    assert both.check("database", url, ["8.8.8.8"], plaintext=True, local=not_local)
+    assert both.check("database", url, ["8.8.4.4"], plaintext=False, local=not_local) is None
+    with pytest.raises(po.PrivateOriginDenied):
+        both.check("database", url, ["8.8.4.4"], plaintext=True, local=not_local)
+    public_plain = database([], ["8.8.8.0/24"])
+    assert public_plain.check("database", url, ["8.8.8.8"], plaintext=True, local=not_local)
+
+
+def test_legacy_entries_that_cannot_be_built_are_invalid():
+    too_many = [f"10.{index}.0.0/16" for index in range(129)]
+    with pytest.raises(po.PrivateOriginsInvalid):
+        po.PrivateOrigins.empty().with_legacy(("database",), too_many, setting="WEAVE_POSTGRES_PRIVATE_NETWORKS")
+    with pytest.raises(po.PrivateOriginsInvalid):
+        po.PrivateOrigins.empty().with_legacy(("mail",), ("10.0.0.1/8",), setting="WEAVE_MAIL_PRIVATE_NETWORKS")
+    # A development entry still names at least one network.
+    with pytest.raises(ValueError):
+        entry(networks=())
+
+
 def test_permits_plaintext_only_for_an_exact_plain_text_entry():
     approved = policy(entry(), entry(origin="https://secure.acceptance.test:8443"))
     assert approved.permits_plaintext("http-connector", ACME + "/")

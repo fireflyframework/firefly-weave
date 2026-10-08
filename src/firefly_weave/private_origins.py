@@ -95,7 +95,7 @@ PURPOSES: Mapping[str, PurposeRule] = {
     # Public FTP stays where the Files worker policy sets allow_cleartext_ftp; that client maps it in S6-M3.
     "file-transfer": PurposeRule(frozenset({"ftp", "ftps", "sftp"}), frozenset({"ftp"}), True, False),
     # PostgreSQL negotiates TLS inside the connection, so its clients pass plaintext= explicitly;
-    # plain text keeps the reach of WEAVE_POSTGRES_PLAINTEXT_NETWORKS through its legacy entry.
+    # its legacy entry allows plain text only inside WEAVE_POSTGRES_PLAINTEXT_NETWORKS, which adds no reach.
     "database": PurposeRule(frozenset({"postgresql"}), frozenset(), True, False),
 }
 DEFAULT_PORTS = {
@@ -307,7 +307,7 @@ class PrivateOrigin(BaseModel):
 
     origin: str | None
     purpose: Purpose
-    networks: tuple[str, ...] = Field(min_length=1, max_length=128)
+    networks: tuple[str, ...] = Field(max_length=128)
     credentials: Credentials
     source: Literal["file", "legacy"] = "file"
     setting: str | None = None
@@ -323,6 +323,9 @@ class PrivateOrigin(BaseModel):
                 raise ValueError("File entries have no legacy fields")
         elif self.origin is not None or not self.setting:
             raise ValueError("A legacy entry names its setting and covers the origins its clients approve")
+        # Only a legacy entry mapped from a plain-text setting alone reaches no private network.
+        if not self.networks and (development or not self.plaintext_networks):
+            raise ValueError("An entry names the networks it may reach")
         for networks in (self.networks, self.plaintext_networks or ()):
             if tuple(_network(value, development=development) for value in networks) != networks:
                 raise ValueError("Networks must be written as canonical CIDR strings")
@@ -449,16 +452,16 @@ class PrivateOrigins(BaseModel):
                 return None
             if entry is None:
                 refuse("public-plain-text" if all(ip.is_global for ip in ips) else "no-entry")
-        reach = [ipaddress.ip_network(value) for value in (*entry.networks, *(entry.plaintext_networks or ()))]
+        reach = [ipaddress.ip_network(value) for value in entry.networks]
+        allowed = [ipaddress.ip_network(value) for value in entry.plaintext_networks or ()]
         for ip in ips:
-            if entry.source == "legacy" and public_ok and ip.is_global:
+            # A legacy entry passes a public address as its setting did: plain text only inside its plain-text networks.
+            if entry.source == "legacy" and ip.is_global and (public_ok or _inside(ip, allowed)):
                 continue
             if not _inside(ip, reach):
                 refuse("public-plain-text" if ip.is_global and not public_ok else "outside-networks")
-        if plain and entry.plaintext_networks is not None:
-            allowed = [ipaddress.ip_network(value) for value in entry.plaintext_networks]
-            if not all(_inside(ip, allowed) for ip in ips):
-                refuse("plain-text-outside-networks")
+        if plain and entry.plaintext_networks is not None and not all(_inside(ip, allowed) for ip in ips):
+            refuse("plain-text-outside-networks")
         if entry.source == "file":
             if rule.connector and any(local(ip) for ip in ips):
                 refuse("control-plane")
@@ -491,19 +494,30 @@ class PrivateOrigins(BaseModel):
 
         A legacy entry has no fixed origin: it covers the origins its clients already approve,
         inside the setting's networks. ``plaintext_networks`` limits plain text (``None`` keeps
-        it wherever the networks reach, as the HTTP setting did; ``()`` allows none). Mapping
-        the same setting again merges networks.
+        it wherever the networks reach, as the HTTP setting did; ``()`` allows none) and adds no
+        reach of its own, as WEAVE_POSTGRES_PLAINTEXT_NETWORKS did before C8. Mapping the same
+        setting again merges networks. A setting that cannot be mapped raises PrivateOriginsInvalid.
         """
-        reach = tuple(
-            dict.fromkeys(_network(value, development=False) for value in (*networks, *(plaintext_networks or ())))
-        )
-        if not reach:
-            return self
+        try:
+            return self._with_legacy(purposes, networks, setting, plaintext_networks)
+        except ValueError:
+            raise PrivateOriginsInvalid(f"{setting} cannot be mapped to a legacy entry.") from None
+
+    def _with_legacy(
+        self,
+        purposes: Sequence[Purpose],
+        networks: Sequence[str],
+        setting: str,
+        plaintext_networks: Sequence[str] | None,
+    ) -> PrivateOrigins:
+        reach = tuple(dict.fromkeys(_network(value, development=False) for value in networks))
         plain = (
             None
             if plaintext_networks is None
             else tuple(dict.fromkeys(_network(value, development=False) for value in plaintext_networks))
         )
+        if not reach and not plain:
+            return self
         entries = list(self.entries)
         for purpose in purposes:
             index = next(
