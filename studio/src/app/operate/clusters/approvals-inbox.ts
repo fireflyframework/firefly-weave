@@ -29,6 +29,42 @@ import { inboxCandidates } from "./cluster-model";
 
 export type InboxRequest = <T>(path: string) => Promise<T>;
 
+/**
+ * How many approvals the inbox reads at once. The Studio host serves a few
+ * requests at a time; a poll that asked for every plan's approval together
+ * would hold all of them, and other tabs or windows would wait or be refused.
+ */
+export const APPROVAL_READS_AT_ONCE = 4;
+
+/**
+ * Runs `task` for each item with at most `limit` running at once, and
+ * settles like Promise.allSettled: one result per item, in the items' order.
+ */
+export async function settleEach<T, R>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let next = 0;
+  const reader = async () => {
+    while (next < items.length) {
+      const index = next++;
+      try {
+        results[index] = {
+          status: "fulfilled",
+          value: await task(items[index]),
+        };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  };
+  const readers = Math.min(Math.max(1, limit), items.length);
+  await Promise.all(Array.from({ length: readers }, reader));
+  return results;
+}
+
 export class ApprovalsInbox {
   /** Plans waiting for an approval, open ones first. */
   rows: Plan[] = [];
@@ -69,12 +105,13 @@ export class ApprovalsInbox {
         cursor = page.next_cursor;
       } while (cursor && ++pages < MAX_PAGES);
       const candidates = inboxCandidates(plans, now);
-      const approvals = await Promise.allSettled(
-        candidates.map((plan) =>
+      const approvals = await settleEach(
+        candidates,
+        APPROVAL_READS_AT_ONCE,
+        (plan) =>
           this.request<Approval | null>(
             `${scope}/deployment-plans/${encodeURIComponent(plan.id)}/approval`,
           ),
-        ),
       );
       if (generation !== this.generation) return;
       this.rows = candidates.filter(

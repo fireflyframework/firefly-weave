@@ -29,7 +29,11 @@ import {
   runnerTone,
   targetRunner,
 } from "../src/app/operate/clusters/cluster-model";
-import { ApprovalsInbox } from "../src/app/operate/clusters/approvals-inbox";
+import {
+  APPROVAL_READS_AT_ONCE,
+  ApprovalsInbox,
+  settleEach,
+} from "../src/app/operate/clusters/approvals-inbox";
 import type { Plan, Runner } from "../src/app/operations/deployment-contracts";
 
 const now = Date.parse("2026-10-08T12:00:00Z");
@@ -213,6 +217,66 @@ describe("approvals inbox", () => {
     expect(inbox.unchecked).toBe(1);
     expect(inbox.truncated).toBe(false);
     expect(inbox.loaded).toBe(true);
+  });
+
+  it("reads at most four approvals at once and keeps each answer in order", async () => {
+    let open = 0;
+    let most = 0;
+    let started = 0;
+    const releases: (() => void)[] = [];
+    const run = (item: number) =>
+      new Promise<number>((resolve, reject) => {
+        open++;
+        started++;
+        most = Math.max(most, open);
+        releases.push(() => {
+          open--;
+          if (item % 3 === 0) reject(new Error(`no ${item}`));
+          else resolve(item * 10);
+        });
+      });
+    const settled = settleEach(
+      Array.from({ length: 10 }, (_, i) => i),
+      APPROVAL_READS_AT_ONCE,
+      run,
+    );
+    // Answers arrive out of order; a new read starts only as one finishes.
+    while (started < 10 || open) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(open).toBeLessThanOrEqual(4);
+      releases.pop()?.();
+    }
+    const results = await settled;
+    expect(APPROVAL_READS_AT_ONCE).toBe(4);
+    expect(most).toBe(4);
+    expect(
+      results.map((result) =>
+        result.status === "fulfilled"
+          ? result.value
+          : (result.reason as Error).message,
+      ),
+    ).toEqual(["no 0", 10, 20, "no 3", 40, 50, "no 6", 70, 80, "no 9"]);
+    expect(await settleEach([], 4, run)).toEqual([]);
+  });
+
+  it("never has more than four approval reads in flight", async () => {
+    const plans = Array.from({ length: 12 }, (_, i) => plan(`p${i}`, 100 + i));
+    let open = 0;
+    let most = 0;
+    const inbox = new ApprovalsInbox(async <T>(path: string) => {
+      if (!path.includes("/approval"))
+        return { items: plans, next_cursor: null } as T;
+      open++;
+      most = Math.max(most, open);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      open--;
+      return (path.includes("/p3/") ? { plan_id: "p3" } : null) as T;
+    });
+    await inbox.load("env", now);
+    expect(most).toBe(4);
+    expect(inbox.rows.map((item) => item.id)).toEqual(
+      plans.filter((item) => item.id !== "p3").map((item) => item.id),
+    );
   });
 
   it("stops after 1,000 plans and reports a failed plan read", async () => {
