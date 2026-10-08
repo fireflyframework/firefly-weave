@@ -429,3 +429,11 @@ reason = "Byte-identical copy of the repository NOTICE for this independently di
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/tsconfig.contracts.json"
+kind = "commentless"
+reason = "Angular and npm require strict JSON configuration without source comments."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"

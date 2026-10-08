@@ -6,7 +6,7 @@
   "scripts": {
     "start": "ng serve --host 127.0.0.1",
     "build": "ng build --configuration production",
-    "check": "tsc --noEmit -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.contracts.json",
     "test": "vitest run",
     "test:browser": "playwright test",
     "format:check": "prettier --check \"src/**/*.{ts,html,css}\" \"tests/**/*.ts\" \"*.json\" \"*config.ts\""
