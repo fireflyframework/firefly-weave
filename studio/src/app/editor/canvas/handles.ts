@@ -16,12 +16,14 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Letting go of an edge dragged from an output handle. Near a step, a
-// handle, an empty-lane slot or a join (60 px on screen, as in n8n) the
-// drop is refused, because steps run in the order of their sequence; on
+// handle, a "+", an empty-lane slot or a join (60 px on screen, as in n8n)
+// the drop is refused, because steps run in the order of their sequence; on
 // empty canvas it opens the step picker at that handle's insertion point.
-import { LTR, type LtrLayout, type Point } from "./layout-ltr";
+import { LTR, midpoint, type LtrLayout, type Point } from "./layout-ltr";
 
 export const CONNECT_RADIUS = 60;
+/** The hit area of a "+", centered on its point. */
+const HIT_AREA = 24;
 export const DROP_REFUSED = "Steps run in order. Use + to insert.";
 
 /** From a point to a rectangle; 0 inside it. */
@@ -32,6 +34,16 @@ export function distanceToRect(
   const dx = Math.max(rect.x - point.x, 0, point.x - (rect.x + rect.width));
   const dy = Math.max(rect.y - point.y, 0, point.y - (rect.y + rect.height));
   return Math.hypot(dx, dy);
+}
+
+/** A square of `size` around a point; a point itself when `size` is 0. */
+function around(point: Point, size: number) {
+  return {
+    x: point.x - size / 2,
+    y: point.y - size / 2,
+    width: size,
+    height: size,
+  };
 }
 
 /** `point` in canvas units; the reach is 60 screen pixels at this zoom. */
@@ -56,12 +68,13 @@ export function dropOutcome(
       width: LTR.slot,
       height: LTR.slot,
     })),
-    ...layout.handles.map((handle) => ({
-      x: handle.x,
-      y: handle.y,
-      width: 0,
-      height: 0,
-    })),
+    ...layout.handles.map((handle) => around(handle, 0)),
+    ...layout.handles.flatMap((handle) =>
+      handle.plus ? [around(handle.plus, HIT_AREA)] : [],
+    ),
+    ...layout.edges.flatMap((edge) =>
+      edge.insert ? [around(midpoint(edge), HIT_AREA)] : [],
+    ),
   ];
   return obstacles.some(near) ? "refused" : "open";
 }
