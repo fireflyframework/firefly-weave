@@ -17,10 +17,11 @@
 """Recolor documentation diagrams to the Firefly light diagram palette.
 
 Legacy colors in presentation attributes, ``style`` attributes and ``<style>`` blocks map
-to the palette in docs/visual-assets.md, matched case-insensitively, and the Inter font
-stack becomes Arial. Edits are textual, so every other byte stays as it was;
-ElementTree parses each file before and after. A color or font the tables do not know
-fails the run and names the file, and nothing is written. Running it again changes nothing.
+to the palette in docs/visual-assets.md, and the Inter font stack becomes Arial; both
+are matched case-insensitively, and font stacks ignore whitespace. Edits are textual, so
+every other byte stays as it was; ElementTree parses each file before and after. A color
+or font stack the tables do not know, a quoted family included, fails the run and names
+the file, and nothing is written. Running it again changes nothing.
 """
 
 from __future__ import annotations
@@ -58,13 +59,17 @@ FONTS = {
     "Arial,Helvetica,sans-serif": "Arial,Helvetica,sans-serif",
     "Menlo,Consolas,monospace": "Menlo,Consolas,monospace",
 }
+FONT_KEYS = {stack.lower(): new for stack, new in FONTS.items()}
 COLOR_PROPERTIES = ("fill", "stroke", "color", "stop-color", "flood-color", "lighting-color")
 PROPERTY = r"(?<![\w-])(?P<property>" + "|".join(COLOR_PROPERTIES) + ")"
 END = r"(?=\s*(?:[;\"'}<]|$))"
 ATTRIBUTE = re.compile(PROPERTY + r"(?P<separator>\s*=\s*[\"'])(?P<value>[^\"']*)", re.IGNORECASE)
 DECLARATION = re.compile(PROPERTY + r"(?P<separator>\s*:\s*)(?P<value>[^;\"'}<]+?)" + END, re.IGNORECASE)
+# A family may be quoted with either quote character, inside an attribute that uses the other one.
+FAMILIES = r"(?:'[^']*'|\"[^\"]*\"|[^;\"'}<])+?"
 FONT = re.compile(
-    r"(?<![\w-])(?P<property>font-family)(?P<separator>\s*(?:=\s*[\"']|:\s*))(?P<value>[^;\"'}<]+?)" + END
+    r"(?<![\w-])(?P<property>font-family)(?P<separator>\s*(?:=\s*[\"']|:\s*))(?P<value>" + FAMILIES + ")" + END,
+    re.IGNORECASE,
 )
 # A marker with content: a self-closing <marker/> has no span and must not reach the next closing tag.
 MARKER = re.compile(r"<marker\b(?:\"[^\"]*\"|'[^']*'|[^>\"'])*(?<!/)>.*?</marker>", re.IGNORECASE | re.DOTALL)
@@ -103,7 +108,7 @@ def recolor(text: str) -> tuple[str, list[str]]:
     text = substitute(DECLARATION, substitute(ATTRIBUTE, text))
 
     def font(match: re.Match[str]) -> str:
-        family = FONTS.get(re.sub(r"\s+", "", match["value"]))
+        family = FONT_KEYS.get(re.sub(r"\s+", "", match["value"]).lower())
         if family is None:
             unknown.append(match["value"].strip())
             return match[0]

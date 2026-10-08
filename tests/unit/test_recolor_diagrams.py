@@ -47,6 +47,11 @@ SVG = '<svg xmlns="http://www.w3.org/2000/svg">{}</svg>'
         ("<style>.edge{fill:none;stroke:#397963}</style>", "<style>.edge{fill:none;stroke:#62645B}</style>"),
         ('<rect fill="white" stroke="#FFFFFF"/><path fill="url(#g)"/>', None),
         ('<g font-family="Inter,Arial,sans-serif"/>', '<g font-family="Arial,Helvetica,sans-serif"/>'),
+        ('<g FONT-FAMILY="inter, arial, sans-serif"/>', '<g FONT-FAMILY="Arial,Helvetica,sans-serif"/>'),
+        (
+            '<text style="FONT-FAMILY:Inter,Arial,sans-serif;fill:#173D34">x</text>',
+            '<text style="FONT-FAMILY:Arial,Helvetica,sans-serif;fill:#272820">x</text>',
+        ),
         (
             "<style>text{font-family:Inter,Arial,sans-serif;fill:#173D34}</style>",
             "<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}</style>",
@@ -67,19 +72,30 @@ def test_recolor_maps_each_legacy_role(before, after):
         ('<rect fill="#397963"/>', ["#397963"]),
         ('<rect fill="red"/>', ["red"]),
         ('<g font-family="Comic Sans MS"/>', ["Comic Sans MS"]),
+        ("<g font-family=\"'Inter', Arial\"/>", ["'Inter', Arial"]),
+        ("<g font-family='\"Inter\", Arial'/>", ['"Inter", Arial']),
+        ("<g font-family=\"'Arial',Helvetica,sans-serif\"/>", ["'Arial',Helvetica,sans-serif"]),
+        ("<text style=\"font-family:'Inter', Arial;fill:#173D34\">x</text>", ["'Inter', Arial"]),
+        ('<style>text{FONT-FAMILY:"Inter",Arial,sans-serif}</style>', ['"Inter",Arial,sans-serif']),
+        ('<g style="FONT-FAMILY:Inter,Arial"/>', ["Inter,Arial"]),
     ],
 )
 def test_recolor_reports_values_outside_the_tables(body, unknown):
     assert RECOLOR["recolor"](SVG.format(body))[1] == unknown
 
 
-def test_unknown_color_fails_the_run_names_the_file_and_writes_nothing(tmp_path, capsys):
+@pytest.mark.parametrize(
+    ("body", "unknown"),
+    [('<rect fill="#123456"/>', "#123456"), ("<g font-family=\"'Inter', Arial\"/>", "'Inter', Arial")],
+)
+def test_unknown_color_or_font_fails_the_run_names_the_file_and_writes_nothing(tmp_path, capsys, body, unknown):
     good, bad = tmp_path / "good.svg", tmp_path / "bad.svg"
     good.write_bytes(SVG.format('<rect fill="#173D34"/>').encode())
-    bad.write_bytes(SVG.format('<rect fill="#123456"/>').encode())
+    bad.write_bytes(SVG.format(body).encode())
     assert RECOLOR["main"]([str(good), str(bad)]) == 1
-    assert f"{bad}: #123456" in capsys.readouterr().err
+    assert f"{bad}: {unknown}" in capsys.readouterr().err
     assert good.read_bytes() == SVG.format('<rect fill="#173D34"/>').encode()
+    assert bad.read_bytes() == SVG.format(body).encode()
 
 
 def test_recolor_rewrites_in_place_keeps_line_endings_and_then_checks_clean(tmp_path):
