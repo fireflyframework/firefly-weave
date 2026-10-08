@@ -335,10 +335,11 @@ def test_brand_files_are_served_from_the_studio_origin_and_license_texts_are_not
         (assets / "favicon.ico").write_bytes(b"\0\0\1\0 icon bytes")
         (assets / "licenses").mkdir()
         (assets / "licenses/NOTICE.txt").write_text("Firefly Weave\n")
+        (assets / "site.webmanifest").write_text("{}")
         font = browser.get("/fonts/manrope/manrope-latin-wght-normal.woff2")
         assert font.status_code == 200 and font.content == b"wOF2 font bytes"
         icon = browser.get("/favicon.ico")
         assert icon.status_code == 200 and icon.content == b"\0\0\1\0 icon bytes"
-        # License texts ship in the bundle but are not served; Studio has no web manifest.
+        # Only the allowlisted suffixes are served: license texts and a web manifest in the bundle are not.
         assert browser.get("/licenses/NOTICE.txt").status_code == 404
         assert browser.get("/site.webmanifest").status_code == 404

@@ -265,7 +265,7 @@ h3 {
   background: var(--danger);
 }
 .timeline li[data-tone="warning"] .dot {
-  background: var(--live);
+  background: var(--warning);
 }
 .timeline li[data-tone="info"] .dot {
   background: var(--info);
