@@ -38,9 +38,10 @@ to read.
 
 The [source inventory](contributing/source-inventory.toml) records every file
 that contains Firefly marks as a third-party asset, and names both owners where
-the file also holds the Weave wordmark. Those files carry a trademark comment
-instead of the Apache-2.0 header; the three wordmark masters carry the Apache-2.0
-header and a trademark line.
+the file also holds the Weave wordmark. The SVG files among them carry a
+trademark comment instead of the Apache-2.0 header; PNG and icon files cannot
+hold a comment, so the inventory is their record. The three wordmark masters
+carry the Apache-2.0 header and a trademark line.
 
 ## Choose the right asset
 
@@ -54,7 +55,7 @@ header and a trademark line.
 | [Logo, color](../assets/brand/weave-lockup-color.svg) | Light surfaces outside the product, such as slides and print: charcoal ink and a gold strand for paper and white | 1368.66 × 248.25 units |
 | [Small logo, reversed](../assets/brand/weave-lockup-small-reversed.svg) | The documentation header and other dark placements where the Firefly part is 48 to 80 pixels wide | 1368.66 × 248.25 units |
 | [Weave wordmark](../assets/brand/weave-wordmark.svg) and [small wordmark](../assets/brand/weave-wordmark-small.svg) | The drawn w and "eave" that the logo and the small logo are built from; sources for the generator, not for placing on a page | 535.26 × 116 units |
-| [The w alone](../assets/brand/weave-w.svg) | A Weave-only glyph, 32 pixels or larger; no placement uses it yet | 56 × 56 tile |
+| [The w alone](../assets/brand/weave-w.svg) | A Weave-only glyph, 32 pixels or larger; no placement uses it yet | 56 × 56 |
 | [Firefly icon](../assets/brand/firefly-icon.svg) | The documentation favicon and the Windows and Linux application icons | 56 × 56 tile |
 | [Small Firefly icon](../assets/brand/firefly-icon-small.svg) | Icon sizes below 32 pixels, with a solid chevron | 56 × 56 tile |
 | [Firefly mark](../assets/brand/firefly-mark.svg) | The collapsed Studio sidebar, on a transparent background | 56 × 56 |
