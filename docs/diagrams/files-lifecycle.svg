@@ -32,7 +32,7 @@ SPDX-License-Identifier: Apache-2.0
   <rect x="30" y="164" width="1100" height="193" rx="18" fill="#EAE7DF"/>
   <text x="52" y="193" font-size="13" font-weight="700" fill="#855414">1  UPLOAD AND VERIFY</text>
   <rect x="52" y="208" width="290" height="125" rx="14" fill="white"/>
-  <use href="#file" x="74" y="231" color="#62645B"/>
+  <use href="#file" x="74" y="226" color="#62645B"/>
   <text x="119" y="242" font-size="19" font-weight="700" fill="#272820">Your app or CLI</text>
   <text x="74" y="282" font-size="15" fill="#62645B">Send small, resumable chunks.</text>
   <text x="74" y="306" font-size="15" fill="#62645B">A stable key resumes the upload.</text>
