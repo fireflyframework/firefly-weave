@@ -24,6 +24,7 @@ from pydantic import ValidationError
 
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.canonical import canonical_digest
+from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.ir import (
     COMPARISON_IR_VERSION,
     HUMAN_IR_VERSION,
@@ -31,6 +32,7 @@ from firefly_weave.compiler.ir import (
     IR_VERSION,
     IR_VERSION_EXTENSIONS,
     ActionIR,
+    ConnectorIR,
     DecisionTableIR,
     IRGraph,
     WorkflowIR,
@@ -191,7 +193,7 @@ def test_an_over_versioned_workflow_without_features_stays_valid():
     )
 
 
-def test_decision_table_and_action_executables_carry_no_features():
+def test_decision_table_executables_carry_no_features():
     table = {
         "irVersion": IR_VERSION_EXTENSIONS,
         "features": ["text.concat"],
@@ -210,20 +212,61 @@ def test_decision_table_and_action_executables_carry_no_features():
     }
     with pytest.raises(ValidationError, match="Decision tables require ir-v1alpha3"):
         DecisionTableIR.model_validate(table)
-    action_ir = {
-        **{key: table[key] for key in ("irVersion", "features", "apiVersion", "dependencies", "schemas", "guards")},
-        "kind": "Action",
-        "metadata": {"name": "a", "version": "1.0.0"},
-        "spec": {
-            "implementation": {"kind": "worker", "taskType": "t", "taskVersion": "1.0.0"},
-            "inputSchema": {},
-            "outputSchema": {},
-            "sideEffect": "read_only",
-            "timeoutSeconds": 1,
-        },
-    }
-    with pytest.raises(ValidationError):
-        ActionIR.model_validate(action_ir)
+
+
+TASK = {
+    "taskType": "echo",
+    "taskVersion": "1.0.0",
+    "inputSchema": {},
+    "outputSchema": {},
+    "sideEffect": "read_only",
+    "timeoutSeconds": 1,
+}
+ACTION_DEFINITION = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Action",
+    "metadata": {"name": "echo", "version": "1.0.0"},
+    "spec": {
+        "implementation": {"kind": "worker", "taskType": "echo", "taskVersion": "1.0.0"},
+        "inputSchema": {},
+        "outputSchema": {},
+        "sideEffect": "read_only",
+        "timeoutSeconds": 1,
+    },
+}
+CONNECTOR_DEFINITION = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Connector",
+    "metadata": {"name": "service", "version": "1.0.0"},
+    "spec": {
+        "adapter": "http",
+        "configSchema": {},
+        "authSchema": {},
+        "compatibility": {"apiVersion": "weave/v1alpha1"},
+        "limits": {"maxRequestBytes": 100, "maxResponseBytes": 100, "maxTimeoutSeconds": 10},
+        "actions": {"get": {"inputSchema": {}, "outputSchema": {}, "sideEffect": "read_only", "timeoutSeconds": 10}},
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("model", "definition", "message"),
+    [
+        pytest.param(ActionIR, ACTION_DEFINITION, "Action executables use no language features", id="action"),
+        pytest.param(
+            ConnectorIR, CONNECTOR_DEFINITION, "Connector executables use no language features", id="connector"
+        ),
+    ],
+)
+def test_action_and_connector_executables_refuse_language_features(model, definition, message):
+    catalog = CatalogSnapshot.from_definitions([], tasks=[TASK], adapters=["http"])
+    result = compile_source(definition, format="object", catalog=catalog)
+    assert result.ok, result.diagnostics
+    executable = result.artifact.executable
+    assert "features" not in executable
+    assert model.model_validate(executable).features == []
+    with pytest.raises(ValidationError, match=message):
+        model.model_validate({**executable, "irVersion": IR_VERSION_EXTENSIONS, "features": ["text.concat"]})
 
 
 def test_exported_executable_schema_carries_the_feature_vocabulary_and_v1alpha4():
