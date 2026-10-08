@@ -16,6 +16,8 @@
 
 """Model failures become product codes and outcomes; provider text never crosses the worker boundary."""
 
+import json
+
 import httpcore2
 import httpx2
 import pytest
@@ -28,7 +30,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from weave_agentic_worker.egress import ModelEgressDenied
 from weave_agentic_worker.errors import classify
-from weave_agentic_worker.execution import estimate_tokens, run_model
+from weave_agentic_worker.execution import estimate_tokens, provider_schema, run_model
 
 REQUEST = httpx2.Request("POST", "http://ollama:11434/v1/chat/completions")
 
@@ -151,6 +153,43 @@ async def test_a_prompt_longer_than_the_context_is_refused_before_any_call():
     small = profile(max_tokens=64)
     output = await run_model(small, "Summarize", "x" * 200, FunctionModel(respond), {}, context_tokens=512)
     assert output["result"] == "short"
+
+
+def answering(calls):
+    def respond(messages, info):
+        calls.append(messages)
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"result": "short"})])
+
+    return respond
+
+
+def tokens_needed(model_profile, prompt, context, instructions=""):
+    request = json.dumps({"prompt": prompt, "context": context}, ensure_ascii=False)
+    schema = json.dumps(provider_schema(model_profile.output_schema))
+    return estimate_tokens(instructions, request, schema) + model_profile.options.max_tokens
+
+
+async def test_a_long_context_is_refused_even_when_the_answer_allowance_is_small():
+    calls = []
+    small = profile(max_tokens=64)
+    with pytest.raises(ConnectorFailure) as refused:
+        await run_model(small, "Summarize", "x" * 4000, FunctionModel(answering(calls)), {}, context_tokens=512)
+    assert (refused.value.code, refused.value.outcome) == ("LLM_CONTEXT_LIMIT", "not_started")
+    assert calls == []
+
+
+async def test_a_prompt_that_exactly_fills_the_context_runs_and_one_token_more_is_refused():
+    calls = []
+    small = profile(max_tokens=64)
+    instructions = "Answer in one word."
+    needed = tokens_needed(small, "Summarize", "x" * 200, instructions)
+    model = FunctionModel(answering(calls))
+    output = await run_model(small, "Summarize", "x" * 200, model, {}, instructions=instructions, context_tokens=needed)
+    assert output["result"] == "short" and len(calls) == 1
+    with pytest.raises(ConnectorFailure) as refused:
+        await run_model(small, "Summarize", "x" * 200, model, {}, instructions=instructions, context_tokens=needed - 1)
+    assert (refused.value.code, refused.value.outcome) == ("LLM_CONTEXT_LIMIT", "not_started")
+    assert len(calls) == 1
 
 
 async def test_a_missing_model_inside_the_agent_is_classified():

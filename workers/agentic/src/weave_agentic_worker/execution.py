@@ -97,7 +97,7 @@ class _BoundedAgent(FireflyAgent[Any, Any]):
 
 
 def estimate_tokens(*parts: str) -> int:
-    """A conservative token estimate: one token per four characters, rounded up."""
+    """An approximate token count: one token per four characters, rounded up."""
     return -(-sum(len(part) for part in parts) // 4)
 
 
