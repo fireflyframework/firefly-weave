@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from types import NoneType, UnionType
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, get_args, get_origin
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from firefly_weave.compiler.catalog import CatalogLock
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
@@ -153,6 +154,14 @@ from firefly_weave.contracts.public import (
     WebhookEnvelope,
 )
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
+from firefly_weave.contracts.run_views import (
+    RunLogPage,
+    RunLogQuery,
+    RunStepQuery,
+    RunSummaryPage,
+    RunSummaryQuery,
+    StepFactPage,
+)
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
     RunView,
@@ -196,6 +205,12 @@ type CanonicalRevisionTag = Annotated[str, Field(pattern=r'^"[1-9][0-9]{0,9}"$')
 type PageLimit = Annotated[int, Field(ge=1, le=100)]
 
 
+def _present(annotation: Any) -> Any:
+    """A query parameter is absent rather than null: document only its non-null type."""
+    choices = [item for item in get_args(annotation) if item is not NoneType]
+    return choices[0] if get_origin(annotation) in (Union, UnionType) and len(choices) == 1 else annotation
+
+
 class CredentialResponse(CredentialLease):
     # This one authorized lease-scoped endpoint deliberately serializes the value.
     value: str = Field(repr=False)
@@ -222,6 +237,10 @@ class Operation:
     public: bool = False
     # Shown instead of the capability sentence for public operations without one.
     description: str = ""
+    # Strict query model: OpenAPI documents its fields and the controller decodes the same model.
+    query: type[BaseModel] | None = None
+    # A published contract this server does not serve yet: authorized reads answer 501 WV-UNAVAILABLE.
+    served: bool = True
 
     def __post_init__(self) -> None:
         if not self.capability and not (self.public and self.description):
@@ -248,6 +267,12 @@ class Operation:
             )
             for name in re.findall(r"{([^}]+)}", self.path)
         ]
+        if self.query is not None:
+            for name, field in self.query.model_fields.items():
+                documented = (
+                    {} if field.default is None or field.default_factory is not None else {"default": field.default}
+                )
+                params.append(OpenAPIParameter(name, "query", _present(field.annotation), required=False, **documented))
         if self.id == "runs.list":
             params += [
                 OpenAPIParameter("business_key", "query", Annotated[str, Field(max_length=200)], required=False),
@@ -361,6 +386,10 @@ class Operation:
                     for status in (401, 403, 404, 409, 412, 413, 422, 500)
                 }
             )
+        if not self.served:
+            responses[501] = OpenAPIResponse(
+                "Not served by this server yet", {"application/problem+json": Problem}, headers
+            )
         if self.id.startswith("debug."):
             responses[410] = OpenAPIResponse("Expired session", {"application/problem+json": Problem}, headers)
         security: list[dict[str, list[str]]] = (
@@ -382,6 +411,11 @@ class Operation:
                     " Teams must be explicitly enabled; otherwise these routes return unavailable (409)."
                     if self.id.startswith("teams_references.")
                     else ""
+                )
+                + (
+                    ""
+                    if self.served
+                    else " Published contract: this server answers 501 WV-UNAVAILABLE until it serves it."
                 )
                 if self.capability
                 else self.description
@@ -1369,6 +1403,33 @@ OPERATIONS = {
         Operation("runs.history", ENVIRONMENT + "/runs/{identifier}/history", "GET", EventPage, "run.read"),
         Operation("runs.export", ENVIRONMENT + "/runs/{identifier}/export", "GET", HistoryExport, "run.read"),
         Operation("runs.replay", ENVIRONMENT + "/runs/{identifier}/replay", "GET", ReplayReport, "run.read"),
+        Operation(
+            "run_summaries.list",
+            ENVIRONMENT + "/run-summaries",
+            "GET",
+            RunSummaryPage,
+            "run.read",
+            query=RunSummaryQuery,
+            served=False,
+        ),
+        Operation(
+            "runs.steps",
+            ENVIRONMENT + "/runs/{identifier}/steps",
+            "GET",
+            StepFactPage,
+            "run.read",
+            query=RunStepQuery,
+            served=False,
+        ),
+        Operation(
+            "runs.logs",
+            ENVIRONMENT + "/runs/{identifier}/logs",
+            "GET",
+            RunLogPage,
+            "run.read",
+            query=RunLogQuery,
+            served=False,
+        ),
         Operation(
             "incidents.run_list",
             ENVIRONMENT + "/runs/{identifier}/incidents",

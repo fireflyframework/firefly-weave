@@ -405,6 +405,23 @@ Replay reports `consistent`, `inconsistent`, or `incomplete`: a history prefix,
 or a history with unavailable or redacted parts, is never reported as success.
 See [history and replay](history-and-replay.md).
 
+**Run summaries, steps, and logs.** `run_summaries.list`, `runs.steps`, and
+`runs.logs` are published so that clients can build against them. Until a
+platform serves them, an authorized request answers `501` with
+`WV-UNAVAILABLE`.
+
+- These lists are ordered by time, not by ID: run summaries by start time
+  (newest first by default) or by last update, steps by scheduled time, and log
+  entries by time.
+- `runs.steps` and `runs.logs` accept a `limit` of 1 to 500 (200 by default).
+- Each cursor is bound to every filter and to the order. After you change a
+  filter, start again from the first page.
+- Test runs are left out unless you send `include_test=true`.
+- A contradictory filter, such as `version` without `workflow`, answers `422`
+  with `WV-FILTER`.
+- Send times as RFC 3339 with an offset. Use `Z`, or encode `+` as `%2B` in the
+  query string.
+
 **Answers that say "unavailable".** Cancellation and task completion can return
 an unavailable acknowledgment when the platform cannot classify the historical
 data or compare payloads; task completion then includes
@@ -551,6 +568,9 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `runs.history` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/history` | run.read |
 | `runs.export` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/export` | run.read |
 | `runs.replay` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/replay` | run.read |
+| `run_summaries.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-summaries` | run.read |
+| `runs.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/steps` | run.read |
+| `runs.logs` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/logs` | run.read |
 | `incidents.run_list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/incidents` | incident.read |
 | `incidents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents` | incident.read |
 | `incidents.resolve` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents/{identifier}/resolve` | incident.resolve |

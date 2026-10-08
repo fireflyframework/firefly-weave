@@ -52,6 +52,7 @@ from firefly_weave.api.human_files import HumanFileController
 from firefly_weave.api.lumi import LumiController
 from firefly_weave.api.operations import OperationsController
 from firefly_weave.api.providers import ProviderController
+from firefly_weave.api.run_views import RunViewController
 from firefly_weave.api.runs import RunController
 from firefly_weave.api.schedules import ScheduleController
 from firefly_weave.api.triggers import TriggerController
@@ -94,6 +95,7 @@ from firefly_weave.operations.incidents import IncidentService
 from firefly_weave.operations.lumi import LumiService
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.operations.outbox_loop import OutboxLoop
+from firefly_weave.operations.run_views import RunViewService
 from firefly_weave.operations.telemetry import TelemetryService
 from firefly_weave.persistence.resources import DatabaseResources
 from firefly_weave.persistence.uow import UnitOfWork
@@ -308,6 +310,8 @@ def make_app(
                 WorkerFileService,
                 FileController,
                 RunController,
+                RunViewService,
+                RunViewController,
                 WorkerController,
             ):
                 pyfly.context.get_bean(required)
