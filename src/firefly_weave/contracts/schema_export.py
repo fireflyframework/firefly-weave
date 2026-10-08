@@ -152,6 +152,7 @@ def contract_models() -> dict[str, SchemaModel]:
         TaskGroupRequest,
     )
     from firefly_weave.contracts.identity import IdentityView
+    from firefly_weave.contracts.language import LanguageManifest
     from firefly_weave.contracts.lumi import (
         LumiAskRequest,
         LumiConfiguration,
@@ -322,6 +323,7 @@ def contract_models() -> dict[str, SchemaModel]:
         "decision-evaluation": DecisionEvaluation,
         "problem": Problem,
         "capabilities": Capabilities,
+        "language-manifest": LanguageManifest,
         "draft-view": DraftView,
         "draft-retirement": DraftRetirement,
         "draft-export": DraftExport,

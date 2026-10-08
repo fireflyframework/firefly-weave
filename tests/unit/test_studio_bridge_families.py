@@ -78,6 +78,7 @@ def pair(browser):
         ("GET", f"{PROJECT}/connector-descriptors/Pets_API.v1"),
         ("GET", f"{PROJECT}/drafts"),
         ("GET", f"{PROJECT}/workflows/{RESOURCE}"),
+        ("GET", f"{PROJECT}/language"),
     ],
 )
 def test_studio_journeys_are_bridged(tmp_path, method, path):
@@ -109,6 +110,7 @@ def test_studio_journeys_are_bridged(tmp_path, method, path):
         ("POST", f"{OTHER_PROJECT}/debug/sessions", 403),
         ("GET", f"{OTHER_PROJECT}/connector-descriptors", 403),
         ("GET", f"{OTHER_PROJECT}/connector-descriptors/weave-http-v2", 403),
+        ("GET", f"{OTHER_PROJECT}/language", 403),
         ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/worker-releases", 403),
     ],
 )
