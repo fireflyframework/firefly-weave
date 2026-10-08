@@ -16,9 +16,12 @@
 
 """C8 private-origin policy: file format, address rules, decisions, legacy settings and audit."""
 
+import errno
 import json
 import logging
 import os
+import socket
+import types
 
 import pytest
 
@@ -170,6 +173,52 @@ def test_entry_ranges_are_loopback_rfc1918_cgnat_and_ula():
 def test_local_addresses_are_the_ones_this_process_can_bind():
     assert po.is_local_address("127.0.0.1")
     assert not po.is_local_address("192.0.2.1")
+
+
+def failing_socket_module(error, *, on_create=False):
+    """A stand-in for the socket module whose sockets raise ``error`` when created or bound."""
+
+    class Probe:
+        def __init__(self, family, kind):
+            if on_create:
+                raise OSError(error, os.strerror(error))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def bind(self, address):
+            raise OSError(error, os.strerror(error))
+
+    return types.SimpleNamespace(
+        AF_INET=socket.AF_INET, AF_INET6=socket.AF_INET6, SOCK_STREAM=socket.SOCK_STREAM, socket=Probe
+    )
+
+
+@pytest.mark.parametrize("on_create", [False, True], ids=["bind", "create"])
+@pytest.mark.parametrize("error", [errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT], ids=errno.errorcode.get)
+def test_only_an_address_or_family_this_host_lacks_is_not_local(monkeypatch, error, on_create):
+    monkeypatch.setattr(po, "socket", failing_socket_module(error, on_create=on_create))
+    assert not po.is_local_address(FIXTURE)
+    assert not po.is_local_address("fd00::2")
+    assert policy(entry()).check("http-connector", ACME + "/x", [FIXTURE]).origin == ACME
+
+
+@pytest.mark.parametrize("on_create", [False, True], ids=["bind", "create"])
+@pytest.mark.parametrize(
+    "error",
+    [errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.EADDRINUSE, errno.EACCES, errno.EPERM, errno.EINVAL],
+    ids=errno.errorcode.get,
+)
+def test_any_other_probe_error_counts_as_local_so_the_connection_is_refused(monkeypatch, error, on_create):
+    monkeypatch.setattr(po, "socket", failing_socket_module(error, on_create=on_create))
+    assert po.is_local_address(FIXTURE)
+    assert po.is_local_address("fd00::2")
+    with pytest.raises(po.PrivateOriginDenied) as refused:
+        policy(entry()).check("http-connector", ACME + "/x", [FIXTURE])
+    assert refused.value.reason == "control-plane"
 
 
 def test_parse_reads_a_valid_document():

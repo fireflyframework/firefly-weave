@@ -27,6 +27,7 @@ plain HTTP for the connector and webhook purposes, exactly as before C8.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import ipaddress
 import json
@@ -140,6 +141,8 @@ _PRIVATE_BLOCKS: tuple[Network, ...] = tuple(
 )
 _NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 _LOCAL_NAT64 = ipaddress.IPv6Network("64:ff9b:1::/48")
+# Bind-probe errors that prove an address is not this namespace's; any other error fails closed.
+_NOT_LOCAL_ERRORS = frozenset({errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT})
 _HOSTNAME = re.compile(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
 _LOG = logging.getLogger("weave.private_origins")
 
@@ -218,15 +221,17 @@ def is_local_address(value: str | Address) -> bool:
     """True when this process can bind the address, so it belongs to its own network namespace.
 
     On the local platform the API shares Keycloak's namespace, so these addresses are the
-    control plane that connector clients must never reach.
+    control plane that connector clients must never reach. Only "address not available" and
+    "address family not supported" mean the address is not this namespace's; any other probe
+    error (no free descriptors or ports, a sandbox) counts as local, so the connection is refused.
     """
     ip = _unmapped(address(value))
     family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
     try:
         with socket.socket(family, socket.SOCK_STREAM) as probe:
             probe.bind((str(ip), 0))
-    except OSError:
-        return False
+    except OSError as error:
+        return error.errno not in _NOT_LOCAL_ERRORS
     return True
 
 
