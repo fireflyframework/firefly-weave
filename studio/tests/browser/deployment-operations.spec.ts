@@ -655,6 +655,7 @@ for (const width of [1440, 390])
         },
       );
       await page.getByRole("button", { name: "Clusters", exact: true }).click();
+      await page.getByRole("tab", { name: "Jobs", exact: true }).click();
       await page
         .getByRole("button", { name: "apply · " + job.created_at, exact: true })
         .click();

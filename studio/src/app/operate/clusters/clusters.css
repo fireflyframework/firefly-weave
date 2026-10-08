@@ -134,3 +134,82 @@ dd {
     width: 100%;
   }
 }
+
+/* Clusters tabs: adapter icons, runner presence and the runners table. */
+.target-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.target-name weave-icon {
+  color: var(--muted);
+  flex: none;
+}
+.runner-line {
+  justify-self: start;
+  /* The line wraps inside a narrow card instead of widening it. */
+  max-width: 100%;
+  height: auto;
+  min-height: 22px;
+  padding-block: 2px;
+  white-space: normal;
+}
+.runner-table {
+  /* The last column is as wide as Revoke, so rows without it still align. */
+  --cols: minmax(180px, 1fr) 110px 130px minmax(140px, 1fr) 104px;
+}
+.runner-table .table-head,
+.runner-table .resource-row {
+  grid-template-columns: var(--cols);
+}
+.runner-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.runner-main weave-icon {
+  color: var(--muted);
+  flex: none;
+}
+.runner-main .row-text {
+  display: grid;
+  min-width: 0;
+}
+.runner-main small {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.runner-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+@media (max-width: 1024px) {
+  .runner-table {
+    --cols: minmax(0, 1fr) 110px 104px;
+  }
+  .runner-table [data-wide] {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .runner-table .table-head {
+    display: none;
+  }
+  .runner-table .resource-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .runner-table .runner-main {
+    grid-column: 1 / -1;
+  }
+}
+/* A long target name wraps inside its card instead of widening the page. */
+.target-name button {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}

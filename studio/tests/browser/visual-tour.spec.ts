@@ -2767,6 +2767,78 @@ spec:
     await expect(page.locator(".record-detail")).toContainText("crm-lookup");
     await shot("87-workers-detail");
   },
+
+  async clusters({ page, shot }) {
+    await connected(page, {
+      capabilities: ["deployment.read", "target.manage", "deployment.approve"],
+    });
+    const scope = {
+      tenant_id: "tenant",
+      project_id: "project",
+      environment_id: "development",
+    };
+    const later = (seconds: number) =>
+      new Date(Date.now() + seconds * 1000).toISOString();
+    const targets = [
+      [
+        "11111111-1111-4111-8111-111111111111",
+        "local-docker",
+        "docker-compose",
+      ],
+      [
+        "22222222-2222-4222-8222-222222222222",
+        "kind-weave-test.weave-workers-production-eu",
+        "kubernetes",
+      ],
+    ].map(([id, name, adapter]) => ({
+      id,
+      name,
+      adapter,
+      external_identity: `${name}-identity`,
+      boundary: `${name}-workers`,
+      runner_principal_id: "44444444-4444-4444-8444-444444444444",
+      capabilities: ["observe", "update", "scale_workers"],
+      scope,
+      revision: 1,
+      disabled: false,
+      created_at: "2026-10-03T10:00:00Z",
+    }));
+    const runners = targets.map((target, index) => ({
+      id: `7${index}111111-7777-4777-8777-777777777777`,
+      principal_id: "55555555-5555-4555-8555-555555555555",
+      target_id: target.id,
+      adapter: target.adapter,
+      adapter_version: "1",
+      capabilities: ["observe", "update", "scale_workers"],
+      last_seen: later(index ? -240 : -10),
+      expires_at: later(index ? -150 : 80),
+      revoked: false,
+    }));
+    await page.route(`${environment}/deployment-targets?*`, (r) =>
+      r.fulfill({ json: { items: targets, next_cursor: null } }),
+    );
+    await page.route(`${environment}/deployment-runners?*`, (r) =>
+      r.fulfill({ json: { items: runners, next_cursor: null } }),
+    );
+    await open(page, "Clusters");
+    await expect(page.locator(".resource-cards li").first()).toContainText(
+      "Runner online",
+    );
+    await shot("88-clusters-targets");
+    await page
+      .getByRole("button", { name: "local-docker", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "local-docker", exact: true }),
+    ).toBeVisible();
+    await shot("95-clusters-target", { end: ".page-content" });
+    await page.getByRole("button", { name: "Back to Clusters" }).click();
+    await page.getByRole("tab", { name: "Runners" }).click();
+    await expect(
+      page.getByRole("table", { name: "Runners" }).locator(".resource-row"),
+    ).toHaveCount(2);
+    await shot("89-clusters-runners");
+  },
 };
 
 for (const size of sizes)

@@ -15,17 +15,26 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The environment's targets, deployments and job history.
+// The Targets tab: one card per target with its adapter and runner
+// presence, then the environment's deployments.
 import { ChangeDetectionStrategy, Component } from "@angular/core";
+import { Icon } from "../../icon";
+import { toneAttribute } from "../../status-labels";
 import { ClusterDeploymentList } from "./cluster-deployment-list";
 import { ClusterSection } from "./cluster-section";
+import {
+  adapterIcon,
+  runnerLine,
+  runnerTone,
+  targetRunner,
+} from "./cluster-model";
 
 @Component({
-  selector: "weave-cluster-overview",
+  selector: "weave-cluster-targets-tab",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ClusterDeploymentList],
-  styleUrl: "./clusters.css",
+  imports: [ClusterDeploymentList, Icon],
+  styleUrls: ["./clusters.css", "../operate.css"],
   template: `
     <section class="operations-panel">
       <div class="panel-heading">
@@ -39,7 +48,7 @@ import { ClusterSection } from "./cluster-section";
           </button>
         }
       </div>
-      @if (store.loading.has("targets")) {
+      @if (store.loading.has("targets") && !store.targets.length) {
         <p role="status">Loading targets…</p>
       }
       @if (store.errors.targets) {
@@ -47,10 +56,21 @@ import { ClusterSection } from "./cluster-section";
       }
       <ul class="resource-cards">
         @for (item of store.targets; track item.id) {
+          @let runner = runnerOf(item.id);
           <li>
-            <button (click)="openTarget(item)">{{ item.name }}</button
+            <span class="target-name"
+              ><weave-icon [name]="icon(item.adapter)" [size]="16" /><button
+                (click)="openTarget(item)"
+              >
+                {{ item.name }}
+              </button></span
             ><span>{{ adapterLabels[item.adapter] }} · {{ item.boundary }}</span
-            ><span>{{ item.disabled ? "Disabled" : "Registered" }}</span>
+            ><span>{{ item.disabled ? "Disabled" : "Registered" }}</span
+            ><span
+              class="status-pill runner-line"
+              [attr.data-tone]="presenceTone(runner)"
+              >{{ line(runner) }}</span
+            >
           </li>
         } @empty {
           @if (!store.loading.has("targets") && !store.errors.targets) {
@@ -58,6 +78,11 @@ import { ClusterSection } from "./cluster-section";
           }
         }
       </ul>
+      @if (store.errors.runners) {
+        <p role="alert">
+          Runner presence could not be loaded. {{ store.errors.runners }}
+        </p>
+      }
       @if (store.cursors.targets) {
         <button (click)="loadMore('targets')">Load more targets</button>
       }
@@ -66,26 +91,17 @@ import { ClusterSection } from "./cluster-section";
       <h2>Deployments</h2>
       <weave-cluster-deployment-list [page]="page" />
     </section>
-    <section class="operations-panel">
-      <h2>Operations history</h2>
-      @if (store.errors.jobs) {
-        <p role="alert">{{ store.errors.jobs }}</p>
-      }
-      <ul class="resource-cards">
-        @for (item of store.jobs; track item.id) {
-          <li>
-            <button (click)="openJob(item)">
-              {{ item.kind }} · {{ item.created_at }}</button
-            ><span>{{ item.state.replaceAll("_", " ") }}</span>
-          </li>
-        } @empty {
-          <li>No operation has been returned.</li>
-        }
-      </ul>
-      @if (store.cursors.jobs) {
-        <button (click)="loadMore('jobs')">Load more operations</button>
-      }
-    </section>
   `,
 })
-export class ClusterOverview extends ClusterSection {}
+export class ClusterTargetsTab extends ClusterSection {
+  readonly icon = adapterIcon;
+  runnerOf(targetId: string) {
+    return targetRunner(this.store.runners, targetId);
+  }
+  line(runner: ReturnType<typeof targetRunner>) {
+    return runnerLine(runner);
+  }
+  presenceTone(runner: ReturnType<typeof targetRunner>) {
+    return toneAttribute(runner ? runnerTone(runner) : "neutral");
+  }
+}

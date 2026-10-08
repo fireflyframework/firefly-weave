@@ -24,12 +24,14 @@ import {
   HostListener,
   Input,
   OnDestroy,
+  OnInit,
   inject,
 } from "@angular/core";
 import { Router } from "@angular/router";
 import type { App } from "../../app";
 import type { LumiOperationAttachment } from "../../lumi/lumi-state";
 import { describeError } from "../../errors";
+import { shortId } from "../../format";
 import type { ReconcileRequest } from "../../operations/deployment-reconciliation";
 import { DeploymentEditor } from "../../operations/deployment-editor";
 import type { PlanRequest } from "../../operations/deployment-plan-builder";
@@ -53,13 +55,23 @@ import {
   type Job,
   type Approval,
   type Collection,
+  type Runner,
 } from "../../operations/deployment-contracts";
 import { ClusterDeploymentDetail } from "./cluster-deployment-detail";
 import { ClusterJobDetail } from "./cluster-job-detail";
-import { ClusterOverview } from "./cluster-overview";
+import { ClusterJobsTab } from "./cluster-jobs-tab";
 import { ClusterPlanDetail } from "./cluster-plan-detail";
+import { ClusterRunnersTab } from "./cluster-runners-tab";
 import { ClusterTargetDetail } from "./cluster-target-detail";
-import { clustersRecordPath, clustersRoute } from "../operate-routes";
+import { ClusterTargetsTab } from "./cluster-targets-tab";
+import {
+  clustersRecordPath,
+  clustersRoute,
+  clustersTabPath,
+  type ClusterTab,
+} from "../operate-routes";
+import { Poller } from "../operate-store";
+import { RefreshStatus } from "../refresh-status";
 
 @Component({
   selector: "weave-clusters-page",
@@ -72,9 +84,12 @@ import { clustersRecordPath, clustersRoute } from "../operate-routes";
     ClusterDeploymentDetail,
     ClusterPlanDetail,
     ClusterJobDetail,
-    ClusterOverview,
+    ClusterTargetsTab,
+    ClusterJobsTab,
+    ClusterRunnersTab,
+    RefreshStatus,
   ],
-  styleUrl: "./clusters.css",
+  styleUrls: ["./clusters.css", "../operate.css"],
   template: `
     <header class="operations-heading">
       <div>
@@ -90,9 +105,11 @@ import { clustersRecordPath, clustersRoute } from "../operate-routes";
             Explain with Weave AI
           </button>
         }
-        <button type="button" [disabled]="store.mutating" (click)="refresh()">
-          Refresh
-        </button>
+        <weave-refresh-status
+          [updatedAt]="poller.lastSuccessAt"
+          [busy]="poller.busy || store.mutating"
+          (refresh)="poller.refresh()"
+        />
       }
     </header>
     @if (!host.profile) {
@@ -216,14 +233,50 @@ import { clustersRecordPath, clustersRoute } from "../operate-routes";
       } @else if (screen === "job" && job) {
         <weave-cluster-job-detail [page]="this" />
       } @else if (screen === "overview") {
-        <weave-cluster-overview [page]="this" />
+        <div
+          class="operate-tabs"
+          role="tablist"
+          aria-label="Clusters sections"
+          (keydown)="tabKey($event)"
+        >
+          @for (item of tabs; track item[0]) {
+            <button
+              type="button"
+              role="tab"
+              [id]="'clusters-tab-' + item[0]"
+              [attr.aria-controls]="'clusters-panel-' + item[0]"
+              [attr.aria-selected]="tab === item[0]"
+              [attr.tabindex]="tab === item[0] ? 0 : -1"
+              (click)="selectTab(item[0])"
+            >
+              {{ item[1] }}
+            </button>
+          }
+        </div>
+        <div
+          role="tabpanel"
+          [id]="'clusters-panel-' + tab"
+          [attr.aria-labelledby]="'clusters-tab-' + tab"
+        >
+          @switch (tab) {
+            @case ("targets") {
+              <weave-cluster-targets-tab [page]="this" />
+            }
+            @case ("jobs") {
+              <weave-cluster-jobs-tab [page]="this" />
+            }
+            @case ("runners") {
+              <weave-cluster-runners-tab [page]="this" />
+            }
+          }
+        </div>
       } @else {
         <p role="status">Loading selected resource…</p>
       }
     }
   `,
 })
-export class ClustersPage implements DoCheck, OnDestroy {
+export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   @Input({ required: true }) host!: App;
   private cdr = inject(ChangeDetectorRef);
   private element = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -319,17 +372,14 @@ export class ClustersPage implements DoCheck, OnDestroy {
   private alive = true;
   private detailSequence = 0;
   private jobReadSequence = 0;
-  private poll = setInterval(() => {
-    this.cdr.markForCheck();
-    if (
-      this.alive &&
-      document.visibilityState === "visible" &&
-      this.job &&
-      !terminalJobs.has(this.job.state) &&
-      !this.store.mutating
-    )
-      void this.refresh();
-  }, 10000);
+  /** Clusters reloads every 15 s, and every 2 s while a job runs. */
+  readonly poller = new Poller(() => this.pollOnce(), 15000);
+  tab: ClusterTab = "targets";
+  readonly tabs: [ClusterTab, string][] = [
+    ["targets", "Targets"],
+    ["jobs", "Jobs"],
+    ["runners", "Runners"],
+  ];
   get canRead() {
     return (
       !this.host.signInEnded &&
@@ -434,9 +484,12 @@ export class ClustersPage implements DoCheck, OnDestroy {
     this.store.setScope(scope, this.canRead, authority);
     if (scope && this.canRead) void this.readLocation();
   }
+  ngOnInit() {
+    this.poller.start(false);
+  }
   ngOnDestroy() {
     this.alive = false;
-    clearInterval(this.poll);
+    this.poller.stop();
     this.detailSequence++;
     this.store.setScope("", false);
   }
@@ -445,13 +498,14 @@ export class ClustersPage implements DoCheck, OnDestroy {
   }
   private async readLocation() {
     this.resetDetails();
-    const { collection, id } = clustersRoute(
+    const { collection, id, tab } = clustersRoute(
       location.pathname,
       location.search,
     );
+    this.tab = tab;
     if (!collection) {
       this.screen = "overview";
-      await this.refresh();
+      await this.poller.refresh();
       return;
     }
     this.screen = (
@@ -497,8 +551,77 @@ export class ClustersPage implements DoCheck, OnDestroy {
   async overview() {
     this.resetDetails();
     this.screen = "overview";
-    await this.router.navigateByUrl("/operate/clusters");
+    await this.router.navigateByUrl(clustersTabPath(this.tab));
+    await this.poller.refresh();
+  }
+  async selectTab(tab: ClusterTab) {
+    if (tab === this.tab) return;
+    this.tab = tab;
+    await this.router.navigateByUrl(clustersTabPath(tab), { replaceUrl: true });
+    await this.poller.refresh();
+  }
+  /** Arrow keys, Home and End move between the tabs (WAI-ARIA tabs pattern). */
+  tabKey(event: KeyboardEvent) {
+    const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    if (!keys.includes(event.key)) return;
+    event.preventDefault();
+    const order = this.tabs.map((item) => item[0]);
+    const index = order.indexOf(this.tab);
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? order.length - 1
+          : (index + (event.key === "ArrowRight" ? 1 : -1) + order.length) %
+            order.length;
+    void this.selectTab(order[next]);
+    queueMicrotask(() =>
+      document.getElementById(`clusters-tab-${order[next]}`)?.focus(),
+    );
+  }
+  /** One poll: skipped while a form is open, so a reload never resets it. */
+  private async pollOnce() {
+    if (
+      this.editing ||
+      this.editingAuthority ||
+      this.registering ||
+      this.planning ||
+      this.store.mutating
+    )
+      return;
     await this.refresh();
+    this.poller.setInterval(
+      this.screen === "job" && this.job && !terminalJobs.has(this.job.state)
+        ? 2000
+        : 15000,
+    );
+    if (this.error || Object.keys(this.store.errors).length)
+      throw new Error("Clusters could not load every section.");
+  }
+  /** A target's name, or "Target 1a2b3c4d" while targets are loading. */
+  targetName(id: string) {
+    return (
+      this.store.targets.find((target) => target.id === id)?.name ??
+      `Target ${shortId(id)}`
+    );
+  }
+  async revokeRunner(runner: Runner) {
+    if (runner.revoked || !this.host.can("target.manage", runner.target_id))
+      return;
+    const confirmed = await this.host.dialogs.confirm({
+      title: "Revoke this runner?",
+      message: `The runner for ${this.targetName(runner.target_id)} can't claim jobs any more, and jobs it is running lose their lease. A revoked runner is never revived: start a new runner to replace it.`,
+      confirmLabel: "Revoke runner",
+      danger: true,
+    });
+    if (!confirmed) return;
+    const result = await this.store.mutate<Runner>(
+      `deployment-runners/${runner.id}/revoke`,
+      undefined,
+    );
+    if (!result) return;
+    this.host.notify("Runner revoked.");
+    await this.poller.refresh();
   }
   async openTarget(value: Target, navigate = true) {
     this.resetDetails();
@@ -635,9 +758,14 @@ export class ClustersPage implements DoCheck, OnDestroy {
       }
     } else if (!this.plan)
       await Promise.all(
-        ["targets", "deployments", "jobs"].map((c) =>
-          this.store.load(c as Collection),
-        ),
+        (
+          {
+            targets: ["targets", "deployments", "runners"],
+            jobs: ["jobs"],
+            runners: ["runners", "targets"],
+            approvals: [],
+          } as Record<ClusterTab, Collection[]>
+        )[this.tab].map((c) => this.store.load(c)),
       );
     this.cdr.markForCheck();
   }

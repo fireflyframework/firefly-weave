@@ -218,7 +218,7 @@ export class OperationsStore {
   ): Promise<T | null> {
     if (!this.scope || !this.readable || this.mutating) return null;
     if (
-      !/^(deployment-targets|deployments|deployment-observations|deployment-plans|deployment-jobs)(\/[A-Za-z0-9-]+){0,2}$/.test(
+      !/^(deployment-targets|deployments|deployment-observations|deployment-plans|deployment-jobs|deployment-runners)(\/[A-Za-z0-9-]+){0,2}$/.test(
         path,
       )
     )
