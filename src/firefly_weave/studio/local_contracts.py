@@ -19,7 +19,6 @@
 These are Studio host payloads, so fields are camelCase like the existing host routes. The debug session routes keep
 the platform ``debug.*`` shapes and are not repeated here. Hosts serialize responses with
 ``model_dump(mode="json", by_alias=True, exclude_unset=True)``, so a field the simulator did not report is absent.
-The simulator's owners review every change to this module.
 """
 
 from typing import Annotated, Literal, Self
@@ -190,6 +189,7 @@ class ExecuteResponse(_HostBody):
     selectedScope: SelectedScope | None = None
     blocked: Blocked | None = None
     variables: JsonObjectData = Field(default_factory=dict)
+    # Debugger errors, such as a missing mock; problems with the definition are in compile.diagnostics.
     diagnostics: list[Diagnostic] = Field(default_factory=list)
 
     @model_validator(mode="after")

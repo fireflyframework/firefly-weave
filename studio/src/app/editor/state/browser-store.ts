@@ -15,11 +15,14 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Every key Studio keeps on this computer goes through this module: connected
-// work under `<profileId>:<subjectHash>:<tenantId>:<projectId>:`, local work
-// under `local:`, preferences that hold no workflow data under `ui:`. Signing
-// out of a platform, or removing it, purges that profile's keys. The desktop
-// app keeps the same keys in the Studio host store instead of the browser.
+// The key scheme for what the new editor will keep on this computer. Studio
+// doesn't use it yet: it keeps its drafts and preferences under the keys it
+// already has. Once the new editor ships, every key will go through this
+// module: connected work under `<profileId>:<subjectHash>:<tenantId>:<projectId>:`,
+// local work under `local:`, preferences that hold no workflow data under
+// `ui:`. Signing out of a platform, or removing it, will purge that profile's
+// keys. The desktop app will keep the same keys in the Studio host store
+// instead of the browser.
 
 export const STORE_KEY_PATTERN = /^[A-Za-z0-9:._-]{1,256}$/;
 export const LOCAL_PREFIX = "local:";

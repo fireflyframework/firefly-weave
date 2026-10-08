@@ -34,7 +34,7 @@ type JsonObject = { [key: string]: Json };
 
 // Studio host, simulated (camelCase).
 
-/** `node:<instance key or step ID>`, `agent:<step>`, `tool:<step>/<tool>`, `action:<ref>`, most specific first. */
+/** `node:<instance key or step ID>`, `agent:<instance key or step ID>`, `tool:<instance key or step ID>/<tool>`, `action:<ref>`, most specific first. */
 export type MockKey =
   | `node:${string}`
   | `action:${string}`
@@ -143,6 +143,7 @@ export interface ExecuteResponse {
   selectedScope?: SelectedScope;
   blocked?: Blocked;
   variables?: JsonObject;
+  /** Debugger errors, such as a missing mock; problems with the definition are in `compile.diagnostics`. */
   diagnostics?: Diagnostic[];
 }
 export type CheckCode =

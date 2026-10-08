@@ -104,10 +104,14 @@ catalog, and changes the definition only through `edit(changes, label)`, which
   `["spec"]` or `["metadata"]` alone is refused.
 - `value: undefined` deletes the key or list item. Its parent stays, so
   deleting the last field of `{"object": {...}}` leaves `{"object": {}}`.
-- A write at a list position past the end of the list is refused. Writing at
-  the position just after the last item appends.
-- A step's `id` and `kind` can't be edited: rename steps with Rename, which
-  rewrites references, and move steps on the canvas.
+- A list position is a number or `"-"`. Writing at the position just after the
+  last item, or at `"-"`, appends; a write past that is refused. When the list
+  isn't there yet, `"-"` or position 0 starts a one-item list and any other
+  position is refused. A position under a field that holds something other than
+  a list is refused.
+- A step's `id` and `kind` can't be edited, including those of steps inside a
+  case, a branch or a loop: rename steps with Rename, which rewrites
+  references, and move steps on the canvas.
 - A refused change throws `EditError`, and none of the call's changes apply.
 - One call is one undo step, and edits within 600 ms merge into it.
 
@@ -152,11 +156,13 @@ TypeScript types in `studio/src/app/editor/state/test-data.ts`.
   (`send[1]`, `support#2.1`), which overrides it for one iteration or
   activation. Lookups try the instance key first. An instance key is the step
   ID, then `[i]` per enclosing loop, `#` and dot-separated segments for repeated
-  activations, and `~n` for a loop's yields. A step ID is ASCII: an optional
-  `@`, then a letter or digit, then letters, digits and `_`, `.`, `:`, `@` and
-  `-`. A key that doesn't follow this grammar, such as `send mail` or `send[01]`,
-  is refused; `firefly_weave.contracts.instance_keys` defines it, and `$defs.key`
-  in the JSON Schema repeats it.
+  activations, and `~n` for a loop's yields. The step ID part of a key is ASCII:
+  an optional `@`, then a letter or digit, then letters, digits and `_`, `.`,
+  `:`, `@` and `-`. Authored step IDs are narrower, with only letters, digits,
+  `_`, `.` and `-`; the `@` and `:` forms are the platform's own IDs. A key that
+  doesn't follow this grammar, such as `send mail` or `send[01]`, is refused;
+  `firefly_weave.contracts.instance_keys` defines it, and `$defs.key` in the
+  JSON Schema repeats it.
 - **Frames.** A script with `frame` (`enrich`, `notify[2]/enrich`) applies only
   inside that sub-workflow.
 - **Source.** `source` is `manual`, `schema`, `simulated`, `test-call` or `run`
@@ -223,11 +229,12 @@ bodies are camelCase. The Python models are in
   `diagnostics` and `stubs`; any of the three lists can be empty. `blocked`
   names its `reason` (`missing_mock`, `signal`, `human`, `path`, `callee`)
   exactly when the status is `blocked`, and a definition that doesn't compile
-  reports `failed` with its diagnostics in `compile.diagnostics`. Each `trace`
-  entry names `nodeId` (the step ID) and `instanceKey` (`""` when it equals the
-  step ID), and `frame` inside a called workflow; `loops`, `frames` and
-  `selectedScope` describe loop progress, sub-workflow frames and the picked
-  iteration's roots.
+  reports `failed` with its diagnostics in `compile.diagnostics`. The
+  response's own `diagnostics` list holds debugger errors, such as a missing
+  mock. Each `trace` entry names `nodeId` (the step ID) and `instanceKey` (`""`
+  when it equals the step ID), and `frame` inside a called workflow; `loops`,
+  `frames` and `selectedScope` describe loop progress, sub-workflow frames and
+  the picked iteration's roots.
 - **Test data checks** report each entry by JSON pointer; refused entries name
   `WV-SCHEMA-SECRET_VALUE`, `WV-SCHEMA-CLASSIFICATION`,
   `WV-STUDIO-TESTDATA-SCHEMA` or `WV-STUDIO-TESTDATA-UNRESOLVED`.
@@ -298,8 +305,10 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
 
 ## Storage on this computer
 
-Every key Studio keeps on this computer goes through
-`studio/src/app/editor/state/browser-store.ts`:
+Every key the new editor keeps on this computer goes through
+`studio/src/app/editor/state/browser-store.ts`. These rules apply once the new
+editor ships; until then Studio keeps its drafts and preferences under the keys
+it already uses.
 
 | Prefix | Holds |
 | --- | --- |
@@ -319,7 +328,7 @@ Every key Studio keeps on this computer goes through
   preferences under `ui:`. Remembered run inputs (`weave-studio-run-input:`)
   can't be attributed to an account, so they are deleted.
 - The desktop app keeps the same keys in the Studio host store under its
-  configuration directory, so local drafts and test data survive quitting.
+  configuration directory instead of browser storage.
 
 ## Keyboard map
 
