@@ -86,6 +86,17 @@ def png_size(data: bytes) -> tuple[int, int]:
     return width, height
 
 
+def png_chunks(data: bytes) -> list[str]:
+    """The PNG's chunk types in file order."""
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+    kinds, at = [], 8
+    while at < len(data):
+        (length,) = struct.unpack(">I", data[at : at + 4])
+        kinds.append(data[at + 4 : at + 8].decode("ascii"))
+        at += 12 + length
+    return kinds
+
+
 def contrast(first: str, second: str) -> float:
     """WCAG 2.x contrast ratio, the formula studio/tests/design-tokens.test.ts uses."""
 
@@ -172,6 +183,23 @@ def test_windows_icon_holds_every_size_as_a_png_entry():
         assert png_size(data[offset : offset + length]) == (width or 256, height or 256)
         sizes.append(width or 256)
     assert sizes == [16, 24, 32, 48, 64, 256]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ("desktop/artwork/dmg-background.png", "assets/brand/social-preview.png", "desktop/src-tauri/icons/icon.ico"),
+)
+def test_rendered_pngs_show_at_their_pixel_size_without_a_density_chunk(path):
+    data = (ROOT / path).read_bytes()
+    images = [data]
+    if path.endswith(".ico"):
+        (count,) = struct.unpack("<H", data[4:6])
+        entries = (struct.unpack("<II", data[14 + 16 * index : 22 + 16 * index]) for index in range(count))
+        images = [data[offset : offset + length] for length, offset in entries]
+    # The composer renders at 4x or 8x before downscaling; a pHYs chunk would carry that density
+    # and macOS would draw the 720 x 440 DMG background at a quarter of its size.
+    for image in images:
+        assert set(png_chunks(image)) == {"IHDR", "IDAT", "IEND"}, "pixels only: no pHYs, iCCP or eXIf chunk"
 
 
 def test_macos_icon_holds_every_size_up_to_1024():

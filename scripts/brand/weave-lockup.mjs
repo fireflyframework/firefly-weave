@@ -224,7 +224,10 @@ async function png(drawing, width, height = width) {
   const intrinsic = Number(drawing.match(/^<svg[^>]*\swidth="([\d.]+)"/)?.[1] ?? viewBox[2]);
   const density = (72 * width * (width < 64 ? 8 : 4)) / intrinsic;
   const big = await sharp(Buffer.from(drawing), { density }).png().toBuffer();
-  return sharp(big).resize(width, height, { kernel: "lanczos3" }).png({ compressionLevel: 9 }).toBuffer();
+  const data = await sharp(big).resize(width, height, { kernel: "lanczos3" }).png({ compressionLevel: 9 }).toBuffer();
+  // Drop the 21-byte pHYs chunk: it records the supersample's density, so macOS would draw the PNG below 1x.
+  const at = data.indexOf("pHYs") - 4;
+  return at < 0 ? data : Buffer.concat([data.subarray(0, at), data.subarray(at + 21)]);
 }
 
 /** An ICO container with PNG entries, which Windows Vista and later read at every size. */
