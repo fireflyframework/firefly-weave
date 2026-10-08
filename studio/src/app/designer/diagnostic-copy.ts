@@ -155,6 +155,10 @@ const compiler: Record<string, Copy> = {
     text: "Nothing reads this step's output.",
     hint: "Use it in a later step or the workflow result, or delete the step.",
   },
+  UNSUPPORTED_FEATURE: {
+    text: "This version of Weave doesn't support this step or formula yet.",
+    hint: "Keep the workflow for a later version, or use the steps and formulas this version offers.",
+  },
 };
 
 const expression: Record<string, Copy> = {

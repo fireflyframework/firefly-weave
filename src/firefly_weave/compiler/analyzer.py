@@ -40,6 +40,7 @@ from firefly_weave.compiler.expressions import (
     measure_value,
     pointer_segments,
 )
+from firefly_weave.compiler.language_support import unsupported_uses
 from firefly_weave.compiler.llm import llm_action_valid, llm_input, llm_output_schema
 from firefly_weave.compiler.parser import ParsedSource
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
@@ -903,6 +904,20 @@ class _Analyzer:
             resource = self.catalog.resolve("Schema", name)
             if resource is not None:
                 self.resolved[("Schema", name)] = resource
+        # Constructs whose feature is not compiled yet stop here, before budgets and flow analysis read them.
+        unsupported = unsupported_uses(value)
+        for use in unsupported:
+            self.add(
+                Diagnostic(
+                    code="WV-COMP-UNSUPPORTED_FEATURE",
+                    severity="error",
+                    stage="semantic",
+                    path=use.path,
+                    message=use.message,
+                )
+            )
+        if unsupported:
+            return self.finish(model.kind, definition)
         if model.kind != "Workflow":
             self.manifest(value, "", partial=partial)
             return self.finish(model.kind, definition)
