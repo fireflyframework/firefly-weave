@@ -107,3 +107,8 @@ def test_desktop_release_notes_name_the_versions():
         f"numeric `{NUMERIC}`",
     ):
         assert phrase in notes, phrase
+
+
+def test_upgrades_table_has_a_row_for_every_alpha():
+    rows = set(re.findall(r"^\| alpha(\d+) \|", text("docs/operations/upgrades.md"), flags=re.MULTILINE))
+    assert {str(number) for number in range(4, ALPHA + 1)} - rows == set()
