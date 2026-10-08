@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Annotated, Literal, cast
 
-from pydantic import Field, model_validator
+from pydantic import AfterValidator, Field, model_validator
 
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.catalog import CatalogResource, FrozenDocument, ResourceKind
@@ -56,6 +56,7 @@ from firefly_weave.contracts.definitions import (
     load_definition,
 )
 from firefly_weave.contracts.diagnostics import Diagnostic, SourceRange
+from firefly_weave.contracts.language_features import LanguageFeature
 from firefly_weave.contracts.llm import LLMProfile
 from firefly_weave.contracts.values import JsonObject, JsonObjectData, JsonValue, UnicodeString
 
@@ -64,6 +65,14 @@ type NodeId = Annotated[UnicodeString, Field(min_length=1)]
 IR_VERSION = "weave/ir-v1alpha1"
 HUMAN_IR_VERSION = "weave/ir-v1alpha2"
 COMPARISON_IR_VERSION = "weave/ir-v1alpha3"
+# The IR version that carries language features (language spec 3.1); accepted from language milestone M1.
+IR_VERSION_EXTENSIONS = "weave/ir-v1alpha4"
+
+
+def _sorted_unique(features: list[LanguageFeature]) -> list[LanguageFeature]:
+    if features != sorted(set(features)):
+        raise ValueError("Language features must be sorted and unique")
+    return features
 
 
 class Dependency(ContractModel):
@@ -438,9 +447,15 @@ class ExecutableBase(ContractModel):
     dependencies: list[Dependency]
     schemas: dict[Digest, JsonObjectData]
     guards: list[Guard]
+    # Required language features: sorted, unique, omitted when empty, and part of the artifact digest.
+    features: Annotated[list[LanguageFeature], AfterValidator(_sorted_unique)] = Field(
+        default_factory=list, exclude_if=lambda value: not value, json_schema_extra={"uniqueItems": True}
+    )
 
     @model_validator(mode="after")
     def references(self) -> ExecutableBase:
+        if self.features and self.ir_version != IR_VERSION_EXTENSIONS:
+            raise ValueError("Language features require weave/ir-v1alpha4")
         identities = [(d.kind, d.reference) for d in self.dependencies]
         if len(set(identities)) != len(identities):
             raise ValueError("Duplicate dependency identity")
