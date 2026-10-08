@@ -299,7 +299,7 @@ def test_environment_round_trip(monkeypatch):
         json.dumps({"provider_id": "s3cr3t-value"}),
         json.dumps([{**entry(), "client_secret": "s3cr3t-value"}]),
         json.dumps([entry(scopes="s3cr3t-value")]),
-        json.dumps([entry(display_name="s3cr3t-value" * 4000)]),
+        pytest.param(json.dumps([entry(display_name="s3cr3t-value" * 4000)]), id="oversized-display-name"),
         json.dumps([entry(provider_id=f"s3cr3t-{index}") for index in range(9)]),
         b"[\xff s3cr3t-value]",
     ],

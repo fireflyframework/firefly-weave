@@ -40,7 +40,7 @@ Three objects decide every call, and each one has a different owner:
 
 | Object | Owner | What it fixes |
 | --- | --- | --- |
-| **Integration connection** | A person with `connection.manage`, per environment | The HTTPS origin (`baseUrl`), the authentication kind, the secret handles, and the allowed destinations |
+| **Integration connection** | A person with `connection.manage`, per environment | The HTTPS or HTTP origin (`baseUrl`), the authentication kind, the secret handles, and the allowed destinations |
 | **Action** | The author, published once | The method, the path template, declared parameters, the side effect, accepted and empty statuses, schemas, and timeout |
 | **Invocation input** | The workflow, on each run | Only values for the declared path, query, and header parameters, and the JSON body |
 
@@ -110,9 +110,9 @@ status policy.
 
 ### Connection and authentication
 
-The connection configuration contains a fixed HTTPS origin in `baseUrl` and an
-`auth` profile. Each authentication kind needs exactly these secret slots in
-`secretRef`; missing or surplus slots fail:
+The connection configuration contains a fixed `https://` or `http://` origin in
+`baseUrl` and an `auth` profile. Each authentication kind needs exactly these
+secret slots in `secretRef`; missing or surplus slots fail:
 
 | Auth kind | Nonsecret profile | Exact `secretRef` slots |
 | --- | --- | --- |
@@ -131,6 +131,13 @@ The connection configuration contains a fixed HTTPS origin in `baseUrl` and an
 - **Secret values.** A basic user name cannot contain a colon. Every secret
   header value is bounded and cannot contain control characters. Credential
   values never belong in config, Action input or output, or logs.
+- **Plain HTTP.** An `http://` origin is accepted exactly as on
+  `weave-http@1.0.0`, with or without credentials, and is not encrypted:
+  secret headers and bodies travel in plain text. Every such connection is
+  flagged: the connection test answers `"encrypted": false`, the CLI prints
+  `Not encrypted: requests to http://… travel in plain text.` on standard
+  error, and Studio shows a "Not encrypted" notice next to the API address.
+  Machine-token endpoints stay HTTPS-only.
 
 ### Request shaping
 
@@ -149,10 +156,13 @@ only the selected slots, and checks authority again immediately before dispatch.
 ### Network and transport
 
 - The existing pinned-DNS, pre-write peer, destination, and TLS policies apply.
-  Private and loopback destinations require an operator-approved range in
+  Connections use `https://` or `http://`; a public address needs no
+  private-origin entry. Private, loopback and CGNAT destinations require an
+  entry of the private-origin policy (`weave platform up
+  --allow-private-origin`) or an operator-approved range in the legacy
   `WEAVE_HTTP_PRIVATE_NETWORKS` (see [Configuration](../operations/configuration.md));
-  link-local, metadata, and Kubernetes service destinations are always refused.
-  Ambient proxies are disabled.
+  link-local, metadata (including `100.100.100.200`), and Kubernetes service
+  destinations are always refused. Ambient proxies are disabled.
 - All v2 redirects are rejected, including read redirects; no credential is
   forwarded to a redirect.
 - There are no hidden retries. Acquisition, I/O, and response processing share
@@ -175,7 +185,10 @@ credentials or sending requests. Its `ok` means that the local configuration
 passed, not that a provider authenticated or a destination is reachable.
 `weave connections test ID` runs it for a saved revision; its request file is
 optional. Installed `connector test --mode native` likewise tests composition,
-not a remote account.
+not a remote account. For a connection whose `baseUrl` is `http://`, the answer
+also carries `"encrypted": false` (`true` for `https://`; absent for connectors
+without an HTTP base URL), and the CLI prints the "Not encrypted" line on
+standard error.
 
 ## Checks before a run
 
@@ -270,10 +283,12 @@ reconciliation and permitted retry.
 
 V2 serialization, auth-slot and authority boundaries, response and outcome rules,
 and generated native package TLS execution are covered by local contract and TLS
-integration tests. On the local platform, a `GET /todos/{id}` Action ran to
-`succeeded` against the public demo API `https://jsonplaceholder.typicode.com`,
-both when built with `weave connector http-action` and when built with Studio's
-**New API action** builder; see
+integration tests, and plain-HTTP reach by an integration test against the
+in-process Acme fixture. On the local platform, the real-platform browser suite
+builds a `GET /orders/{id}/status` Action with Studio's **New API action**
+builder and runs it to `succeeded` against the local Acme fixture at
+`http://acme.acceptance.test:8080`, the origin approved with `weave platform up
+--allow-private-origin`, so no internet API is involved; see
 [Call a REST API without code](http-without-code.md). No commercial API account
 was contacted and no live compatibility with any provider is claimed.
 

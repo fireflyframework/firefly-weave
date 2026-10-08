@@ -209,8 +209,8 @@ _MESSAGES: dict[str, tuple[str, str]] = {
         "Declare a 2xx response with an application/json body or no content.",
     ),
     "SERVER": (
-        "The operation has no fixed HTTPS server.",
-        "Declare an https:// server URL without variables, credentials or query.",
+        "The operation has no fixed HTTPS or HTTP server.",
+        "Declare an https:// (or, not encrypted, http://) server URL without variables, credentials or query.",
     ),
 }
 _REASONS: dict[str, tuple[str, str]] = {
@@ -870,7 +870,7 @@ class _Importer:
         if not found:
             _fail("POLICY", servers_path)
         try:
-            origin, base_path = fixed_server(rule.server)
+            origin, base_path = fixed_server(rule.server, plain_http=True)
             template_names(path)
         except ValueError:
             _fail("POLICY", p)
@@ -1588,15 +1588,17 @@ def import_openapi(
 
 def _effective_server(value: dict[str, Any], item: dict[str, Any], operation: dict[str, Any]) -> str | None:
     servers = operation.get("servers", item.get("servers", value.get("servers", [])))
+    usable: list[str] = []
     for server in _items(servers):
         url = server.get("url") if isinstance(server, dict) else None
         if isinstance(url, str) and not _credential_url(url):
             try:
-                fixed_server(url)
+                fixed_server(url, plain_http=True)
             except ValueError:
                 continue
-            return url
-    return None
+            usable.append(url)
+    # Prefer an encrypted server; a plain-HTTP one is chosen only when the operation declares no HTTPS server.
+    return next((url for url in usable if url.lower().startswith("https://")), usable[0] if usable else None)
 
 
 def _effective_auth(value: dict[str, Any], operation: dict[str, Any]) -> dict[str, Any] | None:
@@ -1949,7 +1951,7 @@ def init_policy(
         if server is None or auth is None:
             continue
         plans[identifier] = server, auth
-        group = fixed_server(server)[0] + " " + canonical_bytes(auth).decode()
+        group = fixed_server(server, plain_http=True)[0] + " " + canonical_bytes(auth).decode()
         groups.setdefault(group, []).append(identifier)
     if not groups:
         return PolicyScaffold(ok=False, diagnostics=notes or [_diagnostic(_Failure("SECURITY", "/paths"), None, {})])

@@ -18,6 +18,27 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## Unreleased
+
+- No-code HTTP connections accept `http://` base URLs and warn that traffic is not encrypted.
+- Add development-only private origins to the Docker development platform:
+  `weave platform up --allow-private-origin ORIGIN` (repeatable) lets HTTP
+  connector actions and signed webhooks reach a local `http://` test service at
+  that exact origin on the installation's own egress network. The API reads the
+  approved entries from the read-only file named by `WEAVE_PRIVATE_ORIGINS_FILE`
+  and refuses to start when that file is malformed, a symbolic link, or writable
+  by other users.
+- Parse `WEAVE_HTTP_PRIVATE_NETWORKS`, `WEAVE_MAIL_PRIVATE_NETWORKS`, and the
+  PostgreSQL private and plaintext network settings strictly at startup: a CIDR
+  with host bits set, or more than 128 networks, in any of them stops the API.
+  Before, the HTTP and mail settings accepted a CIDR with host bits set and
+  failed the requests that used it, and the HTTP and PostgreSQL settings had no
+  limit. Reach is otherwise unchanged.
+- Connection test answers carry a new `encrypted` field. CLIs and SDKs older
+  than this release cannot read `weave connections test` answers for HTTP
+  connections from an upgraded server; upgrade the CLI and SDK together with the
+  server.
+
 ## 0.1.0a14
 
 - Add a detached Docker development platform through `weave platform up`,

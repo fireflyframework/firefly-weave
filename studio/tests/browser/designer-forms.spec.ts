@@ -23,7 +23,6 @@ SPDX-License-Identifier: Apache-2.0
 import { selectChoice } from "./support";
 import { test, expect, Locator, Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "yaml";
 import {
@@ -35,6 +34,7 @@ import {
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { chooseAction } from "./integrations-po";
+import { python, pythonAvailable } from "../python-path";
 
 const inspectorHeading = (page: Page) => page.locator(".inspector header h2");
 const draftErrors = (page: Page) =>
@@ -421,8 +421,7 @@ for (const viewport of [
       const bound = parse(await sourceText(page)).spec.steps[0].with;
       expect(bound.object.note).toEqual({ ref: "/input/region" });
       // What the form wrote compiles against the action's contract.
-      const python = resolve(process.cwd(), "../.venv/bin/python");
-      if (existsSync(python)) {
+      if (pythonAvailable()) {
         const result = JSON.parse(
           execFileSync(
             python,
