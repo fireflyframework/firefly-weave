@@ -31,16 +31,33 @@ export const LTR = {
   agentWidth: 208,
   /** Parallel fork and join bars. */
   bar: 20,
-  /** Room after a tile: its edge, the edge's "+" and a branch label. */
-  edge: 136,
-  lane: 208,
-  agentLane: 272,
+  /**
+   * Room after a tile: its edge, the edge's "+" and a path label that reads
+   * at 10 px down to 40%. With the tile, a 248-unit column.
+   */
+  edge: 152,
+  /**
+   * From one path to the next: a tile, then its label block (three lines,
+   * drawn larger below 92%) and a gap, at every zoom that shows labels.
+   */
+  lane: 224,
+  agentLane: 288,
   subNodeRow: 64,
+  /** A step's label block: 168 wide from 100% up… */
   label: 168,
+  /** …and below 100%, where its text draws larger: its column less a 16-unit gap. */
+  labelWide: 232,
   labelGap: 8,
+  /** One line of label text at 100%. */
+  line: 16,
+  /** Three lines: a name on up to two, then its subtitle. */
   labelHeight: 48,
-  /** "All branches done" under a join bar, centered on it. */
+  /** "All branches done" under a join bar, centered on it, on up to three lines. */
   joinLabel: 120,
+  /** A path label's bottom sits this far above its path's edge, clear of the edge's "+". */
+  pathLabelRise: 14,
+  /** "Add a step" under an empty path's slot, centered on it. */
+  slotLabel: 80,
   /**
    * A path that joins from another row turns this far before the join:
    * clear of the longest path's last "+" and of the join bar's label.
@@ -181,6 +198,7 @@ export interface LtrJoin {
   height: number;
   label: string;
 }
+/** A path's label: one line, LTR.line high at 100%, drawn larger from its bottom left corner. */
 export interface LtrLaneLabel {
   owner: string;
   text: string;
@@ -531,12 +549,14 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         leaves: null,
         enters: first,
       });
+      // Above the path's edge, from the handle's left to just before the
+      // path's first step or slot; drawn larger from its bottom left corner.
       layout.labels.push({
         owner,
         text: label,
-        x: output.x + 12,
-        y: y - 28,
-        width: lanesLeft - output.x - 20,
+        x: output.x - 6,
+        y: y - LTR.pathLabelRise - LTR.line,
+        width: lanesLeft - 8 - (output.x - 6),
       });
       if (!first) {
         layout.slots.push({
@@ -746,11 +766,13 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       add(tile.x, tile.y, tile.x + tile.width, tile.y + tile.height);
       continue;
     }
-    const labelLeft = tile.x + tile.width / 2 - LTR.label / 2;
+    // Its label block at its widest, at 100% or below.
+    const width = Math.max(LTR.label, labelWidth(0.5, tile.shape));
+    const labelLeft = tile.x + tile.width / 2 - width / 2;
     add(
       Math.min(tile.x, labelLeft),
       tile.y,
-      Math.max(tile.x + tile.width, labelLeft + LTR.label),
+      Math.max(tile.x + tile.width, labelLeft + width),
       tile.labelY + LTR.labelHeight,
     );
   }
@@ -829,10 +851,32 @@ export function levelOfDetail(zoom: number): LevelOfDetail {
 /**
  * How much larger the text under a tile is drawn, so a name (13 px) never
  * shows below 12 px on screen and its subtitle (12 px) never below 11 px.
- * 1 from 12/13 (about 92%) up. The text grows, its block's column doesn't.
+ * 1 from 12/13 (about 92%) up. The text grows inside its block, which keeps
+ * to its column (labelWidth).
  */
 export function labelScale(zoom: number): number {
   return Math.max(1, 12 / (13 * zoom));
+}
+
+/**
+ * A step's label block width in canvas units: 168 from 100% up; below, its
+ * whole column less a visible gap, so a name has two lines of room. A
+ * parallel step's bar is 76 units narrower than a tile, and so is its block.
+ */
+export function labelWidth(zoom: number, shape: TileShape = "square"): number {
+  if (zoom >= 1) return LTR.label;
+  return shape === "fork"
+    ? LTR.labelWide - (LTR.tile - LTR.bar)
+    : LTR.labelWide;
+}
+
+/**
+ * How much larger path labels and "All branches done" are drawn, so they
+ * never show below 10 px on screen. 1 from 10/12 (about 83%) up, where they
+ * are 12 px.
+ */
+export function pathLabelScale(zoom: number): number {
+  return Math.max(1, 10 / (12 * zoom));
 }
 
 /**

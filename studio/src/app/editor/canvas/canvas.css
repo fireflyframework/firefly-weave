@@ -232,17 +232,22 @@ weave-canvas-view,
    crosses it never runs through the text. The block lets the pointer
    through; its lines take it, so a cut-off name or subtitle shows in full
    in its tooltip. Below about 92% zoom the text draws larger by
-   --label-scale, so names never show below 12 px on screen, while the
-   block keeps to its 168-unit column: a longer line ends in an ellipsis. */
+   --label-scale, so names never show below 12 px on screen. The block
+   keeps to its column, --label-width canvas units wide: 168 from 100% up,
+   the column less a gap below (layout-ltr's labelWidth). */
 .canvas-v2 .tile-label {
   position: absolute;
-  left: calc(50% - 84px);
-  width: calc(168px / var(--label-scale, 1));
+  left: calc(50% - var(--label-width, 168px) / 2);
+  width: calc(var(--label-width, 168px) / var(--label-scale, 1));
   display: grid;
   text-align: center;
   pointer-events: none;
   transform: scale(var(--label-scale, 1));
   transform-origin: top left;
+}
+/* A parallel step's bar is narrower than a tile, and so is its column. */
+.canvas-v2 .tile-body[data-shape="fork"] ~ .tile-label {
+  --label-width: var(--fork-label-width, 168px);
 }
 .canvas-v2 .tile-label strong,
 .canvas-v2 .tile-label span {
@@ -252,15 +257,21 @@ weave-canvas-view,
   box-sizing: border-box;
   padding: 0 4px;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
   background: var(--canvas);
 }
+/* A name wraps after its hyphens (anywhere, as a last resort) onto two
+   lines before it ends in an ellipsis; its subtitle keeps to one line. */
 .canvas-v2 .tile-label strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
   font: var(--type-label);
   color: var(--text);
 }
 .canvas-v2 .tile-label span {
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font: var(--type-caption);
   color: var(--muted);
 }
@@ -346,27 +357,35 @@ weave-canvas-view,
   background: var(--hover);
   color: var(--text);
 }
-/* Centered under the slot, drawn larger like a step's label: the room
-   below an empty path's slot is free, so it always shows whole. */
+/* Centered under the slot in an 80 px box (LTR.slotLabel), drawn larger
+   like a step's label: the room below an empty path's slot is free, so it
+   always shows whole. */
 .canvas-v2 .lane-slot-label {
   position: absolute;
   top: calc(100% + 4px);
-  left: 50%;
-  width: max-content;
-  transform: translateX(-50%) scale(var(--label-scale, 1));
+  left: calc(50% - 40px);
+  width: 80px;
+  overflow: hidden;
+  transform: scale(var(--label-scale, 1));
   transform-origin: top center;
   font: var(--type-caption);
   color: var(--muted);
+  text-align: center;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* Paths and joins. A path's label is plain text, not the classic
    canvas's pill, so its box is reset here; it keeps the pointer, so a
-   cut-off condition shows in full in its tooltip. */
+   cut-off condition shows in full in its tooltip. It sits above its path's
+   edge in a box --path-label-width canvas units wide, and below about 83%
+   zoom draws larger from its bottom left corner by --path-label-scale, so
+   it never shows below 10 px on screen. */
 .canvas-v2 .branch-label {
   position: absolute;
   bottom: auto;
   z-index: 2;
+  width: calc(var(--path-label-width) / var(--path-label-scale, 1));
   max-width: none;
   box-sizing: border-box;
   padding: 0;
@@ -378,6 +397,8 @@ weave-canvas-view,
   text-overflow: ellipsis;
   font: var(--type-caption);
   color: var(--muted);
+  transform: scale(var(--path-label-scale, 1));
+  transform-origin: bottom left;
 }
 .canvas-v2 .join-bar {
   position: absolute;
@@ -389,19 +410,22 @@ weave-canvas-view,
   border-radius: var(--radius-sm);
   background: var(--node-bg);
 }
-/* At most LTR.joinLabel wide: paths that join from below turn clear of it. */
+/* Centered under its bar in a box LTR.joinLabel (120) units wide, so
+   paths that join from below turn clear of it. Like a path's label it
+   draws larger by --path-label-scale; then it wraps, up to three lines. */
 .canvas-v2 .join-label {
   position: absolute;
   top: calc(100% + 8px);
-  left: 50%;
-  width: max-content;
-  max-width: 120px;
-  box-sizing: border-box;
-  padding: 0 4px;
+  left: calc(50% - 60px);
+  width: calc(120px / var(--path-label-scale, 1));
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  transform: translateX(-50%);
+  overflow-wrap: anywhere;
+  text-align: center;
+  transform: scale(var(--path-label-scale, 1));
+  transform-origin: top left;
   background: var(--canvas);
   font: var(--type-caption);
   color: var(--muted);

@@ -180,10 +180,10 @@ export class CanvasPage {
   }
 }
 
-/** Opens a workflow file with the new editor on. */
+/** Opens a workflow file (a path, or a file made in the test) with the new editor on. */
 export async function openWorkflow(
   page: Page,
-  file = vendorPayment,
+  file: Parameters<Locator["setInputFiles"]>[0] = vendorPayment,
 ): Promise<CanvasPage> {
   await useNewEditor(page);
   await offline(page);

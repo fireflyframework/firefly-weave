@@ -54,6 +54,9 @@ SPDX-License-Identifier: Apache-2.0
       class="graph-flow"
       [style.--zoom]="view.zoom"
       [style.--label-scale]="labelScale()"
+      [style.--label-width.px]="labelWidth()"
+      [style.--fork-label-width.px]="forkLabelWidth()"
+      [style.--path-label-scale]="pathLabelScale()"
       (fFullRendered)="fitIfNew()"
       (scroll)="scrolled($event)"
     >
@@ -81,7 +84,7 @@ SPDX-License-Identifier: Apache-2.0
               [attr.data-owner]="label.owner"
               [style.left.px]="label.x"
               [style.top.px]="label.y"
-              [style.width.px]="label.width"
+              [style.--path-label-width.px]="label.width"
               [attr.title]="label.text"
               aria-hidden="true"
               >{{ label.text }}</span

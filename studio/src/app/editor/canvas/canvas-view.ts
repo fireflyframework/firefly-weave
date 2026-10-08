@@ -54,10 +54,12 @@ import {
   LTR,
   edgePath,
   labelScale,
+  labelWidth,
   layoutLtr,
   levelOfDetail,
   midpoint,
   openView,
+  pathLabelScale,
   type Insertion,
   type LtrLayout,
   type LtrTile,
@@ -236,6 +238,17 @@ export class CanvasView implements OnInit, DoCheck {
   /** Text under tiles draws this much larger, so names stay readable. */
   labelScale() {
     return labelScale(this.view.zoom);
+  }
+  /** A step's label block width, and a parallel step's, in canvas units. */
+  labelWidth() {
+    return labelWidth(this.view.zoom);
+  }
+  forkLabelWidth() {
+    return labelWidth(this.view.zoom, "fork");
+  }
+  /** Path labels and "All branches done" draw this much larger, never below 10 px. */
+  pathLabelScale() {
+    return pathLabelScale(this.view.zoom);
   }
   /** The tile that takes Tab: the selected step, else the first tile. */
   active(): string {

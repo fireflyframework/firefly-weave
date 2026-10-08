@@ -23,10 +23,12 @@ import {
   edgePath,
   fitView,
   labelScale,
+  labelWidth,
   layoutLtr,
   levelOfDetail,
   midpoint,
   openView,
+  pathLabelScale,
   type LtrEdge,
   type LtrLayout,
   type LtrOptions,
@@ -80,6 +82,162 @@ const handle = (layout: LtrLayout, key: string) =>
 const edge = (layout: LtrLayout, key: string) =>
   layout.edges.find((item) => item.key === key)!;
 
+interface Box {
+  what: string;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+const box = (
+  what: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): Box => ({ what, left: x, top: y, right: x + width, bottom: y + height });
+const overlaps = (a: Box, b: Box) =>
+  a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+/** Whether a path of straight segments runs through a box (touching isn't). */
+const crosses = (points: readonly { x: number; y: number }[], other: Box) =>
+  points.slice(1).some((to, i) => {
+    const from = points[i];
+    return (
+      Math.min(from.x, to.x) < other.right &&
+      Math.max(from.x, to.x) > other.left &&
+      Math.min(from.y, to.y) < other.bottom &&
+      Math.max(from.y, to.y) > other.top
+    );
+  });
+
+/**
+ * Every label as the canvas draws it at this zoom, in canvas units, at its
+ * largest: a step's block holds a name on two lines and its subtitle, a
+ * path label one line, "All branches done" up to three lines, and an empty
+ * path's "Add a step" one line in its 80 px box.
+ */
+function drawnLabels(layout: LtrLayout, zoom: number): Box[] {
+  const scale = labelScale(zoom);
+  const path = pathLabelScale(zoom);
+  return [
+    ...layout.tiles.flatMap((item) => {
+      if (item.kind === "end") return [];
+      const width = labelWidth(zoom, item.shape);
+      return [
+        box(
+          `${item.id}'s label`,
+          item.x + item.width / 2 - width / 2,
+          item.labelY,
+          width,
+          LTR.labelHeight * scale,
+        ),
+      ];
+    }),
+    ...layout.labels.map((label) =>
+      box(
+        `${label.owner} label`,
+        label.x,
+        label.y + LTR.line - LTR.line * path,
+        label.width,
+        LTR.line * path,
+      ),
+    ),
+    ...layout.joins.map((join) =>
+      box(
+        `${join.id}'s join label`,
+        join.x + join.width / 2 - LTR.joinLabel / 2,
+        join.y + join.height + LTR.labelGap,
+        LTR.joinLabel,
+        3 * LTR.line * path,
+      ),
+    ),
+    ...layout.slots.map((slot) =>
+      box(
+        `${slot.owner}'s Add a step`,
+        slot.x + LTR.slot / 2 - (LTR.slotLabel * scale) / 2,
+        slot.y + LTR.slot + 4,
+        LTR.slotLabel * scale,
+        LTR.line * scale,
+      ),
+    ),
+  ];
+}
+
+/** Everything a label must keep clear of: steps, handles, "+", slots, joins and path ends. */
+function obstaclesOf(layout: LtrLayout): Box[] {
+  return [
+    ...layout.tiles.flatMap((item) => [
+      box(item.id, item.x, item.y, item.width, item.height),
+      ...(item.kind === "trigger"
+        ? []
+        : [
+            box(
+              `${item.id}'s input`,
+              item.x - 6,
+              item.y + item.height / 2 - 6,
+              12,
+              12,
+            ),
+          ]),
+    ]),
+    ...layout.handles.flatMap((output) => [
+      box(`${output.key} handle`, output.x - 6, output.y - 6, 12, 12),
+      ...(output.plus
+        ? [
+            box(
+              `${output.key}'s +`,
+              output.plus.x - 12,
+              output.plus.y - 12,
+              24,
+              24,
+            ),
+          ]
+        : []),
+    ]),
+    ...layout.edges.flatMap((item) => {
+      if (!item.insert) return [];
+      const mid = midpoint(item);
+      return [box(`${item.key}'s +`, mid.x - 12, mid.y - 12, 24, 24)];
+    }),
+    ...layout.slots.map((slot) =>
+      box(`${slot.owner} slot`, slot.x, slot.y, LTR.slot, LTR.slot),
+    ),
+    ...layout.joins.map((join) =>
+      box(`${join.id}'s join`, join.x, join.y, join.width, join.height),
+    ),
+    ...layout.terminals.map((end) =>
+      box(`${end.step}'s path end`, end.x - 6, end.y - 6, 12, 12),
+    ),
+  ];
+}
+
+/** The vendor payment workflow, every template, and a few shapes they don't have. */
+function workflowsToCheck(): [string, Workflow][] {
+  const decision = createStep("switch", "decide-on-the-request");
+  const parallel = createStep("parallel", "run-both-checks");
+  const nested = createStep("switch", "route-by-amount");
+  (nested["cases"] as { steps: Step[] }[])[0].steps.push(
+    createStep("transform", "reconcile-vendor-ledgers"),
+    createStep("parallel", "notify-in-parallel"),
+  );
+  (nested["default"] as { steps: Step[] }).steps.push(
+    createStep("switch", "second-decision"),
+    createStep("fail", "stop-the-payment"),
+  );
+  return [
+    ["vendor-payment-approval", fixture],
+    ...workflowTemplates.map((template): [string, Workflow] => [
+      template.id,
+      parse(template.yaml) as Workflow,
+    ]),
+    ["new decision and parallel step", workflowOf([decision, parallel])],
+    [
+      "nested groups",
+      workflowOf([createStep("transform", "prepare-the-payment"), nested]),
+    ],
+  ];
+}
+
 describe("the left-to-right layout", () => {
   it("places the trigger in the first column and the main sequence on row 0 after it", () => {
     const layout = layoutLtr(fixture, options());
@@ -90,7 +248,7 @@ describe("the left-to-right layout", () => {
       height: 96,
     });
     const main = ["prepare-request", "approval", "route", "record-result"];
-    expect(main.map((id) => tile(layout, id).x)).toEqual([328, 560, 792, 1936]);
+    expect(main.map((id) => tile(layout, id).x)).toEqual([344, 592, 840, 2080]);
     expect(main.map((id) => tile(layout, id).y)).toEqual([96, 96, 96, 96]);
     expect(tile(layout, "approval")).toMatchObject({
       shape: "square",
@@ -111,33 +269,33 @@ describe("the left-to-right layout", () => {
         return [output.x, output.y, output.label, output.insert];
       }),
     ).toEqual([
-      [908, 144, "Approve", { owner: "route/case 1", index: 0 }],
-      [908, 560, "Reject", { owner: "route/case 2", index: 0 }],
-      [908, 768, "Otherwise", { owner: "route/default", index: 0 }],
+      [956, 144, "Approve", { owner: "route/case 1", index: 0 }],
+      [956, 592, "Reject", { owner: "route/case 2", index: 0 }],
+      [956, 816, "Otherwise", { owner: "route/default", index: 0 }],
     ]);
     expect(
       layout.labels
         .filter((label) => label.owner.startsWith("route/"))
         .map((label) => [label.text, label.x, label.y, label.width]),
     ).toEqual([
-      ["Approve", 920, 116, 96],
-      ["Reject", 920, 532, 96],
-      ["Otherwise", 920, 740, 96],
+      ["Approve", 950, 114, 130],
+      ["Reject", 950, 562, 130],
+      ["Otherwise", 950, 786, 130],
     ]);
     expect([
       tile(layout, "pay-vendor").x,
       tile(layout, "pay-vendor").y,
       tile(layout, "rejected").y,
-    ]).toEqual([1024, 96, 512]);
+    ]).toEqual([1088, 96, 544]);
     expect(handle(layout, "route:out")).toMatchObject({
-      x: 1800,
+      x: 1928,
       y: 144,
       insert: { owner: "root", index: 3 },
       plus: null,
     });
     expect(edge(layout, "route>record-result")).toMatchObject({
-      a: { x: 1806, y: 144 },
-      b: { x: 1936, y: 144 },
+      a: { x: 1934, y: 144 },
+      b: { x: 2080, y: 144 },
       insert: { owner: "root", index: 3 },
       name: "Insert a step between route and record-result",
       leaves: null,
@@ -145,8 +303,8 @@ describe("the left-to-right layout", () => {
     });
     expect(edge(layout, "route>route:case 2")).toMatchObject({
       shape: "fan",
-      a: { x: 888, y: 144 },
-      b: { x: 902, y: 560 },
+      a: { x: 936, y: 144 },
+      b: { x: 950, y: 592 },
       insert: null,
       enters: "rejected",
     });
@@ -155,7 +313,7 @@ describe("the left-to-right layout", () => {
   it("draws a parallel step as a fork bar, one lane per branch and a join bar", () => {
     const layout = layoutLtr(fixture, options());
     expect(tile(layout, "pay-and-notify")).toMatchObject({
-      x: 1256,
+      x: 1336,
       y: 96,
       width: 20,
       height: 96,
@@ -171,20 +329,20 @@ describe("the left-to-right layout", () => {
         handle(layout, key).label,
       ]),
     ).toEqual([
-      [1296, 144, "ledger"],
-      [1296, 352, "email"],
+      [1376, 144, "ledger"],
+      [1376, 368, "email"],
     ]);
     expect([
       card(tile(layout, "post-ledger-entry")),
       card(tile(layout, "send-confirmation")),
     ]).toEqual([
-      { x: 1412, y: 96, width: 96, height: 96 },
-      { x: 1412, y: 304, width: 96, height: 96 },
+      { x: 1508, y: 96, width: 96, height: 96 },
+      { x: 1508, y: 320, width: 96, height: 96 },
     ]);
     expect(layout.joins).toEqual([
       {
         id: "pay-and-notify",
-        x: 1644,
+        x: 1756,
         y: 96,
         width: 20,
         height: 96,
@@ -192,17 +350,17 @@ describe("the left-to-right layout", () => {
       },
     ]);
     expect(handle(layout, "pay-and-notify:out")).toMatchObject({
-      x: 1664,
+      x: 1776,
       y: 144,
-      plus: { x: 1704, y: 144 },
+      plus: { x: 1816, y: 144 },
       insert: { owner: "route/case 1", index: 2 },
     });
     expect(
       edge(layout, "send-confirmation>$join:pay-and-notify"),
     ).toMatchObject({
       shape: "merge",
-      a: { x: 1514, y: 352 },
-      b: { x: 1644, y: 144 },
+      a: { x: 1610, y: 368 },
+      b: { x: 1756, y: 144 },
       insert: null,
       leaves: "send-confirmation",
       enters: null,
@@ -211,8 +369,8 @@ describe("the left-to-right layout", () => {
       edge(layout, "post-ledger-entry>$join:pay-and-notify"),
     ).toMatchObject({
       shape: "curve",
-      a: { x: 1514, y: 144 },
-      b: { x: 1644, y: 144 },
+      a: { x: 1610, y: 144 },
+      b: { x: 1756, y: 144 },
     });
   });
 
@@ -222,7 +380,7 @@ describe("the left-to-right layout", () => {
       shape: "octagon",
       after: null,
     });
-    expect(layout.terminals).toEqual([{ step: "rejected", x: 1144, y: 560 }]);
+    expect(layout.terminals).toEqual([{ step: "rejected", x: 1208, y: 592 }]);
     expect(layout.handles.some((item) => item.tile === "rejected")).toBe(false);
     expect(
       layout.edges.filter((item) => item.key.startsWith("rejected>")),
@@ -235,24 +393,24 @@ describe("the left-to-right layout", () => {
       {
         owner: "route/default",
         tile: "route",
-        x: 1024,
-        y: 736,
+        x: 1088,
+        y: 784,
         label: "Otherwise",
         name: "Add a step to path Otherwise of route",
         insert: { owner: "route/default", index: 0 },
       },
     ]);
     expect(edge(layout, "route:default>$slot:route/default")).toMatchObject({
-      a: { x: 914, y: 768 },
-      b: { x: 1024, y: 768 },
+      a: { x: 962, y: 816 },
+      b: { x: 1088, y: 816 },
       insert: null,
       leaves: null,
       enters: null,
     });
     expect(edge(layout, "$slot:route/default>$join:route")).toMatchObject({
       shape: "merge",
-      a: { x: 1088, y: 768 },
-      b: { x: 1794, y: 144 },
+      a: { x: 1152, y: 816 },
+      b: { x: 1922, y: 144 },
     });
   });
 
@@ -265,25 +423,25 @@ describe("the left-to-right layout", () => {
     ).toEqual([
       [
         "post-ledger-entry:out",
-        { x: 1548, y: 144 },
+        { x: 1644, y: 144 },
         { owner: "pay-and-notify/ledger", index: 1 },
         "Add a step after post-ledger-entry",
       ],
       [
         "send-confirmation:out",
-        { x: 1548, y: 352 },
+        { x: 1644, y: 368 },
         { owner: "pay-and-notify/email", index: 1 },
         "Add a step after send-confirmation",
       ],
       [
         "pay-and-notify:out",
-        { x: 1704, y: 144 },
+        { x: 1816, y: 144 },
         { owner: "route/case 1", index: 2 },
         "Add a step after pay-and-notify",
       ],
       [
         "record-result:out",
-        { x: 2072, y: 144 },
+        { x: 2216, y: 144 },
         { owner: "root", index: 4 },
         "Add a step after record-result",
       ],
@@ -348,7 +506,7 @@ describe("the left-to-right layout", () => {
   it("ends the main sequence with End and bounds every tile, label and +", () => {
     const layout = layoutLtr(fixture, options());
     expect(tile(layout, "$end")).toMatchObject({
-      x: 2168,
+      x: 2328,
       y: 124,
       width: 40,
       height: 40,
@@ -356,17 +514,17 @@ describe("the left-to-right layout", () => {
       after: null,
     });
     expect(edge(layout, "record-result>$end")).toMatchObject({
-      a: { x: 2038, y: 144 },
-      b: { x: 2168, y: 144 },
+      a: { x: 2182, y: 144 },
+      b: { x: 2328, y: 144 },
       insert: null,
       leaves: "record-result",
       enters: "$end",
     });
     expect(layout.bounds).toEqual({
-      minX: 60,
+      minX: 28,
       minY: 96,
-      maxX: 2208,
-      maxY: 824,
+      maxX: 2368,
+      maxY: 872,
     });
   });
 
@@ -437,7 +595,7 @@ describe("the left-to-right layout", () => {
       ["fail", "octagon", 96],
     ]);
     expect(tile(layout, "s9").role).toBe("app");
-    expect(tile(layout, "s9").x - tile(layout, "s8").x).toBe(208 + 136);
+    expect(tile(layout, "s9").x - tile(layout, "s8").x).toBe(208 + 152);
   });
 
   it("puts an AI agent's sub-node row between its card and its label, and gives its lane more room", () => {
@@ -453,7 +611,7 @@ describe("the left-to-right layout", () => {
       options({ slots: (kind) => (kind === "agent" ? slots : []) }),
     );
     expect(tile(layout, "helper")).toMatchObject({
-      x: 328,
+      x: 344,
       y: 96,
       width: 208,
       labelY: 264,
@@ -466,33 +624,33 @@ describe("the left-to-right layout", () => {
             id: "model",
             label: "Model*",
             required: true,
-            x: 268,
+            x: 284,
             y: 224,
-            handle: { x: 340, y: 192 },
+            handle: { x: 356, y: 192 },
           },
           {
             id: "memory",
             label: "Memory",
             required: false,
-            x: 352,
+            x: 368,
             y: 224,
-            handle: { x: 390, y: 192 },
+            handle: { x: 406, y: 192 },
           },
           {
             id: "tools",
             label: "Tools",
             required: false,
-            x: 436,
+            x: 452,
             y: 224,
-            handle: { x: 474, y: 192 },
+            handle: { x: 490, y: 192 },
           },
           {
             id: "output",
             label: "Output",
             required: false,
-            x: 520,
+            x: 536,
             y: 224,
-            handle: { x: 524, y: 192 },
+            handle: { x: 540, y: 192 },
           },
         ],
       },
@@ -503,7 +661,7 @@ describe("the left-to-right layout", () => {
       workflowOf([decision]),
       options({ slots: () => slots }),
     );
-    expect(handle(nested, "route:default").y).toBe(96 + 272 + 48);
+    expect(handle(nested, "route:default").y).toBe(96 + 288 + 48);
   });
 
   it("gives a new decision a Case 1 and an Otherwise output, each with an empty lane", () => {
@@ -647,62 +805,9 @@ describe("the left-to-right layout", () => {
   });
 
   it("never routes a path into its join across a step, a label, a slot or another path's +", () => {
-    interface Box {
-      what: string;
-      left: number;
-      top: number;
-      right: number;
-      bottom: number;
-    }
-    const box = (
-      what: string,
-      x: number,
-      y: number,
-      width: number,
-      height: number,
-    ): Box => ({ what, left: x, top: y, right: x + width, bottom: y + height });
-    const workflows: [string, Workflow][] = [
-      ["vendor-payment-approval", fixture],
-      ...workflowTemplates.map((template): [string, Workflow] => [
-        template.id,
-        parse(template.yaml) as Workflow,
-      ]),
-    ];
     let merges = 0;
-    for (const [name, workflow] of workflows) {
+    for (const [name, workflow] of workflowsToCheck()) {
       const layout = layoutLtr(workflow, options());
-      const obstacles: Box[] = [
-        ...layout.tiles.flatMap((item) => [
-          box(item.id, item.x, item.y, item.width, item.height),
-          ...(item.kind === "end"
-            ? []
-            : [
-                box(
-                  `${item.id}'s label`,
-                  item.x + item.width / 2 - LTR.label / 2,
-                  item.labelY,
-                  LTR.label,
-                  LTR.labelHeight,
-                ),
-              ]),
-        ]),
-        ...layout.joins.flatMap((join) => [
-          box(`${join.id}'s join`, join.x, join.y, join.width, join.height),
-          box(
-            `${join.id}'s join label`,
-            join.x + join.width / 2 - LTR.joinLabel / 2,
-            join.y + join.height + LTR.labelGap,
-            LTR.joinLabel,
-            16,
-          ),
-        ]),
-        ...layout.labels.map((label) =>
-          box(`${label.owner} label`, label.x, label.y, label.width, 16),
-        ),
-        ...layout.slots.map((slot) =>
-          box(`${slot.owner} slot`, slot.x, slot.y, LTR.slot, LTR.slot + 24),
-        ),
-      ];
       for (const item of layout.edges.filter(
         (edge) => edge.key.includes(">$join:") && edge.a.y !== edge.b.y,
       )) {
@@ -715,33 +820,64 @@ describe("the left-to-right layout", () => {
           { x: turn, y: item.b.y },
           item.b,
         ];
-        const pluses = layout.handles
-          .filter((output) => output.plus && output.tile !== item.tile)
-          .map((output) =>
-            box(
-              `${output.key}'s +`,
-              output.plus!.x - 12,
-              output.plus!.y - 12,
-              24,
-              24,
-            ),
-          );
-        for (const obstacle of [...obstacles, ...pluses])
-          for (let i = 1; i < points.length; i++) {
-            const [from, to] = [points[i - 1], points[i]];
-            const crosses =
-              Math.min(from.x, to.x) < obstacle.right &&
-              Math.max(from.x, to.x) > obstacle.left &&
-              Math.min(from.y, to.y) < obstacle.bottom &&
-              Math.max(from.y, to.y) > obstacle.top;
+        // At 100% and at the zooms that draw labels larger. Its own "+"
+        // sits on it: the + that follows the last step of its path.
+        for (const zoom of [1, 0.5, 0.4])
+          for (const obstacle of [
+            ...obstaclesOf(layout),
+            ...drawnLabels(layout, zoom),
+          ].filter((other) => other.what !== `${item.tile}:out's +`))
             expect(
-              crosses,
-              `${name}: ${item.key} crosses ${obstacle.what}`,
+              crosses(points, obstacle),
+              `${name} at ${zoom}: ${item.key} crosses ${obstacle.what}`,
             ).toBe(false);
-          }
       }
     }
-    expect(merges).toBeGreaterThan(2);
+    expect(merges).toBeGreaterThan(4);
+  });
+
+  it("fans a group out to its outputs clear of every step and label but the group's own, whose text sits on the canvas color", () => {
+    let fans = 0;
+    for (const [name, workflow] of workflowsToCheck()) {
+      const layout = layoutLtr(workflow, options());
+      for (const item of layout.edges.filter((edge) => edge.shape === "fan")) {
+        fans++;
+        const turn = item.a.x + (item.b.x - item.a.x) / 2;
+        const points = [
+          item.a,
+          { x: turn, y: item.a.y },
+          { x: turn, y: item.b.y },
+          item.b,
+        ];
+        for (const zoom of [1, 0.5, 0.4])
+          for (const obstacle of [
+            ...obstaclesOf(layout),
+            ...drawnLabels(layout, zoom),
+          ].filter((other) => other.what !== `${item.tile}'s label`))
+            expect(
+              crosses(points, obstacle),
+              `${name} at ${zoom}: ${item.key} crosses ${obstacle.what}`,
+            ).toBe(false);
+      }
+    }
+    expect(fans).toBeGreaterThan(8);
+  });
+
+  it("keeps every label clear of steps, handles, +, slots, joins and other labels at 40% and 50%", () => {
+    for (const [name, workflow] of workflowsToCheck()) {
+      const layout = layoutLtr(workflow, options());
+      for (const zoom of [0.5, 0.4]) {
+        const labels = drawnLabels(layout, zoom);
+        const obstacles = obstaclesOf(layout);
+        labels.forEach((label, i) => {
+          for (const other of [...labels.slice(i + 1), ...obstacles])
+            expect(
+              overlaps(label, other),
+              `${name} at ${zoom}: ${label.what} overlaps ${other.what}`,
+            ).toBe(false);
+        });
+      }
+    }
   });
 
   it("drops labels below 40% and draws plain tiles below 30%", () => {
@@ -773,13 +909,63 @@ describe("the left-to-right layout", () => {
       expect(13 * scale * zoom).toBeGreaterThanOrEqual(12 - 1e-9);
       expect(12 * scale * zoom).toBeGreaterThanOrEqual(11);
     }
-    // At 40%, the lowest zoom that shows labels, the two 16 px lines still
-    // end above the tile of the next path down.
-    const drawn = 2 * 16 * labelScale(0.4);
-    expect(LTR.tile + LTR.labelGap + drawn).toBeLessThan(LTR.lane);
-    expect(LTR.tile + LTR.subNodeRow + LTR.labelGap + drawn).toBeLessThan(
-      LTR.agentLane,
+    // At 40%, the lowest zoom that shows labels, a block of three 16 px
+    // lines (a name on two lines, then its subtitle) still ends above the
+    // next path down: above its label, which rises from its edge, and so
+    // above its tile.
+    const drawn = LTR.labelHeight * labelScale(0.4);
+    expect(LTR.labelHeight).toBe(3 * LTR.line);
+    const nextPathLabel = (lane: number) =>
+      lane + LTR.tile / 2 - LTR.pathLabelRise - LTR.line * pathLabelScale(0.4);
+    expect(LTR.tile + LTR.labelGap + drawn + 8).toBeLessThan(
+      nextPathLabel(LTR.lane),
     );
+    expect(nextPathLabel(LTR.lane)).toBeLessThan(LTR.lane + LTR.tile / 2);
+    expect(LTR.tile + LTR.subNodeRow + LTR.labelGap + drawn + 8).toBeLessThan(
+      nextPathLabel(LTR.agentLane),
+    );
+  });
+
+  it("widens a step's label block below 100% to its column, less a visible gap", () => {
+    expect(labelWidth(2)).toBe(LTR.label);
+    expect(labelWidth(1)).toBe(LTR.label);
+    expect(labelWidth(1, "fork")).toBe(LTR.label);
+    expect(labelWidth(0.99)).toBe(LTR.labelWide);
+    expect(labelWidth(0.5)).toBe(LTR.labelWide);
+    expect(labelWidth(0.4, "square")).toBe(LTR.labelWide);
+    // Two tiles' blocks, one column apart, leave 16 units between them.
+    expect(LTR.tile + LTR.edge - LTR.labelWide).toBe(16);
+    // A parallel step's bar is 76 units narrower than a tile, and its
+    // column too: its block gives up the same 76 units.
+    expect(labelWidth(0.5, "fork")).toBe(LTR.labelWide - (LTR.tile - LTR.bar));
+    // A 24-character name takes two lines of 12 or more characters at 50%,
+    // in a 13 px font drawn larger by labelScale, inside 4 px of padding.
+    expect(LTR.labelWide / labelScale(0.5) - 8).toBeGreaterThan(108);
+  });
+
+  it("draws path labels and All branches done larger as the zoom drops, never below 10 px", () => {
+    expect(pathLabelScale(2)).toBe(1);
+    expect(pathLabelScale(1)).toBe(1);
+    expect(pathLabelScale(10 / 12)).toBe(1);
+    expect(pathLabelScale(0.5)).toBeCloseTo(1.667, 3);
+    expect(pathLabelScale(0.4)).toBeCloseTo(2.083, 3);
+    // They are 12 px (--type-caption) at 100% and above.
+    for (const zoom of [0.3, 0.4, 0.45, 0.5, 0.6, 0.75, 0.9, 1, 1.5, 2]) {
+      const scale = pathLabelScale(zoom);
+      expect(scale).toBeGreaterThanOrEqual(1);
+      expect(12 * scale * zoom).toBeGreaterThanOrEqual(10 - 1e-9);
+      expect(scale === 1 || 12 * scale * zoom < 10 + 1e-9).toBe(true);
+    }
+    // A path label sits above its path's edge, from its output handle's left
+    // to just before the path's first step: at 40% it has room for about
+    // 10 characters (about 62 px of 12 px text).
+    const layout = layoutLtr(fixture, options());
+    const otherwise = handle(layout, "route:default");
+    const label = layout.labels.find((item) => item.owner === "route/default")!;
+    expect(label.x).toBe(otherwise.x - 6);
+    expect(label.y + LTR.line).toBe(otherwise.y - LTR.pathLabelRise);
+    expect(label.x + label.width).toBe(layout.slots[0].x - 8);
+    expect(label.width / pathLabelScale(0.4)).toBeGreaterThan(62);
   });
 
   it("opens a workflow fitted when it fits at 50% or more, else at 50% from the trigger at the left margin", () => {
@@ -805,7 +991,8 @@ describe("the left-to-right layout", () => {
     const trigger = tile(layout, "$trigger:manual");
     expect(view.zoom).toBe(0.5);
     expect(
-      (trigger.x + trigger.width / 2 - LTR.label / 2) * view.zoom + view.pan.x,
+      (trigger.x + trigger.width / 2 - labelWidth(view.zoom) / 2) * view.zoom +
+        view.pan.x,
     ).toBe(48);
     expect(levelOfDetail(view.zoom)).toBe("full");
     // fitView alone would go below 50% for it; the canvas's Fit view uses

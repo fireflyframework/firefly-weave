@@ -16,9 +16,94 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test, type Locator } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { DesignerPage } from "./designer-po";
-import { openNewWorkflow, openWorkflow, type CanvasPage } from "./canvas-po";
+import {
+  openNewWorkflow,
+  openWorkflow,
+  vendorPayment,
+  type CanvasPage,
+} from "./canvas-po";
 import { newWorkflow, offline } from "./support";
+
+/** A step ID of 60 characters: too long for two lines at any zoom. */
+const SIXTY_CHARACTERS =
+  "send-the-payment-confirmation-to-the-vendor-and-the-approver";
+
+/**
+ * The vendor payment workflow with a 24-character step ID in place of
+ * record-result, and a step with a 60-character ID after it.
+ */
+function longStepNames() {
+  return {
+    name: "long-step-names.yaml",
+    mimeType: "application/yaml",
+    buffer: Buffer.from(
+      readFileSync(vendorPayment, "utf8")
+        .replaceAll("record-result", "reconcile-vendor-ledgers")
+        .replace(
+          /^  output: /m,
+          `    - {id: ${SIXTY_CHARACTERS}, kind: wait, durationSeconds: 60}\n  output: `,
+        ),
+    ),
+  };
+}
+
+/** How a step's name draws: on how many lines, and whether it is cut. */
+async function nameLines(canvas: CanvasPage, id: string) {
+  return canvas
+    .tile(id)
+    .locator(".tile-label strong")
+    .evaluate((name: HTMLElement) => ({
+      lines: Math.round(
+        name.clientHeight / parseFloat(getComputedStyle(name).lineHeight),
+      ),
+      cut:
+        name.scrollHeight > name.clientHeight + 1 ||
+        name.scrollWidth > name.clientWidth + 1,
+    }));
+}
+
+/** How each path label and "All branches done" draws on screen. */
+async function pathLabels(canvas: CanvasPage) {
+  return canvas.root.evaluate((root) =>
+    [...root.querySelectorAll<HTMLElement>(".branch-label, .join-label")].map(
+      (label) => ({
+        text: label.textContent!.trim(),
+        title: label.getAttribute("title"),
+        // The font size times the scale the label is drawn at.
+        px:
+          parseFloat(getComputedStyle(label).fontSize) *
+          (label.getBoundingClientRect().height / label.offsetHeight),
+        cut:
+          label.scrollWidth > label.clientWidth + 1 ||
+          label.scrollHeight > label.clientHeight + 1,
+      }),
+    ),
+  );
+}
+
+/**
+ * Path labels and "All branches done" draw at `px` or more (at their own
+ * size, 12 px, from 100% up), and each shows whole or keeps its text in
+ * its tooltip.
+ */
+async function expectReadablePathLabels(canvas: CanvasPage, px: number) {
+  const labels = await pathLabels(canvas);
+  expect(labels.map((label) => label.text).sort()).toEqual([
+    "All branches done",
+    "Approve",
+    "Otherwise",
+    "Reject",
+    "email",
+    "ledger",
+  ]);
+  for (const label of labels) {
+    expect(label.px, `${label.text}: size`).toBeGreaterThanOrEqual(px - 0.01);
+    if (label.cut) expect(label.title, `${label.text}: cut`).toBe(label.text);
+  }
+  return labels;
+}
 
 /** How each step's label block draws on screen at the canvas's zoom. */
 async function labelBlocks(canvas: CanvasPage) {
@@ -38,10 +123,12 @@ async function labelBlocks(canvas: CanvasPage) {
     const blocks = [...root.querySelectorAll<HTMLElement>(".tile-label")].map(
       (block) => {
         const tile = block.closest<HTMLElement>("[data-tile]")!;
-        const card = tile.querySelector(".tile-body")!.getBoundingClientRect();
+        const body = tile.querySelector<HTMLElement>(".tile-body")!;
+        const card = body.getBoundingClientRect();
         const box = block.getBoundingClientRect();
         return {
           id: tile.dataset["tile"]!,
+          shape: body.dataset["shape"]!,
           name: line(block.querySelector("strong")!),
           subtitle: line(block.querySelector("span")!),
           width: box.width,
@@ -55,28 +142,31 @@ async function labelBlocks(canvas: CanvasPage) {
 
 /**
  * Names draw at 12 px or more on screen and subtitles at 11 px or more, and
- * each label block keeps to its 168-unit column centered under its tile.
+ * each label block keeps to its column, centered under its tile: 168 units
+ * wide from 100% up; below 100%, 232 (the 248-unit column less a 16-unit
+ * gap), or 156 under a parallel step's 20-unit bar.
  */
 async function expectReadableLabels(canvas: CanvasPage) {
   const { zoom, blocks } = await labelBlocks(canvas);
   expect(blocks.length).toBeGreaterThan(8);
   for (const block of blocks) {
+    const column =
+      zoom >= 1 ? 168 : block.shape === "fork" ? 232 - (96 - 20) : 232;
     expect(block.name.px, `${block.id}: name`).toBeGreaterThanOrEqual(11.99);
     expect(block.subtitle.px, `${block.id}: subtitle`).toBeGreaterThan(11);
-    expect(block.width, `${block.id}: block`).toBeLessThanOrEqual(
-      168 * zoom + 1,
-    );
+    expect(block.width, `${block.id}: block`).toBeCloseTo(column * zoom, 0);
     expect(block.name.width, `${block.id}: name`).toBeLessThanOrEqual(
-      168 * zoom + 1,
+      column * zoom + 1,
     );
     expect(Math.abs(block.offset), `${block.id}: centered`).toBeLessThan(1);
   }
 }
 
 /**
- * Every label under a tile or an empty-path slot that overlaps a step, a
- * slot, a handle, a "+", a path label, a join or another such label; and
- * every slot label an edge line runs through.
+ * Every label (under a tile or an empty-path slot, a path's, or "All
+ * branches done") that overlaps a step, a slot, a handle, a "+", a join, a
+ * path end or another label; and every label but a step's an edge line runs
+ * through.
  */
 async function labelCollisions(canvas: CanvasPage): Promise<string[]> {
   return canvas.root.evaluate((root) => {
@@ -95,10 +185,14 @@ async function labelCollisions(canvas: CanvasPage): Promise<string[]> {
       b.left < a.right - 0.5 &&
       a.top < b.bottom - 0.5 &&
       b.top < a.bottom - 0.5;
-    const labels = [...root.querySelectorAll(".tile-label, .lane-slot-label")];
+    const labels = [
+      ...root.querySelectorAll(
+        ".tile-label, .lane-slot-label, .branch-label, .join-label",
+      ),
+    ];
     const others = [
       ...root.querySelectorAll(
-        ".tile-body, .lane-slot, .handle, .insert-plus, .branch-label, .join-bar, .join-label, .lane-end",
+        ".tile-body, .lane-slot, .handle, .insert-plus, .join-bar, .lane-end",
       ),
     ];
     const found: string[] = [];
@@ -108,7 +202,9 @@ async function labelCollisions(canvas: CanvasPage): Promise<string[]> {
         if (overlap(box, other.getBoundingClientRect()))
           found.push(`${describe(label)} overlaps ${describe(other)}`);
     });
-    for (const label of root.querySelectorAll(".lane-slot-label")) {
+    for (const label of root.querySelectorAll(
+      ".lane-slot-label, .branch-label, .join-label",
+    )) {
       const box = label.getBoundingClientRect();
       for (const path of root.querySelectorAll<SVGPathElement>("path.edge")) {
         const m = path.getScreenCTM()!;
@@ -337,16 +433,17 @@ test.describe("the left-to-right canvas", () => {
     const canvas = await openWorkflow(page);
     expect(await canvas.zoomPercent()).toBe(50);
     await expectReadableLabels(canvas);
-    // A name too long for its column ends in an ellipsis; its tooltip and
-    // the step's accessible name keep it whole.
-    const long = canvas.tile("post-ledger-entry").locator(".tile-label strong");
-    expect(
-      await long.evaluate((name) => name.scrollWidth > name.clientWidth),
-    ).toBe(true);
-    await expect(long).toHaveAttribute("title", "post-ledger-entry");
-    await expect(canvas.tileBody("post-ledger-entry")).toHaveAccessibleName(
-      /^post-ledger-entry, /,
-    );
+    // At the open zoom every name in this workflow shows whole.
+    for (const id of [
+      "prepare-request",
+      "send-confirmation",
+      "post-ledger-entry",
+      "pay-and-notify",
+    ]) {
+      const name = await nameLines(canvas, id);
+      expect(name.cut, `${id}: cut`).toBe(false);
+      expect(name.lines, `${id}: lines`).toBeLessThanOrEqual(2);
+    }
     // An empty path's "Add a step" shows whole, at 11 px or more.
     const slot = canvas.root.locator(".lane-slot-label");
     const drawn = await slot.evaluate((label: HTMLElement) => ({
@@ -387,6 +484,75 @@ test.describe("the left-to-right canvas", () => {
     await zoomOut.click();
     await expect.poll(() => canvas.zoomPercent()).toBe(33);
     await expect(canvas.tile("approval").locator(".tile-label")).toBeHidden();
+  });
+
+  test("wraps a long step name onto two lines before it ends in an ellipsis", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, longStepNames());
+    expect(await canvas.zoomPercent()).toBe(50);
+    await expectReadableLabels(canvas);
+    // 24 characters: whole, on two lines.
+    expect(await nameLines(canvas, "reconcile-vendor-ledgers")).toEqual({
+      lines: 2,
+      cut: false,
+    });
+    // 60 characters: two lines, then an ellipsis. Its tooltip and the
+    // step's accessible name keep it whole.
+    expect(await nameLines(canvas, SIXTY_CHARACTERS)).toEqual({
+      lines: 2,
+      cut: true,
+    });
+    await expect(
+      canvas.tile(SIXTY_CHARACTERS).locator(".tile-label strong"),
+    ).toHaveAttribute("title", SIXTY_CHARACTERS);
+    await expect(canvas.tileBody(SIXTY_CHARACTERS)).toHaveAccessibleName(
+      `${SIXTY_CHARACTERS}, Wait for time, 1 min, step 5 of 5 in Main sequence`,
+    );
+    // Its subtitle stays on one line.
+    const subtitle = canvas.tile(SIXTY_CHARACTERS).locator(".tile-label span");
+    expect(
+      await subtitle.evaluate(
+        (line: HTMLElement) =>
+          line.clientHeight / parseFloat(getComputedStyle(line).lineHeight),
+      ),
+    ).toBe(1);
+    expect(await labelCollisions(canvas)).toEqual([]);
+    // At 100% too, in the 168-unit block: whole, or two lines and an ellipsis.
+    await canvas.root
+      .getByRole("button", { name: /^Reset zoom to 100%/ })
+      .click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(100);
+    expect((await nameLines(canvas, "reconcile-vendor-ledgers")).cut).toBe(
+      false,
+    );
+    expect(await nameLines(canvas, SIXTY_CHARACTERS)).toEqual({
+      lines: 2,
+      cut: true,
+    });
+  });
+
+  test("draws decision and parallel outputs and All branches done at 10 px or more from 40%", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    expect(await canvas.zoomPercent()).toBe(50);
+    for (const label of await expectReadablePathLabels(canvas, 10))
+      expect(label.cut, `${label.text}: cut at 50%`).toBe(false);
+    await canvas.root
+      .getByRole("button", { name: /^Reset zoom to 100%/ })
+      .click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(100);
+    for (const label of await expectReadablePathLabels(canvas, 12))
+      expect(label.px, label.text).toBeCloseTo(12, 1);
+    const zoomOut = canvas.root.getByRole("button", {
+      name: "Zoom out",
+      exact: true,
+    });
+    for (let i = 0; i < 5; i++) await zoomOut.click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(40);
+    for (const label of await expectReadablePathLabels(canvas, 10))
+      expect(label.cut, `${label.text}: cut at 40%`).toBe(false);
   });
 
   test("keeps each label clear of other steps, labels, handles and + at 50% and 40%", async ({
