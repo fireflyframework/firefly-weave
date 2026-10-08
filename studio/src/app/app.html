@@ -18,9 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 @if (connecting) {
   <main class="pair-page connecting-page">
     <div class="pair-brand">
-      <img src="assets/weave-logo.svg" alt="Firefly Weave" /><span
-        >Firefly Weave <small>Studio</small></span
-      >
+      <img src="assets/weave-lockup-reversed.svg" alt="Firefly Weave" />
     </div>
     <p class="connecting-status" role="status">
       <span class="loading-spinner small"></span>Opening Studio…
@@ -29,9 +27,7 @@ SPDX-License-Identifier: Apache-2.0
 } @else if (!paired) {
   <main class="pair-page">
     <div class="pair-brand">
-      <img src="assets/weave-logo.svg" alt="Firefly Weave" /><span
-        >Firefly Weave <small>Studio</small></span
-      >
+      <img src="assets/weave-lockup-reversed.svg" alt="Firefly Weave" />
     </div>
     <section class="pair-card">
       <img class="lumi" src="assets/lumi.png" alt="Lumi, the Firefly guide" />
@@ -101,11 +97,17 @@ SPDX-License-Identifier: Apache-2.0
           href="/"
           aria-label="Firefly Weave Studio home"
           (click)="$event.preventDefault(); navigate('home')"
-          ><img src="assets/weave-logo-reversed.svg" alt="" /><span
-            aria-hidden="true"
-            >Firefly Weave<small>Studio</small></span
-          ></a
-        >
+          ><img
+            class="brand-lockup"
+            src="assets/weave-lockup-reversed.svg"
+            alt=""
+            width="200" /><img
+            class="brand-mark"
+            src="assets/firefly-mark.svg"
+            alt=""
+            width="32"
+            height="32"
+        /></a>
         @for (group of navGroups; track group.label) {
           @if (group.label) {
             <p class="nav-group" aria-hidden="true">{{ group.label }}</p>

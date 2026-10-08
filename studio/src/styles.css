@@ -518,22 +518,22 @@ pre {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 6px 24px;
+  padding: 0 0 24px;
   color: var(--text);
   text-decoration: none;
-  font: 700 16px/20px var(--font-sans);
 }
-.brand img {
+/* The lockup fills the sidebar's 200px content width; wherever the sidebar is
+   narrow, CSS shows the 32px Firefly mark in a 44px box instead. */
+.brand-lockup {
+  display: block;
+  width: 200px;
+  height: auto;
+}
+.brand-mark {
+  display: none;
   width: 44px;
   height: 44px;
-}
-.brand small {
-  display: block;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-  margin-top: 3px;
+  padding: 6px;
 }
 /* The skip link: the first stop on every page, shown only while focused. */
 .skip-link {
@@ -1043,18 +1043,10 @@ dd {
 .pair-brand {
   display: flex;
   align-items: center;
-  gap: 16px;
-  font-size: 20px;
-  font-weight: 600;
 }
 .pair-brand img {
-  width: 54px;
-  height: 54px;
-}
-.pair-brand small {
-  display: block;
-  color: var(--muted);
-  font-weight: 400;
+  width: 240px;
+  height: auto;
 }
 .pair-card {
   background: var(--surface);
@@ -1360,10 +1352,12 @@ dd {
 .collapsed .brand {
   padding: 0 2px 28px;
 }
-.collapsed .brand img {
-  width: 44px;
+.collapsed .brand-lockup {
+  display: none;
 }
-.collapsed .brand > span,
+.collapsed .brand-mark {
+  display: block;
+}
 .collapsed .nav-group,
 .collapsed .sidebar nav button span,
 .collapsed .foundation,
@@ -1393,10 +1387,12 @@ dd {
   .brand {
     padding: 0 2px 28px;
   }
-  .brand img {
-    width: 44px;
+  .brand-lockup {
+    display: none;
   }
-  .brand > span,
+  .brand-mark {
+    display: block;
+  }
   .nav-group,
   .sidebar nav button span,
   .foundation,
@@ -1470,9 +1466,11 @@ dd {
   .collapsed .brand {
     padding: 0 2px 24px;
   }
-  .brand img,
-  .collapsed .brand img {
+  .brand-mark,
+  .collapsed .brand-mark {
     width: 38px;
+    height: 38px;
+    padding: 3px;
   }
   .sidebar nav button {
     padding: 10px;
@@ -1584,9 +1582,10 @@ dd {
   .collapsed .brand {
     padding-bottom: 12px;
   }
-  .brand img {
+  .brand-mark {
     width: 36px;
     height: 36px;
+    padding: 2px;
   }
   .sidebar nav button {
     height: 38px;

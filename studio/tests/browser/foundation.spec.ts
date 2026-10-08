@@ -317,6 +317,109 @@ test.describe("1440x900", () => {
       })),
     ).toEqual({ root: "dark", meta: "dark" });
   });
+
+  test("loads the brand files on a nested route", async ({ page }) => {
+    await offline(page);
+    await page.goto("/operations/targets/example");
+    const lockup = page
+      .getByRole("link", { name: "Firefly Weave Studio home" })
+      .locator("img.brand-lockup");
+    await expect(lockup).toBeVisible();
+    expect(
+      await lockup.evaluate(
+        (e: HTMLImageElement) => e.complete && e.naturalWidth > 0,
+      ),
+    ).toBe(true);
+    expect(
+      await page.evaluate(() => document.fonts.check("14px Manrope")),
+    ).toBe(true);
+  });
+
+  test("shows the lockup, the mark when narrow, and the favicon set", async ({
+    page,
+  }) => {
+    await offline(page);
+    const home = page.getByRole("link", { name: "Firefly Weave Studio home" });
+    const lockup = home.locator("img.brand-lockup");
+    const mark = home.locator("img.brand-mark");
+    const drawn = (image: Locator) =>
+      image.evaluate((e: HTMLImageElement) => ({
+        loaded: e.complete && e.naturalWidth > 0,
+        width: e.getBoundingClientRect().width,
+        padding: getComputedStyle(e).paddingLeft,
+      }));
+    await expect(lockup).toBeVisible();
+    await expect(mark).toBeHidden();
+    expect(await drawn(lockup)).toMatchObject({ loaded: true, width: 200 });
+    // At 1280px and below the sidebar narrows: the 32px mark in a 44px box.
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(lockup).toBeHidden();
+    await expect(mark).toBeVisible();
+    expect(await drawn(mark)).toEqual({
+      loaded: true,
+      width: 44,
+      padding: "6px",
+    });
+    const head = await page.evaluate(() => ({
+      icons: [
+        ...document.querySelectorAll(
+          'link[rel="icon"], link[rel="apple-touch-icon"]',
+        ),
+      ].map((link) => link.getAttribute("href")),
+      manifests: document.querySelectorAll('link[rel="manifest"]').length,
+      theme: document
+        .querySelector('meta[name="theme-color"]')
+        ?.getAttribute("content"),
+      scheme: document
+        .querySelector('meta[name="color-scheme"]')
+        ?.getAttribute("content"),
+    }));
+    expect(head).toEqual({
+      icons: ["favicon.ico", "favicon.svg", "apple-touch-icon.png"],
+      manifests: 0,
+      theme: "#10110f",
+      scheme: "dark",
+    });
+    for (const file of [
+      "/favicon.ico",
+      "/favicon.svg",
+      "/apple-touch-icon.png",
+    ])
+      expect(
+        (await page.request.get(file)).headers()["content-type"],
+        file,
+      ).toMatch(/^image\//);
+  });
+
+  test("pairing shows the lockup on charcoal", async ({ page }) => {
+    await page.route("**/studio/session", (r) =>
+      r.fulfill({
+        json: { paired: false, version: "1", mode: "offline", profile: null },
+      }),
+    );
+    await page.goto("/");
+    const lockup = page.getByRole("img", {
+      name: "Firefly Weave",
+      exact: true,
+    });
+    await expect(lockup).toBeVisible();
+    expect(
+      await lockup.evaluate((e: HTMLImageElement) => ({
+        src: new URL(e.src).pathname,
+        loaded: e.complete && e.naturalWidth > 0,
+        width: e.getBoundingClientRect().width,
+      })),
+    ).toEqual({
+      src: "/assets/weave-lockup-reversed.svg",
+      loaded: true,
+      width: 240,
+    });
+    expect(
+      await page.evaluate(
+        () => getComputedStyle(document.documentElement).backgroundColor,
+      ),
+    ).toBe(await tokenColor(page, "--bg"));
+  });
 });
 
 for (const [width, height, least] of [
