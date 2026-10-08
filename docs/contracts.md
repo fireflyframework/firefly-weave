@@ -231,9 +231,11 @@ output compatibility, and concurrency budgets.
 
 **Human tasks** need an environment assignment binding at activation, and
 completing one requires the current claim and task permission. A workflow with a
-human task compiles to IR version `weave/ir-v1alpha2`; other workflows keep
-`weave/ir-v1alpha1`. Follow the [human-task walkthrough](guides/human-tasks.md)
-before activating one.
+human task compiles to IR version `weave/ir-v1alpha2` or higher, because the
+version is the highest level any construct in the workflow needs; see the
+[IR version](reference/compiler.md#executable-and-source-envelope) rules.
+Follow the [human-task walkthrough](guides/human-tasks.md) before activating
+one.
 
 **Retry and timeout belong to the action, not the step.** In Studio,
 **Call an action** creates an `action` step whose `uses` selects a published
@@ -438,7 +440,7 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
 | `WV-COMP-UNSUPPORTED_FEATURE` | The document uses `forEach` or `callWorkflow`, which this version of the compiler does not compile yet | Keep the document for a later version, or replace the construct with the steps the compiler supports |
 | `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step before the table and pass it in as input |
-| `WV-IR-UNSUPPORTED` on activation | The platform does not list a language feature the workflow uses; `result.missing_features` names it | Upgrade the platform, or activate a version that does not use the feature |
+| `WV-IR-UNSUPPORTED` on activation | The platform does not list an IR version or a language feature the workflow uses; `result.missing_features` names the missing features and is empty when the IR version itself is unknown | Upgrade the platform, or activate a version that does not use the feature |
 | `onFailure` is rejected on a call step | `onFailure` applies only when the call waits for its result | Remove `onFailure`, or set `mode: wait` |
 | Partial validation passes, but there is no artifact | Partial validation never produces one | Compile with an explicit catalog |
 | Compilation passes, but the run fails to start | Compilation proves no worker, connection, or permission | Check the activation's bindings and your grants |

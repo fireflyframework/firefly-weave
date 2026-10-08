@@ -60,7 +60,9 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 
 _DEFAULT_LIMITS = Limits()
 _DEFAULT_SCHEMA_LIMITS = SchemaLimits()
-# Text operator operands: (the schema every accepted value fits, schemas that no accepted value can fit).
+# Text operator operands: (the schema every accepted value fits, schemas that reject the operand outright). An operand
+# is rejected when its declared type, or for a list its declared item type, can never be text; an empty list still
+# passes because it has no items to convert.
 _TEXT_PART: JsonObject = {"type": ["string", "integer", "number", "boolean"]}
 _NOT_TEXT_PART: JsonObject = {"type": ["null", "object", "array"]}
 _TEXT_LIST: tuple[JsonObject, tuple[JsonObject, ...]] = (
