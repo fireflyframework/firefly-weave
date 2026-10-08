@@ -341,6 +341,33 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "studio/tests/fixtures/language/instance-keys.json"
+kind = "generated"
+source = "scripts/language_fixtures.py"
+reason = "Strict JSON instance-key parse and format cases shared by the Python and Studio suites; regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/tests/fixtures/language/manifest.json"
+kind = "generated"
+source = "scripts/language_fixtures.py"
+reason = "Strict JSON snapshot of the language manifest shared by the Python and Studio suites; regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/tests/fixtures/language/text-conversion.json"
+kind = "generated"
+source = "scripts/language_fixtures.py"
+reason = "Strict JSON concat and join text conversion cases shared by the Python and Studio suites; regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "studio/tests/fixtures/shipped-schemas.json"
 kind = "generated"
 source = "scripts/studio_schema_fixtures.py"

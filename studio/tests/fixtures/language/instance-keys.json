@@ -1,0 +1,308 @@
+{
+  "generator": "scripts/language_fixtures.py",
+  "grammar": "language spec 3.2",
+  "pattern": "@?[A-Za-z0-9][A-Za-z0-9_.:@-]*(?:\\[(?:0|[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]|9007199254740990|9007199254740991)\\])*(?:#[A-Za-z0-9]+(?:\\.[A-Za-z0-9]+)*)?(?:~(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]|9007199254740990|9007199254740991))?",
+  "valid": [
+    {
+      "key": "send",
+      "node_id": "send",
+      "indexes": [],
+      "segments": [],
+      "count": null,
+      "view": {
+        "node_id": "send",
+        "instance_key": "",
+        "iteration": []
+      }
+    },
+    {
+      "key": "send[3]",
+      "node_id": "send",
+      "indexes": [
+        3
+      ],
+      "segments": [],
+      "count": null,
+      "view": {
+        "node_id": "send",
+        "instance_key": "send[3]",
+        "iteration": [
+          3
+        ]
+      }
+    },
+    {
+      "key": "send[3][0]",
+      "node_id": "send",
+      "indexes": [
+        3,
+        0
+      ],
+      "segments": [],
+      "count": null,
+      "view": {
+        "node_id": "send",
+        "instance_key": "send[3][0]",
+        "iteration": [
+          3,
+          0
+        ]
+      }
+    },
+    {
+      "key": "support#2",
+      "node_id": "support",
+      "indexes": [],
+      "segments": [
+        "2"
+      ],
+      "count": null,
+      "view": {
+        "node_id": "support",
+        "instance_key": "support#2",
+        "iteration": []
+      }
+    },
+    {
+      "key": "support#2.1",
+      "node_id": "support",
+      "indexes": [],
+      "segments": [
+        "2",
+        "1"
+      ],
+      "count": null,
+      "view": {
+        "node_id": "support",
+        "instance_key": "support#2.1",
+        "iteration": []
+      }
+    },
+    {
+      "key": "support#2.1.review",
+      "node_id": "support",
+      "indexes": [],
+      "segments": [
+        "2",
+        "1",
+        "review"
+      ],
+      "count": null,
+      "view": {
+        "node_id": "support",
+        "instance_key": "support#2.1.review",
+        "iteration": []
+      }
+    },
+    {
+      "key": "support[3]#2.1.review",
+      "node_id": "support",
+      "indexes": [
+        3
+      ],
+      "segments": [
+        "2",
+        "1",
+        "review"
+      ],
+      "count": null,
+      "view": {
+        "node_id": "support",
+        "instance_key": "support[3]#2.1.review",
+        "iteration": [
+          3
+        ]
+      }
+    },
+    {
+      "key": "notify~2",
+      "node_id": "notify",
+      "indexes": [],
+      "segments": [],
+      "count": 2,
+      "view": {
+        "node_id": "notify",
+        "instance_key": "notify~2",
+        "iteration": []
+      }
+    },
+    {
+      "key": "notify[1]~2",
+      "node_id": "notify",
+      "indexes": [
+        1
+      ],
+      "segments": [],
+      "count": 2,
+      "view": {
+        "node_id": "notify",
+        "instance_key": "notify[1]~2",
+        "iteration": [
+          1
+        ]
+      }
+    },
+    {
+      "key": "@join:notify",
+      "node_id": "@join:notify",
+      "indexes": [],
+      "segments": [],
+      "count": null,
+      "view": {
+        "node_id": "@join:notify",
+        "instance_key": "",
+        "iteration": []
+      }
+    },
+    {
+      "key": "@branch:notify:0[4]",
+      "node_id": "@branch:notify:0",
+      "indexes": [
+        4
+      ],
+      "segments": [],
+      "count": null,
+      "view": {
+        "node_id": "@branch:notify:0",
+        "instance_key": "@branch:notify:0[4]",
+        "iteration": [
+          4
+        ]
+      }
+    },
+    {
+      "key": "a.b_c-d[9007199254740991]",
+      "node_id": "a.b_c-d",
+      "indexes": [
+        9007199254740991
+      ],
+      "segments": [],
+      "count": null,
+      "view": {
+        "node_id": "a.b_c-d",
+        "instance_key": "a.b_c-d[9007199254740991]",
+        "iteration": [
+          9007199254740991
+        ]
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "key": "",
+      "reason": "empty key"
+    },
+    {
+      "key": "[3]",
+      "reason": "no node ID"
+    },
+    {
+      "key": "#2",
+      "reason": "no node ID"
+    },
+    {
+      "key": "~1",
+      "reason": "no node ID"
+    },
+    {
+      "key": "send[03]",
+      "reason": "index with a leading zero"
+    },
+    {
+      "key": "send[-1]",
+      "reason": "negative index"
+    },
+    {
+      "key": "send[]",
+      "reason": "empty index"
+    },
+    {
+      "key": "send[3",
+      "reason": "unclosed index"
+    },
+    {
+      "key": "send]3[",
+      "reason": "bracket in the node ID"
+    },
+    {
+      "key": "send[3]x",
+      "reason": "text after an index"
+    },
+    {
+      "key": "send#",
+      "reason": "empty segment list"
+    },
+    {
+      "key": "send#2.",
+      "reason": "empty segment"
+    },
+    {
+      "key": "send#.2",
+      "reason": "empty segment"
+    },
+    {
+      "key": "send#2..1",
+      "reason": "empty segment"
+    },
+    {
+      "key": "send#ü",
+      "reason": "non-ASCII segment"
+    },
+    {
+      "key": "send#2[3]",
+      "reason": "index after a segment"
+    },
+    {
+      "key": "send~0",
+      "reason": "yield count zero"
+    },
+    {
+      "key": "send~01",
+      "reason": "yield count with a leading zero"
+    },
+    {
+      "key": "send~1[2]",
+      "reason": "index after the yield count"
+    },
+    {
+      "key": "send~1#2",
+      "reason": "segment after the yield count"
+    },
+    {
+      "key": "send~1~2",
+      "reason": "two yield counts"
+    },
+    {
+      "key": "send[9007199254740992]",
+      "reason": "index above 2**53 - 1"
+    },
+    {
+      "key": "send~9007199254740992",
+      "reason": "yield count above 2**53 - 1"
+    },
+    {
+      "key": "a b",
+      "reason": "whitespace in the node ID"
+    },
+    {
+      "key": "send\n",
+      "reason": "control character in the node ID"
+    },
+    {
+      "key": "send\u0000",
+      "reason": "NUL in the node ID"
+    },
+    {
+      "key": "se/nd",
+      "reason": "slash in the node ID"
+    },
+    {
+      "key": "ü[1]",
+      "reason": "non-ASCII node ID"
+    },
+    {
+      "key": "@",
+      "reason": "synthetic marker without a name"
+    }
+  ]
+}
