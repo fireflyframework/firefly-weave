@@ -29,6 +29,7 @@ from firefly_weave.access.scheduler import _SchedulerScope
 from firefly_weave.access.service import AccessService
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.ai import TRANSIENT_MODEL_CODES
 from firefly_weave.contracts.operations import TaskTiming
 from firefly_weave.contracts.runtime import RecoveryReport
 from firefly_weave.definitions.models import CatalogError
@@ -40,6 +41,9 @@ from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService, event_hash, view_of
 from firefly_weave.runtime.waits import TERMINAL
 from firefly_weave.workers.leases import TaskService
+
+# Failure codes recovery may retry, only for read_only, idempotent and idempotency_key actions.
+TRANSIENT_FAILURE_CODES = frozenset({"TRANSIENT", "UNAVAILABLE", "RATE_LIMITED", "TIMEOUT"}) | TRANSIENT_MODEL_CODES
 
 
 @service
@@ -188,10 +192,7 @@ class RecoveryService:
                     node=task["node_id"],
                     generation=attempt["generation"],
                 )
-                transient = bool(
-                    events
-                    and events[0]["data"]["output"]["code"] in {"TRANSIENT", "UNAVAILABLE", "RATE_LIMITED", "TIMEOUT"}
-                )
+                transient = bool(events and events[0]["data"]["output"]["code"] in TRANSIENT_FAILURE_CODES)
             allowed = safe and transient and attempt["generation"] < retry["maxAttempts"] and now < attempt["deadline"]
             delay = min(
                 retry["maxDelaySeconds"], retry["initialDelaySeconds"] * 2 ** min(attempt["generation"] - 1, 30)
