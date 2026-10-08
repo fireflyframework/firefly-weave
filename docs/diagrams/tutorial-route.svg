@@ -42,8 +42,8 @@ SPDX-License-Identifier: Apache-2.0
 <text x="584" y="260" class="body">The demo saves one real run.</text>
 <rect x="380" y="285" width="544" height="86" rx="12" fill="#EAE7DF"/>
 <text x="400" y="312" class="small">Sign in once with <tspan class="code">weave auth setup</tspan>; Studio and the</text>
-<text x="400" y="336" class="small muted">desktop app reuse it. On a local platform, first</text>
-<text x="400" y="360" class="small muted">create a person with <tspan class="code">weave platform user</tspan>.</text>
+<text x="400" y="336" class="small">desktop app reuse it. On a local platform, first</text>
+<text x="400" y="360" class="small">create a person with <tspan class="code">weave platform user</tspan>.</text>
 <path class="edge" d="M724 371V408H238V435"/>
 <path class="edge" d="M724 408V435"/>
 <text x="480" y="398" class="small muted" text-anchor="middle">Choose what your product needs</text>
