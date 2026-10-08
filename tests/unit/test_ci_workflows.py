@@ -69,3 +69,21 @@ def test_the_cross_platform_tier_runs_vitest_xplat_and_portable_python():
 def test_each_cross_platform_area_has_tagged_tests():
     for name in XPLAT_SPECS:
         assert 'tag: "@xplat"' in (ROOT / "studio/tests/browser" / name).read_text(encoding="utf-8"), name
+
+
+def test_the_acceptance_pr_job_runs_on_ubuntu_24_04_with_egress_blocked_and_the_stage_budget():
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("weave_acceptance_ci", ROOT / "scripts/acceptance.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    job = jobs("acceptance.yml")["pr"]
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["timeout-minutes"] == sum(module.stage_minutes("pr").values())
+    command = next(line for line in runs(job) if "scripts/acceptance.py" in line)
+    assert "--profile pr" in command and "--block-egress" in command and "dbus-run-session" in command
+    (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact")]
+    assert upload["if"] == "always() && steps.acceptance.outputs.scan == 'passed'"
+    assert upload["with"]["retention-days"] == 30

@@ -1,0 +1,83 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+# Real-service acceptance on Linux (ubuntu-24.04, zero retries). Needs no secrets, so it
+# also runs for fork pull requests. S6-M1 runs the pr profile on every pull request.
+name: Acceptance
+on:
+  pull_request:
+    paths:
+      - 'scripts/acceptance*.py'
+      - 'tests/acceptance/**'
+      - 'src/firefly_weave/private_origins.py'
+      - 'src/firefly_weave/connectors/**'
+      - 'src/firefly_weave/connections/**'
+      - 'src/firefly_weave/contracts/http_profile*.py'
+      - 'src/firefly_weave/operations/event_delivery.py'
+      - 'src/firefly_weave/sdk/platform*.py'
+      - 'studio/src/app/integrations/**'
+      - 'studio/tests/browser/real-platform.spec.ts'
+      - 'studio/tests/credential-store.ts'
+      - 'studio/tests/python-path.ts'
+      - '.github/workflows/acceptance.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: acceptance-pr-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  pr:
+    name: Acceptance (pr profile)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Free disk space for platform images
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+      - run: uv sync --locked --all-extras --group docs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: npm ci
+        working-directory: studio
+      - run: npx playwright install --with-deps chromium
+        working-directory: studio
+      - name: Secret Service for the Studio host's credential store
+        run: sudo apt-get update && sudo apt-get install -y gnome-keyring libsecret-tools
+      - name: Run the pr profile with container egress blocked
+        id: acceptance
+        run: |
+          KEYRING_PASSWORD="$(openssl rand -hex 24)"
+          export KEYRING_PASSWORD
+          dbus-run-session -- bash -c 'printf %s "$KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && uv run --no-sync python scripts/acceptance.py --profile pr --docker-context default --block-egress'
+      - name: Upload evidence
+        if: always() && steps.acceptance.outputs.scan == 'passed'
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-pr-${{ github.run_id }}
+          path: ${{ steps.acceptance.outputs.evidence }}
+          retention-days: 30
