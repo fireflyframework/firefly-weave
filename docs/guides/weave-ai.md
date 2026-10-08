@@ -177,10 +177,11 @@ one active token, so mismatched deployments fail closed.
 
 ## Configure an environment
 
-Grant `lumi_manager` to the administrator and `lumi_user` to assistant users at
-the intended project or environment scope. Existing viewer/developer roles do not
-implicitly grant access to models. A manager also needs `connection.manage` to
-select a provider connection.
+Grant **Weave AI manager** (`lumi_manager`) to the administrator and
+**Weave AI user** (`lumi_user`) to assistant users at the intended project or
+environment scope. Existing viewer/developer roles do not implicitly grant
+access to models. A manager also needs `connection.manage` to select a provider
+connection.
 
 Publish the Agentic provider connector and create a connection as described in
 [AI workers](ai-workers.md). Configure an operator-approved `apiKey` secret handle
