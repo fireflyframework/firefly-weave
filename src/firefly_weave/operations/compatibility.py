@@ -22,6 +22,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from contextvars import Context
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
@@ -207,7 +208,8 @@ class CompatibilityService:
                             logging.getLogger(__name__).error("Compatibility refresh failed")
                         next_scan = time.monotonic() + INVENTORY_RESCAN_SECONDS
 
-            self._freshness_task = asyncio.create_task(refresh(), name="weave-inventory-freshness")
+            # Like the effect loops, the long-lived task starts from an empty context, never its opener's.
+            self._freshness_task = asyncio.create_task(refresh(), name="weave-inventory-freshness", context=Context())
 
     async def close(self) -> None:
         if self._freshness_task is not None:
