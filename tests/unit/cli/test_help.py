@@ -103,6 +103,16 @@ def test_help_ascii_banner_and_entry_points_fit_terminal(width):
     assert "Start here" in result.output
 
 
+@pytest.mark.parametrize(
+    ("width", "header"),
+    [(59, ["Firefly Weave", ""]), (60, ["Firefly Weave", "Workflow orchestration and integration", ""])],
+)
+def test_help_descriptor_appears_from_60_columns(width, header):
+    result = CliRunner().invoke(cli, ["--help"], prog_name="weave", terminal_width=width)
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[: len(header)] == header
+
+
 @pytest.mark.parametrize("path", [["init"], ["docs"], ["worker", "deploy"], ["workflow", "simulate"]])
 def test_new_help_navigation_matches_direct_help(path):
     runner = CliRunner()
