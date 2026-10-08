@@ -30,7 +30,7 @@ from firefly_weave.access.repository import load_principal
 from firefly_weave.access.scheduler import _SchedulerScope
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.runtime import StartRunRequest
-from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
@@ -73,7 +73,8 @@ class Scheduler:
                 async with tx.session.begin_nested():
                     count += await self._fire(tx, row)
             except CatalogError as error:
-                if error.code != "WV-SCHEDULE-STALE":
+                # A capacity refusal ran nothing; the savepoint undid the attempt, so the next scan retries it.
+                if error.code != "WV-SCHEDULE-STALE" and not capacity_rejected(error):
                     await repository.execute(
                         f"UPDATE schedules SET "
                         f"status='blocked',blocked_reason='WV-SCHEDULE-READINESS' WHERE {SCOPE} AND id=:id",
