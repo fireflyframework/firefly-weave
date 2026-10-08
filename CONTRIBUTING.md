@@ -124,6 +124,13 @@ external-effect receivers; they are acceptance tooling rather than the introduct
 compiler quickstart. Do not copy another checkout's private env files or immutable
 image IDs. Keep failures and corrected reruns distinguishable.
 
+## Acceptance journeys
+
+Acceptance journeys prove the product against real services: a Docker platform
+from `weave platform up`, its real Keycloak, the Acme API fixture and the real
+Studio host. [The acceptance guide](tests/acceptance/README.md) explains the
+stages, the evidence, and how to enable a journey step when your milestone merges.
+
 ## Review and hygiene
 
 Preserve canonical wire names, diagnostic codes, revision/idempotency semantics,

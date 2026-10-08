@@ -134,3 +134,23 @@ def test_versions_toml_refuses_unpinned_images(tmp_path):
     path.write_text('version = 1\n[tools]\nnode = "24.15.0"\n[images]\npostgres = "postgres:17-alpine"\n')
     with pytest.raises(journeys.JourneysInvalid):
         journeys.load_versions(path)
+
+
+def declared_in_tests():
+    found = set()
+    for path in sorted((ROOT / "tests/acceptance").glob("test_*.py")):
+        content = path.read_text(encoding="utf-8")
+        found |= set(re.findall(r'journey_step\("([^"]+)"\)', content))
+        found |= set(re.findall(r'\.check\(\s*"([^"]+)"', content))
+    specs = ROOT / "studio/tests/acceptance"
+    for path in sorted(specs.rglob("*.spec.ts")) if specs.is_dir() else []:
+        found |= set(re.findall(r'\bstep\(\s*"(J[^"]+)"', path.read_text(encoding="utf-8")))
+    return found
+
+
+def test_every_enabled_step_has_a_test_and_every_tested_step_is_declared():
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    tested = declared_in_tests()
+    enabled = {key for key in enablement.steps if not enablement.missing(key)}
+    assert sorted(enabled - tested) == []
+    assert sorted(tested - set(enablement.steps)) == []
