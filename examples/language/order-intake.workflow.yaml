@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Call a workflow and wait for its result, then start another call without waiting. The compiler reports
-# "not yet supported" for callWorkflow, concat and join until their language milestones land.
+# "not yet supported" for callWorkflow, concat and join until a later release adds them.
 apiVersion: weave/v1alpha1
 kind: Workflow
 metadata:

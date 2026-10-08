@@ -15,10 +15,10 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Local work is never silently lost (W2-2): autosave to this browser, a
-// reload brings the workflow back at the same address, Home offers
-// "Continue editing", Workflows lists "On this computer", and a browser that
-// refuses storage says so.
+// Local work is never silently lost: autosave to this browser, a reload
+// brings the workflow back at the same address, Home offers "Continue
+// editing", Workflows lists "On this computer", and a browser that refuses
+// storage says so.
 import { test, expect, Page } from "@playwright/test";
 import { connected, insertStep, newWorkflow, offline } from "./support";
 import { platformHost } from "./platform-host";

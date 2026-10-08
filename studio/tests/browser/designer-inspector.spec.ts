@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The inspector (W3-4, W3-6, W3-7): decision conditions as rule rows, a
-// wider panel with folding sections and a clear apply model, and one
-// vocabulary for where a value comes from.
+// The inspector: decision conditions as rule rows, a wider panel with folding
+// sections and a clear apply model, and one vocabulary for where a value
+// comes from.
 import { selectChoice } from "./support";
 import { test, expect, type Page } from "@playwright/test";
 import {

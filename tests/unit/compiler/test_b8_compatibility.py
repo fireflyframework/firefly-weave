@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Artifacts produced from the retained B8-before source must keep their original identities."""
+"""Artifacts produced from retained earlier-release sources must keep their original identities."""
 
 import json
 from pathlib import Path

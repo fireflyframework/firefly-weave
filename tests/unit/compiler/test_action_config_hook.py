@@ -31,7 +31,7 @@ MANIFEST = HTTP_PROFILE_DESCRIPTOR.manifest.value
 VALIDATORS = {HTTP_PROFILE_DESCRIPTOR.manifest.digest: HTTP_PROFILE_DESCRIPTOR.validate_action_config}
 CONFIG = "/spec/implementation/config"
 
-# The documented no-code example from the connector audit (Q1, step 7).
+# The documented no-code REST action example.
 VALID = {
     "apiVersion": "weave/v1alpha1",
     "kind": "Action",

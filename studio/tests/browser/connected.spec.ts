@@ -523,7 +523,7 @@ test("task JSON validity and task identity protect submitted data", async ({
   await page.getByLabel(/^Details(\s*\(optional\))?$/).fill('{"valid":true}');
   await page.getByLabel(/^Old(\s*\(optional\))?$/).fill("Must not survive");
   await page.getByLabel(/^Details(\s*\(optional\))?$/).fill("{");
-  // Invalid JSON keeps the decision buttons disabled, and they say why (F9).
+  // Invalid JSON keeps the decision buttons disabled, and they say why.
   const approve = page.getByRole("button", { name: "Approve", exact: true });
   await expect(approve).toBeDisabled();
   await expect(approve).toHaveAccessibleDescription(

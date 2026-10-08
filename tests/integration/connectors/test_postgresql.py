@@ -56,7 +56,7 @@ async def external_database(release_backends):
             == "firefly-weave-b1-local-integration"
         )
     except Exception:
-        pytest.fail("D1 task-owned PostgreSQL unavailable or marker missing", pytrace=False)
+        pytest.fail("Task-owned PostgreSQL unavailable or marker missing", pytrace=False)
     suffix = uuid4().hex[:20]
     name = "weave_d1_" + suffix
     password = secrets.token_hex(24)
@@ -102,7 +102,7 @@ async def external_database(release_backends):
 
 @pytest.fixture
 def postgres_connector():
-    assert importlib.util.find_spec("firefly_weave.connectors.postgresql") is not None, "D1 PostgreSQL adapter absent"
+    assert importlib.util.find_spec("firefly_weave.connectors.postgresql") is not None, "PostgreSQL adapter absent"
     from firefly_weave.connectors.postgresql import PostgresConnector, PostgresPolicy
 
     return PostgresConnector(PostgresPolicy(private_networks=("127.0.0.0/8",), plaintext_networks=("127.0.0.0/8",)))

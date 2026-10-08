@@ -15,10 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The shell (W2-1, W2-5, W2-6, W2-9, W2-10, W2-11): landmarks, a skip link,
-// a title per page, Build/Operate navigation, the platform indicator and
-// menu, Home's "Needs you", template rows, connections, Start a run and
-// Settings.
+// The shell: landmarks, a skip link, a title per page, Build/Operate
+// navigation, the platform indicator and menu, Home's "Needs you", template
+// rows, connections, Start a run and Settings.
 import { selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import { allCapabilities, connected, offline } from "./support";

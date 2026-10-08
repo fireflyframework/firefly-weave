@@ -164,7 +164,7 @@ test("requirements, required inputs and a compatible slot complete the step", as
   await page.getByLabel("Tags item 1", { exact: true }).fill("priority");
   await page.getByRole("button", { name: "Add Tags item" }).click();
   await page.getByLabel("Tags item 2", { exact: true }).fill("emea");
-  // An optional yes/no input is "Not set", "Yes" or "No" (F3).
+  // An optional yes/no input is "Not set", "Yes" or "No".
   await selectChoice(page.getByLabel(/^Dry run(\s*\(optional\))?$/), "true");
   await expect(issues).not.toContainText("required inputs");
   await page

@@ -59,7 +59,7 @@ const schema = {
   },
 };
 
-describe("form start values (F3, F4, F5)", () => {
+describe("form start values", () => {
   it("fills required booleans and constants and never keeps a secret", () => {
     const { data, changed } = prepareData(schema, {
       token: "s3cret",

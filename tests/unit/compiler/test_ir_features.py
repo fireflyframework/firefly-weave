@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The IR feature set's frozen shape (language spec 3.1); language milestone M1 computes and checks it."""
+"""The IR feature set's frozen shape; the compiler computes and checks it in a later release."""
 
 import json
 from pathlib import Path
@@ -66,8 +66,8 @@ def test_features_are_sorted_known_and_need_the_ir_version_extensions(features, 
 
 
 @pytest.mark.parametrize("features", [[], ["text.concat"]])
-def test_the_ir_version_extensions_is_not_accepted_until_a_later_milestone_widens_the_model(features):
-    # M0 names weave/ir-v1alpha4 but the model still lists v1alpha1 to v1alpha3 only, so no executable can use it yet.
+def test_the_ir_version_extensions_is_not_accepted_until_a_later_release_widens_the_model(features):
+    # The version is named, but the model still lists v1alpha1 to v1alpha3 only, so no executable can use it yet.
     with pytest.raises(ValidationError, match="Input should be 'weave/ir-v1alpha1'"):
         WorkflowIR.model_validate({**EXECUTABLE, "irVersion": IR_VERSION_EXTENSIONS, "features": features})
 

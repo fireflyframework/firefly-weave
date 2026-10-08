@@ -42,7 +42,7 @@ def catalog():
 
 @pytest.fixture
 def worker_runtime_fixture():
-    """Trusted kernel/storage fixture only; B6 must create an admitted release for live starts."""
+    """Trusted kernel/storage fixture only; worker admission must create an admitted release for live starts."""
     import json
     from uuid import UUID
 

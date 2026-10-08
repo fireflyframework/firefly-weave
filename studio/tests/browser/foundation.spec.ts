@@ -15,11 +15,11 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The design foundation (brand PR 1, contract C1): field borders that pass
-// 3:1, flat disabled buttons, one amber focus ring, status pills in the tone
-// tokens, Lucide icons at a 1.5px stroke, Manrope from Studio's own origin,
-// and the Firefly Weave lockup, mark and favicons. Colors are read from the
-// tokens at run time; only the amber accent is a fixed brand anchor.
+// The design foundation: field borders that pass 3:1, flat disabled buttons,
+// one amber focus ring, status pills in the tone tokens, Lucide icons at a
+// 1.5px stroke, Manrope from Studio's own origin, and the Firefly Weave
+// lockup, mark and favicons. Colors are read from the tokens at run time; only
+// the amber accent is a fixed brand anchor.
 import { test, expect, Locator, Page } from "@playwright/test";
 import {
   allCapabilities,

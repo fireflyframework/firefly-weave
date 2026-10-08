@@ -108,7 +108,7 @@ describe("plain-language diagnostic copy", () => {
         .severity,
     ).toBe("error");
   });
-  it("says what UNUSED and SCHEMA mean, in the author's words (W3-5)", () => {
+  it("says what UNUSED and SCHEMA mean, in the author's words", () => {
     const unused = describeDiagnostic({
       code: "WV-COMP-UNUSED",
       severity: "warning",

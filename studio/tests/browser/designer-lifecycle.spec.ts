@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The designer's editor bar (W3-3, W3-10): one 52 px bar, one primary
-// command that follows the workflow's lifecycle, reasons a person can read,
-// and a canvas that keeps the room the chrome gives back.
+// The designer's editor bar: one 52 px bar, one primary command that follows
+// the workflow's lifecycle, reasons a person can read, and a canvas that keeps
+// the room the chrome gives back.
 import { test, expect, type Page } from "@playwright/test";
 import {
   allCapabilities,
@@ -227,8 +227,7 @@ test.describe("1280x720", () => {
       if (mode === "local") await offline(page);
       else await connected(page);
       await newWorkflow(page);
-      // Steps without problems: an open diagnostics list takes its own room
-      // (deferred roadmap D1-a).
+      // Steps without problems: an open diagnostics list takes its own room.
       for (const label of ["Transform", "Wait for time", "Transform"])
         await insertStep(page, label);
       // Measure the settled bar: the status chip's longest steady text.

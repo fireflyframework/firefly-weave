@@ -15,8 +15,8 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Decision conditions as rule rows (W3-4): rows read and write the
-// expression tree the definition language already has.
+// Decision conditions as rule rows: rows read and write the expression tree
+// the definition language already has.
 import { describe, expect, it } from "vitest";
 import {
   branchName,

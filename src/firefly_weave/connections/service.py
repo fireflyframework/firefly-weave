@@ -183,7 +183,7 @@ class ConnectionService(ConnectionBindingPort):
             await self._ready(actor, scope, revision, "connection.bind", context, tx)
             if revision.connector != connector:
                 raise unavailable()
-            # B6 alone may replace this fail-closed accessor after checking a live lease.
+            # Only worker lease admission may replace this fail-closed accessor, after checking a live lease.
             return BoundConnection(slot, revision, no_credentials)
 
     async def _ready(
