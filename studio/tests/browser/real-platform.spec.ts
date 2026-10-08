@@ -37,6 +37,12 @@ SPDX-License-Identifier: Apache-2.0
 //   WEAVE_E2E_SHOTS         A folder that also receives a copy of every step
 //                           screenshot (they always go to
 //                           test-results/real-platform/).
+//   WEAVE_E2E_ACME_ORIGIN   The Acme fixture origin the platform approved with
+//                           `weave platform up --allow-private-origin`
+//                           (http://acme.acceptance.test:8080). The
+//                           quick-integration test needs it.
+//   WEAVE_E2E_ACME_CONTROL  The fixture's loopback control URL; when set, the
+//                           test also reads the fixture's request journal.
 //
 // Build the app first (`npm run build`): the host serves
 // studio/dist/studio/browser. Every test starts its own host with a fresh
@@ -54,8 +60,9 @@ SPDX-License-Identifier: Apache-2.0
 // extra unlinked person) are made with the realm's admin API; the access
 // token lifetime is always restored and the extra person deleted.
 //
-// The quick-integration test calls https://jsonplaceholder.typicode.com from
-// the platform's worker, and runs the operator's
+// The quick-integration test calls the Acme API fixture from the platform's
+// native executor over plain HTTP, which only the platform's private-origin
+// policy allows, and runs the operator's
 // `weave platform --directory DIR integrations grant` from this source tree.
 // That command refuses to run once the source checkout differs from the one
 // the platform was set up from: set the platform up again after changing src/.
@@ -87,6 +94,8 @@ import { python, pythonAvailable, repository } from "../python-path";
 
 const platformDir = process.env["WEAVE_E2E_PLATFORM_DIR"]?.trim() ?? "";
 const personFile = process.env["WEAVE_E2E_PERSON_FILE"]?.trim() ?? "";
+const acme = process.env["WEAVE_E2E_ACME_ORIGIN"]?.trim() ?? "";
+const acmeControl = process.env["WEAVE_E2E_ACME_CONTROL"]?.trim() ?? "";
 test.skip(
   !platformDir || !personFile,
   "Set WEAVE_E2E_PLATFORM_DIR and WEAVE_E2E_PERSON_FILE to run against a real local platform.",
@@ -940,16 +949,22 @@ test("10: quick integration from Studio runs against the real platform", async (
   page,
 }) => {
   test.setTimeout(420_000);
+  if (process.env.CI) expect(acme, "WEAVE_E2E_ACME_ORIGIN").not.toBe("");
+  test.skip(
+    !acme,
+    "Set WEAVE_E2E_ACME_ORIGIN to the Acme fixture origin this platform approved; scripts/acceptance.py does.",
+  );
   const { person } = setup();
   const s = await session(page);
   const suffix = randomBytes(3).toString("hex");
   const name = `e2e-integration-${suffix}`;
-  const action = `get-todo-${suffix}`;
+  const action = `get-order-status-${suffix}`;
   await pair(page, s.host!, "10-pairing");
   await connectAndSignIn(page, name, person);
   const designer = new DesignerPage(page);
 
-  // Describe GET /todos/{id} in the API action builder, from a new workflow.
+  // Describe GET /orders/{id}/status of the Acme fixture in the API action
+  // builder, from a new workflow.
   await openSidebar(page, "Home");
   await page.getByRole("button", { name: "New workflow", exact: true }).click();
   // At this width the palette is beside the canvas; its catalog loads first.
@@ -959,19 +974,11 @@ test("10: quick integration from Studio runs against the real platform", async (
   const builder = page.getByRole("dialog", { name: "New API action" });
   await expect(builder.getByLabel("Name", { exact: true })).toBeFocused();
   await page.keyboard.type(action);
-  await builder
-    .getByLabel("API address")
-    .fill("https://jsonplaceholder.typicode.com");
-  await builder.getByLabel("Path", { exact: true }).fill("/todos/{id}");
-  await selectChoice(
-    builder.getByLabel("Type of id", { exact: true }),
-    "integer",
-  );
+  await builder.getByLabel("API address").fill(acme);
+  await builder.getByLabel("Path", { exact: true }).fill("/orders/{id}/status");
   await builder
     .getByLabel("Example response")
-    .fill(
-      '{"userId": 1, "id": 1, "title": "sample title", "completed": false}',
-    );
+    .fill('{"orderId": "O-1", "status": "shipped"}');
   // Readiness is one line: ready, or how many things to set up.
   await expect(builder.locator(".readiness-line")).toContainText(
     /Platform ready for API actions|to set up|couldn't check/,
@@ -979,10 +986,10 @@ test("10: quick integration from Studio runs against the real platform", async (
   await openYaml(page);
   const preview = page.getByRole("region", { name: /Action YAML for/ });
   await expect(preview).toContainText("sideEffect: read_only");
-  await expect(preview).toContainText("path: /todos/{id}");
+  await expect(preview).toContainText("path: /orders/{id}/status");
   // The origin stays with the connection; sample values are never kept.
-  await expect(preview).not.toContainText("jsonplaceholder");
-  await expect(preview).not.toContainText("sample title");
+  await expect(preview).not.toContainText("acme.acceptance.test");
+  await expect(preview).not.toContainText("shipped");
   await shot(page, "10-describe");
 
   // Publish the action, then insert it with its connection slot.
@@ -999,9 +1006,9 @@ test("10: quick integration from Studio runs against the real platform", async (
   await expect(builder).toHaveCount(0);
   await expect(designer.node("call-action-1")).toBeVisible();
 
-  // The workflow: a unique name and one required input field, "id".
+  // The workflow: a unique name and one required text field, "id".
   await designer.deselect();
-  await designer.inspectorField("Name").fill(`todo-reader-${suffix}`);
+  await designer.inspectorField("Name").fill(`order-status-${suffix}`);
   const inputSchema = designer.inspector.locator(
     '[data-field="spec/inputSchema"]',
   );
@@ -1009,7 +1016,7 @@ test("10: quick integration from Studio runs against the real platform", async (
   await inputSchema.getByLabel("Field name").fill("id");
   await selectChoice(
     inputSchema.getByLabel("Type of “id”", { exact: true }),
-    "integer",
+    "string",
   );
   await inputSchema.getByRole("checkbox", { name: "Required: “id”" }).check();
   await page.locator(".inspector-header h2").click();
@@ -1034,13 +1041,15 @@ test("10: quick integration from Studio runs against the real platform", async (
   await shot(page, "10-mapped");
   const source = await designer.source();
   expect(source).toContain(`uses: ${action}@1.0.0`);
-  expect(source).toContain("connection: jsonplaceholder");
+  expect(source).toContain("connection: acme");
   expect(source).toMatch(/id:\s+ref: \/input\/id/);
   expect(source).toMatch(
-    /connections:\s+jsonplaceholder:\s+connector: weave-http@2\.0\.0/,
+    /connections:\s+acme:\s+connector: weave-http@2\.0\.0/,
   );
 
   // The connection for the slot, from the inspector: origin only, no secret.
+  // The platform accepts its plain-HTTP origin because the private-origin
+  // policy approved it.
   await designer.selectStep("call-action-1");
   await designer.inspector
     .getByRole("button", { name: "Create a connection for this API" })
@@ -1048,9 +1057,9 @@ test("10: quick integration from Studio runs against the real platform", async (
   const connect = page.getByRole("dialog", { name: "New API connection" });
   await expect(
     connect.getByLabel("Connection name", { exact: true }),
-  ).toHaveValue("jsonplaceholder");
+  ).toHaveValue("acme");
   await expect(connect.getByLabel("API address", { exact: true })).toHaveValue(
-    "https://jsonplaceholder.typicode.com",
+    acme,
   );
   const created = page.waitForResponse(
     (r) =>
@@ -1061,7 +1070,7 @@ test("10: quick integration from Studio runs against the real platform", async (
   const revision = String(
     ((await (await created).json()) as Record<string, unknown>)["id"],
   );
-  await expect(connect).toContainText("Created jsonplaceholder (revision");
+  await expect(connect).toContainText("Created acme (revision");
   // The last step names the real revision ID, ready to run on this computer.
   await expect(connect.locator("code.grant")).toHaveText(
     `weave platform integrations grant --connection ${revision} --access read`,
@@ -1090,7 +1099,7 @@ test("10: quick integration from Studio runs against the real platform", async (
   // Publish, then activate: the slot's connection and the release are pinned.
   await command(page, "Publish…");
   const publish = page.getByRole("dialog", {
-    name: `Publish todo-reader-${suffix} 1.0.0?`,
+    name: `Publish order-status-${suffix} 1.0.0?`,
   });
   await shot(page, "10-publish");
   await publish.getByRole("button", { name: "Publish version" }).click();
@@ -1111,7 +1120,7 @@ test("10: quick integration from Studio runs against the real platform", async (
     integrations.release_id,
     { timeout: 30_000 },
   );
-  await expect(activate.getByLabel(/^jsonplaceholder/)).toHaveValue(revision);
+  await expect(activate.getByLabel(/^acme/)).toHaveValue(revision);
   await shot(page, "10-activate");
   const submit = activate.getByRole("button", { name: "Activate version" });
   await submit.scrollIntoViewIfNeeded();
@@ -1124,7 +1133,7 @@ test("10: quick integration from Studio runs against the real platform", async (
   await expect(
     run.getByLabel("Version to run", { exact: true }),
   ).not.toHaveValue("");
-  await run.getByRole("spinbutton", { name: /^ID/ }).fill("1");
+  await run.getByRole("textbox", { name: /^ID/ }).fill("O-1");
   await shot(page, "10-start-run");
   const started = page.waitForResponse(
     (r) =>
@@ -1137,9 +1146,7 @@ test("10: quick integration from Studio runs against the real platform", async (
   );
   await expect(run).toHaveCount(0, { timeout: 30_000 });
 
-  // The toast opens the new run (the published version holds the edits, so
-  // there is nothing to keep in the designer); it succeeds with the real
-  // API's answer.
+  // The toast opens the new run; it succeeds with the fixture's answer.
   await page.locator(".toast").getByRole("button", { name: "View" }).click();
   await expect(
     page.getByRole("dialog", { name: "Leave the designer?" }),
@@ -1160,8 +1167,19 @@ test("10: quick integration from Studio runs against the real platform", async (
     )
     .toBe("Succeeded");
   await detail.getByText("Technical details").click();
-  await expect(detail).toContainText("delectus aut autem");
+  await expect(detail).toContainText("shipped");
   await shot(page, "10-run-succeeded");
+  // The fixture saw exactly one call for the order, without an API key.
+  if (acmeControl) {
+    const journal = (await (
+      await fetch(`${acmeControl}/_control/journal`)
+    ).json()) as {
+      entries: { method: string; path: string; key_sha256: string | null }[];
+    };
+    expect(
+      journal.entries.filter((entry) => entry.path === "/orders/O-1/status"),
+    ).toEqual([expect.objectContaining({ method: "GET", key_sha256: null })]);
+  }
   expect(s.errors).toEqual([]);
   await removePlatform(page, name);
   expectNoCredentialsLeft();
