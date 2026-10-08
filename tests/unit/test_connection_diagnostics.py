@@ -300,3 +300,28 @@ async def test_connection_test_explains_why_a_saved_revision_is_not_ready(monkey
     with pytest.raises(CatalogError) as binding:
         await connections.resolve_binding(ACTOR, SCOPE, "pets", revision.id, revision.connector, context=CONTEXT)
     assert binding.value.code == "WV-CONNECTION" and binding.value.result is None
+
+
+async def test_connection_tests_flag_plain_http_connections():
+    connections, session = service()
+    plain = await connections.create_revision(
+        ACTOR,
+        SCOPE,
+        request(
+            config={"baseUrl": "http://api.example.com", "auth": {"kind": "none"}},
+            secretRef={},
+            allowed_destinations=("http://api.example.com",),
+        ),
+        context=CONTEXT,
+    )
+
+    class Open:
+        @asynccontextmanager
+        async def open(self, scope, mutation=True):
+            yield SimpleNamespace(session=session, scope=scope)
+
+    connections.uow = Open()
+    result = await connections.test_connection(ACTOR, SCOPE, plain.id, context=CONTEXT)
+    # The flag describes the saved configuration, so it is reported whatever the check's outcome.
+    assert result.encrypted is False
+    assert result.model_dump(mode="json")["encrypted"] is False

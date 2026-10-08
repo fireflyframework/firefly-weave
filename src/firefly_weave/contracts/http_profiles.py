@@ -56,21 +56,6 @@ def protected(name: str) -> bool:
     return name.lower() in PROTECTED or name.lower().startswith(("proxy-", "x-forwarded-"))
 
 
-PLAIN_HTTP = (
-    "Plain HTTP works only for an origin the platform operator approved for development "
-    "(the private-origin policy). Use an HTTPS origin such as https://api.example.com."
-)
-
-
-def plain_http_allowed(value: str) -> bool:
-    """True when this process's private-origin policy approves ``value`` for plain HTTP connector calls."""
-    from firefly_weave import private_origins
-
-    return value.strip().lower().startswith("http://") and private_origins.active().permits_plaintext(
-        "http-connector", value
-    )
-
-
 def fixed_server(value: str, *, plain_http: bool = False) -> tuple[str, str]:
     """The fixed server's origin and base path; ``plain_http`` also accepts an ``http`` origin."""
     parsed = urlsplit(value)
@@ -247,7 +232,8 @@ def check_profile_connection(request: ConnectionRequest) -> None:
     profile = ProfileConnection.model_validate(request.config)
 
     def server(value: str) -> str:
-        return fixed_server(value, plain_http=plain_http_allowed(value))[0]
+        # http:// is accepted like https:// (owner, 2026-10-07); the egress check decides reach (C8).
+        return fixed_server(value, plain_http=True)[0]
 
     allowed = {server(v) for v in request.allowed_destinations}
     if server(profile.base_url) not in allowed or set(request.secret_refs) != profile.auth.slots():

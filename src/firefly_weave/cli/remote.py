@@ -168,6 +168,7 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
 
         ctx = click.get_current_context()
         target: Target | None = None
+        notices: list[str] = []
 
         async def invoke(base_url: str, provider: Any, scope: Any) -> Any:
             identifier = options.get("identifier")
@@ -208,7 +209,7 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                         raise ValueError("Returned plan does not match selection")
                     # Keep stdout as the final machine result; preview before the mutation.
                     click.echo(plan.model_dump_json(), err=True)
-                return await sdk.invoke(
+                result = await sdk.invoke(
                     operation_id,
                     identifier=identifier,
                     state_id=options.get("state_id"),
@@ -218,11 +219,21 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                     idempotency_key=options.get("idempotency_key"),
                     query=query or None,
                 )
+                if operation_id.startswith("connections."):
+                    from firefly_weave.cli.connections import plain_http_notice
+
+                    notice = await plain_http_notice(sdk, operation_id, identifier, result)
+                    if notice is not None:
+                        notices.append(notice)
+                return result
 
         try:
             target = resolve_target(ctx, operation, options)
             result = asyncio.run(invoke(target.base_url, target.provider, target.scope))
             machine_result(result)
+            # Standard output stays the JSON result; a plain-HTTP connection adds one line on standard error.
+            for notice in notices:
+                click.echo(notice, err=True)
             if operation_id in {"compiler.compile", "compiler.validate"}:
                 if not result.validation_ok:
                     for diagnostic in result.diagnostics:

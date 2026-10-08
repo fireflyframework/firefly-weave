@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""HTTP profile connections accept plain HTTP only for an origin the private-origin policy approves."""
+"""HTTP profile connections accept plain HTTP like HTTPS; the private-origin policy decides reach at egress."""
 
 import json
 from uuid import uuid4
@@ -27,6 +27,7 @@ from firefly_weave.contracts.http_profile_checks import connection_issues
 from firefly_weave.contracts.http_profiles import ProfileConnection, check_profile_connection, fixed_server
 
 ACME = "http://acme.acceptance.test:8080"
+PUBLIC = "http://api.example.com"
 
 
 def request(base=ACME, destinations=(ACME,), auth=None, secrets=None):
@@ -47,6 +48,16 @@ def approved(purpose="http-connector"):
     )
 
 
+POLICIES = {
+    "none": po.PrivateOrigins.empty(),
+    "approved": approved(),
+    "webhooks-only": approved("event-delivery"),
+    "legacy": po.PrivateOrigins.empty().with_legacy(
+        ("http-connector",), ("10.0.0.0/8",), setting="WEAVE_HTTP_PRIVATE_NETWORKS"
+    ),
+}
+
+
 def test_fixed_server_reads_plain_http_only_when_asked():
     assert fixed_server(ACME + "/", plain_http=True) == (ACME, "")
     assert fixed_server("https://api.example.com") == ("https://api.example.com", "")
@@ -54,38 +65,38 @@ def test_fixed_server_reads_plain_http_only_when_asked():
         fixed_server(ACME)
 
 
-def test_without_an_entry_plain_http_is_refused_with_a_reason():
-    with po.installed(po.PrivateOrigins.empty()):
-        issues = connection_issues(request())
-        assert [(issue.code, issue.path) for issue in issues] == [
-            ("CONFIG", "/config/baseUrl"),
-            ("DESTINATION", "/allowed_destinations/0"),
-        ]
-        assert "approved" in issues[0].message
-        with pytest.raises(ValueError):
-            check_profile_connection(request())
+@pytest.mark.parametrize("policy", list(POLICIES.values()), ids=list(POLICIES))
+@pytest.mark.parametrize("base", [ACME, PUBLIC])
+def test_plain_http_connections_pass_the_checks_under_every_policy(policy, base):
+    # Connection checks never resolve names: the egress check decides reach before the first write (C8).
+    with po.installed(policy):
+        assert connection_issues(request(base, (base,))) == []
+        check_profile_connection(request(base, (base,)))
 
 
-def test_an_approved_origin_is_accepted_for_the_http_connector_purpose_only():
-    with po.installed(approved()):
-        assert connection_issues(request()) == []
-        check_profile_connection(request())
-    with po.installed(approved("event-delivery")):
-        assert connection_issues(request())
-
-
-def test_legacy_private_networks_never_open_plain_http_for_profiles():
-    legacy = po.PrivateOrigins.empty().with_legacy(
-        ("http-connector",), ("10.0.0.0/8",), setting="WEAVE_HTTP_PRIVATE_NETWORKS"
-    )
-    with po.installed(legacy):
-        assert connection_issues(request())
+def test_secrets_may_travel_over_plain_http():
+    value = request(PUBLIC, (PUBLIC,), {"kind": "api-key", "header": "X-Api-Key"}, {"api_key": "acme-api-key"})
+    assert connection_issues(value) == []
+    check_profile_connection(value)
 
 
 def test_machine_token_endpoints_still_need_https():
     auth = {"kind": "machine-token", "client_id": "weave", "endpoint": ACME + "/token"}
     with po.installed(approved()):
-        assert connection_issues(request(auth=auth, secrets={"client_secret": "acme-client"}))
+        issues = connection_issues(request(auth=auth, secrets={"client_secret": "acme-client"}))
+    assert ("AUTH", "/config/auth/endpoint") in [(issue.code, issue.path) for issue in issues]
+
+
+def test_other_schemes_are_refused_with_a_reason():
+    ftp = "ftp://acme.acceptance.test"
+    issues = connection_issues(request(ftp, (ftp,)))
+    assert [(issue.code, issue.path) for issue in issues] == [
+        ("CONFIG", "/config/baseUrl"),
+        ("DESTINATION", "/allowed_destinations/0"),
+    ]
+    assert all("HTTPS or HTTP" in issue.message for issue in issues)
+    with pytest.raises(ValueError):
+        check_profile_connection(request(ftp, (ftp,)))
 
 
 def test_execution_reads_the_connection_and_leaves_reachability_to_egress():

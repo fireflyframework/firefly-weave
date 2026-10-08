@@ -123,9 +123,20 @@ async def _connector_version(sdk: Any) -> Any:
     )
 
 
+async def plain_http_notice(sdk: Any, operation_id: str, identifier: Any, result: Any) -> str | None:
+    """The "Not encrypted" line for a connection answer; a test answer carries only the flag, so read the origin."""
+    from firefly_weave.contracts.connectors import ConnectionRevision, plain_text_warning
+
+    if operation_id == "connections.test":
+        if getattr(result, "encrypted", None) is not False:
+            return None
+        result = await sdk.invoke("connections.read", identifier=identifier)
+    return plain_text_warning(result.config) if isinstance(result, ConnectionRevision) else None
+
+
 def _guided_create(raw: click.Command) -> click.Command:
     """``connections create`` with the raw ``--request`` path and guided weave-http@2.0.0 flags."""
-    from firefly_weave.contracts.connectors import ConnectionRequest
+    from firefly_weave.contracts.connectors import ConnectionRequest, plain_text_warning
 
     original = raw.callback
     assert original is not None
@@ -159,7 +170,7 @@ def _guided_create(raw: click.Command) -> click.Command:
 
         try:
             # Check everything locally before any network call; the version ID may be resolved below.
-            request(guided["connector_version_id"] or "00000000-0000-0000-0000-000000000000")
+            checked = request(guided["connector_version_id"] or "00000000-0000-0000-0000-000000000000")
         except HttpActionError as error:
             machine_result(
                 {
@@ -176,6 +187,10 @@ def _guided_create(raw: click.Command) -> click.Command:
             return await sdk.invoke("connections.create", body=request(identifier))
 
         machine_result(run_remote(ctx, "connections.create", options, create))
+        warning = plain_text_warning(checked.config)
+        if warning is not None:
+            # Plain HTTP is allowed but never silent; standard output stays the JSON result.
+            click.echo(warning, err=True)
         return None
 
     _request_option(raw, "Raw ConnectionRequest JSON file; or use the guided weave-http@2.0.0 flags.")
@@ -187,7 +202,8 @@ def _guided_create(raw: click.Command) -> click.Command:
         click.Option(["--connector-version-id"], type=click.UUID, help="Skip resolving the published connector."),
         click.Option(
             ["--api-url"],
-            help="The called API's HTTPS origin, such as https://api.example.com (base paths go in the Action).",
+            help="The called API's origin, such as https://api.example.com; http:// works but is not encrypted "
+            "(base paths go in the Action).",
         ),
         click.Option(["--auth"], type=click.Choice(AUTH_KINDS), default="none", show_default=True),
         click.Option(["--auth-header"], help="Header that carries the API key (api-key auth)."),
@@ -199,7 +215,7 @@ def _guided_create(raw: click.Command) -> click.Command:
             multiple=True,
             help="SLOT=HANDLE: an operator-provided secret handle, never the secret value. Repeatable.",
         ),
-        click.Option(["--allow"], multiple=True, help="Another literal HTTPS origin to allow. Repeatable."),
+        click.Option(["--allow"], multiple=True, help="Another literal HTTPS or HTTP origin to allow. Repeatable."),
     ]
     return click.Command(
         "create",
