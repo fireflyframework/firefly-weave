@@ -33,7 +33,11 @@ def test_scheduler_url_requires_postgresql():
         Settings(database_url="postgresql+asyncpg://user@localhost:1234/db", scheduler_database_url="sqlite:///tmp.db")
 
 
-@pytest.mark.parametrize("raw", ['{"ordinary_bytes":0}', '{"control_bytes":4294967297}', " " * 32769])
+@pytest.mark.parametrize(
+    "raw",
+    ['{"ordinary_bytes":0}', '{"control_bytes":4294967297}', " " * 32769],
+    ids=["unlimited-ordinary-bytes", "control-bytes-over-32-bits", "oversized"],
+)
 def test_operations_policy_rejects_unlimited_or_oversized_configuration(monkeypatch, raw):
     monkeypatch.setenv("WEAVE_DATABASE_URL", "postgresql+asyncpg://user@localhost:1234/db")
     monkeypatch.setenv("WEAVE_OPERATIONS_POLICY", raw)

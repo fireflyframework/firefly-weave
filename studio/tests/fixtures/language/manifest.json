@@ -6,9 +6,13 @@
     "ir_versions": [
       "weave/ir-v1alpha1",
       "weave/ir-v1alpha2",
-      "weave/ir-v1alpha3"
+      "weave/ir-v1alpha3",
+      "weave/ir-v1alpha4"
     ],
-    "features": [],
+    "features": [
+      "text.concat",
+      "text.join"
+    ],
     "limits": {
       "max_loop_items": 10000,
       "default_loop_max_items": 1000,

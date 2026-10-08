@@ -40,6 +40,8 @@ from firefly_weave.contracts.client_configuration import ClientConfiguration, Si
 from firefly_weave.contracts.operational_policy import OperationsPolicy
 from firefly_weave.contracts.telemetry import TelemetryOptions
 from firefly_weave.operations.lumi_gateway import LumiGatewaySettings
+from firefly_weave.private_origins import PrivateOrigins
+from firefly_weave.private_origins import load as load_private_origins
 
 
 def operations_from_env() -> OperationsPolicy:
@@ -128,6 +130,7 @@ class Settings(BaseModel):
     mail_private_networks: tuple[str, ...] = Field(default=(), max_length=128)
     mail_allowed_ports: tuple[int, ...] = Field(default=(25, 465, 587, 143, 993), min_length=1, max_length=128)
     mail_allow_local_fixture: bool = False
+    private_origins: PrivateOrigins = Field(default_factory=PrivateOrigins.empty)
 
     @field_validator("mail_allowed_ports")
     @classmethod
@@ -271,6 +274,7 @@ class Settings(BaseModel):
             mail_private_networks=json.loads(os.environ.get("WEAVE_MAIL_PRIVATE_NETWORKS", "[]")),
             mail_allowed_ports=json.loads(os.environ.get("WEAVE_MAIL_ALLOWED_PORTS", "[25,465,587,143,993]")),
             mail_allow_local_fixture=mail_fixture == "true",
+            private_origins=load_private_origins(os.environ),
             native_executors=TypeAdapter(tuple[ExecutorConfig, ...]).validate_json(
                 os.environ.get("WEAVE_NATIVE_EXECUTORS", "[]")
             ),

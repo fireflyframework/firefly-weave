@@ -932,7 +932,7 @@ def json_values(value):
         (id_token({**CLAIMS, "sub": "x" * 256}), None),
         (id_token({**CLAIMS, "sub": " padded"}), None),
         (id_token({**CLAIMS, "sub": "line\nbreak"}), None),
-        ("a." + "A" * 70000 + ".c", None),
+        pytest.param("a." + "A" * 70000 + ".c", None, id="oversized-token"),
         (id_token({**CLAIMS, "sub": "x" * 255}), {"subject": "x" * 255, "display_name": "ada"}),
         (id_token({**CLAIMS, "aud": ["weave-cli"]}), {"subject": "subject-1", "display_name": "ada"}),
         (

@@ -182,7 +182,7 @@ describe("design tokens", () => {
     });
   });
 
-  it("declares every token lanes build on (contract C1)", () => {
+  it("declares every token that components build on", () => {
     const names = [
       ...["--bg", "--sunken", "--surface", "--raised", "--hover", "--selected"],
       ...[
@@ -348,7 +348,7 @@ describe("design tokens", () => {
       expect(d.value).toBe("200 800");
   });
 
-  it("sets no text below 12px outside the canvas (wave 3 owns it)", () => {
+  it("sets no text below 12px outside the canvas", () => {
     const px = (d: { property: string; value: string }) => {
       const size =
         d.property === "font-size"
@@ -459,11 +459,11 @@ describe("design tokens", () => {
   });
 
   it("draws every step kind alike, the canvas dots in --canvas-dot, and a disabled segment at 7:1", () => {
-    // Spec §2.1: no role colors. A Human task differs by icon and shape only.
+    // No role colors: a Human task differs by icon and shape only.
     const human = /\.human(?![\w-])/;
     expect(all.filter((d) => human.test(d.selector))).toEqual([]);
     expect(appDeclarations.filter((d) => human.test(d.selector))).toEqual([]);
-    // Spec §2.2: the dot grid is its own decorative token, not a border.
+    // The dot grid is its own decorative token, not a border.
     expect(
       all.find(
         (d) => d.selector === ".canvas" && d.property === "background-image",

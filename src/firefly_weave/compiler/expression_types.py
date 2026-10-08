@@ -24,6 +24,7 @@ from typing import Literal, cast
 
 from firefly_weave.compiler.expressions import (
     DEFAULT_LIMITS,
+    TEXT_OPERATORS,
     ExpressionFailure,
     _copy,
     _string_size,
@@ -274,6 +275,8 @@ def _infer(expression: JsonObject, context_schemas: dict[str, JsonObject], budge
         )
         return InferredType(schema, classification, any(child.may_be_missing for child in children))
     operation = cast(JsonObject, body)
+    if operation["name"] in TEXT_OPERATORS:
+        return InferredType(budget.object((("type", "string"),)))
     if operation["name"] != "coalesce":
         return InferredType(budget.object((("type", "boolean"),)))
     alternatives = []
@@ -311,7 +314,7 @@ def infer_expression(
 ) -> InferredType:
     """Infer from already profile-validated schemas keyed by root context names.
 
-    Local/bundled refs and composition remain unknown here; A5 must retain runtime
+    Local/bundled refs and composition remain unknown here; callers must retain runtime
     guards whenever stronger schema containment or operand typing is unproved.
     schema_limits independently bounds generated schema bytes/nodes/depth and
     cumulative expansion/copy work. Runtime limits still govern expressions/data.

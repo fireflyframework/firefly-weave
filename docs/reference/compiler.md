@@ -211,10 +211,14 @@ not support v1alpha3 reject these artifacts; upgrade runtime readers before
 activating them. The capabilities response advertises accepted IR versions.
 Executables also define a sorted `features` list of the language features they
 need (`text.concat`, `text.join`, `flow.forEach`, `flow.callWorkflow`,
-`ai.agent`, `ai.memory`). It is omitted when empty, which it is for every
-executable this version compiles, so existing digests do not change; a non-empty
-list requires `weave/ir-v1alpha4`, which this version does not accept yet.
-`ir.py` defines
+`ai.agent`, `ai.memory`). It is omitted when empty, so existing digests do not
+change. A workflow that uses `concat` or `join` in any expression compiles to
+`weave/ir-v1alpha4` with `text.concat`, `text.join`, or both; v1alpha4 always
+has a non-empty list, and the validator recomputes the version and the list from
+the graph. The version is the highest level any construct needs, so a workflow
+with a human task and `join` is v1alpha4, not v1alpha2. A platform imports and
+activates such an artifact only when its capabilities list every feature in
+`language_features`; otherwise it answers `ir_unsupported`. `ir.py` defines
 every node, edge, control, join, guard, dependency, and executable field as a
 strict Pydantic model, and `export_schemas()` publishes `executable` and
 `compiled-artifact` with the other contracts.
@@ -360,10 +364,19 @@ JavaScript (with the `u` flag) and JSON Schema `pattern` use the anchored form
 
 ## Import an artifact
 
-`import_artifact(bytes_or_text_or_object, *, limits=ArtifactLimits())` re-checks
-an artifact before you trust it:
+`import_artifact(bytes_or_text_or_object, *, limits=ArtifactLimits(), features=None)`
+re-checks an artifact before you trust it:
 
-- Input size and the supported IR version.
+- Input size, and an IR version and language features the platform runs.
+  `features` defaults to the platform's own (`text.concat` and `text.join` in
+  this version). Anything else, including an unknown feature name, raises
+  `UnsupportedIR` (a `ValueError` whose `missing` names the missing features and
+  is empty when the IR version itself is unknown). Activation and catalog reads
+  answer it as `WV-IR-UNSUPPORTED`, and compatibility scans as `ir_unsupported`.
+  A platform that lists language features leaves runs in progress that need
+  one it does not list waiting, never blocked, until a platform that runs it
+  picks them up again. Meanwhile, reading such a run, signalling it, or
+  reporting a task result for it also answers `WV-IR-UNSUPPORTED`.
 - Strict model and schema invariants, and the executable, dependency, and schema
   hashes.
 - Unique IDs, referenced nodes, edge kinds, joins, lexical scopes, branch
@@ -416,9 +429,9 @@ snapshot identity and digest validation; `export_schemas()` includes it as
 
 **Expressions.** The supported forms are `literal`, `ref`, `object`, `array`, and
 `op`. Operators are `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `and`, `or`, `not`,
-`exists`, `coalesce`, `contains`, `notContains`, `in`, `notIn`, `startsWith`, and
-`endsWith`. Function calls, code, imports, secret or environment
-access, and remote references are not supported.
+`exists`, `coalesce`, `contains`, `notContains`, `in`, `notIn`, `startsWith`,
+`endsWith`, `concat`, and `join`. Function calls, code, imports, secret or
+environment access, and remote references are not supported.
 
 | Operators | Operands | Evaluation |
 | --- | --- | --- |
@@ -430,6 +443,23 @@ access, and remote references are not supported.
 | `exists` | Exactly one direct `ref` | True when the referenced value is present |
 | `and`, `or` | At least one | Lazy; keeps the difference between missing and `null` |
 | `coalesce` | At least one | Returns the first present, non-null operand; `null` when all are exhausted |
+| `concat` | At least one string, number, or Boolean | Returns the operands' text joined with nothing between them |
+| `join` | Exactly two: a list of strings, numbers, or Booleans, then a string separator | Returns the items' text with the separator between them; an empty list gives `""` |
+
+**Text operators.** `concat` and `join` write strings unchanged, Booleans as
+`true` and `false`, and numbers as JavaScript's `String(x)` does (the RFC 8785
+number form of canonical JSON): `2.0` is `2`, `0.1` is `0.1`, `-0.0` is `0`, and
+`1e21` is `1e+21`. There is no locale and no Unicode normalization. Any other
+value (`null`, an object, or a list inside `concat`) fails with `WV-EXPR-TYPE`,
+and a missing reference with `WV-EXPR-MISSING`; use `coalesce` for a default.
+The compiler reports an operand that can never be text as
+`WV-COMP-TYPE_MISMATCH` at that operand, and an operand that may not be text
+(for example a nullable field, or a list whose item type is unknown) as
+`WV-COMP-UNKNOWN_COMPATIBILITY` with an `operator_operands` runtime guard. The
+produced text counts toward `max_payload_bytes` (`WV-EXPR-RESOURCE_LIMIT`).
+Decision table rules cannot use either operator yet (`WV-DECISION-OPERATOR`).
+`concat` never evaluates its result: do not build SQL, HTML, or URLs with it;
+pass values to a connector as separate parameters instead.
 
 Text matching is case-sensitive and performs no Unicode normalization. Empty
 text matches every string; membership in an empty array is false. Array
@@ -498,7 +528,9 @@ is not classified. Safe ordinary artifacts keep their canonical digests.
 | `WV-COMP-TYPE_MISMATCH` at `/spec/output` | An expression's type cannot satisfy the target schema | Change the expression or the schema; the authoring guide shows an example |
 | `WV-COMP-UNAVAILABLE_REFERENCE` | An expression reads a step that has not run yet in its scope, or a value private to another branch | Read the step only after it runs, or read the decision or parallel step's output |
 | `WV-COMP-UNKNOWN_ACTION` (or `_CONNECTOR`, `_TASK`, `_ADAPTER`) | The catalog does not contain that exact reference | Add the exact version to the catalog, or fix the reference |
-| `WV-COMP-UNSUPPORTED_FEATURE` | The workflow or decision table uses a construct whose language feature this compiler does not compile yet; the message names the feature | Keep the document for a later version, or use the steps and operators this version compiles |
+| `WV-COMP-UNSUPPORTED_FEATURE` | The workflow uses a construct whose language feature this compiler does not compile yet (`forEach` or `callWorkflow`); the message names the feature | Keep the document for a later version, or use the steps and operators this version compiles |
+| `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step and pass it to the table as input |
+| `UnsupportedIR` on import, `WV-IR-UNSUPPORTED` on activation, a catalog read, or a run read | The artifact needs an IR version or language feature this platform does not list; `missing` names the missing features and is empty when the IR version itself is unknown. A run that needs it waits for an upgrade, and signals and task results for it answer the same way | Upgrade the platform, or use an artifact without that feature |
 | `WV-COMP-CATALOG_PENDING` notes in Studio | Studio works without the catalog and checks references later | Nothing; connect and **Validate** against the project catalog |
 | `WV-COMP-CONNECTION` | A step names a connection slot the workflow does not declare, omits a slot its action requires, or uses a slot declared for a different connector | Declare the slot in `spec.connections` with the action's exact connector, or fix the step's `connection` |
 | `WV-COMP-CONFIG_CONTRACT` | An action's `config` does not fit its connector | Fix the configuration; [HTTP profiles](../connectors/http-profiles.md) lists the built-in HTTP rules |

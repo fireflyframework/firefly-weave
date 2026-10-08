@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The frozen instance-key grammar (language spec 3.2, overview C11)."""
+"""The frozen instance-key grammar."""
 
 import re
 

@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The inspector (W3-4, W3-6, W3-7): decision conditions as rule rows, a
-// wider panel with folding sections and a clear apply model, and one
-// vocabulary for where a value comes from.
+// The inspector: decision conditions as rule rows, a wider panel with folding
+// sections and a clear apply model, and one vocabulary for where a value
+// comes from.
 import { selectChoice } from "./support";
 import { test, expect, type Page } from "@playwright/test";
 import {
@@ -58,136 +58,148 @@ for (const viewport of [
   { width: 1440, height: 900 },
   { width: 600, height: 500 },
 ])
-  test.describe(`${viewport.width}x${viewport.height}`, () => {
-    test.use({ viewport });
+  test.describe(
+    `${viewport.width}x${viewport.height}`,
+    { tag: "@xplat" },
+    () => {
+      test.use({ viewport });
 
-    test("a decision's condition is built from rule rows and labels its path", async ({
-      page,
-    }) => {
-      await offline(page);
-      await newWorkflow(page);
-      const designer = new DesignerPage(page);
-      await designer.setSource(routed);
-      await designer.selectStep("decision-1");
-      const condition = inspector(page).locator('[data-field="cases/0/when"]');
-      // A new case has no condition: it says so instead of "always".
-      await expect(condition).not.toContainText(
-        "Choose when this path applies.",
-      );
-      await condition
-        .getByRole("combobox", { name: "Condition 1 data" })
-        .fill("/input/amount");
-      await selectChoice(
-        condition.getByLabel("Condition 1 test", { exact: true }),
-        {
-          label: "is greater than",
-        },
-      );
-      const value = condition.getByLabel("Condition 1 value");
-      await expect(value).toHaveAttribute("type", "number");
-      await value.fill("1000");
-      await expect(condition).not.toContainText(
-        "Choose when this path applies.",
-      );
-      await finishField(page).click();
-      const source = await sourceText(page);
-      expect(source).toContain("name: gt");
-      expect(source).toMatch(/- ref: \/input\/amount\n\s+- literal: 1000/);
-      // The canvas names the paths by their conditions.
-      await designer.open();
-      await closeSheet(page);
-      await designer.fit();
-      const labels = await page
-        .locator(".canvas .lane-header")
-        .allTextContents();
-      expect(labels.map((l) => l.trim())).toEqual([
-        "Amount > 1000",
-        "Otherwise",
-      ]);
-      for (const label of labels)
-        expect(label.trim()).not.toMatch(/^Case \d+$|^Default$/);
-      await expect(
-        page.locator('[data-step="decision-1"] .node-summary'),
-      ).toHaveText("Amount > 1000 · otherwise");
-      // Another path starts without a condition; Validate reports it.
-      await designer.selectStep("decision-1");
-      await inspector(page).getByRole("button", { name: "+ Add path" }).click();
-      await expect(
-        inspector(page).locator('[data-field="cases/1/when"]'),
-      ).not.toContainText("Choose when this path applies.");
-      await closeSheet(page);
-      await page
-        .getByRole("toolbar", { name: "Workflow commands" })
-        .getByRole("button", { name: "Validate" })
-        .click();
-      const strip = page.getByRole("region", { name: "Compiler diagnostics" });
-      await expect(strip).toContainText("1 error");
-      await expect(strip).toContainText("Choose when this path applies.");
-      expect(await sourceText(page)).not.toContain("literal: true");
-    });
-
-    test("Step name and duration update live and Undo restores the previous field", async ({
-      page,
-    }) => {
-      await offline(page);
-      await newWorkflow(page);
-      await insertStep(page, "Wait for time");
-      const designer = new DesignerPage(page);
-      await designer.selectStep("wait-1");
-      const name = inspector(page).getByLabel("Step name");
-      await name.fill("cool-down");
-      const duration = inspector(page).getByLabel("Duration", { exact: true });
-      await duration.click();
-      await expect(designer.node("cool-down")).toHaveCount(1);
-      await duration.fill("5");
-      await expect(designer.node("cool-down")).toContainText("5 min");
-      await duration.press("ControlOrMeta+z");
-      await expect(duration).toHaveValue("1");
-      await expect(designer.node("cool-down")).toHaveCount(1);
-      await duration.fill("5");
-      expect(await sourceText(page)).toContain("durationSeconds: 300");
-    });
-
-    test("the step menu moves, duplicates and deletes", async ({ page }) => {
-      await offline(page);
-      await newWorkflow(page);
-      await insertStep(page, "Wait for time");
-      await insertStep(page, "Transform");
-      const designer = new DesignerPage(page);
-      await designer.selectStep("wait-1");
-      const menu = inspector(page).getByRole("button", {
-        name: "Step actions",
+      test("a decision's condition is built from rule rows and labels its path", async ({
+        page,
+      }) => {
+        await offline(page);
+        await newWorkflow(page);
+        const designer = new DesignerPage(page);
+        await designer.setSource(routed);
+        await designer.selectStep("decision-1");
+        const condition = inspector(page).locator(
+          '[data-field="cases/0/when"]',
+        );
+        // A new case has no condition: it says so instead of "always".
+        await expect(condition).not.toContainText(
+          "Choose when this path applies.",
+        );
+        await condition
+          .getByRole("combobox", { name: "Condition 1 data" })
+          .fill("/input/amount");
+        await selectChoice(
+          condition.getByLabel("Condition 1 test", { exact: true }),
+          {
+            label: "is greater than",
+          },
+        );
+        const value = condition.getByLabel("Condition 1 value");
+        await expect(value).toHaveAttribute("type", "number");
+        await value.fill("1000");
+        await expect(condition).not.toContainText(
+          "Choose when this path applies.",
+        );
+        await finishField(page).click();
+        const source = await sourceText(page);
+        expect(source).toContain("name: gt");
+        expect(source).toMatch(/- ref: \/input\/amount\n\s+- literal: 1000/);
+        // The canvas names the paths by their conditions.
+        await designer.open();
+        await closeSheet(page);
+        await designer.fit();
+        const labels = await page
+          .locator(".canvas .lane-header")
+          .allTextContents();
+        expect(labels.map((l) => l.trim())).toEqual([
+          "Amount > 1000",
+          "Otherwise",
+        ]);
+        for (const label of labels)
+          expect(label.trim()).not.toMatch(/^Case \d+$|^Default$/);
+        await expect(
+          page.locator('[data-step="decision-1"] .node-summary'),
+        ).toHaveText("Amount > 1000 · otherwise");
+        // Another path starts without a condition; Validate reports it.
+        await designer.selectStep("decision-1");
+        await inspector(page)
+          .getByRole("button", { name: "+ Add path" })
+          .click();
+        await expect(
+          inspector(page).locator('[data-field="cases/1/when"]'),
+        ).not.toContainText("Choose when this path applies.");
+        await closeSheet(page);
+        await page
+          .getByRole("toolbar", { name: "Workflow commands" })
+          .getByRole("button", { name: "Validate" })
+          .click();
+        const strip = page.getByRole("region", {
+          name: "Compiler diagnostics",
+        });
+        await expect(strip).toContainText("1 error");
+        await expect(strip).toContainText("Choose when this path applies.");
+        expect(await sourceText(page)).not.toContain("literal: true");
       });
-      await menu.click();
-      await page.getByRole("menuitem", { name: "Duplicate" }).click();
-      await expect(designer.node("wait-2")).toHaveCount(1);
-      await expect(page.locator(".toast")).toContainText(
-        "Duplicated wait-1 as wait-2.",
-      );
-      await expect
-        .poll(() => designer.stepIds())
-        .toEqual(["wait-1", "wait-2", "transform-1"]);
-      await designer.selectStep("wait-2");
-      await inspector(page)
-        .getByRole("button", { name: "Step actions" })
-        .click();
-      await page.getByRole("menuitem", { name: "Move to…" }).click();
-      const end = page.getByRole("button", {
-        name: "Move wait-2 here, after transform-1",
+
+      test("Step name and duration update live and Undo restores the previous field", async ({
+        page,
+      }) => {
+        await offline(page);
+        await newWorkflow(page);
+        await insertStep(page, "Wait for time");
+        const designer = new DesignerPage(page);
+        await designer.selectStep("wait-1");
+        const name = inspector(page).getByLabel("Step name");
+        await name.fill("cool-down");
+        const duration = inspector(page).getByLabel("Duration", {
+          exact: true,
+        });
+        await duration.click();
+        await expect(designer.node("cool-down")).toHaveCount(1);
+        await duration.fill("5");
+        await expect(designer.node("cool-down")).toContainText("5 min");
+        await duration.press("ControlOrMeta+z");
+        await expect(duration).toHaveValue("1");
+        await expect(designer.node("cool-down")).toHaveCount(1);
+        await duration.fill("5");
+        expect(await sourceText(page)).toContain("durationSeconds: 300");
       });
-      await end.click();
-      await expect
-        .poll(() => designer.stepIds())
-        .toEqual(["wait-1", "transform-1", "wait-2"]);
-      await designer.selectStep("wait-2");
-      await inspector(page)
-        .getByRole("button", { name: "Step actions" })
-        .click();
-      await page.getByRole("menuitem", { name: "Delete step" }).click();
-      await expect(designer.node("wait-2")).toHaveCount(0);
-      await expect(page.locator(".toast")).toContainText("Deleted wait-2.");
-    });
-  });
+
+      test("the step menu moves, duplicates and deletes", async ({ page }) => {
+        await offline(page);
+        await newWorkflow(page);
+        await insertStep(page, "Wait for time");
+        await insertStep(page, "Transform");
+        const designer = new DesignerPage(page);
+        await designer.selectStep("wait-1");
+        const menu = inspector(page).getByRole("button", {
+          name: "Step actions",
+        });
+        await menu.click();
+        await page.getByRole("menuitem", { name: "Duplicate" }).click();
+        await expect(designer.node("wait-2")).toHaveCount(1);
+        await expect(page.locator(".toast")).toContainText(
+          "Duplicated wait-1 as wait-2.",
+        );
+        await expect
+          .poll(() => designer.stepIds())
+          .toEqual(["wait-1", "wait-2", "transform-1"]);
+        await designer.selectStep("wait-2");
+        await inspector(page)
+          .getByRole("button", { name: "Step actions" })
+          .click();
+        await page.getByRole("menuitem", { name: "Move to…" }).click();
+        const end = page.getByRole("button", {
+          name: "Move wait-2 here, after transform-1",
+        });
+        await end.click();
+        await expect
+          .poll(() => designer.stepIds())
+          .toEqual(["wait-1", "transform-1", "wait-2"]);
+        await designer.selectStep("wait-2");
+        await inspector(page)
+          .getByRole("button", { name: "Step actions" })
+          .click();
+        await page.getByRole("menuitem", { name: "Delete step" }).click();
+        await expect(designer.node("wait-2")).toHaveCount(0);
+        await expect(page.locator(".toast")).toContainText("Deleted wait-2.");
+      });
+    },
+  );
 
 test.describe("1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });

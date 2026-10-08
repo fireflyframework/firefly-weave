@@ -98,8 +98,11 @@ publish the Action, not at run time.
   `read_only`. `POST`, `PUT`, `PATCH`, and `DELETE` become the `write` action with
   side effect `non_idempotent` and exactly one attempt (`retry.maxAttempts: 1`).
   You cannot choose the side effect or add retries.
-- **Origin.** Each connection fixes one HTTPS origin (`baseUrl`, without a path).
-  A base path such as `/v1` belongs in the Action's path template.
+- **Origin.** Each connection fixes one origin (`baseUrl`, without a path),
+  `https://` or `http://`. A base path such as `/v1` belongs in the Action's
+  path template. An `http://` origin is not encrypted: requests, including any
+  API key, password, or token, travel in plain text, so the CLI and Studio show
+  a "Not encrypted" warning for it. Use `https://` whenever the API offers it.
 - **Path template.** An absolute path of at most 4096 characters. Placeholders
   fill a whole segment, such as `/v1/pets/{petId}`; names start with a letter or
   underscore and continue with letters, digits, `_`, or `-` (at most 128). No query
@@ -127,11 +130,15 @@ publish the Action, not at run time.
 
 **Not supported:**
 
-- Plain `http://` origins, and destinations that resolve to private or loopback
-  addresses unless the operator lists that range in `WEAVE_HTTP_PRIVATE_NETWORKS`
-  (see [Configuration](../operations/configuration.md)). The local platform never
-  allows them. Link-local addresses, cloud metadata hosts, and Kubernetes service
-  names are always refused.
+- Destinations that resolve to private, loopback, or CGNAT addresses, over
+  HTTPS or HTTP, unless the platform's private-origin policy approves that
+  origin (on the local platform, `weave platform up --allow-private-origin`
+  when you create the installation; see
+  [Docker development](../guides/docker-development.md)) or the operator lists
+  the range in the legacy `WEAVE_HTTP_PRIVATE_NETWORKS` (see
+  [Configuration](../operations/configuration.md)). Link-local addresses, cloud
+  metadata hosts (including `100.100.100.200`), and Kubernetes service names are
+  always refused.
 - Redirects. Any `3xx` answer fails; no redirect is followed.
 - Error answers as results. A `4xx` or `5xx` status fails the task, and its body
   is never returned.
@@ -453,11 +460,24 @@ grants that handle to your environment, the platform refuses the connection with
 | `machine-token` | `--client-id`, `--token-endpoint`, `--scope` (repeatable) | `client_secret` |
 
 The API origin, and a machine-token endpoint's origin, are added to
-`allowed_destinations` automatically; `--allow` adds another literal HTTPS origin.
-`--connector-version-id` skips the lookup. `--request FILE` sends a raw
-`ConnectionRequest` instead, and cannot be combined with the guided flags; use it
-for `client_secret_basic` machine tokens. `weave connections test ID` checks a
-saved revision's configuration without sending a request to the API.
+`allowed_destinations` automatically; `--allow` adds another literal HTTPS or
+HTTP origin. `--connector-version-id` skips the lookup. `--request FILE` sends a
+raw `ConnectionRequest` instead, and cannot be combined with the guided flags;
+use it for `client_secret_basic` machine tokens. `weave connections test ID`
+checks a saved revision's configuration without sending a request to the API.
+
+An `http://` API address works too, with or without credentials. The command
+creates the connection and prints one line on standard error after the JSON
+result:
+
+```text
+Not encrypted: requests to http://api.example.com travel in plain text.
+```
+
+`weave connections read ID` and `weave connections test ID` print the same line
+for that connection, and the test's JSON answer has `"encrypted": false`. A
+public address needs nothing more; a private one needs the approval described
+under **Not supported**.
 
 ### 5. Grant the executor the connection
 
@@ -760,7 +780,7 @@ document or policy, and 2 for invalid command usage.
 | `WV-IMPORT-DUPLICATE_OPERATION` | Two operations share an `operationId` | Make every `operationId` unique |
 | `WV-IMPORT-OPERATION_ID` | No usable `operationId` | Add one of letters, digits, `_`, `.`, or `-` (at most 128) |
 | `WV-IMPORT-STATUSES` | No `2xx` status the profile can return | Declare a `2xx` response with a JSON body or no content |
-| `WV-IMPORT-SERVER` | No fixed HTTPS server | Declare an `https://` server without variables, credentials, or query |
+| `WV-IMPORT-SERVER` | No fixed HTTPS or HTTP server | Declare an `https://` (or, not encrypted, `http://`) server without variables, credentials, or query |
 | `WV-IMPORT-COMPILE` | A generated Action does not compile | Report the document to the platform team |
 | `WV-IMPORT-IO` | A local file could not be read or written safely | Check sizes and paths; outputs must not exist yet |
 | `WV-SCHEMA-*` | A schema keyword or format is outside the schema profile | Follow the hint; numeric formats need `--numeric-formats` |
@@ -787,10 +807,11 @@ the run; input only fills declared fields.
   the authentication needs, just before the request, after checking current
   authority twice. A response that echoes a secret is withheld and the task fails.
 - **Egress is closed by default.** The request goes only to an origin listed in
-  `allowed_destinations`, over HTTPS, with DNS resolved once and the peer checked
-  before anything is written. Private and loopback addresses are refused unless
-  the operator allows that network; link-local and metadata addresses are always
-  refused. Ambient proxies are ignored and redirects are never followed.
+  `allowed_destinations`, over HTTPS or, for an `http://` origin, plain HTTP,
+  with DNS resolved once and the peer checked before anything is written.
+  Private and loopback addresses are refused unless the operator allows that
+  network; link-local and metadata addresses are always refused. Ambient
+  proxies are ignored and redirects are never followed.
 - **Nothing is fetched while you build.** The CLI and Studio read local files or
   pasted text only. Samples contribute types and identifier-like field names,
   never values, enums, or examples.
@@ -815,13 +836,14 @@ when the call needs anything the profile excludes, for example:
 | What you see | Why | What to do |
 | --- | --- | --- |
 | `WV-CONNECTION-CONNECTOR`: `weave-http@2.0.0` is not published in this project | The operator has not prepared the environment, or you selected another project | On the local platform, run `weave platform integrations enable`; otherwise ask the operator, or check `weave auth status` |
-| `WV-CONNECTION-INPUT` (exit 2) with `WV-HTTP-CONNECTION-DESTINATION` | `--api-url` is not a literal HTTPS origin | Remove any path, query, or user information; put base paths in the Action |
+| `WV-CONNECTION-INPUT` (exit 2) with `WV-HTTP-CONNECTION-DESTINATION` | `--api-url` is not a literal HTTPS or HTTP origin | Remove any path, query, or user information; put base paths in the Action |
 | `WV-CONNECTION-INPUT` with `WV-HTTP-CONNECTION-SECRET` | The `--secret` slots do not match `--auth` | Use exactly the slots in the table in [step 4](#4-create-the-connection) |
 | `WV-CONNECTION` (422) with `WV-CONNECTION-SECRET`: the handle is not available | The operator has not granted that handle to this environment | Locally: `weave platform secret set`, then restart the API. Shared: ask the operator |
 | `WV-FORBIDDEN` when creating a connection | You lack `connection.manage` | Ask for the `tenant_admin` role. On the local platform, an existing username is never changed: create another person with `tenant_admin` and the other roles, as in [create a person](../guides/local-platform.md#5-create-a-person-who-can-sign-in), then sign in as it with `weave auth login --switch-account` |
 | `WV-COMPILE` with a `WV-COMP-*` pointer at publish | The Action left the profile, usually after a hand edit | Rebuild it with `http-action` or the importer |
 | The run stays queued | The executor is not running | Check `weave platform status` for `Integrations enabled: True`, and read the API terminal's startup notices |
-| The task fails with `HTTP_PROFILE_DESTINATION` | The origin resolves to a refused address or is not in `allowed_destinations` | Use a public HTTPS origin listed on the connection |
+| The task fails with `HTTP_PROFILE_DESTINATION` | The origin resolves to a refused address or is not in `allowed_destinations` | Use a public origin listed on the connection, or ask the operator to approve the private one |
+| `Not encrypted: requests to http://… travel in plain text.` on standard error | The connection's API address is `http://` | Nothing fails. Switch to the `https://` address when the API offers one, because credentials and data cross the network unencrypted |
 | `HTTP_PROFILE_STATUS` | The API answered a status the Action does not accept, including any `3xx`, `4xx`, or `5xx` | Check the input values and the Action's accepted statuses |
 | `HTTP_PROFILE_OUTPUT` | The body was not JSON, did not match the output schema, or an empty status carried a body | Compare a real response with the Action's output schema; regenerate it if needed |
 | `HTTP_PROFILE_AUTH` | The secret value is empty, too long, or not valid for its slot | Store a corrected value behind the same handle |

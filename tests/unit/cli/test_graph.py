@@ -186,3 +186,54 @@ def test_svg_export_carries_no_mascot(artifact):
     tree = ET.fromstring(svg)
     assert tree.find(".//{*}g[@aria-label]") is None
     assert tree.find(".//{*}radialGradient") is None
+
+
+LEGACY_GRAPH_COLORS = {"#367D68", "#173D34", "#EEF4F0", "#D9EBDF", "#FFF3D6"}
+
+
+def test_svg_uses_the_light_diagram_palette_on_an_opaque_paper_ground():
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.sdk.visualization import graph_data, render_graph
+
+    document = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "palette", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "output": {"literal": None},
+            "steps": [
+                {
+                    "id": "pick",
+                    "kind": "switch",
+                    "cases": [{"when": {"literal": True}, "steps": [], "output": {"literal": 1}}],
+                    "default": {
+                        "steps": [{"id": "stop", "kind": "fail", "code": "STOP", "message": "Stop"}],
+                        "output": {"literal": 2},
+                    },
+                }
+            ],
+        },
+    }
+    result = compile_source(document, format="object", catalog=CatalogSnapshot.empty())
+    assert result.ok and result.artifact is not None
+    svg = render_graph(result.artifact, "svg")
+    tree = ET.fromstring(svg)
+    ground = tree.find("{*}rect")
+    assert (ground.get("width"), ground.get("height"), ground.get("fill")) == (
+        tree.get("width"),
+        tree.get("height"),
+        "#F3F1EB",
+    )
+    assert tree.find(".//{*}marker/{*}path").get("fill") == "#62645B"
+    assert {edge.get("stroke") for edge in tree.findall(".//{*}path[@data-edge]")} == {"#62645B"}
+    assert tree.find("{*}g[@font-family]").get("fill") == "#272820"
+    expected = {"start": "#EAE7DF", "end": "#EAE7DF", "switch": "#FFF0D8", "join": "#FFF0D8", "fail": "#FFFFFF"}
+    kinds = {node["id"]: node["kind"] for node in graph_data(result.artifact)["nodes"]}
+    for group in tree.findall(".//{*}g[@data-node]"):
+        kind = kinds[group.get("data-node")]
+        box, disc, numeral = group.find("{*}rect"), group.find("{*}circle"), group.find("{*}text")
+        assert (box.get("fill"), box.get("stroke")) == (expected.get(kind, "#FFFFFF"), "#62645B"), kind
+        assert (disc.get("fill"), numeral.get("fill")) == ("#272820", "#FFFFFF")
+    assert not {color for color in LEGACY_GRAPH_COLORS if color.lower() in svg.lower()}

@@ -28,7 +28,7 @@ permissions:
   contents: read
 jobs:
   offline:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -37,7 +37,7 @@ jobs:
           python-version: '3.12'
       - run: uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python scripts/check.py
   studio:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -57,6 +57,43 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: studio
       - run: npm run test:browser
+        working-directory: studio
+  xplat:
+    name: cross-platform (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep repository line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+      - run: uv sync --locked --all-extras --group docs
+      - name: Portable Python unit subset
+        run: uv run --no-sync python -m pytest tests/unit/compiler tests/contracts tests/unit/email tests/unit/providers tests/unit/operations tests/unit/test_private_origins.py tests/unit/test_release_versions.py tests/unit/test_acme_fixture.py tests/unit/test_acceptance_journeys.py tests/unit/test_acceptance_evidence.py tests/unit/test_ci_workflows.py -q --tb=short --show-capture=no -p no:cacheprovider
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: npm ci
+        working-directory: studio
+      - name: Studio unit tests and production build
+        run: npm test && npm run build
+        working-directory: studio
+      - run: npx playwright install chromium
+        working-directory: studio
+      - name: Cross-platform Playwright subset
+        run: npx playwright test --grep @xplat
         working-directory: studio
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release

@@ -177,16 +177,16 @@ def test_starter_readme_refreshes_simulation_after_input_edit(tmp_path):
     assert json.loads(result.output)["variables"]["output"] == {"message": "Edited input"}
 
 
-def test_logo_help_keeps_narrow_and_machine_outputs_clean():
+def test_help_starts_with_the_product_name_and_keeps_machine_output_clean():
     runner = CliRunner()
     wide = runner.invoke(cli, ["--help"], terminal_width=80)
     assert wide.exit_code == 0
-    assert "#########" in wide.output and "Firefly Weave" in wide.output
+    assert wide.output.startswith("Firefly Weave\nWorkflow orchestration and integration\n\nUsage:")
+    assert "#" not in wide.output.split("Usage:")[0]
     assert "Lumi" not in wide.output
-    assert "(o o)" not in wide.output
     narrow = runner.invoke(cli, ["--help"], terminal_width=50)
+    assert narrow.output.startswith("Firefly Weave\n\nUsage:")
     assert "Lumi" not in narrow.output
-    assert "Firefly Weave" in narrow.output
     version = runner.invoke(cli, ["version", "--output", "json"])
     assert version.exit_code == 0
     assert isinstance(json.loads(version.output), dict)

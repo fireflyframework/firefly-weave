@@ -158,7 +158,7 @@ Expected: a receipt with `status` and, once dispatched, the resulting `run_id`
 | --- | --- |
 | No receipt, HTTP 401 | The provider signature, secret, and installation policy; the route UUID is not a credential |
 | No receipt, HTTP 422 or 413 | A payload or schema rejection, or a size or batch limit; no part of that batch was stored |
-| `pending` | A scheduler-enabled dispatcher, database readiness, and the retry cooldown |
+| `pending` | A scheduler-enabled dispatcher, database readiness, platform capacity, and the retry cooldown |
 | `ignored` | The safe reason; lifecycle and unsupported events may intentionally start nothing |
 | `blocked` | The source owner's current grants, the standing binding, and package availability |
 | `failed` | The target run or activation and its schema; read the reason before an explicit retry |
@@ -290,7 +290,9 @@ Receipts are `pending`, `dispatched`, `ignored`, `blocked`, or `failed`.
 when `scheduler_enabled` is on, keeps durable tenant and environment cursors. Per
 environment turn, it processes at most ten due receipts, with a five-second total
 deadline per dispatch, a four-second SQL limit, and a one-second lock limit.
-Transient failures roll back and wait a stored thirty-second cooldown. Missing
+Transient failures roll back and wait a stored thirty-second cooldown; the
+receipt stays `pending` with the reason `transient_failure`. A capacity refusal
+(`WV-OPERATION-CAPACITY` or `WV-REQUEST-CAPACITY`) is a transient failure. Missing
 authority produces `blocked`; a finished target or schema failure produces
 `failed`. Both need an explicit retry, which keeps the event's identity. API-only
 replicas can leave pending work for a dispatcher replica.
@@ -349,6 +351,6 @@ relationships intact.
 | `provider-sources create` is rejected for `policy` | `policy` differs from the connection's `config` | Copy the connection's `config` exactly, including list order |
 | Creation is rejected for the schema digest or version | The pins come from a different Weave version than the server's | Regenerate `source.json` with the server's Weave version |
 | The provider reports 401 | Provider authentication or installation policy failed | Check the provider secret handles and installation settings in its guide |
-| Receipts stay `pending` | No scheduler-enabled replica is running, or the database is not ready | Start a replica with the scheduler enabled; check readiness |
+| Receipts stay `pending` | No scheduler-enabled replica is running, the database is not ready, or the platform refused dispatch for capacity (reason `transient_failure`) | Start a replica with the scheduler enabled; check readiness. A capacity refusal is retried after the cooldown |
 | A receipt is `blocked` | The source owner lost a grant, or the binding was revoked | Restore the grant, then `weave provider-receipts retry RECEIPT_UUID` |
 | A receipt is `failed` | The target run finished, or the payload does not fit the target's schema | Read the reason; fix the target, then retry or create a new source |

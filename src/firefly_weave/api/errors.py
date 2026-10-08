@@ -34,9 +34,10 @@ class ErrorAdvice:
     @exception_handler(CatalogError)
     async def catalog_error(self, error: CatalogError) -> JSONResponse:
         body = {"code": error.code, "message": error.message}
+        headers = None if error.retry_after is None else {"Retry-After": str(error.retry_after)}
         if error.result is not None:
-            return JSONResponse({**body, "result": error.result}, status_code=error.status)
-        return JSONResponse(body, status_code=error.status)
+            return JSONResponse({**body, "result": error.result}, status_code=error.status, headers=headers)
+        return JSONResponse(body, status_code=error.status, headers=headers)
 
     @exception_handler(ValidationError)
     async def invalid_contract(self, error: ValidationError) -> JSONResponse:

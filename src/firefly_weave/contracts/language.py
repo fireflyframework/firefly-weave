@@ -17,8 +17,8 @@
 """The language manifest: the single source of step kinds, operators, workflow fields, features and limits.
 
 Served by ``language.read`` and the Studio host's ``GET /studio/contracts/language`` and exported as
-``language-manifest`` (language spec 14.1, contract C5). ``studio`` is ``ready`` once Studio ships a
-descriptor for the entry and ``pending`` until then; Studio's schema coverage test compares only ready entries.
+``language-manifest``. ``studio`` is ``ready`` once Studio ships a descriptor for the entry and ``pending`` until
+then; Studio's schema coverage test compares only ready entries.
 Every change that adds a step kind, operator or workflow field to the definition models adds its entry here.
 """
 
@@ -27,7 +27,7 @@ from typing import Final, Literal
 
 from pydantic import Field, model_validator
 
-from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, HUMAN_IR_VERSION, IR_VERSION
+from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, HUMAN_IR_VERSION, IR_VERSION, accepted_ir_versions
 from firefly_weave.contracts.definitions import (
     ContractModel,
     OmissionOnly,
@@ -54,6 +54,7 @@ type StudioMark = Literal["ready", "pending"]
 type KindGroup = Literal["actions", "ai", "data", "flow", "wait", "human"]
 
 MANIFEST_VERSION: Final = "weave/language-manifest-v1"
+# IR versions every target accepts; weave/ir-v1alpha4 joins them with the first advertised feature (ir_versions).
 IR_VERSIONS: Final[tuple[str, ...]] = (IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION)
 # The compiler's default parallel concurrency ceiling (compile_source's max_parallel_concurrency).
 MAX_PARALLEL_CONCURRENCY: Final = 1000
@@ -244,7 +245,7 @@ def _kind(
     return ManifestStepKind.model_validate(value)
 
 
-# Lane A adds the agent entry with AgentStep: kind "agent", group "ai", label "AI agent", studio "pending".
+# AI steps add the agent entry with AgentStep: kind "agent", group "ai", label "AI agent", studio "pending".
 STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
     _kind("action", "ActionStep", "actions", "Action"),
     _kind("llm", "LLMStep", "ai", "AI task"),
@@ -269,12 +270,17 @@ STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
 )
 
 
+def ir_versions(features: Sequence[LanguageFeature] = ADVERTISED_FEATURES) -> list[str]:
+    """The IR versions a target running ``features`` accepts."""
+    return accepted_ir_versions(features)
+
+
 def language_manifest(features: Sequence[LanguageFeature] = ADVERTISED_FEATURES) -> LanguageManifest:
     """The manifest of a target that runs ``features``; limits are this platform's language ceilings."""
     return LanguageManifest(
         version=MANIFEST_VERSION,
         language_version="weave/v1alpha1",
-        ir_versions=list(IR_VERSIONS),
+        ir_versions=ir_versions(features),
         features=sorted(set(features)),
         limits=ManifestLimits(
             max_loop_items=MAX_LOOP_ITEMS,

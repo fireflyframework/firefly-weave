@@ -63,6 +63,7 @@ import {
   python,
   stopLocalAuthoring,
 } from "./local-authoring";
+import { crossingOf } from "./woven-crossing";
 
 interface Size {
   tag: string;
@@ -1492,6 +1493,47 @@ const scenes: Record<string, Scene> = {
     await page.goto("/");
     await expect(page.locator(".pair-card")).toBeVisible();
     await shot("00-pairing");
+  },
+  async "brand-header"({ page, size, problems, shot }) {
+    await hosted(page, {});
+    await expect(page.locator("weave-home-dashboard")).toBeVisible();
+    const where = `${size.tag} brand-header`;
+    const home = page.getByRole("link", { name: "Firefly Weave Studio home" });
+    const lockup = home.locator("img.brand-lockup");
+    const mark = home.locator("img.brand-mark");
+    if (size.width > 1280) {
+      // The expanded sidebar: the lockup at 192 x 35, inside the sidebar, its
+      // woven w's crossing open at this size's pixel density.
+      await expect(lockup).toBeVisible();
+      await expect(mark).toBeHidden();
+      await lockup.evaluate((e: HTMLImageElement) => e.decode());
+      const box = (await lockup.boundingBox())!;
+      const sidebar = (await page.locator(".sidebar").boundingBox())!;
+      if (Math.round(box.width) !== 192 || Math.round(box.height) !== 35)
+        problems.push(
+          `${where}: the lockup is ${box.width} x ${box.height}, not 192 x 35`,
+        );
+      if (box.x < sidebar.x || box.x + box.width > sidebar.x + sidebar.width)
+        problems.push(`${where}: the sidebar cuts the lockup`);
+      const crossing = await crossingOf(lockup);
+      const limit = (size.scale ?? 1) > 1 ? 0.05 : 0.4;
+      if (
+        crossing.missing.length ||
+        crossing.measured < 4 ||
+        crossing.depth > limit
+      )
+        problems.push(
+          `${where}: the woven w's crossing is not open ${JSON.stringify(crossing)}`,
+        );
+    } else {
+      // The narrow sidebar shows the Firefly mark, whole, inside the window.
+      await expect(lockup).toBeHidden();
+      await expect(mark).toBeVisible();
+      const box = (await mark.boundingBox())!;
+      if (box.x < 0 || box.y < 0 || box.x + box.width > size.width)
+        problems.push(`${where}: the window cuts the Firefly mark`);
+    }
+    await shot("00-brand-header", { tabs: 0 });
   },
 
   async "home-local"({ page, shot }) {

@@ -151,6 +151,12 @@ never moves the schedule backward. An overloaded platform may skip minutes by
 policy: a schedule is not a promise of exactly-once external effects or of
 catch-up.
 
+A capacity refusal (`WV-OPERATION-CAPACITY` or `WV-REQUEST-CAPACITY`) starts
+nothing and doesn't block the schedule: it stays `enabled`, and the next scan
+tries the same occurrence again with the same occurrence key, so the occurrence
+starts at most one run. An occurrence still refused when its minute ends becomes
+part of a `skipped` range.
+
 ## Request, routes, and permissions
 
 Save with `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/schedules`.
@@ -275,7 +281,7 @@ tenant-bound transactions.
 | --- | --- | --- |
 | `schedules save` rejects the calendar | The expression uses names, macros, a sixth field, `?`/`L`/`W`/`#`, sets both day fields, or can never occur | Rewrite it with numbers, ranges, lists, and steps; keep one day field `*` |
 | Status `blocked` | The activation is not ready, the owner lost a grant, or the calendar ran out | Read `blocked_reason`, fix the cause, then save or enable again |
-| A `skipped` range instead of a run | The scheduler did not observe the minute in time | Expected under the `skip` policy; missed runs are never replayed |
+| A `skipped` range instead of a run | The scheduler did not observe the minute in time, or the platform refused the run for capacity until the minute ended | Expected under the `skip` policy; missed runs are never replayed |
 | HTTP 409 `WV-SCHEDULE-REVISION` | Another change happened since you read the revision, you saved an existing `id` without `--revision` (or a new one with it), or the schedule is deleted | Read the schedule again, then decide whether your change still applies |
 | HTTP 422 `WV-SCHEDULE-RANGE` | The calendar has no future occurrence the calendar library can represent | Choose a calendar that occurs again in the future |
 | A run stays waiting after its duration | No scheduler-enabled replica, or an incident barrier | Check that a scheduler is running, then the run's incidents |

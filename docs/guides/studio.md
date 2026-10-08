@@ -979,9 +979,9 @@ confirms it."
 On the **Describe a request** tab, fill in:
 
 - **Action**: a **Name**, a **Version**, and an optional description.
-- **Request**: the **Method**, the **API address** (the HTTPS origin), the
-  **Path**, and its **Parameters** (path, query, or header; text, whole number,
-  or yes or no).
+- **Request**: the **Method**, the **API address** (the HTTPS or HTTP origin),
+  the **Path**, and its **Parameters** (path, query, or header; text, whole
+  number, or yes or no).
 - **How the API checks who is calling**: **No sign-in**, **API key in a header**
   (with the **Header that carries the key**), **User name and password**,
   **Bearer token**, or **OAuth client credentials**. The connection holds the
@@ -1054,7 +1054,9 @@ connection** dialog takes the names and the API address from the builder when
 you come from it:
 
 - Under **API**, **Connection name**, the name you choose when you activate a
-  workflow, and **API address**, the HTTPS origin only.
+  workflow, and **API address**, the HTTPS or HTTP origin only. An `http://`
+  address shows a **Not encrypted** notice: the connection works, but requests
+  travel in plain text.
 - Under **Authentication**, **How the API checks who is calling**: the same
   choices as the builder. OAuth client credentials add **Client ID**, **Token
   endpoint**, **Scopes (optional)**, and **How the client secret is sent**.
@@ -1320,5 +1322,8 @@ evidence. `tests/browser/real-platform.spec.ts` drives the connection, sign-in,
 session expiry and revocation, switch-account, and quick-integration journeys
 against a running local platform and its Keycloak, with the system credential
 store; it is skipped unless `WEAVE_E2E_PLATFORM_DIR` and
-`WEAVE_E2E_PERSON_FILE` are set, as its header explains. Tests use owned
-fixtures and never a production service.
+`WEAVE_E2E_PERSON_FILE` are set, as its header explains. Its quick-integration
+test also needs `WEAVE_E2E_ACME_ORIGIN`, the Acme fixture origin the platform
+approved with `weave platform up --allow-private-origin`; the run stage of
+`scripts/acceptance.py` sets it. Tests use owned fixtures and never a production
+service.

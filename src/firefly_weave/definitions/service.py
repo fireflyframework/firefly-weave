@@ -35,17 +35,23 @@ from firefly_weave.compiler.api import CompileResult, compile_source, import_art
 from firefly_weave.compiler.catalog import CatalogLock, CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_decision_table
 from firefly_weave.compiler.expressions import ExpressionFailure, measure_value
-from firefly_weave.compiler.ir import DecisionTableIR
+from firefly_weave.compiler.ir import DecisionTableIR, UnsupportedIR
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation, ActivationRequest, DefinitionKind, Draft, PublishedVersion
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
-from firefly_weave.contracts.public import DecisionEvaluation, DecisionEvaluationRequest, DraftRetirement, DraftView
+from firefly_weave.contracts.public import (
+    DecisionEvaluation,
+    DecisionEvaluationRequest,
+    DraftRetirement,
+    DraftView,
+    UnsupportedResource,
+)
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.contracts.workers import ConnectorExecutionPin
-from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.models import CatalogError, ir_unsupported
 from firefly_weave.definitions.ports import ConnectionBindingPort, WorkerAdmissionPort
 from firefly_weave.definitions.repository import DefinitionRepository
 from firefly_weave.operations.execution import execute_pure
@@ -287,6 +293,8 @@ class DefinitionService:
                 pinned = await DefinitionRepository(tx).version(UUID(prior["id"]))
                 try:
                     import_artifact(pinned["artifact"])
+                except UnsupportedIR as error:
+                    raise ir_unsupported(error.missing) from None
                 except ValueError:
                     raise CatalogError(
                         409, "WV-LEGACY-UNAVAILABLE", "Legacy publication evidence is unavailable"
@@ -486,7 +494,10 @@ class DefinitionService:
                 raise CatalogError(
                     422, "WV-ACTIVATION", "Activation requires an available workflow with the pinned digest"
                 )
-            artifact = import_artifact(row["artifact"])
+            try:
+                artifact = import_artifact(row["artifact"])
+            except UnsupportedIR as error:
+                raise ir_unsupported(error.missing) from None
             spec = row["document"]["spec"]
             connector_pins = await self.execution_readiness(
                 actor, scope, request, artifact, capability="release.activate", context=context, tx=tx
@@ -652,6 +663,8 @@ class DefinitionService:
                     raise CatalogError(404, "WV-NOT-FOUND", "Catalog resource not found")
                 try:
                     import_artifact(row["artifact"])
+                except UnsupportedIR as error:
+                    raise ir_unsupported(error.missing) from None
                 except ValueError:
                     raise CatalogError(
                         409,
@@ -797,6 +810,12 @@ class DefinitionService:
                     try:
                         import_artifact(row["artifact"])
                         items.append(published(row).model_dump(mode="json"))
+                    except UnsupportedIR as error:
+                        items.append(
+                            UnsupportedResource(id=row["id"], missing_features=list(error.missing)).model_dump(
+                                mode="json"
+                            )
+                        )
                     except ValueError:
                         items.append(
                             {

@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/app/api";
 import {
@@ -56,8 +56,7 @@ import {
 } from "../src/app/integrations/http-action-model";
 
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(root, ".venv/bin/python");
-const available = existsSync(python);
+const available = pythonAvailable();
 
 /** Runs a Python snippet that prints JSON, with the repository on the path. */
 function py<T>(source: string, input: unknown): T {
@@ -163,9 +162,14 @@ describe("API address", () => {
       origin: "https://api.example.com:8443",
       basePath: "/v1",
     });
-    const http = parseApiAddress("http://api.example.com");
-    expect(http).toHaveProperty("error");
-    expect("error" in http && http.error).toMatch(/HTTPS/);
+    // Plain HTTP is accepted like HTTPS; the platform's egress check decides
+    // whether the address is reachable.
+    expect(parseApiAddress("http://acme.acceptance.test:8080")).toEqual({
+      origin: "http://acme.acceptance.test:8080",
+      basePath: "",
+    });
+    const ftp = parseApiAddress("ftp://api.example.com");
+    expect("error" in ftp && ftp.error).toMatch(/https:\/\//);
     for (const bad of [
       "https://user:pw@api.example.com",
       "https://api.example.com?x=1",
@@ -199,6 +203,7 @@ describe("API address", () => {
         "https://-bad.com",
         "https://a.b.",
         "http://a.com",
+        "ftp://a.com",
         "https://a.com/%2e",
         "https://a.com/é",
       ];
@@ -210,7 +215,7 @@ from urllib.parse import urlsplit
 out=[]
 for c in json.load(sys.stdin):
     try:
-        origin, base = fixed_server(c)
+        origin, base = fixed_server(c, plain_http=True)
         if not _HOST.fullmatch(urlsplit(c).hostname or ""):
             raise ValueError
         out.append(origin + "|" + base)
@@ -793,5 +798,14 @@ describe("publish failures", () => {
   });
   it("keeps the HTTP connector reference fixed", () => {
     expect(HTTP_CONNECTOR).toBe("weave-http@2.0.0");
+  });
+});
+
+describe("connection slot names", () => {
+  it("names the slot after the host for HTTP and HTTPS addresses", () => {
+    expect(serviceSlug("http://acme.acceptance.test:8080", "x.get")).toBe(
+      "acme",
+    );
+    expect(serviceSlug("https://api.pets.example", "x.get")).toBe("pets");
   });
 });

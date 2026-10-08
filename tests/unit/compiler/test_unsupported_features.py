@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The compiler reports each language construct whose feature it does not compile yet (language spec 18, M0)."""
+"""The compiler reports each language construct whose feature it does not compile yet."""
 
 from collections.abc import Iterator
 from typing import get_args
@@ -79,6 +79,12 @@ EXPECTED = [
 
 def _uses(document: dict) -> list[tuple[str, str]]:
     return [(use.path, use.feature) for use in unsupported_uses(document)]
+
+
+@pytest.fixture
+def nothing_compiled(monkeypatch):
+    """The scan's own contract: with no feature compiled, it reports every construct of the frozen vocabulary."""
+    monkeypatch.setattr(support, "COMPILED_FEATURES", frozenset())
 
 
 def _switch(cases: list[dict], default: dict | None = None) -> dict:
@@ -225,12 +231,19 @@ POSITIONS = [
 ]
 
 
-def test_nothing_is_compiled_or_advertised_that_the_compiler_cannot_compile():
-    assert not COMPILED_FEATURES
+def test_text_features_compile_and_nothing_is_advertised_that_the_compiler_cannot_compile():
+    assert set(COMPILED_FEATURES) == {"text.concat", "text.join"}
     assert set(ADVERTISED_FEATURES) <= COMPILED_FEATURES
 
 
-def test_scan_finds_every_kind_and_operator_at_its_field():
+def test_with_text_compiled_only_loops_and_calls_are_reported():
+    assert _uses(EVERYTHING) == [
+        ("/spec/steps/0/body/steps/1/kind", "flow.callWorkflow"),
+        ("/spec/steps/0/kind", "flow.forEach"),
+    ]
+
+
+def test_scan_finds_every_kind_and_operator_at_its_field(nothing_compiled):
     assert [(use.path, use.feature) for use in unsupported_uses(EVERYTHING)] == EXPECTED
 
 
@@ -242,7 +255,7 @@ def test_literal_data_and_other_documents_are_never_read_as_syntax():
     assert unsupported_uses({"kind": "Workflow"}) == []
 
 
-def test_decision_table_rules_are_scanned():
+def test_decision_table_rules_are_scanned(nothing_compiled):
     table = {
         "kind": "DecisionTable",
         "spec": {"rules": [{"id": "r", "when": {"literal": True}, "output": CONCAT}], "defaultOutput": JOIN},
@@ -254,17 +267,17 @@ def test_decision_table_rules_are_scanned():
 
 
 @pytest.mark.parametrize(("document", "expected"), POSITIONS)
-def test_every_expression_position_is_scanned(document: dict, expected: list[tuple[str, str]]):
+def test_every_expression_position_is_scanned(nothing_compiled, document: dict, expected: list[tuple[str, str]]):
     assert _uses(document) == expected
 
 
-def test_long_numeric_keys_are_scanned_without_integer_conversion():
+def test_long_numeric_keys_are_scanned_without_integer_conversion(nothing_compiled):
     long_key = "1" * 5000
     document = workflow([], output={"object": {long_key: CONCAT}})
     assert _uses(document) == [(f"/spec/output/object/{long_key}/op/name", "text.concat")]
 
 
-def test_numeric_segments_keep_numeric_order_at_any_length():
+def test_numeric_segments_keep_numeric_order_at_any_length(nothing_compiled):
     long_key = "1" * 5000
     document = workflow([], output={"object": {long_key: CONCAT, "2": CONCAT}})
     assert _uses(document) == [
@@ -370,7 +383,7 @@ def test_message_names_the_construct_and_its_feature():
         lambda d: validate_authoring(d, format="object"),
     ],
 )
-def test_every_compiler_entry_point_stops_at_constructs_it_cannot_compile(monkeypatch, check):
+def test_every_compiler_entry_point_stops_at_constructs_it_cannot_compile(nothing_compiled, monkeypatch, check):
     # Pretend two existing constructs need a feature, so the wiring is proven before new constructs parse.
     monkeypatch.setattr(support, "KIND_FEATURES", {"wait": "flow.forEach"})
     monkeypatch.setattr(support, "OPERATOR_FEATURES", {"exists": "text.concat"})
@@ -394,14 +407,14 @@ def test_every_compiler_entry_point_stops_at_constructs_it_cannot_compile(monkey
         lambda d: validate_authoring(d, format="object"),
     ],
 )
-def test_new_constructs_parse_and_every_entry_point_reports_them(check):
+def test_new_constructs_parse_and_every_entry_point_reports_them(nothing_compiled, check):
     result = check(EVERYTHING)
     assert not result.ok and result.artifact is None
     assert {d.code for d in result.diagnostics} == {CODE}
     assert sorted(d.path for d in result.diagnostics) == [path for path, _ in EXPECTED]
 
 
-def test_decision_tables_with_text_operators_do_not_compile():
+def test_decision_tables_with_text_operators_report_the_decision_rule_code():
     table = {
         "apiVersion": "weave/v1alpha1",
         "kind": "DecisionTable",
@@ -414,7 +427,7 @@ def test_decision_tables_with_text_operators_do_not_compile():
         },
     }
     result = compile_source(table, format="object", catalog=CatalogSnapshot.from_definitions([]))
-    assert [(d.code, d.path) for d in result.diagnostics] == [(CODE, "/spec/rules/0/output/op/name")]
+    assert [(d.code, d.path) for d in result.diagnostics] == [("WV-DECISION-OPERATOR", "/spec/rules/0/output/op/name")]
 
 
 def test_callable_workflows_compile_because_callable_only_declares_an_interface():
@@ -424,7 +437,7 @@ def test_callable_workflows_compile_because_callable_only_declares_an_interface(
     assert result.ok, [d.code for d in result.diagnostics]
 
 
-def test_diagnostics_stay_capped_on_large_documents():
+def test_diagnostics_stay_capped_on_large_documents(nothing_compiled):
     many = workflow([{"id": f"t{i}", "kind": "transform", "value": CONCAT} for i in range(150)])
     result = validate_authoring(many, format="object")
     assert len(result.diagnostics) == 100

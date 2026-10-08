@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The frozen scope_at signature and result shape (language spec 14.3); M3 implements the analysis."""
+"""The frozen scope_at signature and result shape; the analysis itself arrives in a later release."""
 
 import inspect
 

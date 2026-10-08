@@ -16,7 +16,7 @@
 """No-code HTTP Actions on the built-in ``weave-http@2.0.0`` connector.
 
 Everything here is pure data shaping: no network, no file access and no code
-selection. An author describes one HTTPS request (method, path template, typed
+selection. An author describes one HTTP or HTTPS request (method, path template, typed
 parameters, a JSON body and response shape); the builder emits an Action whose
 ``implementation.config`` is an ``HttpOperation`` executed by the fixed,
 first-party HTTP profile executor. The side effect follows the method and
@@ -842,7 +842,7 @@ def _connection_issue(code: str, path: str, message: str, hint: str | None = Non
 
 def _origin(value: str, path: str) -> str:
     try:
-        origin, base = fixed_server(value)
+        origin, base = fixed_server(value, plain_http=True)
         if not _HOST.fullmatch(urlsplit(value).hostname or ""):
             raise ValueError("Destination hosts are literal names or addresses")
     except ValueError:
@@ -851,8 +851,9 @@ def _origin(value: str, path: str) -> str:
                 _connection_issue(
                     "DESTINATION",
                     path,
-                    "Destinations must be literal HTTPS origins.",
-                    "Use https://host[:port] with no wildcard, path, query or user information.",
+                    "Destinations must be literal HTTPS or HTTP origins.",
+                    "Use https://host[:port], or http:// (not encrypted), with no wildcard, path, query or user "
+                    "information.",
                 )
             ]
         ) from None
@@ -961,7 +962,7 @@ def build_connection_request(
 
 def connection_example(name: str, base_url: str, auth: AuthProfile) -> JsonObject:
     """A reviewable connection template: placeholders stand in for the version ID and secret handles."""
-    origin = fixed_server(base_url)[0]
+    origin = fixed_server(base_url, plain_http=True)[0]
     destinations = [origin]
     if auth.endpoint:
         destinations.append(fixed_server(auth.endpoint)[0])

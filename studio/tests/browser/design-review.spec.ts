@@ -15,7 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Findings of the cross-wave design review, each pinned with real clicks:
+// Findings of the Studio design review, each pinned with real clicks:
 // toasts announced by live regions that are always there and never drawn
 // over a dialog or the navigation rail; a workflow name the editor bar never
 // cuts by a pixel; the canvas help that stays readable over steps; disclosures

@@ -79,7 +79,7 @@ export const slotLabels: Record<string, string> = {
 
 export interface ConnectionDraft {
   name: string;
-  /** The API's HTTPS origin, such as https://api.example.com. */
+  /** The API's HTTPS or HTTP origin, such as https://api.example.com. */
   origin: string;
   auth: AuthKind;
   header: string;
@@ -90,7 +90,7 @@ export interface ConnectionDraft {
   authentication: ClientAuthentication;
   /** Secret handle NAME per slot; never a value. */
   secrets: Record<string, string>;
-  /** Further literal HTTPS origins the connection may reach. */
+  /** Further literal HTTPS or HTTP origins the connection may reach. */
   extraDestinations: string[];
 }
 /** The JSON body of connections.create (ConnectionRequest by alias). */
@@ -192,11 +192,15 @@ export function suggestedName(origin: string): string {
 }
 
 /**
- * The HTTPS origin of a fixed server address (fixed_server): no credentials,
+ * The origin of a fixed server address (fixed_server): no credentials,
  * query, fragment, percent or backslash, no trailing-dot host, port not 0.
- * Returns the origin and path, or null.
+ * HTTPS, or HTTP when plainHttp is set (the platform's egress check decides
+ * whether that address is reachable). Returns the origin and path, or null.
  */
-function fixedServer(value: string): { origin: string; path: string } | null {
+function fixedServer(
+  value: string,
+  { plainHttp = false }: { plainHttp?: boolean } = {},
+): { origin: string; path: string } | null {
   const raw = value.trim();
   if (
     !raw ||
@@ -213,7 +217,7 @@ function fixedServer(value: string): { origin: string; path: string } | null {
     return null;
   }
   if (
-    url.protocol !== "https:" ||
+    (url.protocol !== "https:" && !(plainHttp && url.protocol === "http:")) ||
     !url.hostname ||
     url.username ||
     url.password ||
@@ -223,7 +227,7 @@ function fixedServer(value: string): { origin: string; path: string } | null {
     raw.includes("#") ||
     url.hostname.endsWith(".") ||
     url.port === "0" ||
-    /^https:\/\/[^/]*@/i.test(raw)
+    /^https?:\/\/[^/]*@/i.test(raw)
   )
     return null;
   const path = url.pathname.replace(/\/+$/, "");
@@ -236,12 +240,28 @@ function fixedServer(value: string): { origin: string; path: string } | null {
     path.includes("}")
   )
     return null;
-  return { origin: `https://${url.host}`, path };
+  return { origin: `${url.protocol}//${url.host}`, path };
 }
 
-/** The origin when the value is a fixed HTTPS server address, else null. */
-export function originOf(value: string): string | null {
-  return fixedServer(value)?.origin ?? null;
+/** The origin when the value is a fixed server address, else null; token endpoints pass plainHttp: false. */
+export function originOf(
+  value: string,
+  { plainHttp = true }: { plainHttp?: boolean } = {},
+): string | null {
+  return fixedServer(value, { plainHttp })?.origin ?? null;
+}
+
+/**
+ * The non-blocking "Not encrypted" notice for an http:// API address, else
+ * null. Plain HTTP works (public addresses as they are, private ones only
+ * where the platform operator approved the origin); the form says so and
+ * never refuses it.
+ */
+export function plainHttpNotice(value: string): string | null {
+  const origin = originOf(value);
+  return origin?.startsWith("http://")
+    ? `Not encrypted: requests to ${origin} travel in plain text.`
+    : null;
 }
 
 const scopesOf = (draft: ConnectionDraft) =>
@@ -253,7 +273,7 @@ export function requiredDestinations(draft: ConnectionDraft): string[] {
   const origin = originOf(draft.origin);
   if (origin) result.push(origin);
   if (draft.auth === "machine-token") {
-    const endpoint = originOf(draft.endpoint);
+    const endpoint = originOf(draft.endpoint, { plainHttp: false });
     if (endpoint && !result.includes(endpoint)) result.push(endpoint);
   }
   return result;
@@ -278,7 +298,7 @@ export function destinationEntries(draft: ConnectionDraft): DestinationEntry[] {
     seen.add(origin);
   }
   if (draft.auth === "machine-token") {
-    const endpoint = originOf(draft.endpoint);
+    const endpoint = originOf(draft.endpoint, { plainHttp: false });
     if (endpoint && !seen.has(endpoint)) {
       entries.push({
         value: endpoint,
@@ -291,7 +311,7 @@ export function destinationEntries(draft: ConnectionDraft): DestinationEntry[] {
   }
   let index = entries.length;
   draft.extraDestinations.forEach((raw, extra) => {
-    const server = fixedServer(raw);
+    const server = fixedServer(raw, { plainHttp: true });
     const value = server && !server.path ? server.origin : raw.trim();
     const repeated = !value || seen.has(value);
     entries.push({
@@ -310,7 +330,7 @@ export function destinationsOf(draft: ConnectionDraft): string[] {
   return destinationEntries(draft)
     .filter((entry) => entry.index >= 0)
     .map((entry) => {
-      const server = fixedServer(entry.value);
+      const server = fixedServer(entry.value, { plainHttp: true });
       return server && !server.path ? server.origin : entry.value.trim();
     });
 }
@@ -368,13 +388,13 @@ export function checkDraft(
       "name",
       "Use letters, digits, '.', '_' or '-', starting with a letter or digit (128 characters at most).",
     );
-  const server = fixedServer(draft.origin);
+  const server = fixedServer(draft.origin, { plainHttp: true });
   if (!draft.origin.trim())
     add("origin", "Enter the API address, such as https://api.example.com.");
   else if (!server)
     add(
       "origin",
-      "Use an HTTPS address such as https://api.example.com, without a user name, password, query or fragment.",
+      "Use an HTTPS or HTTP address such as https://api.example.com, without a user name, password, query or fragment.",
     );
   else if (server.path)
     add(
@@ -455,10 +475,13 @@ export function checkDraft(
   }
   const destinations = destinationsOf(draft);
   destinations.forEach((destination, index) => {
-    if (!originOf(destination) || fixedServer(destination)?.path)
+    if (
+      !originOf(destination) ||
+      fixedServer(destination, { plainHttp: true })?.path
+    )
       add(
         `destination.${index}`,
-        "List only an HTTPS origin such as https://api.example.com: no path, query, credentials or wildcards.",
+        "List only an HTTP or HTTPS origin such as https://api.example.com: no path, query, credentials or wildcards.",
       );
   });
   return problems;
@@ -560,7 +583,7 @@ export const connectionCodeCopy: Record<string, string> = {
   "WV-CONNECTION-SECRET":
     "This secret handle isn't available in this environment.",
   "WV-CONNECTION-DESTINATION":
-    "Allowed destinations must be HTTPS origins such as https://api.example.com.",
+    "Allowed destinations must be HTTPS or HTTP origins such as https://api.example.com.",
 };
 const secretHint = "Check the handle name with your platform operator.";
 

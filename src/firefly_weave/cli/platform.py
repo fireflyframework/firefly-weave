@@ -143,12 +143,27 @@ def start(directory: Path) -> None:
     _call(operation, "text")
 
 
+def _show_private_origins(value: dict[str, Any] | None) -> None:
+    if not value:
+        return
+    origins = sorted({entry["origin"] for entry in value["entries"]})
+    click.echo(f"Private origins ({value['label']}): " + ", ".join(origins))
+    click.echo(f"Egress network: {value['network']} ({value['subnet']})")
+
+
+def _show_status(value: dict[str, Any]) -> None:
+    for key, item in value.items():
+        if key not in {"source_sha256", "engine", "endpoint", "ok", "private_origins"}:
+            click.echo(f"{key.replace('_', ' ').capitalize()}: {item}")
+    _show_private_origins(value.get("private_origins"))
+
+
 @platform.command()
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
 @click.pass_obj
 def status(directory: Path, output: str) -> None:
     """Show saved setup stage, API readiness, identity readiness, and URLs."""
-    _call(lambda: lifecycle.status(directory), output)
+    _call(lambda: lifecycle.status(directory), output, _show_status)
 
 
 @platform.command()
@@ -415,6 +430,14 @@ def secret_remove(directory: Path, handle: str, output: str) -> None:
     type=click.Choice(lifecycle.PERSON_ROLES),
     help="Role for the initial account; repeat for several roles. Requires --username.",
 )
+@click.option(
+    "--allow-private-origin",
+    "private_origins",
+    multiple=True,
+    metavar="ORIGIN",
+    help="Development only: let connector actions and signed webhooks reach this exact http://host:port test "
+    "service on a separate egress network. Repeat for several origins. Fixed when the installation is created.",
+)
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
 @click.pass_obj
 def up(
@@ -424,6 +447,7 @@ def up(
     subnet: str | None,
     username: str | None,
     roles: tuple[str, ...],
+    private_origins: tuple[str, ...],
     output: str,
 ) -> None:
     """Set up once and leave a Docker API, database and identity provider running.
@@ -437,13 +461,21 @@ def up(
     def operation() -> dict[str, Any]:
         with progress("Preparing the local Docker platform", enabled=output == "text") as update:
             return lifecycle.up(
-                directory, source, context, subnet=subnet, username=username, roles=roles, progress=update
+                directory,
+                source,
+                context,
+                subnet=subnet,
+                username=username,
+                roles=roles,
+                progress=update,
+                private_origins=private_origins,
             )
 
     def render(value: dict[str, Any]) -> None:
         click.echo("Docker platform is running; you can close this terminal.")
         click.echo("API: " + value["api_url"])
         click.echo("Data and configuration: " + str(directory))
+        _show_private_origins(value.get("private_origins"))
         account = value.get("account")
         if account and not account.get("existing"):
             _show_person(account)

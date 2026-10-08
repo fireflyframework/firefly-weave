@@ -1,0 +1,15 @@
+{
+  "customers": {
+    "C-1001": { "country": "ES", "email": "ada@example.com", "id": "C-1001", "name": "Ada Lovelace" },
+    "C-1002": { "country": "PT", "email": "grace@example.com", "id": "C-1002", "name": "Grace Hopper" }
+  },
+  "orders": {
+    "C-1001": [
+      { "amount": 120.0, "country": "ES", "currency": "EUR", "id": "O-1" },
+      { "amount": 4800.0, "country": "ES", "currency": "EUR", "id": "O-2" },
+      { "amount": 75.0, "country": "ZZ", "currency": "EUR", "id": "O-3" }
+    ],
+    "C-1002": []
+  },
+  "statuses": { "O-1": "shipped", "O-2": "on_hold", "O-3": "cancelled" }
+}

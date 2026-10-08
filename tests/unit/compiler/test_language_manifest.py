@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The language manifest lists exactly what the definition models accept (language spec 14.1, contract C5)."""
+"""The language manifest lists exactly what the definition models accept."""
 
 import inspect
 from typing import get_args
@@ -23,10 +23,11 @@ import pytest
 from pydantic import ValidationError
 
 from firefly_weave.compiler.api import compile_source
-from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, HUMAN_IR_VERSION, IR_VERSION
+from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, HUMAN_IR_VERSION, IR_VERSION, IR_VERSION_EXTENSIONS
 from firefly_weave.contracts import definitions
 from firefly_weave.contracts.language import LanguageManifest, language_manifest, supported_step_kinds
 from firefly_weave.contracts.language_features import (
+    ADVERTISED_FEATURES,
     DEFAULT_LOOP_MAX_ITEMS,
     KIND_FEATURES,
     LANGUAGE_FEATURES,
@@ -100,7 +101,7 @@ def test_action_entry_and_limits_match_the_spec_example():
         "max_call_depth": 8,
     }
     assert (dump["version"], dump["language_version"]) == ("weave/language-manifest-v1", "weave/v1alpha1")
-    assert dump["ir_versions"] == [IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION]
+    assert dump["ir_versions"] == [IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION, IR_VERSION_EXTENSIONS]
 
 
 def test_schema_references_and_blocks_resolve_in_the_exported_workflow_schema():
@@ -119,8 +120,20 @@ def test_limits_follow_their_sources():
 
 
 def test_features_are_what_the_target_runs():
-    assert language_manifest().features == []
+    assert ADVERTISED_FEATURES == ("text.concat", "text.join")
+    assert language_manifest().features == ["text.concat", "text.join"]
     assert language_manifest(["text.join", "text.concat"]).features == ["text.concat", "text.join"]
+    assert language_manifest([]).features == []
+
+
+def test_v1alpha4_is_accepted_only_by_a_target_that_runs_a_feature():
+    assert language_manifest().ir_versions == [
+        IR_VERSION,
+        HUMAN_IR_VERSION,
+        COMPARISON_IR_VERSION,
+        IR_VERSION_EXTENSIONS,
+    ]
+    assert language_manifest([]).ir_versions == [IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION]
 
 
 def test_capabilities_list_every_runnable_kind_from_the_manifest():
@@ -129,7 +142,14 @@ def test_capabilities_list_every_runnable_kind_from_the_manifest():
     assert sorted(capabilities.step_kinds) == sorted(
         ["action", "llm", "transform", "decisionTable", "switch", "parallel", "wait", "signal", "humanTask", "fail"]
     )
-    assert capabilities.ir_versions == [IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION]
+    assert capabilities.ir_versions == language_manifest().ir_versions
+
+
+def test_capabilities_without_language_features_mean_none():
+    # An older platform answers without the field; clients read that as "no language features".
+    assert Capabilities.model_validate({"limits": {}, "schemas": [], "connectors": []}).language_features == []
+    served = Capabilities(language_features=["text.concat", "text.join"], limits={}, schemas=[], connectors=[])
+    assert served.model_dump(mode="json")["language_features"] == ["text.concat", "text.join"]
 
 
 @pytest.mark.parametrize(

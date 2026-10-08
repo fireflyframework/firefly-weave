@@ -50,12 +50,18 @@ from firefly_weave.contracts.integration_events import (
     Subscription,
     SubscriptionRequest,
 )
-from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.operations.subscriptions import SubscriptionService
 from firefly_weave.persistence.paging import page_ids
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
+
+
+def delivery_egress(policy: HttpPolicy, allowed: tuple[str, ...], auth: object) -> EgressPolicy:
+    """Signed webhooks reach their receiver through the event-delivery purpose (C8)."""
+    return policy.egress("event-delivery", allowed, sends_credentials=auth == "bearer")
+
 
 _capacity_lock = threading.Lock()
 _inflight = 0
@@ -313,7 +319,9 @@ class OutboxDispatcher:
                         headers=headers,
                         max_response_bytes=1024,
                         timeout=min(5.0, max(0.001, deadline - asyncio.get_running_loop().time() - 1)),
-                        egress_policy=EgressPolicy(revision.allowed_destinations, self.policy.private_networks),
+                        egress_policy=delivery_egress(
+                            self.policy, revision.allowed_destinations, revision.config.get("auth")
+                        ),
                     )
                     accepted = response.status_code in sub.statuses
                 finally:
@@ -323,17 +331,20 @@ class OutboxDispatcher:
             return "retry"
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
             # An unavailable database cannot prove revocation. Leave the fenced
             # attempt recoverable if checking or settling cannot finish in budget.
-            if asyncio.get_running_loop().time() >= deadline:
+            # A capacity refusal is not a delivery failure: lease expiry recovers it.
+            if capacity_rejected(error) or asyncio.get_running_loop().time() >= deadline:
                 return "retry"
             try:
                 async with asyncio.timeout_at(deadline):
                     try:
                         async with self.uow.open(scope) as tx:
                             await self._checked(tx, identifier, token)
-                    except (AccessDenied, CatalogError, AuthenticationFailed):
+                    except (AccessDenied, CatalogError, AuthenticationFailed) as refused:
+                        if capacity_rejected(refused):
+                            return "retry"
                         return await self._settle(scope, identifier, token, "AUTHORITY_REVOKED", False, terminal=True)
                     return await self._settle(scope, identifier, token, "DELIVERY_FAILED", False)
             except Exception:

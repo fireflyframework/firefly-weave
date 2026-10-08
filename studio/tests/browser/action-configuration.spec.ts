@@ -85,6 +85,61 @@ for (const viewport of [
         "erp.lookup@2.0.0",
       );
     });
+    test("switching input editing shows typed fields and keeps invalid drafts in view", async ({
+      page,
+    }) => {
+      await connected(page);
+      await newWorkflow(page);
+      await insertStep(page, "Call an action");
+      if (viewport.width < 768)
+        await page.locator('[data-step="call-action-1"] .node-body').click();
+      await chooseAction(page, "sql.lookup@1.0.0");
+      const customer = page.getByLabel("Customer ID", { exact: true });
+      await customer.fill("customer-42");
+      await page
+        .getByRole("button", {
+          name: "Write one expression for the whole input",
+        })
+        .click();
+      // The whole-input expression starts from the fields typed so far.
+      const input = page.locator(
+        'weave-step-property-grid [data-field="with"]',
+      );
+      await input
+        .getByRole("button", { name: "Input options", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Advanced: JSON value", exact: true })
+        .click();
+      const json = input.getByRole("textbox", {
+        name: "Advanced JSON value",
+        exact: true,
+      });
+      const typed = await json.inputValue();
+      expect(JSON.parse(typed)).toEqual({
+        parameters: { customerId: "customer-42" },
+      });
+      // An invalid draft blocks the switch instead of disappearing with it.
+      await json.fill('{"parameters":');
+      const fields = page.getByRole("button", {
+        name: "Edit the input field by field",
+      });
+      await fields.click();
+      await expect(
+        page.getByText(
+          "Fix the invalid fields before continuing. Your edits are still here.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expect(json).toHaveValue('{"parameters":');
+      await json.fill(typed);
+      await fields.click();
+      await expect(customer).toHaveValue("customer-42");
+      await page.locator(".inspector header h2").click();
+      expect(parse(await sourceText(page)).spec.steps[0].with).toEqual({
+        literal: { parameters: { customerId: "customer-42" } },
+      });
+    });
     test("using action result requires review and can be undone", async ({
       page,
     }) => {

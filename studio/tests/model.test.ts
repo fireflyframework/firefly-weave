@@ -579,7 +579,7 @@ spec:
   });
 });
 
-describe("designer naming and editing (W3-2, W3-6)", () => {
+describe("designer naming and editing", () => {
   it("names new steps readably; existing IDs stay as they are", () => {
     const m = new StructuredCanvasAdapter();
     const ids = [

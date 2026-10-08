@@ -25,6 +25,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import cast
 
+import rfc8785
+
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonObject, JsonValue
@@ -57,7 +59,9 @@ _MISSING = _Missing()
 DEFAULT_LIMITS = Limits()
 _COMPARISONS = frozenset({"eq", "ne", "lt", "lte", "gt", "gte"})
 COLLECTION_COMPARISONS = frozenset({"contains", "notContains", "in", "notIn", "startsWith", "endsWith"})
-_OPERATORS = _COMPARISONS | COLLECTION_COMPARISONS | {"and", "or", "not", "exists", "coalesce"}
+# Text operators; each needs its language feature (text.concat, text.join).
+TEXT_OPERATORS = frozenset({"concat", "join"})
+_OPERATORS = _COMPARISONS | COLLECTION_COMPARISONS | TEXT_OPERATORS | {"and", "or", "not", "exists", "coalesce"}
 
 
 def pointer_segments(pointer: str, *, path: str = "") -> tuple[str, ...]:
@@ -219,9 +223,9 @@ def _children(expression: object, path: str, limits: Limits, work: _ValueWork) -
         raise ExpressionFailure("RESOURCE_LIMIT", tag_path)
     count = len(operands)
     if (
-        (name in _COMPARISONS | COLLECTION_COMPARISONS and count != 2)
+        (name in _COMPARISONS | COLLECTION_COMPARISONS | {"join"} and count != 2)
         or (name in {"not", "exists"} and count != 1)
-        or (name in {"and", "or", "coalesce"} and count < 1)
+        or (name in {"and", "or", "coalesce", "concat"} and count < 1)
         or (
             name == "exists"
             and (
@@ -238,7 +242,7 @@ def _children(expression: object, path: str, limits: Limits, work: _ValueWork) -
 def count_expression_nodes(
     expression: JsonObject, *, limits: Limits = DEFAULT_LIMITS, initial_count: int = 0, path: str = ""
 ) -> int:
-    """Return cumulative count; A5 threads it across all workflow expression roots.
+    """Return cumulative count; the analyzer threads it across all workflow expression roots.
 
     Literal data is never interpreted as syntax. All operands, including lazy
     ones, are structurally validated and charged before runtime evaluation.
@@ -283,6 +287,22 @@ def json_equal(
     return left == right
 
 
+def text_of(value: JsonValue) -> str | None:
+    """The text ``concat`` and ``join`` write for a value; ``None`` for any other type.
+
+    Strings are unchanged and Booleans are ``true`` or ``false``. Numbers use the RFC 8785 serialization of canonical
+    JSON, which is ECMAScript ``Number::toString``: ``2.0`` is ``2``, ``0.1`` is ``0.1`` and ``1e21`` is ``1e+21``, as
+    JavaScript ``String(x)`` writes them. Values are already bounded, so numbers are finite and integers are safe.
+    """
+    if type(value) is str:
+        return value
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is int or type(value) is float:
+        return rfc8785.dumps(value).decode()
+    return None
+
+
 @dataclass
 class _Evaluator:
     context: JsonObject
@@ -302,6 +322,13 @@ class _Evaluator:
         elif type(left) is dict and type(right) is dict:
             self.value_work.charge(path, len(left) + len(right))
             self.string_work.charge(path, sum(map(len, left)) + sum(map(len, right)))
+
+    def text(self, value: JsonValue, path: str) -> str:
+        text = text_of(value)
+        if text is None:
+            raise ExpressionFailure("TYPE", path)
+        self.string_work.charge(path, len(text))
+        return text
 
     def collection_comparison(self, name: str, left: JsonValue, right: JsonValue, path: str) -> bool:
         if name in {"in", "notIn"}:
@@ -394,6 +421,21 @@ class _Evaluator:
                 if type(boolean) is not bool:
                     raise ExpressionFailure("TYPE", f"{args_path}/0")
                 result = not boolean
+            elif name == "concat":
+                result = "".join(
+                    self.text(cast(JsonValue, self.run(arg, f"{args_path}/{i}")), f"{args_path}/{i}")
+                    for i, arg in enumerate(args)
+                )
+            elif name == "join":
+                items = cast(JsonValue, self.run(args[0], f"{args_path}/0"))
+                separator = cast(JsonValue, self.run(args[1], f"{args_path}/1"))
+                if type(items) is not list:
+                    raise ExpressionFailure("TYPE", f"{args_path}/0")
+                if type(separator) is not str:
+                    raise ExpressionFailure("TYPE", f"{args_path}/1")
+                texts = [self.text(item, f"{args_path}/0") for item in items]
+                self.string_work.charge(path, len(separator) * max(len(texts) - 1, 0))
+                result = separator.join(texts)
             else:
                 left = cast(JsonValue, self.run(args[0], f"{args_path}/0"))
                 right = cast(JsonValue, self.run(args[1], f"{args_path}/1"))
