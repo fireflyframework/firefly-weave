@@ -59,6 +59,7 @@ ASSETS = (
 )
 PRIVATE_PARTS = {"superpowers", ".superpowers", ".codex", ".agents", ".secrets", ".local", "localenv"}
 GENERATED_FILES = {"reference/openapi.json"}
+TAG_LABELS = {"lumi": "Weave AI"}
 PRIVATE_NAMES = {"AGENTS.md", "CLAUDE.md", "implementation-status.md"}
 
 
@@ -200,7 +201,7 @@ def api_reference(spec):
         for method, operation in methods.items():
             groups.setdefault(operation.get("tags", ["API"])[0], []).append((path, method, operation))
     for tag, operations in sorted(groups.items()):
-        lines.extend([f"### {tag.replace('_', ' ').title()}", ""])
+        lines.extend([f"### {TAG_LABELS.get(tag, tag.replace('_', ' ').title())}", ""])
         for path, method, operation in operations:
             identifier = escape(operation["operationId"], quote=True)
             summary = escape(operation.get("summary", operation["operationId"]))

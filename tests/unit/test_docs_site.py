@@ -170,6 +170,9 @@ def test_strict_build_retains_theme_assets_and_public_navigation(tmp_path):
     pointer = (output / "guides/lumi/index.html").read_text(encoding="utf-8")
     assert '<a href="../weave-ai/">Use Weave AI</a>' in pointer
     assert (output / "guides/weave-ai/index.html").is_file()
+    reference = (output / "reference/api-explorer/index.html").read_text(encoding="utf-8")
+    assert re.search(r"<h3 [^>]*>Weave AI", reference)
+    assert ">Lumi<" not in reference
 
 
 def test_generated_api_reference_matches_exported_contract_and_links_every_schema(tmp_path):
@@ -218,6 +221,7 @@ def test_api_reference_renders_operation_contract_and_schema_crosslinks():
     from firefly_weave.contracts.openapi import export_openapi
 
     document = HOOK["api_reference"](export_openapi())
+    assert "### Weave AI" in document and "### Lumi" not in document
     assert 'id="operation-compiler.compile"' in document
     assert 'href="#schema-CompilerRequest"' in document
     assert 'id="schema-CompilerRequest"' in document
