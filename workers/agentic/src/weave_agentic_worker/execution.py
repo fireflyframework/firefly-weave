@@ -38,6 +38,8 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage, UsageLimits
 
+from weave_agentic_worker.errors import classify
+
 
 def private_framework_logging() -> None:
     # Patterns log generated plans and exception text. This independent worker emits only safe task codes.
@@ -89,9 +91,14 @@ class _BoundedAgent(FireflyAgent[Any, Any]):
         except UsageLimitExceeded:
             self.failure = ConnectorFailure("LLM_LIMIT", "failed")
             raise self.failure from None
-        except Exception:
-            self.failure = ConnectorFailure("LLM_PROVIDER", "unknown")
+        except Exception as error:
+            self.failure = classify(error)
             raise self.failure from None
+
+
+def estimate_tokens(*parts: str) -> int:
+    """A conservative token estimate: one token per four characters, rounded up."""
+    return -(-sum(len(part) for part in parts) // 4)
 
 
 async def run_model(
@@ -102,8 +109,15 @@ async def run_model(
     settings: dict[str, Any],
     *,
     instructions: str = "",
+    context_tokens: int | None = None,
 ) -> JsonValue:
     private_framework_logging()
+    if context_tokens is not None:
+        # Ollama silently truncates a prompt beyond its context, so refuse it before any request.
+        prompt = json.dumps({"prompt": user_prompt, "context": context}, ensure_ascii=False)
+        schema = json.dumps(provider_schema(profile.output_schema))
+        if estimate_tokens(instructions, prompt, schema) + profile.options.max_tokens > context_tokens:
+            raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
     try:
         async with asyncio.timeout(profile.timeout_seconds):
             return await _run_model(profile, user_prompt, context, model, settings, instructions=instructions)
@@ -170,8 +184,8 @@ async def _run_model(
         return output
     except ConnectorFailure:
         raise
-    except Exception:
-        raise ConnectorFailure("LLM_PROVIDER", "unknown") from None
+    except Exception as error:
+        raise classify(error) from None
 
 
 def provider_schema(source: dict[str, Any]) -> dict[str, Any]:
