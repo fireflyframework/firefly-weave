@@ -16,7 +16,8 @@
 
 """Explicit provider clients with no environment endpoints, redirects, or automatic retries.
 
-Requests to an approved endpoint go through its pinned model transport. An Ollama endpoint
+Every client is built for an approved endpoint, and its requests go through that endpoint's
+pinned model transport; a call without one is refused. An Ollama endpoint
 (policy ``compat: ollama``) is an OpenAI-compatible chat endpoint with Ollama's model
 profile, and it never receives a credential.
 """
@@ -73,15 +74,19 @@ def build_model(
     *,
     transport: httpx2.AsyncBaseTransport | None = None,
 ) -> ProviderModel:
-    endpoint = options.endpoint if options is not None else None
-    ollama = endpoint is not None and endpoint.compat == "ollama"
+    """A client for one approved endpoint; ``transport`` replaces the pinned transport in tests only."""
+    if options is None or options.endpoint is None:
+        # Every client is pinned to an endpoint the policy approved; there is no unpinned default.
+        raise ConnectorFailure("LLM_POLICY", "not_started")
+    endpoint = options.endpoint
+    ollama = endpoint.compat == "ollama"
     if ollama and spec.provider != "openai-chat":
         raise ConnectorFailure("LLM_CONNECTION", "not_started")
-    if transport is None and options is not None and endpoint is not None:
+    if transport is None:
         transport = PinnedModelTransport(endpoint, options.origins, resolver=options.resolver or resolve)
     http = httpx2.AsyncClient(timeout=timeout, trust_env=False, follow_redirects=False, transport=transport)
     # An endpoint the policy marks credential none never receives one, whatever the caller supplied.
-    key = KEYLESS if endpoint is not None and endpoint.credential == "none" else secret or KEYLESS
+    key = KEYLESS if endpoint.credential == "none" else secret or KEYLESS
     kwargs: dict[str, Any] = {"api_key": key, "max_retries": 0, "timeout": timeout, "http_client": http}
     client: Any
     provider: Any

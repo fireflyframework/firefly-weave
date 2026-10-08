@@ -33,6 +33,11 @@ from weave_agentic_worker.egress import PinnedModelTransport
 from weave_agentic_worker.providers import BuildOptions, build_model
 
 
+def approved(url, provider, model):
+    endpoint = PolicyEndpoint(id="fixture", label="Fixture", url=url, providers=(provider,), models=(model,))
+    return BuildOptions(endpoint)
+
+
 @pytest.mark.parametrize(
     "provider,model,endpoint",
     [
@@ -51,7 +56,7 @@ async def test_explicit_clients_disable_sdk_retries_and_ignore_environment_endpo
     spec = ModelSpec(
         provider=provider, model=model, base_url=endpoint, api_version="2024-10-21", options=ModelOptions(max_tokens=10)
     )
-    owned = build_model(spec, "fixture-credential", 5)
+    owned = build_model(spec, "fixture-credential", 5, approved(endpoint, provider, model))
     try:
         assert owned.client.max_retries == 0
         assert str(owned.client.base_url).startswith(endpoint)
@@ -75,7 +80,8 @@ async def test_provider_http_never_retries_or_follows_redirects(provider, status
         )
 
     spec = ModelSpec(provider=provider, model="fixture", base_url="https://provider.example", api_version="2024-10-21")
-    owned = build_model(spec, "credential-canary", 5, transport=httpx2.MockTransport(receive))
+    options = approved("https://provider.example", provider, "fixture")
+    owned = build_model(spec, "credential-canary", 5, options, transport=httpx2.MockTransport(receive))
     try:
         with pytest.raises((AnthropicStatusError, OpenAIStatusError)):
             if provider == "anthropic":
@@ -203,3 +209,13 @@ async def test_the_pinned_client_never_follows_redirects_or_reads_the_environmen
         assert owned.client._client.follow_redirects is False and owned.client._client._trust_env is False
     finally:
         await owned.close()
+
+
+@pytest.mark.parametrize("options", [None, BuildOptions()])
+def test_a_client_is_never_built_without_an_approved_endpoint(options):
+    spec = ModelSpec(provider="openai-chat", model="fixture", base_url="https://provider.example")
+    with pytest.raises(ConnectorFailure) as refused:
+        build_model(spec, "credential-canary", 5, options)
+    assert (refused.value.code, refused.value.outcome) == ("LLM_POLICY", "not_started")
+    with pytest.raises(ConnectorFailure, match="LLM_POLICY"):
+        build_model(spec, "credential-canary", 5, options, transport=httpx2.MockTransport(lambda request: None))

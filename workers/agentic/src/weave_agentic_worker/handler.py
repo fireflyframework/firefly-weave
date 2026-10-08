@@ -97,12 +97,6 @@ class WorkerPolicy:
     def options(self, entry: PolicyEndpoint) -> BuildOptions:
         return BuildOptions(entry, self.origins, self.resolver)
 
-    def endpoint(self, value: str) -> str:
-        """The endpoint when the policy lists it (kept for the AI gateway's assistant route)."""
-        if self.current().entry_for(value) is None:
-            raise ConnectorFailure("LLM_POLICY", "not_started")
-        return value
-
 
 def _pre_provider_capacity(error: httpx.HTTPStatusError) -> None:
     if error.response.status_code != 429:
