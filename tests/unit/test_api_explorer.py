@@ -130,3 +130,15 @@ async def test_swagger_uses_proxy_mount_prefix_for_schema():
         assert config["url"] == "/weave/openapi.json"
         spec = (await client.get("/openapi.json")).json()
         assert spec["servers"] == [{"url": "/weave"}]
+
+
+async def test_api_explorer_header_carries_no_mascot():
+    from firefly_weave.api.documentation import install_documentation
+
+    app = Starlette()
+    install_documentation(app)
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://localhost") as client:
+        page = (await client.get("/docs")).text
+    assert "lumi" not in page.lower()
+    assert "<svg" not in page
+    assert "<header><h1>Firefly Weave · API explorer</h1>" in page

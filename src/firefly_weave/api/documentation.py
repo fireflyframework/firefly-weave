@@ -23,7 +23,6 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
 
-from firefly_weave.branding import LUMI_SVG_BODY
 from firefly_weave.contracts.openapi import export_openapi
 
 # Pin bytes as well as version: the browser rejects changed CDN assets.
@@ -66,13 +65,10 @@ def install_documentation(app: Starlette) -> None:
 <style>
 body {{ margin: 0; background: #EEF4F0; font-family: system-ui, sans-serif; }}
 header {{ padding: 24px max(20px, calc((100vw - 1460px) / 2)); background: #173D34; color: white; }}
-header svg {{ float: right; width: 88px; height: 88px; margin-left: 16px;
-    background: #EEF4F0; border-radius: 16px; }}
 header h1 {{ margin: 0 0 8px; font-size: 26px; }} header p {{ margin: 6px 0; line-height: 1.5; }}
 header a {{ color: #8ee3dc; }} .swagger-ui .info {{ margin: 24px 0; }}
 </style></head><body>
-<header><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-hidden="true">
-{LUMI_SVG_BODY}</svg><h1>Firefly Weave · API explorer</h1>
+<header><h1>Firefly Weave · API explorer</h1>
 <p>Browse operations, authorize with a current access token, then choose Try it out.</p>
 <p>Requests run against this API. Write operations change real data. Tokens stay in this page's memory.</p>
 <p><a href="https://fireflyframework.github.io/firefly-weave/guides/api-playground/">

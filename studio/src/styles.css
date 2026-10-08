@@ -1058,11 +1058,6 @@ dd {
   box-shadow: var(--shadow-1);
   text-align: left;
 }
-.pair-card .lumi {
-  height: 110px;
-  display: block;
-  margin: 0 auto 24px;
-}
 .pair-card h1 {
   font: var(--type-display);
   letter-spacing: -0.02em;

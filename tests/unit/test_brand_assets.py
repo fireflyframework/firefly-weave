@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Brand foundation: Studio's brand files match their masters, NOTICE separates the marks."""
+"""Brand foundation: no mascot remains, Studio's brand files match their masters, NOTICE separates the marks."""
 
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+# Diagram file names keep "lumi" (ai-and-lumi.svg); the mascot's files and markers do not survive.
+MASCOT = re.compile(r"(?<![\w-])lumi\.(?:png|svg)\b|LUMI_SVG_BODY|lumi-takeaway|Lumi[’']s takeaway")
 KIT_SOURCE = re.compile(r"Vendored from firefly-oss/firefly-software-website|\"name\": \"firefly-brand-kit\"")
 BRAND = (
     "weave-lockup-reversed",
@@ -64,6 +66,14 @@ def repository_text_files() -> list[tuple[str, str]]:
         if b"\0" not in data[:8192]:
             found.append((name, data.decode("utf-8", errors="replace")))
     return found
+
+
+def test_no_mascot_file_drawing_or_label_remains():
+    hits = [f"{name}: {match.group(0)}" for name, text in repository_text_files() for match in MASCOT.finditer(text)]
+    assert hits == []
+    for name in ("assets/lumi.png", "assets/lumi.svg", "src/firefly_weave/branding.py"):
+        assert not (ROOT / name).exists(), name
+    assert not list((ROOT / "studio/public/assets").glob("lumi.*"))
 
 
 def test_no_brand_kit_source_is_committed():

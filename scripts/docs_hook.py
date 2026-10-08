@@ -45,8 +45,6 @@ PROJECT_PAGES = {
     "tests/fixtures/e2-provider/README.md": "project/provider-fixture.md",
 }
 ASSETS = (
-    "assets/lumi.png",
-    "assets/lumi.svg",
     "assets/weave-logo.svg",
     "assets/weave-logo-reversed.svg",
     "assets/weave-logo-mono.svg",

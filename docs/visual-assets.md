@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Use the Weave logo, Lumi, and diagrams
+# Use the Weave logo and diagrams
 
 Use this page when you place the Weave logo in a document or slide, or when you
 draw or change a diagram in this documentation. It tells you which file to use
@@ -25,11 +25,11 @@ diagram follows, and how to check a change at its real size. It takes about ten
 minutes to read. To edit, you need a text editor or a standards-compliant SVG
 editor, and a Chromium-based browser to check the result.
 
-The brand assets are distributed under the Apache License 2.0. Logos and
-technical diagrams use editable SVG source, with no scripts, remote fonts,
-embedded raster images, or `foreignObject`. Lumi is an image-generated PNG
-with a transparent background. The checked-in image is the master asset;
-building Studio or the documentation does not call an image-generation service.
+Weave's own logos and technical diagrams are distributed under the Apache
+License 2.0. The Firefly marks in `assets/brand/` are not: they are trademarks
+of Firefly Software Solutions Inc., used with permission (see `NOTICE`). Logos
+and technical diagrams use editable SVG source, with no scripts, remote fonts,
+embedded raster images, or `foreignObject`.
 
 ## Choose the right asset
 
@@ -39,7 +39,6 @@ building Studio or the documentation does not call an image-generation service.
 | [Monochrome symbol](../assets/weave-logo-mono.svg) | One-color reproduction on light surfaces | 256 × 256 |
 | [Reversed symbol](../assets/weave-logo-reversed.svg) | The white mark on dark surfaces; the website header uses it | 256 × 256 |
 | [Banner](../assets/banner.svg) | The README and project overview; it has an opaque white background | 1120 × 280 |
-| [Lumi PNG](../assets/lumi.png) | Studio, documentation, slides, and diagram companion artwork; see [Meet Lumi](#meet-lumi) | 1254 × 1254, transparent |
 | Badges for the [license](../assets/badges/license.svg), [Python version](../assets/badges/python.svg), and [maturity](../assets/badges/alpha.svg) | Small labels that state facts from the source tree. There is no CI, release, coverage, or live-provider badge | 28 pixels high |
 | Technical diagrams in `docs/diagrams/` | Explaining how Weave works; the [visual guide](visual-guide.md) lists every one | 960 or 1120 pixels wide |
 
@@ -102,7 +101,7 @@ structural ones.
 | Arial for text (`Arial, Helvetica, sans-serif`), Menlo or Consolas for code | These fonts are installed almost everywhere, so labels do not reflow |
 | Text at least 16 pixels | Labels stay legible at 100% zoom |
 | Forest `#173D34` and jade `#367D68` on mist `#EEF4F0`, with warm `#FFF7E5` for cautions | Diagrams look like one family and keep enough contrast |
-| Most diagrams end with a "Lumi's takeaway" band | One sentence tells the reader what to remember |
+| Most diagrams end with a "Takeaway" band | One sentence tells the reader what to remember |
 | A `<desc>` that states everything the picture shows | Readers who cannot see the image get the same facts |
 
 **Every label must be true.** Check each command, path, field, and error code in
@@ -179,55 +178,13 @@ other variants and sizes.
   own file name so a failed capture is never confused with a corrected one, and
   keep previews outside the repository.
 
-## Meet Lumi
+## Mascot artwork
 
-![Lumi, the Firefly Weave guide](../assets/lumi.png)
-
-**Lumi** is Weave's firefly guide: a sculpted forest-green body, translucent
-mint wings, and an amber lantern. The image uses soft lighting and a transparent
-background so it sits naturally on white, mist, or dark forest surfaces.
-
-Use the [PNG master](../assets/lumi.png) for new artwork. Studio's pairing and
-home screens and the documentation introductions use this image. Existing
-self-contained SVG diagrams and CLI graph exports retain the earlier vector
-illustration; those are separate assets, not a vector version of this image.
-The official Weave symbol remains the application icon and primary product mark.
-
-### Reuse Lumi in a page, slide, or diagram
-
-1. Download the PNG master above. Its alpha channel provides transparency;
-   there is no white rectangle to remove.
-2. Keep the square aspect ratio. Leave space around both antennae and the wings,
-   and avoid circular crops that cut through them.
-3. Use a displayed width of 96–240 pixels for an introduction or diagram
-   companion. At small toolbar sizes, use the Weave symbol instead: Lumi's face
-   and wings need room to remain legible.
-4. Place Lumi beside a short takeaway, outside the boxes and arrows that explain
-   the system. Do not use the character as a status, permission, or execution
-   indicator.
-5. Keep a single shared PNG reference in web pages. For the documentation's SVG
-   diagrams, place it next to the diagram in the surrounding Markdown instead
-   of embedding a copy of the raster in every SVG. This keeps diagrams editable
-   and lets the browser cache the image once.
-
-For a guide under `docs/guides/`, use this pattern:
-
-```markdown
-<!-- Keep the mascot separate so the technical diagram stays readable and editable. -->
-![Lumi, the Firefly Weave guide](../../assets/lumi.png){ .lumi-guide }
-
-Lumi's takeaway: review the proposed change before applying it.
-
-## Follow the process
-
-![How a suggestion becomes a reviewed draft](../diagrams/lumi-review-lifecycle.svg)
-```
-
-The [Lumi assistant guide](guides/lumi.md) shows the image alongside the
-explanation and review diagram. In Studio, `studio/public/assets/lumi.png` is
-an identical copy of the master; update both together when the artwork changes.
-Machine JSON output contains no branding. CLI help uses the official logo;
-progress animation settings are in the [CLI reference](reference/cli.md#local-platform-commands).
+Firefly Weave no longer uses a mascot. Studio, the documentation, the API
+explorer and exported graph drawings carry no character artwork, and diagrams
+end with a plain **Takeaway** band. Machine JSON output contains no branding.
+CLI help uses the official logo; progress animation settings are in the
+[CLI reference](reference/cli.md#local-platform-commands).
 
 ## Next steps
 
