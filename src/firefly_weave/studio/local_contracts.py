@@ -124,8 +124,8 @@ class CompileSummary(_HostBody):
     ok: bool
     sliced: bool
     artifactDigest: Digest | None = None
-    diagnostics: list[Diagnostic] = Field(default_factory=list)
-    stubs: list[VersionedReference] = Field(default_factory=list)
+    diagnostics: list[Diagnostic]
+    stubs: list[VersionedReference]
 
 
 class TraceEntry(_HostBody):
@@ -184,7 +184,7 @@ class Blocked(_HostBody):
 class ExecuteResponse(_HostBody):
     status: Literal["completed", "blocked", "failed", "limit"]
     compile: CompileSummary
-    trace: list[TraceEntry] = Field(default_factory=list)
+    trace: list[TraceEntry]
     loops: list[LoopProgress] = Field(default_factory=list)
     frames: list[FrameView] = Field(default_factory=list)
     selectedScope: SelectedScope | None = None

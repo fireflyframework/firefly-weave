@@ -192,7 +192,7 @@ def test_mock_keys_follow_the_simulator_precedence_kinds(key, valid):
     [
         {"status": "completed"},
         {"blocked": None},
-        {"compile": {"ok": False, "sliced": False}},
+        {"compile": {"ok": False, "sliced": False, "diagnostics": [], "stubs": []}},
         {
             "trace": [
                 {"index": 0, "nodeId": "send", "instanceKey": "notify[0]", "kind": "action", "status": "completed"}
@@ -204,6 +204,25 @@ def test_mock_keys_follow_the_simulator_precedence_kinds(key, valid):
 def test_a_response_states_one_outcome(change):
     with pytest.raises(ValidationError):
         lc.ExecuteResponse.model_validate_json(json.dumps({**EXECUTE_RESPONSE, **change}))
+
+
+def _without(body: dict, key: str) -> dict:
+    return {name: value for name, value in body.items() if name != key}
+
+
+@pytest.mark.parametrize(
+    ("model", "body", "missing"),
+    [
+        (lc.ExecuteResponse, _without(EXECUTE_RESPONSE, "trace"), "trace"),
+        (lc.CompileSummary, _without(EXECUTE_RESPONSE["compile"], "diagnostics"), "diagnostics"),
+        (lc.CompileSummary, _without(EXECUTE_RESPONSE["compile"], "stubs"), "stubs"),
+    ],
+    ids=["response-without-trace", "compile-without-diagnostics", "compile-without-stubs"],
+)
+def test_a_response_always_reports_its_trace_and_a_compile_summary_its_lists(model, body, missing):
+    with pytest.raises(ValidationError) as refused:
+        model.model_validate_json(json.dumps(body))
+    assert [(error["type"], error["loc"]) for error in refused.value.errors()] == [("missing", (missing,))]
 
 
 def test_a_callee_source_comes_with_its_format():
