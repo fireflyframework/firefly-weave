@@ -338,6 +338,8 @@ export class App {
   private historyPosition: number = history.state?.weavePosition ?? 0;
   private historyUrl = location.href;
   private restoringHistory = false;
+  /** Set while Studio steps back to close a run: that popstate needs no reload. */
+  private closingRun = false;
   private injector = inject(Injector);
   dialogs = inject(DialogService);
   crypto = crypto;
@@ -5175,7 +5177,17 @@ export class App {
     this.selectedRecord = record;
     if (this.view === "runs" && typeof record["id"] === "string") {
       const path = viewPath("runs", record["id"]);
-      if (location.pathname !== path) void this.router.navigateByUrl(path);
+      if (location.pathname !== path) {
+        // From the list a run's address is a new entry, marked as Studio's own;
+        // from another run's address it replaces that entry and keeps its mark.
+        const onRun = !!viewFromPath(location.pathname)?.id;
+        void this.router.navigateByUrl(path, {
+          replaceUrl: onRun,
+          state: {
+            weaveRunPushed: onRun ? !!history.state?.weaveRunPushed : true,
+          },
+        });
+      }
     }
     if (this.view === "workflows") {
       this.busy = "load";
@@ -5245,11 +5257,22 @@ export class App {
       )
     );
   }
-  /** Closes a list's detail; a run's own address goes back to the list. */
+  /**
+   * Closes a list's detail and keeps the address in step. A run's own address
+   * goes back to the list: one step back when Studio pushed the entry from the
+   * list, in place when the run address is where the person arrived.
+   */
   closeRecord() {
     this.selectedRecord = null;
-    if (viewFromPath(location.pathname)?.id)
-      void this.router.navigateByUrl(viewPath(this.view), { replaceUrl: true });
+    const route = viewFromPath(location.pathname);
+    if (!route?.id) return;
+    if (history.state?.weaveRunPushed) {
+      this.closingRun = true;
+      history.back();
+    } else
+      void this.router.navigateByUrl(viewPath(route.view), {
+        replaceUrl: true,
+      });
   }
   /** The human task a waiting run waits for, when the person may read it. */
   runTask: Record<string, unknown> | null = null;
@@ -5687,7 +5710,7 @@ export class App {
     this.runFilterTimer = null;
     this.nextCursor = null;
     this.records = [];
-    this.selectedRecord = null;
+    this.closeRecord();
     void this.refresh();
   }
   private runFilterTimer: ReturnType<typeof setTimeout> | null = null;
@@ -6078,7 +6101,7 @@ export class App {
     this.showActivation = false;
     this.exportFallback = null;
     this.records = [];
-    this.selectedRecord = null;
+    this.closeRecord();
     this.emailDetail = null;
     this.emailSubmission = null;
     this.runHistory = null;
@@ -7370,6 +7393,8 @@ export class App {
     return this.runCanvas?.nodes() ?? [];
   }
   @HostListener("window:popstate", ["$event"]) popstate(event: PopStateEvent) {
+    const closing = this.closingRun;
+    this.closingRun = false;
     const position = event.state?.weavePosition;
     if (this.restoringHistory && position === this.historyPosition) {
       this.restoringHistory = false;
@@ -7416,7 +7441,8 @@ export class App {
         ? (route.view as View)
         : "home";
     this.selectedRecord = null;
-    void this.refresh();
+    // Closing a run came from this page: the list on screen is already current.
+    if (!closing) void this.refresh();
     if (route?.id && this.view === "runs") void this.viewRun({ id: route.id });
   }
   @HostListener("window:keydown", ["$event"]) key(event: KeyboardEvent) {

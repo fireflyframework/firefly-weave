@@ -205,4 +205,116 @@ for (const viewport of [
       await expect(page).toHaveURL(/\/operate\/runs$/);
       await expect(detail).toHaveCount(0);
     });
+
+    test("closing a run steps back, so Back leaves Runs and does not repeat the list", async ({
+      page,
+    }) => {
+      await connected(page, { capabilities: ["run.read"] });
+      await runRoutes(page);
+      let listReads = 0;
+      page.on("request", (request) => {
+        if (/\/environments\/development\/runs\?/.test(request.url()))
+          listReads++;
+      });
+      await page.getByRole("button", { name: "Runs", exact: true }).click();
+      await expect(page).toHaveURL(/\/operate\/runs$/);
+      await expect(
+        page.getByRole("button", { name: "order-7", exact: true }),
+      ).toBeVisible();
+      const reads = listReads;
+      const detail = page.locator(".record-detail");
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await page
+          .getByRole("button", { name: "order-7", exact: true })
+          .click();
+        await expect(page).toHaveURL(new RegExp(`/operate/runs/${runId}$`));
+        await expect(detail.locator("#record-detail-title")).toHaveText(
+          "order-7",
+        );
+        await detail.getByRole("button", { name: "Close detail" }).click();
+        await expect(page).toHaveURL(/\/operate\/runs$/);
+        await expect(detail).toHaveCount(0);
+      }
+      // Closing steps back without reading the list again.
+      expect(listReads).toBe(reads);
+      // Two open-and-close cycles leave one Runs entry, not one per cycle.
+      await page.goBack();
+      await expect(page).toHaveURL(/\/home$/);
+      await expect(detail).toHaveCount(0);
+    });
+
+    if (viewport.width > 1024) {
+      test("changing a filter with a run open leaves the address on the list", async ({
+        page,
+      }) => {
+        await connected(page, { capabilities: ["run.read"] });
+        await runRoutes(page);
+        await page.getByRole("button", { name: "Runs", exact: true }).click();
+        const detail = page.locator(".record-detail");
+        await page
+          .getByRole("button", { name: "order-7", exact: true })
+          .click();
+        await expect(page).toHaveURL(new RegExp(`/operate/runs/${runId}$`));
+        await expect(detail).toHaveCount(1);
+        await page
+          .getByRole("button", { name: "Waiting", exact: true })
+          .click();
+        await expect(page).toHaveURL(/\/operate\/runs$/);
+        await expect(detail).toHaveCount(0);
+        // The list stays after a reload, and Back leaves Runs.
+        await page.reload();
+        await expect(page).toHaveURL(/\/operate\/runs$/);
+        await expect(detail).toHaveCount(0);
+        await page.goBack();
+        await expect(page).toHaveURL(/\/home$/);
+        await expect(detail).toHaveCount(0);
+      });
+
+      test("opening another run replaces the open one, so Close still steps back once", async ({
+        page,
+      }) => {
+        const second = { ...run, id: "5e6f7a8b-0000-4000-8000-000000000002" };
+        second.business_key = "order-8";
+        await connected(page, { capabilities: ["run.read"] });
+        await runRoutes(page);
+        await page.route(`${environment}/runs?*`, (r) =>
+          r.fulfill({ json: { items: [run, second], next_cursor: null } }),
+        );
+        await page.route(`${environment}/runs/${second.id}`, (r) =>
+          r.fulfill({ json: second }),
+        );
+        await page.route(`${environment}/runs/${second.id}/lifecycle`, (r) =>
+          r.fulfill({
+            json: {
+              run_id: second.id,
+              archived: false,
+              purged: false,
+              revision: 1,
+            },
+          }),
+        );
+        await page.route(`${environment}/runs/${second.id}/history?*`, (r) =>
+          r.fulfill({ json: { events: [], next_cursor: null } }),
+        );
+        await page.getByRole("button", { name: "Runs", exact: true }).click();
+        const detail = page.locator(".record-detail");
+        await page
+          .getByRole("button", { name: "order-7", exact: true })
+          .click();
+        await expect(page).toHaveURL(new RegExp(`/operate/runs/${runId}$`));
+        await page
+          .getByRole("button", { name: "order-8", exact: true })
+          .click();
+        await expect(page).toHaveURL(new RegExp(`/operate/runs/${second.id}$`));
+        await expect(detail.locator("#record-detail-title")).toHaveText(
+          "order-8",
+        );
+        await detail.getByRole("button", { name: "Close detail" }).click();
+        await expect(page).toHaveURL(/\/operate\/runs$/);
+        await expect(detail).toHaveCount(0);
+        await page.goBack();
+        await expect(page).toHaveURL(/\/home$/);
+        await expect(detail).toHaveCount(0);
+      });
+    }
   });
