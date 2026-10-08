@@ -62,6 +62,8 @@ STUDIO_FAMILIES = frozenset(
         "schemas",
         "activations",
         "runs",
+        # Run summaries back the editor's Runs tab and Operate; run.read is checked server-side.
+        "run_summaries",
         "human_tasks",
         "human_assignments",
         "human_groups",

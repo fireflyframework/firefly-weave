@@ -79,6 +79,9 @@ def pair(browser):
         ("GET", f"{PROJECT}/drafts"),
         ("GET", f"{PROJECT}/workflows/{RESOURCE}"),
         ("GET", f"{PROJECT}/language"),
+        ("GET", f"{ENVIRONMENT}/run-summaries"),
+        ("GET", f"{ENVIRONMENT}/runs/{RESOURCE}/steps"),
+        ("GET", f"{ENVIRONMENT}/runs/{RESOURCE}/logs"),
     ],
 )
 def test_studio_journeys_are_bridged(tmp_path, method, path):
@@ -112,6 +115,10 @@ def test_studio_journeys_are_bridged(tmp_path, method, path):
         ("GET", f"{OTHER_PROJECT}/connector-descriptors/weave-http-v2", 403),
         ("GET", f"{OTHER_PROJECT}/language", 403),
         ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/worker-releases", 403),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/run-summaries", 403),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + f"/runs/{RESOURCE}/steps", 403),
+        ("POST", f"{ENVIRONMENT}/run-summaries", 404),
+        ("GET", f"{ENVIRONMENT}/runs/not-a-uuid/logs", 404),
     ],
 )
 def test_bridge_boundaries_hold(tmp_path, method, path, status):
