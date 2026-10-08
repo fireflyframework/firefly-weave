@@ -20,4 +20,4 @@ The Weave name and logo are trademarks of the Firefly Software Foundation;
 the Apache License 2.0 grants no trademark rights in them (see NOTICE).
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" role="img" aria-labelledby="title desc"><title id="title">Weave</title><desc id="desc">The woven w alone, charcoal with its gold strand.</desc><path class="weave-ink" d="M10 11.47L22 44.53L22 29.79L15.35 11.47ZM31.62 18.02L34 11.47L29.25 11.47ZM22 29.79L22 44.53L27.05 30.62L24.38 23.25ZM34 29.79L34 44.53L46 11.47L40.65 11.47Z" fill="#10110f"/><path class="weave-thread" d="M22 11.47L34 44.53L34 29.79L27.35 11.47Z" fill="#855414"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" role="img" aria-labelledby="title desc"><title id="title">Weave</title><desc id="desc">The woven w alone, charcoal with its gold strand.</desc><path class="weave-ink" d="M10 11.47L22 44.53L22 29.79L15.35 11.47ZM32.26 16.27L34 11.47L30.52 11.47ZM22 29.79L22 44.53L26.42 32.36L23.74 24.99ZM34 29.79L34 44.53L46 11.47L40.65 11.47Z" fill="#10110f"/><path class="weave-thread" d="M22 11.47L34 44.53L34 29.79L27.35 11.47Z" fill="#855414"/></svg>

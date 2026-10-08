@@ -30,6 +30,7 @@ import {
   tokenColor,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+import { crossingOf } from "./woven-crossing";
 
 /** The brand amber (--accent, --focus): a fixed anchor, not read from CSS. */
 const amber = "rgb(255, 179, 74)";
@@ -472,3 +473,69 @@ for (const [width, height, least] of [
       else expect(box.height, name).toBeGreaterThanOrEqual(44);
     }
   });
+
+// The woven w of the weave wordmark. At 1x, every pixel row through its
+// crossing keeps a pixel at most 40% inked between the amber strand and the
+// strand under it; at 2x, a bare one. The lockup is drawn in paths only, so
+// the result does not depend on the fonts a platform has installed.
+for (const scale of [1, 2] as const)
+  test.describe(`the woven w at ${scale}x`, () => {
+    test.use({
+      viewport: { width: 1440, height: 900 },
+      deviceScaleFactor: scale,
+    });
+
+    test("the sidebar lockup keeps its crossing open", async ({ page }) => {
+      await offline(page);
+      const lockup = page
+        .getByRole("link", { name: "Firefly Weave Studio home" })
+        .locator("img.brand-lockup");
+      await expect(lockup).toBeVisible();
+      await lockup.evaluate((e: HTMLImageElement) => e.decode());
+      const crossing = await crossingOf(lockup);
+      expect(crossing.missing).toEqual([]);
+      expect(crossing.measured).toBeGreaterThanOrEqual(4);
+      expect(crossing.depth).toBeLessThanOrEqual(scale === 1 ? 0.4 : 0.05);
+    });
+  });
+
+test("the woven w keeps its crossing open at the lockups' minimum sizes", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await offline(page);
+  // Floors: the regular lockup 177px wide (its Firefly part 80px), the small
+  // lockup 107px (its Firefly part 48px). Both sit on --bg above the page.
+  await page.evaluate(() => {
+    const ground = document.createElement("div");
+    Object.assign(ground.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "1000",
+      padding: "20px 12px",
+      background: "var(--bg)",
+    });
+    for (const [id, file, width] of [
+      ["regular", "weave-lockup-reversed", 177],
+      ["small", "weave-lockup-small-reversed", 107],
+    ]) {
+      const image = document.createElement("img");
+      Object.assign(image, { id, alt: "", src: `/assets/${file}.svg` });
+      Object.assign(image.style, {
+        display: "block",
+        width: `${width}px`,
+        marginBottom: "20px",
+      });
+      ground.append(image);
+    }
+    document.body.append(ground);
+  });
+  for (const id of ["regular", "small"]) {
+    const image = page.locator(`#${id}`);
+    await image.evaluate((e: HTMLImageElement) => e.decode());
+    const crossing = await crossingOf(image);
+    expect(crossing.missing, id).toEqual([]);
+    expect(crossing.measured, id).toBeGreaterThanOrEqual(4);
+    expect(crossing.depth, id).toBeLessThanOrEqual(0.4);
+  }
+});
