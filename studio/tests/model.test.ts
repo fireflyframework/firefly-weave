@@ -713,3 +713,96 @@ describe("fixture insertion target ownership", () => {
     ).toBe("Add a step after post-ledger-entry, in ledger");
   });
 });
+describe("runs of steps", () => {
+  const source = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: runs, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  steps:
+    - {id: load, kind: transform, value: {ref: /input}}
+    - {id: shape, kind: transform, value: {ref: /steps/load/output}}
+    - {id: finish, kind: transform, value: {ref: /steps/shape/output}}
+  output: {ref: /steps/finish/output}
+`;
+  const open = (text = source) => {
+    const model = new StructuredCanvasAdapter();
+    model.setSource(text);
+    return model;
+  };
+  const ids = (model: StructuredCanvasAdapter) =>
+    model.definition.spec.steps.map((step) => step.id);
+
+  it("duplicates a run right after itself, rewriting references between the copies, as one undo step", () => {
+    const model = open();
+    const before = model.revision;
+    expect(model.duplicateRun(["shape", "load"])).toEqual([
+      "load-1",
+      "shape-1",
+    ]);
+    expect(ids(model)).toEqual([
+      "load",
+      "shape",
+      "load-1",
+      "shape-1",
+      "finish",
+    ]);
+    expect(model.definition.spec.steps[3]["value"]).toEqual({
+      ref: "/steps/load-1/output",
+    });
+    expect(model.definition.spec.steps[2]["value"]).toEqual({ ref: "/input" });
+    expect(model.selected).toBe("load-1");
+    expect(model.revision).toBe(before + 1);
+    model.undo();
+    expect(ids(model)).toEqual(["load", "shape", "finish"]);
+  });
+
+  it("refuses a run with a gap, and an empty one", () => {
+    const model = open();
+    expect(() => model.duplicateRun(["load", "finish"])).toThrow(
+      "Select steps next to each other in one path.",
+    );
+    expect(() => model.duplicateRun([])).toThrow("Select a placed step.");
+    expect(ids(model)).toEqual(["load", "shape", "finish"]);
+  });
+
+  it("still duplicates one step the way it always did", () => {
+    const model = open();
+    expect(model.duplicate("shape")).toBe("shape-1");
+    expect(ids(model)).toEqual(["load", "shape", "shape-1", "finish"]);
+  });
+
+  it("deletes several steps as one undo step", () => {
+    const model = open(
+      source.replace(
+        "output: {ref: /steps/finish/output}",
+        "output: {literal: {}}",
+      ),
+    );
+    const before = JSON.stringify(model.definition.spec.steps);
+    model.removeSteps(["finish", "shape"]);
+    expect(ids(model)).toEqual(["load"]);
+    model.undo();
+    expect(JSON.stringify(model.definition.spec.steps)).toBe(before);
+  });
+
+  it("refuses to delete steps something else still reads, and names what reads them", () => {
+    const model = open();
+    expect(() => model.removeSteps(["shape", "finish"])).toThrow(
+      "These steps are referenced by the workflow output. Update it before deleting them.",
+    );
+    expect(() => model.removeSteps(["load", "shape"])).toThrow(
+      "These steps are referenced by finish. Update it before deleting them.",
+    );
+    expect(ids(model)).toEqual(["load", "shape", "finish"]);
+  });
+
+  it("deletes a group with the steps inside it, even when both are listed", () => {
+    const model = new StructuredCanvasAdapter();
+    model.insert("switch");
+    model.insert("wait", "decision-1/default", 0);
+    model.removeSteps(["decision-1", "wait-1"]);
+    expect(model.definition.spec.steps).toEqual([]);
+  });
+});
