@@ -240,3 +240,37 @@ def test_every_firefly_mark_is_inventoried_as_third_party(path):
     assert entry is not None, f"add a third-party inventory entry for {path}"
     assert (entry["kind"], entry["license"]) == ("third-party", "LicenseRef-Firefly-Marks")
     assert "Firefly Software Solutions Inc." in entry["copyright"]
+
+
+BADGES = {
+    "assets/badges/license.svg": ("License", "Apache 2.0", GRAPHITE, PAPER),
+    "assets/badges/python.svg": ("Python", "3.12+", GRAPHITE, PAPER),
+    "assets/badges/alpha.svg": ("Maturity", "alpha", GOLD, "#FFFFFF"),
+}
+
+
+@pytest.mark.parametrize(("path", "badge"), BADGES.items())
+def test_local_badges_pair_a_charcoal_label_with_a_brand_value(path, badge):
+    label, value, value_fill, value_ink = badge
+    root = svg_root(path)
+    assert root.find(f"{SVG}rect").get("fill") == CHARCOAL
+    assert root.find(f"{SVG}path").get("fill") == value_fill
+    assert {text.text: text.get("fill") for text in root.iter(f"{SVG}text")} == {label: PAPER, value: value_ink}
+    assert contrast(CHARCOAL, PAPER) >= 4.5 and contrast(value_fill, value_ink) >= 4.5
+
+
+def test_readme_shields_use_graphite_and_one_alpha_color():
+    found = {}
+    for url in re.findall(r"https://img\.shields\.io/[^)\s]+", text_of("README.md")):
+        if "/github/v/release/" in url:
+            found["release"] = re.search(r"[?&]color=([0-9A-Fa-f]{6})", url).group(1)
+        else:
+            parts = url.split("/badge/", 1)[1].split("?", 1)[0].split("-")
+            found[parts[0]] = parts[-1]
+    assert found == {
+        "release": "474A42",
+        "Python": "474A42",
+        "Built_with": "474A42",
+        "License": "474A42",
+        "Status": "855414",
+    }
