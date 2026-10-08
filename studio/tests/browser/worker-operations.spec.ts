@@ -180,6 +180,59 @@ for (const viewport of [
       await expect(page).toHaveURL(/\/operate\/workers$/);
     });
 
+    test("Resume on a draining worker sends its revision and takes new tasks again", async ({
+      page,
+    }) => {
+      const { items } = await workers(page, ["status.read", "worker.drain"]);
+      items[0] = { ...items[0], draining: true, revision: 3 };
+      const commands: { body: unknown; key?: string }[] = [];
+      await page.route(`${environment}/workers/${online}/resume`, (r) => {
+        commands.push({
+          body: r.request().postDataJSON(),
+          key: r.request().headers()["idempotency-key"],
+        });
+        items[0] = { ...items[0], draining: false, revision: 4 };
+        return r.fulfill({ json: items[0] });
+      });
+      await page.goto(`/operate/workers/${online}`);
+      const detail = page.locator("weave-worker-detail");
+      await expect(detail.locator(".badges")).toContainText("Draining");
+      await detail.getByRole("button", { name: "Resume", exact: true }).click();
+      await expect(
+        page.getByText("Worker 11111111 takes new tasks again."),
+      ).toBeVisible();
+      await expect(detail.locator(".badges")).not.toContainText("Draining");
+      await expect(
+        detail.getByRole("button", { name: "Drain", exact: true }),
+      ).toBeVisible();
+      expect(commands).toHaveLength(1);
+      expect(commands[0].body).toEqual({ expected_revision: 3 });
+      expect(commands[0].key).toBeTruthy();
+    });
+
+    test("closing a worker steps back, so Back leaves Workers and does not repeat the list", async ({
+      page,
+    }) => {
+      await workers(page, ["status.read"]);
+      await page.getByRole("button", { name: "Workers", exact: true }).click();
+      await expect(page).toHaveURL(/\/operate\/workers$/);
+      await expect(rows(page)).toHaveCount(3);
+      const detail = page.locator("weave-worker-detail");
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await page.getByRole("button", { name: "Worker 11111111" }).click();
+        await expect(page).toHaveURL(new RegExp(`/operate/workers/${online}$`));
+        await expect(detail.locator("#worker-detail-title")).toHaveText(
+          "Worker 11111111",
+        );
+        await detail.getByRole("button", { name: "Close detail" }).click();
+        await expect(page).toHaveURL(/\/operate\/workers$/);
+        await expect(detail).toHaveCount(0);
+      }
+      // Two open-and-close cycles leave one Workers entry, not one per cycle.
+      await page.goBack();
+      await expect(page).toHaveURL(/\/home$/);
+    });
+
     test("a changed worker explains WV-WORKER-REVISION and refreshes", async ({
       page,
     }) => {
@@ -460,6 +513,9 @@ for (const viewport of [
       );
       await expect(page).toHaveURL(/\/operate\/workers$/);
       await expect(page.locator("weave-worker-detail")).toHaveCount(0);
+      // The list's address came back without a second list entry.
+      await page.goBack();
+      await expect(page).toHaveURL(/\/home$/);
     });
 
     test("a worker the person may not read shows the access state", async ({
@@ -533,6 +589,52 @@ for (const viewport of [
       await connected(page, { capabilities: ["run.read"] });
       await page.goto("/operate/workers");
       await expect(page.locator("#main h1")).toHaveText("Workers");
+      await expect(page.locator("weave-operate-state")).toContainText(
+        "You need status.read in this environment.",
+      );
+    });
+
+    test("a refused list shows the access it needs until the list answers", async ({
+      page,
+    }) => {
+      await page.clock.install();
+      await workers(page, ["status.read"]);
+      let refuse = true;
+      await page.route(`${environment}/workers?*`, (r) =>
+        refuse
+          ? r.fulfill({
+              status: 403,
+              json: { code: "WV-DENIED", message: "Denied" },
+            })
+          : r.fallback(),
+      );
+      await page.goto("/operate/workers");
+      await expect(page.locator("weave-operate-state")).toContainText(
+        "You need status.read in this environment.",
+      );
+      refuse = false;
+      // After a failure the next reload waits twice as long: 20 s.
+      await page.clock.fastForward(20_500);
+      await expect(rows(page)).toHaveCount(3);
+      await expect(page.locator("weave-operate-state")).toHaveCount(0);
+    });
+
+    test("a refused next page shows the access it needs", async ({ page }) => {
+      await connected(page, { capabilities: ["status.read"] });
+      await page.route(`${environment}/workers?*`, (r) => {
+        const cursor = new URL(r.request().url()).searchParams.get("cursor");
+        return cursor
+          ? r.fulfill({
+              status: 403,
+              json: { code: "WV-DENIED", message: "Denied" },
+            })
+          : r.fulfill({
+              json: { items: [worker(online)], next_cursor: "more" },
+            });
+      });
+      await page.goto("/operate/workers");
+      await expect(rows(page)).toHaveCount(1);
+      await page.getByRole("button", { name: "Load more workers" }).click();
       await expect(page.locator("weave-operate-state")).toContainText(
         "You need status.read in this environment.",
       );

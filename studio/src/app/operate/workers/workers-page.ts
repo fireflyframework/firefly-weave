@@ -387,6 +387,8 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   private pages = 1;
   private scopeKey = "";
   private generation = 0;
+  /** Set while the page steps back to its list: that popstate is its own. */
+  private closing = false;
 
   get readable() {
     return this.host.canAnywhere("status.read");
@@ -421,8 +423,13 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
       void this.poller.refresh();
   }
   @HostListener("window:popstate") locationChanged() {
-    if (viewFromPath(location.pathname)?.view === "workers")
-      this.readLocation();
+    const closing = this.closing;
+    this.closing = false;
+    if (viewFromPath(location.pathname)?.view !== "workers") return;
+    // The page stepped back to its own list entry: the list is on screen
+    // already, and why a worker could not be read stays with it.
+    if (closing) this.filters = filtersFromQuery(location.search);
+    else this.readLocation();
   }
   /** The Workers entry or a link moved the address: the page follows it. */
   private addressChanged() {
@@ -457,6 +464,7 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
       this.workers = items;
       this.nextCursor = cursor;
       this.loaded = true;
+      this.forbidden = false;
       this.error = null;
       const fresh = this.selected
         ? items.find((item) => item.id === this.selected!.id)
@@ -486,7 +494,8 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
       this.nextCursor = page.cursor;
       this.pages = Math.min(this.pages + 1, MAX_PAGES);
     } catch (error) {
-      if (generation === this.generation) this.error = describeError(error);
+      if (generation === this.generation)
+        ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
     } finally {
       this.cdr.markForCheck();
     }
@@ -519,14 +528,20 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   }
   async open(worker: WorkerStatus) {
     this.selected = worker;
-    await this.syncAddress(false);
+    // From the list a worker's address is a new entry, marked as Studio's
+    // own; from another worker's address it replaces that entry and keeps
+    // its mark, so closing always steps back to the list.
+    const onWorker = !!viewFromPath(location.pathname)?.id;
+    await this.syncAddress(onWorker, {
+      weaveWorkerPushed: onWorker ? !!history.state?.weaveWorkerPushed : true,
+    });
     await this.openById(worker.id);
   }
   /**
    * Reads one worker for its detail (also its own address and Refresh
    * worker). A worker this person can't read, or that is gone, is explained
-   * above the list and the address returns to the list; any other failure
-   * keeps the address so Try again can read it.
+   * above the list and the address returns to the list (as Close does); any
+   * other failure keeps the address so Try again can read it.
    */
   async openById(id: string) {
     const scope = this.scope;
@@ -547,7 +562,7 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
       this.detailError = { id, error: plain };
       if (plain.status === 403 || plain.status === 404) {
         this.selected = null;
-        await this.syncAddress(true);
+        await this.returnToList();
       }
     } finally {
       this.cdr.markForCheck();
@@ -567,18 +582,33 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
     );
   }
   close() {
+    // A second close before the step back lands must not step back again.
+    if (this.closing) return;
     this.selected = null;
     this.detailError = null;
     this.opening = "";
-    void this.syncAddress(true);
+    void this.returnToList();
+  }
+  /**
+   * Puts the list's address back: one step back when Studio pushed the
+   * worker's entry from the list, in place when the person arrived on it.
+   */
+  private async returnToList() {
+    if (
+      viewFromPath(location.pathname)?.id &&
+      history.state?.weaveWorkerPushed
+    ) {
+      this.closing = true;
+      history.back();
+    } else await this.syncAddress(true);
   }
   /** Puts what the page shows in the address; settles once it is there. */
-  private async syncAddress(replace: boolean) {
+  private async syncAddress(replace: boolean, state?: Record<string, unknown>) {
     const path =
       viewPath("workers", this.selected?.id ?? "") +
       filtersToQuery(this.filters);
     if (location.pathname + location.search !== path)
-      await this.router.navigateByUrl(path, { replaceUrl: replace });
+      await this.router.navigateByUrl(path, { replaceUrl: replace, state });
   }
   unavailable(worker: WorkerRecord) {
     return isUnavailableWorker(worker);
