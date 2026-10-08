@@ -2786,6 +2786,76 @@ spec:
     await shot("87-workers-detail");
   },
 
+  async incidents({ page, shot }) {
+    await connected(page, {
+      capabilities: ["incident.read", "incident.resolve", "run.read"],
+    });
+    const run = "5e6f7a8b-0000-4000-8000-000000000001";
+    const incidents = [
+      ["91111111-1111-4111-8111-111111111111", "charge-customer-card", 3],
+      ["92222222-2222-4222-8222-222222222222", "notify-warehouse", 1],
+    ].map(([id, step, generation]) => ({
+      id,
+      run_id: run,
+      incident_key: `${step}:${generation}`,
+      node_id: step,
+      generation,
+      origin_code: "WV-TASK-AMBIGUOUS",
+      code:
+        step === "notify-warehouse"
+          ? "WV-TASK-RETRIES-EXHAUSTED"
+          : "WV-TASK-AMBIGUOUS",
+      status: "active",
+      revision: 2,
+      external_effects_may_continue: false,
+    }));
+    await page.route(`${environment}/incidents?*`, (r) =>
+      r.fulfill({ json: { items: incidents, next_cursor: null } }),
+    );
+    await page.route(`${environment}/runs/${run}/history?*`, (r) =>
+      r.fulfill({
+        json: {
+          run_id: run,
+          events: [
+            "run_started",
+            "task_scheduled",
+            "task_claimed",
+            "task_failed",
+            "incident_opened",
+          ].map((type, index) => ({
+            id: `e${index}`,
+            type,
+            sequence: index + 1,
+            timestamp: new Date().toISOString(),
+          })),
+          next_cursor: null,
+          high_water_sequence: 5,
+        },
+      }),
+    );
+    await open(page, "Incidents");
+    await expect(
+      page.getByRole("table", { name: "Incidents" }).locator(".resource-row"),
+    ).toHaveCount(2);
+    await shot("91-incidents-list");
+    await page
+      .getByRole("button", {
+        name: "Open incident WV-TASK-AMBIGUOUS at charge-customer-card",
+      })
+      .click();
+    await expect(
+      page.locator("weave-incident-drawer .event-lines li"),
+    ).toHaveCount(5);
+    await shot("92-incidents-drawer", { end: ".record-detail, .page-content" });
+    await page
+      .getByRole("button", { name: "Resolve incident", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Resolve incident" });
+    await dialog.getByLabel(/Accept a verified result/).check();
+    await expect(dialog.getByLabel("Verified result (JSON)")).toBeVisible();
+    await shot("93-incidents-resolve");
+  },
+
   async clusters({ page, shot }) {
     await connected(page, {
       capabilities: ["deployment.read", "target.manage", "deployment.approve"],

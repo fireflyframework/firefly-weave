@@ -102,6 +102,7 @@ describe("modal sheet: what it covers", () => {
       "weave-modal",
       "weave-dialog-host",
       "weave-step-picker",
+      "weave-resolve-incident-dialog",
     ])
       expect(keepUsable).toContain(selector);
   });

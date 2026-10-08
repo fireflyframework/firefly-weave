@@ -149,6 +149,7 @@ import {
 // The operations pages and Settings load lazily (@defer): only these classes.
 import { ClustersPage } from "./operate/clusters/clusters-page";
 import { WorkersPage } from "./operate/workers/workers-page";
+import { IncidentsPage } from "./operate/incidents/incidents-page";
 import {
   navEntryVisible,
   viewFromPath,
@@ -172,6 +173,7 @@ export type View =
   | "workflows"
   | "designer"
   | "runs"
+  | "incidents"
   | "tasks"
   | "email"
   | "connections"
@@ -329,6 +331,7 @@ const sideEffects: Record<string, string> = {
     RecordsView,
     ClustersPage,
     WorkersPage,
+    IncidentsPage,
     SettingsPage,
     LumiPanel,
   ],
@@ -556,6 +559,7 @@ export class App {
     { id: "tasks", label: "My tasks" },
     { id: "email", label: "Email" },
     { id: "runs", label: "Runs" },
+    { id: "incidents", label: "Incidents" },
     { id: "workers", label: "Workers" },
     { id: "clusters", label: "Clusters" },
     { id: "settings", label: "Settings" },
@@ -564,7 +568,7 @@ export class App {
     ["", ["home"]],
     ["Build", ["workflows", "connections"]],
     ["Work", ["tasks", "email"]],
-    ["Operate", ["runs", "workers", "clusters"]],
+    ["Operate", ["runs", "incidents", "workers", "clusters"]],
   ];
   private navCache: {
     key: string;
@@ -5082,7 +5086,8 @@ export class App {
     if (
       this.view === "connect" ||
       this.view === "clusters" ||
-      this.view === "workers"
+      this.view === "workers" ||
+      this.view === "incidents"
     )
       return;
     if (this.view === "home") {

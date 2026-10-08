@@ -1,0 +1,186 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Operate › Incidents: the list, the drawer and the Resolve incident dialog. */
+.incident-list {
+  display: grid;
+  min-width: 0;
+  container: incidents / inline-size;
+}
+/* A notice keeps its distance from what follows it. */
+weave-operate-state {
+  margin-bottom: var(--space-4);
+}
+.incident-table {
+  --cols: minmax(200px, 1fr) 150px minmax(120px, 1fr) 110px;
+}
+.incident-table .table-head,
+.incident-table .resource-row {
+  grid-template-columns: var(--cols);
+}
+.incident-table .resource-row {
+  position: relative;
+  cursor: pointer;
+}
+.incident-table [role="cell"] {
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.incident-table .row-text {
+  display: grid;
+}
+.incident-table small {
+  font: var(--type-caption);
+  font-weight: 400;
+}
+/* The code wraps inside its cell: a long one is never cut. */
+.incident-table .row-open {
+  display: block;
+  min-height: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  font: var(--type-body);
+  font-weight: 600;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.incident-table .row-open:hover {
+  background: none;
+}
+.incident-table .row-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.incident-table .row-open:focus-visible {
+  outline: none;
+}
+.incident-table .row-open:focus-visible::after {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.incident-table .badges {
+  align-items: center;
+}
+.effects {
+  display: inline-flex;
+  color: var(--warning-ink);
+}
+/* The four columns need about 680 px; the shared table rules that hide a
+   column title on smaller screens don't apply while all four fit. */
+@container incidents (min-width: 680px) {
+  .incident-table .table-head > [role="columnheader"] {
+    display: block;
+  }
+}
+/* Narrower (an incident open beside the list, or a small screen) rows keep
+   the incident and its status. */
+@container incidents (max-width: 679px) {
+  .incident-table {
+    --cols: minmax(0, 1fr) auto;
+  }
+  .incident-table [data-wide] {
+    display: none;
+  }
+  .incident-table .table-head > [role="columnheader"]:nth-child(2) {
+    display: block;
+  }
+}
+/* Without room for the column titles the rows speak for themselves. */
+@container incidents (max-width: 479px) {
+  .incident-table .table-head {
+    display: none;
+  }
+}
+
+/* The drawer: the run's last engine events. */
+.recent-events {
+  margin-top: var(--space-6);
+}
+.event-lines {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.event-lines li {
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+  font: var(--type-small);
+}
+.event-lines .numeric {
+  flex: none;
+  min-width: 3.5em;
+  color: var(--subtle);
+}
+.event-lines code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The Resolve incident dialog. */
+.resolve-form .field {
+  margin-top: var(--space-3);
+}
+.resolve-form textarea,
+.resolve-form input:not([type="radio"]) {
+  width: 100%;
+}
+.resolve-choices {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+.resolve-choices legend {
+  font-weight: 600;
+  padding: 0 var(--space-1);
+}
+.resolve-choice {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  min-width: 0;
+}
+.resolve-choice input {
+  flex: none;
+  /* A radio is as wide as itself: the shared field rule gives inputs the
+     full width of their label. */
+  width: auto;
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.resolve-choice span {
+  display: grid;
+  min-width: 0;
+}
+.resolve-choice small {
+  color: var(--muted);
+  font: var(--type-small);
+}

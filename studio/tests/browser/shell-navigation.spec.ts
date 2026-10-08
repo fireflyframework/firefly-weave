@@ -90,6 +90,7 @@ for (const viewport of [
           "Email",
           "Operate",
           "Runs",
+          "Incidents",
           "Workers",
           "Clusters",
           "Settings",
