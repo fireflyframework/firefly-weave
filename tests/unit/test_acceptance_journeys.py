@@ -1,0 +1,136 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""Step enablement (journeys.toml) and pinned versions (versions.toml) follow the acceptance spec's rules."""
+
+import importlib.util
+import json
+import re
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def script(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+journeys = script("acceptance_journeys")
+MILESTONES = "\n".join(f'"{m}" = {"true" if m == "S6-M0" else "false"}' for m in journeys.MILESTONES)
+PROFILES = "\n".join(f'{profile} = ["J0"]' for profile in journeys.PROFILES)
+CRITERIA = "\n".join(f'{journey} = ["SC7"]' for journey in journeys.JOURNEYS)
+
+
+def parse(steps, extra=""):
+    text = f"[milestones]\n{MILESTONES}\n[profiles]\n{PROFILES}\n[criteria]\n{CRITERIA}\n[steps]\n{steps}\n{extra}"
+    return journeys.Enablement.parse(text)
+
+
+def test_requirements_need_every_milestone_and_alternatives_need_one():
+    enablement = parse(
+        '"J0.1" = ["S6-M0"]\n"J0.2" = ["S6-M0", "O3"]\n"J0.3" = ["A3|S6-M0"]\n"J0.3/owner-roles" = ["A3|O3"]'
+    )
+    assert enablement.missing("J0.1") == ()
+    assert enablement.missing("J0.2") == ("O3",)
+    assert enablement.missing("J0.3") == ()
+    assert enablement.missing("J0.3/owner-roles") == ("A3|O3",)
+    assert enablement.checks("J0.3") == ("J0.3/owner-roles",)
+    assert enablement.journey_steps("J0") == ("J0.1", "J0.2", "J0.3")
+
+
+def test_a_check_inherits_its_step_requirements_and_profiles():
+    enablement = parse('"J0.12" = ["S6-M1"]\n"J0.12/model" = ["S6-M0"]', '[step_profiles]\n"J0.12" = ["ai"]')
+    assert enablement.missing("J0.12/model") == ("S6-M1",)
+    assert enablement.applies("J0.12", "ai") and not enablement.applies("J0.12", "pr")
+    assert not enablement.applies("J0.12/model", "pr")
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        '"J16.1" = ["S6-M0"]',
+        '"J0.0" = ["S6-M0"]',
+        '"J0.1" = []',
+        '"J0.1" = ["S6-M9"]',
+        '"J0.1" = ["A3|X1"]',
+        '"J0.1" = ["S6-M0"]\n"J0.1/Owner" = ["S6-M0"]',
+        '"J0.3/owner" = ["S6-M0"]',
+    ],
+)
+def test_invalid_steps_are_refused(steps):
+    with pytest.raises(journeys.JourneysInvalid):
+        parse(steps)
+
+
+def test_milestones_profiles_and_criteria_must_be_complete():
+    good = '"J0.1" = ["S6-M0"]'
+    with pytest.raises(journeys.JourneysInvalid):
+        journeys.Enablement.parse(
+            f"[milestones]\n{MILESTONES.replace(chr(34) + 'S6-M4' + chr(34) + ' = false', '')}\n"
+            f"[profiles]\n{PROFILES}\n[criteria]\n{CRITERIA}\n[steps]\n{good}"
+        )
+    with pytest.raises(journeys.JourneysInvalid):
+        parse(good, '[step_profiles]\n"J0.1" = ["weekly"]')
+    with pytest.raises(journeys.JourneysInvalid):
+        journeys.Enablement.parse(f"[milestones]\n{MILESTONES}\n[profiles]\n{PROFILES}\n[steps]\n{good}")
+
+
+def test_the_committed_map_is_valid():
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    assert enablement.milestones["S6-M0"] is True
+    assert enablement.journey_steps("J0") == tuple(f"J0.{n}" for n in range(1, 15))
+    assert enablement.profiles["pr"] == ("J0", "J1", "J2", "J3", "J5", "J8", "J9")
+    assert enablement.criteria["J3"] == ("SC1", "SC3", "SC7")
+    assert enablement.applies("J0.12", "ai") and not enablement.applies("J0.12", "pr")
+    assert enablement.missing("J0.3/owner-roles") == ("A3|O3",)
+
+
+def test_versions_toml_pins_match_the_files_that_use_them():
+    versions = journeys.load_versions(ROOT / "tests/acceptance/versions.toml")
+    images = versions["images"]
+
+    def read(relative):
+        return (ROOT / relative).read_text(encoding="utf-8")
+
+    compose = yaml.safe_load(read("compose.yaml"))
+    identity = yaml.safe_load(read("compose.identity.yaml"))
+    assert compose["services"]["postgres"]["image"] == images["postgres"]
+    assert identity["services"]["keycloak-db"]["image"] == images["postgres"]
+    assert identity["services"]["keycloak"]["image"] == images["keycloak"]
+    assert re.findall(r"^FROM (\S+)", read("Dockerfile"), flags=re.MULTILINE)[:2] == [images["uv"], images["python"]]
+    assert re.findall(r"^FROM (\S+)", read("tests/acceptance/fixtures/acme_api/Dockerfile"), flags=re.MULTILINE) == [
+        images["python"]
+    ]
+    package = json.loads(read("studio/package.json"))
+    assert package["devDependencies"]["@playwright/test"] == versions["tools"]["playwright"]
+    ci = read(".github/workflows/ci.yml")
+    assert f"node-version: '{versions['tools']['node']}'" in ci
+    assert f"version: '{versions['tools']['uv']}'" in ci
+
+
+def test_versions_toml_refuses_unpinned_images(tmp_path):
+    path = tmp_path / "versions.toml"
+    path.write_text('version = 1\n[tools]\nnode = "24.15.0"\n[images]\npostgres = "postgres:17-alpine"\n')
+    with pytest.raises(journeys.JourneysInvalid):
+        journeys.load_versions(path)
