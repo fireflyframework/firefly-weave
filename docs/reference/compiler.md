@@ -209,6 +209,11 @@ selection reads expression syntax, never operator-shaped literal data. Existing
 workflows retain their prior IR version and executable digest. Readers that do
 not support v1alpha3 reject these artifacts; upgrade runtime readers before
 activating them. The capabilities response advertises accepted IR versions.
+Executables also define a sorted `features` list of the language features they
+need (`text.concat`, `text.join`, `flow.forEach`, `flow.callWorkflow`,
+`ai.agent`, `ai.memory`). It is omitted when empty, which it is for every
+executable this version compiles, so existing digests do not change; a non-empty
+list requires `weave/ir-v1alpha4`, which this version does not accept yet.
 `ir.py` defines
 every node, edge, control, join, guard, dependency, and executable field as a
 strict Pydantic model, and `export_schemas()` publishes `executable` and
@@ -321,6 +326,35 @@ flow as: start, decide, take one branch, join, end. The rules behind it:
 - **Guards.** Each guard keeps its semantic path and purpose. Consumers match a
   node `path`, the input, a branch output, or the workflow output, and validate it
   against `schemaRef` using the locked schema resources as the local bundle.
+
+### Instance keys
+
+A node can run more than once in one run: once per loop iteration, or once per
+agent turn or tool call. Each run of a node has an **instance key**: the node ID,
+then one `[index]` per enclosing loop (outer loop first), then optional
+`#`-separated activation segments, then an optional `~count` for a loop's yield:
+
+```text
+instance-key = node-id *("[" index "]") ["#" seg *("." seg)] ["~" count]
+index        = "0" / (%x31-39 *DIGIT)     ; loop iteration, from 0
+count        = %x31-39 *DIGIT             ; yield count, from 1
+seg          = 1*(ALPHA / DIGIT)          ; turn, tool call, or review
+```
+
+Examples: `send` (no loop), `send[3]`, `send[3][0]`, `support#2.1`,
+`support[3]#2.1.review`, and `notify[1]~2`. Indexes and counts have no leading
+zeros and are at most 2^53 − 1. Node IDs never contain `[`, `]`, `#`, or `~`.
+A node ID is a step ID or a synthetic ID (`@run`, `@start`, `@end`,
+`@join:<id>`, `@branch:<id>:<n>`), written with ASCII letters, digits, `_`, `.`,
+`:`, `@` and `-` only, so `firefly_weave.contracts.instance_keys.node_of(key)`
+returns the node ID by cutting at the first separator; `split_instance` parses a
+whole key and `format_instance` writes it back, and both reject any other
+spelling. API views show `node_id` (the node ID), `instance_key` (the full key, or
+`""` when it equals the node ID), and `iteration` (the loop indexes);
+`instance_view(key)` returns all three. `INSTANCE_KEY_PATTERN` is the same grammar
+as a regular expression that Python, JavaScript and JSON Schema read alike, and
+API models declare key fields as `InstanceKeyText` (or `InstanceKeyTextOrEmpty`
+where `""` is allowed).
 
 ## Import an artifact
 
@@ -462,6 +496,7 @@ is not classified. Safe ordinary artifacts keep their canonical digests.
 | `WV-COMP-TYPE_MISMATCH` at `/spec/output` | An expression's type cannot satisfy the target schema | Change the expression or the schema; the authoring guide shows an example |
 | `WV-COMP-UNAVAILABLE_REFERENCE` | An expression reads a step that has not run yet in its scope, or a value private to another branch | Read the step only after it runs, or read the decision or parallel step's output |
 | `WV-COMP-UNKNOWN_ACTION` (or `_CONNECTOR`, `_TASK`, `_ADAPTER`) | The catalog does not contain that exact reference | Add the exact version to the catalog, or fix the reference |
+| `WV-COMP-UNSUPPORTED_FEATURE` | The workflow or decision table uses a construct whose language feature this compiler does not compile yet; the message names the feature | Keep the document for a later version, or use the steps and operators this version compiles |
 | `WV-COMP-CATALOG_PENDING` notes in Studio | Studio works without the catalog and checks references later | Nothing; connect and **Validate** against the project catalog |
 | `WV-COMP-CONNECTION` | A step names a connection slot the workflow does not declare, omits a slot its action requires, or uses a slot declared for a different connector | Declare the slot in `spec.connections` with the action's exact connector, or fix the step's `connection` |
 | `WV-COMP-CONFIG_CONTRACT` | An action's `config` does not fit its connector | Fix the configuration; [HTTP profiles](../connectors/http-profiles.md) lists the built-in HTTP rules |

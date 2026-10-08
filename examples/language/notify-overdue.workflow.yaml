@@ -1,0 +1,76 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+# Loop over items with a text template. The compiler reports "not yet supported" for forEach and concat
+# until their language milestones land; the document shape is final.
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: notify-overdue
+  version: 1.0.0
+spec:
+  inputSchema:
+    type: object
+    properties:
+      invoices:
+        type: array
+        items:
+          type: object
+          properties:
+            number: {type: string}
+            customerEmail: {type: string}
+            daysLate: {type: integer}
+          required: [number, customerEmail, daysLate]
+          additionalProperties: false
+    required: [invoices]
+    additionalProperties: false
+  outputSchema:
+    type: object
+  connections:
+    mail:
+      connector: weave-email@1.0.0
+  steps:
+    - id: notify
+      kind: forEach
+      items: {ref: /input/invoices}
+      concurrency: 4
+      maxItems: 500
+      collect: all
+      body:
+        steps:
+          - id: send
+            kind: action
+            uses: mail.send-reminder@1.0.0
+            connection: mail
+            with:
+              object:
+                to: {ref: /item/customerEmail}
+                subject:
+                  op:
+                    name: concat
+                    args:
+                      - {literal: "Invoice "}
+                      - {ref: /item/number}
+                      - {literal: " is overdue by "}
+                      - {ref: /item/daysLate}
+                      - {literal: " days"}
+        output:
+          object:
+            invoice: {ref: /item/number}
+            messageId: {ref: /steps/send/output/id}
+  output:
+    object:
+      sent: {ref: /steps/notify/output}
