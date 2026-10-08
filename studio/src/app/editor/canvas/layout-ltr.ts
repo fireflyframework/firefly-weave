@@ -39,6 +39,13 @@ export const LTR = {
   label: 168,
   labelGap: 8,
   labelHeight: 48,
+  /** "All branches done" under a join bar, centered on it. */
+  joinLabel: 120,
+  /**
+   * A path that joins from another row turns this far before the join:
+   * clear of the longest path's last "+" and of the join bar's label.
+   */
+  merge: 64,
   /** Decision and parallel outputs sit this far right of the tile or fork bar. */
   rail: 20,
   /** A free output's "+", from the handle's center. */
@@ -142,8 +149,11 @@ export interface LtrEdge {
   key: string;
   /** The tile whose Tab group holds the edge's "+". */
   tile: string;
-  /** "fan": from a group to one of its outputs, drawn with right angles. */
-  shape: "curve" | "fan";
+  /**
+   * "fan": from a group to one of its outputs; "merge": from the end of a
+   * path into its group's join on another row. Both are drawn with right angles.
+   */
+  shape: "curve" | "fan" | "merge";
   a: Point;
   b: Point;
   /** What the edge's "+" inserts; null for an edge without a "+" of its own. */
@@ -552,7 +562,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         layout.edges.push({
           key: `$slot:${owner}>$join:${step.id}`,
           tile: step.id,
-          shape: "curve",
+          shape: y === join.y ? "curve" : "merge",
           a: { x: lanesLeft + LTR.slot, y },
           b: join,
           insert: null,
@@ -586,7 +596,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
           layout.edges.push({
             key: `${last.id}>$join:${step.id}`,
             tile: last.id,
-            shape: "curve",
+            shape: last.out.y === join.y ? "curve" : "merge",
             a: { x: last.out.x + 6, y: last.out.y },
             b: join,
             insert: null,
@@ -782,11 +792,19 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
   return layout;
 }
 
-/** An edge's SVG path: a smooth curve, or right angles for a group's fan. */
+/**
+ * An edge's SVG path: a smooth curve, or right angles for a group's fan and
+ * for a path that joins from another row. Those run along their own row,
+ * turn at one x shared by every path into that join, and enter it level.
+ */
 export function edgePath(edge: LtrEdge): string {
   const { a, b } = edge;
   if (edge.shape === "fan") {
     const x = a.x + (b.x - a.x) / 2;
+    return `M ${a.x} ${a.y} H ${x} V ${b.y} H ${b.x}`;
+  }
+  if (edge.shape === "merge") {
+    const x = Math.max(a.x, b.x - LTR.merge);
     return `M ${a.x} ${a.y} H ${x} V ${b.y} H ${b.x}`;
   }
   const dx = Math.max(24, Math.abs(b.x - a.x) / 2);
@@ -799,9 +817,12 @@ export function midpoint(edge: LtrEdge): Point {
 }
 
 export type LevelOfDetail = "full" | "compact" | "minimal";
-/** Below 50% tiles drop their labels; below 30% they are plain rectangles. */
+/**
+ * Below 40% tiles drop their labels; below 30% they are plain rectangles.
+ * A workflow opens at 50% or more (openView), so it opens with its names.
+ */
 export function levelOfDetail(zoom: number): LevelOfDetail {
-  return zoom < 0.3 ? "minimal" : zoom < 0.5 ? "compact" : "full";
+  return zoom < 0.3 ? "minimal" : zoom < 0.4 ? "compact" : "full";
 }
 
 /** The whole workflow in view, 48 px from the edges, between `min` and `max` zoom. */
@@ -833,4 +854,17 @@ export function fitView(
           : margin - bounds.minY * zoom,
     },
   };
+}
+
+/**
+ * The view a workflow opens with: fitted when it fits at 50% or more;
+ * otherwise 50%, the trigger column at the left margin and the workflow
+ * centered vertically when its height fits (else its top at the top
+ * margin). The rest is a pan away; Fit view still shows everything.
+ */
+export function openView(
+  bounds: LtrBounds,
+  size: { width: number; height: number },
+): { zoom: number; pan: Point } {
+  return fitView(bounds, size, 0.5);
 }

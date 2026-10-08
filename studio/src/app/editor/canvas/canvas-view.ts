@@ -55,6 +55,7 @@ import {
   layoutLtr,
   levelOfDetail,
   midpoint,
+  openView,
   type Insertion,
   type LtrLayout,
   type LtrTile,
@@ -551,22 +552,26 @@ export class CanvasView implements OnInit, DoCheck {
       }),
     );
   }
+  /** Fit view: the whole workflow, down to 25%. */
   fit(): boolean {
+    return this.frame(fitView);
+  }
+  /** Opens a workflow the canvas hasn't shown yet, at 50% or more (openView). */
+  fitIfNew() {
+    const opened = this.host().model.opened;
+    if (this.ready && this.fitted !== opened && this.frame(openView))
+      this.fitted = opened;
+  }
+  private frame(place: typeof openView): boolean {
     const root = this.root().nativeElement;
     if (!root.clientWidth || !root.clientHeight) return false;
     this.setView(
-      fitView(this.layout().bounds, {
+      place(this.layout().bounds, {
         width: root.clientWidth,
         height: root.clientHeight,
       }),
     );
     return true;
-  }
-  /** Fits a workflow the canvas hasn't shown yet. */
-  fitIfNew() {
-    const opened = this.host().model.opened;
-    if (this.ready && this.fitted !== opened && this.fit())
-      this.fitted = opened;
   }
   /** Pans so a tile and its label sit at least `margin` px inside the canvas. */
   revealTile(id: string, margin = 64) {

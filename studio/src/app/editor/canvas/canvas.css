@@ -126,9 +126,13 @@ weave-canvas-view,
 .canvas-v2 .tile-body[data-shape="octagon"] .tile-icon {
   color: var(--danger-ink);
 }
+/* A fork bar is 20 px wide: its icon sits near the top, clear of the
+   input handle (and its 24 px hit area) at the bar's middle. */
 .canvas-v2 .tile-body[data-shape="fork"] .tile-icon {
   width: 16px;
   height: 16px;
+  align-self: start;
+  margin-top: 12px;
 }
 .canvas-v2 .tile-body[data-shape="trigger"] .tile-icon {
   margin-left: 8px;
@@ -225,7 +229,9 @@ weave-canvas-view,
 }
 
 /* Label block. Each line sits on the canvas color, so an edge that
-   crosses it never runs through the text. */
+   crosses it never runs through the text. The block lets the pointer
+   through; its lines take it, so a cut-off name or subtitle shows in full
+   in its tooltip. */
 .canvas-v2 .tile-label {
   position: absolute;
   left: calc(50% - 84px);
@@ -237,6 +243,7 @@ weave-canvas-view,
 .canvas-v2 .tile-label strong,
 .canvas-v2 .tile-label span {
   justify-self: center;
+  pointer-events: auto;
   max-width: 100%;
   box-sizing: border-box;
   padding: 0 4px;
@@ -347,7 +354,8 @@ weave-canvas-view,
 }
 
 /* Paths and joins. A path's label is plain text, not the classic
-   canvas's pill, so its box is reset here. */
+   canvas's pill, so its box is reset here; it keeps the pointer, so a
+   cut-off condition shows in full in its tooltip. */
 .canvas-v2 .branch-label {
   position: absolute;
   bottom: auto;
@@ -363,7 +371,6 @@ weave-canvas-view,
   text-overflow: ellipsis;
   font: var(--type-caption);
   color: var(--muted);
-  pointer-events: none;
 }
 .canvas-v2 .join-bar {
   position: absolute;
@@ -375,12 +382,13 @@ weave-canvas-view,
   border-radius: var(--radius-sm);
   background: var(--node-bg);
 }
+/* At most LTR.joinLabel wide: paths that join from below turn clear of it. */
 .canvas-v2 .join-label {
   position: absolute;
   top: calc(100% + 8px);
   left: 50%;
   width: max-content;
-  max-width: 168px;
+  max-width: 120px;
   box-sizing: border-box;
   padding: 0 4px;
   overflow: hidden;
@@ -650,7 +658,7 @@ weave-canvas-view,
   }
 }
 
-/* Level of detail: below 50% no labels; below 30% plain rectangles */
+/* Level of detail: below 40% no labels; below 30% plain rectangles */
 .canvas-v2.lod-compact
   :is(.tile-label, .branch-label, .join-label, .lane-slot-label) {
   display: none;

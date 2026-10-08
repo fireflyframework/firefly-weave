@@ -25,6 +25,7 @@ import {
   layoutLtr,
   levelOfDetail,
   midpoint,
+  openView,
   type LtrEdge,
   type LtrLayout,
   type LtrOptions,
@@ -198,11 +199,19 @@ describe("the left-to-right layout", () => {
     expect(
       edge(layout, "send-confirmation>$join:pay-and-notify"),
     ).toMatchObject({
+      shape: "merge",
       a: { x: 1514, y: 352 },
       b: { x: 1644, y: 144 },
       insert: null,
       leaves: "send-confirmation",
       enters: null,
+    });
+    expect(
+      edge(layout, "post-ledger-entry>$join:pay-and-notify"),
+    ).toMatchObject({
+      shape: "curve",
+      a: { x: 1514, y: 144 },
+      b: { x: 1644, y: 144 },
     });
   });
 
@@ -240,6 +249,7 @@ describe("the left-to-right layout", () => {
       enters: null,
     });
     expect(edge(layout, "$slot:route/default>$join:route")).toMatchObject({
+      shape: "merge",
       a: { x: 1088, y: 768 },
       b: { x: 1794, y: 144 },
     });
@@ -619,8 +629,126 @@ describe("the left-to-right layout", () => {
     );
   });
 
-  it("drops labels below 50% and draws plain tiles below 30%", () => {
-    expect([1, 0.5, 0.49, 0.3, 0.29, 0.25].map(levelOfDetail)).toEqual([
+  it("brings a path into its join from another row with right angles, turning just before the join", () => {
+    const merge: LtrEdge = {
+      key: "c>$join:g",
+      tile: "c",
+      shape: "merge",
+      a: { x: 0, y: 400 },
+      b: { x: 300, y: 0 },
+      insert: null,
+      name: null,
+      leaves: "c",
+      enters: null,
+    };
+    expect(LTR.merge).toBe(64);
+    expect(edgePath(merge)).toBe("M 0 400 H 236 V 0 H 300");
+  });
+
+  it("never routes a path into its join across a step, a label, a slot or another path's +", () => {
+    interface Box {
+      what: string;
+      left: number;
+      top: number;
+      right: number;
+      bottom: number;
+    }
+    const box = (
+      what: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+    ): Box => ({ what, left: x, top: y, right: x + width, bottom: y + height });
+    const workflows: [string, Workflow][] = [
+      ["vendor-payment-approval", fixture],
+      ...workflowTemplates.map((template): [string, Workflow] => [
+        template.id,
+        parse(template.yaml) as Workflow,
+      ]),
+    ];
+    let merges = 0;
+    for (const [name, workflow] of workflows) {
+      const layout = layoutLtr(workflow, options());
+      const obstacles: Box[] = [
+        ...layout.tiles.flatMap((item) => [
+          box(item.id, item.x, item.y, item.width, item.height),
+          ...(item.kind === "end"
+            ? []
+            : [
+                box(
+                  `${item.id}'s label`,
+                  item.x + item.width / 2 - LTR.label / 2,
+                  item.labelY,
+                  LTR.label,
+                  LTR.labelHeight,
+                ),
+              ]),
+        ]),
+        ...layout.joins.flatMap((join) => [
+          box(`${join.id}'s join`, join.x, join.y, join.width, join.height),
+          box(
+            `${join.id}'s join label`,
+            join.x + join.width / 2 - LTR.joinLabel / 2,
+            join.y + join.height + LTR.labelGap,
+            LTR.joinLabel,
+            16,
+          ),
+        ]),
+        ...layout.labels.map((label) =>
+          box(`${label.owner} label`, label.x, label.y, label.width, 16),
+        ),
+        ...layout.slots.map((slot) =>
+          box(`${slot.owner} slot`, slot.x, slot.y, LTR.slot, LTR.slot + 24),
+        ),
+      ];
+      for (const item of layout.edges.filter(
+        (edge) => edge.key.includes(">$join:") && edge.a.y !== edge.b.y,
+      )) {
+        merges++;
+        expect(item.shape, `${name}: ${item.key}`).toBe("merge");
+        const turn = item.b.x - LTR.merge;
+        const points = [
+          item.a,
+          { x: turn, y: item.a.y },
+          { x: turn, y: item.b.y },
+          item.b,
+        ];
+        const pluses = layout.handles
+          .filter((output) => output.plus && output.tile !== item.tile)
+          .map((output) =>
+            box(
+              `${output.key}'s +`,
+              output.plus!.x - 12,
+              output.plus!.y - 12,
+              24,
+              24,
+            ),
+          );
+        for (const obstacle of [...obstacles, ...pluses])
+          for (let i = 1; i < points.length; i++) {
+            const [from, to] = [points[i - 1], points[i]];
+            const crosses =
+              Math.min(from.x, to.x) < obstacle.right &&
+              Math.max(from.x, to.x) > obstacle.left &&
+              Math.min(from.y, to.y) < obstacle.bottom &&
+              Math.max(from.y, to.y) > obstacle.top;
+            expect(
+              crosses,
+              `${name}: ${item.key} crosses ${obstacle.what}`,
+            ).toBe(false);
+          }
+      }
+    }
+    expect(merges).toBeGreaterThan(2);
+  });
+
+  it("drops labels below 40% and draws plain tiles below 30%", () => {
+    expect(
+      [1, 0.5, 0.45, 0.4, 0.39, 0.3, 0.29, 0.25].map(levelOfDetail),
+    ).toEqual([
+      "full",
+      "full",
       "full",
       "full",
       "compact",
@@ -628,6 +756,38 @@ describe("the left-to-right layout", () => {
       "minimal",
       "minimal",
     ]);
+  });
+
+  it("opens a workflow fitted when it fits at 50% or more, else at 50% from the trigger at the left margin", () => {
+    const size = { width: 1440, height: 900 };
+    const small = { minX: 60, minY: 96, maxX: 1060, maxY: 496 };
+    expect(openView(small, size)).toEqual(fitView(small, size));
+    expect(openView(small, size).zoom).toBe(1);
+    const medium = { minX: 60, minY: 96, maxX: 60 + 1344 / 0.7, maxY: 496 };
+    expect(openView(medium, size).zoom).toBeCloseTo(0.7, 10);
+    const wide = { minX: 60, minY: 96, maxX: 4060, maxY: 496 };
+    expect(openView(wide, size)).toEqual({
+      zoom: 0.5,
+      pan: { x: 48 - 60 * 0.5, y: (900 - 400 * 0.5) / 2 - 96 * 0.5 },
+    });
+    const tall = { minX: 60, minY: 96, maxX: 4060, maxY: 3096 };
+    expect(openView(tall, size)).toEqual({
+      zoom: 0.5,
+      pan: { x: 48 - 60 * 0.5, y: 48 - 96 * 0.5 },
+    });
+    // The vendor payment workflow in a canvas beside both side panels.
+    const layout = layoutLtr(fixture, options());
+    const view = openView(layout.bounds, { width: 766, height: 670 });
+    const trigger = tile(layout, "$trigger:manual");
+    expect(view.zoom).toBe(0.5);
+    expect(
+      (trigger.x + trigger.width / 2 - LTR.label / 2) * view.zoom + view.pan.x,
+    ).toBe(48);
+    expect(levelOfDetail(view.zoom)).toBe("full");
+    // Fit view still shows everything, down to 25%.
+    expect(
+      fitView(layout.bounds, { width: 766, height: 670 }).zoom,
+    ).toBeLessThan(0.5);
   });
 
   it("fits the whole workflow, never past 100% and never below 25%", () => {
