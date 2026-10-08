@@ -72,7 +72,7 @@ let sequence = 0;
   >
     <div class="hb-shell">
       <p class="hint hb-intro" [id]="prefix + '-intro'">
-        Describe one HTTPS request, or import operations from an OpenAPI
+        Describe one HTTP or HTTPS request, or import operations from an OpenAPI
         document. Studio turns them into actions on the built-in HTTP connector,
         with no code.
       </p>

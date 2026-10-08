@@ -59,6 +59,7 @@ import {
   emptyDraft,
   handoffCommand,
   handoffRequest,
+  plainHttpNotice,
   prefillFromBuilder,
   sameRequest,
   slotLabels,
@@ -568,6 +569,9 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
       margin: calc(var(--space-1) - var(--space-2)) 0 0;
       font-size: 12px;
     }
+    .field .plain-http {
+      margin: var(--space-2) 0 0;
+    }
     [aria-invalid="true"] {
       border-color: var(--danger);
     }
@@ -722,13 +726,21 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
             placeholder="https://api.example.com"
             [value]="draft.origin"
             [attr.aria-invalid]="invalid('origin')"
-            [attr.aria-describedby]="described('origin', true)"
+            [attr.aria-describedby]="originDescribedBy()"
             (input)="edit('origin', $event)"
           />
           <p class="hint" [id]="id + '-origin-hint'">
-            The HTTPS origin, or an approved development http:// origin. Base
-            paths belong in each action.
+            The HTTPS or HTTP origin only. Base paths belong in each action.
           </p>
+          @if (plainHttp(); as notice) {
+            <p
+              class="notice plain-http"
+              role="note"
+              [id]="id + '-origin-plain'"
+            >
+              {{ notice }}
+            </p>
+          }
           @for (problem of problemsFor("origin"); track $index) {
             <p class="error" [id]="id + '-origin-error'">
               {{ problem.message }}
@@ -1276,6 +1288,11 @@ export class HttpConnectionForm implements OnInit {
     this.revision();
     return destinationEntries(this.draft);
   });
+  /** "Not encrypted: …" for an http:// API address; a notice, never a problem. */
+  plainHttp = computed(() => {
+    this.revision();
+    return plainHttpNotice(this.draft.origin);
+  });
   generalProblems = computed(() =>
     this.problems().filter((problem) =>
       ["general", "connector", "secrets"].includes(problem.field),
@@ -1347,6 +1364,15 @@ export class HttpConnectionForm implements OnInit {
       this.problemsFor(field).length ? `${this.id}-${field}-error` : "",
     ].filter(Boolean);
     return ids.join(" ") || null;
+  }
+  /** The API address's hint, problems and, for http://, the "Not encrypted" notice. */
+  originDescribedBy() {
+    return [
+      this.described("origin", true),
+      this.plainHttp() ? `${this.id}-origin-plain` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
   private changed() {
     this.revision.update((value) => value + 1);

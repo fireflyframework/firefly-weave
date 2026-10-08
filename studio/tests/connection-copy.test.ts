@@ -32,6 +32,7 @@ import {
   handoffRequest,
   looksLikeSecretValue,
   originOf,
+  plainHttpNotice,
   prefillFromBuilder,
   sameRequest,
   suggestedName,
@@ -248,6 +249,27 @@ describe("client checks mirror the platform", () => {
     expect(fields({ ...oauth, name: "-pets" })).toEqual(["name"]);
     expect(suggestedName("https://api.pets.example")).toBe("pets");
     expect(suggestedName("not a url")).toBe("");
+  });
+});
+
+describe("plain HTTP notice", () => {
+  it("warns for an http:// API address and never for https://", () => {
+    expect(plainHttpNotice("http://Acme.Acceptance.Test:8080/")).toBe(
+      "Not encrypted: requests to http://acme.acceptance.test:8080 travel in plain text.",
+    );
+    expect(plainHttpNotice("  http://api.pets.example ")).toBe(
+      "Not encrypted: requests to http://api.pets.example travel in plain text.",
+    );
+    for (const value of [
+      "https://api.pets.example",
+      "ftp://api.pets.example",
+      "",
+      "not a url",
+    ])
+      expect(plainHttpNotice(value)).toBeNull();
+  });
+  it("is a notice, never a problem: the draft still passes every check", () => {
+    expect(fields({ ...oauth, origin: "http://api.pets.example" })).toEqual([]);
   });
 });
 
@@ -475,13 +497,10 @@ print(json.dumps(result))
       expect(issues.slice(0, 4)).toEqual([[], [], [], []]);
       expect(issues[4]).toEqual([["DESTINATION", "/allowed_destinations"]]);
       expect(fieldForPointer(issues[4][0][1])).toBe("destinations");
-      // Without an approved private origin the platform refuses plain HTTP
-      // at the origin and its destination.
-      expect(issues[5]).toEqual([
-        ["CONFIG", "/config/baseUrl"],
-        ["DESTINATION", "/allowed_destinations/0"],
-      ]);
-      expect(fieldForPointer(issues[5][0][1])).toBe("origin");
+      // The platform accepts plain HTTP like HTTPS; its egress check decides
+      // whether the address is reachable, and the form warns it is not
+      // encrypted.
+      expect(issues[5]).toEqual([]);
     });
   },
 );

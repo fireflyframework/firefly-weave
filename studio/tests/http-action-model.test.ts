@@ -162,8 +162,8 @@ describe("API address", () => {
       origin: "https://api.example.com:8443",
       basePath: "/v1",
     });
-    // Plain HTTP is accepted here; the platform allows it only for an origin
-    // its operator approved for development.
+    // Plain HTTP is accepted like HTTPS; the platform's egress check decides
+    // whether the address is reachable.
     expect(parseApiAddress("http://acme.acceptance.test:8080")).toEqual({
       origin: "http://acme.acceptance.test:8080",
       basePath: "",

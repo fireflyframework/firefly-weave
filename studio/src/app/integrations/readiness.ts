@@ -355,7 +355,7 @@ export function integrationReadiness(facts: ReadinessFacts): Readiness {
               ? "Connector actions aren't enabled on this computer"
               : "No release in this environment runs API actions yet",
             detail: local
-              ? "Enable integrations, then restart the platform. Only public HTTPS addresses can be called from this computer."
+              ? "Enable integrations, then restart the platform. Public addresses work over HTTPS or HTTP; private ones only where the platform approved them."
               : `Register a release with the ${httpConnector} bindings in this environment and turn on native connector execution.`,
             who: local ? "You, on this computer" : "Platform operator",
             command: local

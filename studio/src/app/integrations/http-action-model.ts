@@ -157,9 +157,9 @@ export function pathPlaceholders(
 /**
  * The origin a connection keeps, plus any base path the person typed (which
  * belongs in the action's path). Mirrors fixed_server and the connection
- * destination check. Plain http:// is accepted here: the platform allows it
- * only for an origin its operator approved for development (private-origin
- * policy), so the server stays the authority.
+ * destination check. Plain http:// is accepted like https:// and is not
+ * encrypted; the platform's egress check decides whether the address is
+ * reachable (a private one needs an origin its operator approved).
  */
 export function parseApiAddress(
   input: string,
@@ -172,7 +172,7 @@ export function parseApiAddress(
   const protocol = scheme?.[1].toLowerCase();
   if (!scheme || (protocol !== "https" && protocol !== "http"))
     return fail(
-      "Use an https:// address, for example https://api.example.com. Plain http:// works only for development addresses your platform operator approved.",
+      "Use an https:// or http:// address, for example https://api.example.com.",
     );
   if (/[%\\]/.test(value) || invisible(value))
     return fail(

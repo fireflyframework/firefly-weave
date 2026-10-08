@@ -79,7 +79,7 @@ export const slotLabels: Record<string, string> = {
 
 export interface ConnectionDraft {
   name: string;
-  /** The API's HTTPS origin, such as https://api.example.com. */
+  /** The API's HTTPS or HTTP origin, such as https://api.example.com. */
   origin: string;
   auth: AuthKind;
   header: string;
@@ -90,7 +90,7 @@ export interface ConnectionDraft {
   authentication: ClientAuthentication;
   /** Secret handle NAME per slot; never a value. */
   secrets: Record<string, string>;
-  /** Further literal HTTPS origins the connection may reach. */
+  /** Further literal HTTPS or HTTP origins the connection may reach. */
   extraDestinations: string[];
 }
 /** The JSON body of connections.create (ConnectionRequest by alias). */
@@ -194,8 +194,8 @@ export function suggestedName(origin: string): string {
 /**
  * The origin of a fixed server address (fixed_server): no credentials,
  * query, fragment, percent or backslash, no trailing-dot host, port not 0.
- * HTTPS, or HTTP when plainHttp is set (the platform decides whether that
- * origin is approved). Returns the origin and path, or null.
+ * HTTPS, or HTTP when plainHttp is set (the platform's egress check decides
+ * whether that address is reachable). Returns the origin and path, or null.
  */
 function fixedServer(
   value: string,
@@ -249,6 +249,19 @@ export function originOf(
   { plainHttp = true }: { plainHttp?: boolean } = {},
 ): string | null {
   return fixedServer(value, { plainHttp })?.origin ?? null;
+}
+
+/**
+ * The non-blocking "Not encrypted" notice for an http:// API address, else
+ * null. Plain HTTP works (public addresses as they are, private ones only
+ * where the platform operator approved the origin); the form says so and
+ * never refuses it.
+ */
+export function plainHttpNotice(value: string): string | null {
+  const origin = originOf(value);
+  return origin?.startsWith("http://")
+    ? `Not encrypted: requests to ${origin} travel in plain text.`
+    : null;
 }
 
 const scopesOf = (draft: ConnectionDraft) =>
@@ -381,7 +394,7 @@ export function checkDraft(
   else if (!server)
     add(
       "origin",
-      "Use an HTTPS address such as https://api.example.com, without a user name, password, query or fragment. Plain HTTP works only for development addresses your platform operator approved.",
+      "Use an HTTPS or HTTP address such as https://api.example.com, without a user name, password, query or fragment.",
     );
   else if (server.path)
     add(
@@ -570,7 +583,7 @@ export const connectionCodeCopy: Record<string, string> = {
   "WV-CONNECTION-SECRET":
     "This secret handle isn't available in this environment.",
   "WV-CONNECTION-DESTINATION":
-    "Allowed destinations must be HTTPS origins such as https://api.example.com.",
+    "Allowed destinations must be HTTPS or HTTP origins such as https://api.example.com.",
 };
 const secretHint = "Check the handle name with your platform operator.";
 
