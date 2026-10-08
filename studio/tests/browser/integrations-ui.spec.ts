@@ -510,9 +510,9 @@ spec:
       await expect(designer.node("review")).toBeVisible();
       // Focus moves to the new workflow's first step, not to the page.
       await expect(designer.node("review").locator(".node-body")).toBeFocused();
-      // The new template is queued for local saving.
-      await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-        /^(Unsaved|Draft saved \d{2}:\d{2})$/,
+      // Nothing is kept yet: the template opens as an untouched new draft.
+      await expect(page.locator(".editor-identity .status-chip")).toHaveCount(
+        0,
       );
       // A template starts its own undo history.
       expect(await canUndo(page)).toBe(false);
