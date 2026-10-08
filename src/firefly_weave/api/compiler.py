@@ -102,6 +102,7 @@ class CompilerController:
     @operation("capabilities.read")
     async def capabilities(self, request: Request) -> dict[str, Any]:
         from firefly_weave.connections.secret_execution import SECRET_SLOTS
+        from firefly_weave.contracts.language_features import ADVERTISED_FEATURES
         from firefly_weave.contracts.public import Capabilities, compiler_limits
         from firefly_weave.contracts.schema_export import contract_models
         from firefly_weave.operations.compatibility_catalog import WORKER_PROTOCOL
@@ -124,6 +125,7 @@ class CompilerController:
 
         await self.service.catalog(request.state.principal, request_scope(request), context=request.state.audit_context)
         result = Capabilities(
+            language_features=list(ADVERTISED_FEATURES),
             limits=compiler_limits(),
             schemas=sorted(contract_models()),
             connectors=sorted(r.reference for r in self.service.capabilities.resources.values() if r.kind == "Adapter"),

@@ -28,6 +28,7 @@ from firefly_weave.contracts.definitions import load_definition
 EXAMPLES = Path("examples/language")
 EXPECTED = {
     "notify-customer.workflow.yaml": [],
+    "order-summary.workflow.yaml": [],
     # Text operators compile; loops and workflow calls are still reported.
     "notify-overdue.workflow.yaml": [("/spec/steps/0/kind", "flow.forEach")],
     "order-intake.workflow.yaml": [
@@ -57,7 +58,8 @@ def test_example_shape_is_final_and_unsupported_features_are_reported(name):
     )
 
 
-def test_the_callable_example_compiles_today():
-    text = (EXAMPLES / "notify-customer.workflow.yaml").read_text()
+@pytest.mark.parametrize("name", ["notify-customer.workflow.yaml", "order-summary.workflow.yaml"])
+def test_the_examples_without_loops_or_calls_compile_today(name):
+    text = (EXAMPLES / name).read_text()
     result = compile_source(text, format="yaml", catalog=CatalogSnapshot.from_definitions([]))
     assert result.ok, [d.code for d in result.diagnostics]
