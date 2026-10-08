@@ -83,7 +83,9 @@ def test_j0_02_doctor(run):
 def test_j0_03_up_with_the_fixture_origin(run):
     result = run.require(run.platform(*run.up_arguments(), "--username", "owner", "--output", "json", timeout=1500))
     value = json.loads(result.stdout)
-    assert run.save_person("owner", value["account"]).stat().st_mode & 0o777 == 0o600
+    # Saved outside an assert: pytest would print the call's arguments, the password among them.
+    saved_owner = run.save_person("owner", value["account"])
+    assert saved_owner.stat().st_mode & 0o777 == 0o600
     assert value["mode"] == "docker" and ready(value["api_url"])
     assert value["private_origins"]["label"] == "Development only"
     saved = run.platform_state()["private_origins"]
@@ -130,7 +132,9 @@ def test_j0_07_secret_handles(run):
         value = run.canary(handle)
         arguments = ("secret", "set", "--handle", handle, "--value-stdin", "--output", "json")
         result = run.require(run.platform(*arguments, input=value))
-        assert value not in result.stdout + result.stderr
+        if value in result.stdout + result.stderr:
+            # Never through assert: pytest would print both operands, the value among them.
+            pytest.fail(f"weave platform secret set printed the value of {handle}")
     run.restart()
     listed = json.loads(run.require(run.platform("secret", "list", "--output", "json")).stdout)
     assert set(SECRET_HANDLES) <= set(listed["handles"])

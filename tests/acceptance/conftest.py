@@ -21,7 +21,8 @@ directory it prepared. A test marked journey_step("J0.3") implements one journey
 step: a step whose milestones have not merged is skipped and recorded with them, never
 passed, and after a failed step the rest of its journey is recorded as not run. Results go
 to evidence/steps.jsonl. Command output can hold generated passwords: it is parsed in
-memory and shown only when a command fails.
+memory and shown only when a command fails. Failure text, on the console and in a step's
+error, never carries the run's canaries or people passwords: they read [redacted].
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,33 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_COMPOSE = ROOT / "tests/acceptance/compose.fixtures.yaml"
+REDACTED = "[redacted]"
+# pytest shortens long values as head + "..." + tail; a cut secret leaves such fragments.
+SHORTENED = "..."
+FRAGMENT = 4
+
+
+def known_secrets(root: Path) -> list[str]:
+    """The run's canary values and people passwords, longest first."""
+    private = root / "private"
+    found: list[str] = []
+    if (private / "canaries.json").is_file():
+        found += json.loads((private / "canaries.json").read_text(encoding="utf-8")).values()
+    for person in sorted((private / "people").glob("*.json")):
+        found.append(json.loads(person.read_text(encoding="utf-8")).get("password"))
+    return sorted({value for value in found if isinstance(value, str) and value}, key=len, reverse=True)
+
+
+def redact(text: str, secrets: Iterable[str]) -> str:
+    """Replace every secret, and every fragment of FRAGMENT or more characters pytest cut from one."""
+    values = list(secrets)
+    for value in values:
+        text = text.replace(value, REDACTED)
+    for value in values:
+        for size in range(len(value) - 1, FRAGMENT - 1, -1):
+            text = text.replace(value[:size] + SHORTENED, REDACTED + SHORTENED)
+            text = text.replace(SHORTENED + value[-size:], SHORTENED + REDACTED)
+    return text
 
 
 def _script(name: str) -> Any:
@@ -113,13 +141,13 @@ class Run:
     def docker(self, *args: str, timeout: float = 300) -> subprocess.CompletedProcess[str]:
         return self.command(["docker", "--context", self.context, *args], timeout=timeout)
 
-    @staticmethod
-    def require(result: subprocess.CompletedProcess[str]) -> subprocess.CompletedProcess[str]:
+    def require(self, result: subprocess.CompletedProcess[str]) -> subprocess.CompletedProcess[str]:
         if result.returncode != 0:
             command = " ".join(str(part) for part in list(result.args)[:4])
-            raise AssertionError(
-                f"{command} exited {result.returncode}: {result.stdout[-1500:]} {result.stderr[-1500:]}"
-            )
+            secrets = known_secrets(self.root)
+            # Redact before cutting, so the cut never leaves part of a secret behind.
+            stdout, stderr = (redact(text, secrets)[-1500:] for text in (result.stdout, result.stderr))
+            raise AssertionError(f"{command} exited {result.returncode}: {stdout} {stderr}")
         return result
 
     def up_arguments(self) -> list[str]:
@@ -224,9 +252,12 @@ def _record(entry: dict[str, Any]) -> None:
             stream.write(json.dumps(entry, sort_keys=True) + "\n")
 
 
+def _root() -> Path:
+    return Path(os.environ["WEAVE_ACC_RUN_DIR"])
+
+
 def _profile() -> str:
-    run_json = Path(os.environ["WEAVE_ACC_RUN_DIR"]) / "run.json"
-    return str(json.loads(run_json.read_text(encoding="utf-8"))["profile"])
+    return str(json.loads((_root() / "run.json").read_text(encoding="utf-8"))["profile"])
 
 
 @pytest.fixture(scope="session")
@@ -287,7 +318,10 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
     if skipped:
         entry["skipped_checks"] = skipped
     if report.failed:
-        lines = str(report.longrepr).strip().splitlines() if report.longrepr else ["failed"]
+        # The console prints this text too, so it replaces pytest's own report.
+        text = redact(str(report.longrepr) if report.longrepr else "failed", known_secrets(_root()))
+        report.longrepr = text
+        lines = text.strip().splitlines() or ["failed"]
         entry["error"] = lines[-1][:300]
         _FAILED_JOURNEYS.add(step.split(".")[0])
     _record(entry)
