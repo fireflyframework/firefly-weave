@@ -106,5 +106,14 @@ def test_recolor_rewrites_in_place_keeps_line_endings_and_then_checks_clean(tmp_
     assert RECOLOR["main"](["--check", str(path)]) == 0
 
 
+def test_check_reports_a_legacy_color_exits_one_and_leaves_the_file_alone(tmp_path, capsys):
+    path = tmp_path / "diagram.svg"
+    original = SVG.format('<rect fill="#173D34"/>').encode()
+    path.write_bytes(original)
+    assert RECOLOR["main"](["--check", str(path)]) == 1
+    assert capsys.readouterr().out == f"would recolor {path}\n"
+    assert path.read_bytes() == original
+
+
 def test_every_documentation_diagram_uses_the_palette():
     assert RECOLOR["main"](["--check"]) == 0
