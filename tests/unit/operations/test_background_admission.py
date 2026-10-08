@@ -58,6 +58,112 @@ async def saturated_requests():
         await asyncio.gather(*tasks)
 
 
+class Blocked:
+    """Pure calls that stay running until released, like a call that outlived its caller."""
+
+    def __init__(self):
+        self.entered, self.release = threading.Semaphore(0), threading.Event()
+
+    def __call__(self):
+        self.entered.release()
+        return self.release.wait(5)
+
+    async def started(self, count=1):
+        for _ in range(count):
+            assert await asyncio.to_thread(self.entered.acquire, True, 2)
+
+
+async def admitted_eventually(reservation):
+    # A released thread gives its slot back just after its call returns.
+    async with asyncio.timeout(2):
+        while True:
+            try:
+                async with reservation.execution():
+                    return await execute_pure(lambda: "admitted")
+            except CatalogError:
+                await asyncio.sleep(0.01)
+
+
+async def test_reserved_slots_admit_background_work_while_requests_hold_every_slot():
+    from firefly_weave.operations.execution import ReservedSlots, request_execution
+
+    reservation = ReservedSlots(1)
+    async with saturated_requests(), reservation.execution():
+        assert await execute_pure(lambda: "work") == "work"
+        assert await execute_pure(lambda: "control", control=True) == "control"
+        # Request admission keeps its own ceilings while background work runs.
+        with pytest.raises(CatalogError, match="capacity"):
+            async with request_execution():
+                raise AssertionError("request admitted beyond the work slots")
+
+
+async def test_reserved_slots_bound_concurrent_pure_calls_to_their_size():
+    from firefly_weave.operations.execution import ReservedSlots
+
+    reservation, blocked = ReservedSlots(2), Blocked()
+    async with saturated_requests(), reservation.execution():
+        # Unlike one request lease, concurrent calls in one unit each take their own slot.
+        calls = [asyncio.create_task(execute_pure(blocked)) for _ in range(2)]
+        try:
+            await blocked.started(2)
+            with pytest.raises(CatalogError, match="capacity"):
+                await execute_pure(lambda: "beyond the reservation")
+        finally:
+            blocked.release.set()
+            assert await asyncio.gather(*calls) == [True, True]
+    assert await admitted_eventually(reservation) == "admitted"
+
+
+async def test_a_call_that_outlived_its_cancelled_unit_keeps_its_slot():
+    from firefly_weave.operations.execution import ReservedSlots
+
+    reservation, blocked = ReservedSlots(2), Blocked()
+
+    async def unit():
+        async with reservation.execution():
+            await execute_pure(blocked)
+
+    units = []
+    async with saturated_requests():
+        try:
+            units.append(asyncio.create_task(unit()))
+            await blocked.started()
+            units[0].cancel()
+            # The spare slot keeps one orphaned call from refusing the owner's next unit.
+            async with reservation.execution():
+                assert await execute_pure(lambda: "next unit") == "next unit"
+            units.append(asyncio.create_task(unit()))
+            await blocked.started()
+            units[1].cancel()
+            async with reservation.execution():
+                with pytest.raises(CatalogError, match="capacity"):
+                    await execute_pure(lambda: "a third thread")
+        finally:
+            blocked.release.set()
+            await asyncio.gather(*units, return_exceptions=True)
+    assert await admitted_eventually(reservation) == "admitted"
+
+
+async def test_reserved_slots_replace_a_closed_inherited_request_lease():
+    from firefly_weave.operations.execution import ReservedSlots, request_execution
+
+    reservation = ReservedSlots(1)
+    opened, ended = asyncio.Event(), asyncio.Event()
+
+    async def background():
+        opened.set()
+        await ended.wait()
+        async with reservation.execution():
+            return await execute_pure(lambda: "ran")
+
+    # Like a loop task opened while a request was being served.
+    async with request_execution(control=True):
+        task = asyncio.create_task(background())
+        await opened.wait()
+    ended.set()
+    assert await task == "ran"
+
+
 async def test_provider_cycle_dispatches_while_requests_hold_every_slot(monkeypatch):
     from firefly_weave.providers.loop import ProviderLoop
 
