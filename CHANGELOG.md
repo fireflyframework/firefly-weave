@@ -18,6 +18,19 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## Unreleased
+
+- Draw "weave" in the Firefly Weave logo as a wordmark whose w is woven from two
+  strands, one amber, instead of typed text, in Studio, on the desktop launch
+  page and installer, and in the README banner and social preview. NOTICE names
+  the Weave name and logo as trademarks of the Firefly Software Foundation.
+- Show the product name, Firefly Weave, at the top of CLI help instead of ASCII
+  logo art, and say Weave AI in CLI prompts and in server and worker messages.
+  API paths, permissions, roles and error codes keep `lumi`.
+- Give the desktop app the Firefly icon, a charcoal DMG background and a
+  charcoal launch page, and draw exported workflow graphs, the API explorer, the
+  README banner, shields and badges with the Firefly identity.
+
 ## 0.1.0a14
 
 - Add a detached Docker development platform through `weave platform up`,
