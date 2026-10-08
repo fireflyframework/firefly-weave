@@ -456,7 +456,7 @@ class DeploymentService:
                 raise CatalogError(
                     422,
                     "WV-DEPLOYMENT-UNSUPPORTED",
-                    "Container Apps plans support worker and Lumi components only; use the API upgrade runbook",
+                    "Container Apps plans support worker and Weave AI components only; use the API upgrade runbook",
                 )
             by_name = {r.name: r for r in observed.resources}
             if request.intent == "scale_workers" and any(

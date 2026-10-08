@@ -12,7 +12,8 @@
         "label": "launcher",
         "title": "Firefly Weave Studio",
         "width": 1000,
-        "height": 720
+        "height": 720,
+        "backgroundColor": "#10110f"
       }
     ],
     "security": {

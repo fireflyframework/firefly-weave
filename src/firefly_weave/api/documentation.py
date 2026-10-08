@@ -63,10 +63,10 @@ def install_documentation(app: Starlette) -> None:
 <title>Firefly Weave API explorer</title>
 <link rel="stylesheet" href="{_ASSETS}swagger-ui.css" integrity="{_CSS_INTEGRITY}" crossorigin="anonymous">
 <style>
-body {{ margin: 0; background: #EEF4F0; font-family: system-ui, sans-serif; }}
-header {{ padding: 24px max(20px, calc((100vw - 1460px) / 2)); background: #173D34; color: white; }}
+body {{ margin: 0; background: #F3F1EB; font-family: system-ui, sans-serif; }}
+header {{ padding: 24px max(20px, calc((100vw - 1460px) / 2)); background: #10110F; color: #F3F1EB; }}
 header h1 {{ margin: 0 0 8px; font-size: 26px; }} header p {{ margin: 6px 0; line-height: 1.5; }}
-header a {{ color: #8ee3dc; }} .swagger-ui .info {{ margin: 24px 0; }}
+header a {{ color: #FFB34A; }} .swagger-ui .info {{ margin: 24px 0; }}
 </style></head><body>
 <header><h1>Firefly Weave · API explorer</h1>
 <p>Browse operations, authorize with a current access token, then choose Try it out.</p>

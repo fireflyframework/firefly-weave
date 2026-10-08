@@ -528,11 +528,12 @@ pre {
   color: var(--text);
   text-decoration: none;
 }
-/* The lockup fills the sidebar's 200px content width; wherever the sidebar is
-   narrow, CSS shows the 32px Firefly mark in a 44px box instead. */
+/* The lockup sits in the sidebar's 200px content width at 192px, the scale
+   that draws its Firefly part 86.9px wide; wherever the sidebar is narrow,
+   CSS shows the 32px Firefly mark in a 44px box instead. */
 .brand-lockup {
   display: block;
-  width: 200px;
+  width: 192px;
   height: auto;
 }
 .brand-mark {
