@@ -123,6 +123,17 @@ def test_the_pattern_and_api_types_accept_exactly_what_split_instance_accepts(ke
         assert node_of(key) == split_instance(key).node_id
 
 
+def test_the_anchored_form_is_for_ecmascript_and_pydantic_not_python_re():
+    key = "send[1]\n"
+    # Python's "$" also matches before a trailing newline, so the anchored form is not a safe Python guard ...
+    assert re.match(rf"^(?:{INSTANCE_KEY_PATTERN})$", key) is not None
+    # ... while re.fullmatch on the unanchored pattern, split_instance and pydantic's default (Rust) engine reject it.
+    assert re.fullmatch(INSTANCE_KEY_PATTERN, key) is None
+    assert not accepts(split_instance, key)
+    assert not accepts(TEXT.validate_python, key)
+    assert not accepts(TEXT_OR_EMPTY.validate_python, key)
+
+
 def test_the_pattern_bounds_indexes_and_counts_at_max_safe_integer():
     digits = str(MAX_SAFE_INTEGER)
     numbers = {0, 1, 9, 10, 10**15 - 1, 10**15, 10**16 - 1, 10**16, MAX_SAFE_INTEGER + 1}

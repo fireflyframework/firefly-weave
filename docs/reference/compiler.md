@@ -344,12 +344,12 @@ seg          = 1*(ALPHA / DIGIT)          ; turn, tool call, or review
 Examples: `send` (no loop), `send[3]`, `send[3][0]`, `support#2.1`,
 `support[3]#2.1.review`, and `notify[1]~2`. Indexes and counts have no leading
 zeros and are at most 2^53 − 1. Node IDs never contain `[`, `]`, `#`, or `~`.
-A node ID is a step ID or a synthetic ID (`@run`, `@start`, `@end`,
-`@join:<id>`, `@branch:<id>:<n>`), written with ASCII letters, digits, `_`, `.`,
-`:`, `@` and `-` only, so `firefly_weave.contracts.instance_keys.node_of(key)`
-returns the node ID by cutting at the first separator; `split_instance` parses a
-whole key and `format_instance` writes it back, and both reject any other
-spelling. API views show `node_id` (the node ID), `instance_key` (the full key, or
+A node ID is a step ID or a synthetic ID (`@run`, `@start`, `@end`, `@legacy`,
+`@join:<id>`, `@branch:<id>:<n>`): an optional leading `@`, then an ASCII letter
+or digit, then ASCII letters, digits, `_`, `.`, `:`, `@` and `-` only. So
+`firefly_weave.contracts.instance_keys.node_of(key)` returns the node ID by
+cutting at the first separator; `split_instance` parses a whole key and
+`format_instance` writes it back, and both reject any other spelling. API views show `node_id` (the node ID), `instance_key` (the full key, or
 `""` when it equals the node ID), and `iteration` (the loop indexes);
 `instance_view(key)` returns all three. `INSTANCE_KEY_PATTERN` is the same grammar
 as a regular expression that Python, JavaScript and JSON Schema read alike, and

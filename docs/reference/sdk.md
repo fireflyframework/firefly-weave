@@ -343,7 +343,7 @@ capability.
 
 | Methods | Purpose |
 | --- | --- |
-| `compile`, `validate`, `catalog`, `schemas`, `capabilities` | Compile and validate; read the catalog and the supported language, limits, and connectors |
+| `compile`, `validate`, `catalog`, `schemas`, `capabilities`, `language` | Compile and validate; read the catalog, the supported language, limits, and connectors, and the language manifest (`language()` returns a `LanguageManifest`) |
 | `list_connector_descriptors`, `read_connector_descriptor` | Installed connectors and the exact manifest to publish (new in 0.1.0a7) |
 | `save_draft`, `read_draft`, `export_draft`, `delete_draft`, `list_definitions` | Append-only drafts, their retirement, and catalog discovery |
 | `publish`, `read_definition`, `export_definition`, `retire_definition` | Immutable workflow, Action, and Connector versions |

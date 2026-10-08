@@ -29,9 +29,13 @@ A node ID is an optional leading ``@``, then an ASCII letter or digit, then ASCI
 never contain ``[``, ``]``, ``#``, ``~``, whitespace, control characters or non-ASCII characters, so parsing is
 unambiguous. Indexes and counts are at most 2**53 - 1 so that API views can carry them as JSON integers.
 
-``INSTANCE_KEY_PATTERN`` is this grammar, bound included, as regular-expression source that reads the same in
-Python ``re``, ECMAScript and JSON Schema ``pattern``; ``split_instance`` validates with it. API models declare
-key fields as ``InstanceKeyText``, or ``InstanceKeyTextOrEmpty`` where ``""`` stands for the step itself.
+``INSTANCE_KEY_PATTERN`` is this grammar, bound included, as unanchored regular-expression source. In Python,
+match it with ``re.fullmatch``; ``split_instance`` does. Do not wrap it in ``^(?:...)$`` for Python ``re``, whose
+``$`` also matches before a trailing newline, so a key such as ``send[1]`` plus a newline would pass. The
+anchored form is for ECMAScript (with the ``u`` flag), JSON Schema ``pattern`` and pydantic's default Rust
+regular-expression engine, whose ``$`` matches only at the end of the text. API models declare key fields as
+``InstanceKeyText``, or ``InstanceKeyTextOrEmpty`` where ``""`` stands for the step itself; both rely on that
+Rust engine.
 """
 
 from __future__ import annotations
@@ -64,7 +68,9 @@ _INDEX = "0|" + _positive_at_most(MAX_SAFE_INTEGER)
 _COUNT = _positive_at_most(MAX_SAFE_INTEGER)
 _SEGMENT = r"[A-Za-z0-9]+"
 
-# The whole grammar without anchors: re.fullmatch it, or wrap it in ^(?:...)$ as the API types below do.
+# The whole grammar without anchors. Python: re.fullmatch it (a "^(?:...)$" wrapper would accept a trailing newline,
+# because Python's "$" matches before one). ECMAScript (u flag), JSON Schema and pydantic's default Rust engine, which
+# the API types below use: wrap it in ^(?:...)$.
 INSTANCE_KEY_PATTERN: str = rf"{_NODE_ID}(?:\[(?:{_INDEX})\])*(?:#{_SEGMENT}(?:\.{_SEGMENT})*)?(?:~(?:{_COUNT}))?"
 
 InstanceKeyText = Annotated[str, Field(max_length=512, pattern=rf"^(?:{INSTANCE_KEY_PATTERN})$")]

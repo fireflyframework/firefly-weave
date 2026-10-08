@@ -128,9 +128,11 @@ def test_invalid_new_steps_are_rejected_by_the_model_and_the_exported_schema(ste
         {"other": True},
     ],
 )
-def test_invalid_callable_is_rejected(callable_spec):
+def test_invalid_callable_is_rejected_by_the_model_and_the_exported_schema(callable_spec):
+    document = workflow([], callable=callable_spec)
     with pytest.raises(ValidationError):
-        load_definition(workflow([], callable=callable_spec))
+        load_definition(document)
+    assert not Draft202012Validator(export_schemas()["definition"]).is_valid(document)
 
 
 def test_callers_are_bounded_to_one_hundred_names():

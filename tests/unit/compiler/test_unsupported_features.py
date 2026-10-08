@@ -429,3 +429,6 @@ def test_diagnostics_stay_capped_on_large_documents():
     result = validate_authoring(many, format="object")
     assert len(result.diagnostics) == 100
     assert result.truncated and result.omitted_count > 0
+    findings = [d for d in result.diagnostics if d.code != "WV-COMP-DIAGNOSTICS_TRUNCATED"]
+    assert len(findings) == len(result.diagnostics) - 1  # exactly one truncation marker
+    assert all(d.code == CODE for d in findings)

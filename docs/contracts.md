@@ -321,7 +321,7 @@ writing one, see [Call a REST API without code](connectors/http-without-code.md)
 
 The **language manifest** lists every step kind, operator, and workflow field the
 language defines, the features each one needs, the features the platform runs,
-and the language limits. Studio reads it to decide what to offer. Read it with
+and the language limits. Studio will read it to decide what to offer. Read it with
 `weave remote language` or `GET /api/v1/tenants/{tenant}/projects/{project}/language`
 (`language.read`, capability `catalog.read`); Studio's local host serves the same
 document at `/studio/contracts/language`, and `weave schema export` writes its

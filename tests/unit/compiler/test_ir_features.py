@@ -31,7 +31,7 @@ from firefly_weave.contracts.schema_export import export_schemas
 EXECUTABLE = json.loads(Path("tests/fixtures/canonical/empty-workflow.executable.json").read_text())
 
 
-def test_the_features_ir_version_is_named_but_nothing_is_advertised_yet():
+def test_the_ir_version_extensions_is_named_but_nothing_is_advertised_yet():
     assert IR_VERSION_EXTENSIONS == "weave/ir-v1alpha4"
     assert ADVERTISED_FEATURES == ()
 
@@ -60,9 +60,16 @@ def test_compiled_workflows_keep_their_ir_version_and_digest(catalog, workflow_s
         (["loops"], "Input should be"),
     ],
 )
-def test_features_are_sorted_known_and_need_the_features_ir_version(features, message):
+def test_features_are_sorted_known_and_need_the_ir_version_extensions(features, message):
     with pytest.raises(ValidationError, match=message):
         WorkflowIR.model_validate({**EXECUTABLE, "features": features})
+
+
+@pytest.mark.parametrize("features", [[], ["text.concat"]])
+def test_the_ir_version_extensions_is_not_accepted_until_a_later_milestone_widens_the_model(features):
+    # M0 names weave/ir-v1alpha4 but the model still lists v1alpha1 to v1alpha3 only, so no executable can use it yet.
+    with pytest.raises(ValidationError, match="Input should be 'weave/ir-v1alpha1'"):
+        WorkflowIR.model_validate({**EXECUTABLE, "irVersion": IR_VERSION_EXTENSIONS, "features": features})
 
 
 def test_exported_executable_schema_carries_the_feature_vocabulary():
