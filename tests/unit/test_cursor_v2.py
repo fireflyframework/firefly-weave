@@ -65,6 +65,28 @@ def test_cursor_v2_rejects_other_filters_orders_scopes_versions_and_tampering():
             decode_cursor_v2(value, scope, collection)
 
 
+@pytest.mark.parametrize(
+    ("sort_value", "identifier"),
+    [
+        (float("nan"), "x"),
+        (float("inf"), "x"),
+        (float("-inf"), "x"),
+        (9007199254740993, "x"),
+        ("\ud800", "x"),
+        ("2026-10-07T12:00:00Z", "\ud800"),
+    ],
+)
+def test_cursor_v2_rejects_values_outside_the_json_domain(sort_value, identifier):
+    collection = RunSummaryQuery(include_test=True).cursor_collection()
+    raw = json.dumps([2, SCOPE.model_dump(mode="json"), collection, sort_value, identifier], separators=(",", ":"))
+    cursor = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+    with pytest.raises(ValueError, match="Invalid scope-bound cursor"):
+        decode_cursor_v2(cursor, SCOPE, collection)
+    # The same shape with the largest safe integer decodes, so only the bad value makes each probe invalid.
+    boundary = encode_cursor_v2(SCOPE, collection, 9007199254740991, "x")
+    assert decode_cursor_v2(boundary, SCOPE, collection) == (9007199254740991, "x")
+
+
 def test_queries_decode_typed_repeated_and_encoded_values():
     query = parse_query(
         QueryParams(

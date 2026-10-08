@@ -21,16 +21,21 @@ import json
 import re
 from functools import cache
 from types import NoneType, UnionType
-from typing import Annotated, Literal, TypeAliasType, Union, get_args, get_origin
+from typing import Annotated, Literal, NoReturn, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 
 from firefly_weave.contracts.access import Scope
-from firefly_weave.contracts.values import JsonValue
+from firefly_weave.contracts.values import JsonValue, validate_json_value, validate_unicode
 from firefly_weave.definitions.models import CatalogError
 
 CURSOR_V2_LIMIT = 2048
+
+
+def _reject_constant(_: str) -> NoReturn:
+    # json.loads accepts NaN and Infinity by default; the JSON domain does not.
+    raise ValueError("JSON numbers must be finite")
 
 
 def canonical_path(path: str) -> bool:
@@ -123,10 +128,13 @@ def decode_cursor_v2(value: str | None, scope: Scope, collection: str) -> tuple[
         if len(value) > CURSOR_V2_LIMIT or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
             raise ValueError()
         version, bound, selected, sort_value, identifier = json.loads(
-            base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+            base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True),
+            parse_constant=_reject_constant,
         )
         if version != 2 or bound != scope.model_dump(mode="json") or selected != collection:
             raise ValueError()
+        validate_json_value(sort_value)
+        validate_unicode(identifier)
         if not isinstance(identifier, str) or encode_cursor_v2(scope, collection, sort_value, identifier) != value:
             raise ValueError()
         return sort_value, identifier
