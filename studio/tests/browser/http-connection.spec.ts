@@ -562,3 +562,47 @@ test("the form fits a 360 px wide screen without sideways scrolling", async ({
     ),
   ).toBeLessThanOrEqual(0);
 });
+
+test("a plain-HTTP API address shows the Not encrypted notice and still creates", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const capture = await platform(page);
+  await page.route("**/environments/development/connections", (r) => {
+    capture.creates.push(r.request());
+    return r.fulfill({
+      status: 201,
+      json: {
+        name: "acme",
+        connector_version_id: connectorVersion,
+        config: { baseUrl: "http://api.acme.example", auth: { kind: "none" } },
+        secretRef: {},
+        allowed_destinations: ["http://api.acme.example"],
+        id: revisionId,
+        revision: 1,
+        connector: "weave-http@2.0.0",
+      },
+    });
+  });
+  const dialog = await openForm(page);
+  await expect(dialog).toContainText("Looks ready.");
+  const address = dialog.getByLabel("API address", { exact: true });
+  await address.fill("https://api.acme.example");
+  await expect(dialog.locator(".plain-http")).toHaveCount(0);
+  await address.fill("http://api.acme.example");
+  await dialog.getByLabel("Connection name", { exact: true }).fill("acme");
+  await expect(dialog.locator(".plain-http")).toHaveText(
+    "Not encrypted: requests to http://api.acme.example travel in plain text.",
+  );
+  // A notice, not an error: the field stays valid and names the notice.
+  await expect(address).not.toHaveAttribute("aria-invalid", "true");
+  await expect(address).toHaveAttribute("aria-describedby", /-origin-plain/);
+  const create = dialog.getByRole("button", { name: "Create connection" });
+  await create.scrollIntoViewIfNeeded();
+  await create.click();
+  await expect(dialog).toContainText("Created acme (revision 1).");
+  expect(capture.creates[0].postDataJSON()).toMatchObject({
+    config: { baseUrl: "http://api.acme.example", auth: { kind: "none" } },
+    allowed_destinations: ["http://api.acme.example"],
+  });
+});

@@ -22,7 +22,6 @@ SPDX-License-Identifier: Apache-2.0
 // of the workflow below; the platform's debug sessions are mocked.
 import { test, expect, Page, Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   allCapabilities,
@@ -32,9 +31,8 @@ import {
   newWorkflow,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+import { python, pythonAvailable, repository } from "../python-path";
 
-const repository = resolve("..");
-const python = resolve(repository, ".venv/bin/python");
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 const source = `apiVersion: weave/v1alpha1
 kind: Workflow
@@ -79,7 +77,7 @@ spec:
   output: { literal: {} }
 `;
 /** The real compiled artifact, against the sample check-customer action. */
-const artifact: Record<string, unknown> | null = existsSync(python)
+const artifact: Record<string, unknown> | null = pythonAvailable()
   ? JSON.parse(
       execFileSync(
         python,

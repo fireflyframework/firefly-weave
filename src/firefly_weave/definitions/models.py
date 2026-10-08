@@ -20,12 +20,22 @@ from typing import Any
 
 
 class CatalogError(Exception):
-    def __init__(self, status: int, code: str, message: str, *, result: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        *,
+        result: dict[str, Any] | None = None,
+        retry_after: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.result = result
+        # Whole seconds a client should wait before sending a refused request again.
+        self.retry_after = retry_after
 
 
 # Admission rejections: the operation ran nothing, so the identical call may be sent again.

@@ -16,9 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import { propertyFields, supportedOperators } from "../src/app/property-grid";
 import { createStep, freshWorkflow, kinds } from "../src/app/model";
@@ -28,14 +28,8 @@ import { ndvRegistry } from "../src/app/editor/ndv/registry";
 import { loadLanguageManifest } from "./support/language-manifest";
 
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
 
-/** The language manifest's entries (language spec 14.1); Studio compares only `ready` ones. */
+/** The language manifest's entries; Studio compares only `ready` ones. */
 interface Marked {
   studio: "ready" | "pending";
   feature?: string;
@@ -50,7 +44,7 @@ const ready = <T extends Marked>(entries: T[]) =>
 
 // CI installs the repository environment. Frontend-only contributors can still
 // run UI tests; this cross-language contract check explicitly reports a skip.
-const available = existsSync(python);
+const available = pythonAvailable();
 const schema = available
   ? JSON.parse(
       execFileSync(

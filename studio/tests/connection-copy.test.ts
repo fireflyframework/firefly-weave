@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import {
   checkDraft,
@@ -32,6 +32,7 @@ import {
   handoffRequest,
   looksLikeSecretValue,
   originOf,
+  plainHttpNotice,
   prefillFromBuilder,
   sameRequest,
   suggestedName,
@@ -133,8 +134,11 @@ describe("connection request", () => {
 });
 
 describe("client checks mirror the platform", () => {
-  it("requires an HTTPS origin without a path", () => {
-    expect(fields({ ...oauth, origin: "http://api.pets.example" })).toContain(
+  it("accepts an HTTP or HTTPS origin without a path; the platform decides on plain HTTP", () => {
+    expect(
+      fields({ ...oauth, origin: "http://acme.acceptance.test:8080" }),
+    ).not.toContain("origin");
+    expect(fields({ ...oauth, origin: "ftp://api.pets.example" })).toContain(
       "origin",
     );
     expect(
@@ -149,7 +153,16 @@ describe("client checks mirror the platform", () => {
     expect(originOf("https://API.Pets.Example:443/")).toBe(
       "https://api.pets.example",
     );
+    expect(originOf("http://Acme.Acceptance.Test:8080")).toBe(
+      "http://acme.acceptance.test:8080",
+    );
     expect(originOf("https://api.pets.example/./x")).toBeNull();
+  });
+  it("keeps the token endpoint HTTPS-only", () => {
+    const plain = { ...oauth, endpoint: "http://login.pets.example/token" };
+    expect(fields(plain)).toContain("endpoint");
+    expect(destinationsOf(plain)).toEqual(["https://api.pets.example"]);
+    expect(originOf(plain.endpoint, { plainHttp: false })).toBeNull();
   });
   it("rejects reserved headers for API keys", () => {
     const draft = emptyDraft({
@@ -236,6 +249,27 @@ describe("client checks mirror the platform", () => {
     expect(fields({ ...oauth, name: "-pets" })).toEqual(["name"]);
     expect(suggestedName("https://api.pets.example")).toBe("pets");
     expect(suggestedName("not a url")).toBe("");
+  });
+});
+
+describe("plain HTTP notice", () => {
+  it("warns for an http:// API address and never for https://", () => {
+    expect(plainHttpNotice("http://Acme.Acceptance.Test:8080/")).toBe(
+      "Not encrypted: requests to http://acme.acceptance.test:8080 travel in plain text.",
+    );
+    expect(plainHttpNotice("  http://api.pets.example ")).toBe(
+      "Not encrypted: requests to http://api.pets.example travel in plain text.",
+    );
+    for (const value of [
+      "https://api.pets.example",
+      "ftp://api.pets.example",
+      "",
+      "not a url",
+    ])
+      expect(plainHttpNotice(value)).toBeNull();
+  });
+  it("is a notice, never a problem: the draft still passes every check", () => {
+    expect(fields({ ...oauth, origin: "http://api.pets.example" })).toEqual([]);
   });
 });
 
@@ -395,13 +429,7 @@ describe("administrator hand-off", () => {
 // module builds must pass connection_issues and the profile check, and a
 // request missing the token endpoint origin must fail at the same pointer.
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
-describe.skipIf(!existsSync(python))(
+describe.skipIf(!pythonAvailable())(
   "parity with the platform's connection check",
   () => {
     it("accepts what the form builds and rejects at the same pointers", () => {
@@ -434,6 +462,13 @@ describe.skipIf(!existsSync(python))(
           ...connectionRequest(oauth, versionId),
           allowed_destinations: ["https://api.pets.example"],
         },
+        connectionRequest(
+          emptyDraft({
+            name: "acme",
+            origin: "http://acme.acceptance.test:8080",
+          }),
+          versionId,
+        ),
       ];
       const output = execFileSync(
         python,
@@ -462,6 +497,10 @@ print(json.dumps(result))
       expect(issues.slice(0, 4)).toEqual([[], [], [], []]);
       expect(issues[4]).toEqual([["DESTINATION", "/allowed_destinations"]]);
       expect(fieldForPointer(issues[4][0][1])).toBe("destinations");
+      // The platform accepts plain HTTP like HTTPS; its egress check decides
+      // whether the address is reachable, and the form warns it is not
+      // encrypted.
+      expect(issues[5]).toEqual([]);
     });
   },
 );

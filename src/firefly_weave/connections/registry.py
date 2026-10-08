@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 class ConnectorRegistry:
     def __init__(self, allowlist: tuple[str, ...] = ()) -> None:
         self._operational_guard: Callable[[], bool] | None = None
+        self._operational_retry: Callable[[], int] | None = None
         self._adapters: dict[str, ConnectorAdapter] = {}
         self._retired: set[str] = set()
         self._descriptors: dict[str, ConnectorDescriptor] = {}
@@ -139,12 +140,18 @@ class ConnectorRegistry:
             raise ValueError("Invalid connector adapter")
         self._adapters[reference] = adapter
 
-    def set_operational_guard(self, guard: Callable[[], bool]) -> None:
+    def set_operational_guard(self, guard: Callable[[], bool], *, retry_after: Callable[[], int] | None = None) -> None:
         self._operational_guard = guard
+        self._operational_retry = retry_after
 
     def require_operational(self) -> None:
         if self._operational_guard is not None and not self._operational_guard():
-            raise CatalogError(503, "WV-COMPATIBILITY", "Execution compatibility unavailable")
+            raise CatalogError(
+                503,
+                "WV-COMPATIBILITY",
+                "Execution compatibility unavailable",
+                retry_after=None if self._operational_retry is None else self._operational_retry(),
+            )
 
     def retire(self, reference: str) -> None:
         self._retired.add(reference)

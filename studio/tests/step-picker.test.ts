@@ -46,7 +46,7 @@ describe("step picker options", () => {
     }
   });
 
-  it("finds steps by everyday words (W3-11)", () => {
+  it("finds steps by everyday words", () => {
     expect(pickerOptions("appro", kinds, []).steps.map((o) => o.label)).toEqual(
       ["Human task"],
     );

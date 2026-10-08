@@ -153,6 +153,29 @@ weave platform --directory /absolute/path/to/weave-dev up --source /absolute/pat
 weave platform --directory /absolute/path/to/weave-dev status
 ```
 
+## 6. Let actions reach a local test service (development only)
+
+Connector actions and signed webhooks normally reach only public addresses.
+To try them against a test service that runs in Docker on this computer,
+approve its exact `http://` origin when you create the installation:
+
+```sh
+# Create a new installation whose connectors may call one local test service.
+weave platform --directory .local/platform-fixture up --subnet 10.231.0.0/24 \
+  --allow-private-origin http://acme.acceptance.test:8080 --username YOUR_NAME
+```
+
+Expected: the summary shows `Private origins (Development only):` with the
+origin and names the egress network `weave-local-ID-egress`. Attach your test
+service to that network with the origin's host name as a network alias; nothing
+else on that network is reachable. The approval is fixed when the installation
+is created: use a new directory to change it. The platform writes one entry per
+purpose (connector actions and signed webhooks) to `private-origins.json` in
+the installation directory and gives the API a read-only copy. Credentials for
+that origin travel over plain HTTP only inside that egress network. When you
+remove the installation's containers, remove the network too with
+`docker network rm weave-local-ID-egress`.
+
 ## If something goes wrong
 
 | What you see | What to do |
@@ -163,6 +186,7 @@ weave platform --directory /absolute/path/to/weave-dev status
 | The checkout or CLI changed | Return to the matching version, or create a new installation in a separate directory |
 | A username already exists | Sign in with the original password; starting again does not reset accounts |
 | You need API logs | Run `platform logs`; retain the private setup logs for earlier stages |
+| Every command reports that the private-origin file is missing, changed or not private | Never edit that file. In the installation directory, run `rm -f private-origins.json`, copy the byte-identical `container-config/private-origins-ID.json` (ID: the first 16 characters of `file_sha256` in `platform.json`) to `private-origins.json`, then run `chmod 600 private-origins.json`. Without that copy, or to change the approved origins, use a new directory |
 
 For the individual setup steps and the foreground API workflow, see
 [the detailed local-platform guide](local-platform.md).

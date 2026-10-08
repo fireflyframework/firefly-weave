@@ -19,6 +19,7 @@
 import asyncio
 import json
 import logging
+import math
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
@@ -45,7 +46,7 @@ from firefly_weave.contracts.integration_events import Subscription, Subscriptio
 from firefly_weave.contracts.providers import ProviderSource, ProviderSourceRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.compatibility_catalog import classify_requirement
-from firefly_weave.operations.execution import execute_pure
+from firefly_weave.operations.execution import execute_pure, inventory_execution
 from firefly_weave.operations.telemetry import TelemetryService
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
@@ -131,6 +132,15 @@ def classify_inventory_row(
     return classify_requirement(kind, payload, registry)
 
 
+def log_withdrawal(findings: list[CompatibilityFinding], error: BaseException | None) -> None:
+    """Name why a rescan withdrew readiness without logging values or exception messages."""
+    causes = ",".join(sorted({f"{finding.kind}:{finding.code}" for finding in findings})) or "none"
+    cause = "none" if error is None else type(error).__name__
+    if isinstance(error, CatalogError):
+        cause = f"{cause} {error.code}"
+    logging.getLogger(__name__).warning("Compatibility rescan withdrew readiness: findings=%s error=%s", causes, cause)
+
+
 class FindingAccumulator:
     """Admission sees every finding even when presentation is truncated."""
 
@@ -175,6 +185,7 @@ class CompatibilityService:
         self._freshness_task: asyncio.Task[None] | None = None
         self._opened_at: float | None = None
         self._completed_at: float | None = None
+        self._next_scan = math.inf
         self._catalog_engine: AsyncEngine | None = None
         self.on_ready: Callable[[], Awaitable[None]] | None = None
         self.on_restricted: Callable[[], Awaitable[None]] | None = None
@@ -194,18 +205,18 @@ class CompatibilityService:
     async def open(self) -> None:
         if self._freshness_task is None:
             self._opened_at = time.monotonic()
+            self._next_scan = self._opened_at + INVENTORY_RESCAN_SECONDS
 
             async def refresh() -> None:
-                next_scan = time.monotonic() + INVENTORY_RESCAN_SECONDS
                 while True:
                     await asyncio.sleep(INVENTORY_AGE_SECONDS)
                     self.refresh_inventory_age()
-                    if time.monotonic() >= next_scan and not self._scan_lock.locked():
+                    if time.monotonic() >= self._next_scan and not self._scan_lock.locked():
                         try:
                             await self.scan()
                         except Exception:
                             logging.getLogger(__name__).error("Compatibility refresh failed")
-                        next_scan = time.monotonic() + INVENTORY_RESCAN_SECONDS
+                        self._next_scan = time.monotonic() + INVENTORY_RESCAN_SECONDS
 
             self._freshness_task = asyncio.create_task(refresh(), name="weave-inventory-freshness")
 
@@ -265,6 +276,12 @@ class CompatibilityService:
         report = self.report
         return report.mode == "ready" and report.complete
 
+    def retry_after_seconds(self) -> int:
+        """Whole seconds until the next periodic rescan can change a restricted verdict."""
+        # The refresh loop notices a due rescan on its next age tick.
+        wait = min(self._next_scan - time.monotonic(), INVENTORY_RESCAN_SECONDS) + INVENTORY_AGE_SECONDS
+        return max(1, math.ceil(wait))
+
     @asynccontextmanager
     async def _completed_scan(self) -> AsyncIterator[None]:
         try:
@@ -280,9 +297,10 @@ class CompatibilityService:
         async with self._scan_lock, self._completed_scan():
             findings = FindingAccumulator()
             inspected = 0
-            complete = False
+            complete = traversed = False
             engine = None
             failure: BaseException | None = None
+            swallowed: Exception | None = None
             inventory: dict[str, int] = {}
 
             record = findings.record
@@ -309,6 +327,7 @@ class CompatibilityService:
                     )
                     self._catalog_engine = engine
                     async with (
+                        inventory_execution(),
                         asyncio.timeout(CATALOG_SCAN_SECONDS),
                         engine.connect() as connection,
                         connection.begin(),
@@ -377,18 +396,26 @@ class CompatibilityService:
                                             )
                                     after_kind, after_id = rows[-1]["kind"], rows[-1]["id"]
                             after_tenant = tenants[-1]
+                traversed = True
             except asyncio.CancelledError as error:
                 failure = error
                 record(CompatibilityFinding(kind="inventory", code="inventory_incomplete"))
-            except InventoryAuthorityError:
+            except InventoryAuthorityError as error:
+                swallowed = error
                 record(CompatibilityFinding(kind="inventory", code="authority_missing"))
-            except Exception:
+            except Exception as error:
+                swallowed = error
                 record(CompatibilityFinding(kind="inventory", code="inventory_incomplete"))
             finally:
-                # Readiness must be withdrawn before fallible or stalled cleanup.
-                self.report = CompatibilityReport(
-                    checked_at=datetime.now(UTC), findings=findings.items, findings_truncated=findings.truncated
-                )
+                # Readiness must be withdrawn before fallible or stalled cleanup, unless this
+                # rescan confirms the ready verdict in force: its effect owners are already
+                # initialized and cleanup is bounded, so only a failed cleanup withdraws it.
+                was_ready = self.ready
+                confirmed = was_ready and traversed and complete and not findings.incomplete and not findings.blocking
+                if not confirmed:
+                    self.report = CompatibilityReport(
+                        checked_at=datetime.now(UTC), findings=findings.items, findings_truncated=findings.truncated
+                    )
                 try:
                     await self._dispose_catalog()
                 except BaseException as error:
@@ -404,11 +431,20 @@ class CompatibilityService:
                 findings=findings.items,
                 findings_truncated=findings.truncated,
             )
+            confirmed = confirmed and candidate.mode == "ready"
             # A compatible inventory alone does not establish initialized effect owners.
-            self.report = candidate.model_copy(update={"mode": "restricted"})
+            withdrawn = candidate.model_copy(update={"mode": "restricted"})
+            if not confirmed:
+                self.report = withdrawn
+            if was_ready and candidate.mode == "restricted":
+                log_withdrawal(findings.items, swallowed or failure)
             callback = self.on_ready if candidate.mode == "ready" else self.on_restricted
             if callback is not None:
-                await callback()
+                try:
+                    await callback()
+                except BaseException:
+                    self.report = withdrawn
+                    raise
             if failure is not None:
                 raise failure
             self.report = candidate

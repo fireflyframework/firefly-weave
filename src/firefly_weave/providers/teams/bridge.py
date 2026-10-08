@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Verified Teams activities traverse public SDK protocols before E2 atomic admission.
+"""Verified Teams activities traverse public SDK protocols before atomic event admission.
 
 SDK clients are lazy and perform no outbound I/O on ingress. Mutable reference
 state is consulted only by the transactional hook, never by event normalization.

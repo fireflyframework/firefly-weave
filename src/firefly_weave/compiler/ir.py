@@ -65,7 +65,7 @@ type NodeId = Annotated[UnicodeString, Field(min_length=1)]
 IR_VERSION = "weave/ir-v1alpha1"
 HUMAN_IR_VERSION = "weave/ir-v1alpha2"
 COMPARISON_IR_VERSION = "weave/ir-v1alpha3"
-# The IR version that carries language features (language spec 3.1); accepted from language milestone M1.
+# The IR version that carries language features; the model accepts it in a later release.
 IR_VERSION_EXTENSIONS = "weave/ir-v1alpha4"
 
 

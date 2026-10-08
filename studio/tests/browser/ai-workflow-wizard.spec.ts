@@ -26,10 +26,11 @@ import {
   selectChoice,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+import { python } from "../python-path";
 
 const profileSchema = JSON.parse(
   execFileSync(
-    ".venv/bin/python",
+    python,
     [
       "-c",
       "import json; from firefly_weave.contracts.llm import LLMProfile; print(json.dumps(LLMProfile.model_json_schema(by_alias=True)))",

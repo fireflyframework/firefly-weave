@@ -20,14 +20,13 @@ SPDX-License-Identifier: Apache-2.0
 // calls (studio/host.py), in one helper process per test worker. Nothing is
 // fetched: OpenAPI text is pasted, and HTTP actions are built offline.
 import { ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Page } from "@playwright/test";
+import { python, pythonAvailable, repository } from "../python-path";
 
-const repository = resolve("..");
-export const python = resolve(repository, ".venv/bin/python");
-export const hasPython = existsSync(python);
+export { python };
+export const hasPython = pythonAvailable();
 
 // Mirrors the three handlers in src/firefly_weave/studio/host.py.
 const helper = `

@@ -16,11 +16,10 @@
 
 """Write the shared language fixtures that the Python suite and Studio's vitest suite both run.
 
-The fixtures freeze the language contracts of language milestone M0 (language spec 14.5): instance-key parse and
-format cases with the ``INSTANCE_KEY_PATTERN`` expression (3.2), the text conversion table for ``concat`` and
-``join`` (4.3), and the language manifest snapshot (14.1). Expected values are written here by hand; the generator
-refuses to write a fixture that the implementation disagrees with. Later milestones add template segments and
-``scope_at`` cases.
+The fixtures pin the stable language contracts: instance-key parse and format cases with the
+``INSTANCE_KEY_PATTERN`` expression, the text conversion table for ``concat`` and ``join``, and the language
+manifest snapshot. Expected values are written here by hand; the generator refuses to write a fixture that the
+implementation disagrees with. Later releases add template segments and ``scope_at`` cases.
 
 Run ``uv run --locked --all-extras python scripts/language_fixtures.py`` to regenerate the files, or add
 ``--check`` to fail when they are out of date.
@@ -126,7 +125,7 @@ CONVERSION_VALUES: tuple[str | bool | int | float, ...] = (
 
 
 def text_of(value: str | bool | int | float) -> str:
-    """The reference conversion of language spec 4.3."""
+    """The reference conversion of a value to text for ``concat`` and ``join``."""
     if isinstance(value, str):
         return value
     if isinstance(value, bool):
@@ -168,7 +167,7 @@ def instance_key_cases() -> dict[str, Any]:
             raise SystemExit(f"Implementation accepts the invalid key {key!r}")
     return {
         "generator": GENERATOR,
-        "grammar": "language spec 3.2",
+        "grammar": "instance key grammar",
         "pattern": INSTANCE_KEY_PATTERN,
         "valid": valid,
         "invalid": invalid,
@@ -178,7 +177,7 @@ def instance_key_cases() -> dict[str, Any]:
 def conversion_cases() -> dict[str, Any]:
     return {
         "generator": GENERATOR,
-        "rule": "language spec 4.3",
+        "rule": "text conversion for concat and join",
         "cases": [{"value": value, "text": text_of(value)} for value in CONVERSION_VALUES],
     }
 

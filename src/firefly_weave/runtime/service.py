@@ -254,7 +254,7 @@ class RuntimeService:
         tx: Transaction | None = None,
     ) -> RunView:
         self.require(actor, scope, "run.start", context)
-        # B6/B7 must supply fenced completion/inbox authority before enabling these events.
+        # Worker leases and retries must supply fenced completion/inbox authority before enabling these events.
         # An event DTO or operator grant is never worker-completion proof.
         if event.type != "started":
             raise AccessDenied()

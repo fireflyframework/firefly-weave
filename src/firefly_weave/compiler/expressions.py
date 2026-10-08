@@ -238,7 +238,7 @@ def _children(expression: object, path: str, limits: Limits, work: _ValueWork) -
 def count_expression_nodes(
     expression: JsonObject, *, limits: Limits = DEFAULT_LIMITS, initial_count: int = 0, path: str = ""
 ) -> int:
-    """Return cumulative count; A5 threads it across all workflow expression roots.
+    """Return cumulative count; the analyzer threads it across all workflow expression roots.
 
     Literal data is never interpreted as syntax. All operands, including lazy
     ones, are structurally validated and charged before runtime evaluation.

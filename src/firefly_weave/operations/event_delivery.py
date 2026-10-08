@@ -57,6 +57,12 @@ from firefly_weave.persistence.paging import page_ids
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 
+
+def delivery_egress(policy: HttpPolicy, allowed: tuple[str, ...], auth: object) -> EgressPolicy:
+    """Signed webhooks reach their receiver through the event-delivery purpose (C8)."""
+    return policy.egress("event-delivery", allowed, sends_credentials=auth == "bearer")
+
+
 _capacity_lock = threading.Lock()
 _inflight = 0
 
@@ -313,7 +319,9 @@ class OutboxDispatcher:
                         headers=headers,
                         max_response_bytes=1024,
                         timeout=min(5.0, max(0.001, deadline - asyncio.get_running_loop().time() - 1)),
-                        egress_policy=EgressPolicy(revision.allowed_destinations, self.policy.private_networks),
+                        egress_policy=delivery_egress(
+                            self.policy, revision.allowed_destinations, revision.config.get("auth")
+                        ),
                     )
                     accepted = response.status_code in sub.statuses
                 finally:

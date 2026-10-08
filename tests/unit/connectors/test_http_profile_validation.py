@@ -111,7 +111,7 @@ def issues(value):
     "value,expected",
     [
         (
-            request({"baseUrl": "http://api.example.test", "auth": {"kind": "none"}}),
+            request({"baseUrl": "ftp://api.example.test", "auth": {"kind": "none"}}),
             {("CONFIG", "/config/baseUrl")},
         ),
         (
@@ -143,7 +143,7 @@ def issues(value):
         ),
         (request(destinations=("https://other.example.test",)), {("DESTINATION", "/allowed_destinations")}),
         (
-            request(destinations=("https://api.example.test", "http://plain.example.test")),
+            request(destinations=("https://api.example.test", "ftp://plain.example.test")),
             {("DESTINATION", "/allowed_destinations/1")},
         ),
         (

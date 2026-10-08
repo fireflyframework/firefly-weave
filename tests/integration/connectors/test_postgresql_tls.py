@@ -32,7 +32,7 @@ pytestmark = pytest.mark.integration
 
 async def docker(*args):
     if os.environ.get("WEAVE_TEST_DOCKER_CONTEXT") != "colima-weave-tests":
-        pytest.fail("D1 TLS proof requires explicit WEAVE_TEST_DOCKER_CONTEXT=colima-weave-tests")
+        pytest.fail("PostgreSQL TLS proof requires explicit WEAVE_TEST_DOCKER_CONTEXT=colima-weave-tests")
     process = await asyncio.create_subprocess_exec(
         "docker",
         "--context",

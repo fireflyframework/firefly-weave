@@ -317,6 +317,12 @@ def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
         or len(set(ports.values())) != 4
     ):
         raise PlatformError("Installation port metadata is invalid.")
+    if "private_origins" in state:
+        from firefly_weave.sdk import platform_origins
+
+        platform_origins.validate_state(state)
+        # Every command loads the installation first, so none runs on a changed private-origin file.
+        platform_origins.verified(state)
     if complete and state.get("stage") != "ready":
         raise PlatformError("Setup is incomplete. Inspect status and private logs; never repeat provisioning blindly.")
     return state
@@ -377,6 +383,10 @@ def _compose(state: dict[str, Any]) -> list[str]:
         if read_file(override, 4096, private=True) != _network_override(state):
             raise PlatformError("The saved network configuration has changed; no services were modified.")
         command.extend(["-f", str(override)])
+    if state.get("private_origins"):
+        from firefly_weave.sdk import platform_origins
+
+        command.extend(["-f", str(platform_origins.compose_override(state))])
     if state.get("mode") == "docker":
         from firefly_weave.sdk import platform_docker
 
@@ -494,9 +504,15 @@ def setup(
     subnet: str | None = None,
     progress: Callable[[str], None] | None = None,
     mode: str = "host",
+    private_origins: Sequence[str] = (),
 ) -> dict[str, Any]:
     if mode not in {"host", "docker"}:
         raise PlatformError("Installation mode is invalid.")
+    if private_origins and mode != "docker":
+        raise PlatformError("Private origins need the Docker platform; use weave platform up.")
+    from firefly_weave.sdk import platform_origins
+
+    origins = platform_origins.requested(private_origins)
     directory = real_path(directory)
     if directory.exists():
         raise PlatformError(
@@ -520,6 +536,10 @@ def setup(
         ) as stream:
             stream.write(_network_override(state))
     with _lock(directory):
+        if origins:
+            if progress is not None:
+                progress("Creating the egress network for approved private origins (development only)")
+            platform_origins.prepare(state, origins)
         if progress is not None:
             progress("Building and installing the isolated server package")
         _phase(state, "package")
@@ -754,6 +774,10 @@ def status(directory: Path) -> dict[str, Any]:
     if enabled and integration is not None:
         result["connector_release_ids"] = {integration["connector_version_id"]: integration["release_id"]}
     result["sign_in"] = "weave auth setup " + result["api_url"]
+    if state.get("private_origins"):
+        from firefly_weave.sdk import platform_origins
+
+        result["private_origins"] = platform_origins.summary(state)
     return result
 
 
@@ -1703,24 +1727,34 @@ def up(
     username: str | None = None,
     roles: Sequence[str] = (),
     progress: Callable[[str], None] | None = None,
+    private_origins: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Prepare once, then resume the retained Docker platform and its demo workspace."""
+    from firefly_weave.sdk import platform_origins
+
     if roles and username is None:
         raise PlatformError("Account roles require --username.")
     selected = _person_roles(roles)
     if username is not None:
         _check_username(username)
+    origins = platform_origins.requested(private_origins)
     if not directory.exists():
-        setup(directory, source, context, subnet=subnet, progress=progress, mode="docker")
+        setup(directory, source, context, subnet=subnet, progress=progress, mode="docker", private_origins=origins)
     state = _load(directory)
     if state.get("mode", "host") != "docker":
         raise PlatformError("This installation uses foreground host mode. Use start, or up with a new directory.")
     if context is not None and context != state["context"] or subnet is not None and subnet != state.get("subnet"):
         raise PlatformError("Use the installation's saved Docker context and subnet.")
+    if origins and list(origins) != (state.get("private_origins") or {}).get("origins"):
+        raise PlatformError(
+            "Private origins are fixed when an installation is created; use a new --directory to change them."
+        )
     with _exclusive(directory, ".up.lock", "Another platform up command is active."):
         start(directory, progress)
         first = demo(directory)
         result = {**_summary(state), "first_run_saved": True, "run": first["receipt"]}
+        if state.get("private_origins"):
+            result["private_origins"] = platform_origins.summary(state)
         if username is not None:
             path = directory / "up-user.json"
             if path.exists():

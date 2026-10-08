@@ -1,6 +1,6 @@
 {
   "generator": "scripts/language_fixtures.py",
-  "rule": "language spec 4.3",
+  "rule": "text conversion for concat and join",
   "cases": [
     {
       "value": "Invoice ",

@@ -17,10 +17,9 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { selectChoice } from "./support";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import { test, expect, Page } from "@playwright/test";
 import { chooseAction } from "./integrations-po";
+import { python, pythonAvailable } from "../python-path";
 const profile = {
   name: "Test platform",
   baseUrl: "https://weave.invalid",
@@ -523,7 +522,7 @@ test("task JSON validity and task identity protect submitted data", async ({
   await page.getByLabel(/^Details(\s*\(optional\))?$/).fill('{"valid":true}');
   await page.getByLabel(/^Old(\s*\(optional\))?$/).fill("Must not survive");
   await page.getByLabel(/^Details(\s*\(optional\))?$/).fill("{");
-  // Invalid JSON keeps the decision buttons disabled, and they say why (F9).
+  // Invalid JSON keeps the decision buttons disabled, and they say why.
   const approve = page.getByRole("button", { name: "Approve", exact: true });
   await expect(approve).toBeDisabled();
   await expect(approve).toHaveAccessibleDescription(
@@ -627,9 +626,7 @@ test("catalog integration fields compile against the real Python action contract
     .inputValue();
   expect(source).toContain("uses: lookup-customer@1.0.0");
   expect(source).toContain("customer: customer-104");
-  const python = resolve(process.cwd(), "../.venv/bin/python");
-  if (process.env.CI) expect(existsSync(python)).toBe(true);
-  if (existsSync(python)) {
+  if (pythonAvailable()) {
     const script = `import json,sys
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot

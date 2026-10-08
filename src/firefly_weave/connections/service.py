@@ -42,6 +42,7 @@ from firefly_weave.contracts.connectors import (
     ConnectionRevision,
     ConnectionTestResult,
     ResolvedSecret,
+    transport_encrypted,
 )
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.ports import ConnectionBindingPort
@@ -183,7 +184,7 @@ class ConnectionService(ConnectionBindingPort):
             await self._ready(actor, scope, revision, "connection.bind", context, tx)
             if revision.connector != connector:
                 raise unavailable()
-            # B6 alone may replace this fail-closed accessor after checking a live lease.
+            # Only worker lease admission may replace this fail-closed accessor, after checking a live lease.
             return BoundConnection(slot, revision, no_credentials)
 
     async def _ready(
@@ -281,7 +282,10 @@ class ConnectionService(ConnectionBindingPort):
         finally:
             active = False
             resolved.clear()
-        result = ConnectionTestResult(ok=ok, code="ok" if ok else "failed", job_id=job_id)
+        # Plain HTTP is allowed but never silent: the answer says whether requests to the base URL are encrypted.
+        result = ConnectionTestResult(
+            ok=ok, code="ok" if ok else "failed", job_id=job_id, encrypted=transport_encrypted(revision.config)
+        )
         async with self.uow.open(scope) as tx:
             await ConnectionRepository(tx).execute(
                 "INSERT INTO connection_test_results VALUES(:job,:tenant,:project,"
