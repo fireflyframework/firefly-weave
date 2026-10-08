@@ -54,6 +54,57 @@ describe("shared language fixtures", () => {
       expect(instanceKey.test(key), key).toBe(false);
     expect(invalid.length).toBeGreaterThan(10);
   });
+  it("maps every concat to template segments and saves them normalized", () => {
+    type Expression = Record<string, unknown>;
+    type Segment =
+      | { kind: "text"; text: string }
+      | { kind: "placeholder"; expression: Expression };
+    const { cases } = fixture("template-segments.json") as {
+      cases: {
+        name: string;
+        expression: Expression;
+        segments: Segment[] | null;
+        saved: Expression | null;
+      }[];
+    };
+    expect(cases.length).toBeGreaterThan(8);
+    const isText = (value: unknown): value is { literal: string } =>
+      typeof value === "object" &&
+      value !== null &&
+      Object.keys(value).length === 1 &&
+      typeof (value as { literal?: unknown }).literal === "string";
+    for (const { name, expression, segments, saved } of cases) {
+      const op = (expression as { op?: { name?: string; args?: unknown[] } })
+        .op;
+      if (segments === null) {
+        expect(op?.name === "concat", name).toBe(false);
+        expect(saved, name).toBeNull();
+        continue;
+      }
+      // One segment per concat argument: string literals are text, anything else a placeholder.
+      expect(
+        segments.map((segment) => segment.kind),
+        name,
+      ).toEqual(
+        (op?.args ?? []).map((arg) => (isText(arg) ? "text" : "placeholder")),
+      );
+      // Saving merges adjacent text, drops empty text and stores text-only templates as one literal.
+      const args = (saved as { op?: { args: unknown[] } }).op?.args;
+      if (args === undefined) {
+        expect(saved, name).toEqual({
+          literal: segments
+            .map((segment) => (segment.kind === "text" ? segment.text : ""))
+            .join(""),
+        });
+        continue;
+      }
+      args.forEach((arg, index) => {
+        expect(arg, name).not.toEqual({ literal: "" });
+        if (index > 0)
+          expect(isText(arg) && isText(args[index - 1]), name).toBe(false);
+      });
+    }
+  });
   it("publishes the manifest with Studio marks on every entry", () => {
     const { manifest } = fixture("manifest.json") as {
       manifest: Record<string, { studio: string }[]>;

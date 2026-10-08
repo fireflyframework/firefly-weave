@@ -1,6 +1,6 @@
 {
   "generator": "scripts/language_fixtures.py",
-  "rule": "text conversion for concat and join",
+  "rule": "concat and join text conversion",
   "cases": [
     {
       "value": "Invoice ",
