@@ -69,10 +69,29 @@ export function stepPath(
   return search(workflow.spec.steps, ["spec", "steps"]);
 }
 
-/** setAt, with a list position past the end reported as a refusal. */
+/**
+ * Where a "-" or a number ends the path, the parent must be a list. An absent
+ * parent becomes an empty list when the position is "-" or 0, so the write
+ * starts it; any other position there, or a parent that holds something that
+ * isn't a list, is refused (setAt would turn those into object keys).
+ */
+function withListParent(value: unknown, path: Path): unknown {
+  const last = path[path.length - 1];
+  if (last !== "-" && typeof last !== "number") return value;
+  const parentPath = path.slice(0, -1);
+  const parent = getAt(value, parentPath);
+  if (Array.isArray(parent)) return value;
+  if (parent !== undefined)
+    throw new EditError("That field isn't a list, so it has no items.");
+  if (last !== "-" && last !== 0)
+    throw new EditError("That list has no item at that position.");
+  return setAt(value, parentPath, []);
+}
+
+/** setAt, with list positions checked first and one past the end reported as a refusal. */
 function writeAt(value: unknown, path: Path, next: unknown): unknown {
   try {
-    return setAt(value, path, next);
+    return setAt(withListParent(value, path), path, next);
   } catch (error) {
     if (error instanceof RangeError)
       throw new EditError("That list has no item at that position.");
@@ -96,11 +115,30 @@ function deleteAt(value: unknown, path: Path): unknown {
   return parentPath.length ? setAt(value, parentPath, next) : next;
 }
 
+const isIndex = (segment: unknown): boolean =>
+  typeof segment === "number" ||
+  (typeof segment === "string" && /^(?:0|[1-9][0-9]*)$/.test(segment));
+
+/** True when the path names the ID or kind of a step in some `steps` list, at any depth. */
+function endsAtNestedStepIdentity(path: Path): boolean {
+  const [steps, index, field] = path.slice(-3);
+  return (
+    path.length >= 3 &&
+    steps === "steps" &&
+    isIndex(index) &&
+    (field === "id" || field === "kind")
+  );
+}
+
 function check(change: Edit): void {
   const [head, next] = change.path;
   if (!change.path.length) throw new EditError("An edit needs a path.");
   if ((change.scope ?? "step") === "step") {
-    if (head === "id" || head === "kind")
+    if (
+      head === "id" ||
+      head === "kind" ||
+      endsAtNestedStepIdentity(change.path)
+    )
       throw new EditError(
         "Rename a step with Rename; a step's kind can't change.",
       );
