@@ -29,6 +29,8 @@ exclude_docs: |
   implementation-status.md
   superpowers/
   .superpowers/
+not_in_nav: |
+  guides/lumi.md
 hooks:
   - scripts/docs_hook.py
 validation:
@@ -101,7 +103,7 @@ nav:
       - Evaluate decision tables: reference/decision-tables.md
       - Run AI steps: guides/ai-workers.md
       - Share context between AI steps: guides/shared-ai-context.md
-      - Configure Lumi assistance: guides/lumi.md
+      - Use Weave AI: guides/weave-ai.md
       - Manage runs and business cases: guides/execution-management.md
       - Resolve incidents, cancel, and retry: reference/incident-operations.md
       - See a workflow as a graph: guides/workflow-graphs.md

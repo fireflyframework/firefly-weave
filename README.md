@@ -62,7 +62,7 @@ service or embed it in another product.
 profiles through guided setup with review before saving. Explicitly select
 earlier AI results as [shared context within one execution](docs/guides/shared-ai-context.md).
 See the illustrated [AI workflow guide](docs/guides/ai-workers.md) and
-[Lumi guide](docs/guides/lumi.md).
+[Lumi guide](docs/guides/weave-ai.md).
 
 **Included capabilities:**
 
@@ -300,7 +300,7 @@ body, and a warm amber lantern bring Weave's colors to life. The lantern
 represents a clear next step through a complex process.
 
 You will find Lumi throughout the documentation and in Studio. Open the
-**Ask Lumi** panel for assistance, and [configure its model](docs/guides/lumi.md)
+**Ask Lumi** panel for assistance, and [configure its model](docs/guides/weave-ai.md)
 separately from workflow AI tasks. In diagrams,
 the **Takeaway** band highlights the main idea to remember before moving on.
 Start with the [visual guide](docs/visual-guide.md) to explore the platform together.

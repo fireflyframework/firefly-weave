@@ -55,7 +55,7 @@ order-approval example, and which Weave permissions each one needs.
 - [Work with files](guides/files.md): upload documents, pass references through workflows, and transfer content from workers.
 - [Decision tables](reference/decision-tables.md): put reusable business rules behind a versioned decision step.
 - [Run AI steps](guides/ai-workers.md): configure workflow model profiles and operate an Agentic worker.
-- [Configure Lumi](guides/lumi.md): give Studio its own assistant configuration, separately from workflow AI.
+- [Configure Lumi](guides/weave-ai.md): give Studio its own assistant configuration, separately from workflow AI.
 
 ## Choose your next task
 

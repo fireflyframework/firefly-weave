@@ -321,7 +321,7 @@ counts, freshness, ownership, risks, and safe receipt codes. It excludes provide
 configuration, external identities, credentials, paths, and raw logs. It cannot
 create or apply an Operations plan. Treat it as an explanation of saved evidence,
 not proof of live cloud health or available worker task capacity. See the
-[Lumi guide](../guides/lumi.md#explain-operations-records) for the opt-in flow.
+[Lumi guide](../guides/weave-ai.md#explain-operations-records) for the opt-in flow.
 
 See [Install an Operations runner](operations-runner.md) for local configuration,
 provider setup, capability limits, and recovery after an uncertain operation.

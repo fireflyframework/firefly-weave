@@ -167,6 +167,9 @@ def test_strict_build_retains_theme_assets_and_public_navigation(tmp_path):
     assert len(fonts) == 2 and all((output / font).is_file() for font in fonts)
     assert (output / "assets/fonts/manrope/OFL.txt").is_file()
     assert not list(output.rglob("weave-logo*.svg"))
+    pointer = (output / "guides/lumi/index.html").read_text(encoding="utf-8")
+    assert '<a href="../weave-ai/">Use Weave AI</a>' in pointer
+    assert (output / "guides/weave-ai/index.html").is_file()
 
 
 def test_generated_api_reference_matches_exported_contract_and_links_every_schema(tmp_path):

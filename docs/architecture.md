@@ -71,7 +71,7 @@ execution or publish a definition. The person reviews and applies a proposed
 change to a local draft.
 
 The [AI worker guide](guides/ai-workers.md) explains deployment and profile
-budgets; the [Lumi guide](guides/lumi.md) explains separate configuration and
+budgets; the [Lumi guide](guides/weave-ai.md) explains separate configuration and
 context sharing. [Files](guides/files.md) follow a third boundary: PostgreSQL
 stores their chunks separately, while workflows and workers pass verified file
 references with current scope and task authority checks.

@@ -51,7 +51,7 @@ which.
 | Upload or download verified files | `firefly_weave.sdk.files.upload_file` and `download_file` | Yes; scoped file grants | [Files, step by step](../guides/files.md) |
 | Transfer files inside a leased task | `upload_task_file` and `download_task_file`, with `WorkerTransport` | Yes; a current task lease | [Worker file transfers](../guides/files.md#5-use-a-file-inside-a-worker) |
 | Author or evaluate reusable decision rules | `DecisionTableDefinition`, `DecisionTableStep`, `WeaveClient.evaluate_decision` | Author locally; published evaluation uses the API | [Decision tables](decision-tables.md) |
-| Configure or ask Lumi | `WeaveClient.configure_lumi`, `lumi_status`, `ask_lumi` | Yes; a configured private gateway and explicit Lumi roles | [Lumi assistant](../guides/lumi.md) |
+| Configure or ask Lumi | `WeaveClient.configure_lumi`, `lumi_status`, `ask_lumi` | Yes; a configured private gateway and explicit Lumi roles | [Lumi assistant](../guides/weave-ai.md) |
 | Add a reusable connector | A connector package and its registration | Authoring is local; live calls need an installed executor and a connection | [Build a custom integration](../guides/custom-connectors-tutorial.md) |
 
 **"New in 0.1.0a7" marks what alpha6 and earlier packages do not have:** saved

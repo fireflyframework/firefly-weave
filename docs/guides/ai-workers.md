@@ -23,7 +23,7 @@ continues. For example, a workflow can summarize a support request, then give
 that summary to a person for review. You define the expected result; Weave
 accepts the answer only if it satisfies that contract.
 
-Use [Lumi](lumi.md) when *you*, the person using Studio, want an explanation or
+Use [Lumi](weave-ai.md) when *you*, the person using Studio, want an explanation or
 a proposed definition change. Lumi has separate configuration and does not
 execute workflow AI tasks.
 
@@ -467,5 +467,5 @@ To pass results between AI steps in one workflow execution, follow
 [Share context between AI steps](shared-ai-context.md). Context is explicit
 workflow data; it is not a persistent conversation shared by unrelated runs.
 
-For assistance while editing, continue with [Lumi](lumi.md). Enabling Lumi is a
+For assistance while editing, continue with [Lumi](weave-ai.md). Enabling Lumi is a
 separate setup; it neither starts this worker nor changes any workflow profile.

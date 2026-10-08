@@ -49,6 +49,12 @@ SPDX-License-Identifier: Apache-2.0
   the installer window, and a charcoal launch page in a charcoal window that
   opens without a white flash, and draw exported workflow graphs, the API
   explorer, the README banner, shields and badges with the Firefly identity.
+- Restyle the documentation site in one dark scheme with the Firefly Weave logo,
+  the Firefly favicon and self-hosted Manrope, and recolor every diagram to the
+  Firefly light palette on paper panels.
+- Call the Studio assistant Weave AI throughout the documentation. Its guide is
+  now [Use Weave AI](docs/guides/weave-ai.md); [the previous guide](docs/guides/lumi.md)
+  points to it. API paths, permissions and role names keep `lumi`.
 
 ## 0.1.0a14
 
