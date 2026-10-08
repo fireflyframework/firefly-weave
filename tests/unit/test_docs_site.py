@@ -16,6 +16,7 @@
 
 """Check site link translation, private-file boundaries, and literal code examples."""
 
+import json
 import re
 import runpy
 import subprocess
@@ -176,6 +177,11 @@ def test_strict_build_retains_theme_assets_and_public_navigation(tmp_path):
     assert not list(output.rglob("weave-logo*.svg"))
     pointer = (output / "guides/lumi/index.html").read_text(encoding="utf-8")
     assert '<a href="../weave-ai/">Use Weave AI</a>' in pointer
+    assert re.search(r"<title>The Weave AI guide has moved\b", pointer)
+    search = json.loads((output / "search/search_index.json").read_text(encoding="utf-8"))
+    assert {entry["title"] for entry in search["docs"] if entry["location"] == "guides/lumi/"} == {
+        "The Weave AI guide has moved"
+    }
     assert (output / "guides/weave-ai/index.html").is_file()
     reference = (output / "reference/api-explorer/index.html").read_text(encoding="utf-8")
     assert re.search(r"<h3 [^>]*>Weave AI", reference)
@@ -183,7 +189,6 @@ def test_strict_build_retains_theme_assets_and_public_navigation(tmp_path):
 
 
 def test_generated_api_reference_matches_exported_contract_and_links_every_schema(tmp_path):
-    import json
     from html.parser import HTMLParser
 
     from firefly_weave.contracts.openapi import export_openapi

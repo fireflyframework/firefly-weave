@@ -60,6 +60,8 @@ ASSETS = (
 PRIVATE_PARTS = {"superpowers", ".superpowers", ".codex", ".agents", ".secrets", ".local", "localenv"}
 GENERATED_FILES = {"reference/openapi.json"}
 TAG_LABELS = {"lumi": "Weave AI"}
+# Pages outside the nav (mkdocs.yml not_in_nav) start with the license comment, so MkDocs cannot read their H1.
+HEADING_TITLED_PAGES = {"guides/lumi.md"}
 PRIVATE_NAMES = {"AGENTS.md", "CLAUDE.md", "implementation-status.md"}
 
 
@@ -162,6 +164,8 @@ def on_page_markdown(markdown, page, config, files):
     # this context via its configuration before that instance is created.
     extension = next(item for item in config.markdown_extensions if isinstance(item, SourceLinkExtension))
     extension.source = {"origin": origin, "site_uri": page.file.src_uri, "root": root, "ref": ref}
+    if page.file.src_uri in HEADING_TITLED_PAGES and (heading := re.search(r"^# (.+?)\s*$", markdown, re.MULTILINE)):
+        page.title = heading[1]
     if page.file.src_uri == "README.md":
         markdown = markdown.replace(
             "# Learn and use Firefly Weave",
