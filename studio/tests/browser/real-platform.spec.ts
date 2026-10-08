@@ -54,7 +54,9 @@ SPDX-License-Identifier: Apache-2.0
 // removes its platform through the UI, which signs out and deletes the
 // credential, and the suite checks that no credential created by this run is
 // left behind (leftovers are deleted by their account binding, and only those
-// this run created). The audit fails when the store is unavailable.
+// this run created). A test that fails first has the bindings it stored
+// deleted after it, so its failure is reported once. The audit fails when the
+// store is unavailable.
 //
 // Keycloak changes (a 20-second access token lifetime, ended sessions, an
 // extra unlinked person) are made with the realm's admin API; the access
@@ -653,6 +655,13 @@ test.beforeAll(() => {
   baseline = credentialAccounts();
 });
 
+/** Bindings already stored when the running test started. */
+let storedBefore = new Set<string>();
+
+test.beforeEach(() => {
+  storedBefore = credentialAccounts();
+});
+
 test.afterEach(async ({}, info) => {
   await restoreAccessTokenLifespan();
   while (cleanups.length)
@@ -661,6 +670,12 @@ test.afterEach(async ({}, info) => {
     } catch (error) {
       console.error(error);
     }
+  // A test that failed before removing its platform never signed out: delete
+  // the bindings it stored, so the suite's audit reports only what a passing
+  // test left behind instead of repeating this failure.
+  if (info.status !== info.expectedStatus)
+    for (const account of credentialAccounts())
+      if (!storedBefore.has(account)) deleteCredential(service, account);
 });
 
 test.afterAll(() => {
@@ -983,6 +998,12 @@ test("10: quick integration from Studio runs against the real platform", async (
   await expect(builder.locator(".readiness-line")).toContainText(
     /Platform ready for API actions|to set up|couldn't check/,
   );
+  // The preview names the action once this test's freshly started host has
+  // analyzed the request; the host allows one analysis 30 seconds
+  // (LOCAL_WORK_SECONDS in src/firefly_weave/studio/host.py).
+  await expect(
+    builder.getByRole("region", { name: "Action preview", exact: true }),
+  ).toContainText(`${action}@1.0.0`, { timeout: 30_000 });
   await openYaml(page);
   const preview = page.getByRole("region", { name: /Action YAML for/ });
   await expect(preview).toContainText("sideEffect: read_only");
