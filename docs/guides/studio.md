@@ -913,13 +913,18 @@ designer's main button; while you are connected, it is in the toolbar's **More**
 menu (⋯).
 
 **Studio is designed for a desktop-size screen.** In the designer, the
-navigation shows icons only to give the canvas room; the menu button at the
-bottom of the sidebar (**Expand navigation**) shows the names again. In a window 1280
-pixels wide or narrower, the navigation shows icons only everywhere. At 1024
-pixels or narrower, **Insert step** opens the step palette. At 767 pixels or
-narrower, the inspector opens over the canvas, and the toolbar moves its other
-commands into **More**. Below 600 pixels, a workflow opens on its **Outline**,
-and **Show canvas** switches to the designer.
+navigation opens in full, with the names, in a window 1440 pixels wide or wider,
+and as icons only below that, to give the canvas room. The menu button at the
+bottom of the sidebar (**Collapse navigation** or **Expand navigation**) changes
+it, and Studio remembers your choice in this browser. In a window from 900 to
+1280 pixels wide, the designer shows the navigation in full when you expanded
+it; in a window narrower than 900 pixels it shows icons only, and the button is
+not offered. In the other views, the navigation shows icons only in a window
+1280 pixels wide or narrower. At 1024 pixels or narrower, **Insert step** opens
+the step palette. At 767 pixels or narrower, the inspector opens over the
+canvas, and the toolbar moves its other commands into **More**. Below 600
+pixels, a workflow opens on its **Outline**, and **Show canvas** switches to the
+designer.
 
 While you are connected, the workflow you are editing lives in the page's
 memory, so save a draft before you reload the page; the browser asks first.

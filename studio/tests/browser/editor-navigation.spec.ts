@@ -147,23 +147,35 @@ test.describe("the editor's navigation", () => {
       await expectFits(page);
     });
 
-  test("keeps the rail below 900 px, where the toolbar needs the room, whatever was chosen", async ({
+  test("keeps the rail and offers no toggle below 900 px, whatever was chosen", async ({
     page,
   }) => {
     await page.addInitScript(
       (key) => localStorage.setItem(key, "true"),
       NAV_KEY,
     );
-    await page.setViewportSize({ width: 800, height: 700 });
+    await page.setViewportSize({ width: 820, height: 1000 });
     await openWorkflow(page);
+    // The rail is all that can show here: no button claims otherwise.
     expect(await sidebarWidth(page)).toBe(64);
+    await expect(lockup(page)).toBeHidden();
+    await expect(navButton(page)).toHaveCount(0);
     await expectFits(page);
-    await page.setViewportSize({ width: 900, height: 700 });
+    // The saved choice is kept for wider windows.
+    expect(await stored(page)).toBe("true");
+    await page.setViewportSize({ width: 900, height: 1000 });
     await expectExpanded(page);
     await expectFits(page);
-    // Phones keep the narrow rail.
     await page.setViewportSize({ width: 600, height: 700 });
+    await expect(navButton(page)).toHaveCount(0);
     expect(await sidebarWidth(page)).toBeLessThanOrEqual(64);
+    expect(await stored(page)).toBe("true");
+  });
+
+  test("keeps the toggle below 900 px in the other views", async ({ page }) => {
+    await page.setViewportSize({ width: 820, height: 1000 });
+    await offline(page);
+    await expect(navButton(page)).toHaveCount(1);
   });
 
   test("opens the classic editor expanded at 1440 px too", async ({ page }) => {

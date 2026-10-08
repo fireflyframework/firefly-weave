@@ -2780,11 +2780,14 @@ spec:
     const toggle = page.getByRole("button", {
       name: /^(Collapse|Expand) navigation$/,
     });
-    // The person collapses it: from the rail, they expand it first.
-    if ((await toggle.getAttribute("aria-expanded")) === "false")
+    // The person collapses it: from the rail, they expand it first. Below
+    // 900 px the editor has no button; the rail is all there is.
+    if (await toggle.count()) {
+      if ((await toggle.getAttribute("aria-expanded")) === "false")
+        await toggle.click();
       await toggle.click();
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    }
     await openStepDetails(page, canvas);
     await shot("89-editor-nav-collapsed");
   },

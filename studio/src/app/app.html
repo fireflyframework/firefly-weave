@@ -150,16 +150,19 @@ SPDX-License-Identifier: Apache-2.0
           >
             <weave-icon name="settings" /><span>Settings</span>
           </button>
-          <button
-            class="collapse-button"
-            [attr.aria-label]="
-              navCollapsed ? 'Expand navigation' : 'Collapse navigation'
-            "
-            [attr.aria-expanded]="!navCollapsed"
-            (click)="toggleNav()"
-          >
-            <weave-icon name="menu" /><span>Collapse sidebar</span></button
-          ><small class="foundation">Firefly Software Foundation</small>
+          @if (navToggleOffered) {
+            <button
+              class="collapse-button"
+              [attr.aria-label]="
+                navCollapsed ? 'Expand navigation' : 'Collapse navigation'
+              "
+              [attr.aria-expanded]="!navCollapsed"
+              (click)="toggleNav()"
+            >
+              <weave-icon name="menu" /><span>Collapse sidebar</span>
+            </button>
+          }
+          <small class="foundation">Firefly Software Foundation</small>
         </div>
       </nav>
     </div>

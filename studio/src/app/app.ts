@@ -513,6 +513,7 @@ export class App implements CanvasHost {
    * The editor shows its expanded navigation in full down to 900 px, even
    * where other views narrow to the rail. Below that the editor's toolbar no
    * longer fits beside it (Save to file is cut off), so it stays the rail.
+   * This is what the sidebar draws, in the editor and in the width sums.
    */
   get navFull() {
     return (
@@ -520,6 +521,13 @@ export class App implements CanvasHost {
       !this.navCollapsed &&
       this.windowWidth >= EDITOR_NAV_FULL_MIN
     );
+  }
+  /**
+   * The navigation button. In the editor below 900 px the navigation cannot
+   * expand, so no button claims it can; the saved choice stays for wider windows.
+   */
+  get navToggleOffered() {
+    return this.view !== "designer" || this.windowWidth >= EDITOR_NAV_FULL_MIN;
   }
   toggleNav() {
     if (this.view !== "designer") {
@@ -3140,7 +3148,7 @@ export class App implements CanvasHost {
   }
   setPane(pane: "palette" | "inspector", width: number) {
     const available =
-      this.windowWidth - (this.navCollapsed ? 64 : 224) - 48 - 32 - 400;
+      this.windowWidth - (this.navFull ? 224 : 64) - 48 - 32 - 400;
     const maximum =
       pane === "palette"
         ? Math.min(256, available - this.inspectorWidth)
