@@ -211,6 +211,12 @@ for (const viewport of [
     }) => {
       await connected(page, { capabilities: ["run.read"] });
       await runRoutes(page);
+      // Once Studio has checked the platform at startup it reads the open
+      // view again. Opening Runs only after it knows the person (Workers has
+      // left the menu) keeps that startup read out of the count.
+      await expect(
+        page.getByRole("button", { name: "Workers", exact: true }),
+      ).toHaveCount(0);
       let listReads = 0;
       page.on("request", (request) => {
         if (/\/environments\/development\/runs\?/.test(request.url()))
