@@ -23,9 +23,11 @@ Grammar (frozen in language milestone M0; overview contract C11)::
     count        = %x31-39 *DIGIT             ; loop yield count, from 1
     seg          = 1*(ALPHA / DIGIT)          ; repeated activation (agent turn, tool call, review)
 
-Node IDs never contain ``[``, ``]``, ``#`` or ``~`` (author IDs are ``ResourceName`` values; the synthetic
-``@run``, ``@start``, ``@join:X`` and ``@branch:X:N`` use none of them), so parsing is unambiguous. Indexes and
-counts are at most 2**53 - 1 so that API views can carry them as JSON integers.
+A node ID is an optional leading ``@``, then an ASCII letter or digit, then ASCII letters, digits, ``_``, ``.``,
+``:``, ``@`` or ``-``. Author IDs are ``ResourceName`` values (``[A-Za-z0-9][A-Za-z0-9_.-]*``), and the synthetic
+``@run``, ``@start``, ``@end``, ``@legacy``, ``@join:X`` and ``@branch:X:N`` fit the same set. Node IDs therefore
+never contain ``[``, ``]``, ``#``, ``~``, whitespace, control characters or non-ASCII characters, so parsing is
+unambiguous. Indexes and counts are at most 2**53 - 1 so that API views can carry them as JSON integers.
 
 ``INSTANCE_KEY_PATTERN`` is this grammar, bound included, as regular-expression source that reads the same in
 Python ``re``, ECMAScript and JSON Schema ``pattern``; ``split_instance`` validates with it. API models declare
@@ -57,7 +59,7 @@ def _positive_at_most(limit: int) -> str:
     return "|".join(branches)
 
 
-_NODE_ID = r"[^\[\]#~]+"
+_NODE_ID = r"@?[A-Za-z0-9][A-Za-z0-9_.:@-]*"
 _INDEX = "0|" + _positive_at_most(MAX_SAFE_INTEGER)
 _COUNT = _positive_at_most(MAX_SAFE_INTEGER)
 _SEGMENT = r"[A-Za-z0-9]+"
@@ -89,7 +91,10 @@ class InstanceKey:
 
     def __post_init__(self) -> None:
         if type(self.node_id) is not str or _NODE.fullmatch(self.node_id) is None:
-            raise InvalidInstanceKey("Node IDs are non-empty and contain no '[', ']', '#' or '~'")
+            raise InvalidInstanceKey(
+                "Node IDs start with an optional '@' and an ASCII letter or digit, then contain only ASCII "
+                "letters, digits, '_', '.', ':', '@' or '-'"
+            )
         if type(self.indexes) is not tuple or any(
             type(index) is not int or not 0 <= index <= MAX_SAFE_INTEGER for index in self.indexes
         ):

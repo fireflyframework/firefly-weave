@@ -38,7 +38,7 @@ from firefly_weave.contracts.instance_keys import (
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER
 
 # The cases of the shared fixture studio/tests/fixtures/language/instance-keys.json (scripts/language_fixtures.py),
-# plus one key too long for any fixture.
+# plus keys a JSON fixture cannot carry (a 5000-digit index and a lone surrogate).
 VALID_KEYS = [
     ("send", InstanceKey("send")),
     ("send[3]", InstanceKey("send", (3,))),
@@ -78,6 +78,13 @@ INVALID_KEYS = [
     "send[9007199254740992]",
     "send~9007199254740992",
     "send[" + "9" * 5000 + "]",
+    "a b",
+    "send\n",
+    "send\x00",
+    "se/nd",
+    "ü[1]",
+    "send\ud800",
+    "@",
 ]
 TEXT = TypeAdapter(InstanceKeyText)
 TEXT_OR_EMPTY = TypeAdapter(InstanceKeyTextOrEmpty)
@@ -147,6 +154,8 @@ def test_api_types_cap_keys_at_512_characters_and_publish_the_pattern():
         {"node_id": "a#b"},
         {"node_id": "a~1"},
         {"node_id": "a]"},
+        {"node_id": "a b"},
+        {"node_id": "ü"},
         {"node_id": "a", "indexes": (-1,)},
         {"node_id": "a", "indexes": (True,)},
         {"node_id": "a", "indexes": (MAX_SAFE_INTEGER + 1,)},
