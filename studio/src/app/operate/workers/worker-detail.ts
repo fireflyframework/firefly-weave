@@ -22,6 +22,7 @@ import {
   ChangeDetectorRef,
   Component,
   OnChanges,
+  OnDestroy,
   SimpleChanges,
   inject,
   input,
@@ -154,17 +155,27 @@ import {
       </dl>
     </details>`,
 })
-export class WorkerDetail implements OnChanges {
+export class WorkerDetail implements OnChanges, OnDestroy {
   host = input.required<App>();
   worker = input.required<WorkerStatus>();
   /** The worker after a command, read again from the platform. */
   changed = output<WorkerStatus>();
   refresh = output<void>();
   closed = output<void>();
-  busy = false;
   problem: PlainError | null = null;
   private cdr = inject(ChangeDetectorRef);
   readonly short = shortId;
+  /** The workers whose command is on its way; one worker's never blocks another's. */
+  private running = new Set<string>();
+  private alive = true;
+
+  /** Whether the worker on screen has a command on its way. */
+  get busy() {
+    return this.running.has(this.worker().id);
+  }
+  ngOnDestroy() {
+    this.alive = false;
+  }
 
   ngOnChanges(changes: SimpleChanges) {
     // Another worker, or the same one read again at a new revision, leaves
@@ -210,10 +221,42 @@ export class WorkerDetail implements OnChanges {
       host.can("worker.drain", worker.id)
     );
   }
+  /** The environment commands go to; empty when there is none. */
+  private environment() {
+    try {
+      return this.host().api.environment;
+    } catch {
+      return "";
+    }
+  }
+  /**
+   * Whether a command's answer still belongs on screen: the same worker is
+   * open, in the same environment, for the same person.
+   */
+  private current(worker: WorkerStatus, scope: string, identity: string) {
+    return (
+      this.alive &&
+      this.worker().id === worker.id &&
+      this.environment() === scope &&
+      JSON.stringify(this.host().identity) === identity
+    );
+  }
+  private explain(error: unknown): PlainError {
+    const plain = describeError(error);
+    return plain.code === "WV-WORKER-REVISION"
+      ? {
+          ...plain,
+          message:
+            "This worker changed since you opened it. Refresh it, then try again.",
+        }
+      : plain;
+  }
   async control(action: "drain" | "resume") {
     const host = this.host();
     const worker = this.worker();
-    if (this.busy || !this.canControl(worker)) return;
+    if (this.running.has(worker.id) || !this.canControl(worker)) return;
+    const scope = this.environment();
+    const identity = JSON.stringify(host.identity);
     if (action === "drain") {
       const tasks = worker.active_leases ?? 0;
       const confirmed = await host.dialogs.confirm({
@@ -221,13 +264,15 @@ export class WorkerDetail implements OnChanges {
         message: `It finishes its ${tasks} active ${tasks === 1 ? "task" : "tasks"} and takes no new ones. You can resume it at any time.`,
         confirmLabel: "Drain",
       });
-      if (!confirmed) return;
+      // Another worker may be on screen by now: never act on one the person
+      // is no longer looking at.
+      if (!confirmed || !this.current(worker, scope, identity)) return;
     }
-    this.busy = true;
+    this.running.add(worker.id);
     this.problem = null;
     this.cdr.markForCheck();
+    const named = `Worker ${shortId(worker.id)}`;
     try {
-      const scope = host.api.environment;
       const path = `${scope}/workers/${encodeURIComponent(worker.id)}`;
       await host.api.request(
         `${path}/${action}`,
@@ -236,25 +281,25 @@ export class WorkerDetail implements OnChanges {
         { "Idempotency-Key": crypto.randomUUID() },
       );
       // A replayed command answers with its first result: read the worker now.
-      this.changed.emit(await host.api.request<WorkerStatus>(path));
+      const read = await host.api.request<WorkerStatus>(path);
+      if (this.current(worker, scope, identity)) this.changed.emit(read);
       host.notify(
         action === "drain"
-          ? `Worker ${shortId(worker.id)} is draining.`
-          : `Worker ${shortId(worker.id)} takes new tasks again.`,
+          ? `${named} is draining.`
+          : `${named} takes new tasks again.`,
       );
     } catch (error) {
-      const plain = describeError(error);
-      this.problem =
-        plain.code === "WV-WORKER-REVISION"
-          ? {
-              ...plain,
-              message:
-                "This worker changed since you opened it. Refresh it, then try again.",
-            }
-          : plain;
+      const plain = this.explain(error);
+      // An answer for a worker that is no longer open never becomes this
+      // detail's problem; a short notice says what happened to it.
+      if (this.current(worker, scope, identity)) this.problem = plain;
+      else
+        host.notify(
+          `${named} was not ${action === "drain" ? "drained" : "resumed"}. ${plain.message}`,
+        );
     } finally {
-      this.busy = false;
-      this.cdr.markForCheck();
+      this.running.delete(worker.id);
+      if (this.alive) this.cdr.markForCheck();
     }
   }
 }

@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // Operate › Workers: presence, claims, load and last contact for every
 // worker, filters kept in the address, a worker's own address, and Drain and
 // Resume with their error paths. The server checks every command.
-import { test, expect, Page } from "@playwright/test";
+import { test, expect, Page, Route } from "@playwright/test";
 import { connected } from "./support";
 
 const environment =
@@ -266,6 +266,247 @@ for (const viewport of [
         };
       });
       expect(layout).toEqual({ sideways: false, clipped: [] });
+    });
+
+    if (viewport.width > 1024) {
+      // A command's answer belongs to the worker it was for, never to the
+      // worker the person opened while it was on its way.
+      const drainThenOpenAnother = async (
+        page: Page,
+        answer: (
+          route: Route,
+          items: Record<string, unknown>[],
+        ) => Promise<void>,
+      ) => {
+        const { items } = await workers(page, ["status.read", "worker.drain"]);
+        let finish!: () => void;
+        const gate = new Promise<void>((resolve) => (finish = resolve));
+        await page.route(
+          `${environment}/workers/${online}/drain`,
+          async (r) => {
+            await gate;
+            await answer(r, items);
+          },
+        );
+        await page.goto(`/operate/workers/${online}`);
+        const detail = page.locator("weave-worker-detail");
+        await detail
+          .getByRole("button", { name: "Drain", exact: true })
+          .click();
+        await page
+          .getByRole("dialog", { name: "Drain this worker?" })
+          .getByRole("button", { name: "Drain", exact: true })
+          .click();
+        await page.getByRole("button", { name: "Worker 12222222" }).click();
+        await expect(detail.locator("#worker-detail-title")).toHaveText(
+          "Worker 12222222",
+        );
+        return {
+          detail,
+          // Lets the first worker's answer arrive and the page handle it.
+          answerArrives: async () => {
+            const answered = page.waitForResponse((response) =>
+              response.url().endsWith(`/workers/${online}/drain`),
+            );
+            finish();
+            await answered;
+            await page.evaluate(
+              () =>
+                new Promise<void>((resolve) =>
+                  requestAnimationFrame(() => setTimeout(resolve, 100)),
+                ),
+            );
+          },
+        };
+      };
+
+      test("a Drain on its way for one worker does not hold up another worker's", async ({
+        page,
+      }) => {
+        const { detail, answerArrives } = await drainThenOpenAnother(
+          page,
+          async (r, items) => r.fulfill({ json: items[0] }),
+        );
+        await expect(
+          detail.getByRole("button", { name: "Drain", exact: true }),
+        ).toBeEnabled();
+        await answerArrives();
+      });
+
+      test("a finished Drain never changes the worker opened meanwhile", async ({
+        page,
+      }) => {
+        const { detail, answerArrives } = await drainThenOpenAnother(
+          page,
+          async (r, items) => {
+            items[0] = { ...items[0], draining: true, revision: 3 };
+            await r.fulfill({ json: items[0] });
+          },
+        );
+        await answerArrives();
+        await expect(
+          page.getByText("Worker 11111111 is draining."),
+        ).toBeVisible();
+        await expect(detail.locator("#worker-detail-title")).toHaveText(
+          "Worker 12222222",
+        );
+        await expect(page).toHaveURL(new RegExp(`/operate/workers/${stale}$`));
+        await expect(detail.locator(".badges")).toContainText("Offline");
+      });
+
+      test("a refused Drain never becomes the alert of the worker opened meanwhile", async ({
+        page,
+      }) => {
+        const { detail, answerArrives } = await drainThenOpenAnother(
+          page,
+          async (r) => {
+            await r.fulfill({
+              status: 409,
+              json: {
+                code: "WV-WORKER-REVISION",
+                message:
+                  "Worker control state changed; refresh before retrying",
+              },
+            });
+          },
+        );
+        await answerArrives();
+        await expect(detail.getByRole("alert")).toHaveCount(0);
+        await expect(detail.locator("#worker-detail-title")).toHaveText(
+          "Worker 12222222",
+        );
+        // The person still learns what happened to the worker they asked about.
+        await expect(
+          page.getByText("Worker 11111111 was not drained."),
+        ).toBeVisible();
+      });
+    }
+
+    test("closing the detail while Drain runs leaves no warning and still says what happened", async ({
+      page,
+    }) => {
+      const warnings: string[] = [];
+      page.on("console", (message) => {
+        if (/NG0\d+/.test(message.text())) warnings.push(message.text());
+      });
+      const { items } = await workers(page, ["status.read", "worker.drain"]);
+      let finish!: () => void;
+      const gate = new Promise<void>((resolve) => (finish = resolve));
+      await page.route(`${environment}/workers/${online}/drain`, async (r) => {
+        await gate;
+        items[0] = { ...items[0], draining: true, revision: 3 };
+        await r.fulfill({ json: items[0] });
+      });
+      await page.goto(`/operate/workers/${online}`);
+      const detail = page.locator("weave-worker-detail");
+      await detail.getByRole("button", { name: "Drain", exact: true }).click();
+      await page
+        .getByRole("dialog", { name: "Drain this worker?" })
+        .getByRole("button", { name: "Drain", exact: true })
+        .click();
+      await detail.getByRole("button", { name: "Close detail" }).click();
+      await expect(detail).toHaveCount(0);
+      finish();
+      await expect(
+        page.getByText("Worker 11111111 is draining."),
+      ).toBeVisible();
+      expect(warnings).toEqual([]);
+    });
+
+    test("a deep link to a worker that can't be found says so and returns to the list", async ({
+      page,
+    }) => {
+      await workers(page, ["status.read"]);
+      const missing = "15555555-5555-4555-8555-555555555555";
+      let answered!: () => void;
+      const missingAnswered = new Promise<void>(
+        (resolve) => (answered = resolve),
+      );
+      await page.route(`${environment}/workers/${missing}`, async (r) => {
+        await r.fulfill({
+          status: 404,
+          json: { code: "WV-NOT-FOUND", message: "Worker not found" },
+        });
+        answered();
+      });
+      // The list answers after the worker read, as the next reload would.
+      await page.route(`${environment}/workers?*`, async (r) => {
+        await missingAnswered;
+        await r.fallback();
+      });
+      await page.goto(`/operate/workers/${missing}`);
+      await expect(rows(page)).toHaveCount(3);
+      const problem = page.getByRole("alert");
+      await expect(problem).toContainText("Worker not found");
+      await expect(problem).toContainText("Support code: WV-NOT-FOUND");
+      await expect(page).toHaveURL(/\/operate\/workers$/);
+      await expect(page.locator("weave-worker-detail")).toHaveCount(0);
+    });
+
+    test("opening a worker that is gone shows why and puts the list address back", async ({
+      page,
+    }) => {
+      await workers(page, ["status.read"]);
+      await page.route(`${environment}/workers/${stale}`, (r) =>
+        r.fulfill({
+          status: 404,
+          json: { code: "WV-NOT-FOUND", message: "Worker not found" },
+        }),
+      );
+      await page.goto("/operate/workers");
+      await page.getByRole("button", { name: "Worker 12222222" }).click();
+      await expect(page.getByRole("alert")).toContainText(
+        "Support code: WV-NOT-FOUND",
+      );
+      await expect(page).toHaveURL(/\/operate\/workers$/);
+      await expect(page.locator("weave-worker-detail")).toHaveCount(0);
+    });
+
+    test("a worker the person may not read shows the access state", async ({
+      page,
+    }) => {
+      await workers(page, ["status.read"]);
+      await page.route(`${environment}/workers/${stale}`, (r) =>
+        r.fulfill({
+          status: 403,
+          json: { code: "WV-DENIED", message: "Denied" },
+        }),
+      );
+      await page.goto(`/operate/workers/${stale}`);
+      const state = page.locator("weave-operate-state");
+      await expect(state).toContainText("You don't have access to this worker");
+      await expect(state).toContainText(
+        "You need status.read in this environment.",
+      );
+      // The workers they can read stay on the page.
+      await expect(rows(page)).toHaveCount(3);
+      await expect(page).toHaveURL(/\/operate\/workers$/);
+    });
+
+    test("a worker that can't be read for another reason keeps its address for Try again", async ({
+      page,
+    }) => {
+      const { items } = await workers(page, ["status.read"]);
+      let fail = true;
+      await page.route(`${environment}/workers/${online}`, (r) =>
+        fail
+          ? r.fulfill({
+              status: 503,
+              json: { code: "WV-UNAVAILABLE", message: "Unavailable" },
+            })
+          : r.fulfill({ json: items[0] }),
+      );
+      await page.goto(`/operate/workers/${online}`);
+      const problem = page.getByRole("alert");
+      await expect(problem).toContainText("Support code: WV-UNAVAILABLE");
+      await expect(page).toHaveURL(new RegExp(`/operate/workers/${online}$`));
+      await expect(page.locator("weave-worker-detail")).toHaveCount(0);
+      fail = false;
+      await problem.getByRole("button", { name: "Try again" }).click();
+      await expect(
+        page.locator("weave-worker-detail #worker-detail-title"),
+      ).toHaveText("Worker 11111111");
+      await expect(page.getByRole("alert")).toHaveCount(0);
     });
 
     test("readers see presence without Drain, and lapsed contact hides free slots", async ({

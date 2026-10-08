@@ -193,6 +193,22 @@ const MAX_PAGES = 10;
           (retry)="poller.refresh()"
         />
       }
+      @if (detailError; as failed) {
+        @if (failed.error.status === 403) {
+          <weave-operate-state
+            kind="access"
+            heading="You don't have access to this worker"
+            capability="status.read"
+          />
+        } @else {
+          <weave-operate-state
+            kind="error"
+            [message]="failed.error.message"
+            [code]="failed.error.code"
+            (retry)="retryDetail(failed.id)"
+          />
+        }
+      }
       @if (!visible().length) {
         @if (workers.length) {
           <weave-operate-state
@@ -364,6 +380,10 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   error: PlainError | null = null;
   filters: WorkerFilters = noWorkerFilters;
   selected: WorkerStatus | null = null;
+  /** Why a worker could not be read; it stays until another worker is opened. */
+  detailError: { id: string; error: PlainError } | null = null;
+  /** The worker the latest read is for: an older answer never replaces it. */
+  private opening = "";
   private pages = 1;
   private scopeKey = "";
   private generation = 0;
@@ -401,6 +421,8 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
     this.forbidden = false;
     this.error = null;
     this.selected = null;
+    this.detailError = null;
+    this.opening = "";
     this.pages = 1;
     this.readLocation();
     if (this.scope && this.host.identity && this.readable)
@@ -424,8 +446,11 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   private readLocation() {
     this.filters = filtersFromQuery(location.search);
     const id = viewFromPath(location.pathname)?.id ?? "";
-    if (!id) this.selected = null;
-    else if (this.selected?.id !== id) void this.openById(id);
+    if (!id) {
+      this.selected = null;
+      this.detailError = null;
+      this.opening = "";
+    } else if (this.selected?.id !== id) void this.openById(id);
   }
   private async load() {
     const scope = this.scope;
@@ -502,38 +527,56 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   }
   setFilter<K extends keyof WorkerFilters>(key: K, value: WorkerFilters[K]) {
     this.filters = { ...this.filters, [key]: value };
-    this.syncAddress(true);
+    void this.syncAddress(true);
   }
   clearFilters() {
     this.filters = noWorkerFilters;
-    this.syncAddress(true);
+    void this.syncAddress(true);
   }
   async open(worker: WorkerStatus) {
     this.selected = worker;
-    this.syncAddress(false);
+    await this.syncAddress(false);
     await this.openById(worker.id);
   }
-  /** Reads one worker for its detail (also its own address and Refresh worker). */
+  /**
+   * Reads one worker for its detail (also its own address and Refresh
+   * worker). A worker this person can't read, or that is gone, is explained
+   * above the list and the address returns to the list; any other failure
+   * keeps the address so Try again can read it.
+   */
   async openById(id: string) {
     const scope = this.scope;
-    if (!scope) return;
+    // Before the person's access is known there is nothing to ask for.
+    if (!scope || !this.host.identity || !this.readable) return;
     const generation = this.generation;
+    this.opening = id;
+    this.detailError = null;
     try {
       const worker = await this.host.api.request<WorkerStatus>(
         `${scope}/workers/${encodeURIComponent(id)}`,
       );
-      if (generation === this.generation) this.selected = worker;
+      if (generation !== this.generation || this.opening !== id) return;
+      this.selected = worker;
     } catch (error) {
-      if (generation === this.generation) {
-        this.error = describeError(error);
-        if (this.selected?.id === id && this.error.status === 404)
-          this.selected = null;
+      if (generation !== this.generation || this.opening !== id) return;
+      const plain = describeError(error);
+      this.detailError = { id, error: plain };
+      if (plain.status === 403 || plain.status === 404) {
+        this.selected = null;
+        await this.syncAddress(true);
       }
     } finally {
       this.cdr.markForCheck();
     }
   }
+  /** Try again on a worker that could not be read: its address comes back. */
+  async retryDetail(id: string) {
+    await this.openById(id);
+    if (this.selected?.id === id) await this.syncAddress(false);
+  }
   replace(worker: WorkerStatus) {
+    // The answer to a command belongs to the worker it was for.
+    if (this.selected?.id !== worker.id) return;
     this.selected = worker;
     this.workers = this.workers.map((item) =>
       item.id === worker.id ? worker : item,
@@ -541,14 +584,17 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   }
   close() {
     this.selected = null;
-    this.syncAddress(true);
+    this.detailError = null;
+    this.opening = "";
+    void this.syncAddress(true);
   }
-  private syncAddress(replace: boolean) {
+  /** Puts what the page shows in the address; settles once it is there. */
+  private async syncAddress(replace: boolean) {
     const path =
       viewPath("workers", this.selected?.id ?? "") +
       filtersToQuery(this.filters);
     if (location.pathname + location.search !== path)
-      void this.router.navigateByUrl(path, { replaceUrl: replace });
+      await this.router.navigateByUrl(path, { replaceUrl: replace });
   }
   unavailable(worker: WorkerRecord) {
     return isUnavailableWorker(worker);
