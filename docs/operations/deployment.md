@@ -496,7 +496,8 @@ scheduling enabled.
 **This exercise uses the older built-in `weave-http@1.0.0` connector,** because its
 target is the local receiver at a plain-HTTP private address, which the explicit
 private-network allowance below permits. For new REST integrations, use
-`weave-http@2.0.0`, which accepts only HTTPS origins; see
+`weave-http@2.0.0`, which takes HTTPS origins and, with a "Not encrypted"
+warning, `http://` ones; see
 [Call a REST API without code](../connectors/http-without-code.md).
 
 Keep the receiver on port 8090 running. The recipe admits a native read-only HTTP

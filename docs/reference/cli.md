@@ -413,7 +413,9 @@ people connect with
   granted only to the demo environment. Connections reference the handle,
   never the value.
 - Only the declarative HTTP executor runs locally, under the usual egress
-  rules: HTTPS origins listed on each connection, and no private networks.
+  rules: origins listed on each connection (HTTPS, or HTTP with a "Not
+  encrypted" warning), and private addresses only for an origin approved with
+  `weave platform up --allow-private-origin`.
 
 ```sh
 # Read a development value from a private file; it never appears in arguments or output.
@@ -594,16 +596,20 @@ weave runs debug command "$SESSION_ID" --revision 1 --request debug-command.json
 | Flag | Meaning |
 | --- | --- |
 | `--name` | The connection name, such as `todos` |
-| `--api-url` | The called API's HTTPS origin; base paths go in the Action, and `--base-url` still selects the platform |
+| `--api-url` | The called API's origin, `https://` or `http://` (not encrypted, with a warning); base paths go in the Action, and `--base-url` still selects the platform |
 | `--auth` | How the API authenticates: `none` (default), `api-key`, `basic`, `bearer`, or `machine-token` |
 | `--auth-header` | The header that carries the API key (`api-key`) |
 | `--client-id`, `--token-endpoint`, `--scope` | OAuth client settings (`machine-token`); `--scope` is repeatable |
 | `--secret SLOT=HANDLE` | Repeatable. Slots are `api_key`, `username` and `password`, `token`, or `client_secret`, depending on `--auth`; each maps to an operator's secret handle, never to the value |
-| `--allow ORIGIN` | Repeatable: another literal HTTPS origin to allow |
+| `--allow ORIGIN` | Repeatable: another literal HTTPS or HTTP origin to allow |
 | `--connector-version-id` | Skip looking up the published connector |
 
 - The API origin, and the token endpoint for a machine token, are allowed
   automatically.
+- An `http://` API address is accepted. After the JSON result, the command
+  prints `Not encrypted: requests to http://… travel in plain text.` on
+  standard error; `connections read` and `connections test` print the same
+  line for such a connection, and the test result carries `"encrypted": false`.
 - The request is checked locally first: invalid settings exit 2 with
   `WV-CONNECTION-INPUT` and pointed diagnostics.
 - Without `--connector-version-id`, the command looks up the published

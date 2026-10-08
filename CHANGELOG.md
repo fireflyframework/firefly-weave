@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## Unreleased
+
+- No-code HTTP connections accept `http://` base URLs and warn that traffic is not encrypted.
+
 ## 0.1.0a14
 
 - Add a detached Docker development platform through `weave platform up`,
