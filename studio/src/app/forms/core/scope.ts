@@ -310,6 +310,8 @@ export function compatibility(
 
 class Walker {
   capture: Capture | null = null;
+  /** Every step's inferred output schema, reachable or not (stepOutputSchema). */
+  readonly outputs = new Map<string, Schema>();
   constructor(
     private readonly target: Target,
     private readonly input: Schema,
@@ -411,6 +413,7 @@ class Walker {
           completes = alternatives.length > 0;
         }
       }
+      this.outputs.set(id, schema);
       if (reachable && completes) visible.set(id, { id, kind, schema });
       reachable = reachable && completes;
     }
@@ -510,6 +513,29 @@ function walk(
       input,
     };
   return { capture: walker.capture, input };
+}
+
+/**
+ * The output schema the compiler infers for one step, wherever it is nested,
+ * or null when the definition has no step with that ID. `{}` means any value.
+ */
+export function stepOutputSchema(
+  definition: unknown,
+  stepId: string,
+  options: ScopeOptions = {},
+): Schema | null {
+  const { steps, input } = stepsAndInput(definition);
+  const spec = isObject(definition) ? definition["spec"] : undefined;
+  const profiles =
+    isObject(spec) && isObject(spec["llmProfiles"]) ? spec["llmProfiles"] : {};
+  const walker = new Walker(
+    { stepId: WORKFLOW, kind: "workflow" },
+    input,
+    options,
+    profiles,
+  );
+  walker.block(steps, new Map());
+  return walker.outputs.get(stepId) ?? null;
 }
 
 /**
