@@ -42,7 +42,7 @@ SPDX-License-Identifier: Apache-2.0
 <text class="p" x="584" y="286">Calls the active platform for you.</text>
 <text class="small" x="584" y="314">Works without a platform: local authoring.</text>
 <path class="arrow" d="M680 330V371"/><path class="arrow" d="M950 330V371"/>
-<rect x="50" y="375" width="280" height="165" rx="14" fill="white"/>
+<rect x="50" y="375" width="280" height="171" rx="14" fill="white"/>
 <g class="icon" transform="translate(72 396)"><rect width="34" height="30" rx="5"/><path d="M8 9l6 6-6 6M18 22h8"/></g>
 <text class="b" x="122" y="418">weave CLI</text>
 <text class="small" x="72" y="456">weave auth setup saves</text>
@@ -50,14 +50,14 @@ SPDX-License-Identifier: Apache-2.0
 <text class="small" x="72" y="508">desktop app reuse it, and</text>
 <text class="small" x="72" y="534">the CLI reuses theirs.</text>
 <path class="arrow" d="M330 457H366"/>
-<rect x="370" y="375" width="330" height="165" rx="14" fill="white"/>
+<rect x="370" y="375" width="330" height="171" rx="14" fill="white"/>
 <g class="icon" transform="translate(392 394)"><path d="M2 0h18l10 10v26H2Z"/><path d="M20 0v10h10M8 19h16M8 27h16"/></g>
 <text class="b" x="438" y="418">Saved platforms</text>
 <text class="small" x="392" y="456">profiles.json: each server</text>
 <text class="small" x="392" y="482">address, its sign-in settings,</text>
 <text class="small" x="392" y="508">and your workspace.</text>
 <text class="small" x="392" y="534">No passwords or tokens.</text>
-<rect x="720" y="375" width="350" height="165" rx="14" fill="#FFF0D8"/>
+<rect x="720" y="375" width="350" height="171" rx="14" fill="#FFF0D8"/>
 <g class="icon" transform="translate(742 396)"><circle cx="10" cy="10" r="9"/><path d="M16 16l16 16M24 24l5-5M29 29l5-5"/></g>
 <text class="b" x="790" y="418">Credential store</text>
 <text class="small" x="742" y="456">Holds your tokens: Keychain,</text>
