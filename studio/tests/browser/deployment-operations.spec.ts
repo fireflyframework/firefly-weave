@@ -1346,7 +1346,9 @@ for (const width of [1440, 390]) {
       .click();
     const planner = page.locator("weave-deployment-plan-builder");
     await expect(
-      planner.getByText(/Container Apps updates support worker and Lumi apps/),
+      planner.getByText(
+        /Container Apps updates support worker and Weave AI apps/,
+      ),
     ).toBeVisible();
     await expect(
       planner.getByRole("button", {
@@ -1373,11 +1375,11 @@ for (const width of [1440, 390]) {
       page.getByRole("option", { name: "api", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Explain with Lumi", exact: true }),
+      page.getByRole("button", { name: "Explain with Weave AI", exact: true }),
     ).toHaveCount(0);
   });
 
-  test(`Explain with Lumi offers only unchecked selected target context at ${width}`, async ({
+  test(`Explain with Weave AI offers only unchecked selected target context at ${width}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -1410,7 +1412,7 @@ for (const width of [1440, 390]) {
     });
     await page.goto("/operations/targets/" + targetId);
     await page
-      .getByRole("button", { name: "Explain with Lumi", exact: true })
+      .getByRole("button", { name: "Explain with Weave AI", exact: true })
       .click();
     await expect(
       page.getByRole("checkbox", {

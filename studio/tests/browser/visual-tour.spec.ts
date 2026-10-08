@@ -1364,10 +1364,15 @@ const scenes: Record<string, Scene> = {
       }),
     );
     await newWorkflow(page);
-    await page.getByRole("button", { name: "Ask Lumi", exact: true }).click();
-    const panel = page.getByRole("dialog", { name: "Ask Lumi", exact: true });
+    await page
+      .getByRole("button", { name: "Ask Weave AI", exact: true })
+      .click();
+    const panel = page.getByRole("dialog", {
+      name: "Ask Weave AI",
+      exact: true,
+    });
     await panel
-      .getByLabel("Message to Lumi")
+      .getByLabel("Message to Weave AI")
       .fill("Help me add a review step.");
     await panel.getByLabel("Include current source", { exact: true }).check();
     await shot("lumi-context", { end: ".modal-panel" });
@@ -1381,7 +1386,7 @@ const scenes: Record<string, Scene> = {
       .click();
     await shot("lumi-review", { end: ".modal-panel" });
     await panel
-      .getByRole("button", { name: "Lumi settings", exact: true })
+      .getByRole("button", { name: "Weave AI settings", exact: true })
       .click();
     await expect(panel.getByLabel("Model", { exact: true })).toBeVisible();
     await shot("lumi-settings", { end: ".modal-panel" });

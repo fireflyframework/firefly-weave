@@ -332,7 +332,7 @@ for (const viewport of [
   { width: 1440, height: 900 },
   { width: 600, height: 500 },
 ]) {
-  test(`file and Lumi roles can be granted independently at ${viewport.width}`, async ({
+  test(`file and Weave AI roles can be granted independently at ${viewport.width}`, async ({
     page,
   }) => {
     await page.setViewportSize(viewport);

@@ -59,8 +59,8 @@ import {
       <p>
         The configuration was validated. Provider access has not been tested. No
         model request was sent. A platform operator must authorize the worker
-        release to use this connection before a workflow can run; Lumi uses its
-        separately configured gateway.
+        release to use this connection before a workflow can run; Weave AI uses
+        its separately configured gateway.
       </p>
       <button type="button" (click)="finished.emit()">Done</button>
     } @else {
@@ -90,7 +90,8 @@ import {
             <h3 class="wizard-title" tabindex="-1">Choose a provider</h3>
             <p class="hint">
               Name this connection so authors can recognize it. Choose models or
-              Azure deployments later in workflow AI profiles or Lumi settings.
+              Azure deployments later in workflow AI profiles or Weave AI
+              settings.
             </p>
             <label
               >Connection name
@@ -159,7 +160,7 @@ import {
                 </label>
                 <p class="hint">
                   Override only for an approved proxy or compatible service. The
-                  worker or Lumi gateway must allow the exact endpoint.
+                  worker or Weave AI gateway must allow the exact endpoint.
                 </p>
               </details>
             }
@@ -212,7 +213,7 @@ import {
             <p class="review-note">
               The platform will validate the configuration. No model request or
               connectivity test is sent. Your operator still needs to authorize
-              the worker release or configure Lumi's gateway before use.
+              the worker release or configure Weave AI's gateway before use.
             </p>
           }
           <div class="actions">
