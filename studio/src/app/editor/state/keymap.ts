@@ -576,6 +576,11 @@ const SHEET_SURFACES: readonly [KeymapSurface | "any", string][] = [
   ["runLog", "Run log"],
 ];
 
+/** Ends a phrase with a period, unless it already ends with a sentence mark. */
+function asSentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
 /** The "?" sheet, built from the same table the handler reads. */
 export function shortcutSheet(platform: KeyPlatform): SheetSection[] {
   const rows = KEYMAP.filter((row) => appliesTo(row, platform));
@@ -611,7 +616,7 @@ export function shortcutSheet(platform: KeyPlatform): SheetSection[] {
         const meaning = row.note ?? (own ? COMMAND_LABELS[own] : "");
         return {
           keys: row.keys.map((combo) => formatCombo(combo, platform)),
-          label: `${meaning} ${row.n8n}`,
+          label: `${asSentence(meaning)} ${row.n8n}`,
         };
       }),
   });

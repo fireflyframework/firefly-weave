@@ -175,4 +175,30 @@ describe("the shortcuts sheet", () => {
     );
     expect(formatCombo("+", "mac")).toBe("+");
   });
+
+  it("reads each difference from n8n as two sentences", () => {
+    const differences = (platform: KeyPlatform) =>
+      shortcutSheet(platform).find((s) => s.title === "Differences from n8n")
+        ?.entries;
+    const entries = (mod: string) => [
+      {
+        keys: ["/"],
+        label:
+          "Search in the Add a step panel. Replaces A, which opens the step list in n8n.",
+      },
+      { keys: ["F9"], label: "Toggle a breakpoint. Not in n8n." },
+      { keys: ["?"], label: "Show keyboard shortcuts. Not in n8n." },
+      {
+        keys: [`${mod}+K`],
+        label: "Reserved for a command bar. Opens the command bar in n8n.",
+      },
+      {
+        keys: ["D"],
+        label:
+          "Not assigned: Weave has no deactivated steps. Deactivates a step in n8n.",
+      },
+    ];
+    expect(differences("mac")).toEqual(entries("Cmd"));
+    expect(differences("other")).toEqual(entries("Ctrl"));
+  });
 });
