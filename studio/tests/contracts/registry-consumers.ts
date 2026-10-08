@@ -28,9 +28,11 @@ import {
   type KindContext,
   type NdvContext,
   type ParameterComponent,
+  type RealExecutionSupport,
   type SampleContext,
   type SubNodeSlotSpec,
 } from "../../src/app/editor/ndv/registry";
+import type { StepTestRequest } from "../../src/app/editor/state/execution";
 
 // A registry version 2 fails here first.
 export const pinnedVersion: NdvContext["version"] = NDV_REGISTRY_VERSION;
@@ -130,3 +132,30 @@ export const pickedIteration = (ctx: NdvContext): InstanceKey | null =>
   ctx.instanceKey;
 export const calleeInterface = (kind: KindContext, uses: string): Json | null =>
   kind.workflowContract(uses);
+
+// A kind that can run in an environment answers with the body of
+// POST {ENV}/step-tests, typed as the platform's request, or says why it can't.
+// The draft fields and the timeout belong to the saved draft, not to the step.
+const savedDraft = {
+  draft_id: "0f8f2a10-3c4d-4e5f-8a9b-1c2d3e4f5a6b",
+  draft_revision: 12,
+  timeout_seconds: 120,
+};
+export const actionRealExecution: RealExecutionSupport = {
+  request: (ctx) => {
+    const uses = ctx.step["uses"];
+    if (typeof uses !== "string" || !uses)
+      return { blocked: "Choose an action first." };
+    const input = ctx.sample.resolvedInput();
+    if (input.state !== "available")
+      return { blocked: "Run the previous steps first." };
+    const body: StepTestRequest = {
+      kind: ctx.step.kind,
+      step_id: ctx.step.id,
+      uses,
+      input: input.value,
+      ...savedDraft,
+    };
+    return { body };
+  },
+};

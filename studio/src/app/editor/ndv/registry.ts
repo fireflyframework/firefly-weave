@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 import type { Signal, Type } from "@angular/core";
 import type { ReferenceScope, Schema } from "../../forms/core/scope";
 import type { Step, Workflow } from "../../model";
+import type { StepTestRequest } from "../state/execution";
 
 export const NDV_REGISTRY_VERSION = 1 as const;
 export type Json =
@@ -260,7 +261,7 @@ export interface SubNodeSlotSpec {
 }
 export interface RealExecutionSupport {
   /** Body for POST {ENV}/step-tests, or why the step can't run in an environment. */
-  request(ctx: NdvContext): { body: Json } | { blocked: string };
+  request(ctx: NdvContext): { body: StepTestRequest } | { blocked: string };
 }
 
 export class RegistryError extends Error {
