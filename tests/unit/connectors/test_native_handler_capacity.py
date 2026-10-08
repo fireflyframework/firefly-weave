@@ -25,11 +25,12 @@ from uuid import uuid4
 import pytest
 
 from firefly_weave.access.authorization import AccessDenied
+from firefly_weave.connectors.dispatcher import ExecutorConfig, NativeDispatcher
 from firefly_weave.connectors.execution import ConnectorExecutionService, ServiceTransport
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.workers import LeaseProof, TaskLease
 from firefly_weave.definitions.models import CatalogError
-from firefly_weave.operations.execution import WORK_SLOTS, request_execution
+from firefly_weave.operations.execution import WORK_SLOTS, execute_pure, request_execution
 from firefly_weave.sdk.worker import Worker
 
 
@@ -98,7 +99,10 @@ class Tasks:
 
 
 class Harness:
-    """Real native execution, in-process transport, and worker; storage and the connector are fakes."""
+    """Real native execution, dispatcher reservation, in-process transport, and worker.
+
+    Storage and the connector are fakes.
+    """
 
     def __init__(self, errors=None, body=None) -> None:
         self.tasks = Tasks(errors or {})
@@ -128,9 +132,12 @@ class Harness:
             SimpleNamespace(),  # type: ignore[arg-type]
         )
         scope, principal = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4()), uuid4()
+        entry = ExecutorConfig(scope=scope, principal_id=principal, release_id=uuid4(), task_types=["call@1.0.0"])
+        native = NativeDispatcher(self.service, (entry,), "sha256:" + "a" * 64, 1)
 
         async def handler(task: TaskLease):
-            return await self.service.execute(scope, principal, task)
+            # As the dispatcher runs it: from the executors' reservation, never a request work slot.
+            return await self.service.execute(scope, principal, task, reservation=native.reservation)
 
         self.worker = Worker(ServiceTransport(self.service, scope, principal, uuid4()), {"call@1.0.0": handler}, 1)
 
@@ -147,8 +154,12 @@ async def test_unrefused_task_completes():
     assert harness.ran == [{"value": 1}]
 
 
-async def test_task_waits_for_a_work_slot_instead_of_failing():
-    harness = Harness()
+async def test_task_runs_while_requests_hold_every_work_slot():
+    async def body(context):
+        # The connector's pure work takes a reserved slot, not one of the requests' work slots.
+        return {"pure": await execute_pure(lambda: "work")}
+
+    harness = Harness({"invocation": [busy()]}, body)
     held, release = asyncio.Event(), asyncio.Event()
 
     async def occupy():
@@ -162,15 +173,13 @@ async def test_task_waits_for_a_work_slot_instead_of_failing():
     holder = asyncio.create_task(occupy())
     try:
         await held.wait()
-        execution = asyncio.create_task(harness.run())
-        await asyncio.sleep(0.2)
-        assert not execution.done() and harness.ran == []
+        await asyncio.wait_for(harness.run(), 5)
     finally:
         release.set()
         await holder
-    await asyncio.wait_for(execution, 5)
 
-    assert harness.tasks.settled == [("complete", {"ok": True})]
+    assert harness.tasks.settled == [("complete", {"pure": "work"})]
+    assert harness.tasks.calls == ["invocation"] * 2
     assert harness.ran == [{"value": 1}]
 
 

@@ -22,6 +22,7 @@ import json
 import logging
 import sys
 import time
+from contextvars import Context
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -33,6 +34,7 @@ from firefly_weave.connectors.execution import ConnectorExecutionService, Servic
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.workers import InstanceRequest
+from firefly_weave.operations.execution import ReservedSlots
 from firefly_weave.sdk.worker import Worker
 from firefly_weave.workers.repository import WorkerRepository
 
@@ -117,6 +119,9 @@ class NativeDispatcher:
             image_digest,
             shutdown_seconds,
         )
+        # One slot per execution the workers can run at once, plus a spare for a pure call that
+        # outlived its cancelled execution. Connector calls never hold a request work slot.
+        self.reservation = ReservedSlots(sum(entry.capacity for entry in entries) + 1)
         self.workers: list[Worker] = []
         self.tasks: list[asyncio.Task[None]] = []
         self.closing = False
@@ -171,11 +176,13 @@ class NativeDispatcher:
                 )
 
             async def execute(lease: Any, scope: Scope = entry.scope, principal: UUID = entry.principal_id) -> Any:
-                return await self.service.execute(scope, principal, lease)
+                return await self.service.execute(scope, principal, lease, reservation=self.reservation)
 
             transport = ServiceTransport(self.service, entry.scope, entry.principal_id, instance.id)
             self.workers.append(Worker(transport, {ref: execute for ref in entry.task_types}, entry.capacity))
-        self.tasks = [asyncio.create_task(self._supervise(worker)) for worker in self.workers]
+        # A request can open the dispatcher. An empty context keeps the request's execution
+        # lease and identity, which end with its response, out of the long-lived workers.
+        self.tasks = [asyncio.create_task(self._supervise(worker), context=Context()) for worker in self.workers]
 
     async def _supervise(self, worker: Worker) -> None:
         """Keep one in-process worker serving after a task it could not settle.

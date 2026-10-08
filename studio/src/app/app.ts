@@ -4198,8 +4198,10 @@ export class App {
   /**
    * Switches between field-by-field input and one custom expression for the
    * whole input. Fields can't show some expressions; replacing one asks first.
+   * An invalid draft keeps the switch from hiding it.
    */
   async customInput(custom: boolean) {
+    if (!this.leaveInspector()) return;
     const step = this.editableStep();
     if (!step) return;
     if (!custom && !fieldable(step["with"])) {
@@ -4217,6 +4219,8 @@ export class App {
       this.setBuffer(step, true);
     }
     this.actionInitialInput = step["with"];
+    // The whole-input expression starts from the input typed so far.
+    this.propertyStep = structuredClone(step);
     this.actionInputMode = custom ? "expression" : "fields";
     this.actionInputValid.set(true);
     this.cdr.markForCheck();

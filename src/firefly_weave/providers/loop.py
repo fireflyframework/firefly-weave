@@ -18,16 +18,22 @@
 import asyncio
 import logging
 from contextlib import suppress
+from contextvars import Context
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from firefly_weave.access.scheduler import next_scope
 from firefly_weave.email.source import EmailSourceService
+from firefly_weave.operations.execution import ReservedSlots
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.providers.dispatcher import ProviderDispatcher
 from firefly_weave.settings import Settings
+
+# Requests can hold every work and control slot. A provider cycle runs one pure call at a time;
+# the spare slot absorbs a call that outlived its timed-out receipt, as the work pool did.
+PROVIDER_EXECUTION = ReservedSlots(2)
 
 
 class ProviderLoop:
@@ -65,25 +71,28 @@ class ProviderLoop:
                 )
                 if not valid:
                     raise RuntimeError("Provider traversal requires execute-only scheduler authority")
-            self.task = asyncio.create_task(self.poll(), name="weave-provider-inbox")
+            # A request can open this loop. An empty context keeps the request's execution
+            # lease and identity, which end with its response, out of the long-lived task.
+            self.task = asyncio.create_task(self.poll(), name="weave-provider-inbox", context=Context())
         except BaseException:
             await self.close()
             raise
 
     async def cycle(self) -> None:
         assert self.engine is not None
-        async with asyncio.timeout(5):
-            async with self.engine.begin() as connection:
-                await connection.execute(text("SET LOCAL statement_timeout='4000ms'"))
-                await connection.execute(text("SET LOCAL lock_timeout='1000ms'"))
-                tenant = await connection.scalar(text("SELECT weave_provider_tenants(1)"))
-            if tenant is None:
-                return
-            authority = await next_scope(self.uow, tenant, provider=True)
-        if authority is not None:
-            await self.dispatcher.scan(authority, 10)
-            if self.email_sources is not None:
-                await self.email_sources.scan(authority, 1)
+        async with PROVIDER_EXECUTION.execution():
+            async with asyncio.timeout(5):
+                async with self.engine.begin() as connection:
+                    await connection.execute(text("SET LOCAL statement_timeout='4000ms'"))
+                    await connection.execute(text("SET LOCAL lock_timeout='1000ms'"))
+                    tenant = await connection.scalar(text("SELECT weave_provider_tenants(1)"))
+                if tenant is None:
+                    return
+                authority = await next_scope(self.uow, tenant, provider=True)
+            if authority is not None:
+                await self.dispatcher.scan(authority, 10)
+                if self.email_sources is not None:
+                    await self.email_sources.scan(authority, 1)
 
     async def poll(self) -> None:
         while True:
