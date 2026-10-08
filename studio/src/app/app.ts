@@ -2204,7 +2204,8 @@ export class App implements CanvasHost {
     );
     if (!this.profile) {
       if (this.localDrafts.failed) return { text: "Not saved", tone: "danger" };
-      if (this.localTimer || this.pendingInspector)
+      // Opening a workflow arms the autosave too; it keeps only edits.
+      if ((this.dirty && this.localTimer) || this.pendingInspector)
         return { text: "Unsaved", tone: "warning" };
       if (this.dirty || this.keptLocally)
         return { text: this.savedDraftLabel(), tone: "" };
