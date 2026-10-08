@@ -116,6 +116,19 @@ class UnavailableResource(ContractModel):
     omissions: list[Omission]
 
 
+class UnsupportedResource(ContractModel):
+    """A catalog version whose IR version or language features this platform does not run.
+
+    ``missing_features`` names the features this platform does not list and is empty when the IR version itself is
+    unknown, as in the ``WV-IR-UNSUPPORTED`` answer.
+    """
+
+    id: UUID
+    unavailable: Literal[True] = True
+    reason: Literal["ir_unsupported"] = "ir_unsupported"
+    missing_features: list[str]
+
+
 class DraftView(Draft):
     retired: bool = False
     retirement_revision: int | None = Field(default=None, ge=1)
