@@ -54,22 +54,62 @@ print(json.dumps({
     "levels": get_args(v.LogLevel.__value__),
 }))
 `;
+const pythonOptions = {
+  cwd: root,
+  encoding: "utf8" as const,
+  timeout: 180_000,
+  env: {
+    ...process.env,
+    PYTHONPATH: [resolve(root, "src"), process.env.PYTHONPATH]
+      .filter(Boolean)
+      .join(delimiter),
+  },
+};
 /** Throws with Python's error when any page breaks the contract. */
 export function validateWithPython(
   pages: RunViewPages,
 ): Record<string, string[]> {
   return JSON.parse(
     execFileSync(python, ["-c", script], {
-      cwd: root,
+      ...pythonOptions,
       input: JSON.stringify(pages),
-      encoding: "utf8",
-      timeout: 180_000,
-      env: {
-        ...process.env,
-        PYTHONPATH: [resolve(root, "src"), process.env.PYTHONPATH]
-          .filter(Boolean)
-          .join(delimiter),
-      },
     }),
   ) as Record<string, string[]>;
+}
+
+/** The query models that parse_query decodes in the run views. */
+export type QueryModel = "RunSummaryQuery" | "RunStepQuery" | "RunLogQuery";
+const queryScript = `
+import json, sys
+from starlette.datastructures import QueryParams
+from firefly_weave.api.transport import parse_query
+from firefly_weave.contracts import run_views as v
+from firefly_weave.definitions.models import CatalogError
+model = getattr(v, sys.argv[1])
+def verdict(raw):
+    try:
+        parse_query(QueryParams(raw), model)
+        return "ok"
+    except CatalogError as error:
+        return error.code
+    except ValueError:
+        return "WV-VALIDATION"
+    except Exception as error:
+        return "ERROR:" + type(error).__name__
+print(json.dumps([verdict(raw) for raw in json.load(sys.stdin)]))
+`;
+/**
+ * parse_query's verdict for each raw query string, in order: "ok", the
+ * CatalogError code, or "WV-VALIDATION". A server crash reads "ERROR:...".
+ */
+export function classifyQueriesWithPython(
+  queries: string[],
+  model: QueryModel = "RunSummaryQuery",
+): string[] {
+  return JSON.parse(
+    execFileSync(python, ["-c", queryScript, model], {
+      ...pythonOptions,
+      input: JSON.stringify(queries),
+    }),
+  ) as string[];
 }

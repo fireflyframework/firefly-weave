@@ -44,13 +44,25 @@ export const fakeEnvironment =
 
 type Kind = "string" | "boolean" | "integer" | "array";
 type Values = Record<string, string | string[] | boolean | number | undefined>;
+// Stricter than the server only on forms it also accepts: a space instead of
+// "T", no seconds, a comma fraction, offsets without a colon, UUIDs without
+// hyphens or braces, and names or versions over 200 characters. Never looser.
 const name = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const semver =
-  /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+// Mirrors SEMVER_PATTERN in src/firefly_weave/contracts/definitions.py.
+const semver = new RegExp(
+  `^${[
+    String.raw`(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)`,
+    String.raw`(?:-(?:(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))`,
+    String.raw`(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?`,
+    String.raw`(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?`,
+  ].join("")}$`,
+);
 const instant =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
-const maxRange = 400 * 86_400_000;
+  /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/;
+const cursorPattern = /^[A-Za-z0-9_-]+$/;
+/** 400 days, in microseconds: the server compares instants to the microsecond. */
+const maxRange = BigInt(400 * 86_400_000) * 1000n;
 
 const problem = (
   status: number,
@@ -109,8 +121,8 @@ const logParameters: Record<string, Kind> = {
 function read(params: URLSearchParams, kinds: Record<string, Kind>): Values {
   const values: Values = {};
   for (const key of new Set(params.keys())) {
+    if (!Object.hasOwn(kinds, key)) throw invalid("Unknown query parameter");
     const kind = kinds[key];
-    if (!kind) throw invalid("Unknown query parameter");
     const raw = params.getAll(key);
     if (kind === "array") {
       values[key] = raw;
@@ -161,25 +173,95 @@ function limitOf(values: Values, max: number, fallback: number): number {
     throw invalid("Invalid limit");
   return value;
 }
-function timeOf(values: Values, key: string): number | undefined {
-  const value = text(values, key, instant);
-  return value === undefined ? undefined : Date.parse(value);
+/** UUID values are compared in lower case, as the server normalizes them. */
+function uuidOf(values: Values, key: string): string | undefined {
+  return text(values, key, uuid)?.toLowerCase();
 }
+const cursorOf = (values: Values) =>
+  text(values, "cursor", cursorPattern, 2048);
 
-function encodeCursor(key: string, offset: number): string {
-  return btoa(encodeURIComponent(JSON.stringify([key, offset])))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+/**
+ * Microseconds since the epoch, with the server's rules: a real calendar
+ * date, a 24-hour clock, offsets up to 23:59, and fractions past six digits
+ * truncated.
+ */
+function instantMicros(value: string): bigint {
+  const match = instant.exec(value);
+  if (match === null) throw invalid("Invalid timestamp");
+  const [, year, month, day, hour, minute, second, digits, sign] = match;
+  const offsetHour = Number(match[9] ?? 0);
+  const offsetMinute = Number(match[10] ?? 0);
+  const fields = [year, month, day, hour, minute, second].map(Number);
+  const [y, mo, d, h, mi, s] = fields;
+  const local = new Date(0);
+  local.setUTCFullYear(y, mo - 1, d);
+  local.setUTCHours(h, mi, s, 0);
+  const rebuilt = [
+    local.getUTCFullYear(),
+    local.getUTCMonth() + 1,
+    local.getUTCDate(),
+    local.getUTCHours(),
+    local.getUTCMinutes(),
+    local.getUTCSeconds(),
+  ];
+  if (y < 1 || rebuilt.some((field, index) => field !== fields[index]))
+    throw invalid("Invalid timestamp");
+  if (offsetHour > 23 || offsetMinute > 59) throw invalid("Invalid timestamp");
+  const offset =
+    sign === undefined
+      ? 0
+      : (sign === "-" ? -1 : 1) * (offsetHour * 60 + offsetMinute);
+  const micros = (digits ?? "").padEnd(6, "0").slice(0, 6);
+  return BigInt(local.getTime() - offset * 60_000) * 1000n + BigInt(micros);
 }
-function offsetOf(cursor: string | undefined, key: string): number {
+function timeOf(values: Values, key: string): bigint | undefined {
+  const value = text(values, key, instant);
+  return value === undefined ? undefined : instantMicros(value);
+}
+/** Run timestamps come from the fixture, which has whole-millisecond precision. */
+const recordMicros = (value: string): bigint =>
+  BigInt(Date.parse(value)) * 1000n;
+const compareMicros = (left: bigint, right: bigint) =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+/**
+ * cyrb53: a synchronous 53-bit hash. A cursor carries this digest of the
+ * query scope, so filter values such as business keys never appear in it.
+ */
+function digest(value: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 =
+    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
+    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 =
+    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
+    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0))
+    .toString(16)
+    .padStart(14, "0");
+}
+function base64url(value: string): string {
+  return btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function fromBase64url(cursor: string): string {
+  const base64 = cursor.replace(/-/g, "+").replace(/_/g, "/");
+  return atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="));
+}
+function offsetOf(cursor: string | undefined, bound: string): number {
   if (cursor === undefined) return 0;
   try {
-    const [bound, offset] = JSON.parse(
-      decodeURIComponent(atob(cursor.replace(/-/g, "+").replace(/_/g, "/"))),
-    ) as [unknown, unknown];
+    const [issued, offset] = JSON.parse(fromBase64url(cursor)) as [
+      unknown,
+      unknown,
+    ];
     if (
-      bound === key &&
+      issued === bound &&
       typeof offset === "number" &&
       Number.isInteger(offset) &&
       offset > 0
@@ -190,15 +272,19 @@ function offsetOf(cursor: string | undefined, key: string): number {
   }
   throw invalid("Invalid scope-bound cursor");
 }
-function page<T>(items: T[], values: Values, limit: number, key: string) {
-  const offset = offsetOf(
-    text(values, "cursor", /^[A-Za-z0-9_-]+$/, 2048),
-    key,
-  );
+function page<T>(
+  items: T[],
+  cursor: string | undefined,
+  limit: number,
+  bound: string,
+) {
+  const offset = offsetOf(cursor, bound);
   return {
     items: items.slice(offset, offset + limit),
     next_cursor:
-      offset + limit < items.length ? encodeCursor(key, offset + limit) : null,
+      offset + limit < items.length
+        ? base64url(JSON.stringify([bound, offset + limit]))
+        : null,
   };
 }
 const compare = (left: string, right: string) =>
@@ -206,14 +292,14 @@ const compare = (left: string, right: string) =>
 
 function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
   const values = read(params, summaryParameters);
-  const status = [
-    ...new Set((values["status"] as string[] | undefined) ?? []),
-  ].sort();
+  // The server limits the raw list before it de-duplicates, so repeats count.
+  const raw = (values["status"] as string[] | undefined) ?? [];
   if (
-    status.length > 8 ||
-    status.some((item) => !runStatuses.includes(item as never))
+    raw.length > 8 ||
+    raw.some((item) => !runStatuses.includes(item as never))
   )
     throw invalid("Invalid status");
+  const status = [...new Set(raw)].sort();
   const filters = {
     workflow: text(values, "workflow", name),
     version: text(values, "version", semver),
@@ -222,18 +308,21 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
     started_after: timeOf(values, "started_after"),
     started_before: timeOf(values, "started_before"),
     include_test: values["include_test"] === true,
-    caller_run_id: text(values, "caller_run_id", uuid),
+    caller_run_id: uuidOf(values, "caller_run_id"),
     top_level_only: values["top_level_only"] === true,
-    retried_from_run_id: text(values, "retried_from_run_id", uuid),
+    retried_from_run_id: uuidOf(values, "retried_from_run_id"),
     business_key: text(values, "business_key"),
     correlation_key: text(values, "correlation_key"),
     has_active_incident: values["has_active_incident"] as boolean | undefined,
     include_archived: values["include_archived"] === true,
-    activation_id: text(values, "activation_id", uuid),
+    activation_id: uuidOf(values, "activation_id"),
   };
   const order = choice(values, "order", runSummaryOrders) ?? "started_desc";
   const limit = limitOf(values, 100, 50);
-  const { started_after: after, started_before: before } = filters;
+  const cursor = cursorOf(values);
+  // Every value is checked above, so a value error wins over a filter combination.
+  const after = filters.started_after;
+  const before = filters.started_before;
   if (
     (filters.version !== undefined && filters.workflow === undefined) ||
     (filters.top_level_only &&
@@ -244,7 +333,14 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
       (after >= before || before - after > maxRange))
   )
     throw contradictory();
-  const time = (value: string) => Date.parse(value);
+  const bound = digest(
+    JSON.stringify({
+      ...filters,
+      started_after: after?.toString(),
+      started_before: before?.toString(),
+      order,
+    }),
+  );
   const keep = (run: RunSummary) =>
     (filters.include_test || !run.test) &&
     (filters.include_archived || !run.archived) &&
@@ -254,8 +350,8 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
       run.workflow.version === filters.version) &&
     (status.length === 0 || status.includes(run.status)) &&
     (filters.origin === undefined || run.origin === filters.origin) &&
-    (after === undefined || time(run.started_at) >= after) &&
-    (before === undefined || time(run.started_at) < before) &&
+    (after === undefined || recordMicros(run.started_at) >= after) &&
+    (before === undefined || recordMicros(run.started_at) < before) &&
     (filters.caller_run_id === undefined ||
       run.caller?.run_id === filters.caller_run_id) &&
     (!filters.top_level_only || run.caller === null) &&
@@ -276,10 +372,12 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
     .sort(
       (left, right) =>
         direction *
-        (time(left.summary[field]) - time(right.summary[field]) ||
-          compare(left.summary.id, right.summary.id)),
+        (compareMicros(
+          recordMicros(left.summary[field]),
+          recordMicros(right.summary[field]),
+        ) || compare(left.summary.id, right.summary.id)),
     );
-  const result = page(runs, values, limit, JSON.stringify({ filters, order }));
+  const result = page(runs, cursor, limit, bound);
   return {
     status: 200,
     body: {
@@ -306,6 +404,7 @@ function steps(
   const step = text(values, "step", name);
   const include = choice(values, "include", ["output"] as const);
   const limit = limitOf(values, 500, 200);
+  const cursor = cursorOf(values);
   if (!data.runs.some((run) => run.summary.id === runId))
     return problem(404, "WV-NOT-FOUND", "Run not found");
   const record = data.steps[runId] ?? { complete: true, items: [] };
@@ -329,7 +428,7 @@ function steps(
   return {
     status: 200,
     body: {
-      ...page(items, values, limit, JSON.stringify({ runId, step })),
+      ...page(items, cursor, limit, digest(JSON.stringify({ runId, step }))),
       complete: record.complete,
     },
   };
@@ -345,6 +444,7 @@ function logs(
   const source = choice(values, "source", logSources);
   const node = text(values, "node_id", name);
   const limit = limitOf(values, 500, 200);
+  const cursor = cursorOf(values);
   if (!data.runs.some((run) => run.summary.id === runId))
     return problem(404, "WV-NOT-FOUND", "Run not found");
   const lowest = level === undefined ? 0 : logLevels.indexOf(level);
@@ -364,9 +464,9 @@ function logs(
     status: 200,
     body: page(
       items,
-      values,
+      cursor,
       limit,
-      JSON.stringify({ runId, level, source, node }),
+      digest(JSON.stringify({ runId, level, source, node })),
     ),
   };
 }
@@ -386,7 +486,8 @@ export function answerRunViews(
       return summaries(searchParams, data);
     const match = /\/runs\/([^/]+)\/(steps|logs)$/.exec(pathname);
     if (!match) return null;
-    const runId = decodeURIComponent(match[1]);
+    // Run IDs are compared in lower case, as the server normalizes them.
+    const runId = decodeURIComponent(match[1]).toLowerCase();
     if (!uuid.test(runId))
       return problem(404, "WV-STUDIO-ROUTE", "Unknown platform operation");
     return match[2] === "steps"
