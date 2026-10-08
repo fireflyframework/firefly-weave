@@ -52,12 +52,12 @@ SPDX-License-Identifier: Apache-2.0
 <path class="arrow" d="M220 672H926"/><circle cx="246" cy="646" r="15" fill="#855414"/><text class="n" x="246" y="652" text-anchor="middle">5</text><text class="lbl halo" x="270" y="652">Sign in: a browser with PKCE (S256), or a code on another device</text>
 <text class="small halo" x="270" y="698">Browser callback: http://127.0.0.1:&lt;free port&gt;/callback</text>
 <path class="ret" d="M930 742H224"/><text class="lbl halo" x="240" y="732">Access token and refresh token</text>
-<rect x="40" y="766" width="500" height="118" rx="14" fill="white"/>
+<rect x="40" y="766" width="500" height="122" rx="14" fill="white"/>
 <circle cx="68" cy="795" r="15" fill="#855414"/><text class="n" x="68" y="801" text-anchor="middle">6</text>
 <text class="b" x="96" y="802">Store the tokens securely</text>
 <text class="small" x="62" y="832">System credential store by default, or a private</text>
 <text class="small" x="62" y="858">file you choose. Never in profiles.json.</text>
-<rect x="622" y="766" width="458" height="118" rx="12" fill="#FFF0D8"/>
+<rect x="622" y="766" width="458" height="122" rx="12" fill="#FFF0D8"/>
 <text class="b" x="642" y="798">System credential stores</text>
 <text class="lbl" x="642" y="826">macOS Keychain · Windows Credential Locker</text>
 <text class="lbl" x="642" y="852">Linux Secret Service or KWallet</text>
