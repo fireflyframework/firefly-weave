@@ -229,7 +229,9 @@ const newRowId = () => `hb-row-${++rowSequence}`;
             (input)="setText('address', $event)"
           />
           <p class="hb-help" [id]="prefix + '-address-help'">
-            HTTPS only. The connection keeps this address, not the action.
+            HTTPS, or plain HTTP for a development address your platform
+            operator approved. The connection keeps this address, not the
+            action.
           </p>
           <div [id]="prefix + '-address-notes'">
             <ng-container

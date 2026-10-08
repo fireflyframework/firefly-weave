@@ -726,7 +726,8 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
             (input)="edit('origin', $event)"
           />
           <p class="hint" [id]="id + '-origin-hint'">
-            The HTTPS origin only. Base paths belong in each action.
+            The HTTPS origin, or an approved development http:// origin. Base
+            paths belong in each action.
           </p>
           @for (problem of problemsFor("origin"); track $index) {
             <p class="error" [id]="id + '-origin-error'">

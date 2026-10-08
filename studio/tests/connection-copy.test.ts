@@ -133,8 +133,11 @@ describe("connection request", () => {
 });
 
 describe("client checks mirror the platform", () => {
-  it("requires an HTTPS origin without a path", () => {
-    expect(fields({ ...oauth, origin: "http://api.pets.example" })).toContain(
+  it("accepts an HTTP or HTTPS origin without a path; the platform decides on plain HTTP", () => {
+    expect(
+      fields({ ...oauth, origin: "http://acme.acceptance.test:8080" }),
+    ).not.toContain("origin");
+    expect(fields({ ...oauth, origin: "ftp://api.pets.example" })).toContain(
       "origin",
     );
     expect(
@@ -149,7 +152,16 @@ describe("client checks mirror the platform", () => {
     expect(originOf("https://API.Pets.Example:443/")).toBe(
       "https://api.pets.example",
     );
+    expect(originOf("http://Acme.Acceptance.Test:8080")).toBe(
+      "http://acme.acceptance.test:8080",
+    );
     expect(originOf("https://api.pets.example/./x")).toBeNull();
+  });
+  it("keeps the token endpoint HTTPS-only", () => {
+    const plain = { ...oauth, endpoint: "http://login.pets.example/token" };
+    expect(fields(plain)).toContain("endpoint");
+    expect(destinationsOf(plain)).toEqual(["https://api.pets.example"]);
+    expect(originOf(plain.endpoint, { plainHttp: false })).toBeNull();
   });
   it("rejects reserved headers for API keys", () => {
     const draft = emptyDraft({
@@ -434,6 +446,13 @@ describe.skipIf(!existsSync(python))(
           ...connectionRequest(oauth, versionId),
           allowed_destinations: ["https://api.pets.example"],
         },
+        connectionRequest(
+          emptyDraft({
+            name: "acme",
+            origin: "http://acme.acceptance.test:8080",
+          }),
+          versionId,
+        ),
       ];
       const output = execFileSync(
         python,
@@ -462,6 +481,13 @@ print(json.dumps(result))
       expect(issues.slice(0, 4)).toEqual([[], [], [], []]);
       expect(issues[4]).toEqual([["DESTINATION", "/allowed_destinations"]]);
       expect(fieldForPointer(issues[4][0][1])).toBe("destinations");
+      // Without an approved private origin the platform refuses plain HTTP
+      // at the origin and its destination.
+      expect(issues[5]).toEqual([
+        ["CONFIG", "/config/baseUrl"],
+        ["DESTINATION", "/allowed_destinations/0"],
+      ]);
+      expect(fieldForPointer(issues[5][0][1])).toBe("origin");
     });
   },
 );

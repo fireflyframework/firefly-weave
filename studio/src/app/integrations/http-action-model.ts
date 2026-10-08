@@ -155,9 +155,11 @@ export function pathPlaceholders(
 }
 
 /**
- * The HTTPS origin a connection keeps, plus any base path the person typed
- * (which belongs in the action's path). Mirrors fixed_server and the
- * connection destination check.
+ * The origin a connection keeps, plus any base path the person typed (which
+ * belongs in the action's path). Mirrors fixed_server and the connection
+ * destination check. Plain http:// is accepted here: the platform allows it
+ * only for an origin its operator approved for development (private-origin
+ * policy), so the server stays the authority.
  */
 export function parseApiAddress(
   input: string,
@@ -167,9 +169,10 @@ export function parseApiAddress(
   if (!value)
     return fail("Enter the API address, for example https://api.example.com.");
   const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(value);
-  if (!scheme || scheme[1].toLowerCase() !== "https")
+  const protocol = scheme?.[1].toLowerCase();
+  if (!scheme || (protocol !== "https" && protocol !== "http"))
     return fail(
-      "Use an https:// address. Weave only calls APIs over HTTPS, so credentials never travel unencrypted.",
+      "Use an https:// address, for example https://api.example.com. Plain http:// works only for development addresses your platform operator approved.",
     );
   if (/[%\\]/.test(value) || invisible(value))
     return fail(
@@ -188,7 +191,7 @@ export function parseApiAddress(
     );
   if (!rest.startsWith("//"))
     return fail(
-      "Enter the address as https://host, for example https://api.example.com.",
+      `Enter the address as ${protocol}://host, for example https://api.example.com.`,
     );
   rest = rest.slice(2);
   const slash = rest.indexOf("/");
@@ -234,7 +237,7 @@ export function parseApiAddress(
     return fail(
       "The address path has empty, . or .. segments or a placeholder. Put the path in the Path field instead.",
     );
-  return { origin: `https://${netloc}`, basePath };
+  return { origin: `${protocol}://${netloc}`, basePath };
 }
 
 export interface ParamRow {
@@ -868,7 +871,7 @@ export function serviceSlug(origin: string, fallbackName: string): string {
   const parsed = origin ? parseApiAddress(origin) : null;
   if (parsed && "origin" in parsed) {
     const host = parsed.origin
-      .slice("https://".length)
+      .replace(/^https?:\/\//, "")
       .replace(/:\d*$/, "")
       .toLowerCase();
     if (!host.startsWith("[") && !/^[0-9.]+$/.test(host)) {
