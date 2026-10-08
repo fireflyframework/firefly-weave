@@ -54,7 +54,7 @@ SPDX-License-Identifier: Apache-2.0
     <rect x="18" y="18" width="48" height="48" rx="12" fill="#EAE7DF"/>
     <g class="icon" transform="translate(28 26)"><path d="M14 0l13 5v10c0 9-13 16-13 16S1 24 1 15V5zM7 14l5 5 9-10"/></g>
     <text x="18" y="103" class="heading">3. Weave checks</text>
-    <text x="18" y="141" class="body"><tspan x="18">Your access is checked.</tspan><tspan x="18" dy="29">Weave AI gets a short</tspan><tspan x="18" dy="29">summary of the records.</tspan></text>
+    <text x="18" y="141" class="body"><tspan x="18">Your access is checked.</tspan><tspan x="18" dy="29">Weave AI gets a limited</tspan><tspan x="18" dy="29">summary of the records.</tspan></text>
     <text x="18" y="239" class="small">Credentials stay private.</text>
   </g>
   <path class="link" d="M874 263h19"/>
