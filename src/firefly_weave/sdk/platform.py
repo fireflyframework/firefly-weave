@@ -1222,6 +1222,10 @@ def integrations_grant(
 
 
 def _check_handle(handle: str) -> None:
+    if handle == "no-credential":
+        raise PlatformError(
+            "no-credential is reserved for local model endpoints that use no credential; choose another handle."
+        )
     if _SECRET_HANDLE.fullmatch(handle) is None:
         raise PlatformError(
             "Use a secret handle of 1 to 64 lowercase letters, digits, '.', '_', or '-', "

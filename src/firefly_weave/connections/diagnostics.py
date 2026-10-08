@@ -29,6 +29,7 @@ from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import ScopedSecrets
+from firefly_weave.contracts import agentic
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.connectors import (
     ConnectionInvalid,
@@ -144,11 +145,21 @@ def destination_issues(adapter: str, destinations: Iterable[str]) -> list[Connec
     return found
 
 
-def secret_issues(scope: Scope, secrets: ScopedSecrets, references: Mapping[str, str]) -> list[ConnectionIssue]:
+AGENTIC_ADAPTER = "weave-agentic-provider"
+
+
+def keyless_connection(adapter: str, config: Mapping[str, object], references: Mapping[str, str]) -> bool:
+    """Agentic connections on an approved local model endpoint use the reserved no-credential handle."""
+    return adapter == AGENTIC_ADAPTER and agentic.keyless(config, references)
+
+
+def secret_issues(
+    scope: Scope, secrets: ScopedSecrets, references: Mapping[str, str], *, keyless: bool = False
+) -> list[ConnectionIssue]:
     found = []
     for slot, handle in sorted(references.items()):
         try:
-            secrets.check(scope, handle)
+            secrets.check(scope, handle, keyless=keyless)
         except CatalogError:
             found.append(ConnectionIssue(pointer_child("/secretRef", slot), SECRET_UNAVAILABLE, "SECRET"))
     return found
@@ -183,7 +194,12 @@ def request_issues(
             found += invalid.issues
         except (ValueError, CatalogError):
             found.append(ConnectionIssue("/config", "This connector does not accept these connection settings."))
-    found += secret_issues(scope, secrets, request.secret_refs)
+    found += secret_issues(
+        scope,
+        secrets,
+        request.secret_refs,
+        keyless=keyless_connection(adapter, request.config, request.secret_refs),
+    )
     return found
 
 
@@ -211,5 +227,5 @@ def readiness_issues(
         registry.get(adapter)
     except CatalogError:
         found.append(ConnectionIssue("/connector_version_id", ADAPTER_UNAVAILABLE, "CONNECTOR"))
-    found += secret_issues(scope, secrets, references)
+    found += secret_issues(scope, secrets, references, keyless=keyless_connection(adapter, config, references))
     return found

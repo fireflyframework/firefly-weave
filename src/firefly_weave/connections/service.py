@@ -29,7 +29,13 @@ from firefly_weave.access.models import Principal
 from firefly_weave.access.service import audit
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.schemas import validate_payload
-from firefly_weave.connections.diagnostics import connector_unavailable, readiness_issues, rejected, request_issues
+from firefly_weave.connections.diagnostics import (
+    connector_unavailable,
+    keyless_connection,
+    readiness_issues,
+    rejected,
+    request_issues,
+)
 from firefly_weave.connections.models import unavailable
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.repository import ConnectionRepository
@@ -37,6 +43,7 @@ from firefly_weave.connections.secret_execution import resolve_secret
 from firefly_weave.connections.secrets import ScopedSecrets, SecretUnavailable
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.connectors import (
+    NO_CREDENTIAL,
     BoundConnection,
     ConnectionRequest,
     ConnectionRevision,
@@ -230,6 +237,16 @@ class ConnectionService(ConnectionBindingPort):
         if validate_payload(contract["document"]["spec"]["configSchema"], revision.config, bundle):
             raise unavailable()
 
+    async def ready_revision(
+        self, actor: Principal, scope: Scope, revision_id: UUID, capability: str, *, context: AuditContext
+    ) -> ConnectionRevision:
+        """A saved revision that is usable now; field problems are explained, as connection tests do."""
+        self.require(actor, scope, capability, context)
+        async with self.uow.open(scope, mutation=False) as tx:
+            revision = await ConnectionRepository(tx).revision(revision_id)
+            await self._ready(actor, scope, revision, capability, context, tx, explain=True)
+            return revision
+
     async def test_connection(
         self, actor: Principal, scope: Scope, revision_id: UUID, *, context: AuditContext
     ) -> ConnectionTestResult:
@@ -264,8 +281,12 @@ class ConnectionService(ConnectionBindingPort):
 
         try:
             async with asyncio.timeout(30):
+                keyless = keyless_connection(revision.adapter, revision.config, revision.secret_refs)
                 async with asyncio.timeout(5):
                     for name, handle in revision.secret_refs.items():
+                        if keyless and handle == NO_CREDENTIAL:
+                            # Never resolved, leased, logged or sent.
+                            continue
                         resolved[name] = await resolve_secret(partial(self.secrets.resolve, scope, handle))
                 async with self.uow.open(scope, mutation=False) as tx:
                     from firefly_weave.access.repository import load_principal
