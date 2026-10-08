@@ -68,6 +68,7 @@ class _Lease:
 
 _request_lease: ContextVar[_Lease | None] = ContextVar("weave_request_execution", default=None)
 _debug_lease: ContextVar[_Lease | None] = ContextVar("weave_debug_execution", default=None)
+_reserved_slots: ContextVar[threading.BoundedSemaphore | None] = ContextVar("weave_reserved_execution", default=None)
 
 
 @asynccontextmanager
@@ -93,6 +94,31 @@ def debug_operation[**P, R](method: Callable[P, Awaitable[R]]) -> Callable[P, Aw
     return guarded
 
 
+class ReservedSlots:
+    """Pure execution reserved for one lifespan owner, apart from request admission.
+
+    In-flight requests can hold every work and control slot. Background work that borrowed them
+    was refused and read the refusal as a failed recovery quantum, a blocked receipt, or a failed
+    consumer turn. Inside `execution()`, each pure call takes one slot from this reservation
+    instead, and any request lease the task inherited is set aside. A call still running after its
+    caller was cancelled keeps its slot until it ends, so the size bounds the owner's pure threads;
+    a spare slot keeps one such call from refusing the owner's next one.
+    """
+
+    def __init__(self, slots: int) -> None:
+        self.size = slots
+        self.slots = threading.BoundedSemaphore(slots)
+
+    @asynccontextmanager
+    async def execution(self) -> AsyncIterator[None]:
+        request, reserved = _request_lease.set(None), _reserved_slots.set(self.slots)
+        try:
+            yield
+        finally:
+            _reserved_slots.reset(reserved)
+            _request_lease.reset(request)
+
+
 @asynccontextmanager
 async def request_execution(*, control: bool = False) -> AsyncIterator[None]:
     lease = _Lease(control)
@@ -106,7 +132,7 @@ async def request_execution(*, control: bool = False) -> AsyncIterator[None]:
 
 async def execute_pure[Result](call: Callable[[], Result], *, control: bool = False) -> Result:
     inherited = _request_lease.get()
-    lease = inherited or _Lease(control)
+    lease = inherited or _Lease(control, slots=_reserved_slots.get())
     try:
         lease.enter()
         debug = _debug_lease.get()
