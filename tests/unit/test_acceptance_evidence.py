@@ -109,7 +109,7 @@ def test_journey_results_report_passes_partials_skips_and_gaps():
     assert steps[1] == {"n": 1, "status": "passed", "seconds": 1.0}
     assert steps[3]["status"] == "partial" and steps[3]["skipped_checks"][0]["check"] == "J0.3/owner-roles"
     assert steps[2] == {"n": 2, "status": "not_run"}
-    assert steps[5] == {"n": 5, "status": "skipped", "missing": ["S6-M1"]}
+    assert steps[5] == {"n": 5, "status": "skipped", "missing": ["real-platform-journeys"]}
     assert 12 not in steps and 13 not in steps
     assert results[1] == {
         "id": "J1",

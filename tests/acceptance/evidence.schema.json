@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:firefly-weave:acceptance-evidence:1",
   "title": "Firefly Weave acceptance evidence",
-  "description": "evidence/acceptance.json written by scripts/acceptance.py (acceptance spec section 3.7).",
+  "description": "evidence/acceptance.json written by scripts/acceptance.py.",
   "type": "object",
   "additionalProperties": false,
   "required": [

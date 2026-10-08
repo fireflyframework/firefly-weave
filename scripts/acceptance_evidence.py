@@ -104,7 +104,7 @@ def _journey_status(steps: Sequence[Mapping[str, Any]]) -> str:
 
 
 def journey_results(enablement: Any, profile: str, records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """One entry per journey of the profile: recorded steps, skipped steps with their missing milestones,
+    """One entry per journey of the profile: recorded steps, skipped steps with their missing capabilities,
     and enabled steps without a record as not_run (a harness gap fails the journey, and with it the run)."""
     by_step = {record["id"]: record for record in records}
     results = []
@@ -151,7 +151,7 @@ def validate(document: Mapping[str, Any]) -> None:
 
 
 def document(**fields: Any) -> dict[str, Any]:
-    """The acceptance.json document; measurements and accessibility stay empty until S6-M3."""
+    """The acceptance.json document; measurements and accessibility stay empty until the quality gates land."""
     value = {
         "schema_version": 1,
         "measurements": {},

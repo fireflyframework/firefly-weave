@@ -72,7 +72,7 @@ ACME_IMAGE = "weave-acc/acme-api:local"
 # manifest-index digest, and BuildKit's provenance attestation gives each cache-hit rebuild a new one.
 IMAGE_CONTENT_FORMAT = "{{json .RootFS.Layers}}{{json .Config}}"
 CANARY_HANDLES = ("acme-api-key", "order-review-webhook")
-# S6-M1 moves these tests to playwright.acceptance.config.ts; until then the quick-integration
+# The real-platform journeys move these tests to playwright.acceptance.config.ts; until then the quick-integration
 # test runs against the platform this harness starts.
 SUITES: dict[str, dict[str, Any]] = {
     "platform-session": {

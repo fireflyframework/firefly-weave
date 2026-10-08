@@ -16,8 +16,8 @@
 
 # Tools and images acceptance runs pin. The prepare stage pulls every image here by
 # digest; tests/unit/test_acceptance_journeys.py keeps these equal to the files that use
-# them. Lane O's cluster tools (kind, k3d, kubectl) arrive with S6-M2, and GreenMail,
-# SFTP and Kafka with S6-M3.
+# them. The cluster tools (kind, k3d, kubectl) arrive with the AI and cluster profiles, and
+# GreenMail, SFTP and Kafka with the quality gates.
 version = 1
 
 [tools]

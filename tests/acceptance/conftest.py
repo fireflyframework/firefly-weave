@@ -18,7 +18,7 @@
 
 Journeys run only through scripts/acceptance.py, which sets WEAVE_ACC_RUN_DIR to a run
 directory it prepared. A test marked journey_step("J0.3") implements one journeys.toml
-step: a step whose milestones have not merged is skipped and recorded with them, never
+step: a step whose capabilities have not landed is skipped and recorded with them, never
 passed, and after a failed step the rest of its journey is recorded as not run. Results go
 to evidence/steps.jsonl. Command output can hold generated passwords: it is parsed in
 memory and shown only when a command fails. Failure text, on the console and in a step's

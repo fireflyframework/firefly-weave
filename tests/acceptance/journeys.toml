@@ -14,64 +14,65 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-# Step enablement for acceptance journeys (acceptance spec §2.1 rule 7 and §10.2).
-# A step ("J0.3") or check ("J0.3/owner-roles") runs when every requirement holds;
-# "A3|O3" holds when either milestone merged. Each milestone PR sets its own entry to
-# true and adds the steps and checks it enables, with their tests.
+# Step enablement for acceptance journeys. A step ("J0.3") or check ("J0.3/owner-roles")
+# runs when every requirement holds. A requirement names a product capability, which
+# holds once that capability has landed; "ai-models-screen|compose-operations" holds when
+# either has. The change that delivers a capability sets its entry to true and adds the
+# steps and checks it enables, with their tests.
 
-[milestones]
-"brand-PR1" = false
-"brand-PR2" = false
-"brand-PR3" = false
-"E-M0" = false
-"E-M1" = false
-"E-M2" = false
-"E-M3" = false
-"E-M4" = false
-"E-M5" = false
-"E-M6" = false
-"E-M7" = false
-"E-M8" = false
-"E-M9" = false
-"E-M10" = false
-"E-M11a" = false
-"E-M11b" = false
-"E-M11c" = false
-"E-M12" = false
-"L-M0" = false
-"L-M1" = false
-"L-M2" = false
-"L-M3" = false
-"L-M4" = false
-"L-M5" = false
-"L-M6" = false
-"L-M7" = false
-"L-M8" = false
-"L-M9" = false
-"L-M10" = false
-"A1" = false
-"A2" = false
-"A3" = false
-"A4" = false
-"A5" = false
-"A6" = false
-"A7" = false
-"A8" = false
-"A9" = false
-"O0" = false
-"O1" = false
-"O2" = false
-"O3" = false
-"O4" = false
-"O5" = false
-"O6" = false
-"O7" = false
-"O8" = false
-"S6-M0" = true
-"S6-M1" = false
-"S6-M2" = false
-"S6-M3" = false
-"S6-M4" = false
+[capabilities]
+"studio-brand" = false
+"brand-assets" = false
+"docs-brand" = false
+"editor-contracts" = false
+"editor-canvas" = false
+"add-step-panel" = false
+"step-details" = false
+"formula-editor" = false
+"test-data" = false
+"step-execution" = false
+"decision-table-editor" = false
+"editor-runs" = false
+"step-tests" = false
+"activation-dialog" = false
+"text-templates" = false
+"loops" = false
+"sub-workflows" = false
+"editor-hardening" = false
+"language-contracts" = false
+"text-operators" = false
+"instance-keys" = false
+"loop-compiler" = false
+"loop-runtime" = false
+"loop-simulation" = false
+"workflow-call-compiler" = false
+"workflow-call-runtime" = false
+"workflow-call-simulation" = false
+"workflow-call-fast-path" = false
+"language-docs" = false
+"ai-gateway" = false
+"ai-setup" = false
+"ai-models-screen" = false
+"ai-task" = false
+"weave-ai-ollama" = false
+"agents" = false
+"agent-editor" = false
+"ai-acceptance" = false
+"agent-memory" = false
+"run-view-contracts" = false
+"operations-studio" = false
+"run-views" = false
+"compose-operations" = false
+"kubernetes-operations" = false
+"metrics" = false
+"logs" = false
+"alerts" = false
+"operations-explanations" = false
+"acceptance-foundations" = true
+"real-platform-journeys" = false
+"ai-and-cluster-profiles" = false
+"quality-gates" = false
+"release-verification" = false
 
 [profiles]
 pr = ["J0", "J1", "J2", "J3", "J5", "J8", "J9"]
@@ -82,7 +83,7 @@ nightly = ["J0", "J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10", "J
 release = ["J0", "J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10", "J11", "J12", "J13", "J14", "J15"]
 docs-shots = ["J0"]
 
-# Success criteria each journey proves (acceptance spec §2.3).
+# Success criteria each journey proves.
 [criteria]
 J0 = ["SC7"]
 J1 = ["SC1", "SC7"]
@@ -102,31 +103,31 @@ J14 = ["SC1", "SC7"]
 J15 = ["SC1", "SC7"]
 
 [steps]
-# J0 clean-machine bring-up (acceptance spec §2.4).
-"J0.1" = ["S6-M0"]
-"J0.2" = ["S6-M0"]
-"J0.2/cluster-tools" = ["O4"]
-"J0.3" = ["S6-M0"]
-"J0.3/owner-roles" = ["A3|O3"]
-"J0.3/operations" = ["O3"]
-"J0.3/event-fixtures" = ["S6-M3"]
-"J0.4" = ["S6-M0"]
-"J0.4/step-tester" = ["E-M9", "A3"]
-"J0.4/deployment-log-reader" = ["O6"]
-"J0.4/alert-manager" = ["O7"]
-"J0.5" = ["S6-M1"]
-"J0.6" = ["S6-M0"]
-"J0.7" = ["S6-M0"]
-"J0.7/sftp-password" = ["S6-M3"]
-"J0.8" = ["S6-M0"]
-"J0.8/catalog" = ["S6-M1"]
-"J0.8/child-workflow" = ["S6-M1", "L-M6"]
-"J0.9" = ["S6-M1", "L-M6"]
-"J0.10" = ["S6-M1", "O3"]
-"J0.11" = ["S6-M1", "E-M9"]
-"J0.12" = ["S6-M2", "A1"]
-"J0.13" = ["S6-M2", "O4"]
-"J0.14" = ["S6-M0"]
+# J0 clean-machine bring-up.
+"J0.1" = ["acceptance-foundations"]
+"J0.2" = ["acceptance-foundations"]
+"J0.2/cluster-tools" = ["kubernetes-operations"]
+"J0.3" = ["acceptance-foundations"]
+"J0.3/owner-roles" = ["ai-models-screen|compose-operations"]
+"J0.3/operations" = ["compose-operations"]
+"J0.3/event-fixtures" = ["quality-gates"]
+"J0.4" = ["acceptance-foundations"]
+"J0.4/step-tester" = ["step-tests", "ai-models-screen"]
+"J0.4/deployment-log-reader" = ["logs"]
+"J0.4/alert-manager" = ["alerts"]
+"J0.5" = ["real-platform-journeys"]
+"J0.6" = ["acceptance-foundations"]
+"J0.7" = ["acceptance-foundations"]
+"J0.7/sftp-password" = ["quality-gates"]
+"J0.8" = ["acceptance-foundations"]
+"J0.8/catalog" = ["real-platform-journeys"]
+"J0.8/child-workflow" = ["real-platform-journeys", "workflow-call-compiler"]
+"J0.9" = ["real-platform-journeys", "workflow-call-compiler"]
+"J0.10" = ["real-platform-journeys", "compose-operations"]
+"J0.11" = ["real-platform-journeys", "step-tests"]
+"J0.12" = ["ai-and-cluster-profiles", "ai-gateway"]
+"J0.13" = ["ai-and-cluster-profiles", "kubernetes-operations"]
+"J0.14" = ["acceptance-foundations"]
 
 [step_profiles]
 "J0.2/cluster-tools" = ["cluster", "k3d", "nightly", "release"]

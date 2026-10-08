@@ -14,10 +14,10 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""J0: clean-machine bring-up through the CLI (acceptance spec §2.4).
+"""J0: clean-machine bring-up through the CLI.
 
 Runs only through scripts/acceptance.py (the up stage). Each test is one journeys.toml
-step; the checks later milestones add run inside their step through run.check(...).
+step; the checks that later capabilities add run inside their step through run.check(...).
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ from firefly_weave.sdk.platform import PERSON_ROLES
 
 pytestmark = pytest.mark.acceptance
 
-# People of acceptance spec §2.2 with the roles that exist at this commit; the roles later
-# milestones add (step_tester, deployment_log_reader, alert_manager) are checks of J0.4.
+# The acceptance people with the roles that exist at this commit; the roles that later
+# capabilities add (step_tester, deployment_log_reader, alert_manager) are checks of J0.4.
 PEOPLE = {
     "builder": ("developer", "deployer", "operator", "viewer", "tenant_admin", "lumi_user", "task_participant"),
     "approver": ("task_participant", "task_manager", "deployment_approver"),

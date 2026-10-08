@@ -17,8 +17,9 @@
 """Step enablement for acceptance journeys (tests/acceptance/journeys.toml) and pinned versions.
 
 A step such as J0.3, or a check inside it such as J0.3/owner-roles, runs only when every
-requirement holds. A requirement names a milestone ("O3") or alternatives ("A3|O3"). A
-step that does not run reports skipped with its missing milestones, never passed.
+requirement holds. A requirement names a product capability ("compose-operations") or
+alternatives ("ai-models-screen|compose-operations"), and holds once that capability has
+landed. A step that does not run reports skipped with its missing capabilities, never passed.
 """
 
 from __future__ import annotations
@@ -31,24 +32,74 @@ from typing import Any
 
 PROFILES = ("pr", "ai", "cluster", "k3d", "nightly", "release", "docs-shots")
 JOURNEYS = tuple(f"J{number}" for number in range(16))
-MILESTONES = (
-    *(f"brand-PR{number}" for number in range(1, 4)),
-    *(f"E-M{number}" for number in range(11)),
-    "E-M11a",
-    "E-M11b",
-    "E-M11c",
-    "E-M12",
-    *(f"L-M{number}" for number in range(11)),
-    *(f"A{number}" for number in range(1, 10)),
-    *(f"O{number}" for number in range(9)),
-    *(f"S6-M{number}" for number in range(5)),
+# The product capabilities a journey step can wait for, one entry each in [capabilities].
+CAPABILITIES = (
+    # Brand
+    "studio-brand",
+    "brand-assets",
+    "docs-brand",
+    # Workflow editor
+    "editor-contracts",
+    "editor-canvas",
+    "add-step-panel",
+    "step-details",
+    "formula-editor",
+    "test-data",
+    "step-execution",
+    "decision-table-editor",
+    "editor-runs",
+    "step-tests",
+    "activation-dialog",
+    "text-templates",
+    "loops",
+    "sub-workflows",
+    "editor-hardening",
+    # Workflow language
+    "language-contracts",
+    "text-operators",
+    "instance-keys",
+    "loop-compiler",
+    "loop-runtime",
+    "loop-simulation",
+    "workflow-call-compiler",
+    "workflow-call-runtime",
+    "workflow-call-simulation",
+    "workflow-call-fast-path",
+    "language-docs",
+    # AI
+    "ai-gateway",
+    "ai-setup",
+    "ai-models-screen",
+    "ai-task",
+    "weave-ai-ollama",
+    "agents",
+    "agent-editor",
+    "ai-acceptance",
+    "agent-memory",
+    # Operations
+    "run-view-contracts",
+    "operations-studio",
+    "run-views",
+    "compose-operations",
+    "kubernetes-operations",
+    "metrics",
+    "logs",
+    "alerts",
+    "operations-explanations",
+    # Acceptance and release
+    "acceptance-foundations",
+    "real-platform-journeys",
+    "ai-and-cluster-profiles",
+    "quality-gates",
+    "release-verification",
 )
+CAPABILITY = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 STEP = re.compile(r"(J(?:[0-9]|1[0-5]))\.([1-9][0-9]?)")
 CHECK = re.compile(r"(J(?:[0-9]|1[0-5])\.[1-9][0-9]?)/[a-z0-9]+(?:-[a-z0-9]+)*")
 CRITERION = re.compile(r"SC[1-7]")
 IMAGE = re.compile(r"[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}")
-_TABLES = {"milestones", "profiles", "criteria", "steps", "step_profiles"}
-_REQUIRED = {"milestones", "profiles", "criteria", "steps"}
+_TABLES = {"capabilities", "profiles", "criteria", "steps", "step_profiles"}
+_REQUIRED = {"capabilities", "profiles", "criteria", "steps"}
 
 
 class JourneysInvalid(ValueError):
@@ -57,7 +108,7 @@ class JourneysInvalid(ValueError):
 
 @dataclass(frozen=True)
 class Enablement:
-    milestones: dict[str, bool]
+    capabilities: dict[str, bool]
     steps: dict[str, tuple[str, ...]]
     profiles: dict[str, tuple[str, ...]]
     step_profiles: dict[str, tuple[str, ...]]
@@ -75,20 +126,25 @@ class Enablement:
             raise JourneysInvalid(f"journeys.toml is not valid TOML: {error}") from None
         if set(data) - _TABLES or _REQUIRED - set(data):
             raise JourneysInvalid(
-                "journeys.toml has the tables milestones, profiles, criteria, steps and step_profiles"
+                "journeys.toml has the tables capabilities, profiles, criteria, steps and step_profiles"
             )
-        milestones = data["milestones"]
-        if set(milestones) != set(MILESTONES) or any(type(value) is not bool for value in milestones.values()):
-            raise JourneysInvalid("[milestones] lists every milestone ID once with true or false")
+        capabilities = data["capabilities"]
+        if not isinstance(capabilities, dict):
+            raise JourneysInvalid("[capabilities] is a table of capability names")
+        unknown = sorted(set(capabilities) - set(CAPABILITIES))
+        if unknown:
+            raise JourneysInvalid(f"[capabilities] names unknown capabilities: {', '.join(unknown)}")
+        if set(capabilities) != set(CAPABILITIES) or any(type(value) is not bool for value in capabilities.values()):
+            raise JourneysInvalid("[capabilities] lists every capability once with true or false")
         steps: dict[str, tuple[str, ...]] = {}
         for key, requirements in data["steps"].items():
             if STEP.fullmatch(key) is None and CHECK.fullmatch(key) is None:
                 raise JourneysInvalid(f"{key} is not a step (J3.5) or a check (J3.5/name)")
             if not isinstance(requirements, list) or not requirements:
-                raise JourneysInvalid(f"{key} needs at least one milestone")
+                raise JourneysInvalid(f"{key} needs at least one capability")
             for requirement in requirements:
-                if not isinstance(requirement, str) or any(part not in milestones for part in requirement.split("|")):
-                    raise JourneysInvalid(f"{key} names an unknown milestone: {requirement}")
+                if not isinstance(requirement, str) or any(part not in capabilities for part in requirement.split("|")):
+                    raise JourneysInvalid(f"{key} names an unknown capability: {requirement}")
             steps[key] = tuple(requirements)
         for key in steps:
             parent = cls.parent(key)
@@ -112,7 +168,7 @@ class Enablement:
         ):
             raise JourneysInvalid("[criteria] maps every journey to success criteria SC1 to SC7")
         return cls(
-            dict(milestones),
+            dict(capabilities),
             steps,
             {key: tuple(value) for key, value in profiles.items()},
             {key: tuple(value) for key, value in step_profiles.items()},
@@ -133,7 +189,7 @@ class Enablement:
         own = tuple(
             requirement
             for requirement in self.steps[step_id]
-            if not any(self.milestones[part] for part in requirement.split("|"))
+            if not any(self.capabilities[part] for part in requirement.split("|"))
         )
         return tuple(dict.fromkeys((*inherited, *own)))
 

@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Real-service acceptance on Linux (ubuntu-24.04, zero retries). Needs no secrets, so it
-# also runs for fork pull requests. S6-M1 runs the pr profile on every pull request.
+# also runs for fork pull requests. The real-platform journeys run the pr profile on every pull request.
 name: Acceptance
 on:
   pull_request:

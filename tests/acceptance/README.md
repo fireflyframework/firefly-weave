@@ -62,11 +62,12 @@ everything for debugging with `--keep`, then remove it with
 ## Enable a journey step
 
 [journeys.toml](journeys.toml) maps each step (`J0.3`) and check
-(`J0.3/owner-roles`) to the milestones that enable it; `A3|O3` holds when either
-merged. A step whose milestones have not merged reports `skipped` with them,
-never `passed`. When your milestone PR merges:
+(`J0.3/owner-roles`) to the product capabilities that enable it;
+`ai-models-screen|compose-operations` holds when either has landed. A step whose
+capabilities have not landed reports `skipped` with them, never `passed`. When the
+change that delivers a capability merges:
 
-1. Set your milestone to `true` under `[milestones]`.
+1. Set the capability to `true` under `[capabilities]`.
 2. Add or change the steps and checks it enables.
 3. Add their tests: a pytest step carries `@pytest.mark.journey_step("J0.3")`,
    and a check runs inside its step through `run.check("J0.3/owner-roles", body)`.

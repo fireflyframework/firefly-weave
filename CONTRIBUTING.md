@@ -129,7 +129,7 @@ image IDs. Keep failures and corrected reruns distinguishable.
 Acceptance journeys prove the product against real services: a Docker platform
 from `weave platform up`, its real Keycloak, the Acme API fixture and the real
 Studio host. [The acceptance guide](tests/acceptance/README.md) explains the
-stages, the evidence, and how to enable a journey step when your milestone merges.
+stages, the evidence, and how to enable a journey step when the capability it needs lands.
 
 ## Review and hygiene
 

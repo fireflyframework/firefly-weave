@@ -258,8 +258,8 @@ ENABLEMENT = acceptance.acceptance_journeys.Enablement.load(acceptance.JOURNEYS)
 
 def record_steps(plan, leave_out=()):
     """steps.jsonl as the harness writes it when every applicable pr step ran, except ``leave_out``: an
-    enabled step passes, or is partial when one of its checks waits for milestones; a step that waits
-    for milestones is skipped with them."""
+    enabled step passes, or is partial when one of its checks waits for capabilities; a step that waits
+    for capabilities is skipped with them."""
     lines = []
     for journey in ENABLEMENT.profiles["pr"]:
         for step in ENABLEMENT.journey_steps(journey):
