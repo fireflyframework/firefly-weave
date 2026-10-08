@@ -58,6 +58,7 @@ STUDIO_FAMILIES = frozenset(
         "compiler",
         "catalog",
         "capabilities",
+        "language",
         "schemas",
         "activations",
         "runs",

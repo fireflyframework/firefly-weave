@@ -522,6 +522,7 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `compiler.evaluate_decision` | `POST /api/v1/tenants/{tenant}/projects/{project}/compiler/evaluate-decision` | compile |
 | `catalog.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/catalog` | catalog.read |
 | `capabilities.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/capabilities` | catalog.read |
+| `language.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/language` | catalog.read |
 | `schemas.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/schemas` | catalog.read |
 | `connector_descriptors.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/connector-descriptors` | catalog.read |
 | `connector_descriptors.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/connector-descriptors/{adapter}` | catalog.read |

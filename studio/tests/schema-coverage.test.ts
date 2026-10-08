@@ -24,6 +24,20 @@ import { propertyFields, supportedOperators } from "../src/app/property-grid";
 import { createStep, freshWorkflow, kinds } from "../src/app/model";
 
 const root = resolve(import.meta.dirname, "../..");
+
+/** The language manifest's entries (language spec 14.1); Studio compares only `ready` ones. */
+interface Marked {
+  studio: "ready" | "pending";
+  feature?: string;
+}
+interface Manifest {
+  step_kinds: (Marked & { kind: string })[];
+  operators: (Marked & { name: string })[];
+  workflow_fields: (Marked & { name: string })[];
+}
+const ready = <T extends Marked>(entries: T[]) =>
+  entries.filter((entry) => entry.studio === "ready");
+
 // CI installs the repository environment. Frontend-only contributors can still
 // run UI tests; this cross-language contract check explicitly reports a skip.
 const available = pythonAvailable();
@@ -37,9 +51,8 @@ const schema = available
 import json
 from typing import get_args
 from firefly_weave.contracts import definitions as d
-models = [d.ActionStep, d.TransformStep, d.SwitchStep, d.ParallelStep,
-          d.WaitStep, d.SignalStep, d.HumanTaskStep, d.FailStep,
-          d.DecisionTableStep, d.LLMStep]
+from firefly_weave.contracts.language import language_manifest
+models = get_args(get_args(d.Step.__value__)[0])
 def fields(model):
     return [f.alias or name for name, f in model.model_fields.items()]
 print(json.dumps({
@@ -47,6 +60,7 @@ print(json.dumps({
     "workflow": fields(d.WorkflowSpec), "metadata": fields(d.Metadata),
     "case": fields(d.SwitchCase), "branch": fields(d.Branch),
     "operators": list(get_args(d.OperatorName.__value__)),
+    "manifest": language_manifest().model_dump(mode="json"),
 }))
 `,
         ],
@@ -54,12 +68,28 @@ print(json.dumps({
       ),
     )
   : null;
+const manifest = schema?.manifest as Manifest;
 
 describe.skipIf(!available)(
   "editor coverage of the real Python contracts",
   () => {
-    it("covers every step kind and configuration field", () => {
-      expect([...kinds].sort()).toEqual(Object.keys(schema.steps).sort());
+    it("lists every Python step kind, operator and workflow field in the language manifest", () => {
+      expect(manifest.step_kinds.map((entry) => entry.kind).sort()).toEqual(
+        Object.keys(schema.steps).sort(),
+      );
+      expect(manifest.operators.map((entry) => entry.name).sort()).toEqual(
+        [...schema.operators].sort(),
+      );
+      expect(
+        manifest.workflow_fields.map((entry) => entry.name).sort(),
+      ).toEqual([...schema.workflow].sort());
+    });
+    it("covers every ready step kind and its configuration fields", () => {
+      expect([...kinds].sort()).toEqual(
+        ready(manifest.step_kinds)
+          .map((entry) => entry.kind)
+          .sort(),
+      );
       for (const kind of kinds) {
         const fields = new Set(
           propertyFields(createStep(kind, "step")).map((f) => f.path[0]),
@@ -70,21 +100,23 @@ describe.skipIf(!available)(
         expect([...fields].sort(), kind).toEqual(schema.steps[kind].sort());
       }
     });
-    it("covers workflow configuration and metadata without hiding fields in source mode", () => {
+    it("covers ready workflow configuration and metadata without hiding fields in source mode", () => {
       const fields = propertyFields(freshWorkflow());
       const spec = fields
         .filter((f) => f.path[0] === "spec")
         .map((f) => f.path[1]);
       // Canvas owns steps, ConnectionSlotList the slots, and LlmInspector profiles.
       expect([...spec, "steps", "connections", "llmProfiles"].sort()).toEqual(
-        schema.workflow.sort(),
+        ready(manifest.workflow_fields)
+          .map((entry) => entry.name)
+          .sort(),
       );
       const metadata = fields
         .filter((f) => f.path[0] === "metadata")
         .map((f) => f.path[1]);
       expect(metadata.sort()).toEqual(schema.metadata.sort());
     });
-    it("covers branch configuration and every supported expression operation", () => {
+    it("covers branch configuration and every ready expression operation", () => {
       const decision = propertyFields(createStep("switch", "decision"));
       const caseFields = decision
         .filter((f) => f.path[0] === "cases")
@@ -95,7 +127,11 @@ describe.skipIf(!available)(
         .filter((f) => f.path[0] === "branches" && f.path[1] === "first")
         .map((f) => f.path[2]);
       expect([...branchFields, "steps"].sort()).toEqual(schema.branch.sort());
-      expect([...supportedOperators].sort()).toEqual(schema.operators.sort());
+      expect([...supportedOperators].sort()).toEqual(
+        ready(manifest.operators)
+          .map((entry) => entry.name)
+          .sort(),
+      );
     });
   },
 );

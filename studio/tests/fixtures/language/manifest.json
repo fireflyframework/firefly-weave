@@ -1,0 +1,635 @@
+{
+  "generator": "scripts/language_fixtures.py",
+  "manifest": {
+    "version": "weave/language-manifest-v1",
+    "language_version": "weave/v1alpha1",
+    "ir_versions": [
+      "weave/ir-v1alpha1",
+      "weave/ir-v1alpha2",
+      "weave/ir-v1alpha3"
+    ],
+    "features": [],
+    "limits": {
+      "max_loop_items": 10000,
+      "default_loop_max_items": 1000,
+      "max_loop_depth": 3,
+      "max_concurrency": 1000,
+      "max_run_iterations": 100000,
+      "max_call_depth": 8
+    },
+    "operators": [
+      {
+        "name": "eq",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ],
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Is",
+        "studio": "ready"
+      },
+      {
+        "name": "ne",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ],
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Is not",
+        "studio": "ready"
+      },
+      {
+        "name": "lt",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "integer",
+            "number",
+            "string"
+          ],
+          [
+            "integer",
+            "number",
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Is less than",
+        "studio": "ready"
+      },
+      {
+        "name": "lte",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "integer",
+            "number",
+            "string"
+          ],
+          [
+            "integer",
+            "number",
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Is at most",
+        "studio": "ready"
+      },
+      {
+        "name": "gt",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "integer",
+            "number",
+            "string"
+          ],
+          [
+            "integer",
+            "number",
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Is greater than",
+        "studio": "ready"
+      },
+      {
+        "name": "gte",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "integer",
+            "number",
+            "string"
+          ],
+          [
+            "integer",
+            "number",
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Is at least",
+        "studio": "ready"
+      },
+      {
+        "name": "and",
+        "arity": {
+          "min": 1
+        },
+        "operand_types": [
+          [
+            "boolean"
+          ]
+        ],
+        "repeat_last": true,
+        "result": {
+          "type": "boolean"
+        },
+        "label": "All of",
+        "studio": "ready"
+      },
+      {
+        "name": "or",
+        "arity": {
+          "min": 1
+        },
+        "operand_types": [
+          [
+            "boolean"
+          ]
+        ],
+        "repeat_last": true,
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Any of",
+        "studio": "ready"
+      },
+      {
+        "name": "not",
+        "arity": {
+          "min": 1,
+          "max": 1
+        },
+        "operand_types": [
+          [
+            "boolean"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Not",
+        "studio": "ready"
+      },
+      {
+        "name": "exists",
+        "arity": {
+          "min": 1,
+          "max": 1
+        },
+        "operand_types": [
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Is present",
+        "studio": "ready"
+      },
+      {
+        "name": "coalesce",
+        "arity": {
+          "min": 1
+        },
+        "operand_types": [
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
+        ],
+        "repeat_last": true,
+        "result": {},
+        "label": "First available of",
+        "studio": "ready"
+      },
+      {
+        "name": "contains",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "array",
+            "string"
+          ],
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Contains",
+        "studio": "ready"
+      },
+      {
+        "name": "notContains",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "array",
+            "string"
+          ],
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Does not contain",
+        "studio": "ready"
+      },
+      {
+        "name": "in",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ],
+          [
+            "array"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Is in list",
+        "studio": "ready"
+      },
+      {
+        "name": "notIn",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ],
+          [
+            "array"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Is not in list",
+        "studio": "ready"
+      },
+      {
+        "name": "startsWith",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "string"
+          ],
+          [
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Starts with",
+        "studio": "ready"
+      },
+      {
+        "name": "endsWith",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "string"
+          ],
+          [
+            "string"
+          ]
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "label": "Ends with",
+        "studio": "ready"
+      },
+      {
+        "name": "concat",
+        "feature": "text.concat",
+        "arity": {
+          "min": 1
+        },
+        "operand_types": [
+          [
+            "string",
+            "integer",
+            "number",
+            "boolean"
+          ]
+        ],
+        "repeat_last": true,
+        "result": {
+          "type": "string"
+        },
+        "label": "Combine text",
+        "studio": "pending"
+      },
+      {
+        "name": "join",
+        "feature": "text.join",
+        "arity": {
+          "min": 2,
+          "max": 2
+        },
+        "operand_types": [
+          [
+            "array"
+          ],
+          [
+            "string"
+          ]
+        ],
+        "item_types": [
+          "string",
+          "integer",
+          "number",
+          "boolean"
+        ],
+        "result": {
+          "type": "string"
+        },
+        "label": "Join list",
+        "studio": "pending"
+      }
+    ],
+    "workflow_fields": [
+      {
+        "name": "inputSchema",
+        "studio": "ready"
+      },
+      {
+        "name": "outputSchema",
+        "studio": "ready"
+      },
+      {
+        "name": "connections",
+        "studio": "ready"
+      },
+      {
+        "name": "timeoutSeconds",
+        "studio": "ready"
+      },
+      {
+        "name": "llmProfiles",
+        "studio": "ready"
+      },
+      {
+        "name": "steps",
+        "studio": "ready"
+      },
+      {
+        "name": "output",
+        "studio": "ready"
+      },
+      {
+        "name": "callable",
+        "feature": "flow.callWorkflow",
+        "studio": "pending"
+      }
+    ],
+    "step_kinds": [
+      {
+        "kind": "action",
+        "schema_ref": "workflow.schema.json#/$defs/ActionStep",
+        "group": "actions",
+        "label": "Action",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "ready"
+      },
+      {
+        "kind": "llm",
+        "schema_ref": "workflow.schema.json#/$defs/LLMStep",
+        "group": "ai",
+        "label": "AI task",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "ready"
+      },
+      {
+        "kind": "transform",
+        "schema_ref": "workflow.schema.json#/$defs/TransformStep",
+        "group": "data",
+        "label": "Transform",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "ready"
+      },
+      {
+        "kind": "decisionTable",
+        "schema_ref": "workflow.schema.json#/$defs/DecisionTableStep",
+        "group": "data",
+        "label": "Decision table",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "ready"
+      },
+      {
+        "kind": "switch",
+        "schema_ref": "workflow.schema.json#/$defs/SwitchStep",
+        "group": "flow",
+        "label": "Decision",
+        "blocks": [
+          {
+            "name": "default",
+            "path": "/default",
+            "label": "Otherwise"
+          }
+        ],
+        "scope_roots": [],
+        "studio": "ready"
+      },
+      {
+        "kind": "parallel",
+        "schema_ref": "workflow.schema.json#/$defs/ParallelStep",
+        "group": "flow",
+        "label": "Parallel",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "ready"
+      },
+      {
+        "kind": "forEach",
+        "feature": "flow.forEach",
+        "schema_ref": "workflow.schema.json#/$defs/ForEachStep",
+        "group": "flow",
+        "label": "Loop over items",
+        "blocks": [
+          {
+            "name": "body",
+            "path": "/body",
+            "label": "For each item"
+          }
+        ],
+        "scope_roots": [
+          "/item",
+          "/index",
+          "/loops"
+        ],
+        "studio": "pending"
+      },
+      {
+        "kind": "callWorkflow",
+        "feature": "flow.callWorkflow",
+        "schema_ref": "workflow.schema.json#/$defs/CallWorkflowStep",
+        "group": "flow",
+        "label": "Call a workflow",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "pending"
+      },
+      {
+        "kind": "wait",
+        "schema_ref": "workflow.schema.json#/$defs/WaitStep",
+        "group": "wait",
+        "label": "Wait for time",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "ready"
+      },
+      {
+        "kind": "signal",
+        "schema_ref": "workflow.schema.json#/$defs/SignalStep",
+        "group": "wait",
+        "label": "Wait for signal",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "ready"
+      },
+      {
+        "kind": "humanTask",
+        "schema_ref": "workflow.schema.json#/$defs/HumanTaskStep",
+        "group": "human",
+        "label": "Human task",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "ready"
+      },
+      {
+        "kind": "fail",
+        "schema_ref": "workflow.schema.json#/$defs/FailStep",
+        "group": "flow",
+        "label": "Stop with error",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "ready"
+      }
+    ]
+  }
+}

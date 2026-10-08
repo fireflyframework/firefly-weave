@@ -358,7 +358,13 @@ def test_generated_shapes_match_models_for_representable_fixture_cases():
 
     cases = json.loads((Path(__file__).parents[2] / "fixtures/schemas/contracts.json").read_text())
     exports = exporter().export_schemas()
-    model_only = {"unsafe-integer", "strict-integer", "retry-cross-field", "diagnostic-unordered-source"}
+    model_only = {
+        "unsafe-integer",
+        "strict-integer",
+        "retry-cross-field",
+        "diagnostic-unordered-source",
+        "language-call-detach-on-failure",
+    }
     for case in cases:
         if case["name"] not in model_only:
             assert Draft202012Validator(exports[case["contract"]]).is_valid(case["value"]) is case["valid"], case[

@@ -159,8 +159,11 @@ Choose the kind that matches the file:
 Most inventory entries are `commentless`: strict JSON, the Python, npm, and
 Cargo lockfiles, the desktop icons and installer background, and `py.typed`. Two
 YAML files are `immutable-fixture` entries because parser and CLI tests assert
-their source positions. One entry is `generated`: Studio's schema test corpus, produced by
-[`studio_schema_fixtures.py`](../../scripts/studio_schema_fixtures.py). No vendored
+their source positions. `generated` entries name their generator in `source`. Examples are
+Studio's schema test corpus, produced by
+[`studio_schema_fixtures.py`](../../scripts/studio_schema_fixtures.py), the shared language
+fixtures, produced by [`language_fixtures.py`](../../scripts/language_fixtures.py), and the
+worker lockfiles, produced from the `pyproject.toml` beside each. No vendored
 third-party source is declared. Third-party dependencies keep their own
 distribution metadata and license terms; the inventory does not certify
 redistribution compliance.

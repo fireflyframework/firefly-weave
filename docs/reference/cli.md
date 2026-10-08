@@ -570,6 +570,8 @@ workspace, and you need each operation's grant. Find the body schemas in the
 ```sh
 # Read the project catalog.
 weave remote catalog --output json
+# Read the language manifest: step kinds, operators, features, and limits.
+weave remote language --output json
 # Compile a request file through the platform.
 weave remote compile --request compiler-request.json --output json
 # Save a new draft, then a change to revision 1 of it.

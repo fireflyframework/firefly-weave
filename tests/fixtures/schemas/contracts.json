@@ -439,5 +439,251 @@
       "extra": 1
     },
     "valid": false
+  },
+  {
+    "name": "language-loop-call-text",
+    "contract": "definition",
+    "valid": true,
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "notify",
+            "kind": "forEach",
+            "items": {
+              "ref": "/input/invoices"
+            },
+            "concurrency": 4,
+            "maxItems": 500,
+            "collect": "nonNull",
+            "body": {
+              "steps": [
+                {
+                  "id": "label",
+                  "kind": "transform",
+                  "value": {
+                    "op": {
+                      "name": "concat",
+                      "args": [
+                        {
+                          "literal": "Invoice "
+                        },
+                        {
+                          "ref": "/item/number"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "id": "enrich",
+                  "kind": "callWorkflow",
+                  "uses": "customer-enrichment@1.2.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "mode": "wait",
+                  "onFailure": "continue",
+                  "businessKey": {
+                    "ref": "/item/number"
+                  }
+                }
+              ],
+              "output": {
+                "op": {
+                  "name": "join",
+                  "args": [
+                    {
+                      "ref": "/item/tags"
+                    },
+                    {
+                      "literal": ", "
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "output": {
+          "ref": "/steps/t/output"
+        },
+        "callable": {
+          "allowedCallers": [
+            "order-intake"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "language-call-detach-on-failure",
+    "contract": "definition",
+    "valid": false,
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "enrich",
+            "kind": "callWorkflow",
+            "uses": "customer-enrichment@1.2.0",
+            "with": {
+              "object": {}
+            },
+            "mode": "detach",
+            "onFailure": "stop"
+          }
+        ],
+        "output": {
+          "ref": "/steps/t/output"
+        }
+      }
+    }
+  },
+  {
+    "name": "language-loop-null-max-items",
+    "contract": "definition",
+    "valid": false,
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [
+          {
+            "id": "notify",
+            "kind": "forEach",
+            "items": {
+              "ref": "/input/invoices"
+            },
+            "concurrency": 4,
+            "maxItems": null,
+            "collect": "nonNull",
+            "body": {
+              "steps": [
+                {
+                  "id": "label",
+                  "kind": "transform",
+                  "value": {
+                    "op": {
+                      "name": "concat",
+                      "args": [
+                        {
+                          "literal": "Invoice "
+                        },
+                        {
+                          "ref": "/item/number"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "id": "enrich",
+                  "kind": "callWorkflow",
+                  "uses": "customer-enrichment@1.2.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "mode": "wait",
+                  "onFailure": "continue",
+                  "businessKey": {
+                    "ref": "/item/number"
+                  }
+                }
+              ],
+              "output": {
+                "op": {
+                  "name": "join",
+                  "args": [
+                    {
+                      "ref": "/item/tags"
+                    },
+                    {
+                      "literal": ", "
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "output": {
+          "ref": "/steps/t/output"
+        }
+      }
+    }
+  },
+  {
+    "name": "language-callable-empty-callers",
+    "contract": "definition",
+    "valid": false,
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [],
+        "output": {
+          "ref": "/steps/t/output"
+        },
+        "callable": {
+          "allowedCallers": []
+        }
+      }
+    }
+  },
+  {
+    "name": "language-callable-duplicate-callers",
+    "contract": "definition",
+    "valid": false,
+    "value": {
+      "apiVersion": "weave/v1alpha1",
+      "kind": "Workflow",
+      "metadata": {
+        "name": "sample",
+        "version": "1.0.0"
+      },
+      "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "steps": [],
+        "output": {
+          "ref": "/steps/t/output"
+        },
+        "callable": {
+          "allowedCallers": [
+            "a",
+            "a"
+          ]
+        }
+      }
+    }
   }
 ]

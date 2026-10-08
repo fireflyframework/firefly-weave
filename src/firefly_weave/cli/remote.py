@@ -375,6 +375,7 @@ for operation_id in (
     "compiler.evaluate_decision",
     "catalog.read",
     "capabilities.read",
+    "language.read",
     "schemas.read",
 ):
     remote.add_command(command(operation_id, operation_id.split(".")[0] if operation_id.endswith(".read") else None))

@@ -146,10 +146,11 @@ snake_case keys in a document are rejected. Serialize Python models with
 `model_dump(by_alias=True)` or `model_dump_json(by_alias=True)`.
 
 **Some fields may be omitted but never set to null.** These are the workflow's
-`timeoutSeconds`, an action's `connection` and `routing`, and an action step's
-`connection`. When present they must have their declared type; an explicit `null`
-is rejected. Both serializers preserve the omission, and the Python model shows
-an omitted field as `None`.
+`timeoutSeconds` and `callable` (and its `allowedCallers`), an action's
+`connection` and `routing`, an action step's `connection`, and a call step's
+`onFailure` and `businessKey`. When present they must have their declared type;
+an explicit `null` is rejected. Both serializers preserve the omission, and the
+Python model shows an omitted field as `None`.
 
 `load_definition` checks shape only. It does not parse source text, validate the
 embedded JSON Schemas, resolve dependencies, compile, or authorize anything. The
@@ -170,7 +171,10 @@ object with exactly one of these keys:
 | `op` | An operator with expression arguments: `{op: {name, args}}` | `{op: {name: eq, args: [{ref: /input/urgent}, {literal: true}]}}` |
 
 Operators are `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `and`, `or`, `not`, `exists`,
-`coalesce`, `contains`, `notContains`, `in`, `notIn`, `startsWith`, and `endsWith`.
+`coalesce`, `contains`, `notContains`, `in`, `notIn`, `startsWith`, `endsWith`,
+`concat`, and `join`. `concat` joins one or more strings, numbers, or Booleans
+into one string; `join` takes a list of such values and a separator string. Numbers
+are written as JavaScript writes them (`2.0` becomes `2`, `1e21` stays `1e+21`).
 There are no function calls, scripts, environment variables, or
 file access. The compiler checks arity, types, and scope; the
 [compiler reference](reference/compiler.md#cli-and-published-catalog-contract)
@@ -194,16 +198,29 @@ helps if you know process modeling from another tool:
 | `kind` | Studio name | Closest BPMN idea | Other fields |
 | --- | --- | --- | --- |
 | `action` | **Call an action** | Service task | Required `uses` (exact action reference) and `with` (input expression); optional `connection` slot name |
+| `llm` | **AI task** | Service task | Required `uses` (exact AI action reference), `profile` (an `llmProfiles` entry), `prompt` and `context` expressions, and `connection` slot name |
 | `transform` | **Transform** | Script or business rule task (expressions only) | Required `value` expression |
+| `decisionTable` | **Decision table** | Business rule task | Required `uses` (exact decision table reference) and `with` (input expression) |
 | `switch` | **Decision** | Exclusive gateway | Nonempty `cases: [{when, steps, output}]` and required `default: {steps, output}` (the **Otherwise** path in Studio); the first true case wins |
 | `parallel` | **Parallel** | Parallel gateway (split and join) | Nonempty `branches: {name: {steps, output}}` and a positive integer `concurrency`; every branch completes before the step continues |
 | `wait` | **Wait for time** | Timer intermediate event | Required positive integer `durationSeconds` |
 | `signal` | **Wait for signal** | Message intermediate event | Required `name`, positive integer `timeoutSeconds`, and a `payloadSchema` object |
 | `humanTask` | **Human task** | User task | Required `assignment` (the name of an assignment bound at activation), `title` and `context` expressions, and `formSchema`; `decisions` defaults to `approve`, `reject` (1 to 32 unique names); optional positive `dueSeconds` and `expirySeconds` |
 | `fail` | **Fail** | Error end event | Required business-error `code` (a name such as `customer-not-found`) and a nonempty `message` |
+| `forEach` | **Loop over items** | Multi-instance subprocess | Required `items` (an expression that gives a list) and `body: {steps, output}`; optional `concurrency` (default 1), `maxItems` (default 1000), and `collect` (`all`, the default, or `nonNull`). The defaults are written into the stored document |
+| `callWorkflow` | **Call a workflow** | Call activity | Required `uses` (exact workflow reference) and `with` (input expression); optional `mode` (`wait`, the default, or `detach`), `onFailure` (`stop` or `continue`, only with `wait`), and `businessKey` expression |
 
-Weave is not a BPMN engine and does not import BPMN files. Subprocesses (call
-activities), loops, and compensation are not part of the language.
+Weave is not a BPMN engine and does not import BPMN files. Loops and calls to
+other workflows are part of the language; compensation is not.
+
+**New language constructs.** `forEach`, `callWorkflow`, `concat`, and `join`
+each need a language feature: `flow.forEach`, `flow.callWorkflow`, `text.concat`,
+and `text.join`. Their document shape is final, so `load_definition` accepts
+them, but this version of the compiler reports `WV-COMP-UNSUPPORTED_FEATURE` at
+each use instead of compiling it. A platform runs a construct only when its
+[language manifest](#language-manifest) lists the feature. Step IDs can never
+contain `[`, `#`, or `~`, which keeps
+[instance keys](reference/compiler.md#instance-keys) unambiguous.
 
 Branches may contain zero steps, but each must declare its `output`. The compiler,
 not the shape check, enforces unique step IDs, unique signal names, branch scope,
@@ -231,6 +248,34 @@ definition; they are not legal on a workflow step.
 | `output` | Yes | Expression that computes the run output |
 | `timeoutSeconds` | No | Positive whole-run timeout; omit it for no workflow-wide timeout |
 | `connections` | No (default `{}`) | **Connection slots**: named requirements `{connector: <exact ref>, required: <bool>}`; `required` defaults to `true`. Each slot is bound to an integration connection at activation |
+| `callable` | No | Lets other workflows call this exact version with `callWorkflow`: `{}` allows any workflow in the project, and `{allowedCallers: [order-intake]}` allows only the named workflows (1 to 100 unique names). Studio will write it from a **Called by a workflow** trigger; the manifest marks the field `pending` until then |
+
+A callable workflow, and a loop over a list that builds text for each item:
+
+```yaml
+# notify-customer@1.0.0 accepts calls from order-intake only.
+spec:
+  callable:
+    allowedCallers: [order-intake]
+---
+# One reminder per invoice, four at a time, collected in invoice order.
+- id: notify
+  kind: forEach
+  items: {ref: /input/invoices}
+  concurrency: 4
+  body:
+    steps:
+      - id: subject
+        kind: transform
+        value:
+          op:
+            name: concat
+            args: [{literal: "Invoice "}, {ref: /item/number}, {literal: " is overdue"}]
+    output: {ref: /steps/subject/output}
+```
+
+The full examples are in
+[examples/language](../examples/language/).
 
 ## Actions
 
@@ -271,6 +316,24 @@ A **connector** is trusted code that knows a protocol, such as the built-in
 Manifests contain no Python source or import paths. To build one, see
 [Author a connector](connectors/authoring.md); to call a REST API without
 writing one, see [Call a REST API without code](connectors/http-without-code.md).
+
+## Language manifest
+
+The **language manifest** lists every step kind, operator, and workflow field the
+language defines, the features each one needs, the features the platform runs,
+and the language limits. Studio will read it to decide what to offer. Read it with
+`weave remote language` or `GET /api/v1/tenants/{tenant}/projects/{project}/language`
+(`language.read`, capability `catalog.read`); Studio's local host serves the same
+document at `/studio/contracts/language`, and `weave schema export` writes its
+schema as `language-manifest.schema.json`.
+
+| Field | Meaning |
+| --- | --- |
+| `version`, `language_version` | `weave/language-manifest-v1` and `weave/v1alpha1` |
+| `ir_versions` | The executable IR versions the platform accepts |
+| `features` | The language features the platform runs; empty in this version |
+| `limits` | `max_loop_items`, `default_loop_max_items`, `max_loop_depth`, `max_concurrency`, `max_run_iterations`, `max_call_depth` |
+| `step_kinds`, `operators`, `workflow_fields` | One entry each, with the `feature` it needs (if any) and `studio`: `ready` when Studio edits it, `pending` until then |
 
 ## Values and budgets
 
@@ -370,5 +433,7 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | A field is rejected although it looks right | Field names are camelCase and case-sensitive; snake_case keys are rejected | Use the published name, such as `timeoutSeconds` |
 | `null` is rejected for an optional field | Optional fields may be omitted but not set to null | Remove the field |
 | A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
+| `WV-COMP-UNSUPPORTED_FEATURE` | The document uses `forEach`, `callWorkflow`, `concat`, or `join`, which this version of the compiler does not compile yet | Keep the document for a later version, or replace the construct with the steps the compiler supports |
+| `onFailure` is rejected on a call step | `onFailure` applies only when the call waits for its result | Remove `onFailure`, or set `mode: wait` |
 | Partial validation passes, but there is no artifact | Partial validation never produces one | Compile with an explicit catalog |
 | Compilation passes, but the run fails to start | Compilation proves no worker, connection, or permission | Check the activation's bindings and your grants |
