@@ -43,7 +43,7 @@ from firefly_weave.contracts.workers import (
 )
 from firefly_weave.definitions.models import capacity_rejected
 from firefly_weave.email.service import EmailService
-from firefly_weave.operations.execution import request_execution
+from firefly_weave.operations.execution import ReservedSlots, request_execution
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.repository import RuntimeRepository
 from firefly_weave.sdk._settlement import check_settlement, settlement_deadline
@@ -111,10 +111,15 @@ class ConnectorExecutionService:
             actor = await self.access.load_principal(principal_id, tx=tx)
             return await getattr(self.tasks, name)(tx, *args, actor=actor, scope=scope, context=AuditContext())
 
-    async def execute(self, scope: Scope, principal_id: UUID, lease: TaskLease) -> JsonValue:
+    async def execute(
+        self, scope: Scope, principal_id: UUID, lease: TaskLease, *, reservation: ReservedSlots | None = None
+    ) -> JsonValue:
         self.registry.require_operational()
+        # A request lease covers the whole connector call. In-process native workers bring their
+        # own reservation instead, whose slots only the call's pure work takes.
+        execution = request_execution if reservation is None else reservation.execution
         async with AsyncExitStack() as stack:
-            await _admitted(lease.proof, lambda: stack.enter_async_context(request_execution()), waits=True)
+            await _admitted(lease.proof, lambda: stack.enter_async_context(execution()), waits=True)
             return await self._execute(scope, principal_id, lease)
 
     async def _execute(self, scope: Scope, principal_id: UUID, lease: TaskLease) -> JsonValue:

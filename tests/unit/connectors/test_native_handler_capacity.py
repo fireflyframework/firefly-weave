@@ -29,7 +29,7 @@ from firefly_weave.connectors.execution import ConnectorExecutionService, Servic
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.workers import LeaseProof, TaskLease
 from firefly_weave.definitions.models import CatalogError
-from firefly_weave.operations.execution import WORK_SLOTS, request_execution
+from firefly_weave.operations.execution import WORK_SLOTS, ReservedSlots, request_execution
 from firefly_weave.sdk.worker import Worker
 
 
@@ -100,7 +100,7 @@ class Tasks:
 class Harness:
     """Real native execution, in-process transport, and worker; storage and the connector are fakes."""
 
-    def __init__(self, errors=None, body=None) -> None:
+    def __init__(self, errors=None, body=None, reservation=None) -> None:
         self.tasks = Tasks(errors or {})
         self.ran: list[object] = []
         harness = self
@@ -130,7 +130,7 @@ class Harness:
         scope, principal = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4()), uuid4()
 
         async def handler(task: TaskLease):
-            return await self.service.execute(scope, principal, task)
+            return await self.service.execute(scope, principal, task, reservation=reservation)
 
         self.worker = Worker(ServiceTransport(self.service, scope, principal, uuid4()), {"call@1.0.0": handler}, 1)
 
@@ -184,6 +184,16 @@ async def test_refused_invocation_check_waits_past_the_direct_window(code):
     assert harness.tasks.settled == [("complete", {"ok": True})]
     assert harness.tasks.calls.count("invocation") == 7
     assert harness.ran == [{"value": 1}]
+
+
+async def test_native_reservation_waits_out_a_refused_invocation_check():
+    # In-process native workers execute inside their own pure-execution reservation.
+    harness = Harness({"invocation": [busy()] * 6}, reservation=ReservedSlots(2))
+
+    await harness.run()
+
+    assert harness.tasks.settled == [("complete", {"ok": True})]
+    assert harness.tasks.calls.count("invocation") == 7
 
 
 async def test_refused_authorization_inside_the_handler_is_sent_again():

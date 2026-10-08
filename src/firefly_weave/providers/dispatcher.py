@@ -32,7 +32,7 @@ from firefly_weave.access.service import audit
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.providers import ProviderReceipt
 from firefly_weave.contracts.runtime import StartRunRequest
-from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.providers.repository import ProviderRepository
 from firefly_weave.providers.service import ProviderIngressService
 from firefly_weave.runtime.repository import SCOPE
@@ -89,6 +89,9 @@ class ProviderDispatcher:
             except (AccessDenied, AuthenticationFailed):
                 changes.update(state="blocked", reason="authority_unavailable")
             except CatalogError as error:
+                # A capacity refusal ran nothing: roll back, and the turn keeps the receipt pending with a cooldown.
+                if capacity_rejected(error):
+                    raise
                 changes.update(
                     state="failed"
                     if error.code in {"WV-PROVIDER-TERMINAL", "WV-SIGNAL-TERMINAL", "WV-PROVIDER-PAYLOAD"}
