@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Contract gaps share one status across cards, the inspector and diagnostics.
 import { test, expect } from "@playwright/test";
+import { resolve } from "node:path";
 import {
   connected,
   newWorkflow,
@@ -106,3 +107,41 @@ for (const viewport of [
     ).toHaveText("Draft");
   });
 }
+test("an opened workflow isn't marked unsaved until it's edited", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.clock.install();
+  await offline(page);
+  await page
+    .getByLabel("Choose a workflow file")
+    .setInputFiles(resolve("tests/fixtures/vendor-payment-approval.yaml"));
+  const designer = new DesignerPage(page);
+  const identity = page.locator(".editor-identity");
+  // The workflow settings are open beside the canvas.
+  await expect(
+    designer.inspector.getByRole("heading", { name: "Inputs", exact: true }),
+  ).toBeVisible();
+  // Nothing was edited: no change waits to be kept, neither now nor once
+  // the 800 ms autosave delay has passed.
+  expect(await identity.textContent()).not.toContain("Unsaved");
+  await page.clock.runFor(1000);
+  await expect(identity).not.toContainText("Unsaved");
+  // The same with a step's details open.
+  await designer.node("approval").locator(".node-body").click();
+  const title = designer.inspector.getByRole("textbox", {
+    name: "Title",
+    exact: true,
+  });
+  await expect(title).toHaveValue("Approve vendor payment");
+  expect(await identity.textContent()).not.toContain("Unsaved");
+  await page.clock.runFor(1000);
+  await expect(identity).not.toContainText("Unsaved");
+  // An edit is kept on this computer and says so.
+  await title.fill("Approve the vendor payment");
+  await title.press("Tab");
+  await page.clock.runFor(1000);
+  await expect(identity.locator(".status-chip")).toContainText(
+    /Draft saved \d{2}:\d{2}/,
+  );
+});
