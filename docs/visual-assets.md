@@ -45,9 +45,9 @@ carry the Apache-2.0 header and a trademark line.
 
 ## Choose the right asset
 
-![The Firefly Weave logo in paper on charcoal](../assets/brand/weave-lockup-reversed.svg){ width="320" }
+![The Firefly Weave logo in paper on charcoal](../assets/brand/weave-lockup-reversed.svg#gh-dark-mode-only)
 
-![The Firefly Weave logo in charcoal, shown on a paper panel](../assets/brand/weave-lockup-color.svg){ width="320" }
+![The Firefly Weave logo in charcoal, shown on a paper panel](../assets/brand/weave-lockup-color.svg#gh-light-mode-only)
 
 | Asset | Use it for | Size |
 | --- | --- | --- |

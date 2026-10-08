@@ -85,8 +85,18 @@ SPDX-License-Identifier: Apache-2.0
 .md-typeset table:not([class]) th { background: var(--md-code-bg-color); }
 /* Diagrams stay light, each on its own paper panel. */
 .md-typeset img[src*="diagrams/"] { background: #f3f1eb; border-radius: 6px; }
+/* The brand page shows both lockups 320 px wide. The source links end in GitHub's theme fragments, so these selectors
+   match inside the URL. The header logo sits outside .md-typeset and keeps its own size. Material hides images with
+   those fragments for the other color scheme, so the page shows both lockups on purpose. */
+[data-md-color-scheme] .md-typeset img[src*="weave-lockup-reversed.svg"],
+[data-md-color-scheme] .md-typeset img[src*="weave-lockup-color.svg"] {
+  display: inline;
+  width: 320px;
+  max-width: 100%;
+  height: auto;
+}
 /* The color lockup is for paper and white surfaces. */
-.md-typeset img[src$="weave-lockup-color.svg"] { background: #f3f1eb; border-radius: 6px; padding: 16px; }
+.md-typeset img[src*="weave-lockup-color.svg"] { background: #f3f1eb; border-radius: 6px; padding: 16px; }
 .md-typeset img[src$="banner.svg"] { width: 100%; height: auto; border-radius: .2rem; }
 .md-nav__link--active { font-weight: 600; }
 :focus-visible { outline: 3px solid var(--md-accent-fg-color); outline-offset: 3px; }

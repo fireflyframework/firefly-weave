@@ -166,6 +166,13 @@ def test_strict_build_retains_theme_assets_and_public_navigation(tmp_path):
     fonts = re.findall(r'url\("\.\./(assets/fonts/manrope/[^"]+\.woff2)"\)', stylesheet)
     assert len(fonts) == 2 and all((output / font).is_file() for font in fonts)
     assert (output / "assets/fonts/manrope/OFL.txt").is_file()
+    brand = (output / "visual-assets/index.html").read_text(encoding="utf-8")
+    assert 'src="../assets/brand/weave-lockup-reversed.svg#gh-dark-mode-only"' in brand
+    assert 'src="../assets/brand/weave-lockup-color.svg#gh-light-mode-only"' in brand
+    assert "{ width" not in brand
+    assert 'img[src*="weave-lockup-reversed.svg"]' in stylesheet
+    assert 'img[src*="weave-lockup-color.svg"]' in stylesheet
+    assert 'src$="weave-lockup' not in stylesheet
     assert not list(output.rglob("weave-logo*.svg"))
     pointer = (output / "guides/lumi/index.html").read_text(encoding="utf-8")
     assert '<a href="../weave-ai/">Use Weave AI</a>' in pointer
