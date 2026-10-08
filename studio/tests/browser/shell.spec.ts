@@ -31,68 +31,72 @@ const desktopShell = (page: Page) =>
     (window as unknown as Record<string, unknown>)["__TAURI_INTERNALS__"] = {};
   });
 
-test("reloading a paired window never flashes the pairing page", async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    new MutationObserver(() => {
-      if (document.getElementById("pair-code"))
-        (window as unknown as Record<string, boolean>)["pairSeen"] = true;
-    }).observe(document, { childList: true, subtree: true });
-  });
-  await page.route("**/studio/session", async (r) => {
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    await r.fulfill({
-      json: { paired: true, version: "1", mode: "offline", profile: null },
+test(
+  "reloading a paired window never flashes the pairing page",
+  { tag: "@xplat" },
+  async ({ page }) => {
+    await page.addInitScript(() => {
+      new MutationObserver(() => {
+        if (document.getElementById("pair-code"))
+          (window as unknown as Record<string, boolean>)["pairSeen"] = true;
+      }).observe(document, { childList: true, subtree: true });
     });
-  });
-  await page.goto("/");
-  await expect(
-    page.getByRole("status").filter({ hasText: "Opening Studio" }),
-  ).toBeVisible();
-  await expect(page.locator("weave-home-dashboard")).toBeVisible();
-  expect(await page.evaluate(() => (window as any).pairSeen ?? false)).toBe(
-    false,
-  );
-});
-
-test("pairing focuses the code, ignores empty or repeated Enter and explains failures", async ({
-  page,
-}) => {
-  const posts: unknown[] = [];
-  await page.route("**/studio/session", async (r) => {
-    if (r.request().method() === "GET")
-      return r.fulfill({
-        json: { paired: false, version: "1", mode: "offline", profile: null },
+    await page.route("**/studio/session", async (r) => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await r.fulfill({
+        json: { paired: true, version: "1", mode: "offline", profile: null },
       });
-    posts.push(r.request().postDataJSON());
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    return r.fulfill({
-      status: 403,
-      json: {
-        status: 403,
-        code: "WV-STUDIO-PAIRING",
-        message: "Pairing code is invalid or expired; restart Studio",
-      },
     });
-  });
-  await page.goto("/");
-  const code = page.getByLabel("Pairing code");
-  await expect(code).toBeFocused();
-  await code.press("Enter");
-  expect(posts).toHaveLength(0);
-  await code.fill("  stale-code ");
-  await code.press("Enter");
-  await code.press("Enter");
-  await expect(page.getByRole("alert")).toContainText(
-    "That pairing code is invalid or has expired.",
-  );
-  await expect(page.getByRole("alert")).toContainText(
-    "Support code: WV-STUDIO-PAIRING",
-  );
-  await expect(page.getByRole("alert")).not.toContainText("{");
-  expect(posts).toEqual([{ code: "stale-code" }]);
-});
+    await page.goto("/");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Opening Studio" }),
+    ).toBeVisible();
+    await expect(page.locator("weave-home-dashboard")).toBeVisible();
+    expect(await page.evaluate(() => (window as any).pairSeen ?? false)).toBe(
+      false,
+    );
+  },
+);
+
+test(
+  "pairing focuses the code, ignores empty or repeated Enter and explains failures",
+  { tag: "@xplat" },
+  async ({ page }) => {
+    const posts: unknown[] = [];
+    await page.route("**/studio/session", async (r) => {
+      if (r.request().method() === "GET")
+        return r.fulfill({
+          json: { paired: false, version: "1", mode: "offline", profile: null },
+        });
+      posts.push(r.request().postDataJSON());
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return r.fulfill({
+        status: 403,
+        json: {
+          status: 403,
+          code: "WV-STUDIO-PAIRING",
+          message: "Pairing code is invalid or expired; restart Studio",
+        },
+      });
+    });
+    await page.goto("/");
+    const code = page.getByLabel("Pairing code");
+    await expect(code).toBeFocused();
+    await code.press("Enter");
+    expect(posts).toHaveLength(0);
+    await code.fill("  stale-code ");
+    await code.press("Enter");
+    await code.press("Enter");
+    await expect(page.getByRole("alert")).toContainText(
+      "That pairing code is invalid or has expired.",
+    );
+    await expect(page.getByRole("alert")).toContainText(
+      "Support code: WV-STUDIO-PAIRING",
+    );
+    await expect(page.getByRole("alert")).not.toContainText("{");
+    expect(posts).toEqual([{ code: "stale-code" }]);
+  },
+);
 
 test("an ended session returns the browser to pairing with an explanation", async ({
   page,
@@ -153,54 +157,56 @@ test("an ended session reloads the desktop shell so it can pair again", async ({
   expect(sessions).toBe(1);
 });
 
-test("dialogs are labeled, trap focus, close on Escape and return focus", async ({
-  page,
-}) => {
-  await connected(page);
-  await newWorkflow(page);
-  await insertStep(page, "Transform");
-  // Publish waits in More until the draft is saved; More opens the dialog.
-  const publish = page.getByRole("button", { name: "More", exact: true });
-  await command(page, "Publish…");
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toHaveAttribute("aria-modal", "true");
-  const heading = await dialog.getAttribute("aria-labelledby");
-  await expect(page.locator(`[id="${heading}"]`)).toHaveText(
-    "Publish untitled-workflow 1.0.0?",
-  );
-  await expect(
-    dialog.getByRole("button", { name: "Publish version" }),
-  ).toBeFocused();
-  for (let i = 0; i < 6; i++) {
-    await page.keyboard.press("Tab");
+test(
+  "dialogs are labeled, trap focus, close on Escape and return focus",
+  { tag: "@xplat" },
+  async ({ page }) => {
+    await connected(page);
+    await newWorkflow(page);
+    await insertStep(page, "Transform");
+    // Publish waits in More until the draft is saved; More opens the dialog.
+    const publish = page.getByRole("button", { name: "More", exact: true });
+    await command(page, "Publish…");
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toHaveAttribute("aria-modal", "true");
+    const heading = await dialog.getAttribute("aria-labelledby");
+    await expect(page.locator(`[id="${heading}"]`)).toHaveText(
+      "Publish untitled-workflow 1.0.0?",
+    );
+    await expect(
+      dialog.getByRole("button", { name: "Publish version" }),
+    ).toBeFocused();
+    for (let i = 0; i < 6; i++) {
+      await page.keyboard.press("Tab");
+      expect(
+        await page.evaluate(
+          () => !!document.activeElement?.closest(".modal-panel"),
+        ),
+      ).toBe(true);
+    }
+    await page.keyboard.press("Shift+Tab");
     expect(
       await page.evaluate(
         () => !!document.activeElement?.closest(".modal-panel"),
       ),
     ).toBe(true);
-  }
-  await page.keyboard.press("Shift+Tab");
-  expect(
-    await page.evaluate(
-      () => !!document.activeElement?.closest(".modal-panel"),
-    ),
-  ).toBe(true);
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(publish).toBeFocused();
-  await expect(page.locator('[data-step="transform-1"]')).toHaveCount(1);
-  // A press on the backdrop keeps focus in the dialog, so Escape still closes it.
-  await command(page, "Publish…");
-  await expect(dialog).toBeVisible();
-  await page.mouse.click(4, 450);
-  expect(
-    await page.evaluate(
-      () => !!document.activeElement?.closest(".modal-panel"),
-    ),
-  ).toBe(true);
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-});
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(publish).toBeFocused();
+    await expect(page.locator('[data-step="transform-1"]')).toHaveCount(1);
+    // A press on the backdrop keeps focus in the dialog, so Escape still closes it.
+    await command(page, "Publish…");
+    await expect(dialog).toBeVisible();
+    await page.mouse.click(4, 450);
+    expect(
+      await page.evaluate(
+        () => !!document.activeElement?.closest(".modal-panel"),
+      ),
+    ).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  },
+);
 
 test("export in the desktop shell downloads both files to the shell", async ({
   page,
@@ -247,21 +253,23 @@ test("export offers copies when no download can start", async ({ page }) => {
   await expect(dialog).toHaveCount(0);
 });
 
-test("browser export downloads both files without a fallback dialog", async ({
-  page,
-}) => {
-  await offline(page);
-  await newWorkflow(page);
-  const names: string[] = [];
-  page.on("download", (download) => names.push(download.suggestedFilename()));
-  await command(page, "Save to file");
-  await expect.poll(() => names.length).toBe(2);
-  expect(names.sort()).toEqual([
-    "untitled-workflow.layout.json",
-    "untitled-workflow.yaml",
-  ]);
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-});
+test(
+  "browser export downloads both files without a fallback dialog",
+  { tag: "@xplat" },
+  async ({ page }) => {
+    await offline(page);
+    await newWorkflow(page);
+    const names: string[] = [];
+    page.on("download", (download) => names.push(download.suggestedFilename()));
+    await command(page, "Save to file");
+    await expect.poll(() => names.length).toBe(2);
+    expect(names.sort()).toEqual([
+      "untitled-workflow.layout.json",
+      "untitled-workflow.yaml",
+    ]);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  },
+);
 
 test("API failures read as plain language with a support code", async ({
   page,
