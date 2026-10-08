@@ -50,7 +50,7 @@ from firefly_weave.contracts.integration_events import (
     Subscription,
     SubscriptionRequest,
 )
-from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.operations.subscriptions import SubscriptionService
 from firefly_weave.persistence.paging import page_ids
@@ -331,17 +331,20 @@ class OutboxDispatcher:
             return "retry"
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
             # An unavailable database cannot prove revocation. Leave the fenced
             # attempt recoverable if checking or settling cannot finish in budget.
-            if asyncio.get_running_loop().time() >= deadline:
+            # A capacity refusal is not a delivery failure: lease expiry recovers it.
+            if capacity_rejected(error) or asyncio.get_running_loop().time() >= deadline:
                 return "retry"
             try:
                 async with asyncio.timeout_at(deadline):
                     try:
                         async with self.uow.open(scope) as tx:
                             await self._checked(tx, identifier, token)
-                    except (AccessDenied, CatalogError, AuthenticationFailed):
+                    except (AccessDenied, CatalogError, AuthenticationFailed) as refused:
+                        if capacity_rejected(refused):
+                            return "retry"
                         return await self._settle(scope, identifier, token, "AUTHORITY_REVOKED", False, terminal=True)
                     return await self._settle(scope, identifier, token, "DELIVERY_FAILED", False)
             except Exception:

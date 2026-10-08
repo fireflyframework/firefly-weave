@@ -226,6 +226,12 @@ A delivery's status is `pending`, `leased`, `retry`, `delivered`, or `incident`.
   5 seconds; after later ones, 30 seconds. An expired lease is recorded as
   `ACK_UNKNOWN` before the next attempt. Attempts accumulate and are never
   erased.
+- **Busy platform.** If Weave turns away a database transaction during an
+  attempt for capacity (`WV-OPERATION-CAPACITY`), the attempt is recorded
+  neither as failed nor as `AUTHORITY_REVOKED`. The lease stays fenced and
+  expires, and the next attempt records it as `ACK_UNKNOWN`. The attempt still
+  counts toward the three, so sustained refusals end in the usual exhaustion
+  incident.
 - **Incidents.** When attempts run out or authority is revoked, the delivery
   becomes an operations incident with a controlled code and an audit record. It
   does not create or suspend a run.
