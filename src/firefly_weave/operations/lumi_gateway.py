@@ -64,6 +64,9 @@ class LumiGatewaySettings(BaseModel):
             secure = url.scheme == "https" or (url.scheme == "http" and _loopback(url.hostname))
             if not secure or not url.hostname or url.username or url.password or url.query or url.fragment:
                 raise ValueError("The AI gateway needs an HTTPS endpoint, or plain HTTP to a loopback address")
+            if url.path.endswith("/"):
+                # Sibling routes such as ``test`` resolve next to the endpoint's last segment, not under it.
+                raise ValueError("The AI gateway endpoint names its route without a trailing slash")
         return self
 
 
