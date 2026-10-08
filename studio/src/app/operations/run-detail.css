@@ -73,7 +73,7 @@ h3 {
   border: 1px solid var(--warning-bd);
   border-left: 3px solid var(--live);
   border-radius: var(--radius-md);
-  background: var(--gold-soft);
+  background: var(--accent-soft);
 }
 .now-label {
   font: var(--type-caption);
@@ -172,8 +172,8 @@ h3 {
   height: 32px;
   flex: none;
   border-radius: var(--radius-sm);
-  background: var(--mist);
-  color: var(--jade-strong);
+  background: var(--raised);
+  color: var(--link);
 }
 .node-text {
   display: grid;
@@ -259,7 +259,7 @@ h3 {
   position: relative;
 }
 .timeline li[data-tone="success"] .dot {
-  background: var(--jade);
+  background: var(--success);
 }
 .timeline li[data-tone="danger"] .dot {
   background: var(--danger);

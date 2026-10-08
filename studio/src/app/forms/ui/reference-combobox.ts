@@ -426,7 +426,7 @@ let sequence = 0;
         grid-area: token;
         padding: 5px 8px 0;
         font: 600 13px/18px var(--font-sans);
-        color: var(--forest);
+        color: var(--text);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -490,7 +490,7 @@ let sequence = 0;
         overflow-wrap: anywhere;
       }
       .ref-combo-group weave-icon {
-        color: var(--jade);
+        color: var(--link);
         flex: none;
       }
       .ref-combo-group small {
@@ -534,7 +534,7 @@ let sequence = 0;
         font-size: 12px;
         border-radius: var(--radius-pill);
         padding: 1px 7px;
-        background: var(--mist);
+        background: var(--raised);
         color: var(--text);
         white-space: nowrap;
       }

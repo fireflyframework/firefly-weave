@@ -259,7 +259,7 @@ const marks: Record<ReadinessStep["status"], string> = {
       height: 20px;
       border-radius: 50%;
       font: 700 12px/1 var(--font-sans);
-      background: var(--mist);
+      background: var(--raised);
       color: var(--muted);
     }
     .readiness-icon[data-tone="ok"] {
@@ -291,17 +291,17 @@ const marks: Record<ReadinessStep["status"], string> = {
       justify-content: center;
       font-size: 12px;
       font-weight: 700;
-      background: var(--mist);
+      background: var(--raised);
       color: var(--muted);
     }
     .done .mark {
-      background: var(--mint);
-      color: var(--forest);
+      background: var(--success-bg);
+      color: var(--success-ink);
     }
     .action .mark {
-      background: var(--gold-soft);
-      color: #5f4612;
-      border: 1px solid var(--gold);
+      background: var(--warning-bg);
+      color: var(--warning-ink);
+      border: 1px solid var(--warning-bd);
     }
     .title {
       margin: 2px 0 0;
@@ -327,7 +327,7 @@ const marks: Record<ReadinessStep["status"], string> = {
       overflow-wrap: anywhere;
       padding: 6px 8px;
       border-radius: 5px;
-      background: var(--mist);
+      background: var(--sunken);
       font-size: 12px;
     }
     .command button {
@@ -593,7 +593,7 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
       overflow-wrap: anywhere;
       padding: 8px 10px;
       border-radius: 5px;
-      background: var(--mist);
+      background: var(--raised);
     }
     .destination .error {
       flex-basis: 100%;
@@ -613,7 +613,7 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
       overflow-wrap: anywhere;
       padding: 8px;
       border-radius: 5px;
-      background: var(--mist);
+      background: var(--sunken);
       font-size: 12px;
     }
     .row {
@@ -653,7 +653,7 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
       overflow-wrap: anywhere;
       padding: 8px;
       border-radius: var(--radius-xs);
-      background: var(--mist);
+      background: var(--sunken);
       font: var(--type-mono);
     }
     /* The dialog's footer stays in view at the bottom of the scrolling

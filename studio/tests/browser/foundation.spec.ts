@@ -15,9 +15,11 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The design foundation (UX plan wave 1): field borders that pass 3:1, flat
-// disabled buttons, one focus ring, status pills with a tone border, control
-// heights, and one drawing per icon.
+// The design foundation (brand PR 1, contract C1): field borders that pass
+// 3:1, flat disabled buttons, one amber focus ring, status pills in the tone
+// tokens, Lucide icons at a 1.5px stroke, Manrope from Studio's own origin,
+// and the Firefly Weave lockup, mark and favicons. Colors are read from the
+// tokens at run time; only the amber accent is a fixed brand anchor.
 import { test, expect, Locator, Page } from "@playwright/test";
 import {
   allCapabilities,
@@ -25,8 +27,12 @@ import {
   insertStep,
   newWorkflow,
   offline,
+  tokenColor,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+/** The brand amber (--accent, --focus): a fixed anchor, not read from CSS. */
+const amber = "rgb(255, 179, 74)";
 
 /** WCAG contrast of two computed colors ("rgb(r, g, b)"). */
 function contrast(a: string, b: string) {
@@ -62,8 +68,6 @@ async function tabTo(page: Page, selector: string, limit = 40) {
   }
   throw Error(`Tab never reached ${selector}`);
 }
-const white = "rgb(255, 255, 255)";
-const mist = "rgb(238, 244, 240)";
 
 test.describe("1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
@@ -74,10 +78,13 @@ test.describe("1440x900", () => {
     await offline(page);
     await newWorkflow(page);
     const name = new DesignerPage(page).inspectorField("Name");
-    const rest = await css(name, "border-top-color");
-    expect(rest["border-top-color"]).toBe("rgb(115, 140, 128)");
-    expect(contrast(rest["border-top-color"], white)).toBeGreaterThanOrEqual(3);
-    expect(contrast(rest["border-top-color"], mist)).toBeGreaterThanOrEqual(3);
+    const rest = (await css(name, "border-top-color"))["border-top-color"];
+    expect(rest).toBe(await tokenColor(page, "--field-border"));
+    for (const surface of ["--sunken", "--surface", "--raised", "--hover"])
+      expect(
+        contrast(rest, await tokenColor(page, surface)),
+        surface,
+      ).toBeGreaterThanOrEqual(3);
     await name.click();
     const focused = await css(
       name,
@@ -90,9 +97,9 @@ test.describe("1440x900", () => {
     expect(focused).toEqual({
       "outline-style": "solid",
       "outline-width": "2px",
-      "outline-color": "rgb(44, 106, 87)",
+      "outline-color": amber,
       "outline-offset": "1px",
-      "border-top-color": "rgb(44, 106, 87)",
+      "border-top-color": amber,
     });
   });
 
@@ -111,26 +118,27 @@ test.describe("1440x900", () => {
     await expect(activate).toBeDisabled();
     await expect(activate).toHaveAttribute("aria-disabled", "true");
     await expect(activate).toHaveClass(/\bprimary\b/);
-    const look = await css(activate, "background-color", "color", "opacity");
-    expect(look).toEqual({
-      "background-color": "rgb(238, 242, 239)",
-      color: "rgb(92, 112, 106)",
+    const flat = {
+      "background-color": await tokenColor(page, "--disabled-bg"),
+      color: await tokenColor(page, "--disabled-ink"),
       opacity: "1",
-    });
+    };
+    const look = await css(activate, "background-color", "color", "opacity");
+    expect(look).toEqual(flat);
     expect(contrast(look.color, look["background-color"])).toBeGreaterThan(4.5);
     // Hovering changes nothing.
     await activate.hover({ force: true });
     expect((await css(activate, "background-color"))["background-color"]).toBe(
-      "rgb(238, 242, 239)",
+      flat["background-color"],
     );
   });
 
-  test("one 2px focus ring, mint in the forest sidebar", async ({ page }) => {
+  test("one 2px amber focus ring, in the sidebar too", async ({ page }) => {
     await offline(page);
     // The first stops are in the sidebar.
     const sidebar = await tabTo(page, ".sidebar button");
     expect(await css(sidebar, "outline-color", "outline-width")).toEqual({
-      "outline-color": "rgb(161, 209, 185)",
+      "outline-color": amber,
       "outline-width": "2px",
     });
     const content = await tabTo(page, ".main-shell button");
@@ -145,7 +153,7 @@ test.describe("1440x900", () => {
     ).toEqual({
       "outline-style": "solid",
       "outline-width": "2px",
-      "outline-color": "rgb(44, 106, 87)",
+      "outline-color": amber,
       "outline-offset": "2px",
     });
   });
@@ -155,7 +163,6 @@ test.describe("1440x900", () => {
   }) => {
     await offline(page);
     await expect(page.locator(".dashboard-status")).toBeVisible();
-    // Waves 2 and 3 apply these classes; their look is defined now.
     const looks = await page.evaluate(() => {
       const host = document.createElement("div");
       host.innerHTML = `
@@ -191,34 +198,40 @@ test.describe("1440x900", () => {
       return result;
     });
     const by = (text: string) => looks.find((l) => l.text === text)!;
+    const token = (name: string) => tokenColor(page, name);
     expect(by("Failed")).toMatchObject({
-      color: "rgb(150, 37, 49)",
-      background: "rgb(251, 232, 233)",
+      color: await token("--danger-ink"),
+      background: await token("--danger-bg"),
       borderWidth: "1px",
       height: "22px",
       font: "600 12px",
       dot: '""',
     });
-    expect(by("Succeeded").color).toBe("rgb(29, 96, 71)");
-    expect(by("Running").color).toBe("rgb(36, 90, 107)");
-    expect(by("Waiting").color).toBe("rgb(115, 80, 15)");
+    expect(by("Succeeded").color).toBe(await token("--success-ink"));
+    expect(by("Running").color).toBe(await token("--info-ink"));
+    expect(by("Waiting").color).toBe(await token("--warning-ink"));
     // The old class name is the neutral pill.
     expect(by("Queued")).toMatchObject({
-      color: "rgb(70, 93, 85)",
-      background: "rgb(237, 241, 238)",
+      color: await token("--neutral-ink"),
+      background: await token("--neutral-bg"),
     });
     for (const text of ["Failed", "Succeeded", "Running", "Waiting", "Queued"])
       expect(
         contrast(by(text).color, by(text).background),
       ).toBeGreaterThanOrEqual(6);
-    // "Production" is a forest outline, never gold.
+    // "Production" is a paper outline: never amber, never a status tone.
     expect(by("Production")).toMatchObject({
-      color: "rgb(23, 61, 52)",
-      border: "rgb(23, 61, 52)",
+      color: await token("--text"),
+      border: await token("--text"),
     });
-    expect(by("Created pets.").background).toBe("rgb(226, 241, 233)");
-    expect(by("Not saved.").color).toBe("rgb(150, 37, 49)");
-    expect(by("Task claimed.").background).toBe("rgb(23, 61, 52)");
+    expect(by("Created pets.").background).toBe(await token("--success-bg"));
+    expect(by("Not saved.").color).toBe(await token("--danger-ink"));
+    // Toasts are raised surfaces with paper text and a graphite edge.
+    expect(by("Task claimed.")).toMatchObject({
+      background: await token("--raised"),
+      color: await token("--text"),
+      border: await token("--border"),
+    });
   });
 
   test("icons draw Lucide geometry at a 1.5px stroke, 16 and 20 px", async ({
@@ -268,6 +281,41 @@ test.describe("1440x900", () => {
         new Set(["non-scaling-stroke"]),
       );
     }
+  });
+
+  test("renders Manrope from Studio's own origin", async ({ page }) => {
+    const fonts: string[] = [];
+    page.on("request", (request) => {
+      if (request.resourceType() === "font") fonts.push(request.url());
+    });
+    await offline(page);
+    await page.evaluate(() => document.fonts.ready);
+    expect(
+      await page.evaluate(() => document.fonts.check("14px Manrope")),
+    ).toBe(true);
+    expect(
+      await page.evaluate(() => getComputedStyle(document.body).fontFamily),
+    ).toMatch(/^"?Manrope"?,/);
+    const origin = new URL(page.url()).origin;
+    expect(fonts.length).toBeGreaterThan(0);
+    for (const url of fonts)
+      expect(url.startsWith(`${origin}/fonts/manrope/`), url).toBe(true);
+    const latin = await page.request.get(
+      "/fonts/manrope/manrope-latin-wght-normal.woff2",
+    );
+    expect(latin.headers()["content-type"]).toMatch(/^font\/woff2/);
+  });
+
+  test("asks the browser for dark native controls", async ({ page }) => {
+    await offline(page);
+    expect(
+      await page.evaluate(() => ({
+        root: getComputedStyle(document.documentElement).colorScheme,
+        meta: document
+          .querySelector('meta[name="color-scheme"]')
+          ?.getAttribute("content"),
+      })),
+    ).toEqual({ root: "dark", meta: "dark" });
   });
 });
 

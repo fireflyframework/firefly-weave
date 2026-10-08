@@ -228,15 +228,15 @@ let sequence = 0;
         overflow-wrap: anywhere;
       }
       .choice-option.active {
-        background: var(--forest);
-        color: var(--on-dark);
+        background: var(--accent);
+        color: var(--on-accent);
       }
       .choice-option small {
         font-size: 12px;
         color: var(--muted);
       }
       .choice-option.active small {
-        color: var(--on-dark);
+        color: var(--on-accent);
       }
       .choice-option weave-icon {
         position: absolute;

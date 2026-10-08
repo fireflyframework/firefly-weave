@@ -734,8 +734,8 @@ const noNodes = (): SimulationNodes => ({
         line-height: 1.25;
       }
       .sim-tabs button.selected {
-        border-bottom-color: var(--jade);
-        color: var(--forest);
+        border-bottom-color: var(--accent);
+        color: var(--text);
       }
       .sim-tab-panel {
         display: grid;
@@ -877,7 +877,7 @@ const noNodes = (): SimulationNodes => ({
         font: var(--type-body);
       }
       .sim-now strong {
-        color: var(--forest);
+        color: var(--text);
       }
       /* What the run waits for: the one place to act now. */
       .sim-wait {
@@ -897,7 +897,7 @@ const noNodes = (): SimulationNodes => ({
         margin: 0;
         max-height: 180px;
         overflow: auto;
-        background: var(--mist);
+        background: var(--raised);
         padding: 8px;
         border-radius: var(--radius-xs);
         font: var(--type-mono);
@@ -967,7 +967,7 @@ const noNodes = (): SimulationNodes => ({
         margin: 0;
         max-height: 180px;
         overflow: auto;
-        background: var(--mist);
+        background: var(--sunken);
         padding: 8px;
         border-radius: var(--radius-xs);
         font-size: 12px;

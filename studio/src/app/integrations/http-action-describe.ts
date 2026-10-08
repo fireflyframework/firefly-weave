@@ -817,7 +817,7 @@ const newRowId = () => `hb-row-${++rowSequence}`;
         cursor: pointer;
         font-size: 12px;
         font-weight: 600;
-        color: var(--jade);
+        color: var(--link);
       }
       .monospace {
         overflow-wrap: anywhere;

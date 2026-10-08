@@ -179,7 +179,7 @@ let sequence = 0;
       .connection-ok {
         background: var(--success-bg);
         border-color: var(--success-bd);
-        border-left-color: var(--jade);
+        border-left-color: var(--success);
         color: var(--success-ink);
       }
       /* Busy, not unavailable: the global disabled look, a progress cursor. */

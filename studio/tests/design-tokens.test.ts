@@ -22,6 +22,16 @@ import { describe, expect, it } from "vitest";
 
 const source = (path: string) =>
   readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
+/** Every component stylesheet, template and script under src/app. */
+function appFiles(dir = fileURLToPath(new URL("../src/app", import.meta.url))) {
+  const found: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) found.push(...appFiles(path));
+    else if (/\.(ts|css|html)$/.test(name)) found.push(path);
+  }
+  return found;
+}
 const styles = source("styles.css");
 
 interface Declaration {
@@ -84,69 +94,171 @@ const token = (name: string) => {
   if (!value) throw Error(`missing token ${name}`);
   return value;
 };
+/** Contrast of two tokens that hold #rrggbb colors. */
+const ratio = (a: string, b: string) => contrast(token(a), token(b));
+/** The color-scheme :root declares (it is not a custom property). */
+const colorScheme = () =>
+  all.find((d) => d.selector === ":root" && d.property === "color-scheme")
+    ?.value;
 
 describe("design tokens", () => {
-  it("keeps the brand and declares the plan's tokens", () => {
+  const surfaces = [
+    "--bg",
+    "--sunken",
+    "--surface",
+    "--raised",
+    "--hover",
+    "--selected",
+  ];
+  const tones = ["success", "info", "warning", "danger"];
+
+  it("declares the dark theme and its anchor values", () => {
+    expect(colorScheme()).toBe("dark");
     expect(Object.fromEntries(root)).toMatchObject({
-      "--forest": "#173d34",
-      "--jade": "#367d68",
-      "--mint": "#a1d1b9",
-      "--mist": "#eef4f0",
-      "--gold": "#b88322",
-      "--field-border": "#738c80",
-      "--flow-line": "#5f8a76",
-      "--disabled-bg": "#eef2ef",
-      "--disabled-ink": "#5c706a",
-      "--focus": "#2c6a57",
-      "--focus-on-dark": "#a1d1b9",
-      "--live": "#b88322",
+      "--bg": "#10110f",
+      "--surface": "#1a1b17",
+      "--text": "#f3f1eb",
+      "--muted": "#bfb8ab",
+      "--accent": "#ffb34a",
+      "--on-accent": "#10110f",
+      "--field-border": "#767672",
+      "--flow-line": "#767672",
+      "--focus": "#ffb34a",
+      "--live": "#ffb34a",
       "--control-md": "36px",
       "--control-touch": "44px",
       "--radius-lg": "12px",
     });
-    for (const name of [
-      "--type-caption",
-      "--type-small",
-      "--type-body",
-      "--type-label",
-      "--type-button",
-      "--type-title-sm",
-      "--type-title-md",
-      "--type-title-lg",
-      "--type-display",
-      "--type-mono",
-      "--shadow-1",
-      "--shadow-2",
-      "--shadow-3",
-      "--info-ink",
-      "--info-bg",
-      "--info-bd",
-      "--panel-w",
-    ])
-      expect(root.has(name), name).toBe(true);
   });
 
-  it("has no raw hex color outside :root and forced-colors", () => {
+  it("declares every token lanes build on (contract C1)", () => {
+    const names = [
+      ...["--bg", "--sunken", "--surface", "--raised", "--hover", "--selected"],
+      ...[
+        "--accent-soft",
+        "--disabled-bg",
+        "--canvas",
+        "--canvas-dot",
+        "--scrim",
+      ],
+      ...["--text", "--muted", "--subtle", "--link", "--disabled-ink"],
+      ...[
+        "--accent",
+        "--accent-hover",
+        "--accent-press",
+        "--on-accent",
+        "--accent-glow",
+      ],
+      ...[
+        "--line",
+        "--border",
+        "--border-hover",
+        "--field-border",
+        "--field-border-hover",
+      ],
+      ...tones.flatMap((t) => [
+        `--${t}-ink`,
+        `--${t}-bg`,
+        `--${t}-bd`,
+        `--${t}`,
+      ]),
+      ...["--neutral-ink", "--neutral-bg", "--neutral-bd", "--danger-hover"],
+      ...["--focus", "--selection"],
+      ...["--flow-line", "--flow-line-dim", "--node-bg", "--node-border"],
+      ...["--live", "--live-glow", "--marquee-bg"],
+      ...[
+        "--series-1",
+        "--series-2",
+        "--series-3",
+        "--series-4",
+        "--series-other",
+      ],
+      ...["yellow", "blue", "green", "pink", "purple", "gray"].flatMap((n) => [
+        `--note-${n}-bg`,
+        `--note-${n}-bd`,
+      ]),
+      ...["--syntax-keyword", "--syntax-string", "--syntax-number"],
+      ...["--diff-add-bg", "--diff-add-ink", "--diff-del-bg", "--diff-del-ink"],
+      "--skeleton",
+      ...["--font-sans", "--font-mono"],
+      ...[
+        "caption",
+        "small",
+        "body",
+        "label",
+        "button",
+        "title-sm",
+        "title-md",
+      ].map((t) => `--type-${t}`),
+      ...["--type-title-lg", "--type-display", "--type-mono"],
+      ...["--shadow-1", "--shadow-2", "--shadow-3"],
+      ...["--ease", "--ease-move", "--ease-exit"],
+      ...["--dur-fast", "--dur", "--dur-panel", "--dur-expressive"],
+      ...["--control-sm", "--control-md", "--control-touch", "--panel-w"],
+    ];
+    expect(names.filter((name) => !root.has(name))).toEqual([]);
+    expect(token("--font-sans")).toMatch(/^"Manrope", system-ui/);
+    expect(token("--type-title-lg")).toMatch(/^600 24px\/32px /);
+    expect(token("--type-display")).toMatch(/^500 32px\/40px /);
+    expect(token("--dur-expressive")).toBe("1200ms");
+  });
+
+  it("drops the light-theme brand tokens everywhere under studio/src", () => {
+    const removed =
+      /--(forest|forest-hover|forest-press|forest-active|jade|jade-strong|mint|mist|gold|gold-soft|on-dark|on-dark-muted|on-dark-accent|focus-on-dark)\b/;
+    for (const file of [
+      fileURLToPath(new URL("../src/styles.css", import.meta.url)),
+      ...appFiles(),
+    ])
+      expect(readFileSync(file, "utf8"), file).not.toMatch(removed);
+    expect(styles).not.toContain(".forest-surface");
+  });
+
+  it("writes colors only in :root: no literal in styles.css or src/app", () => {
+    const literal = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i;
     const raw = all.filter(
       (d) =>
         d.selector !== ":root" &&
         !d.media.includes("forced-colors") &&
-        /#[0-9a-f]{3,8}\b/i.test(d.value),
+        literal.test(d.value),
     );
     expect(
       raw.map((d) => `${d.selector} { ${d.property}: ${d.value} }`),
     ).toEqual([]);
+    for (const file of appFiles()) {
+      const text = readFileSync(file, "utf8").replace(/href="#[^"]*"/g, "");
+      const lines = text.split("\n").filter((line) => literal.test(line));
+      expect(lines, file).toEqual([]);
+    }
   });
 
-  it("uses only the four font weights Avenir Next has", () => {
-    const weights = all
-      .filter((d) => d.property === "font-weight")
-      .map((d) => d.value);
-    for (const weight of weights)
-      expect(["400", "500", "600", "700", "inherit"]).toContain(weight);
+  it("never redefines a theme token outside :root (one value set per theme)", () => {
+    const local = all.filter(
+      (d) =>
+        d.selector !== ":root" &&
+        d.property.startsWith("--") &&
+        root.has(d.property),
+    );
+    expect(local.map((d) => `${d.selector} { ${d.property} }`)).toEqual([]);
+    for (const file of appFiles())
+      for (const [, name] of readFileSync(file, "utf8").matchAll(
+        /^\s*(--[a-z0-9-]+)\s*:/gm,
+      ))
+        expect(root.has(name), `${file} redefines ${name}`).toBe(false);
+  });
+
+  it("uses only the weights Studio uses", () => {
+    const faces = all.filter((d) => d.selector !== "@font-face");
+    for (const d of faces.filter((d) => d.property === "font-weight"))
+      expect(["400", "500", "600", "700", "inherit"]).toContain(d.value);
     // Shorthands and type tokens follow the same rule.
-    for (const d of all.filter((d) => d.property.startsWith("--type-")))
+    for (const d of faces.filter((d) => d.property.startsWith("--type-")))
       expect(d.value).toMatch(/^(400|500|600|700) /);
+    // The variable font covers the whole range it declares.
+    for (const d of all.filter(
+      (d) => d.selector === "@font-face" && d.property === "font-weight",
+    ))
+      expect(d.value).toBe("200 800");
   });
 
   it("sets no text below 12px outside the canvas (wave 3 owns it)", () => {
@@ -162,53 +274,81 @@ describe("design tokens", () => {
     expect(small.map((d) => `${d.selector}: ${d.value}`)).toEqual([]);
   });
 
-  it("meets the contrast the plan measured", () => {
-    const white =
-      token("--surface") === "#fff" ? "#ffffff" : token("--surface");
-    // Field borders and canvas lines: 3:1 against what they sit on (1.4.11).
-    for (const surface of [white, token("--bg"), token("--mist")])
-      expect(contrast(token("--field-border"), surface)).toBeGreaterThanOrEqual(
-        3,
-      );
-    expect(contrast(token("--flow-line"), token("--canvas"))).toBeGreaterThan(
-      3.7,
-    );
-    // Disabled text stays legible.
-    expect(
-      contrast(token("--disabled-ink"), token("--disabled-bg")),
-    ).toBeGreaterThanOrEqual(4.5);
-    // The focus ring is visible on every light surface, mint on forest.
-    for (const surface of [white, token("--bg"), token("--mist")])
-      expect(contrast(token("--focus"), surface)).toBeGreaterThanOrEqual(3);
-    expect(
-      contrast(token("--focus-on-dark"), token("--forest")),
-    ).toBeGreaterThanOrEqual(7);
-    expect(
-      contrast(token("--focus-on-dark"), token("--forest-active")),
-    ).toBeGreaterThanOrEqual(3);
-    // Links on mist, text on a selected row.
-    expect(contrast(token("--link"), token("--mist"))).toBeGreaterThan(4.5);
-    expect(contrast(token("--muted"), token("--selected"))).toBeGreaterThan(
+  it("keeps text at 4.5:1 and boundaries at 3:1 on every surface", () => {
+    for (const surface of surfaces) {
+      for (const ink of ["--text", "--muted", "--subtle", "--link"])
+        expect(
+          ratio(ink, surface),
+          `${ink} on ${surface}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      for (const line of ["--field-border", "--focus"])
+        expect(
+          ratio(line, surface),
+          `${line} on ${surface}`,
+        ).toBeGreaterThanOrEqual(3);
+    }
+    expect(ratio("--disabled-ink", "--disabled-bg")).toBeGreaterThanOrEqual(
       4.5,
     );
-    expect(
-      contrast(token("--on-dark-muted"), token("--forest-active")),
-    ).toBeGreaterThan(4.5);
+  });
+
+  it("draws the canvas and charts at 3:1", () => {
+    expect(ratio("--flow-line", "--canvas")).toBeGreaterThan(3.7);
+    expect(ratio("--node-border", "--canvas")).toBeGreaterThan(3.7);
+    expect(ratio("--flow-line-dim", "--canvas")).toBeGreaterThanOrEqual(3);
+    for (const series of [
+      "--series-1",
+      "--series-2",
+      "--series-3",
+      "--series-4",
+      "--series-other",
+    ])
+      expect(ratio(series, "--surface"), series).toBeGreaterThanOrEqual(3);
+  });
+
+  it("puts 7:1 text on every solid fill", () => {
+    for (const fill of [
+      "--accent",
+      "--accent-hover",
+      "--accent-press",
+      "--danger-hover",
+      ...tones.map((t) => `--${t}`),
+    ])
+      expect(ratio("--on-accent", fill), fill).toBeGreaterThanOrEqual(7);
   });
 
   it("keeps every status tone readable and visible on a selected row", () => {
-    for (const tone of ["success", "info", "warning", "danger", "neutral"]) {
-      const ink = token(`--${tone}-ink`);
-      const bg = token(`--${tone}-bg`);
-      const border = token(`--${tone}-bd`);
-      expect(contrast(ink, bg), `${tone} ink`).toBeGreaterThanOrEqual(6);
-      // A pill on a selected row keeps an edge (C15 in the plan).
+    for (const tone of [...tones, "neutral"]) {
       expect(
-        contrast(border, token("--selected")),
+        ratio(`--${tone}-ink`, `--${tone}-bg`),
+        `${tone} ink`,
+      ).toBeGreaterThanOrEqual(6);
+      for (const surface of ["--surface", "--raised", "--selected"])
+        expect(
+          ratio(`--${tone}-ink`, surface),
+          `${tone} on ${surface}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      // A pill on a selected row keeps an edge.
+      expect(
+        ratio(`--${tone}-bd`, "--selected"),
         `${tone} border`,
       ).toBeGreaterThanOrEqual(1.3);
     }
-    expect(contrast("#ffffff", token("--danger"))).toBeGreaterThan(7);
+  });
+
+  it("keeps notes, code and diffs readable", () => {
+    for (const note of ["yellow", "blue", "green", "pink", "purple", "gray"])
+      expect(ratio("--text", `--note-${note}-bg`), note).toBeGreaterThanOrEqual(
+        4.5,
+      );
+    for (const syntax of [
+      "--syntax-keyword",
+      "--syntax-string",
+      "--syntax-number",
+    ])
+      expect(ratio(syntax, "--sunken"), syntax).toBeGreaterThanOrEqual(4.5);
+    expect(ratio("--diff-add-ink", "--diff-add-bg")).toBeGreaterThanOrEqual(6);
+    expect(ratio("--diff-del-ink", "--diff-del-bg")).toBeGreaterThanOrEqual(6);
   });
 
   it("styles disabled buttons with tokens, never opacity", () => {
@@ -220,16 +360,7 @@ describe("design tokens", () => {
       disabled.filter((d) => d.property === "opacity" && d.value !== "1"),
     ).toEqual([]);
     // Component styles follow the same rule.
-    const files: string[] = [];
-    const walk = (dir: string) => {
-      for (const name of readdirSync(dir)) {
-        const path = join(dir, name);
-        if (statSync(path).isDirectory()) walk(path);
-        else if (/\.(ts|css)$/.test(name)) files.push(path);
-      }
-    };
-    walk(fileURLToPath(new URL("../src/app", import.meta.url)));
-    for (const file of files) {
+    for (const file of appFiles().filter((f) => /\.(ts|css)$/.test(f))) {
       const text = readFileSync(file, "utf8");
       for (const rule of text.matchAll(/([^{}]*)\{([^{}]*)\}/g))
         if (/:disabled|aria-disabled|\.disabled\b/.test(rule[1]))
@@ -239,7 +370,7 @@ describe("design tokens", () => {
     }
   });
 
-  it("draws one focus ring: 2px in --focus, mint in the sidebar", () => {
+  it("draws one 2px amber focus ring on every surface", () => {
     const ring = all.find(
       (d) =>
         /^:is\(\s*button,\s*a,/.test(d.selector) &&
@@ -247,11 +378,8 @@ describe("design tokens", () => {
         d.property === "outline",
     );
     expect(ring?.value).toBe("2px solid var(--focus)");
-    const dark = all.find(
-      (d) =>
-        d.selector.startsWith(":is(.sidebar") && d.property === "outline-color",
-    );
-    expect(dark?.value).toBe("var(--focus-on-dark)");
+    // Every surface is dark: no sidebar or toast override remains.
+    expect(all.filter((d) => d.property === "outline-color")).toEqual([]);
     // No component keeps its own 3px ring.
     for (const file of [
       "app/home-dashboard.css",
@@ -262,6 +390,16 @@ describe("design tokens", () => {
       "app/workspace-picker.ts",
     ])
       expect(source(file), file).not.toMatch(/outline:\s*3px/);
+  });
+
+  it("selects text in translucent amber with paper text", () => {
+    const selection = all.filter((d) => d.selector === "::selection");
+    expect(
+      Object.fromEntries(selection.map((d) => [d.property, d.value])),
+    ).toEqual({
+      background: "var(--selection)",
+      color: "var(--text)",
+    });
   });
 
   it("writes group labels in sentence case", () => {

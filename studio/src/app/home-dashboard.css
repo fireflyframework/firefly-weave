@@ -82,10 +82,11 @@ h1 {
   letter-spacing: -0.01em;
   text-wrap: balance;
   margin: 0 0 var(--space-4);
-  color: var(--forest);
+  color: var(--text);
 }
 h1.display {
   font: var(--type-display);
+  letter-spacing: -0.02em;
   margin-bottom: var(--space-2);
 }
 .welcome-description {
@@ -132,7 +133,7 @@ h1.display {
   padding: var(--space-2) var(--space-4);
   margin-bottom: var(--space-6);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--jade);
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius-md);
   background: var(--surface);
   text-align: left;
@@ -168,7 +169,7 @@ h1.display {
 }
 h2 {
   font: var(--type-title-sm);
-  color: var(--forest);
+  color: var(--text);
   margin: 0;
 }
 button.text-button {
@@ -210,11 +211,11 @@ button.preview-row:hover {
   background: var(--hover);
 }
 .row-icon {
-  color: var(--jade-strong);
+  color: var(--link);
   display: inline-flex;
   padding: var(--space-2);
   border-radius: var(--radius-md);
-  background: var(--mist);
+  background: var(--raised);
   flex: none;
 }
 .row-copy {

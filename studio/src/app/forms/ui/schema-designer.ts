@@ -1802,7 +1802,7 @@ let sequence = 0;
         color: var(--muted);
       }
       .sd-flag.warn {
-        color: #5f4612;
+        color: var(--warning-ink);
       }
       .sd-error,
       p.sd-summary {
@@ -1826,7 +1826,7 @@ let sequence = 0;
         border: 1px solid var(--line);
         border-radius: 6px;
         padding: 10px 12px;
-        background: var(--mist);
+        background: var(--raised);
       }
       .sd-preview h4 {
         margin: 0 0 8px;
@@ -1841,7 +1841,7 @@ let sequence = 0;
         max-height: 240px;
         overflow: auto;
         font-size: 11px;
-        background: var(--mist);
+        background: var(--sunken);
         padding: 8px;
         border-radius: 6px;
         white-space: pre-wrap;

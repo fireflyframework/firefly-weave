@@ -261,7 +261,7 @@ import {
       font-size: 13px;
     }
     .progress li[aria-current] {
-      color: var(--forest);
+      color: var(--text);
       font-weight: 650;
     }
     .number {
@@ -274,13 +274,13 @@ import {
       border-radius: 50%;
     }
     [aria-current] .number {
-      background: var(--forest);
-      border-color: var(--forest);
-      color: var(--on-dark);
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--on-accent);
     }
     .complete .number {
       background: var(--selected);
-      color: var(--forest);
+      color: var(--text);
     }
     fieldset {
       display: grid;
@@ -351,9 +351,9 @@ import {
       font-weight: 550;
     }
     .review-note {
-      border-left: 3px solid var(--jade);
+      border-left: 3px solid var(--accent);
       padding: 10px 12px;
-      background: var(--mist);
+      background: var(--raised);
     }
     @media (max-width: 420px) {
       .progress li {

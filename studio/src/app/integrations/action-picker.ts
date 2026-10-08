@@ -549,7 +549,7 @@ let sequence = 0;
         width: 16px;
         height: 16px;
         --icon-stroke: 1.5;
-        color: var(--jade);
+        color: var(--link);
       }
       .action-picker-version {
         color: var(--muted);
@@ -566,7 +566,7 @@ let sequence = 0;
         gap: 8px;
         font-size: 13px;
         font-weight: 600;
-        color: var(--forest);
+        color: var(--text);
       }
       .action-picker-command weave-icon {
         width: 16px;

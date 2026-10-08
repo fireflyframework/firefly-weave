@@ -155,20 +155,20 @@ let sequence = 0;
         background: var(--surface);
       }
       .environment-card:hover {
-        border-color: #9cb9aa;
-        background: var(--mist);
+        border-color: var(--border-hover);
+        background: var(--hover);
       }
       .environment-card.selected {
-        border-color: var(--jade);
-        background: #e8f3ed;
-        box-shadow: inset 0 0 0 1px var(--jade);
+        border-color: var(--accent);
+        background: var(--selected);
+        box-shadow: inset 0 0 0 1px var(--accent);
       }
       .environment-card input {
         width: 16px;
         height: 16px;
         margin: 0;
         flex: none;
-        accent-color: var(--forest);
+        accent-color: var(--accent);
       }
       .environment-card:has(input:focus-visible) {
         outline: 2px solid var(--focus);

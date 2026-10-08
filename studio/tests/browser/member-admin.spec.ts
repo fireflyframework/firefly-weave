@@ -15,7 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { selectChoice } from "./support";
+import { selectChoice, tokenColor } from "./support";
 import { test, expect, Page } from "@playwright/test";
 const tenant = "00000000-0000-0000-0000-000000000001";
 const project = "00000000-0000-0000-0000-000000000002";
@@ -186,7 +186,11 @@ test("People and access reads by account and role; tables share one look", async
       const s = getComputedStyle(e);
       return [s.fontSize, s.backgroundColor, s.color];
     });
-  expect(head).toEqual(["12px", "rgb(248, 250, 248)", "rgb(77, 101, 93)"]);
+  expect(head).toEqual([
+    "12px",
+    await tokenColor(page, "--sunken"),
+    await tokenColor(page, "--muted"),
+  ]);
   const cell = await table.locator("td").first().boundingBox();
   expect(cell!.height).toBeGreaterThanOrEqual(56);
   // Assign role opens a side panel; its fields stack with their labels.

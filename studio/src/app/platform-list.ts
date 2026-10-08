@@ -251,7 +251,7 @@ import {
       .platform-row.active {
         border-color: var(--border-hover);
         background: var(--sunken);
-        box-shadow: inset 3px 0 0 var(--jade);
+        box-shadow: inset 3px 0 0 var(--accent);
       }
       .platform-summary {
         flex: 1 1 260px;

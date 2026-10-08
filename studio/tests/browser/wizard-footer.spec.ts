@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // below or through it.
 import { test, expect, Page } from "@playwright/test";
 import { acmeDiscovery, platformHost } from "./platform-host";
+import { tokenColor } from "./support";
 
 async function reviewStep(page: Page) {
   await platformHost(page, {
@@ -66,6 +67,7 @@ for (const viewport of [
       (element) => element.scrollHeight - element.clientHeight,
     );
     expect(overflow).toBeGreaterThan(40);
+    const surface = await tokenColor(page, "--surface");
     for (const position of [0, Math.floor(overflow / 2), overflow]) {
       await scroller.evaluate(
         (element, top) => (element.scrollTop = top),
@@ -78,7 +80,7 @@ for (const viewport of [
         state.viewport - state.bottom,
         `scrolled ${position}`,
       ).toBeLessThanOrEqual(1);
-      expect(state.background).toBe("rgb(255, 255, 255)");
+      expect(state.background).toBe(surface);
       if (position < overflow)
         expect(state.corners, `corners at ${position}`).toBe(true);
     }

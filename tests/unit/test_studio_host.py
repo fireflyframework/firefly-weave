@@ -325,3 +325,20 @@ def test_browser_pairing_stays_single_use_after_unpairing(tmp_path):
     with client(tmp_path / "late") as browser:
         browser.app.state.studio.pairing_deadline = 0
         assert browser.post("/studio/session", json={"code": CODE}, headers={"Origin": ORIGIN}).status_code == 403
+
+
+def test_brand_files_are_served_from_the_studio_origin_and_license_texts_are_not(tmp_path):
+    with client(tmp_path) as browser:
+        assets = tmp_path / "assets"
+        (assets / "fonts/manrope").mkdir(parents=True)
+        (assets / "fonts/manrope/manrope-latin-wght-normal.woff2").write_bytes(b"wOF2 font bytes")
+        (assets / "favicon.ico").write_bytes(b"\0\0\1\0 icon bytes")
+        (assets / "licenses").mkdir()
+        (assets / "licenses/NOTICE.txt").write_text("Firefly Weave\n")
+        font = browser.get("/fonts/manrope/manrope-latin-wght-normal.woff2")
+        assert font.status_code == 200 and font.content == b"wOF2 font bytes"
+        icon = browser.get("/favicon.ico")
+        assert icon.status_code == 200 and icon.content == b"\0\0\1\0 icon bytes"
+        # License texts ship in the bundle but are not served; Studio has no web manifest.
+        assert browser.get("/licenses/NOTICE.txt").status_code == 404
+        assert browser.get("/site.webmanifest").status_code == 404

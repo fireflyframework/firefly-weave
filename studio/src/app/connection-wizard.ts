@@ -1021,14 +1021,14 @@ const record = (value: unknown): Record<string, unknown> =>
         --icon-stroke: 1.5;
       }
       li.current .step-marker {
-        background: var(--forest);
-        border-color: var(--forest);
-        color: #fff;
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--on-accent);
       }
       li.complete .step-marker {
-        background: #dbece3;
-        border-color: #b9d8c8;
-        color: #174d3c;
+        background: var(--success-bg);
+        border-color: var(--success-bd);
+        color: var(--success-ink);
       }
       .step-name {
         overflow: hidden;
@@ -1091,7 +1091,7 @@ const record = (value: unknown): Record<string, unknown> =>
         border-color: var(--border);
       }
       .choice-card:hover {
-        border-color: var(--jade);
+        border-color: var(--border-hover);
       }
       .choice-icon {
         flex: none;
@@ -1101,8 +1101,8 @@ const record = (value: unknown): Record<string, unknown> =>
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        background: var(--mist);
-        color: var(--forest);
+        background: var(--raised);
+        color: var(--text);
       }
       .choice-copy {
         display: grid;
@@ -1189,10 +1189,10 @@ const record = (value: unknown): Record<string, unknown> =>
         gap: 12px;
         margin: 16px 0 0;
         padding: 14px 16px;
-        border: 1px solid #ebccce;
+        border: 1px solid var(--danger-bd);
         border-radius: 8px;
-        background: #fff6f5;
-        color: #6f1f27;
+        background: var(--danger-bg);
+        color: var(--danger-ink);
         min-width: 0;
       }
       .problem > weave-icon {
@@ -1267,19 +1267,19 @@ const record = (value: unknown): Record<string, unknown> =>
         font-weight: 400;
       }
       .radio-card.selected {
-        border-color: var(--jade);
-        background: #e8f3ed;
+        border-color: var(--accent);
+        background: var(--selected);
       }
       .radio-card.unavailable {
         cursor: not-allowed;
-        background: #f8f9f8;
+        background: var(--disabled-bg);
       }
       .radio-card input {
         width: 16px;
         height: 16px;
         margin: 2px 0 0;
         flex: none;
-        accent-color: var(--forest);
+        accent-color: var(--accent);
       }
       .radio-copy {
         display: grid;
@@ -1322,15 +1322,15 @@ const record = (value: unknown): Record<string, unknown> =>
         flex-wrap: wrap;
         align-items: center;
         gap: 10px 14px;
-        border: 1px dashed #8caaa0;
+        border: 1px dashed var(--field-border);
         border-radius: 10px;
-        background: #f5faf7;
+        background: var(--sunken);
         padding: 18px;
         margin-bottom: 16px;
       }
       .file-drop.dragging {
-        border-color: var(--jade);
-        background: #e8f3ed;
+        border-color: var(--accent);
+        background: var(--selected);
       }
       .file-drop .hint {
         margin: 0;
@@ -1351,12 +1351,12 @@ const record = (value: unknown): Record<string, unknown> =>
         text-decoration: none;
       }
       a.button.primary-link {
-        background: var(--forest);
-        border-color: var(--forest);
-        color: #fff;
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--on-accent);
       }
       a.button.primary-link:hover {
-        background: #285947;
+        background: var(--accent-hover);
       }
       .instructions {
         margin: 12px 0 0;
@@ -1391,7 +1391,7 @@ const record = (value: unknown): Record<string, unknown> =>
         letter-spacing: 0.12em;
         padding: 12px 18px;
         border-radius: 8px;
-        background: var(--mist);
+        background: var(--raised);
         border: 1px solid var(--line);
         overflow-wrap: anywhere;
         max-width: 100%;
@@ -1408,8 +1408,8 @@ const record = (value: unknown): Record<string, unknown> =>
         height: 36px;
         padding: 8px;
         border-radius: 10px;
-        background: var(--gold-soft);
-        color: #7a5a17;
+        background: var(--warning-bg);
+        color: var(--warning-ink);
       }
       .access-state p {
         color: var(--muted);

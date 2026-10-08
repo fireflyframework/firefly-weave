@@ -107,7 +107,7 @@ let sequence = 0;
         background: var(--surface);
         border: 1px solid var(--line);
         border-radius: 8px;
-        box-shadow: 0 8px 28px #173d3429;
+        box-shadow: var(--shadow-2);
         padding: 4px;
       }
       .new-menu-list button {
@@ -123,11 +123,11 @@ let sequence = 0;
       }
       .new-menu-list button:hover,
       .new-menu-list button:focus-visible {
-        background: var(--mist);
+        background: var(--hover);
       }
       .new-menu-list weave-icon {
         flex: none;
-        color: var(--jade);
+        color: var(--link);
       }
       .new-menu-list small {
         display: block;
