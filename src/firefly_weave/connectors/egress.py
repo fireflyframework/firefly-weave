@@ -31,6 +31,7 @@ from pyfly.client.adapters.httpx_adapter import HttpxClientAdapter
 from pyfly.client.ports.outbound import BoundedHttpClientPort
 
 from firefly_weave.connectors.http_logging import protected_http_diagnostics
+from firefly_weave.private_origins import PrivateOriginDenied, PrivateOrigins, Purpose
 
 
 class EgressDenied(ValueError):
@@ -62,12 +63,30 @@ def origin(url: str) -> tuple[str, str, int]:
 
 @dataclass(frozen=True)
 class EgressPolicy:
+    """Destinations one request may reach.
+
+    With a ``purpose`` the private-origin policy (C8) decides plain text, private
+    addresses and plain-text credentials; clients not yet on C8 keep the legacy
+    network list, unchanged.
+    """
+
     allowed_origins: tuple[str, ...]
     private_networks: tuple[str, ...] = ()
+    purpose: Purpose | None = None
+    origins: PrivateOrigins | None = None
+    sends_credentials: bool = False
 
     def validate(self, url: str, resolved_addresses: tuple[str, ...]) -> None:
         if origin(url) not in {origin(value) for value in self.allowed_origins} or not resolved_addresses:
             raise EgressDenied()
+        if self.purpose is not None:
+            try:
+                (self.origins or PrivateOrigins.empty()).check(
+                    self.purpose, url, resolved_addresses, sends_credentials=self.sends_credentials
+                )
+            except PrivateOriginDenied:
+                raise EgressDenied() from None
+            return
         host = origin(url)[1]
         if (
             host in {"metadata.google.internal", "metadata"}

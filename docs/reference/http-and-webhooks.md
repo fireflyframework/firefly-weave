@@ -271,10 +271,14 @@ These rules belong to the v1 adapter; v2 shares the same destination policy, and
 
 - **Destinations.** Port 0, non-numeric ports, and out-of-range ports are
   invalid. Hostnames with a trailing root dot are rejected in origins and
-  redirects. The connection's administrator can narrow destinations; only the
-  operator's `WEAVE_HTTP_PRIVATE_NETWORKS` permits private CIDRs. Link-local and
-  metadata addresses, multicast, unspecified or reserved addresses, and
-  Kubernetes service hostnames stay denied even under broad CIDRs.
+  redirects. The connection's administrator can narrow destinations. Public
+  addresses are reachable over HTTPS and plain HTTP without any private-origin
+  entry, as before. Private, loopback and CGNAT addresses need an entry of the
+  private-origin policy: an exact development origin that
+  `weave platform up --allow-private-origin` approved, or the CIDRs of the
+  legacy `WEAVE_HTTP_PRIVATE_NETWORKS`. Link-local and metadata addresses
+  (including `100.100.100.200`), multicast, unspecified or reserved addresses,
+  and Kubernetes service hostnames stay denied even under broad CIDRs.
 - **Connections.** Each request has its own connection pool. DNS resolves once to
   validated addresses; the actual peer is checked before anything is written, and
   TLS verifies the original hostname. Ambient proxies are ignored
@@ -286,7 +290,8 @@ These rules belong to the v1 adapter; v2 shares the same destination policy, and
 - **Redirects.** GET and HEAD redirects stay on the same origin and revalidate DNS
   and the peer on every hop; writes never redirect. A cross-origin redirect is
   rejected even when both origins are allowed, so credentials cannot move to
-  another origin.
+  another origin. Requests to an approved development origin never follow
+  redirects.
 
 ## Release and activation pins
 
@@ -332,7 +337,8 @@ shared platform, the operator sets it up once per image:
 | --- | --- |
 | `WEAVE_NATIVE_EXECUTORS` | JSON array of `{scope, principal_id, release_id, task_types, capacity, build}`; `build` is `image` (default) or `local-development`; an empty array disables dispatch |
 | `WEAVE_NATIVE_IMAGE_DIGEST` | The actual image identity that matches each configured release |
-| `WEAVE_HTTP_PRIVATE_NETWORKS` | JSON array of operator-approved private CIDRs |
+| `WEAVE_PRIVATE_ORIGINS_FILE` | Read-only private-origin file written by `weave platform` (development only) |
+| `WEAVE_HTTP_PRIVATE_NETWORKS` | Legacy JSON array of operator-approved private CIDRs, mapped to private-origin entries |
 | `WEAVE_SECRET_GRANTS` | JSON array of `{scope, handle, provider, locator}`; `provider` is `env` (the locator names a `WEAVE_CONNECTION_SECRET_*` variable) or `file` |
 | `WEAVE_SECRET_ROOT` | Root directory for the mounted-file secret provider |
 

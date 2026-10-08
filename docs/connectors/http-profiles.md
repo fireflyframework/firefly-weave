@@ -149,10 +149,13 @@ only the selected slots, and checks authority again immediately before dispatch.
 ### Network and transport
 
 - The existing pinned-DNS, pre-write peer, destination, and TLS policies apply.
-  Private and loopback destinations require an operator-approved range in
-  `WEAVE_HTTP_PRIVATE_NETWORKS` (see [Configuration](../operations/configuration.md));
-  link-local, metadata, and Kubernetes service destinations are always refused.
-  Ambient proxies are disabled.
+  Connections use HTTPS, except an exact development origin that the
+  private-origin policy approves for plain HTTP (`weave platform up
+  --allow-private-origin`). Private, loopback and CGNAT destinations require that
+  entry or an operator-approved range in the legacy `WEAVE_HTTP_PRIVATE_NETWORKS`
+  (see [Configuration](../operations/configuration.md)); link-local, metadata
+  (including `100.100.100.200`), and Kubernetes service destinations are always
+  refused. Ambient proxies are disabled.
 - All v2 redirects are rejected, including read redirects; no credential is
   forwarded to a redirect.
 - There are no hidden retries. Acquisition, I/O, and response processing share
