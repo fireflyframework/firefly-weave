@@ -729,6 +729,7 @@ const noNodes = (): SimulationNodes => ({
         border-radius: 0;
         background: transparent;
         min-height: 36px;
+        padding: 0 var(--space-3);
         white-space: normal;
         text-align: start;
         line-height: 1.25;

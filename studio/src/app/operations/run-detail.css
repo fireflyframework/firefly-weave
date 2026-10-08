@@ -173,7 +173,7 @@ h3 {
   flex: none;
   border-radius: var(--radius-sm);
   background: var(--raised);
-  color: var(--link);
+  color: var(--muted);
 }
 .node-text {
   display: grid;

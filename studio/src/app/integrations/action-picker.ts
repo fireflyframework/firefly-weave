@@ -549,7 +549,7 @@ let sequence = 0;
         width: 16px;
         height: 16px;
         --icon-stroke: 1.5;
-        color: var(--link);
+        color: var(--muted);
       }
       .action-picker-version {
         color: var(--muted);

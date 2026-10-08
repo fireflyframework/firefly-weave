@@ -878,7 +878,7 @@ pre {
   border: 1px solid var(--line);
   background: var(--raised);
   border-radius: 8px;
-  color: var(--link);
+  color: var(--muted);
   flex: none;
 }
 .record-ref {
@@ -941,7 +941,7 @@ pre {
   height: 32px;
   background: var(--raised);
   border: 1px solid var(--line);
-  color: var(--link);
+  color: var(--muted);
   border-radius: 6px;
   display: flex;
   align-items: center;
@@ -3242,7 +3242,7 @@ details.disclosure[open] > summary::before {
   border: 1.5px solid var(--flow-line);
   border-radius: 50%;
   background: var(--surface);
-  color: var(--link);
+  color: var(--muted);
   line-height: normal;
   pointer-events: auto;
   display: grid;
@@ -4041,8 +4041,11 @@ kbd {
   .inspector > .pane-resizer {
     display: none;
   }
+  /* The close button's hit area reaches into the header padding so its icon
+     lines up with the content edge and a long step name stays on one line. */
   .inspector-close {
     display: flex !important;
+    margin-right: calc(-1 * var(--space-2));
   }
 }
 /* Narrower windows: the bar wraps its commands onto a second row. */

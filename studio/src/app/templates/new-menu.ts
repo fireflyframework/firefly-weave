@@ -127,7 +127,7 @@ let sequence = 0;
       }
       .new-menu-list weave-icon {
         flex: none;
-        color: var(--link);
+        color: var(--muted);
       }
       .new-menu-list small {
         display: block;

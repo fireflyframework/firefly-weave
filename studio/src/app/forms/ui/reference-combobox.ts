@@ -490,7 +490,7 @@ let sequence = 0;
         overflow-wrap: anywhere;
       }
       .ref-combo-group weave-icon {
-        color: var(--link);
+        color: var(--muted);
         flex: none;
       }
       .ref-combo-group small {
