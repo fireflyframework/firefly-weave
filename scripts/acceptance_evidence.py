@@ -105,7 +105,7 @@ def _journey_status(steps: Sequence[Mapping[str, Any]]) -> str:
 
 def journey_results(enablement: Any, profile: str, records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """One entry per journey of the profile: recorded steps, skipped steps with their missing milestones,
-    and enabled steps without a record as not_run (a harness gap fails the journey)."""
+    and enabled steps without a record as not_run (a harness gap fails the journey, and with it the run)."""
     by_step = {record["id"]: record for record in records}
     results = []
     for journey in enablement.profiles[profile]:

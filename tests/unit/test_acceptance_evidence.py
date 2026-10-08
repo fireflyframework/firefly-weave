@@ -122,6 +122,38 @@ def test_journey_results_report_passes_partials_skips_and_gaps():
     }
 
 
+def applicable_records(profile, journey):
+    """Records for every applicable step of ``journey`` as the harness writes them when each one ran."""
+    records = []
+    for step in ENABLEMENT.journey_steps(journey):
+        if not ENABLEMENT.applies(step, profile):
+            continue
+        missing = ENABLEMENT.missing(step)
+        if missing:
+            records.append({"id": step, "status": "skipped", "missing": list(missing)})
+            continue
+        skipped = [
+            {"check": check, "missing": list(ENABLEMENT.missing(check))}
+            for check in ENABLEMENT.checks(step)
+            if ENABLEMENT.applies(check, profile) and ENABLEMENT.missing(check)
+        ]
+        record = {"id": step, "status": "partial" if skipped else "passed", "seconds": 1.0}
+        records.append({**record, "skipped_checks": skipped} if skipped else record)
+    return records
+
+
+def test_a_journey_fails_only_when_an_applicable_step_failed_or_has_no_record():
+    records = applicable_records("pr", "J0")
+    assert {record["status"] for record in records} <= {"passed", "partial", "skipped"}
+    assert evidence.journey_results(ENABLEMENT, "pr", records)[0]["status"] != "failed"
+    enabled = [record["id"] for record in records if record["status"] != "skipped"]
+    for step in enabled:
+        gap = [record for record in records if record["id"] != step]
+        result = evidence.journey_results(ENABLEMENT, "pr", gap)[0]
+        assert result["status"] == "failed", step
+        assert {"n": int(step.split(".")[1]), "status": "not_run"} in result["steps"]
+
+
 def test_documents_validate_against_the_schema(tmp_path):
     (tmp_path / "screens").mkdir()
     (tmp_path / "screens" / "01.png").write_bytes(b"png")

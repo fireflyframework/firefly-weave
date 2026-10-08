@@ -253,6 +253,32 @@ def every_stage_passed(plan):
     ]
 
 
+ENABLEMENT = acceptance.acceptance_journeys.Enablement.load(acceptance.JOURNEYS)
+
+
+def record_steps(plan, leave_out=()):
+    """steps.jsonl as the harness writes it when every applicable pr step ran, except ``leave_out``: an
+    enabled step passes, or is partial when one of its checks waits for milestones; a step that waits
+    for milestones is skipped with them."""
+    lines = []
+    for journey in ENABLEMENT.profiles["pr"]:
+        for step in ENABLEMENT.journey_steps(journey):
+            if not ENABLEMENT.applies(step, "pr") or step in leave_out:
+                continue
+            missing = ENABLEMENT.missing(step)
+            if missing:
+                lines.append({"id": step, "status": "skipped", "missing": list(missing)})
+                continue
+            skipped = [
+                {"check": check, "missing": list(ENABLEMENT.missing(check))}
+                for check in ENABLEMENT.checks(step)
+                if ENABLEMENT.applies(check, "pr") and ENABLEMENT.missing(check)
+            ]
+            record = {"id": step, "status": "partial" if skipped else "passed", "seconds": 1.0}
+            lines.append({**record, "skipped_checks": skipped} if skipped else record)
+    (plan.evidence / "steps.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
+
 @pytest.mark.parametrize("trouble", [{"failing": {"-D"}}, {"failing": {"-X"}}, {"raising": {"-F"}}])
 def test_a_failed_egress_release_stays_visible_as_a_leftover(tmp_path, trouble):
     plan = blocked_plan(tmp_path)
@@ -277,6 +303,7 @@ def test_a_complete_egress_release_leaves_nothing_listed(tmp_path):
     assert plan.state["egress_rules"] is False
     assert plan.state["resources_left"] == []
     assert not plan.private.exists()
+    record_steps(plan)
     summary = acceptance.summarize(plan, every_stage_passed(plan))
     assert summary["complete"] is True and summary["resources_left"] == []
 
@@ -287,3 +314,90 @@ def test_down_without_an_egress_block_runs_no_iptables_command(tmp_path):
     recorder = FakeRecorder()
     acceptance.down(plan, recorder)
     assert recorder.iptables == [] and plan.state["resources_left"] == []
+
+
+class PytestRecorder:
+    """Stands in for Recorder in the journey stages: every command exits ``code``."""
+
+    def __init__(self, code):
+        self.code, self.commands = code, []
+
+    def run(self, argv, **kwargs):
+        self.commands.append(list(argv))
+        return subprocess.CompletedProcess(list(argv), self.code, stdout="", stderr="")
+
+
+def test_up_fails_when_pytest_collects_no_j0_test(tmp_path):
+    plan = acceptance.Plan(tmp_path, RUN, "pr", "default", False, False, {"profile": "pr"})
+    with pytest.raises(acceptance.StageFailed, match="No journey test was collected"):
+        acceptance.up(plan, PytestRecorder(5))
+    recorder = PytestRecorder(0)
+    acceptance.up(plan, recorder)
+    assert acceptance.J0_TESTS in recorder.commands[0]
+    with pytest.raises(acceptance.StageFailed, match="Journey steps failed"):
+        acceptance.up(plan, PytestRecorder(1))
+
+
+def test_the_run_stage_still_accepts_journey_files_without_collected_tests(tmp_path):
+    # The step records, not pytest's exit code, show whether an enabled step ran (see the summary tests).
+    plan = acceptance.Plan(tmp_path, RUN, "pr", "default", False, False, {"profile": "pr"})
+    acceptance._journeys(plan, PytestRecorder(5), ["tests/acceptance/test_j1_example.py"], allow_empty=True)
+    with pytest.raises(acceptance.StageFailed, match="Journey steps failed"):
+        acceptance._journeys(plan, PytestRecorder(1), ["tests/acceptance/test_j1_example.py"], allow_empty=True)
+
+
+def test_an_enabled_step_without_a_record_makes_the_run_incomplete(tmp_path):
+    plan = blocked_plan(tmp_path)
+    plan.state["resources_left"] = []
+    record_steps(plan, leave_out={"J0.8"})
+    summary = acceptance.summarize(plan, every_stage_passed(plan))
+    first = summary["journeys"][0]
+    assert first["id"] == "J0" and first["status"] == "failed"
+    assert {"n": 8, "status": "not_run"} in first["steps"]
+    assert summary["complete"] is False
+    assert acceptance.failed_journeys(summary["journeys"], acceptance.STAGES) == ["J0"]
+
+
+def test_a_run_whose_applicable_steps_passed_were_partial_or_skipped_is_complete(tmp_path):
+    plan = blocked_plan(tmp_path)
+    plan.state["resources_left"] = []
+    record_steps(plan)
+    summary = acceptance.summarize(plan, every_stage_passed(plan))
+    statuses = {step["status"] for journey in summary["journeys"] for step in journey["steps"]}
+    assert statuses <= {"passed", "partial", "skipped"} and "passed" in statuses
+    assert all(journey["status"] != "failed" for journey in summary["journeys"])
+    assert summary["complete"] is True
+
+
+def stub_stages(monkeypatch, up):
+    for name in acceptance.STAGES:
+        monkeypatch.setitem(acceptance.STAGE_FUNCTIONS, name, up if name == "up" else lambda plan, recorder: None)
+
+
+def test_main_fails_when_an_enabled_step_has_no_record_even_though_every_stage_passed(tmp_path, monkeypatch, capsys):
+    stub_stages(monkeypatch, lambda plan, recorder: record_steps(plan, leave_out={"J0.8"}))
+    argv = ["--profile", "pr", "--root", str(tmp_path), "--run-id", RUN, "--docker-context", "default"]
+    assert acceptance.main(argv) == 1
+    summary = json.loads((tmp_path / RUN / "evidence" / "acceptance.json").read_text(encoding="utf-8"))
+    assert all(stage["exit"] == 0 for stage in summary["stages"])
+    assert summary["complete"] is False and summary["journeys"][0]["status"] == "failed"
+    assert "journey J0 failed or left an enabled step without a record" in capsys.readouterr().out
+
+
+def test_main_succeeds_when_every_applicable_step_passed_was_partial_or_skipped(tmp_path, monkeypatch, capsys):
+    stub_stages(monkeypatch, lambda plan, recorder: record_steps(plan))
+    argv = ["--profile", "pr", "--root", str(tmp_path), "--run-id", RUN, "--docker-context", "default"]
+    assert acceptance.main(argv) == 0
+    summary = json.loads((tmp_path / RUN / "evidence" / "acceptance.json").read_text(encoding="utf-8"))
+    assert summary["complete"] is True
+    assert "all requested stages passed" in capsys.readouterr().out
+
+
+def test_main_judges_only_the_journeys_of_the_requested_stages(tmp_path, monkeypatch):
+    # J0 runs in up: a prepare-only invocation cannot fail on it, an up invocation can.
+    stub_stages(monkeypatch, lambda plan, recorder: None)
+    argv = ["--profile", "pr", "--root", str(tmp_path), "--run-id", RUN, "--docker-context", "default"]
+    assert acceptance.main([*argv, "--stages", "prepare"]) == 0
+    assert acceptance.main([*argv, "--stages", "up"]) == 1
+    monkeypatch.setitem(acceptance.STAGE_FUNCTIONS, "up", lambda plan, recorder: record_steps(plan))
+    assert acceptance.main([*argv, "--stages", "up"]) == 0

@@ -22,7 +22,9 @@ up (optional container egress block, then journey J0), run (journey tests and Pl
 suites), collect (status and container logs), scan (canary scan) and down (teardown and
 resource audit). Evidence goes to build/acceptance/<run-id>/: private/ holds the platform,
 people and traces and is never uploaded; evidence/ is uploadable after the scan passes.
-evidence/acceptance.json is written even when a stage fails.
+evidence/acceptance.json is written even when a stage fails. An enabled step without a
+record fails its journey: the run is then incomplete, and the command that ran the
+journey's stage (up for J0, run for the others) exits 1 even when every stage exited 0.
 """
 
 from __future__ import annotations
@@ -364,7 +366,11 @@ def prepare(plan: Plan, recorder: Recorder) -> None:
     )
 
 
-def _journeys(plan: Plan, recorder: Recorder, targets: Sequence[str]) -> None:
+def _journeys(plan: Plan, recorder: Recorder, targets: Sequence[str], *, allow_empty: bool) -> None:
+    """Run journey tests; ``allow_empty`` accepts pytest's "no tests collected" (exit 5).
+
+    Either way, the step records decide whether every enabled step ran (see failed_journeys).
+    """
     result = recorder.run(
         [sys.executable, "-m", "pytest", *targets, "-m", "acceptance", "-p", "no:cacheprovider", "-q", "--tb=short"],
         cwd=ROOT,
@@ -373,7 +379,9 @@ def _journeys(plan: Plan, recorder: Recorder, targets: Sequence[str]) -> None:
         check=False,
         capture=False,
     )
-    if result.returncode not in (0, 5):
+    if result.returncode == 5 and not allow_empty:
+        raise StageFailed("No journey test was collected; see the steps in evidence/acceptance.json")
+    if result.returncode not in ((0, 5) if allow_empty else (0,)):
         raise StageFailed("Journey steps failed; see the steps in evidence/acceptance.json")
 
 
@@ -403,7 +411,7 @@ def up(plan: Plan, recorder: Recorder) -> None:
             raise StageFailed("Containers can still reach public addresses")
         plan.state["egress_blocked"] = True
     plan.save()
-    _journeys(plan, recorder, [J0_TESTS])
+    _journeys(plan, recorder, [J0_TESTS], allow_empty=False)
 
 
 def run(plan: Plan, recorder: Recorder) -> None:
@@ -413,7 +421,7 @@ def run(plan: Plan, recorder: Recorder) -> None:
         if path.name != Path(J0_TESTS).name
     )
     if others:
-        _journeys(plan, recorder, others)
+        _journeys(plan, recorder, others, allow_empty=True)
     for name, suite in SUITES.items():
         if plan.profile not in suite["profiles"]:
             continue
@@ -672,13 +680,30 @@ def _environment(plan: Plan) -> dict[str, Any]:
     }
 
 
+def journey_stage(journey: str) -> str:
+    """The stage whose tests record a journey's steps: J0 in up, every other journey in run."""
+    return "up" if journey == "J0" else "run"
+
+
+def failed_journeys(journeys: Sequence[Mapping[str, Any]], stages: Sequence[str]) -> list[str]:
+    """The journeys recorded by ``stages`` that failed, including those with an enabled step that never ran."""
+    return [
+        str(journey["id"])
+        for journey in journeys
+        if journey["status"] == "failed" and journey_stage(str(journey["id"])) in stages
+    ]
+
+
 def summarize(plan: Plan, records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     enablement = acceptance_journeys.Enablement.load(JOURNEYS)
     latest = {record["name"]: record for record in records}
-    complete = not plan.state.get("resources_left") and all(
-        name in latest and latest[name]["exit"] == 0 and not latest[name].get("skipped") for name in STAGES
-    )
     steps = acceptance_evidence.read_steps(plan.evidence / "steps.jsonl")
+    journeys = acceptance_evidence.journey_results(enablement, plan.profile, steps)
+    complete = (
+        not plan.state.get("resources_left")
+        and all(name in latest and latest[name]["exit"] == 0 and not latest[name].get("skipped") for name in STAGES)
+        and not failed_journeys(journeys, STAGES)
+    )
     return acceptance_evidence.document(
         run_id=plan.run_id,
         profile=plan.profile,
@@ -688,7 +713,7 @@ def summarize(plan: Plan, records: Sequence[Mapping[str, Any]]) -> dict[str, Any
         versions=_versions(),
         environment=_environment(plan),
         stages=list(records),
-        journeys=acceptance_evidence.journey_results(enablement, plan.profile, steps),
+        journeys=journeys,
         secret_scan=plan.state.get("secret_scan", {"files": 0, "browser_storage_entries": 0, "hits": 0}),
         resources_left=plan.state.get("resources_left", []),
         artifacts=acceptance_evidence.artifacts(plan.evidence),
@@ -785,10 +810,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
     latest = {record["name"]: record for record in records}
-    ok = all(name in latest and latest[name]["exit"] == 0 for name in args.stages)
-    outcome = "all requested stages passed" if ok else "a stage failed"
+    stages_ok = all(name in latest and latest[name]["exit"] == 0 for name in args.stages)
+    failed = failed_journeys(summary["journeys"], args.stages)
+    if not stages_ok:
+        outcome = "a stage failed"
+    elif failed:
+        label = "journey" if len(failed) == 1 else "journeys"
+        outcome = f"{label} {', '.join(failed)} failed or left an enabled step without a record"
+    else:
+        outcome = "all requested stages passed"
     print(f"Acceptance {plan.profile} run {plan.run_id}: {outcome}. Evidence: {plan.evidence}", flush=True)
-    return 0 if ok else 1
+    return 0 if stages_ok and not failed else 1
 
 
 if __name__ == "__main__":
