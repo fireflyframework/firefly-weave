@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:firefly-weave:acceptance-evidence:1",
+  "title": "Firefly Weave acceptance evidence",
+  "description": "evidence/acceptance.json written by scripts/acceptance.py (acceptance spec section 3.7).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "profile",
+    "complete",
+    "commit",
+    "journeys_toml_sha256",
+    "versions",
+    "environment",
+    "stages",
+    "journeys",
+    "measurements",
+    "accessibility",
+    "secret_scan",
+    "resources_left",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{5,62}$" },
+    "profile": { "enum": ["pr", "ai", "cluster", "k3d", "nightly", "release", "docs-shots"] },
+    "complete": { "type": "boolean" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "journeys_toml_sha256": { "$ref": "#/$defs/sha256" },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["core", "agentic", "files", "desktop", "studio_bundle_sha256"],
+      "properties": {
+        "core": { "type": "string" },
+        "agentic": { "type": "string" },
+        "files": { "type": "string" },
+        "desktop": { "type": "string" },
+        "studio_bundle_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "runner",
+        "docker",
+        "kind",
+        "kubernetes",
+        "ollama",
+        "model",
+        "keycloak_image",
+        "postgres_image",
+        "egress_blocked",
+        "image_inventory"
+      ],
+      "properties": {
+        "os": { "type": "string" },
+        "runner": { "type": "string" },
+        "docker": { "type": "string" },
+        "kind": { "type": ["string", "null"] },
+        "kubernetes": { "type": ["string", "null"] },
+        "ollama": { "type": ["string", "null"] },
+        "model": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "digest"],
+              "properties": { "name": { "type": "string" }, "digest": { "type": "string" } }
+            }
+          ]
+        },
+        "keycloak_image": { "type": "string" },
+        "postgres_image": { "type": "string" },
+        "egress_blocked": { "type": "boolean" },
+        "image_inventory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ref", "id", "content"],
+            "properties": {
+              "ref": { "type": "string" },
+              "id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+              "content": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+            }
+          }
+        }
+      }
+    },
+    "stages": { "type": "array", "items": { "$ref": "#/$defs/stage" } },
+    "journeys": { "type": "array", "items": { "$ref": "#/$defs/journey" } },
+    "measurements": { "type": "object" },
+    "accessibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contrast", "axe", "target_size"],
+      "properties": {
+        "contrast": { "type": "array" },
+        "axe": { "type": "array" },
+        "target_size": { "type": "array" }
+      }
+    },
+    "secret_scan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files", "browser_storage_entries", "hits"],
+      "properties": {
+        "files": { "type": "integer", "minimum": 0 },
+        "browser_storage_entries": { "type": "integer", "minimum": 0 },
+        "hits": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "resources_left": { "type": "array", "items": { "type": "string" } },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": { "path": { "type": "string" }, "sha256": { "$ref": "#/$defs/sha256" } }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv", "exit", "seconds"],
+      "properties": {
+        "argv": { "type": "array", "items": { "type": "string" } },
+        "exit": { "type": "integer" },
+        "seconds": { "type": "number", "minimum": 0 }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "argv", "exit", "seconds"],
+      "properties": {
+        "name": { "enum": ["prepare", "up", "run", "collect", "scan", "down"] },
+        "argv": { "type": "array", "items": { "type": "string" } },
+        "exit": { "type": "integer" },
+        "seconds": { "type": "number", "minimum": 0 },
+        "skipped": { "type": "boolean" },
+        "commands": { "type": "array", "items": { "$ref": "#/$defs/command" } }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check", "missing"],
+      "properties": {
+        "check": { "type": "string" },
+        "missing": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "status"],
+      "properties": {
+        "n": { "type": "integer", "minimum": 1 },
+        "status": { "enum": ["passed", "failed", "skipped", "partial", "not_run"] },
+        "seconds": { "type": "number", "minimum": 0 },
+        "screenshot": { "type": "string" },
+        "missing": { "type": "array", "items": { "type": "string" } },
+        "skipped_checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+        "error": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "journey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "criteria", "viewport", "status", "attempts", "seconds", "steps"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^J([0-9]|1[0-5])$" },
+        "criteria": { "type": "array", "items": { "type": "string", "pattern": "^SC[1-7]$" } },
+        "viewport": { "type": "string" },
+        "status": { "enum": ["passed", "failed", "skipped", "partial"] },
+        "attempts": { "type": "integer", "minimum": 1 },
+        "seconds": { "type": "number", "minimum": 0 },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/step" } }
+      }
+    }
+  }
+}

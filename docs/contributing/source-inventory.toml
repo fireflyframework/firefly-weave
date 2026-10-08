@@ -410,3 +410,11 @@ reason = "Acme fixture data for acceptance journeys; strict JSON cannot carry a 
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/acceptance/evidence.schema.json"
+kind = "commentless"
+reason = "JSON Schema for acceptance evidence; strict JSON cannot carry a source comment header."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
