@@ -142,6 +142,12 @@ def _operators(expression: JsonValue, path: str) -> list[UnsupportedUse]:
     return found
 
 
-def _order(path: str) -> tuple[tuple[int, int | str], ...]:
-    """Sort key: numeric segments compare as numbers, names as text."""
-    return tuple((0, int(part)) if part.isascii() and part.isdigit() else (1, part) for part in path.split("/")[1:])
+def _order(path: str) -> tuple[tuple[int, int, str], ...]:
+    """Sort key: ASCII-digit segments by length and then text, other segments after them as text.
+
+    For digit strings without leading zeros, length then text is numeric order. Nothing calls ``int()``, whose digit
+    limit would raise on a long key.
+    """
+    return tuple(
+        (0, len(part), part) if part.isascii() and part.isdigit() else (1, 0, part) for part in path.split("/")[1:]
+    )
