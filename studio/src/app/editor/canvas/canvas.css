@@ -556,7 +556,9 @@ weave-canvas-view,
   color: var(--muted);
 }
 
-/* Hover toolbar and selection toolbar */
+/* Hover toolbar and selection toolbar. The hover toolbar sits on its
+   step's top right corner and grows from there like a label, so its
+   buttons never draw below 24 px on screen, at any level of detail. */
 .canvas-v2 .tile-toolbar {
   position: absolute;
   z-index: 6;
@@ -568,6 +570,8 @@ weave-canvas-view,
   background: var(--surface);
   box-shadow: var(--shadow-1);
   pointer-events: auto;
+  transform: scale(var(--label-scale, 1));
+  transform-origin: bottom right;
 }
 .canvas-v2 .tile-toolbar :is(.icon-button, .row-menu-toggle) {
   width: 28px;
@@ -678,12 +682,15 @@ weave-canvas-view,
     .lane-slot-label,
     .tile-badge,
     .handle,
-    .insert-plus,
     .sub-node-chip,
     .sub-node-handle,
-    .sub-node-links,
-    .tile-toolbar
+    .sub-node-links
   ) {
+  display: none;
+}
+/* While a step is being placed, or a step kind is dragged in, every "+"
+   shows at any zoom, so the pointer and focus can reach them. */
+.canvas-v2.lod-minimal:not(.revealing) .insert-plus {
   display: none;
 }
 .canvas-v2.lod-minimal .tile-body,

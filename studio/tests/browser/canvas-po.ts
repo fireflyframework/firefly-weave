@@ -86,15 +86,26 @@ export class CanvasPage {
     await this.insertTarget("Add first step").click();
     await this.pick(label);
   }
-  /** Closes the step details once they are on screen, and waits until they are gone. */
+  /**
+   * Hides the step details when they are on screen, and waits until they are
+   * gone: with their Close button where it shows (narrow windows), else with
+   * "Hide inspector" in the editor's toolbar. A narrow window doesn't open
+   * them for a step added with the step picker, so there is nothing to hide.
+   */
   async closeInspector() {
     const inspector = this.page.getByRole("complementary", {
       name: "Inspector",
     });
-    await expect(inspector).toBeVisible();
-    await inspector
-      .getByRole("button", { name: "Close inspector", exact: true })
-      .click();
+    if (!(await inspector.isVisible())) return;
+    const close = inspector.getByRole("button", {
+      name: "Close inspector",
+      exact: true,
+    });
+    await (
+      (await close.isVisible())
+        ? close
+        : this.page.getByRole("button", { name: "Hide inspector", exact: true })
+    ).click();
     await expect(inspector).toBeHidden();
   }
   /** The main sequence's step IDs, read from Source. */

@@ -17,7 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // What the canvas needs from the editor that hosts it. The shell (App)
 // implements it with the commands it already has: selecting, the step
-// picker, "Move to…", the workflow settings and undo.
+// picker, "Move to…", deleting and duplicating, the workflow settings and
+// undo.
 import type { Signal } from "@angular/core";
 import type { AnchorRect } from "../../designer/popover-placement";
 import type { StructuredCanvasAdapter } from "../../model";
@@ -56,4 +57,24 @@ export interface CanvasHost {
   closePicker(): void;
   /** Moves a step there (or places an unplaced one) as one undo step. */
   moveStep(id: string, insert: Insertion): void;
+  /** A step kind is being dragged from the editor, to drop on a "+". */
+  readonly dragPreview: unknown;
+  /** "Move to…": the step waits for a "+". */
+  startMove(id: string): void;
+  /** Ends "Move to…" and any drag the editor tracks. */
+  cancelGesture(): void;
+  /** Selects a step and moves focus into its details: the title, or its name to rename it. */
+  openStep(id: string, focus: "details" | "rename"): Promise<void>;
+  /** Deletes steps, each with everything inside it, as one undo step with an Undo toast. */
+  removeSteps(ids: readonly string[]): Promise<void>;
+  /** Copies a step, or a run of steps, right after itself. */
+  duplicateSteps(ids: readonly string[]): Promise<void>;
+  /** Adds a decision with one path per answer after a human task. */
+  branchOnDecision(id: string): Promise<void>;
+  /** A dragged step kind may drop here. */
+  allowDrop(event: DragEvent): void;
+  /** Inserts the step kind being dropped on a "+". */
+  dropStep(event: DragEvent, insert: Insertion): Promise<void>;
+  /** Shows an outcome in a toast, which also announces it. */
+  notify(text: string): void;
 }

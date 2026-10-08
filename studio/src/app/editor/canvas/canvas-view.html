@@ -35,6 +35,15 @@ SPDX-License-Identifier: Apache-2.0
   (click)="click($event)"
   (pointerover)="hover($event)"
   (pointerleave)="unhover()"
+  (pointerdown)="pointerDown($event)"
+  (pointermove)="pointerMove($event)"
+  (pointerup)="pointerUp($event)"
+  (pointercancel)="cancelPress()"
+  (contextmenu)="contextMenu($event)"
+  (focusin)="focusIn($event)"
+  (focusout)="focusOut($event)"
+  (dragover)="dragOver($event)"
+  (drop)="dropOn($event)"
 >
   @if (!ready) {
     <p class="canvas-v2-loading" role="status">Opening the canvas…</p>
@@ -55,6 +64,17 @@ SPDX-License-Identifier: Apache-2.0
             [width]="l.bounds.maxX + 96"
             [height]="l.bounds.maxY + 96"
           />
+          @if (band; as line) {
+            <svg class="rubber-band-layer" aria-hidden="true">
+              <line
+                class="rubber-band"
+                [attr.x1]="line.from.x"
+                [attr.y1]="line.from.y"
+                [attr.x2]="line.to.x"
+                [attr.y2]="line.to.y"
+              />
+            </svg>
+          }
           @for (label of l.labels; track label.owner) {
             <span
               class="branch-label"
@@ -105,9 +125,36 @@ SPDX-License-Identifier: Apache-2.0
               <weave-node-tile [view]="tile" />
             </div>
           }
+          @for (bar of toolbars(); track bar.id) {
+            <div
+              class="tile-toolbar f-drag-blocker"
+              role="group"
+              [attr.aria-label]="'Commands for ' + bar.id"
+              [attr.data-toolbar-for]="bar.id"
+              [style.left.px]="bar.x"
+              [style.top.px]="bar.y"
+            >
+              <button
+                type="button"
+                class="icon-button"
+                data-action="delete"
+                [attr.data-target]="bar.id"
+                [attr.aria-label]="'Delete ' + bar.id"
+                [attr.title]="'Delete ' + bar.id"
+                [attr.aria-disabled]="bar.locked || null"
+              >
+                <weave-icon name="trash" [size]="16" />
+              </button>
+              <weave-row-menu
+                [label]="'More commands for ' + bar.id"
+                [items]="bar.menu"
+              />
+            </div>
+          }
           @for (output of l.handles; track output.key) {
             <span
               class="handle f-drag-blocker"
+              [class.connecting]="band?.key === output.key"
               [attr.data-handle]="output.key"
               [style.left.px]="output.x - 6"
               [style.top.px]="output.y - 6"

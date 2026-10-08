@@ -2335,18 +2335,6 @@ export class App implements CanvasHost {
    */
   async remove(id = this.model.selected) {
     if (!id || this.editingLocked) return;
-    const contained = this.model.containedSteps(id);
-    if (
-      contained &&
-      !(await this.dialogs.confirm({
-        title: `Delete ${id} and the ${contained === 1 ? "1 step" : `${contained} steps`} inside it?`,
-        message:
-          "The group and every step in its branches are removed from the workflow. You can undo this.",
-        confirmLabel: "Delete group",
-        danger: true,
-      }))
-    )
-      return;
     // Where focus goes next: the step after it, else the one before it on
     // the same branch, else the "+" left where it was.
     const node = this.nodes.find((n) => n.step.id === id);
@@ -2355,30 +2343,7 @@ export class App implements CanvasHost {
     const next =
       siblings[position + 1]?.step.id ?? siblings[position - 1]?.step.id ?? "";
     const owner = node?.owner ?? "root";
-    // Its inspector edits go with it.
-    if (this.model.selected === id) this.loadInspector();
-    this.perform(() => this.model.remove(id, { contents: contained > 0 }));
-    if (this.error) {
-      this.cdr.markForCheck();
-      return;
-    }
-    this.message = "";
-    const revision = this.model.revision;
-    this.notify(`Deleted ${id}.`, {
-      label: "Undo",
-      run: () => {
-        if (this.model.revision !== revision || !this.model.canUndo) {
-          this.notify(
-            `${id} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
-          );
-          return;
-        }
-        this.undo();
-        this.notify(`Restored ${id}.`);
-        this.focusStep(id);
-      },
-    });
-    this.cdr.markForCheck();
+    if (!(await this.deleteSteps([id]))) return;
     this.focusLater(
       () =>
         (next
@@ -2391,6 +2356,68 @@ export class App implements CanvasHost {
         ) ??
         document.querySelector<HTMLElement>(".canvas"),
     );
+  }
+  /**
+   * Deletes one step or several as one undo step: groups with steps inside
+   * ask first, and a toast offers Undo while the workflow is still as the
+   * deletion left it. False when nothing was deleted.
+   */
+  private async deleteSteps(ids: readonly string[]): Promise<boolean> {
+    const one = ids.length === 1 ? ids[0] : "";
+    const contained = ids.reduce(
+      (sum, id) => sum + this.model.containedSteps(id),
+      0,
+    );
+    const inside = contained === 1 ? "1 step" : `${contained} steps`;
+    if (
+      contained &&
+      !(await this.dialogs.confirm(
+        one
+          ? {
+              title: `Delete ${one} and the ${inside} inside it?`,
+              message:
+                "The group and every step in its branches are removed from the workflow. You can undo this.",
+              confirmLabel: "Delete group",
+              danger: true,
+            }
+          : {
+              title: `Delete ${ids.length} steps and the ${inside} inside them?`,
+              message:
+                "The groups and every step in their branches are removed from the workflow. You can undo this.",
+              confirmLabel: "Delete steps",
+              danger: true,
+            },
+      ))
+    )
+      return false;
+    // Their inspector edits go with them.
+    if (ids.includes(this.model.selected)) this.loadInspector();
+    this.perform(() =>
+      one
+        ? this.model.remove(one, { contents: contained > 0 })
+        : this.model.removeSteps(ids),
+    );
+    if (this.error) {
+      this.cdr.markForCheck();
+      return false;
+    }
+    const what = one || `${ids.length} steps`;
+    const revision = this.model.revision;
+    this.notify(`Deleted ${what}.`, {
+      label: "Undo",
+      run: () => {
+        if (this.model.revision !== revision || !this.model.canUndo) {
+          this.notify(
+            `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
+          );
+          return;
+        }
+        this.undo();
+        this.notify(`Restored ${what}.`);
+        if (one) this.focusStep(one);
+      },
+    });
+    return true;
   }
   /** Makes a copy of a step right after it (the inspector's ⋯ menu). */
   async duplicate(id = this.model.selected) {
@@ -3093,6 +3120,41 @@ export class App implements CanvasHost {
   moveStep(id: string, insert: { owner: string; index: number }) {
     this.connectingNode = "";
     this.moveTo(id, { ...insert, point: { x: 0, y: 0 }, label: "" });
+  }
+  /** Selects a step and moves focus into its details: their title, or the step name to rename it. */
+  async openStep(id: string, focus: "details" | "rename") {
+    const node = this.nodes.find((n) => n.step.id === id);
+    if (!node) return;
+    await this.select(node);
+    if (this.model.selected !== id) return;
+    this.focusLater(() =>
+      focus === "rename"
+        ? document.querySelector<HTMLElement>("#step-name-input")
+        : document.querySelector<HTMLElement>(".inspector-header h2"),
+    );
+  }
+  /** Deletes steps as one undo step; one step goes through `remove`, which moves focus to its neighbor. */
+  async removeSteps(ids: readonly string[]) {
+    if (!ids.length || this.editingLocked) return;
+    if (ids.length === 1) return this.remove(ids[0]);
+    if (!(await this.deleteSteps(ids))) return;
+    this.focusLater(() => document.querySelector<HTMLElement>(".canvas-v2"));
+  }
+  /** Copies a step, or a run of steps, right after itself, as one undo step. */
+  async duplicateSteps(ids: readonly string[]) {
+    if (!ids.length || this.editingLocked) return;
+    if (ids.length === 1) return this.duplicate(ids[0]);
+    if (!(await this.ensureApplied())) return;
+    let copies: string[] = [];
+    this.perform(() => (copies = this.model.duplicateRun(ids)));
+    if (this.error || !copies.length) return;
+    this.notify(`Duplicated ${ids.length} steps.`);
+    this.loadInspector();
+    this.focusStep(copies[0]);
+  }
+  /** A step kind dropped on a "+" of the left-to-right canvas. */
+  dropStep(event: DragEvent, insert: { owner: string; index: number }) {
+    return this.drop(event, { ...insert, point: { x: 0, y: 0 }, label: "" });
   }
   readonly editorViews = ["Designer", "Source", "Outline"];
   selectTab(tab: string) {
