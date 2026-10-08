@@ -63,6 +63,32 @@ FIREFLY_MARKS = (
     "desktop/src-tauri/icons/icon.icns",
     "desktop/src-tauri/icons/icon.ico",
 )
+# The retired green palette and its warm accents: earlier Studio tokens, documentation diagrams, artwork and pages.
+LEGACY_HEX = frozenset(
+    {
+        # Studio's retired forest, jade and mint tokens and component literals.
+        "#173D34", "#244B3E", "#10302A", "#367D68", "#2C6A57", "#A1D1B9", "#EEF4F0", "#315D4B", "#C7D9D0",
+        "#F5F8F5", "#F8FAF8", "#FAFCF9", "#E3EFE8", "#DBE5DF", "#CCDCD2", "#9CB9AA", "#738C80", "#5F8A76",
+        "#253E36", "#4D655D", "#EEF2EF", "#5C706A", "#1D6047", "#E2F1E9", "#A9D3BD", "#465D55", "#EDF1EE",
+        "#C3D0C9", "#B88322", "#FBF4DF", "#DBECE3", "#B9D8C8", "#174D3C", "#E8F3ED", "#8CAAA0", "#F5FAF7",
+        "#285947",
+        # Legacy documentation diagram colors.
+        "#0C2923", "#315C4E", "#566C61", "#536D60", "#48655C", "#45685C", "#397963", "#7FA99A", "#326B88",
+        "#FAFCFB", "#F7FAF8", "#F3F8F5", "#F0F6F2", "#EAF4ED", "#E6F2EB", "#EDF5EF", "#DDEAE3", "#DCEBE3",
+        "#E4EFEC", "#E3ECDD", "#E8F0F6", "#BFD2C8", "#C9DACF", "#C6D8CE", "#CEE4D8", "#C4D8CE", "#CADFD2",
+        "#B7CFC1", "#A8D5BE", "#A8BDB1", "#A8C8B9", "#FFF7E5", "#FFF6E3", "#FFF5E5", "#94601B", "#624B22",
+        "#D6A646", "#DCC18C", "#E4D3AE",
+        # Earlier artwork, graph export, API explorer and documentation stylesheet colors.
+        "#D9EBDF", "#FFF3D6", "#8EE3DC", "#62706A", "#F6F4EC", "#486459", "#EEECE1", "#AD8233", "#DBDDD0",
+        "#65766B", "#123229", "#28644F", "#162A24", "#B9CEC4", "#20382F", "#91D3B5", "#A7E6C9",
+    }
+)  # fmt: skip
+LEGACY_SCAN_ROOTS = ("assets", "src/firefly_weave", "desktop/bootstrap", "desktop/artwork", "studio/src")
+# Deleted when the documentation header and favicon switch to the Firefly files.
+LEGACY_SCAN_EXEMPT = frozenset(
+    {"assets/weave-logo.svg", "assets/weave-logo-mono.svg", "assets/weave-logo-reversed.svg"}
+)
+
 TEXT_SUFFIXES = frozenset({".svg", ".css", ".html", ".py", ".ts", ".js", ".mjs", ".json", ".md", ".txt"})
 
 
@@ -274,3 +300,16 @@ def test_readme_shields_use_graphite_and_one_alpha_color():
         "License": "474A42",
         "Status": "855414",
     }
+
+
+@pytest.mark.parametrize("folder", LEGACY_SCAN_ROOTS)
+def test_no_retired_palette_color_remains(folder):
+    offenders = []
+    for path in sorted((ROOT / folder).rglob("*")):
+        relative = path.relative_to(ROOT).as_posix()
+        if not path.is_file() or path.suffix not in TEXT_SUFFIXES or relative in LEGACY_SCAN_EXEMPT:
+            continue
+        if {"node_modules", "__pycache__"} & set(path.parts):
+            continue
+        offenders += [f"{relative}: {color}" for color in sorted(colors(text_of(relative)) & LEGACY_HEX)]
+    assert offenders == []
