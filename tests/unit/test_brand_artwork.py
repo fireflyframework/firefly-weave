@@ -234,7 +234,9 @@ def test_macos_icon_holds_every_size_up_to_1024():
     types, at = set(), 8
     while at < len(data):
         types.add(data[at : at + 4].decode("ascii"))
-        at += struct.unpack(">I", data[at + 4 : at + 8])[0]
+        length = struct.unpack(">I", data[at + 4 : at + 8])[0]
+        assert length >= 8, f"bad icns chunk length {length} at {at}"
+        at += length
     assert {"is32", "il32", "ic07", "ic08", "ic09", "ic10", "ic11", "ic12", "ic13", "ic14"} <= types
 
 
@@ -309,7 +311,7 @@ def test_no_retired_palette_color_remains(folder):
         relative = path.relative_to(ROOT).as_posix()
         if not path.is_file() or path.suffix not in TEXT_SUFFIXES or relative in LEGACY_SCAN_EXEMPT:
             continue
-        if {"node_modules", "__pycache__"} & set(path.parts):
+        if {"node_modules", "__pycache__"} & set(path.relative_to(ROOT).parts):
             continue
         offenders += [f"{relative}: {color}" for color in sorted(colors(text_of(relative)) & LEGACY_HEX)]
     assert offenders == []

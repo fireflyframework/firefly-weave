@@ -90,7 +90,7 @@ def test_root_help_explains_public_command_families_without_generated_boilerplat
 
 
 @pytest.mark.parametrize("width", [32, 48, 80])
-def test_help_ascii_banner_and_entry_points_fit_terminal(width):
+def test_help_header_and_entry_points_fit_terminal(width):
     result = CliRunner().invoke(cli, ["--help"], prog_name="weave", terminal_width=width)
     assert result.exit_code == 0, result.output
     banner = result.output.split("Usage:")[0]

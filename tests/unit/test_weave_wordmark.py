@@ -163,6 +163,10 @@ def test_lockups_are_drawn_from_the_wordmark_master(lockup, master):
     assert logo is not None
     # The w starts 1X after the separator, which sits 1X after the chevron apex.
     offset = float(logo.get("x")) + float(logo.get("width")) - 1 + 2 * X
+    # Pin the box and the w's left ink edge: the masters start at x = 0, so the edge sits at the offset.
+    assert root.get("viewBox") == "5 -178.12 1368.66 248.25"
+    assert offset == pytest.approx(839.4, abs=0.01)
+    assert min(numbers(part(root, "ink").get("d"))[::2]) == pytest.approx(839.4, abs=0.01)
     source = ET.fromstring(text_of(master))
     ink = PAPER if "reversed" in lockup else CHARCOAL
     for role, fill in (("ink", ink), ("thread", AMBER if ink == PAPER else GOLD)):
