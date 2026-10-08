@@ -23,6 +23,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Discriminator, Field, Tag, TypeAdapter, model_validator
 from pydantic.json_schema import JsonSchemaValue, SkipJsonSchema
 
+from firefly_weave.contracts.language_features import DEFAULT_LOOP_MAX_ITEMS
 from firefly_weave.contracts.llm import LLMProfile
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonData, JsonObject, JsonObjectData, UnicodeString
 
@@ -59,6 +60,8 @@ type OperatorName = Literal[
     "notIn",
     "startsWith",
     "endsWith",
+    "concat",
+    "join",
 ]
 
 
@@ -325,6 +328,41 @@ class FailStep(ContractModel):
     message: Annotated[UnicodeString, Field(min_length=1)]
 
 
+class ForEachStep(ContractModel):
+    """Run ``body`` once per element of ``items`` and collect one result per element, in element order."""
+
+    id: ResourceName
+    kind: Literal["forEach"]
+    items: Expression
+    # Defaults are materialized in the canonical document, like ``retry`` and ``decisions``.
+    concurrency: PositiveInt = 1
+    max_items: PositiveInt = Field(default=DEFAULT_LOOP_MAX_ITEMS, alias="maxItems")
+    collect: Literal["all", "nonNull"] = "all"
+    body: Branch
+
+
+class CallWorkflowStep(ContractModel):
+    """Run an exact published workflow version as a separate child run."""
+
+    id: ResourceName
+    kind: Literal["callWorkflow"]
+    uses: VersionedReference
+    input: Expression = Field(alias="with")
+    mode: Literal["wait", "detach"] = "wait"
+    on_failure: OmissionOnly[Literal["stop", "continue"]] = Field(
+        default=None, alias="onFailure", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    business_key: OmissionOnly[Expression] = Field(
+        default=None, alias="businessKey", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def failure_needs_wait(self) -> CallWorkflowStep:
+        if self.mode == "detach" and self.on_failure is not None:
+            raise ValueError("onFailure applies only when the call waits for its result")
+        return self
+
+
 type Step = Annotated[
     ActionStep
     | LLMStep
@@ -335,9 +373,30 @@ type Step = Annotated[
     | WaitStep
     | SignalStep
     | HumanTaskStep
-    | FailStep,
+    | FailStep
+    | ForEachStep
+    | CallWorkflowStep,
     Field(discriminator="kind"),
 ]
+
+
+type CallerNames = Annotated[
+    list[ResourceName], Field(min_length=1, max_length=100, json_schema_extra={"uniqueItems": True})
+]
+
+
+class CallableSpec(ContractModel):
+    """A workflow's opt-in to being called; omitted allowedCallers means any workflow in the project."""
+
+    allowed_callers: OmissionOnly[CallerNames] = Field(
+        default=None, alias="allowedCallers", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def unique_callers(self) -> CallableSpec:
+        if self.allowed_callers is not None and len(set(self.allowed_callers)) != len(self.allowed_callers):
+            raise ValueError("allowedCallers must be unique")
+        return self
 
 
 class WorkflowSpec(ContractModel):
@@ -352,6 +411,9 @@ class WorkflowSpec(ContractModel):
     )
     steps: list[Step]
     output: Expression
+    callable: OmissionOnly[CallableSpec] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
 
 
 class ConnectorAction(ContractModel):
@@ -427,6 +489,8 @@ for _model in (
     SwitchCase,
     SwitchStep,
     ParallelStep,
+    ForEachStep,
+    CallWorkflowStep,
 ):
     _model.model_rebuild()
 

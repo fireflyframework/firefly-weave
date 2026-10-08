@@ -147,7 +147,9 @@ class LanguageManifest(ContractModel):
 
 _ANY: Final[list[JsonType]] = ["array", "boolean", "integer", "null", "number", "object", "string"]
 _ORDERED: Final[list[JsonType]] = ["integer", "number", "string"]
+_TEXT_PARTS: Final[list[JsonType]] = ["string", "integer", "number", "boolean"]
 _BOOLEAN: Final[JsonObject] = {"type": "boolean"}
+_STRING: Final[JsonObject] = {"type": "string"}
 
 
 def _operator(
@@ -195,6 +197,8 @@ OPERATORS: Final[tuple[ManifestOperator, ...]] = (
     _operator("notIn", (2, 2), [_ANY, ["array"]], _BOOLEAN, "Is not in list"),
     _operator("startsWith", (2, 2), [["string"], ["string"]], _BOOLEAN, "Starts with"),
     _operator("endsWith", (2, 2), [["string"], ["string"]], _BOOLEAN, "Ends with"),
+    _operator("concat", (1, None), [_TEXT_PARTS], _STRING, "Combine text", repeat_last=True, studio="pending"),
+    _operator("join", (2, 2), [["array"], ["string"]], _STRING, "Join list", item_types=_TEXT_PARTS, studio="pending"),
 )
 
 _WORKFLOW_FIELD_MARKS: Final[tuple[tuple[str, StudioMark], ...]] = (
@@ -205,6 +209,7 @@ _WORKFLOW_FIELD_MARKS: Final[tuple[tuple[str, StudioMark], ...]] = (
     ("llmProfiles", "ready"),
     ("steps", "ready"),
     ("output", "ready"),
+    ("callable", "pending"),
 )
 WORKFLOW_FIELDS: Final[tuple[ManifestWorkflowField, ...]] = tuple(
     ManifestWorkflowField.model_validate(
@@ -247,6 +252,16 @@ STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
     _kind("decisionTable", "DecisionTableStep", "data", "Decision table"),
     _kind("switch", "SwitchStep", "flow", "Decision", blocks=[("default", "/default", "Otherwise")]),
     _kind("parallel", "ParallelStep", "flow", "Parallel"),
+    _kind(
+        "forEach",
+        "ForEachStep",
+        "flow",
+        "Loop over items",
+        blocks=[("body", "/body", "For each item")],
+        scope_roots=["/item", "/index", "/loops"],
+        studio="pending",
+    ),
+    _kind("callWorkflow", "CallWorkflowStep", "flow", "Call a workflow", studio="pending"),
     _kind("wait", "WaitStep", "wait", "Wait for time"),
     _kind("signal", "SignalStep", "wait", "Wait for signal"),
     _kind("humanTask", "HumanTaskStep", "human", "Human task"),

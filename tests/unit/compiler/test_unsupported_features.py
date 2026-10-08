@@ -384,3 +384,48 @@ def test_every_compiler_entry_point_stops_at_constructs_it_cannot_compile(monkey
         (CODE, "/spec/output/op/name", "error", "semantic"),
         (CODE, "/spec/steps/0/kind", "error", "semantic"),
     ]
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        lambda d: compile_source(d, format="object", catalog=CatalogSnapshot.from_definitions([])),
+        lambda d: validate_source(d, format="object"),
+        lambda d: validate_authoring(d, format="object"),
+    ],
+)
+def test_new_constructs_parse_and_every_entry_point_reports_them(check):
+    result = check(EVERYTHING)
+    assert not result.ok and result.artifact is None
+    assert {d.code for d in result.diagnostics} == {CODE}
+    assert sorted(d.path for d in result.diagnostics) == [path for path, _ in EXPECTED]
+
+
+def test_decision_tables_with_text_operators_do_not_compile():
+    table = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "DecisionTable",
+        "metadata": {"name": "d", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "hitPolicy": "first",
+            "rules": [{"id": "r", "when": {"literal": True}, "output": CONCAT}],
+        },
+    }
+    result = compile_source(table, format="object", catalog=CatalogSnapshot.from_definitions([]))
+    assert [(d.code, d.path) for d in result.diagnostics] == [(CODE, "/spec/rules/0/output/op/name")]
+
+
+def test_callable_workflows_compile_because_callable_only_declares_an_interface():
+    document = workflow([])
+    document["spec"]["callable"] = {"allowedCallers": ["order-intake"]}
+    result = compile_source(document, format="object", catalog=CatalogSnapshot.from_definitions([]))
+    assert result.ok, [d.code for d in result.diagnostics]
+
+
+def test_diagnostics_stay_capped_on_large_documents():
+    many = workflow([{"id": f"t{i}", "kind": "transform", "value": CONCAT} for i in range(150)])
+    result = validate_authoring(many, format="object")
+    assert len(result.diagnostics) == 100
+    assert result.truncated and result.omitted_count > 0

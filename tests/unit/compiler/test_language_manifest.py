@@ -164,3 +164,45 @@ def test_manifest_round_trips_and_its_schema_is_exported():
         "workflow_fields",
         "step_kinds",
     }
+
+
+def test_new_constructs_stay_pending_until_studio_ships_them():
+    manifest = language_manifest()
+    assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {"forEach", "callWorkflow"}
+    assert {entry.name for entry in manifest.operators if entry.studio == "pending"} == {"concat", "join"}
+    assert {entry.name for entry in manifest.workflow_fields if entry.studio == "pending"} == {"callable"}
+
+
+def test_loop_and_join_entries_match_the_spec_example():
+    dump = language_manifest().model_dump(mode="json")
+    assert next(entry for entry in dump["step_kinds"] if entry["kind"] == "forEach") == {
+        "kind": "forEach",
+        "feature": "flow.forEach",
+        "schema_ref": "workflow.schema.json#/$defs/ForEachStep",
+        "group": "flow",
+        "label": "Loop over items",
+        "blocks": [{"name": "body", "path": "/body", "label": "For each item"}],
+        "scope_roots": ["/item", "/index", "/loops"],
+        "studio": "pending",
+    }
+    assert next(entry for entry in dump["operators"] if entry["name"] == "join") == {
+        "name": "join",
+        "feature": "text.join",
+        "arity": {"min": 2, "max": 2},
+        "operand_types": [["array"], ["string"]],
+        "item_types": ["string", "integer", "number", "boolean"],
+        "result": {"type": "string"},
+        "label": "Join list",
+        "studio": "pending",
+    }
+
+
+def test_loop_default_in_the_definition_is_the_manifest_default():
+    max_items = definitions.ForEachStep.model_fields["max_items"]
+    assert max_items.default == language_manifest().limits.default_loop_max_items
+
+
+def test_kinds_with_a_feature_run_only_where_the_feature_is_advertised():
+    assert "forEach" not in supported_step_kinds()
+    assert "forEach" in supported_step_kinds(["flow.forEach"])
+    assert "callWorkflow" in supported_step_kinds(["flow.callWorkflow"])
