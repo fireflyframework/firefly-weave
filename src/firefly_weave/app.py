@@ -324,7 +324,7 @@ def make_app(
             compatibility = pyfly.context.get_bean(CompatibilityService)
             app.state.compatibility = compatibility
             app.state.telemetry_service = pyfly.context.get_bean(TelemetryService)
-            registry.set_operational_guard(lambda: compatibility.ready)
+            registry.set_operational_guard(lambda: compatibility.ready, retry_after=compatibility.retry_after_seconds)
 
             async def open_control_loop(*, required: bool = False) -> None:
                 nonlocal recovery_loop

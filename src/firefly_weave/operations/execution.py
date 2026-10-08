@@ -29,9 +29,11 @@ from firefly_weave.definitions.models import CatalogError
 WORK_SLOTS = 2
 CONTROL_SLOTS = 4
 DEBUG_EXECUTION_SLOTS = 1
+INVENTORY_SLOTS = 1
 _work_slots = threading.BoundedSemaphore(WORK_SLOTS)
 _control_slots = threading.BoundedSemaphore(CONTROL_SLOTS)
 _debug_slots = threading.BoundedSemaphore(DEBUG_EXECUTION_SLOTS)
+_inventory_slots = threading.BoundedSemaphore(INVENTORY_SLOTS)
 
 
 class _Lease:
@@ -96,6 +98,23 @@ def debug_operation[**P, R](method: Callable[P, Awaitable[R]]) -> Callable[P, Aw
 @asynccontextmanager
 async def request_execution(*, control: bool = False) -> AsyncIterator[None]:
     lease = _Lease(control)
+    token = _request_lease.set(lease)
+    try:
+        yield
+    finally:
+        _request_lease.reset(token)
+        lease.close()
+
+
+@asynccontextmanager
+async def inventory_execution() -> AsyncIterator[None]:
+    """Own the compatibility inventory's reserved slot for one sequential scan.
+
+    A request burst can hold every control slot; the inventory must not read that
+    refusal as an incompatible retained item. A classification still running from a
+    cancelled scan keeps the slot, so the next scan is refused instead of overlapping.
+    """
+    lease = _Lease(True, slots=_inventory_slots)
     token = _request_lease.set(lease)
     try:
         yield
