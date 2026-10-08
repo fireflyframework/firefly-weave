@@ -42,6 +42,11 @@ INVENTORIED = (
     *LOCKUPS,
     "studio/public/assets/weave-lockup-reversed.svg",
     "studio/public/assets/weave-lockup-small-reversed.svg",
+    "desktop/bootstrap/weave-lockup-reversed.svg",
+    "assets/banner.svg",
+    "assets/brand/social-preview.png",
+    "desktop/artwork/dmg-background.svg",
+    "desktop/artwork/dmg-background.png",
 )
 # The w's strand carries at most this share of the amber in the Firefly logo beside it.
 AMBER_BUDGET = 0.70
@@ -201,3 +206,14 @@ def test_notice_names_the_weave_marks_and_the_trademark_limit():
         "Firefly Software Foundation" in flat
     )
     assert "grants no permission to use them except as its section 6 allows" in flat
+
+
+@pytest.mark.parametrize("path", ("assets/banner.svg", "desktop/artwork/dmg-background.svg"))
+def test_artwork_nests_the_lockup_with_the_wordmark(path):
+    text = text_of(path)
+    assert "<text" not in text and LOCKUP_MARK in text.splitlines()[0]
+    nested = ET.fromstring(text).find(f"{SVG}svg")
+    assert nested is not None, "the artwork nests the lockup as an <svg> element"
+    lockup = ET.fromstring(text_of("assets/brand/weave-lockup-reversed.svg"))
+    for role in ("ink", "thread"):
+        assert part(nested, role).get("d") == part(lockup, role).get("d")

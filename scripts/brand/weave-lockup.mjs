@@ -30,6 +30,7 @@ SPDX-License-Identifier: Apache-2.0
 // committed masters, assets/brand/weave-wordmark.svg and, for the small
 // lockup, weave-wordmark-small.svg; no lockup sets live or outlined type.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -153,6 +154,135 @@ files["assets/brand/firefly-mark.svg"] = accessible(
 for (const name of ["weave-lockup-reversed", "weave-lockup-small-reversed", "firefly-mark"])
   files[`studio/public/assets/${name}.svg`] = files[`assets/brand/${name}.svg`];
 files["studio/public/favicon.svg"] = files["assets/brand/firefly-icon.svg"];
+
+// The README banner, the social preview, the DMG window, the launch page's
+// lockup, the macOS icon master and the Windows icon. They reuse the lockup and
+// icon above, so every Firefly artwork file comes from this one construction.
+const sharp = (await import(pathToFileURL(createRequire(resolve("package.json")).resolve("sharp")).href)).default;
+const STONE = "#bfb8ab";
+const GRAPHITE = "#474a42";
+const RAISED = "#1f201c";
+const RULE = "#2e2f2a";
+const PLATE = "#767672";
+const reversed = lockup({ ink: PAPER, solid: false });
+
+/** The reversed lockup over the descriptor line, centered vertically on charcoal. */
+function hero({ width, height, x, centered }) {
+  const k = x / X; // Pixels per drawing unit when 1X is x pixels.
+  const [lockupWidth, lockupHeight] = [reversed.width * k, reversed.height * k];
+  const size = (28 * x) / 32; // 28 px when 1X is 32 px.
+  const regular = face(400);
+  const cap = (regular.capHeight * size) / regular.unitsPerEm;
+  const top = (height - (lockupHeight + x + cap)) / 2;
+  const left = centered ? (width - lockupWidth) / 2 : 2 * x;
+  const descriptor = line("Workflow orchestration and integration", {
+    x: centered ? width / 2 : left + k,
+    y: top + lockupHeight + x + cap,
+    size,
+    weight: 400,
+    fill: STONE,
+    anchor: centered ? "middle" : "start",
+  });
+  const logo = placed(reversed.drawing, r(left), r(top), r(lockupWidth));
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="${CHARCOAL}"/>${logo}${descriptor}</svg>`;
+}
+
+/** The DMG window, 720 x 440 at 1x; Finder draws 128 px icons at (190, 236) and (530, 236). */
+function dmgBackground() {
+  const x = Math.max(16, Math.ceil((80 * X) / reversed.FW)); // The Firefly part stays at least 80 px wide.
+  const k = x / X;
+  const text = (value, options) => line(value, { weight: 400, ...options });
+  const drop = (cx) => `<circle cx="${cx}" cy="236" r="74" fill="${RAISED}" stroke="${GRAPHITE}" stroke-width="1"/>`;
+  // Finder colors icon labels by appearance; black (4.60) and white (4.56) both read on this plate.
+  const plate = (cx, w) => `<rect x="${cx - w / 2}" y="308" width="${w}" height="26" rx="6" fill="${PLATE}"/>`;
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="440" viewBox="0 0 720 440">`,
+    `<rect width="720" height="440" fill="${CHARCOAL}"/>`,
+    placed(reversed.drawing, 40, 32, r(reversed.width * k)),
+    text("Drag Firefly Weave Studio into Applications to install.", {
+      x: 40,
+      y: r(32 + reversed.height * k + 34),
+      size: 17,
+      weight: 500,
+      fill: PAPER,
+    }),
+    drop(190),
+    drop(530),
+    plate(190, 196),
+    plate(530, 132),
+    `<path d="M304 236H416M401 223L416 236L401 249" fill="none" stroke="${AMBER}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`,
+    `<path d="M40 362H680" stroke="${RULE}"/>`,
+    text("Then open Firefly Weave Studio from Applications.", { x: 40, y: 394, size: 15, fill: PAPER }),
+    text("Firefly Software Foundation", { x: 40, y: 418, size: 12, fill: STONE }),
+    `</svg>`,
+  ].join("");
+}
+
+/** Rasterize a drawing to exact pixels: supersample with sharp, then downscale. */
+async function png(drawing, width, height = width) {
+  const viewBox = drawing.match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number);
+  const intrinsic = Number(drawing.match(/^<svg[^>]*\swidth="([\d.]+)"/)?.[1] ?? viewBox[2]);
+  const density = (72 * width * (width < 64 ? 8 : 4)) / intrinsic;
+  const big = await sharp(Buffer.from(drawing), { density }).png().toBuffer();
+  return sharp(big).resize(width, height, { kernel: "lanczos3" }).png({ compressionLevel: 9 }).toBuffer();
+}
+
+/** An ICO container with PNG entries, which Windows Vista and later read at every size. */
+function ico(images) {
+  const header = Buffer.alloc(6 + 16 * images.length);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(images.length, 4);
+  let offset = header.length;
+  images.forEach(({ size, data }, index) => {
+    const at = 6 + 16 * index;
+    header.writeUInt8(size >= 256 ? 0 : size, at);
+    header.writeUInt8(size >= 256 ? 0 : size, at + 1);
+    header.writeUInt16LE(1, at + 4);
+    header.writeUInt16LE(32, at + 6);
+    header.writeUInt32LE(data.length, at + 8);
+    header.writeUInt32LE(offset, at + 12);
+    offset += data.length;
+  });
+  return Buffer.concat([header, ...images.map((image) => image.data)]);
+}
+
+// Windows icon entries: the solid chevron below 32 px, the trail from 32 px up (the kit's rule).
+const ICO_ENTRIES = [
+  [16, tile({ solid: true }, "ico-small-trail")],
+  [24, tile({ solid: true }, "ico-small-trail")],
+  [32, tile({}, "ico-trail")],
+  [48, tile({}, "ico-trail")],
+  [64, tile({}, "ico-trail")],
+  [256, tile({}, "ico-trail")],
+];
+const macosIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">${placed(tile({}, "macos-icon-trail"), 100, 100, 824)}</svg>`;
+const banner = hero({ width: 1120, height: 280, x: 32, centered: false });
+const dmg = dmgBackground();
+files["assets/banner.svg"] = accessible(
+  banner,
+  "Firefly Weave — workflow orchestration and integration",
+  "The Firefly Weave logo in paper above the line Workflow orchestration and integration in stone, on charcoal.",
+  LOCKUP_NOTICE,
+);
+files["desktop/artwork/dmg-background.svg"] = accessible(
+  dmg,
+  "Install Firefly Weave Studio",
+  "Drag the app on the left into Applications on the right, then open Firefly Weave Studio from Applications.",
+  LOCKUP_NOTICE,
+);
+// The desktop launch page shows the same lockup from its own folder (the app's CSP allows img-src 'self').
+files["desktop/bootstrap/weave-lockup-reversed.svg"] = files["assets/brand/weave-lockup-reversed.svg"];
+files["desktop/artwork/app-icon-macos.svg"] = accessible(
+  macosIcon,
+  "Firefly Weave Studio",
+  "The Firefly icon tile at 824 by 824 pixels on a transparent 1024 by 1024 canvas, the macOS icon grid.",
+);
+files["desktop/artwork/dmg-background.png"] = await png(dmg, 720, 440);
+files["assets/brand/social-preview.png"] = await png(hero({ width: 1280, height: 640, x: 48, centered: true }), 1280, 640);
+files["desktop/src-tauri/icons/icon.ico"] = ico(
+  await Promise.all(ICO_ENTRIES.map(async ([size, drawing]) => ({ size, data: await png(drawing, size) }))),
+);
 
 for (const [path, text] of Object.entries(files)) {
   const target = join(values.out, path);
