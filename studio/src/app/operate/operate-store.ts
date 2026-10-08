@@ -116,12 +116,14 @@ export class Poller {
    * Loads now (Refresh, Try again, a changed tab) and restarts the wait. A
    * load never overlaps another: asked during one, it runs once more right
    * after it, so what the person just changed is what loads. Every caller
-   * during the same load shares that one follow-up.
+   * during the same load shares that one follow-up, which never runs once
+   * the poller has stopped (the page is gone).
    */
   refresh(): Promise<void> {
     if (this.current === null) return this.run();
     this.followUp ??= this.current.then(() => {
       this.followUp = null;
+      if (this.stopped) return;
       return this.current ?? this.run();
     });
     return this.followUp;

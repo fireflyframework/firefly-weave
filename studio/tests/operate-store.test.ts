@@ -223,6 +223,33 @@ describe("Poller", () => {
     poller.stop();
   });
 
+  it("does not run a refresh queued before it stopped", async () => {
+    const browser = new FakeBrowser();
+    const releases: (() => void)[] = [];
+    let started = 0;
+    const poller = new Poller(
+      () =>
+        new Promise<void>((resolve) => {
+          started++;
+          releases.push(resolve);
+        }),
+      10_000,
+      browser,
+    );
+    poller.start();
+    expect(started).toBe(1);
+    const queued = poller.refresh();
+    // The page goes away while its load is in flight.
+    poller.stop();
+    releases[0]();
+    await settle();
+    expect(started).toBe(1);
+    for (const release of releases) release();
+    await queued;
+    expect(poller.busy).toBe(false);
+    expect(browser.pending()).toBeNull();
+  });
+
   it("does not load, stamp or fail while paused, and keeps its schedule", async () => {
     const browser = new FakeBrowser();
     let loads = 0;
