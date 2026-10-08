@@ -160,6 +160,13 @@ def test_strict_build_retains_theme_assets_and_public_navigation(tmp_path):
     assert not (output / "implementation-status/index.html").exists()
     assert not (output / "contributing/source-inventory.toml").exists()
     assert not (output / ".superpowers").exists()
+    assert 'src="assets/brand/weave-lockup-small-reversed.svg"' in home
+    assert 'href="assets/brand/firefly-icon.svg"' in home
+    stylesheet = (output / "stylesheets/weave.css").read_text(encoding="utf-8")
+    fonts = re.findall(r'url\("\.\./(assets/fonts/manrope/[^"]+\.woff2)"\)', stylesheet)
+    assert len(fonts) == 2 and all((output / font).is_file() for font in fonts)
+    assert (output / "assets/fonts/manrope/OFL.txt").is_file()
+    assert not list(output.rglob("weave-logo*.svg"))
 
 
 def test_generated_api_reference_matches_exported_contract_and_links_every_schema(tmp_path):

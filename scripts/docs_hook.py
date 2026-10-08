@@ -45,13 +45,17 @@ PROJECT_PAGES = {
     "tests/fixtures/e2-provider/README.md": "project/provider-fixture.md",
 }
 ASSETS = (
-    "assets/weave-logo.svg",
-    "assets/weave-logo-reversed.svg",
-    "assets/weave-logo-mono.svg",
     "assets/banner.svg",
     "assets/badges/license.svg",
     "assets/badges/python.svg",
     "assets/badges/alpha.svg",
+    "assets/brand/weave-lockup-reversed.svg",
+    "assets/brand/weave-lockup-color.svg",
+    "assets/brand/weave-lockup-small-reversed.svg",
+    "assets/brand/firefly-icon.svg",
+    "assets/fonts/manrope/manrope-latin-wght-normal.woff2",
+    "assets/fonts/manrope/manrope-latin-ext-wght-normal.woff2",
+    "assets/fonts/manrope/OFL.txt",
 )
 PRIVATE_PARTS = {"superpowers", ".superpowers", ".codex", ".agents", ".secrets", ".local", "localenv"}
 GENERATED_FILES = {"reference/openapi.json"}

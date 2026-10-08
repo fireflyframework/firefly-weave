@@ -90,6 +90,7 @@ LEGACY_SCAN_ROOTS = (
     "desktop/artwork",
     "studio/src",
     "docs/diagrams",
+    "docs/stylesheets",
 )
 # Deleted when the documentation header and favicon switch to the Firefly files.
 LEGACY_SCAN_EXEMPT = frozenset(
