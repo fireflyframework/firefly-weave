@@ -34,7 +34,7 @@ async def bounded_body(request: Request) -> bytes:
     body = bytearray()
     async for chunk in request.stream():
         if len(body) + len(chunk) > 524288:
-            raise CatalogError(413, "WV-LUMI-LIMIT", "Lumi request is too large")
+            raise CatalogError(413, "WV-LUMI-LIMIT", "Weave AI request is too large")
         body.extend(chunk)
     return bytes(body)
 

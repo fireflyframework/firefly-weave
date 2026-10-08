@@ -69,7 +69,7 @@ class LumiService:
 
     async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> Principal:
         if tx.scope.environment_id is None:
-            raise CatalogError(422, "WV-SCOPE", "Lumi requires an environment")
+            raise CatalogError(422, "WV-SCOPE", "Weave AI requires an environment")
         current = await load_principal(tx.session, actor.id)
         self.definitions.require(current, tx.scope, capability, context)
         return current
@@ -87,7 +87,7 @@ class LumiService:
             await self._require(tx, actor, "lumi.manage", context)
             result = await self._read(tx)
             if result is None:
-                raise CatalogError(404, "WV-NOT-FOUND", "Lumi is not configured")
+                raise CatalogError(404, "WV-NOT-FOUND", "Weave AI is not configured")
             return result
 
     async def status(self, actor: Principal, scope: Scope, *, context: AuditContext) -> LumiStatus:
@@ -113,7 +113,7 @@ class LumiService:
             actor = await self._require(tx, actor, "lumi.manage", context)
             prior = await self._read(tx)
             if (prior.revision if prior else None) != expected:
-                raise CatalogError(409, "WV-LUMI-REVISION", "Lumi configuration changed; reload it")
+                raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reload it")
             connection = await self.connections.read(
                 actor, scope, request.connection_revision_id, context=context, tx=tx
             )
@@ -151,7 +151,7 @@ class LumiService:
             or connection.connector_digest != AGENTIC_DESCRIPTOR.manifest.digest
             or connection.config.get("provider") != configuration.profile.provider
         ):
-            raise CatalogError(422, "WV-LUMI-CONNECTION", "Lumi needs its configured provider connection")
+            raise CatalogError(422, "WV-LUMI-CONNECTION", "Weave AI needs its configured provider connection")
         validate_connection(connection)
         handle = connection.secret_refs["apiKey"]
         self.connections.secrets.check(scope, handle)
@@ -212,7 +212,7 @@ class LumiService:
             actor = await self._require(tx, actor, "lumi.use", context)
             config = await self._read(tx)
             if config is None or not config.enabled or not self.gateway.configured:
-                raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Lumi is not configured")
+                raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Weave AI is not configured")
             connection = await ConnectionRepository(tx).revision(config.connection_revision_id)
             handle = self._connection(scope, config, connection)
         # No database transaction is held across secret resolution or model I/O.
@@ -225,11 +225,11 @@ class LumiService:
                     actor = await self._require(tx, actor, "lumi.use", context)
                     current = await self._read(tx)
                     if current is None or current.revision != config.revision or not current.enabled:
-                        raise CatalogError(409, "WV-LUMI-REVISION", "Lumi configuration changed; reply discarded")
+                        raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reply discarded")
                 # Recheck attachment permissions and simulation ownership before releasing output.
                 await self._attachments(actor, scope, request, context)
                 return reply.model_copy(update={"proposals": []}) if request.explanation_only else reply
         except TimeoutError:
-            raise CatalogError(504, "WV-LUMI-TIMEOUT", "Lumi did not respond in time") from None
+            raise CatalogError(504, "WV-LUMI-TIMEOUT", "Weave AI did not respond in time") from None
         except SecretUnavailable:
-            raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Lumi is unavailable") from None
+            raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Weave AI is unavailable") from None
