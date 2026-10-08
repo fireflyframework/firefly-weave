@@ -35,6 +35,10 @@ SVG = '<svg xmlns="http://www.w3.org/2000/svg">{}</svg>'
         ('<path stroke="#367D68"/>', '<path stroke="#62645B"/>'),
         ('<use href="#flow" color="#367D68"/>', '<use href="#flow" color="#62645B"/>'),
         ('<marker id="a"><path fill="#367D68"/></marker>', '<marker id="a"><path fill="#62645B"/></marker>'),
+        (
+            '<marker id="m"/><circle fill="#367D68"/><marker id="a"><path fill="#367D68"/></marker>',
+            '<marker id="m"/><circle fill="#855414"/><marker id="a"><path fill="#62645B"/></marker>',
+        ),
         ('<circle fill="#367D68"/>', '<circle fill="#855414"/>'),
         ('<text fill="#326B88">x</text>', '<text fill="#4A5D65">x</text>'),
         ('<rect fill="#FFF7E5" stroke="#94601B"/>', '<rect fill="#FFF0D8" stroke="#855414"/>'),

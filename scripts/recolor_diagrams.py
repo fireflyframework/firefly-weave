@@ -66,7 +66,8 @@ DECLARATION = re.compile(PROPERTY + r"(?P<separator>\s*:\s*)(?P<value>[^;\"'}<]+
 FONT = re.compile(
     r"(?<![\w-])(?P<property>font-family)(?P<separator>\s*(?:=\s*[\"']|:\s*))(?P<value>[^;\"'}<]+?)" + END
 )
-MARKER = re.compile(r"<marker\b.*?</marker>", re.IGNORECASE | re.DOTALL)
+# A marker with content: a self-closing <marker/> has no span and must not reach the next closing tag.
+MARKER = re.compile(r"<marker\b(?:\"[^\"]*\"|'[^']*'|[^>\"'])*(?<!/)>.*?</marker>", re.IGNORECASE | re.DOTALL)
 SVG = "{http://www.w3.org/2000/svg}"
 
 
