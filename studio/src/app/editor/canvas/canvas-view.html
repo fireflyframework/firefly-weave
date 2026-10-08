@@ -1,0 +1,210 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+@let h = host();
+@let lod = level();
+<div
+  #root
+  class="canvas canvas-v2"
+  [class.lod-compact]="lod === 'compact'"
+  [class.lod-minimal]="lod === 'minimal'"
+  [class.revealing]="revealing()"
+  [class.locked]="locked()"
+  role="group"
+  aria-roledescription="workflow canvas"
+  aria-label="Workflow canvas"
+  aria-describedby="canvas-v2-help"
+  tabindex="-1"
+  [attr.data-ready]="isFitted() ? '' : null"
+  (wheel)="wheel($event)"
+  (scroll)="scrolled($event)"
+  (click)="click($event)"
+  (pointerover)="hover($event)"
+  (pointerleave)="unhover()"
+>
+  @if (!ready) {
+    <p class="canvas-v2-loading" role="status">Opening the canvas…</p>
+  } @else {
+    @let l = layout();
+    @let fixed = locked();
+    <f-flow
+      class="graph-flow"
+      [style.--zoom]="view.zoom"
+      (fFullRendered)="fitIfNew()"
+      (scroll)="scrolled($event)"
+    >
+      <f-canvas [position]="view.pan" [scale]="view.zoom">
+        <div fNodes>
+          <weave-edge-layer
+            [edges]="edges()"
+            [width]="l.bounds.maxX + 96"
+            [height]="l.bounds.maxY + 96"
+          />
+          @for (label of l.labels; track label.owner) {
+            <span
+              class="branch-label"
+              [attr.data-owner]="label.owner"
+              [style.left.px]="label.x"
+              [style.top.px]="label.y"
+              [style.width.px]="label.width"
+              [attr.title]="label.text"
+              aria-hidden="true"
+              >{{ label.text }}</span
+            >
+          }
+          @for (join of l.joins; track join.id) {
+            <div
+              class="join-bar"
+              [style.left.px]="join.x"
+              [style.top.px]="join.y"
+              aria-hidden="true"
+            >
+              <span class="join-label">{{ join.label }}</span>
+            </div>
+          }
+          @for (end of l.terminals; track end.step) {
+            <span
+              class="lane-end"
+              [style.left.px]="end.x - 6"
+              [style.top.px]="end.y - 6"
+              role="img"
+              aria-label="This path ends here"
+            ></span>
+          }
+          @for (row of chips(); track row.step) {
+            <weave-sub-node-row [row]="row" />
+          }
+          @for (tile of tiles(); track tile.id) {
+            <div
+              fNode
+              [fNodeId]="tile.id"
+              [fNodePosition]="tile.position"
+              [fNodeSelectionDisabled]="!tile.step"
+              class="tile-node"
+              [style.--tile-w.px]="tile.width"
+              [style.--tile-h.px]="tile.height"
+              aria-roledescription="step"
+              [attr.data-tile]="tile.id"
+              [attr.data-step]="tile.step ? tile.id : null"
+            >
+              <weave-node-tile [view]="tile" />
+            </div>
+          }
+          @for (output of l.handles; track output.key) {
+            <span
+              class="handle f-drag-blocker"
+              [attr.data-handle]="output.key"
+              [style.left.px]="output.x - 6"
+              [style.top.px]="output.y - 6"
+              aria-hidden="true"
+            ></span>
+          }
+          @for (plus of pluses(); track plus.key) {
+            <button
+              type="button"
+              class="insert-plus plus-stub f-drag-blocker"
+              [class.move-target]="plus.moving"
+              data-action="insert"
+              data-insert=""
+              [attr.data-handle]="plus.key"
+              [attr.data-insert-owner]="plus.insert.owner"
+              [attr.data-insert-index]="plus.insert.index"
+              [style.left.px]="plus.x"
+              [style.top.px]="plus.y"
+              [attr.aria-label]="plus.name"
+              [attr.title]="plus.name"
+              [attr.tabindex]="plus.tabIndex"
+              aria-haspopup="dialog"
+              [attr.aria-expanded]="h.isPickerOpenAt(plus.insert)"
+            >
+              <weave-icon name="plus" [size]="16" />
+            </button>
+          }
+          @for (slot of slots(); track slot.key) {
+            <button
+              type="button"
+              class="lane-slot f-drag-blocker"
+              [class.move-target]="slot.moving"
+              data-action="insert"
+              data-insert=""
+              [attr.data-insert-owner]="slot.insert.owner"
+              [attr.data-insert-index]="slot.insert.index"
+              [style.left.px]="slot.x"
+              [style.top.px]="slot.y"
+              [attr.aria-label]="slot.name"
+              [attr.title]="slot.name"
+              [attr.aria-disabled]="fixed || null"
+              [attr.tabindex]="slot.tabIndex"
+              aria-haspopup="dialog"
+              [attr.aria-expanded]="h.isPickerOpenAt(slot.insert)"
+            >
+              <weave-icon name="plus" [size]="16" /><span
+                class="lane-slot-label"
+                aria-hidden="true"
+                >Add a step</span
+              >
+            </button>
+          }
+          @if (!h.model.definition.spec.steps.length) {
+            <div class="empty-start" style="left: 60px; top: 96px">
+              <button
+                type="button"
+                class="empty-trigger f-drag-blocker"
+                data-action="insert"
+                data-insert=""
+                data-insert-owner="root"
+                data-insert-index="0"
+                aria-label="Add first step"
+                aria-describedby="canvas-v2-empty-hint"
+                aria-haspopup="dialog"
+                [attr.aria-disabled]="fixed || null"
+                [attr.aria-expanded]="
+                  h.isPickerOpenAt({ owner: 'root', index: 0 })
+                "
+              >
+                <span class="empty-slot" aria-hidden="true"
+                  ><weave-icon name="plus"
+                /></span>
+                <strong>Add first step</strong>
+                <span id="canvas-v2-empty-hint" class="empty-hint"
+                  >Start with what triggers this workflow</span
+                >
+              </button>
+              <button
+                type="button"
+                class="text-link f-drag-blocker"
+                data-action="templates"
+              >
+                Start from a template
+              </button>
+            </div>
+          }
+        </div>
+      </f-canvas>
+    </f-flow>
+    <weave-canvas-tools
+      [zoom]="view.zoom"
+      (zoomIn)="zoomBy(1.2)"
+      (zoomOut)="zoomBy(1 / 1.2)"
+      (reset)="zoomBy(1 / view.zoom)"
+      (fit)="fit()"
+    />
+  }
+  <p class="sr-only" id="canvas-v2-help">
+    Scroll to pan; hold Ctrl or Command and scroll to zoom.
+  </p>
+</div>

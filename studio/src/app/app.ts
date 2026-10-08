@@ -70,9 +70,13 @@ import {
 import { type ActivationBindings, ActivationDialog } from "./activation-dialog";
 import {
   StepPicker,
+  type AnchorRect,
   type PickerAction,
   type StepPickerChoice,
 } from "./designer/step-picker";
+import type { CanvasHost, WorkflowSection } from "./editor/canvas/canvas-host";
+import { setupPhrase, type StepFacts } from "./editor/canvas/tile-facts";
+import type { Json, KindContext } from "./editor/ndv/registry";
 import { StartRunDialog, type StartRunRequest } from "./run/start-run-dialog";
 import type { SuggestedChange } from "./designer/diagnostics-list";
 import type { DiagnosticLocation } from "./designer/diagnostic-location";
@@ -162,6 +166,8 @@ import {
   compatibleSlots as slotsFitting,
   planSlot,
 } from "./integrations/slot-binding";
+/** No contract gaps yet: the same empty list, so caches keyed on it hold. */
+const noContractGaps: (ContractGap & { stepId: string })[] = [];
 export type View =
   | "home"
   | "workflows"
@@ -328,7 +334,7 @@ const sideEffects: Record<string, string> = {
   ],
   templateUrl: "./app.html",
 })
-export class App {
+export class App implements CanvasHost {
   private cdr = inject(ChangeDetectorRef);
   private router = inject(Router);
   private historyPosition: number = history.state?.weavePosition ?? 0;
@@ -507,7 +513,7 @@ export class App {
   readonly selectedNodeElement = () =>
     this.model.selected
       ? document.querySelector<HTMLElement>(
-          `[data-step="${CSS.escape(this.model.selected)}"] .node-body`,
+          `[data-step="${CSS.escape(this.model.selected)}"] :is(.node-body, .tile-body)`,
         )
       : null;
   showPalette = false;
@@ -781,7 +787,7 @@ export class App {
   dragTarget: Target | null = null;
   private suppressNodeClick = false;
   /** The open step picker and the "+" it inserts at. */
-  picker: { target: Target; anchor: HTMLElement } | null = null;
+  picker: { target: Target; anchor: HTMLElement | AnchorRect } | null = null;
   /** A press on empty canvas; a release close to it returns to workflow settings. */
   private canvasPress: Point | null = null;
   reply = "";
@@ -830,10 +836,15 @@ export class App {
     drag: unknown;
     paths: { key: string; from: string; d: string }[];
   } = { tick: -1, drag: null, paths: [] };
-  /** Error and warning counts per step from the last diagnostics. */
+  /** Errors and warnings per step from the last diagnostics, counted and in order. */
   private diagnosticSteps = new Map<
     string,
-    { errors: number; warnings: number }
+    {
+      errors: number;
+      warnings: number;
+      errorMessages: string[];
+      warningMessages: string[];
+    }
   >();
   private infoCache: {
     tick: number;
@@ -869,7 +880,7 @@ export class App {
   } = { tick: -1, revision: -1, rows: [] };
   get contractIssues() {
     const contractGaps = this.findContractGaps;
-    if (!contractGaps) return [];
+    if (!contractGaps) return noContractGaps;
     const tick = this.tick();
     if (
       this.gapCache.tick !== tick ||
@@ -2339,7 +2350,7 @@ export class App {
       () =>
         (next
           ? document.querySelector<HTMLElement>(
-              `[data-step="${CSS.escape(next)}"] .node-body`,
+              `[data-step="${CSS.escape(next)}"] :is(.node-body, .tile-body)`,
             )
           : null) ??
         document.querySelector<HTMLElement>(
@@ -2371,7 +2382,9 @@ export class App {
       `Choose where ${id} goes: select a + on the canvas. Escape cancels.`,
     );
     this.focusLater(() =>
-      document.querySelector<HTMLElement>(".insertion-target"),
+      document.querySelector<HTMLElement>(
+        ".insertion-target, .canvas-v2 [data-insert]",
+      ),
     );
   }
   /** Steps nested in a group's branches, from this tick's layout. */
@@ -2630,15 +2643,33 @@ export class App {
     void import("./designer/diagnostic-location").then(
       ({ locateDiagnostic }) => {
         if (this.diagnostics !== result) return;
-        const steps = new Map<string, { errors: number; warnings: number }>();
+        const steps = new Map<
+          string,
+          {
+            errors: number;
+            warnings: number;
+            errorMessages: string[];
+            warningMessages: string[];
+          }
+        >();
         for (const d of result.diagnostics) {
           const path = d["path"];
           if (typeof path !== "string") continue;
           const { stepId } = locateDiagnostic(path, definition);
           if (stepId === "$workflow") continue;
-          const entry = steps.get(stepId) ?? { errors: 0, warnings: 0 };
-          if (d.severity === "warning") entry.warnings++;
-          else if (d.severity !== "info") entry.errors++;
+          const entry = steps.get(stepId) ?? {
+            errors: 0,
+            warnings: 0,
+            errorMessages: [],
+            warningMessages: [],
+          };
+          if (d.severity === "warning") {
+            entry.warnings++;
+            entry.warningMessages.push(d.message);
+          } else if (d.severity !== "info") {
+            entry.errors++;
+            entry.errorMessages.push(d.message);
+          }
           steps.set(stepId, entry);
         }
         this.diagnosticSteps = steps;
@@ -2944,6 +2975,91 @@ export class App {
     this.model.redo();
     this.dirty = true;
     this.changed();
+  }
+  // ------------------------------------------- the left-to-right canvas
+  private factsCache: {
+    tick: number;
+    steps: unknown;
+    gaps: unknown;
+    facts: Map<string, StepFacts>;
+  } = { tick: -1, steps: null, gaps: null, facts: new Map() };
+  /** Errors, warnings and setup per step; the same map until they change. */
+  canvasFacts(): ReadonlyMap<string, StepFacts> {
+    const gaps = this.contractIssues;
+    const tick = this.tick();
+    const cache = this.factsCache;
+    if (
+      cache.tick === tick &&
+      cache.steps === this.diagnosticSteps &&
+      cache.gaps === gaps
+    )
+      return cache.facts;
+    const facts = new Map<string, StepFacts>();
+    for (const node of this.nodes) {
+      const found = this.diagnosticSteps.get(node.step.id);
+      const chip = incompleteChip(node.step);
+      const setup = [
+        ...gaps
+          .filter((gap) => gap.stepId === node.step.id)
+          .map((gap) => setupPhrase(gap.label)),
+        ...(chip ? [setupPhrase(chip)] : []),
+      ];
+      const errors = found?.errorMessages ?? [];
+      const warnings = found?.warningMessages ?? [];
+      if (errors.length || warnings.length || setup.length)
+        facts.set(node.step.id, { errors, warnings, setup });
+    }
+    this.factsCache = { tick, steps: this.diagnosticSteps, gaps, facts };
+    return facts;
+  }
+  kindContext(): KindContext {
+    return {
+      workflow: this.model.definition,
+      features: [],
+      actionContract: (uses) =>
+        (this.catalogContracts.get(uses) as Json | undefined) ?? null,
+      tableContract: (uses) =>
+        (this.decisionContracts.get(uses) as Json | undefined) ?? null,
+      workflowContract: () => null,
+    };
+  }
+  async selectStep(id: string, open: boolean) {
+    const node = this.nodes.find((n) => n.step.id === id);
+    if (node) await this.select(node, open);
+  }
+  /** The workflow settings, focused on Inputs or Result. */
+  async openWorkflowSection(section: WorkflowSection) {
+    if (!(await this.deselect())) return;
+    this.showInspector = true;
+    this.cdr.markForCheck();
+    this.focusField(section);
+  }
+  openPicker(
+    insert: { owner: string; index: number },
+    label: string,
+    anchor: HTMLElement | AnchorRect,
+  ) {
+    if (this.editingLocked || this.model.readonly) return;
+    this.picker = {
+      target: { ...insert, point: { x: 0, y: 0 }, label },
+      anchor,
+    };
+    if (this.profile) void this.loadActionCatalog();
+    this.cdr.markForCheck();
+  }
+  isPickerOpenAt(insert: { owner: string; index: number }) {
+    return (
+      this.picker?.target.owner === insert.owner &&
+      this.picker.target.index === insert.index
+    );
+  }
+  closePicker() {
+    this.picker = null;
+    this.cdr.markForCheck();
+  }
+  moveStep(id: string, insert: { owner: string; index: number }) {
+    this.connectingNode = "";
+    this.moveTo(id, { ...insert, point: { x: 0, y: 0 }, label: "" });
   }
   readonly editorViews = ["Designer", "Source", "Outline"];
   selectTab(tab: string) {
@@ -4173,7 +4289,7 @@ export class App {
     this.focusLater(() =>
       this.model.selected === selection
         ? document.querySelector<HTMLElement>(
-            `[data-step="${CSS.escape(id)}"] .node-body`,
+            `[data-step="${CSS.escape(id)}"] :is(.node-body, .tile-body)`,
           )
         : null,
     );
@@ -4564,7 +4680,7 @@ export class App {
       () =>
         document
           .querySelector<HTMLElement>(
-            `[data-step="${CSS.escape(id)}"] .node-body`,
+            `[data-step="${CSS.escape(id)}"] :is(.node-body, .tile-body)`,
           )
           ?.focus(),
       { injector: this.injector },
@@ -7416,11 +7532,14 @@ export class App {
       event.preventDefault();
       void this.runCommand(this.profile ? "save" : "export");
     }
-    if (command && event.key === "0") {
+    // The new canvas runs its own keys.
+    if (this.editorNext && target.closest?.(".canvas-v2")) return;
+    if (!this.editorNext && command && event.key === "0") {
       event.preventDefault();
       this.zoomReset();
     }
     if (
+      !this.editorNext &&
       !command &&
       event.shiftKey &&
       (event.key === "!" || event.code === "Digit1")

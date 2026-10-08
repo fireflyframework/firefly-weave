@@ -35,6 +35,7 @@ import { HumanInspector } from "./human-inspector";
 import { PathInspector } from "./path-inspector";
 import { DiagnosticsList } from "./diagnostics-list";
 import { SimulationPanel } from "./simulation/simulation-panel";
+import { CanvasView } from "../editor/canvas/canvas-view";
 import type { App } from "../app";
 
 @Component({
@@ -57,6 +58,7 @@ import type { App } from "../app";
     ConnectionSlotList,
     DiagnosticsList,
     SimulationPanel,
+    CanvasView,
   ],
   // No box of its own: the bar, the grid and the strip lay out in the
   // shell's main column.
@@ -470,6 +472,14 @@ import type { App } from "../app";
               <p>No steps yet. Insert a step from the palette.</p>
             }
           </div>
+        } @else if (h.editorNext) {
+          @defer (on immediate) {
+            <weave-canvas-view [host]="h" />
+          } @placeholder {
+            <p class="connecting-status designer-loading" role="status">
+              <span class="loading-spinner small"></span>Opening the canvas…
+            </p>
+          }
         } @else {
           <div
             class="canvas"
