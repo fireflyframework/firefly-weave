@@ -97,6 +97,8 @@ describe("step details edits", () => {
     [{ path: ["kind"], value: "wait" }],
     [{ path: ["spec", "steps", 0], value: {}, scope: "workflow" }],
     [{ path: ["apiVersion"], value: "weave/v2", scope: "workflow" }],
+    [{ path: ["spec"], value: { steps: [] }, scope: "workflow" }],
+    [{ path: ["metadata"], value: undefined, scope: "workflow" }],
   ] satisfies [Edit][])(
     "refuses an edit that bypasses rename, the canvas or the document shape: %j",
     (change) => {
@@ -108,5 +110,13 @@ describe("step details edits", () => {
     expect(() =>
       applyEdits(nested(), "missing", [{ path: ["with"], value: {} }]),
     ).toThrow(new EditError("Step missing isn't in this workflow."));
+  });
+
+  it("refuses a list item past the end of the list with an EditError", () => {
+    const workflow = freshWorkflow();
+    workflow.spec.steps.push(createStep("switch", "route"));
+    expect(() =>
+      applyEdits(workflow, "route", [{ path: ["cases", 5], value: {} }]),
+    ).toThrow(EditError);
   });
 });

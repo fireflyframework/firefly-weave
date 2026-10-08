@@ -69,6 +69,17 @@ export function stepPath(
   return search(workflow.spec.steps, ["spec", "steps"]);
 }
 
+/** setAt, with a list position past the end reported as a refusal. */
+function writeAt(value: unknown, path: Path, next: unknown): unknown {
+  try {
+    return setAt(value, path, next);
+  } catch (error) {
+    if (error instanceof RangeError)
+      throw new EditError("That list has no item at that position.");
+    throw error;
+  }
+}
+
 /** A copy without one key or list item; unlike removeAt, emptied parents stay. */
 function deleteAt(value: unknown, path: Path): unknown {
   if (getAt(value, path) === undefined) return value;
@@ -97,6 +108,8 @@ function check(change: Edit): void {
   }
   if (head !== "spec" && head !== "metadata")
     throw new EditError("Workflow edits change spec or metadata fields.");
+  if (change.path.length < 2)
+    throw new EditError("Name the spec or metadata field to change.");
   if (head === "spec" && next === "steps")
     throw new EditError("Steps change on the canvas, not through parameters.");
 }
@@ -120,7 +133,7 @@ export function applyEdits(
     next =
       change.value === undefined
         ? deleteAt(next, target)
-        : setAt(next, target, change.value);
+        : writeAt(next, target, change.value);
   }
   return next as Workflow;
 }
