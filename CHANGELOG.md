@@ -38,6 +38,25 @@ SPDX-License-Identifier: Apache-2.0
   than this release cannot read `weave connections test` answers for HTTP
   connections from an upgraded server; upgrade the CLI and SDK together with the
   server.
+- Keep an integration event delivery recoverable when Weave refuses one of its
+  database transactions for capacity (`WV-OPERATION-CAPACITY`). The delivery
+  stays `leased` instead of moving to `retry` with `DELIVERY_FAILED` or to an
+  `AUTHORITY_REVOKED` incident. When the lease expires, the attempt is recorded
+  as `ACK_UNKNOWN` and the same event ID is delivered again. The attempt still
+  counts, so a delivery refused on every attempt ends in a `DELIVERY_EXHAUSTED`
+  incident.
+- Native connector tasks no longer fail with `HANDLER_FAILED` when Weave refuses
+  one of their platform calls for capacity (`WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`). The invocation check before the connector starts is
+  sent again while the task's lease is valid; authority and credential checks
+  made while the connector runs get up to three attempts within one second.
+- Native connector calls no longer share the two execution work slots of API
+  requests, so a burst of requests no longer refuses them. They run up to the
+  `capacity` configured for each `WEAVE_NATIVE_EXECUTORS` entry.
+- `email_receipts.dispatch` answers HTTP 429 (`WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`) when Weave refuses the dispatch for capacity, where it
+  used to answer HTTP 200 with state `blocked`. The receipt keeps its state, and
+  the next pending scan dispatches it.
 
 ## 0.1.0a14
 
