@@ -3316,7 +3316,7 @@ details.disclosure[open] > summary::before {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--link);
+  color: var(--muted);
   font-weight: 600;
   white-space: nowrap;
 }
