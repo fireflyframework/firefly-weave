@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Page helpers for the quick-integration UI: the inspector's searchable action
 // picker (an ARIA combobox), the palette's Integrations section and the
-// shared screenshot folder for the program's journey evidence.
+// shared screenshot folder for journey evidence.
 import { expect, Page, TestInfo } from "@playwright/test";
 import { copyFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -62,7 +62,7 @@ export async function openPaletteIntegrations(page: Page) {
 /**
  * Saves a journey screenshot into this run's output folder (for example
  * test-results/<lane>/journey/) and, when STUDIO_PROGRAM_SHOTS names a
- * folder, a copy there for the program's evidence.
+ * folder, a copy there for collecting the evidence.
  */
 export async function shot(page: Page, info: TestInfo, name: string) {
   const folder = join(info.project.outputDir, "journey");

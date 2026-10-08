@@ -28,6 +28,7 @@ from click.testing import CliRunner
 
 from firefly_weave.cli.connectors import classify
 from firefly_weave.cli.main import cli
+from firefly_weave.contracts.connectors import ConnectionRevision, ConnectionTestResult
 from firefly_weave.sdk import client
 
 ROOT = Path(__file__).parents[3]
@@ -469,3 +470,97 @@ def test_guided_machine_token_connection_allows_the_token_endpoint(platform):
         "scopes": ["pets.read"],
     }
     assert body["secretRef"] == {"client_secret": "pets-client"}
+
+
+PLAIN = "http://api.example.com"
+NOT_ENCRYPTED = "Not encrypted: requests to http://api.example.com travel in plain text."
+
+
+def test_guided_plain_http_connection_is_created_with_a_warning(platform):
+    result = run(
+        "connections",
+        "create",
+        *EXPLICIT,
+        "--name",
+        "pets",
+        "--api-url",
+        PLAIN,
+        "--auth",
+        "bearer",
+        "--secret",
+        "token=pets-token",
+    )
+    assert result.exit_code == 0, result.output
+    body = platform.calls[1][1]["body"].model_dump(by_alias=True, mode="json")
+    assert body["config"]["baseUrl"] == PLAIN and body["allowed_destinations"] == [PLAIN]
+    # Standard output stays one JSON result; the warning is one line on standard error.
+    assert one_json(result) == {"operation": "connections.create"}
+    assert NOT_ENCRYPTED in result.stderr.splitlines()
+    secure = run("connections", "create", *EXPLICIT, "--name", "pets", "--api-url", "https://api.example.com")
+    assert secure.exit_code == 0 and "Not encrypted" not in secure.stderr
+
+
+@pytest.fixture
+def plain_connection(monkeypatch):
+    """A fake SDK client whose connection is plain HTTP: reads return it, tests answer encrypted: false."""
+    calls = []
+    revision = ConnectionRevision(
+        id=UUID(int=11),
+        revision=1,
+        name="pets",
+        connector_version_id=VERSION_ID,
+        connector="weave-http@2.0.0",
+        connector_digest="a" * 64,
+        adapter="weave-http-v2",
+        config={"baseUrl": PLAIN, "auth": {"kind": "none"}},
+        allowed_destinations=(PLAIN,),
+    )
+
+    class Fake:
+        def __init__(self, base_url, provider, scope, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def invoke(self, operation, **kwargs):
+            calls.append(operation)
+            return ConnectionTestResult(ok=True, encrypted=False) if operation == "connections.test" else revision
+
+    monkeypatch.setattr(client, "WeaveClient", Fake)
+    return calls
+
+
+def test_connection_test_and_read_warn_for_plain_http(plain_connection):
+    tested = run("connections", "test", UUID(int=11), *EXPLICIT)
+    assert tested.exit_code == 0, tested.output
+    assert one_json(tested)["encrypted"] is False
+    assert NOT_ENCRYPTED in tested.stderr.splitlines()
+    # The test answer carries only the flag; the CLI reads the revision for the origin it names.
+    assert plain_connection == ["connections.test", "connections.read"]
+    read = run("connections", "read", UUID(int=11), *EXPLICIT)
+    assert read.exit_code == 0, read.output
+    assert one_json(read)["config"]["baseUrl"] == PLAIN
+    assert NOT_ENCRYPTED in read.stderr.splitlines()
+
+
+def test_builtin_import_of_a_plain_http_server_warns(tmp_path):
+    document = tmp_path / "petstore.yaml"
+    document.write_text(FIXTURE.read_text().replace("https://api.petstore.test", "http://api.petstore.test"))
+    policy = tmp_path / "policy.json"
+    scaffold = run("connector", "import-openapi", document, "--init-policy", policy, *RELAX)
+    assert scaffold.exit_code == 0, scaffold.output
+    warning = "Not encrypted: requests to http://api.petstore.test travel in plain text."
+    text = run("connector", "import-openapi", document, "--policy", policy, "--target", "builtin")
+    assert text.exit_code == 0, text.output
+    # Standard output carries the import summary; the warning is one line on standard error.
+    assert warning in text.stderr.splitlines() and "Not encrypted" not in text.stdout
+    as_json = run(
+        "connector", "import-openapi", document, "--policy", policy, "--target", "builtin", "--output", "json"
+    )
+    assert as_json.exit_code == 0, as_json.output
+    assert one_json(as_json)["connectionExample"]["config"]["baseUrl"] == "http://api.petstore.test"
+    assert warning in as_json.stderr.splitlines()

@@ -83,7 +83,7 @@ async def sql_native_setup(services, access_db, provisioned, external_database, 
     binding = next(b for b in POSTGRES_DESCRIPTOR.bindings if b.action == action_name)
     image = os.environ.get("WEAVE_D1_IMAGE_ID") if mode == "image" else "sha256:" + "d" * 64
     if not image:
-        pytest.fail("D1 native artifact requires WEAVE_D1_IMAGE_ID")
+        pytest.fail("Native PostgreSQL artifact requires WEAVE_D1_IMAGE_ID")
     release = await workers.register_release(
         actor,
         scope,
@@ -381,7 +381,7 @@ async def test_built_native_sql_executor(
             assert await docker("inspect", "--format", "{{.State.Running}}", identifier) == "true"
             await asyncio.sleep(0.2)
         else:
-            pytest.fail("Built D1 executor did not become ready")
+            pytest.fail("Built PostgreSQL executor did not become ready")
         runtime = graph.resolve(RuntimeService)
         run = await runtime.start(
             actor,
@@ -411,7 +411,7 @@ async def test_built_native_sql_executor(
             "pins": [p.model_dump(mode="json") for p in activation.connector_execution_pins],
         }
         target = os.environ.get("WEAVE_IMAGE_PROOF_PATH")
-        assert target, "Use a distinct D1 image proof path"
+        assert target, "Use a distinct PostgreSQL image proof path"
         write_image_proof(Path(target), "sql", proof)
     finally:
         await docker("stop", "--time", "15", identifier)

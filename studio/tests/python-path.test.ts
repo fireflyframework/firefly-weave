@@ -1,0 +1,61 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  python,
+  pythonAvailable,
+  pythonPath,
+  repository,
+  repositoryRoot,
+} from "./python-path";
+
+describe("the repository's Python interpreter", () => {
+  it("is .venv/bin/python on macOS and Linux and .venv\\Scripts\\python.exe on Windows", () => {
+    expect(pythonPath("/repo", "linux")).toBe("/repo/.venv/bin/python");
+    expect(pythonPath("/repo", "darwin")).toBe("/repo/.venv/bin/python");
+    expect(pythonPath("C:\\repo", "win32")).toBe(
+      "C:\\repo\\.venv\\Scripts\\python.exe",
+    );
+  });
+  it("finds the checkout from studio/ or any folder inside it", () => {
+    const root = mkdtempSync(join(tmpdir(), "weave-root-"));
+    writeFileSync(join(root, "pyproject.toml"), "");
+    mkdirSync(join(root, "studio", "tests", "browser"), { recursive: true });
+    writeFileSync(join(root, "studio", "package.json"), "{}");
+    expect(repositoryRoot(join(root, "studio", "tests", "browser"))).toBe(root);
+    expect(() => repositoryRoot(tmpdir())).toThrow(/checkout/);
+  });
+  it("resolves this checkout", () => {
+    expect(repository).toBe(repositoryRoot());
+    expect(python).toBe(pythonPath(repository));
+  });
+  it("skips locally but fails on CI when the interpreter is missing", () => {
+    const missing = { path: "/nowhere/python", exists: () => false };
+    expect(pythonAvailable({ ...missing, env: {} })).toBe(false);
+    expect(pythonAvailable({ ...missing, env: { CI: "false" } })).toBe(false);
+    expect(() => pythonAvailable({ ...missing, env: { CI: "true" } })).toThrow(
+      /uv sync/,
+    );
+    expect(
+      pythonAvailable({ path: "/x", exists: () => true, env: { CI: "true" } }),
+    ).toBe(true);
+  });
+});

@@ -48,7 +48,7 @@ def upgrade():
         PRIMARY KEY(release_id,connection_id,capability),
         FOREIGN KEY({key},release_id) REFERENCES worker_releases({key},id),
         FOREIGN KEY({key},connection_id) REFERENCES connection_revisions({key},id))""")
-    # Existing unsupported B5 worker fixtures are deliberately not adopted as trusted releases.
+    # Existing unsupported worker fixtures are deliberately not adopted as trusted releases.
     op.execute(f"""ALTER TABLE task_intents ADD CONSTRAINT task_release_scope
         FOREIGN KEY({key},worker_release_id) REFERENCES worker_releases({key},id)""")
     for table in (

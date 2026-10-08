@@ -16,10 +16,11 @@
 
 """Reference-only connection contracts and adapter execution ports."""
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Protocol
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -80,6 +81,28 @@ class ConnectionTestResult(ContractModel):
     ok: bool
     code: Literal["ok", "failed"] = "ok"
     job_id: UUID | None = None
+    # False when the connection's baseUrl is plain http://, which is allowed but flagged "Not encrypted";
+    # True for https://; absent for connections without an HTTP base URL.
+    encrypted: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+def transport_encrypted(config: Mapping[str, object]) -> bool | None:
+    """Whether requests to a connection's ``baseUrl`` are encrypted; None when it names no HTTP origin."""
+    base = config.get("baseUrl")
+    try:
+        scheme = urlsplit(base.strip()).scheme.lower() if isinstance(base, str) else ""
+    except ValueError:
+        scheme = ""
+    return {"https": True, "http": False}.get(scheme)
+
+
+def plain_text_warning(config: Mapping[str, object]) -> str | None:
+    """The one-line "Not encrypted" warning for a connection whose ``baseUrl`` is plain HTTP, else None."""
+    if transport_encrypted(config) is not False:
+        return None
+    # Host and port only: user information never reaches the warning.
+    netloc = urlsplit(str(config["baseUrl"]).strip()).netloc.rpartition("@")[2]
+    return f"Not encrypted: requests to http://{netloc.lower()} travel in plain text."
 
 
 @dataclass(frozen=True)

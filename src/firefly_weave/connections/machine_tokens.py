@@ -31,7 +31,7 @@ from typing import Literal
 from pyfly.container import service
 from pyfly.oauth2 import OAuth2Client, OAuth2Endpoints
 
-from firefly_weave.connectors.egress import EgressPolicy, PinnedTransport, origin
+from firefly_weave.connectors.egress import PinnedTransport, origin
 from firefly_weave.connectors.http import HttpPolicy
 from firefly_weave.connectors.http_logging import protected_http_diagnostics
 from firefly_weave.contracts.connectors import ActionContext, ConnectorFailure
@@ -107,8 +107,9 @@ class MachineTokenService:
             async with asyncio.timeout(budget):
                 await context.authorize()
                 secret = await context.credentials(profile.credential_slot)
+                # Token endpoints stay HTTPS-only; C8 decides private addresses.
                 transport = PinnedTransport(
-                    EgressPolicy((profile.endpoint,), self.policy.private_networks), profile.endpoint
+                    self.policy.egress("http-connector", (profile.endpoint,), sends_credentials=True), profile.endpoint
                 )
                 acquired_at = time.monotonic()
                 with protected_http_diagnostics():

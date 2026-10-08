@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""C2 operations against real PostgreSQL and native HTTP controllers."""
+"""Incident operations against real PostgreSQL and native HTTP controllers."""
 
 import json
 from uuid import uuid4

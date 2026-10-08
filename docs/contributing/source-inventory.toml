@@ -533,9 +533,25 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/acceptance/fixtures/acme_api/data.json"
+kind = "commentless"
+reason = "Acme fixture data for acceptance journeys; strict JSON cannot carry a source comment header."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "studio/tsconfig.contracts.json"
 kind = "commentless"
 reason = "Angular and npm require strict JSON configuration without source comments."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "tests/acceptance/evidence.schema.json"
+kind = "commentless"
+reason = "JSON Schema for acceptance evidence; strict JSON cannot carry a source comment header."
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"

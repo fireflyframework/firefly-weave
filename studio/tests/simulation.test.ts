@@ -16,10 +16,11 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
+import { python, pythonAvailable } from "./python-path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   ValueEditor,
@@ -46,13 +47,7 @@ import {
 import { workflowTemplates } from "../src/app/templates/catalog";
 
 const root = resolve(import.meta.dirname, "../..");
-const python = resolve(
-  root,
-  process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python",
-);
-const available = existsSync(python);
+const available = pythonAvailable();
 const env = { ...process.env, PYTHONPATH: resolve(root, "src") };
 
 describe("sample values shaped by schemas", () => {

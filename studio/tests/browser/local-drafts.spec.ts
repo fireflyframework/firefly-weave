@@ -15,10 +15,10 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Local work is never silently lost (W2-2): autosave to this browser, a
-// reload brings the workflow back at the same address, Home offers
-// "Continue editing", Workflows lists "On this computer", and a browser that
-// refuses storage says so.
+// Local work is never silently lost: autosave to this browser, a reload
+// brings the workflow back at the same address, Home offers "Continue
+// editing", Workflows lists "On this computer", and a browser that refuses
+// storage says so.
 import { test, expect, Page } from "@playwright/test";
 import { connected, insertStep, newWorkflow, offline } from "./support";
 import { platformHost } from "./platform-host";
@@ -29,146 +29,153 @@ for (const viewport of [
   { width: 1440, height: 900 },
   { width: 600, height: 500 },
 ])
-  test.describe(`${viewport.width}x${viewport.height}`, () => {
-    test.use({ viewport });
+  test.describe(
+    `${viewport.width}x${viewport.height}`,
+    { tag: "@xplat" },
+    () => {
+      test.use({ viewport });
 
-    test("a local workflow survives a reload at the same address", async ({
-      page,
-    }) => {
-      await offline(page);
-      await newWorkflow(page);
-      for (const step of ["Transform", "Wait for time", "Human task"])
-        await insertStep(page, step);
-      await expect(steps(page)).toHaveCount(3);
-      const address = page.url();
-      expect(address).toMatch(/\/workflows\/[^/]+\/designer$/);
-      // The autosave waits 800 ms after the last change.
-      await expect
-        .poll(() =>
-          page.evaluate(() => localStorage.getItem("weave.localDrafts.v1")),
-        )
-        .toContain("untitled-workflow");
-      await page.reload();
-      await expect(steps(page)).toHaveCount(3);
-      expect(page.url()).toBe(address);
-      await expect(page).toHaveTitle(
-        "untitled-workflow | Designer | Firefly Weave Studio",
-      );
-    });
-
-    test("Home continues the last workflow; Workflows lists it on this computer", async ({
-      page,
-    }) => {
-      await offline(page);
-      await newWorkflow(page);
-      await insertStep(page, "Transform");
-      await page.getByRole("button", { name: "Home", exact: true }).click();
-      // Leaving says where the workflow is kept.
-      const leave = page.getByRole("dialog", {
-        name: "Leave untitled-workflow?",
-      });
-      await expect(leave).toContainText(
-        "You'll find it under Workflows › On this computer.",
-      );
-      await leave.getByRole("button", { name: "Leave", exact: true }).click();
-      const resume = page.getByRole("button", { name: /^Continue editing/ });
-      await expect(resume).toContainText(
-        "Continue editing untitled-workflow, edited",
-      );
-      // The first row of Home.
-      const first = await page
-        .locator("weave-home-dashboard button")
-        .evaluateAll(
-          (buttons) =>
-            buttons.find(
-              (b) =>
-                !b.closest(".home-header") && b.getBoundingClientRect().height,
-            )?.textContent ?? "",
+      test("a local workflow survives a reload at the same address", async ({
+        page,
+      }) => {
+        await offline(page);
+        await newWorkflow(page);
+        for (const step of ["Transform", "Wait for time", "Human task"])
+          await insertStep(page, step);
+        await expect(steps(page)).toHaveCount(3);
+        const address = page.url();
+        expect(address).toMatch(/\/workflows\/[^/]+\/designer$/);
+        // The autosave waits 800 ms after the last change.
+        await expect
+          .poll(() =>
+            page.evaluate(() => localStorage.getItem("weave.localDrafts.v1")),
+          )
+          .toContain("untitled-workflow");
+        await page.reload();
+        await expect(steps(page)).toHaveCount(3);
+        expect(page.url()).toBe(address);
+        await expect(page).toHaveTitle(
+          "untitled-workflow | Designer | Firefly Weave Studio",
         );
-      expect(first).toContain("Continue editing");
-      await resume.click();
-      await expect(steps(page)).toHaveCount(1);
-      await page
-        .getByRole("button", { name: "Workflows", exact: true })
-        .click();
-      await page.getByRole("button", { name: "Leave", exact: true }).click();
-      await expect(
-        page.getByRole("button", { name: "On this computer" }),
-      ).toHaveAttribute("aria-pressed", "true");
-      const row = page.locator(".resource-row").filter({
-        hasText: "untitled-workflow",
       });
-      await expect(row).toContainText("Kept on this computer");
-      await expect(row).toContainText("1.0.0");
-      await expect(row).toContainText(/Edited (just now|\d+ min ago)/);
-      await row
-        .getByRole("button", {
-          name: "Delete untitled-workflow from this computer",
-        })
-        .click();
-      const confirm = page.getByRole("dialog", {
-        name: "Delete untitled-workflow from this computer?",
-      });
-      await confirm
-        .getByRole("button", { name: "Delete", exact: true })
-        .click();
-      await expect(row).toHaveCount(0);
-      const toast = page.locator(".toast");
-      await expect(toast).toContainText(
-        "Deleted untitled-workflow from this computer.",
-      );
-      await toast.getByRole("button", { name: "Undo" }).click();
-      await expect(row).toHaveCount(1);
-      await expect(toast).toContainText("Restored untitled-workflow.");
-    });
 
-    test("a new workflow keeps the previous one", async ({ page }) => {
-      await offline(page);
-      await newWorkflow(page);
-      await insertStep(page, "Transform");
-      await page
-        .getByRole("button", { name: "Workflows", exact: true })
-        .click();
-      await page.getByRole("button", { name: "Leave", exact: true }).click();
-      await page
-        .getByRole("button", { name: "New workflow", exact: true })
-        .click();
-      await insertStep(page, "Wait for time");
-      await page
-        .getByRole("button", { name: "Workflows", exact: true })
-        .click();
-      await page.getByRole("button", { name: "Leave", exact: true }).click();
-      await expect(page.locator(".resource-row")).toHaveCount(2);
-      await expect(page.locator(".count")).toHaveText("2 workflows");
-    });
+      test("Home continues the last workflow; Workflows lists it on this computer", async ({
+        page,
+      }) => {
+        await offline(page);
+        await newWorkflow(page);
+        await insertStep(page, "Transform");
+        await page.getByRole("button", { name: "Home", exact: true }).click();
+        // Leaving says where the workflow is kept.
+        const leave = page.getByRole("dialog", {
+          name: "Leave untitled-workflow?",
+        });
+        await expect(leave).toContainText(
+          "You'll find it under Workflows › On this computer.",
+        );
+        await leave.getByRole("button", { name: "Leave", exact: true }).click();
+        const resume = page.getByRole("button", { name: /^Continue editing/ });
+        await expect(resume).toContainText(
+          "Continue editing untitled-workflow, edited",
+        );
+        // The first row of Home.
+        const first = await page
+          .locator("weave-home-dashboard button")
+          .evaluateAll(
+            (buttons) =>
+              buttons.find(
+                (b) =>
+                  !b.closest(".home-header") &&
+                  b.getBoundingClientRect().height,
+              )?.textContent ?? "",
+          );
+        expect(first).toContain("Continue editing");
+        await resume.click();
+        await expect(steps(page)).toHaveCount(1);
+        await page
+          .getByRole("button", { name: "Workflows", exact: true })
+          .click();
+        await page.getByRole("button", { name: "Leave", exact: true }).click();
+        await expect(
+          page.getByRole("button", { name: "On this computer" }),
+        ).toHaveAttribute("aria-pressed", "true");
+        const row = page.locator(".resource-row").filter({
+          hasText: "untitled-workflow",
+        });
+        await expect(row).toContainText("Kept on this computer");
+        await expect(row).toContainText("1.0.0");
+        await expect(row).toContainText(/Edited (just now|\d+ min ago)/);
+        await row
+          .getByRole("button", {
+            name: "Delete untitled-workflow from this computer",
+          })
+          .click();
+        const confirm = page.getByRole("dialog", {
+          name: "Delete untitled-workflow from this computer?",
+        });
+        await confirm
+          .getByRole("button", { name: "Delete", exact: true })
+          .click();
+        await expect(row).toHaveCount(0);
+        const toast = page.locator(".toast");
+        await expect(toast).toContainText(
+          "Deleted untitled-workflow from this computer.",
+        );
+        await toast.getByRole("button", { name: "Undo" }).click();
+        await expect(row).toHaveCount(1);
+        await expect(toast).toContainText("Restored untitled-workflow.");
+      });
 
-    test("storage that refuses drafts is explained once and nothing breaks", async ({
-      page,
-    }) => {
-      await page.addInitScript(() => {
-        const refuse = () => {
-          throw new DOMException("Storage is blocked", "SecurityError");
-        };
-        Storage.prototype.setItem = refuse;
-        Storage.prototype.getItem = refuse;
+      test("a new workflow keeps the previous one", async ({ page }) => {
+        await offline(page);
+        await newWorkflow(page);
+        await insertStep(page, "Transform");
+        await page
+          .getByRole("button", { name: "Workflows", exact: true })
+          .click();
+        await page.getByRole("button", { name: "Leave", exact: true }).click();
+        await page
+          .getByRole("button", { name: "New workflow", exact: true })
+          .click();
+        await insertStep(page, "Wait for time");
+        await page
+          .getByRole("button", { name: "Workflows", exact: true })
+          .click();
+        await page.getByRole("button", { name: "Leave", exact: true }).click();
+        await expect(page.locator(".resource-row")).toHaveCount(2);
+        await expect(page.locator(".count")).toHaveText("2 workflows");
       });
-      await offline(page);
-      await newWorkflow(page);
-      await insertStep(page, "Transform");
-      const notice = page.getByRole("alert").filter({
-        hasText: "Studio can't keep drafts in this browser.",
+
+      test("storage that refuses drafts is explained once and nothing breaks", async ({
+        page,
+      }) => {
+        await page.addInitScript(() => {
+          const refuse = () => {
+            throw new DOMException("Storage is blocked", "SecurityError");
+          };
+          Storage.prototype.setItem = refuse;
+          Storage.prototype.getItem = refuse;
+        });
+        await offline(page);
+        await newWorkflow(page);
+        await insertStep(page, "Transform");
+        const notice = page.getByRole("alert").filter({
+          hasText: "Studio can't keep drafts in this browser.",
+        });
+        await expect(notice).toContainText(
+          "Use Save to file to keep your work.",
+        );
+        await insertStep(page, "Wait for time");
+        await expect(steps(page)).toHaveCount(2);
+        await expect(notice).toHaveCount(1);
+        // Leaving says the truth: nothing is kept here.
+        await page.getByRole("button", { name: "Home", exact: true }).click();
+        await expect(page.getByRole("dialog")).toContainText(
+          "Studio can't keep drafts in this browser.",
+        );
       });
-      await expect(notice).toContainText("Use Save to file to keep your work.");
-      await insertStep(page, "Wait for time");
-      await expect(steps(page)).toHaveCount(2);
-      await expect(notice).toHaveCount(1);
-      // Leaving says the truth: nothing is kept here.
-      await page.getByRole("button", { name: "Home", exact: true }).click();
-      await expect(page.getByRole("dialog")).toContainText(
-        "Studio can't keep drafts in this browser.",
-      );
-    });
-  });
+    },
+  );
 
 test("the desktop app says local drafts last until it quits", async ({
   page,

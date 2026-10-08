@@ -81,24 +81,24 @@ export const iconMap = {
   panel: "panel-right",
   tidy: "layout-grid",
   failCircle: "circle-x",
-  // Triggers (Lane E)
+  // Triggers
   manualTrigger: "mouse-pointer-click",
   webhook: "webhook",
   schedule: "calendar-clock",
   kafka: "inbox",
   appEvent: "app-window",
   calledTrigger: "square-arrow-down-right",
-  // AI agent slots (Lane A)
+  // AI agent slots
   agent: "bot",
   model: "brain-circuit",
   tools: "wrench",
   memory: "database",
   output: "file-output",
-  // Flow kinds (Lane L and Lane E)
+  // Flow kinds
   forEach: "iteration-cw",
   callWorkflow: "square-stack",
   textTemplate: "text-cursor-input",
-  // Editor (Lane E)
+  // Editor
   execute: "flask-conical",
   pin: "pin",
   unpin: "pin-off",
@@ -111,7 +111,7 @@ export const iconMap = {
   zoomOut: "zoom-out",
   drag: "grip-vertical",
   spinner: "loader-circle",
-  // Operate (Lane O)
+  // Operate
   overview: "gauge",
   clusters: "server",
   metrics: "chart-line",

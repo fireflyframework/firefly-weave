@@ -16,7 +16,7 @@
 
 """Instance keys: the runtime identity of one activation of a workflow node.
 
-Grammar (frozen in language milestone M0; overview contract C11)::
+Grammar (a stable format shared by loops, agents and yields)::
 
     instance-key = node-id *("[" index "]") ["#" seg *("." seg)] ["~" count]
     index        = "0" / (%x31-39 *DIGIT)     ; loop iteration, outer loop first
@@ -115,7 +115,7 @@ class InstanceKey:
 
 @dataclass(frozen=True)
 class InstanceView:
-    """The C11 API view of a key: static step ID, full key ('' when it equals the step ID), loop indexes."""
+    """The API view of a key: static step ID, full key ('' when it equals the step ID), loop indexes."""
 
     node_id: str
     instance_key: str

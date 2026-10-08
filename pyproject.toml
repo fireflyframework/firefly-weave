@@ -146,6 +146,8 @@ asyncio_mode = "auto"
 markers = [
   "integration: requires explicitly configured real backends; dependency failures must fail",
   "e2e: full product acceptance against real services",
+  "acceptance: real-service acceptance journeys; run them through scripts/acceptance.py",
+  "journey_step(step): the journeys.toml step a test implements, such as J0.3",
 ]
 
 [tool.ruff]

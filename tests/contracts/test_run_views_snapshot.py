@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reviewed snapshot of the run views contract; any change needs Lane E and Lane L review."""
+"""Reviewed snapshot of the run views contract; any change needs an explicit contract review."""
 
 import json
 import sys
@@ -51,7 +51,7 @@ def render() -> str:
 
 def test_run_views_contract_matches_the_reviewed_snapshot():
     assert render() == SNAPSHOT.read_text(encoding="utf-8"), (
-        "The run views contract changed. Review the change with Lanes E and L, then regenerate it with "
+        "The run views contract changed. Review the change, then regenerate it with "
         "`python tests/contracts/test_run_views_snapshot.py --write`."
     )
 

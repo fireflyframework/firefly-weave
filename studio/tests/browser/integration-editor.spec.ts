@@ -57,7 +57,7 @@ async function chooseLookup(page: Page) {
 }
 
 for (const viewport of desktopViewports) {
-  test(`H1 inspector controls receive real clicks at ${viewport.width}x${viewport.height}`, async ({
+  test(`inspector controls receive real clicks at ${viewport.width}x${viewport.height}`, async ({
     page,
   }) => {
     await page.setViewportSize(viewport);
@@ -84,7 +84,7 @@ for (const viewport of desktopViewports) {
     await expectHitTarget(inspectorHeading(page));
   });
 
-  test(`H1 published action select is clickable at ${viewport.width}x${viewport.height}`, async ({
+  test(`published action select is clickable at ${viewport.width}x${viewport.height}`, async ({
     page,
   }) => {
     await page.setViewportSize(viewport);
@@ -110,7 +110,7 @@ test("an action step added before the account check finishes still gets the cata
   expect(recorder.catalogPages).toBe(1);
 });
 
-test("H1 overlay inspector keeps fields reachable at 600x500", async ({
+test("overlay inspector keeps fields reachable at 600x500", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 600, height: 500 });
@@ -129,7 +129,7 @@ test("H1 overlay inspector keeps fields reachable at 600x500", async ({
   await button.click({ timeout: 3000 });
 });
 
-test("H2 re-clicking the selected node keeps live edits and loads the catalog once", async ({
+test("re-clicking the selected node keeps live edits and loads the catalog once", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -141,7 +141,7 @@ test("H2 re-clicking the selected node keeps live edits and loads the catalog on
   await node(page, "call-action-1").click();
   await page.waitForTimeout(300);
   await expect(page.locator(".integration-contract dl")).toBeVisible();
-  // The picker is the one place the action version shows (W3-6).
+  // The picker is the one place the action version shows.
   await expect(page.getByLabel("Action version", { exact: true })).toHaveCount(
     0,
   );
@@ -156,7 +156,7 @@ test("H2 re-clicking the selected node keeps live edits and loads the catalog on
   expect(await sourceText(page)).not.toContain("positions");
 });
 
-test("H2 H4 reselecting an applied action shows its action and enum value", async ({
+test("reselecting an applied action shows its action and enum value", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -179,7 +179,7 @@ test("H2 H4 reselecting an applied action shows its action and enum value", asyn
   expect(recorder.catalogPages).toBe(1);
 });
 
-test("H4 the Fields builder and operator select show the stored value", async ({
+test("the Fields builder and operator select show the stored value", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -225,7 +225,7 @@ test("H4 the Fields builder and operator select show the stored value", async ({
   ).toHaveAttribute("data-value", "and");
 });
 
-test("H3 typed JSON stays while invalid and numbers never coerce", async ({
+test("typed JSON stays while invalid and numbers never coerce", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -262,7 +262,7 @@ test("H3 typed JSON stays while invalid and numbers never coerce", async ({
   expect(source).toContain("a: 1");
 });
 
-test("H5 switching input editing keeps applied values", async ({ page }) => {
+test("switching input editing keeps applied values", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await connected(page);
   await newWorkflow(page);
@@ -281,7 +281,7 @@ test("H5 switching input editing keeps applied values", async ({ page }) => {
   expect(await sourceText(page)).toContain("customer: edited");
 });
 
-test("H6 Delete and arrows from inspector focus never touch steps", async ({
+test("Delete and arrows from inspector focus never touch steps", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -314,7 +314,7 @@ test("H6 Delete and arrows from inspector focus never touch steps", async ({
   await expect(page.locator('[data-step="call-action-1"]')).toHaveCount(0);
 });
 
-test("H7 overlapping catalog loads never restore a stale contract", async ({
+test("overlapping catalog loads never restore a stale contract", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -342,7 +342,7 @@ test("H7 overlapping catalog loads never restore a stale contract", async ({
   await expect(contract.getByText("crm-lookup")).toHaveCount(0);
 });
 
-test("H8 a nested invalid value keeps an inline error after editing a sibling", async ({
+test("a nested invalid value keeps an inline error after editing a sibling", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -403,7 +403,7 @@ test("J long action names fit and fields stay reachable at 1280x720", async ({
   await expectHitTarget(inspectorHeading(page));
 });
 
-test("H8 a duplicate mapped key keeps an inline error after editing a sibling", async ({
+test("a duplicate mapped key keeps an inline error after editing a sibling", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -429,7 +429,7 @@ test("H8 a duplicate mapped key keeps an inline error after editing a sibling", 
   ).toBeVisible();
 });
 
-test("H7 a contract still loading is shown for the next step that uses it", async ({
+test("a contract still loading is shown for the next step that uses it", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });

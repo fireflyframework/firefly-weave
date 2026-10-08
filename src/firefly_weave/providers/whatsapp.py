@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Authenticated WhatsApp batches; only E2 admission may commit or acknowledge events."""
+"""Authenticated WhatsApp batches; only event admission may commit or acknowledge events."""
 
 import hashlib
 import hmac

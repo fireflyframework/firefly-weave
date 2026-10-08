@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The shared language fixtures (language spec 14.5) are current and agree with the Python contracts."""
+"""The shared language fixtures are current and agree with the Python contracts."""
 
 import json
 import re

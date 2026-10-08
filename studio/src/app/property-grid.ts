@@ -638,7 +638,7 @@ export class PropertyValue implements OnChanges {
     this.invalid.clear();
     if (wasInvalid) this.validityChange.emit(true);
   }
-  /** What each value type held, so switching back restores it (F8). */
+  /** What each value type held, so switching back restores it. */
   private memory = new Map<string, unknown>();
   get typeOptions() {
     return [...new Set([...this.types, this.type])].map((value) => ({
@@ -1345,7 +1345,7 @@ export class ExpressionEditor implements OnChanges, AfterViewChecked {
     this.current = { [this.mode]: value };
     this.emit();
   }
-  /** What each mode held, so switching back restores it (F8). */
+  /** What each mode held, so switching back restores it. */
   private memory = new Map<string, unknown>();
   changeMode(event: Event) {
     this.setMode(this.text(event));

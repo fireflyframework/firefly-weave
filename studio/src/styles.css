@@ -2566,8 +2566,8 @@ details.disclosure[open] > summary::before {
   }
 }
 
-/* The live thread: where the work is now, on a workflow graph. Waves 2 and 3
-   apply these classes to the run detail graph and the simulation. */
+/* The live thread: where the work is now, on a workflow graph. The run detail
+   graph and the simulation apply these classes. */
 .is-live .node-body,
 .run-node.is-live {
   border: 2px solid var(--live);

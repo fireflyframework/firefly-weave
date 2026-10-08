@@ -25,6 +25,7 @@ import {
   sourceText,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+import { python } from "../python-path";
 
 const proposal = `apiVersion: weave/v1alpha1
 kind: Workflow
@@ -188,7 +189,7 @@ for (const viewport of [
     await page.setViewportSize(viewport);
     const schema = JSON.parse(
       execFileSync(
-        ".venv/bin/python",
+        python,
         [
           "-c",
           "import json; from firefly_weave.contracts.lumi import LumiConfigurationRequest; print(json.dumps(LumiConfigurationRequest.model_json_schema(by_alias=True)))",

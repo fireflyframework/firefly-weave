@@ -19,7 +19,7 @@
 import asyncio
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import unquote, urlencode, urljoin, urlsplit
@@ -36,11 +36,33 @@ from firefly_weave.connectors.egress import EgressDenied, EgressPolicy, origin
 from firefly_weave.contracts.connectors import ActionContext, BoundConnection, ConnectionTestResult, ConnectorFailure
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.values import JsonObject, JsonValue, validate_json_value
+from firefly_weave.private_origins import PrivateOrigins, Purpose
 
 
 @dataclass(frozen=True)
 class HttpPolicy:
+    """HTTP egress for this process: the private-origin policy (C8) plus the legacy network list."""
+
     private_networks: tuple[str, ...] = ()
+    origins: PrivateOrigins = field(default_factory=PrivateOrigins.empty)
+
+    def __post_init__(self) -> None:
+        # WEAVE_HTTP_PRIVATE_NETWORKS keeps today's reach as "Legacy setting" entries (C8 mapping).
+        object.__setattr__(
+            self,
+            "origins",
+            self.origins.with_legacy(
+                ("http-connector", "event-delivery"), self.private_networks, setting="WEAVE_HTTP_PRIVATE_NETWORKS"
+            ),
+        )
+
+    def egress(self, purpose: Purpose, allowed: tuple[str, ...], *, sends_credentials: bool = False) -> EgressPolicy:
+        return EgressPolicy(allowed, purpose=purpose, origins=self.origins, sends_credentials=sends_credentials)
+
+    def follows_redirects(self, url: str) -> bool:
+        """Requests to an exact development origin never follow redirects (C8)."""
+        entry = self.origins.match("http-connector", url)
+        return entry is None or entry.source != "file"
 
 
 class HttpConfig(ContractModel):
@@ -127,8 +149,13 @@ class HttpConnector:
                     del secret
                 elif connection.config.get("auth", "none") != "none":
                     raise ConnectorFailure("HTTP_AUTH", "not_started")
-                policy = EgressPolicy(connection.allowed_destinations, self.policy.private_networks)
-                for redirect in range(config.max_redirects + 1):
+                policy = self.policy.egress(
+                    "http-connector",
+                    connection.allowed_destinations,
+                    sends_credentials=connection.config.get("auth", "none") == "bearer",
+                )
+                redirects = config.max_redirects if self.policy.follows_redirects(url) else 0
+                for redirect in range(redirects + 1):
                     started = True
                     response = await self.client.request_bounded(
                         config.method,
@@ -141,7 +168,7 @@ class HttpConnector:
                     )
                     if response.status_code in {301, 302, 303, 307, 308}:
                         # Unsafe methods never follow a redirect after an external write.
-                        if config.method not in {"GET", "HEAD"} or redirect == config.max_redirects:
+                        if config.method not in {"GET", "HEAD"} or redirect == redirects:
                             raise ConnectorFailure("HTTP_REDIRECT")
                         target = urljoin(url, response.headers.get("location", ""))
                         if not response.headers.get("location") or origin(target) != origin(url):
@@ -195,7 +222,7 @@ class HttpConnector:
                 base,
                 max_response_bytes=0,
                 timeout=5,
-                egress_policy=EgressPolicy(connection.revision.allowed_destinations, self.policy.private_networks),
+                egress_policy=self.policy.egress("http-connector", connection.revision.allowed_destinations),
             )
             return ConnectionTestResult(ok=200 <= response.status_code < 400)
         except Exception:

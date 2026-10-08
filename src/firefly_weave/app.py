@@ -33,7 +33,7 @@ from pyfly.web.ports.outbound import WebServerPort
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.applications import Starlette
 
-from firefly_weave import __version__
+from firefly_weave import __version__, private_origins
 from firefly_weave.access.authentication import AuthenticationFilter, AuthenticationService, VerifierSet
 from firefly_weave.access.authorization import AuthorizationService
 from firefly_weave.access.identity_links import IdentityResolver
@@ -185,6 +185,8 @@ def make_app(
     # schema mutation, remote config or administrative endpoints before startup.
     if any(name.startswith("PYFLY_") for name in os.environ):
         raise ValueError("Use Weave settings; PYFLY_* overrides are not supported")
+    # Connection checks and every C8 client in this process use the policy loaded at startup.
+    private_origins.install(settings.private_origins)
     pyfly = PyFlyApplication(WeaveApplication, config_path=Path(__file__).with_name("pyfly.yaml"))
     resources = DatabaseResources(settings)
     pyfly.context.container.register_instance(Settings, settings)
@@ -204,7 +206,9 @@ def make_app(
         verifiers if verifiers is not None else VerifierSet(tuple(OIDCVerifier(p) for p in settings.providers)),
     )
     pyfly.context.container.register_instance(BoundedHttpClientPort, SecureHttpClient())
-    pyfly.context.container.register_instance(HttpPolicy, HttpPolicy(private_networks=settings.http_private_networks))
+    pyfly.context.container.register_instance(
+        HttpPolicy, HttpPolicy(private_networks=settings.http_private_networks, origins=settings.private_origins)
+    )
     pyfly.context.container.register_instance(
         PostgresPolicy,
         PostgresPolicy(
@@ -320,7 +324,7 @@ def make_app(
             compatibility = pyfly.context.get_bean(CompatibilityService)
             app.state.compatibility = compatibility
             app.state.telemetry_service = pyfly.context.get_bean(TelemetryService)
-            registry.set_operational_guard(lambda: compatibility.ready)
+            registry.set_operational_guard(lambda: compatibility.ready, retry_after=compatibility.retry_after_seconds)
 
             async def open_control_loop(*, required: bool = False) -> None:
                 nonlocal recovery_loop

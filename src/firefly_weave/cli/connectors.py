@@ -382,6 +382,14 @@ def import_openapi_command(
     else:
         summary = "OpenAPI import rejected; nothing was written."
     lines = [summary] + [f"  wrote {directory}/{name}" for name in files] + _lines(result.diagnostics)
+    from firefly_weave.contracts.connectors import plain_text_warning
+
+    # The connection template names the API origin: an http:// one works but is never silent. Standard output
+    # keeps the command's output in every mode; the warning is one line on standard error.
+    example = (result.connection_example or {}).get("config")
+    warning = plain_text_warning(example) if isinstance(example, dict) else None
+    if warning is not None:
+        click.echo(warning, err=True)
     _finish(ctx, output, result.ok, value, lines)
 
 
