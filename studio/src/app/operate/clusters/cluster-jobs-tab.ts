@@ -17,18 +17,33 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The Jobs tab: observe and apply jobs across the environment's targets.
 import { ChangeDetectionStrategy, Component } from "@angular/core";
+import { OperateState } from "../operate-state";
 import { ClusterSection } from "./cluster-section";
 
 @Component({
   selector: "weave-cluster-jobs-tab",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
+  imports: [OperateState],
   styleUrl: "./clusters.css",
   template: `
     <section class="operations-panel">
       <h2>Jobs</h2>
       @if (store.errors.jobs) {
-        <p role="alert">{{ store.errors.jobs }}</p>
+        @if (store.errorInfo.jobs?.status === 403) {
+          <weave-operate-state
+            kind="access"
+            heading="You don't have access to jobs"
+            capability="deployment.read"
+          />
+        } @else {
+          <weave-operate-state
+            kind="partial"
+            [message]="store.errors.jobs"
+            [code]="store.errorInfo.jobs?.code ?? ''"
+            (retry)="page.poller.refresh()"
+          />
+        }
       }
       <ul class="resource-cards">
         @for (item of store.jobs; track item.id) {

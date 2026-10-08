@@ -27,10 +27,10 @@ import {
   OnInit,
   inject,
 } from "@angular/core";
-import { Router } from "@angular/router";
+import { NavigationEnd, Router } from "@angular/router";
 import type { App } from "../../app";
 import type { LumiOperationAttachment } from "../../lumi/lumi-state";
-import { describeError } from "../../errors";
+import { describeError, type PlainError } from "../../errors";
 import { shortId } from "../../format";
 import type { ReconcileRequest } from "../../operations/deployment-reconciliation";
 import { DeploymentEditor } from "../../operations/deployment-editor";
@@ -71,8 +71,11 @@ import {
   clustersRecordPath,
   clustersRoute,
   clustersTabPath,
+  viewFromPath,
+  type ClusterCollection,
   type ClusterTab,
 } from "../operate-routes";
+import { OperateState } from "../operate-state";
 import { Poller, browserEnvironment } from "../operate-store";
 import { RefreshStatus } from "../refresh-status";
 
@@ -91,6 +94,7 @@ import { RefreshStatus } from "../refresh-status";
     ClusterApprovalsTab,
     ClusterJobsTab,
     ClusterRunnersTab,
+    OperateState,
     RefreshStatus,
   ],
   styleUrls: ["./clusters.css", "../operate.css"],
@@ -112,7 +116,7 @@ import { RefreshStatus } from "../refresh-status";
         <weave-refresh-status
           [updatedAt]="poller.lastSuccessAt"
           [busy]="poller.busy || store.mutating"
-          (refresh)="poller.refresh()"
+          (refresh)="reload()"
         />
       }
     </header>
@@ -155,6 +159,9 @@ import { RefreshStatus } from "../refresh-status";
       @if (error || store.mutationError) {
         <p class="notice" data-tone="danger" role="alert">
           {{ error || store.mutationError }}
+          @if (error ? errorCode : store.mutationErrorCode; as code) {
+            <small class="support-code">Support code: {{ code }}</small>
+          }
         </p>
       }
       @if (store.mutationUncertain) {
@@ -277,6 +284,21 @@ import { RefreshStatus } from "../refresh-status";
             }
           }
         </div>
+      } @else if (recordError; as failed) {
+        @if (failed.status === 403) {
+          <weave-operate-state
+            kind="access"
+            [heading]="recordAccessHeading()"
+            capability="deployment.read"
+          />
+        } @else {
+          <weave-operate-state
+            kind="error"
+            [message]="failed.message"
+            [code]="failed.code"
+            (retry)="reload()"
+          />
+        }
       } @else {
         <p role="status">Loading selected resource…</p>
       }
@@ -288,6 +310,9 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   private cdr = inject(ChangeDetectorRef);
   private element = inject<ElementRef<HTMLElement>>(ElementRef);
   private router = inject(Router);
+  private navigated = this.router.events.subscribe((event) => {
+    if (event instanceof NavigationEnd) this.addressChanged();
+  });
   readonly store = new OperationsStore(
     {
       request: (path, method, body, headers) =>
@@ -375,6 +400,11 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   editorTarget: Target | null = null;
   deploymentSchema: Schema | null = null;
   error = "";
+  errorCode = "";
+  /** Why the record this address names could not be read. */
+  recordError: PlainError | null = null;
+  /** The address the page shows or is reading: "targets/ID" or "?tab=jobs". */
+  private shown = "";
   private scopeKey = "";
   private alive = true;
   private detailSequence = 0;
@@ -495,6 +525,8 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.workerReleases = [];
     this.editorTarget = null;
     this.error = "";
+    this.errorCode = "";
+    this.recordError = null;
     this.store.setScope(scope, this.canRead, authority);
     this.inbox.clear();
     if (scope && this.canRead) void this.readLocation();
@@ -504,12 +536,35 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   }
   ngOnDestroy() {
     this.alive = false;
+    this.navigated.unsubscribe();
     this.poller.stop();
     this.detailSequence++;
     this.store.setScope("", false);
   }
   @HostListener("window:popstate") locationChanged() {
-    void this.readLocation();
+    if (viewFromPath(location.pathname)?.view === "clusters")
+      void this.readLocation();
+  }
+  /**
+   * The Clusters entry or a link moved the address (the router fires no
+   * popstate): the page follows it unless it already shows that address.
+   */
+  private addressChanged() {
+    if (viewFromPath(location.pathname)?.view !== "clusters") return;
+    if (!this.host.profile || !this.canRead) return;
+    const { collection, id, tab } = clustersRoute(
+      location.pathname,
+      location.search,
+    );
+    if (this.addressKey(collection, id, tab) !== this.shown)
+      void this.readLocation();
+  }
+  private addressKey(
+    collection: ClusterCollection | null,
+    id: string,
+    tab: ClusterTab,
+  ) {
+    return collection ? `${collection}/${id}` : `?tab=${tab}`;
   }
   private async readLocation() {
     this.resetDetails();
@@ -518,6 +573,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       location.search,
     );
     this.tab = tab;
+    this.shown = this.addressKey(collection, id, tab);
     if (!collection) {
       this.screen = "overview";
       await this.poller.refresh();
@@ -542,11 +598,37 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
         await this.openPlan(value as unknown as Plan, false);
       else await this.openJob(value as unknown as Job, false);
     } catch (error) {
+      // The address stays: a refusal names the access it needs, anything
+      // else says why with its code and Try again, beside Back to Clusters.
       if (seq === this.detailSequence) {
-        this.error = describeError(error).message;
+        this.recordError = describeError(error);
         this.cdr.markForCheck();
       }
     }
+  }
+  /** A record's screen whose record has not loaded (yet, or at all). */
+  private get recordMissing() {
+    return (
+      this.screen !== "overview" &&
+      !this.target &&
+      !this.deployment &&
+      !this.plan &&
+      !this.job
+    );
+  }
+  /** "You don't have access to this target". */
+  recordAccessHeading() {
+    return `You don't have access to this ${this.screen}`;
+  }
+  /** Refresh and Try again: a record that could not be read is read again. */
+  reload() {
+    return this.recordMissing ? this.readLocation() : this.poller.refresh();
+  }
+  /** Shows a failure above the page with its support code. */
+  private showError(error: unknown) {
+    const plain = describeError(error);
+    this.error = plain.message;
+    this.errorCode = plain.code;
   }
   private resetDetails() {
     this.target = null;
@@ -555,6 +637,8 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.job = null;
     this.approval = null;
     this.error = "";
+    this.errorCode = "";
+    this.recordError = null;
     this.registering = false;
     this.editing = false;
     this.editingAuthority = false;
@@ -566,18 +650,23 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   async overview() {
     this.resetDetails();
     this.screen = "overview";
+    this.shown = this.addressKey(null, "", this.tab);
     await this.router.navigateByUrl(clustersTabPath(this.tab));
     await this.poller.refresh();
   }
   async selectTab(tab: ClusterTab) {
     if (tab === this.tab) return;
     this.tab = tab;
+    this.shown = this.addressKey(null, "", tab);
     await this.router.navigateByUrl(clustersTabPath(tab), { replaceUrl: true });
     await this.poller.refresh();
   }
   /** Arrow keys, Home and End move between the tabs (WAI-ARIA tabs pattern). */
   tabKey(event: KeyboardEvent) {
     const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    // Held with Alt, Control or Meta, the key is the browser's: Alt+Left
+    // is Back.
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (!keys.includes(event.key)) return;
     event.preventDefault();
     const order = this.tabs.map((item) => item[0]);
@@ -607,7 +696,8 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       this.editingAuthority ||
       this.registering ||
       this.planning ||
-      this.store.mutating
+      this.store.mutating ||
+      this.recordMissing
     );
   }
   /** One load of what is on screen; throws when any of it failed. */
@@ -666,8 +756,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       if (value && seq === this.detailSequence)
         await this.openDeployment(value);
     } catch (error) {
-      if (seq === this.detailSequence)
-        this.error = describeError(error).message;
+      if (seq === this.detailSequence) this.showError(error);
     }
   }
   /**
@@ -711,6 +800,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.resetDetails();
     this.target = value;
     this.screen = "target";
+    this.shown = this.addressKey("targets", value.id, this.tab);
     if (navigate)
       await this.router.navigateByUrl(clustersRecordPath("targets", value.id));
     this.focusDetail();
@@ -720,6 +810,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.resetDetails();
     this.deployment = value;
     this.screen = "deployment";
+    this.shown = this.addressKey("deployments", value.id, this.tab);
     if (navigate)
       await this.router.navigateByUrl(
         clustersRecordPath("deployments", value.id),
@@ -731,6 +822,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.resetDetails();
     this.plan = value;
     this.screen = "plan";
+    this.shown = this.addressKey("plans", value.id, this.tab);
     if (navigate)
       await this.router.navigateByUrl(clustersRecordPath("plans", value.id));
     this.focusDetail();
@@ -740,6 +832,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.resetDetails();
     this.job = value;
     this.screen = "job";
+    this.shown = this.addressKey("jobs", value.id, this.tab);
     if (navigate)
       await this.router.navigateByUrl(clustersRecordPath("jobs", value.id));
     this.focusDetail();
@@ -762,13 +855,15 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       const result = await this.store.read("targets", id);
       if (result && seq === this.detailSequence) await this.openTarget(result);
     } catch (error) {
-      if (seq === this.detailSequence)
-        this.error = describeError(error).message;
+      if (seq === this.detailSequence) this.showError(error);
     }
   }
   /** Loads what is on screen; false when any section of it failed. */
   async refresh(): Promise<boolean> {
     if (!this.canRead || !this.host.profile) return false;
+    // A record that could not be read has nothing to reload, and the tabs
+    // behind it are not on screen: nothing loads, so nothing claims it did.
+    if (this.recordMissing) return false;
     let failed = false;
     const arrived = (...names: Collection[]) => {
       if (names.some((name) => this.store.errors[name])) failed = true;
@@ -799,8 +894,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
           })
           .catch((error) => {
             failed = true;
-            if (seq === this.detailSequence)
-              this.error = describeError(error).message;
+            if (seq === this.detailSequence) this.showError(error);
           }),
       ]);
       arrived("plans", "observations");
@@ -818,8 +912,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
           this.job = result;
       } catch (error) {
         failed = true;
-        if (seq === this.detailSequence)
-          this.error = describeError(error).message;
+        if (seq === this.detailSequence) this.showError(error);
       }
       if (
         this.job?.state === "reconciliation_required" &&
@@ -836,8 +929,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
             })
             .catch((error) => {
               failed = true;
-              if (seq === this.detailSequence)
-                this.error = describeError(error).message;
+              if (seq === this.detailSequence) this.showError(error);
             }),
         ]);
         arrived("observations");
@@ -849,8 +941,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
         if (seq === this.detailSequence) this.approval = result;
       } catch (error) {
         failed = true;
-        if (seq === this.detailSequence)
-          this.error = describeError(error).message;
+        if (seq === this.detailSequence) this.showError(error);
       }
     } else {
       const names = (
@@ -903,8 +994,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       this.store.cancelMutation();
       this.cdr.markForCheck();
     } catch (error) {
-      if (seq === this.detailSequence)
-        this.error = describeError(error).message;
+      if (seq === this.detailSequence) this.showError(error);
     }
   }
   async saveTargetAuthority(request: TargetUpdate) {
@@ -934,8 +1024,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
         await this.openTarget(target);
       }
     } catch (error) {
-      if (seq === this.detailSequence)
-        this.error = describeError(error).message;
+      if (seq === this.detailSequence) this.showError(error);
     } finally {
       if (this.alive) this.cdr.markForCheck();
     }
@@ -985,8 +1074,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       this.editing = true;
       this.cdr.markForCheck();
     } catch (error) {
-      if (seq === this.detailSequence)
-        this.error = describeError(error).message;
+      if (seq === this.detailSequence) this.showError(error);
     }
   }
   async saveDeployment(request: DeploymentRequest) {

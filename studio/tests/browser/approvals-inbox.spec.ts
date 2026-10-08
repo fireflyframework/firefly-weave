@@ -235,6 +235,9 @@ for (const viewport of [
       await expect(page.getByRole("alert")).toContainText(
         "Approval differs from reviewed plan",
       );
+      await expect(page.getByRole("alert")).toContainText(
+        "Support code: WV-PLAN-STALE",
+      );
       await expect(
         page
           .getByRole("table", { name: "Plans waiting for an approval" })

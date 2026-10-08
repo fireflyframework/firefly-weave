@@ -17,17 +17,31 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The deployments the page has loaded, with Load more.
 import { ChangeDetectionStrategy, Component } from "@angular/core";
+import { OperateState } from "../operate-state";
 import { ClusterSection } from "./cluster-section";
 
 @Component({
   selector: "weave-cluster-deployment-list",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [],
+  imports: [OperateState],
   styleUrl: "./clusters.css",
   template: `
     @if (store.errors.deployments) {
-      <p role="alert">{{ store.errors.deployments }}</p>
+      @if (store.errorInfo.deployments?.status === 403) {
+        <weave-operate-state
+          kind="access"
+          heading="You don't have access to deployments"
+          capability="deployment.read"
+        />
+      } @else {
+        <weave-operate-state
+          kind="partial"
+          [message]="store.errors.deployments"
+          [code]="store.errorInfo.deployments?.code ?? ''"
+          (retry)="page.poller.refresh()"
+        />
+      }
     }
     <ul class="resource-cards">
       @for (item of store.deployments; track item.id) {

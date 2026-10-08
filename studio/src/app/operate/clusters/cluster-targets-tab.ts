@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 import { ChangeDetectionStrategy, Component } from "@angular/core";
 import { Icon } from "../../icon";
 import { toneAttribute } from "../../status-labels";
+import { OperateState } from "../operate-state";
 import { ClusterDeploymentList } from "./cluster-deployment-list";
 import { ClusterSection } from "./cluster-section";
 import {
@@ -33,7 +34,7 @@ import {
   selector: "weave-cluster-targets-tab",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ClusterDeploymentList, Icon],
+  imports: [ClusterDeploymentList, Icon, OperateState],
   styleUrls: ["./clusters.css", "../operate.css"],
   template: `
     <section class="operations-panel">
@@ -52,7 +53,20 @@ import {
         <p role="status">Loading targets…</p>
       }
       @if (store.errors.targets) {
-        <p role="alert">{{ store.errors.targets }}</p>
+        @if (store.errorInfo.targets?.status === 403) {
+          <weave-operate-state
+            kind="access"
+            heading="You don't have access to targets"
+            capability="deployment.read"
+          />
+        } @else {
+          <weave-operate-state
+            kind="partial"
+            [message]="store.errors.targets"
+            [code]="store.errorInfo.targets?.code ?? ''"
+            (retry)="page.poller.refresh()"
+          />
+        }
       }
       <ul class="resource-cards">
         @for (item of store.targets; track item.id) {

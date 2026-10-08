@@ -172,6 +172,80 @@ for (const viewport of [
       await expect(page).toHaveURL(/\/operate\/clusters\?tab=jobs$/);
     });
 
+    test("arrow keys held with Alt, Control or Meta leave the tabs alone", async ({
+      page,
+    }) => {
+      await clusters(page, ["deployment.read"]);
+      const targets = page.getByRole("tab", { name: "Targets" });
+      await targets.focus();
+      for (const key of [
+        "Alt+ArrowRight",
+        "Alt+ArrowLeft",
+        "Control+End",
+        "Meta+End",
+        "Alt+Home",
+      ]) {
+        const moved = await targets.evaluate(
+          (tab, pressed) =>
+            new Promise<boolean>((resolve) => {
+              tab.addEventListener(
+                "keydown",
+                (event) => setTimeout(() => resolve(event.defaultPrevented)),
+                { once: true },
+              );
+              const [modifier, name] = pressed.split("+");
+              tab.dispatchEvent(
+                new KeyboardEvent("keydown", {
+                  key: name,
+                  bubbles: true,
+                  cancelable: true,
+                  altKey: modifier === "Alt",
+                  ctrlKey: modifier === "Control",
+                  metaKey: modifier === "Meta",
+                }),
+              );
+            }),
+          key,
+        );
+        // The browser keeps the key (Alt+Left is Back) and no tab moves.
+        expect(moved, key).toBe(false);
+      }
+      await expect(targets).toHaveAttribute("aria-selected", "true");
+      await expect(targets).toBeFocused();
+      await expect(page).toHaveURL(/\/operate\/clusters$/);
+    });
+
+    test("choosing Clusters again shows Targets and closes an open record", async ({
+      page,
+    }) => {
+      await clusters(page, ["deployment.read"]);
+      const targets = page.getByRole("tab", { name: "Targets" });
+      const menu = page.getByRole("button", { name: "Clusters", exact: true });
+      await page.getByRole("tab", { name: "Jobs" }).click();
+      await expect(page).toHaveURL(/\/operate\/clusters\?tab=jobs$/);
+      await menu.click();
+      await expect(page).toHaveURL(/\/operate\/clusters$/);
+      await expect(targets).toHaveAttribute("aria-selected", "true");
+      await page
+        .getByRole("button", { name: "local-docker", exact: true })
+        .click();
+      await expect(
+        page.getByRole("heading", { name: "local-docker", exact: true }),
+      ).toBeVisible();
+      await expect(page).toHaveURL(
+        new RegExp(`/operate/clusters/targets/${targetId}$`),
+      );
+      await menu.click();
+      await expect(page).toHaveURL(/\/operate\/clusters$/);
+      await expect(
+        page.getByRole("button", { name: "Back to Clusters" }),
+      ).toHaveCount(0);
+      await expect(targets).toHaveAttribute("aria-selected", "true");
+      await expect(
+        page.getByRole("button", { name: "local-docker", exact: true }),
+      ).toBeVisible();
+    });
+
     test("every runner shows its presence, and readers cannot revoke", async ({
       page,
     }) => {
@@ -249,6 +323,9 @@ for (const viewport of [
         .click();
       await expect(page.getByRole("alert")).toContainText(
         "Your account does not have permission for this action",
+      );
+      await expect(page.getByRole("alert")).toContainText(
+        "Support code: WV-DENIED",
       );
       await expect(
         page
@@ -592,6 +669,148 @@ test.describe("polling and failures", () => {
     await page.getByRole("tab", { name: "Jobs" }).click();
     await expect(page.getByRole("button", { name: jobButton })).toBeVisible();
     await expect(page.getByText("Updated just now")).toBeVisible();
+  });
+
+  test("a failed section shows its message, support code and Try again", async ({
+    page,
+  }) => {
+    await polling(page, ["deployment.read"]);
+    let fail = true;
+    await page.route("**/deployments?*", (r) =>
+      fail
+        ? r.fulfill({
+            status: 503,
+            json: {
+              code: "WV-UNAVAILABLE",
+              message: "Deployments unavailable",
+            },
+          })
+        : r.fulfill({ json: { items: [], next_cursor: null } }),
+    );
+    await page.route("**/deployment-jobs?*", (r) =>
+      r.fulfill({
+        status: 500,
+        json: { code: "WV-OUTAGE", message: "The job service is down" },
+      }),
+    );
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    const deployments = page
+      .locator("weave-cluster-deployment-list")
+      .getByRole("alert");
+    await expect(deployments).toContainText("Deployments unavailable");
+    await expect(deployments).toContainText("Support code: WV-UNAVAILABLE");
+    fail = false;
+    await deployments.getByRole("button", { name: "Try again" }).click();
+    await expect(
+      page.getByText("No deployment has been returned."),
+    ).toBeVisible();
+    await page.getByRole("tab", { name: "Jobs" }).click();
+    const jobs = page.locator("weave-cluster-jobs-tab").getByRole("alert");
+    await expect(jobs).toContainText("The job service is down");
+    await expect(jobs).toContainText("Support code: WV-OUTAGE");
+    await expect(jobs.getByRole("button", { name: "Try again" })).toBeVisible();
+  });
+
+  test("a refused targets read shows the access state", async ({ page }) => {
+    await connected(page, { capabilities: ["deployment.read"] });
+    await page.route("**/deployment-targets?*", (r) =>
+      r.fulfill({
+        status: 403,
+        json: { code: "WV-DENIED", message: "Denied" },
+      }),
+    );
+    await page.goto("/operate/clusters");
+    await expect(
+      page.getByRole("heading", { name: "You don't have access to targets" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("You need deployment.read in this environment."),
+    ).toBeVisible();
+  });
+
+  test("a record address the person may not read shows the access state and never claims it loaded", async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await connected(page, { capabilities: ["deployment.read"] });
+    await page.route(`**/deployment-targets/${targetId}`, (r) =>
+      r.fulfill({
+        status: 403,
+        json: { code: "WV-DENIED", message: "Denied" },
+      }),
+    );
+    await page.goto(`/operate/clusters/targets/${targetId}`);
+    await expect(
+      page.getByRole("heading", {
+        name: "You don't have access to this target",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("You need deployment.read in this environment."),
+    ).toBeVisible();
+    await expect(page.getByText("Loading selected resource…")).toHaveCount(0);
+    // A reload is due every 15 s; nothing on screen was loaded.
+    await page.clock.runFor(31_000);
+    await expect(page.getByText(/^Updated /)).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", {
+        name: "You don't have access to this target",
+      }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Back to Clusters" }).click();
+    await expect(page).toHaveURL(/\/operate\/clusters$/);
+    await expect(page.getByRole("tab", { name: "Targets" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  test("a record address that is gone says so with its support code and a way back", async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await connected(page, { capabilities: ["deployment.read"] });
+    let gone = true;
+    await page.route(`**/deployment-jobs/${jobId}`, (r) =>
+      gone
+        ? r.fulfill({
+            status: 404,
+            json: { code: "WV-NOT-FOUND", message: "Deployment job not found" },
+          })
+        : r.fulfill({
+            json: {
+              id: jobId,
+              scope,
+              target_id: targetId,
+              target_revision: 1,
+              kind: "observe",
+              plan_id: null,
+              plan_digest: null,
+              state: "succeeded",
+              revision: 2,
+              operation_key: "op",
+              created_at: "2026-10-08T09:00:00Z",
+              deadline: at(600),
+              receipt: null,
+              observation_id: null,
+              reconciliation_started_at: null,
+            },
+          }),
+    );
+    await page.goto(`/operate/clusters/jobs/${jobId}`);
+    const problem = page.getByRole("alert");
+    await expect(problem).toContainText("Deployment job not found");
+    await expect(problem).toContainText("Support code: WV-NOT-FOUND");
+    await expect(page.getByText("Loading selected resource…")).toHaveCount(0);
+    await page.clock.runFor(31_000);
+    await expect(page.getByText(/^Updated /)).toHaveCount(0);
+    // Try again reads the record again.
+    gone = false;
+    await problem.getByRole("button", { name: "Try again" }).click();
+    await expect(page.locator("p[role=status] strong")).toHaveText("succeeded");
+    await expect(page.getByText("Updated just now")).toBeVisible();
+    await page.getByRole("button", { name: "Back to Clusters" }).click();
+    await expect(page).toHaveURL(/\/operate\/clusters$/);
   });
 
   test("a record opened from its address says it just loaded", async ({
