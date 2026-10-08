@@ -23,6 +23,7 @@ from uuid import uuid4
 import pytest
 
 from firefly_weave.compiler.api import compile_source
+from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.contracts.access import Scope
@@ -370,3 +371,36 @@ def test_comparison_ir_is_advertised_and_classified_without_a_worker():
     capabilities = Capabilities(limits={}, schemas=[], connectors=[])
     assert compiled.artifact.executable["irVersion"] in capabilities.ir_versions
     assert classify_requirement("run", requirement(compiled.artifact), ConnectorRegistry()) is None
+
+
+@pytest.fixture
+def text():
+    document = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "greeting", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "steps": [],
+            "output": {"op": {"name": "join", "args": [{"literal": ["a", "b"]}, {"literal": ", "}]}},
+        },
+    }
+    result = compile_source(json.dumps(document), format="json", catalog=CatalogSnapshot.empty())
+    assert result.ok
+    return requirement(result.artifact)
+
+
+@pytest.mark.parametrize("kind", ["run", "activation"])
+def test_language_features_are_supported_only_where_the_platform_runs_them(text, kind):
+    assert classify_requirement(kind, text, ConnectorRegistry(), features=("text.concat", "text.join")) is None
+    assert classify_requirement(kind, text, ConnectorRegistry(), features=("text.concat",)) == "ir_unsupported"
+    assert classify_requirement(kind, text, ConnectorRegistry(), features=()) == "ir_unsupported"
+
+
+def test_an_unknown_feature_name_is_ir_unsupported_even_with_a_valid_digest(text):
+    executable = text["artifact"]["executable"]
+    executable["features"] = ["flow.tryCatch"]
+    text["artifact"]["digest"] = canonical_digest(executable)
+    text["activation"]["request"]["artifact_digest"] = text["artifact"]["digest"]
+    assert classify_requirement("run", text, ConnectorRegistry(), features=("text.join",)) == "ir_unsupported"

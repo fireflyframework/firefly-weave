@@ -36,3 +36,13 @@ class CatalogError(Exception):
         self.result = result
         # Whole seconds a client should wait before sending a refused request again.
         self.retry_after = retry_after
+
+
+def ir_unsupported(missing: tuple[str, ...]) -> CatalogError:
+    """The answer when this platform does not run an artifact's IR version or language features."""
+    return CatalogError(
+        422,
+        "WV-IR-UNSUPPORTED",
+        "This platform does not run the IR version or language features of this workflow",
+        result={"reason": "ir_unsupported", "missing_features": list(missing)},
+    )

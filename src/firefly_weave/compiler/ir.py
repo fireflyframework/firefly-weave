@@ -29,6 +29,7 @@ from firefly_weave.compiler.catalog import CatalogResource, FrozenDocument, Reso
 from firefly_weave.compiler.decision_tables import validate_decision_expressions
 from firefly_weave.compiler.expressions import COLLECTION_COMPARISONS
 from firefly_weave.compiler.schema_profile import SCHEMA_ARRAYS, SCHEMA_MAPS, SCHEMA_SINGLE
+from firefly_weave.contracts import language_features
 from firefly_weave.contracts.definitions import (
     ActionDefinition,
     ActionSpec,
@@ -456,6 +457,32 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
 def accepted_ir_versions(features: Collection[str]) -> list[str]:
     """The IR versions a platform running ``features`` accepts: v1alpha4 joins with the first feature."""
     return list(IR_LEVELS if features else IR_LEVELS[:3])
+
+
+class UnsupportedIR(ValueError):
+    """An executable whose IR version or language features this platform does not run (``ir_unsupported``)."""
+
+    def __init__(self, missing: tuple[str, ...]) -> None:
+        self.missing = missing
+        super().__init__("ir_unsupported")
+
+
+def require_supported_ir(executable: object, features: Collection[str] | None = None) -> None:
+    """Refuse an executable this platform cannot run, before strict validation reads it.
+
+    ``features`` defaults to the advertised ones. An unknown IR version, or a ``features`` list of names that
+    are not all advertised (unknown names included), raises ``UnsupportedIR`` naming the missing features.
+    Any other malformed shape is left to strict validation.
+    """
+    if not isinstance(executable, dict):
+        return
+    advertised = language_features.ADVERTISED_FEATURES if features is None else features
+    declared = executable.get("features", [])
+    missing: tuple[str, ...] = ()
+    if isinstance(declared, list) and all(isinstance(name, str) for name in declared):
+        missing = tuple(sorted(set(cast(list[str], declared)) - set(advertised)))
+    if missing or executable.get("irVersion") not in accepted_ir_versions(advertised):
+        raise UnsupportedIR(missing)
 
 
 class ExecutableBase(ContractModel):
