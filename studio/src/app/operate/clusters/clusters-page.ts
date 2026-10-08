@@ -59,6 +59,7 @@ import { ClusterJobDetail } from "./cluster-job-detail";
 import { ClusterOverview } from "./cluster-overview";
 import { ClusterPlanDetail } from "./cluster-plan-detail";
 import { ClusterTargetDetail } from "./cluster-target-detail";
+import { clustersRecordPath, clustersRoute } from "../operate-routes";
 
 @Component({
   selector: "weave-clusters-page",
@@ -77,9 +78,8 @@ import { ClusterTargetDetail } from "./cluster-target-detail";
   template: `
     <header class="operations-heading">
       <div>
-        <p class="eyebrow">CONTAINER OPERATIONS</p>
-        <h1>Operations</h1>
-        <p>
+        <h1>Clusters</h1>
+        <p class="subtitle">
           Targets, deployments and their verified observations in this
           environment.
         </p>
@@ -91,7 +91,7 @@ import { ClusterTargetDetail } from "./cluster-target-detail";
           </button>
         }
         <button type="button" [disabled]="store.mutating" (click)="refresh()">
-          Refresh Operations
+          Refresh
         </button>
       }
     </header>
@@ -109,7 +109,7 @@ import { ClusterTargetDetail } from "./cluster-target-detail";
       </section>
     } @else if (host.signInEnded || !host.identity) {
       <section class="empty-state">
-        <h2>Sign in to view Operations</h2>
+        <h2>Sign in to view Clusters</h2>
         <p>
           A current platform identity is required before target information can
           be requested.
@@ -117,7 +117,7 @@ import { ClusterTargetDetail } from "./cluster-target-detail";
       </section>
     } @else if (!canRead) {
       <section class="empty-state">
-        <h2>Operations access is required</h2>
+        <h2>Clusters access is required</h2>
         <p>
           Ask an administrator for deployment.read in this environment or on the
           target you manage.
@@ -145,9 +145,7 @@ import { ClusterTargetDetail } from "./cluster-target-detail";
         </p>
       }
       @if (screen !== "overview") {
-        <button class="tertiary" (click)="overview()">
-          Back to Operations
-        </button>
+        <button class="tertiary" (click)="overview()">Back to Clusters</button>
       }
       @if (editingAuthority && target && targetUpdateSchema) {
         <section class="operations-panel">
@@ -447,16 +445,15 @@ export class ClustersPage implements DoCheck, OnDestroy {
   }
   private async readLocation() {
     this.resetDetails();
-    const match =
-      /^\/operations\/(targets|deployments|plans|jobs)\/([0-9a-f-]{36})$/.exec(
-        location.pathname,
-      );
-    if (!match) {
+    const { collection, id } = clustersRoute(
+      location.pathname,
+      location.search,
+    );
+    if (!collection) {
       this.screen = "overview";
       await this.refresh();
       return;
     }
-    const [_, collection, id] = match;
     this.screen = (
       {
         targets: "target",
@@ -464,7 +461,7 @@ export class ClustersPage implements DoCheck, OnDestroy {
         plans: "plan",
         jobs: "job",
       } as const
-    )[collection as "targets" | "deployments" | "plans" | "jobs"];
+    )[collection];
     const seq = ++this.detailSequence;
     try {
       const value = await this.store.read(collection as "targets", id);
@@ -500,7 +497,7 @@ export class ClustersPage implements DoCheck, OnDestroy {
   async overview() {
     this.resetDetails();
     this.screen = "overview";
-    await this.router.navigateByUrl("/operations");
+    await this.router.navigateByUrl("/operate/clusters");
     await this.refresh();
   }
   async openTarget(value: Target, navigate = true) {
@@ -508,7 +505,7 @@ export class ClustersPage implements DoCheck, OnDestroy {
     this.target = value;
     this.screen = "target";
     if (navigate)
-      await this.router.navigateByUrl("/operations/targets/" + value.id);
+      await this.router.navigateByUrl(clustersRecordPath("targets", value.id));
     this.focusDetail();
     await this.refresh();
   }
@@ -517,7 +514,9 @@ export class ClustersPage implements DoCheck, OnDestroy {
     this.deployment = value;
     this.screen = "deployment";
     if (navigate)
-      await this.router.navigateByUrl("/operations/deployments/" + value.id);
+      await this.router.navigateByUrl(
+        clustersRecordPath("deployments", value.id),
+      );
     this.focusDetail();
     await this.refresh();
   }
@@ -526,7 +525,7 @@ export class ClustersPage implements DoCheck, OnDestroy {
     this.plan = value;
     this.screen = "plan";
     if (navigate)
-      await this.router.navigateByUrl("/operations/plans/" + value.id);
+      await this.router.navigateByUrl(clustersRecordPath("plans", value.id));
     this.focusDetail();
     await this.refresh();
   }
@@ -535,7 +534,7 @@ export class ClustersPage implements DoCheck, OnDestroy {
     this.job = value;
     this.screen = "job";
     if (navigate)
-      await this.router.navigateByUrl("/operations/jobs/" + value.id);
+      await this.router.navigateByUrl(clustersRecordPath("jobs", value.id));
     this.focusDetail();
     await this.refresh();
   }

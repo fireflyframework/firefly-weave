@@ -607,7 +607,7 @@ const runStatusFilters: [string, string][] = [
               [weaveModalSheet]="true"
               [sheetWhen]="sheetWhen.detail"
               sheetInitialFocus="#record-detail-title"
-              (sheetDismiss)="h.selectedRecord = null"
+              (sheetDismiss)="h.closeRecord()"
             >
               @if (v === "runs") {
                 <weave-run-detail [host]="h" />
@@ -619,7 +619,7 @@ const runStatusFilters: [string, string][] = [
                   <button
                     class="icon-button"
                     aria-label="Close detail"
-                    (click)="h.selectedRecord = null"
+                    (click)="h.closeRecord()"
                   >
                     <weave-icon name="close" />
                   </button>

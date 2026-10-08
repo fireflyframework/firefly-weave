@@ -169,7 +169,9 @@ test.describe("360x740", () => {
       capacity: 4,
       revoked: false,
     };
-    await connected(page);
+    await connected(page, {
+      capabilities: [...allCapabilities, "status.read"],
+    });
     await page.route("**/environments/development/workers?*", (r) =>
       r.fulfill({ json: { items: [worker], next_cursor: null } }),
     );

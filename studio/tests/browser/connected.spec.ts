@@ -34,6 +34,7 @@ const capabilities = [
   "definition.publish",
   "release.activate",
   "run.start",
+  "run.read",
   "run.archive",
   "run.purge",
   "human_task.read",

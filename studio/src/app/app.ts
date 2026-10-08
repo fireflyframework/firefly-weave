@@ -148,6 +148,11 @@ import {
 } from "./format";
 // The operations pages and Settings load lazily (@defer): only these classes.
 import { ClustersPage } from "./operate/clusters/clusters-page";
+import {
+  navEntryVisible,
+  viewFromPath,
+  viewPath,
+} from "./operate/operate-routes";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
@@ -170,7 +175,7 @@ export type View =
   | "email"
   | "connections"
   | "workers"
-  | "operations"
+  | "clusters"
   | "settings"
   | "connect";
 type PlatformNoticeKind =
@@ -362,7 +367,7 @@ export class App {
   lumiOpen = false;
   private readonly operationsView = viewChild(ClustersPage);
   get lumiOperationAttachments() {
-    return this.view === "operations"
+    return this.view === "clusters"
       ? (this.operationsView()?.lumiAttachments ?? [])
       : [];
   }
@@ -539,23 +544,57 @@ export class App {
     x: number;
     initial: number;
   } | null = null;
-  /** Home, then "Build" (1–2), then "Operate" (3–6); Settings sits at the bottom. */
+  /** Home, then "Build", "Work" and "Operate"; Settings sits at the bottom. */
   nav: { id: View; label: string }[] = [
     { id: "home", label: "Home" },
     { id: "workflows", label: "Workflows" },
     { id: "connections", label: "Connections" },
-    { id: "runs", label: "Runs" },
     { id: "tasks", label: "My tasks" },
     { id: "email", label: "Email" },
+    { id: "runs", label: "Runs" },
     { id: "workers", label: "Workers" },
-    { id: "operations", label: "Operations" },
+    { id: "clusters", label: "Clusters" },
     { id: "settings", label: "Settings" },
   ];
-  readonly navGroups = [
-    { label: "", items: this.nav.slice(0, 1) },
-    { label: "Build", items: this.nav.slice(1, 3) },
-    { label: "Operate", items: this.nav.slice(3, 8) },
+  private readonly navSections: [string, View[]][] = [
+    ["", ["home"]],
+    ["Build", ["workflows", "connections"]],
+    ["Work", ["tasks", "email"]],
+    ["Operate", ["runs", "workers", "clusters"]],
   ];
+  private navCache: {
+    key: string;
+    groups: { label: string; items: { id: View; label: string }[] }[];
+  } = { key: "", groups: [] };
+  /**
+   * The navigation groups. An Operate entry shows only when the signed-in
+   * person holds its capability somewhere in the workspace; the server still
+   * authorizes every request, so this only keeps dead ends out of the menu.
+   */
+  get navGroups() {
+    const known = !!this.profile && !!this.identity && !this.signInEnded;
+    const key = known
+      ? JSON.stringify([this.profile, this.identity!.grants])
+      : "unknown";
+    if (key !== this.navCache.key || !this.navCache.groups.length) {
+      const holds = known
+        ? (capability: string) => this.canAnywhere(capability)
+        : null;
+      this.navCache = {
+        key,
+        groups: this.navSections
+          .map(([label, ids]) => ({
+            label,
+            items: this.nav.filter(
+              (item) =>
+                ids.includes(item.id) && navEntryVisible(item.id, holds),
+            ),
+          }))
+          .filter((group) => group.items.length),
+      };
+    }
+    return this.navCache.groups;
+  }
   kinds = kinds;
   paletteQuery = "";
   search = "";
@@ -1034,9 +1073,9 @@ export class App {
       this.paired = s.paired;
       if (s.paired) {
         const designer = designerPath.exec(location.pathname);
-        const initial = location.pathname.split("/")[1] as View;
-        if (!designer && this.nav.some((n) => n.id === initial))
-          this.view = initial;
+        const route = viewFromPath(location.pathname);
+        if (!designer && route && this.nav.some((n) => n.id === route.view))
+          this.view = route.view as View;
         // Local authoring is usable at once; the platform check runs behind it.
         this.connecting = false;
         this.cdr.markForCheck();
@@ -1050,6 +1089,8 @@ export class App {
         if (designer) await this.restoreWorkflow(designer[1]);
         await this.verifyPlatform(true);
         if (this.view !== "designer") await this.refresh();
+        if (route?.id && this.view === "runs")
+          await this.viewRun({ id: route.id });
       }
     } catch (e) {
       this.fail(e);
@@ -1447,7 +1488,9 @@ export class App {
     }
     this.view = view;
     await this.router.navigateByUrl(
-      view === "designer" ? `/workflows/${this.draftId}/designer` : `/${view}`,
+      view === "designer"
+        ? `/workflows/${this.draftId}/designer`
+        : viewPath(view),
     );
     this.selectedRecord = null;
     this.search = "";
@@ -5032,7 +5075,7 @@ export class App {
       await this.loadAdministration();
       return;
     }
-    if (this.view === "connect" || this.view === "operations") return;
+    if (this.view === "connect" || this.view === "clusters") return;
     if (this.view === "home") {
       await this.refreshHome();
       return;
@@ -5130,6 +5173,10 @@ export class App {
     this.taskFormValid = true;
     this.taskConfirm = "";
     this.selectedRecord = record;
+    if (this.view === "runs" && typeof record["id"] === "string") {
+      const path = viewPath("runs", record["id"]);
+      if (location.pathname !== path) void this.router.navigateByUrl(path);
+    }
     if (this.view === "workflows") {
       this.busy = "load";
       this.flushLocalSave();
@@ -5187,12 +5234,22 @@ export class App {
   }
   /** The person may read human tasks somewhere in this workspace. */
   get canReadTasks() {
+    return this.canAnywhere("human_task.read");
+  }
+  /** The capability in this workspace, or on at least one resource in it. */
+  canAnywhere(capability: string) {
     return (
-      this.can("human_task.read") ||
+      this.can(capability) ||
       !!this.identity?.grants.some((g) =>
-        g.resources.some((id) => this.can("human_task.read", id)),
+        g.resources.some((id) => this.can(capability, id)),
       )
     );
+  }
+  /** Closes a list's detail; a run's own address goes back to the list. */
+  closeRecord() {
+    this.selectedRecord = null;
+    if (viewFromPath(location.pathname)?.id)
+      void this.router.navigateByUrl(viewPath(this.view), { replaceUrl: true });
   }
   /** The human task a waiting run waits for, when the person may read it. */
   runTask: Record<string, unknown> | null = null;
@@ -7353,10 +7410,14 @@ export class App {
       } else void this.restoreWorkflow(designer[1]);
       return;
     }
-    const segment = location.pathname.split("/")[1] as View;
-    this.view = this.nav.some((n) => n.id === segment) ? segment : "home";
+    const route = viewFromPath(location.pathname);
+    this.view =
+      route && this.nav.some((n) => n.id === route.view)
+        ? (route.view as View)
+        : "home";
     this.selectedRecord = null;
     void this.refresh();
+    if (route?.id && this.view === "runs") void this.viewRun({ id: route.id });
   }
   @HostListener("window:keydown", ["$event"]) key(event: KeyboardEvent) {
     const target = event.target as HTMLElement;

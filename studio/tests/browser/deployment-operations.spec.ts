@@ -18,7 +18,13 @@ SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { test, expect } from "@playwright/test";
-import { connected, offline, selectChoice, tokenColor } from "./support";
+import {
+  allCapabilities,
+  connected,
+  offline,
+  selectChoice,
+  tokenColor,
+} from "./support";
 
 const schema = JSON.parse(
   execFileSync(
@@ -99,11 +105,9 @@ for (const width of [1440, 390])
       page,
     }) => {
       await offline(page);
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await expect(
-        page.getByRole("heading", { name: "Operations", exact: true }),
+        page.getByRole("heading", { name: "Clusters", exact: true }),
       ).toBeVisible();
       await expect(
         page.getByRole("heading", {
@@ -186,9 +190,7 @@ for (const width of [1440, 390])
           },
         });
       });
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await page
         .getByRole("button", { name: "Register target", exact: true })
         .click();
@@ -313,9 +315,7 @@ for (const width of [1440, 390])
           },
         });
       });
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await page
         .getByRole("button", { name: "owned-api", exact: true })
         .click();
@@ -424,9 +424,7 @@ for (const width of [1440, 390])
         plans++;
         return route.fulfill({ status: 500, json: {} });
       });
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await page
         .getByRole("button", { name: "owned-api", exact: true })
         .click();
@@ -467,9 +465,7 @@ for (const width of [1440, 390])
         saved = route.request().postDataJSON();
         await route.fulfill({ json: { ...deployment, ...saved, revision: 1 } });
       });
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await page
         .getByRole("button", { name: "owned-target", exact: true })
         .click();
@@ -658,9 +654,7 @@ for (const width of [1440, 390])
           });
         },
       );
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await page
         .getByRole("button", { name: "apply · " + job.created_at, exact: true })
         .click();
@@ -722,9 +716,7 @@ for (const width of [1440, 390])
         command = route.request().postDataJSON();
         await route.fulfill({ json: { ...target, ...command, revision: 2 } });
       });
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await page
         .getByRole("button", { name: "owned-target", exact: true })
         .click();
@@ -806,9 +798,7 @@ for (const width of [1440, 390])
           json: { ...target, ...route.request().postDataJSON(), revision: 6 },
         });
       });
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await page
         .getByRole("button", { name: "owned-target", exact: true })
         .click();
@@ -978,7 +968,7 @@ for (const width of [1440, 390])
       expect(keys[1]).toBe(keys[0]);
       expect(created).toBe(1);
       await expect(page).toHaveURL(
-        new RegExp("/operations/jobs/" + job.id + "$"),
+        new RegExp("/operate/clusters/jobs/" + job.id + "$"),
       );
     });
     test("browser Back restores the full authorized inventory after a target filter", async ({
@@ -1005,9 +995,7 @@ for (const width of [1440, 390])
           },
         }),
       );
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await expect(
         page.getByRole("button", { name: "other-authorized", exact: true }),
       ).toBeVisible();
@@ -1029,9 +1017,7 @@ for (const width of [1440, 390])
       page,
     }) => {
       await connected(page, { capabilities: ["deployment.read"] });
-      await page
-        .getByRole("button", { name: "Operations", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Clusters", exact: true }).click();
       await expect(
         page.getByRole("heading", { name: "Deployment targets", exact: true }),
       ).toBeVisible();
@@ -1042,7 +1028,9 @@ for (const width of [1440, 390])
     test("worker registration does not claim the process is healthy", async ({
       page,
     }) => {
-      await connected(page);
+      await connected(page, {
+        capabilities: [...allCapabilities, "status.read"],
+      });
       await page.route("**/environments/development/workers?*", (route) =>
         route.fulfill({
           json: {
@@ -1107,7 +1095,7 @@ for (const width of [1440, 390])
     await page.route("**/deployment-targets", async (route) =>
       route.fulfill({ json: { ...target, ...route.request().postDataJSON() } }),
     );
-    await page.getByRole("button", { name: "Operations", exact: true }).click();
+    await page.getByRole("button", { name: "Clusters", exact: true }).click();
     await page
       .getByRole("button", { name: "Register target", exact: true })
       .click();
@@ -1247,7 +1235,7 @@ for (const width of [1440, 390])
         },
       }),
     );
-    await page.getByRole("button", { name: "Operations", exact: true }).click();
+    await page.getByRole("button", { name: "Clusters", exact: true }).click();
     await page.getByRole("button", { name: target.name, exact: true }).click();
     await page
       .getByRole("button", { name: "Record desired deployment", exact: true })

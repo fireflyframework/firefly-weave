@@ -88,7 +88,7 @@ const isRecord = (value: unknown): value is Json =>
       <button
         class="icon-button"
         aria-label="Close detail"
-        (click)="h.selectedRecord = null"
+        (click)="h.closeRecord()"
       >
         <weave-icon name="close" />
       </button>

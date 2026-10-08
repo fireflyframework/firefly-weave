@@ -2733,7 +2733,9 @@ spec:
   },
 
   async workers({ page, shot }) {
-    await connected(page);
+    await connected(page, {
+      capabilities: [...allCapabilities, "status.read"],
+    });
     const workers = [
       {
         id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
