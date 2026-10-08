@@ -94,6 +94,7 @@ from firefly_weave.contracts.human_tasks import (
 )
 from firefly_weave.contracts.identity import IdentityView
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
+from firefly_weave.contracts.language import LanguageManifest
 from firefly_weave.contracts.lumi import (
     LumiAskRequest,
     LumiConfiguration,
@@ -1181,6 +1182,7 @@ OPERATIONS = {
         ),
         Operation("catalog.read", PROJECT + "/catalog", "GET", CatalogLock, "catalog.read"),
         Operation("capabilities.read", PROJECT + "/capabilities", "GET", Capabilities, "catalog.read"),
+        Operation("language.read", PROJECT + "/language", "GET", LanguageManifest, "catalog.read"),
         Operation("schemas.read", PROJECT + "/schemas", "GET", dict[str, JsonObjectData], "catalog.read"),
         # Static catalog resources precede the {collection} matcher for first-match consumers.
         Operation(

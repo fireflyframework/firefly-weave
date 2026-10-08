@@ -163,6 +163,13 @@ class CompilerController:
         )
         return result.model_dump(mode="json")
 
+    @operation("language.read")
+    async def language(self, request: Request) -> dict[str, Any]:
+        from firefly_weave.contracts.language import language_manifest
+
+        await self.service.catalog(request.state.principal, request_scope(request), context=request.state.audit_context)
+        return language_manifest().model_dump(mode="json")
+
     @operation("schemas.read")
     async def schemas(self, request: Request) -> dict[str, Any]:
         from firefly_weave.contracts.schema_export import export_schemas

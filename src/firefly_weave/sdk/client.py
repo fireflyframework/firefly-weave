@@ -57,6 +57,7 @@ from firefly_weave.contracts.human_tasks import (
     TaskGroupRequest,
 )
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
+from firefly_weave.contracts.language import LanguageManifest
 from firefly_weave.contracts.lumi import (
     LumiAskRequest,
     LumiConfiguration,
@@ -375,6 +376,10 @@ class WeaveClient:
 
     async def capabilities(self) -> Capabilities:
         return cast(Capabilities, await self.invoke("capabilities.read"))
+
+    async def language(self) -> LanguageManifest:
+        """The platform's language manifest: step kinds, operators, workflow fields, features and limits."""
+        return cast(LanguageManifest, await self.invoke("language.read"))
 
     async def schemas(self) -> dict[str, JsonObject]:
         return cast(dict[str, JsonObject], await self.invoke("schemas.read"))

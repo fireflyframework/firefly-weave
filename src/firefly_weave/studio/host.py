@@ -407,6 +407,12 @@ class StudioController:
             LumiConfigurationRequest.model_json_schema(by_alias=True), headers={"Cache-Control": "no-store"}
         )
 
+    @get_mapping("/studio/contracts/language")
+    async def language_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.language import language_manifest
+
+        return JSONResponse(language_manifest().model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
     @post_mapping("/studio/local/validate")
     async def validate(self, request: Request) -> Response:
         try:
