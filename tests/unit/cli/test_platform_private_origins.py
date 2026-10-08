@@ -187,6 +187,25 @@ def test_prepare_creates_the_network_and_writes_one_entry_per_purpose(owned, doc
     assert "external: true" in (directory / "compose.egress.yaml").read_text()
 
 
+def test_consent_is_recorded_before_the_private_origin_file_exists(owned, docker, monkeypatch):
+    directory, state = owned
+    created = []
+    original = platform_origins._create
+
+    def create(path, data):
+        # C8: platform.json records consent and the exact digest before any entry exists on disk.
+        saved = json.loads((directory / "platform.json").read_text()).get("private_origins")
+        assert saved is not None and saved["consent"] == "--allow-private-origin"
+        if path.name == platform_origins.FILE:
+            assert saved["file_sha256"] == hashlib.sha256(data).hexdigest()
+        created.append(path.name)
+        original(path, data)
+
+    monkeypatch.setattr(platform_origins, "_create", create)
+    platform_origins.prepare(state, (ACME,))
+    assert created == [platform_origins.FILE, platform_origins.COMPOSE]
+
+
 def test_keycloak_and_the_api_join_the_egress_network(owned, docker):
     directory, state = owned
     platform_origins.prepare(state, (ACME,))

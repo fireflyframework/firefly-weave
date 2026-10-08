@@ -186,6 +186,7 @@ remove the installation's containers, remove the network too with
 | The checkout or CLI changed | Return to the matching version, or create a new installation in a separate directory |
 | A username already exists | Sign in with the original password; starting again does not reset accounts |
 | You need API logs | Run `platform logs`; retain the private setup logs for earlier stages |
+| Every command reports that the private-origin file is missing, changed or not private | Never edit that file. In the installation directory, run `rm -f private-origins.json`, copy the byte-identical `container-config/private-origins-ID.json` (ID: the first 16 characters of `file_sha256` in `platform.json`) to `private-origins.json`, then run `chmod 600 private-origins.json`. Without that copy, or to change the approved origins, use a new directory |
 
 For the individual setup steps and the foreground API workflow, see
 [the detailed local-platform guide](local-platform.md).

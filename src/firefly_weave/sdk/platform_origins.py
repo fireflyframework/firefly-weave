@@ -149,7 +149,7 @@ def _inspect(state: dict[str, Any]) -> str:
 
 
 def prepare(state: dict[str, Any], origins: Sequence[str]) -> None:
-    """Create the egress network and write the private-origin file for a new Docker installation."""
+    """Create the egress network, record consent, then write the private-origin file (new Docker installation)."""
     directory = Path(state["directory"])
     command = [
         "docker",
@@ -177,8 +177,8 @@ def prepare(state: dict[str, Any], origins: Sequence[str]) -> None:
     data = private_origins.render(
         private_origins.PrivateOrigins(platform=private_origins.PLATFORM).with_entries(entries)
     )
-    _create(directory / FILE, data)
-    _create(directory / COMPOSE, _override(state))
+    # Consent and the file's exact digest are recorded first, so no entry ever exists on disk
+    # without them; an interruption before the file is written leaves every command refusing.
     state["private_origins"] = {
         "origins": list(origins),
         "network": network_name(state),
@@ -188,6 +188,8 @@ def prepare(state: dict[str, Any], origins: Sequence[str]) -> None:
         "consented_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     local._write(directory / "platform.json", state, replace=True)
+    _create(directory / FILE, data)
+    _create(directory / COMPOSE, _override(state))
 
 
 def validate_state(state: dict[str, Any]) -> None:
