@@ -31,6 +31,8 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from firefly_weave import private_origins
+from firefly_weave.private_origins import Purpose
 from firefly_weave.sdk.client import AsyncTokenProvider
 
 
@@ -39,11 +41,13 @@ class WorkerAuthError(Exception):
         super().__init__("Worker authentication unavailable")
 
 
-def _origin(value: str, *, origin_only: bool = False) -> str:
+def _origin(value: str, *, origin_only: bool = False, purpose: Purpose | None = None) -> str:
+    """The canonical origin; plain HTTP only for an exact private-origin entry of ``purpose``."""
     url = urlsplit(value)
+    plain = url.scheme == "http" and purpose is not None and private_origins.active().permits_plaintext(purpose, value)
     if (
         len(value) > 2048
-        or url.scheme != "https"
+        or url.scheme not in ({"https", "http"} if plain else {"https"})
         or not url.hostname
         or url.username is not None
         or url.password is not None
@@ -56,7 +60,21 @@ def _origin(value: str, *, origin_only: bool = False) -> str:
     host = url.hostname
     if ":" in host:
         host = f"[{host}]"
-    return "https://" + host + (f":{url.port}" if url.port not in (None, 443) else "")
+    default = 80 if url.scheme == "http" else 443
+    return f"{url.scheme}://" + host + (f":{url.port}" if url.port not in (None, default) else "")
+
+
+def private_transport(url: str, purpose: Purpose, *, max_connections: int = 1) -> httpx.AsyncBaseTransport | None:
+    """A DNS-pinned, peer-checked transport for an approved plain HTTP origin; None keeps HTTPS as is."""
+    if urlsplit(url).scheme != "http":
+        return None
+    from firefly_weave.connectors.egress import EgressPolicy, PinnedTransport
+
+    origin = _origin(url, purpose=purpose)
+    policy = EgressPolicy(
+        allowed_origins=(origin,), purpose=purpose, origins=private_origins.active(), sends_credentials=True
+    )
+    return PinnedTransport(policy, origin, max_connections=max_connections)
 
 
 def _read_mount(path: Path, limit: int) -> str:
@@ -85,7 +103,7 @@ class ClientCredentialsConfig(BaseModel):
 
     @model_validator(mode="after")
     def explicit_authorities(self) -> ClientCredentialsConfig:
-        _origin(self.token_endpoint)
+        _origin(self.token_endpoint, purpose="worker-auth")
         if (
             urlsplit(self.token_endpoint).query
             or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in self.client_id)
@@ -114,7 +132,7 @@ class ClientCredentialsTokenProvider:
         transport_factory: Callable[[], httpx.AsyncBaseTransport] | None = None,
     ) -> None:
         try:
-            self._origin = _origin(api_origin, origin_only=True)
+            self._origin = _origin(api_origin, origin_only=True, purpose="platform-api")
             if isinstance(timeout, bool) or not math.isfinite(timeout) or not 0 < timeout <= 10:
                 raise ValueError
         except (TypeError, ValueError):
@@ -143,7 +161,7 @@ class ClientCredentialsTokenProvider:
 
     async def get_access_token(self, target: str) -> str:
         try:
-            if _origin(target, origin_only=True) != self._origin:
+            if _origin(target, origin_only=True, purpose="platform-api") != self._origin:
                 raise ValueError
             async with asyncio.timeout(self._timeout):
                 async with self._lock:
@@ -160,7 +178,12 @@ class ClientCredentialsTokenProvider:
                         client_secret=secret,
                         timeout=self._timeout,
                         max_response_bytes=65536,
-                        transport=self._transport_factory() if self._transport_factory else None,
+                        transport=(
+                            self._transport_factory()
+                            if self._transport_factory
+                            else private_transport(self._config.token_endpoint, "worker-auth")
+                        ),
+                        allow_loopback_http=urlsplit(self._config.token_endpoint).scheme == "http",
                     ) as client:
                         token = await client.client_credentials(
                             scopes=(self._config.scope,), authentication="client_secret_post"
@@ -186,7 +209,7 @@ class WorkerTokenAuth(httpx.Auth):
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         try:
-            target = _origin(str(request.url))
+            target = _origin(str(request.url), purpose="platform-api")
             token = await self._provider.get_access_token(target)
         except Exception:
             raise WorkerAuthError() from None
