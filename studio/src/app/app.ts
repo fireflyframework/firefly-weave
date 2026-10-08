@@ -138,6 +138,7 @@ import { TemplateGallery } from "./templates/template-gallery";
 import { sheetWhen } from "./modal-sheet";
 import { ToastHost, ToastService, type ToastAction } from "./toast";
 import { LocalDrafts, type LocalDraftEntry } from "./local-drafts";
+import { editorNextEnabled, setEditorNext } from "./editor/state/editor-flag";
 import { runStatus } from "./status-labels";
 import {
   loadingWorkspace,
@@ -525,6 +526,19 @@ export class App {
   commandNote = "";
   /** The "Keyboard shortcuts" sheet. */
   shortcutsOpen = false;
+  /**
+   * "Try the new editor" (Settings › Preferences), or `?editor=next` in the
+   * address when Studio opened.
+   */
+  editorNext = editorNextEnabled();
+  setEditorNextPreference(enabled: boolean) {
+    this.editorNext = enabled;
+    if (!setEditorNext(enabled))
+      this.notify(
+        "Studio couldn't keep this choice in this browser, so it lasts until Studio closes.",
+      );
+    this.cdr.markForCheck();
+  }
   /**
    * The diagnostics strip shows its problems; the person can fold it to its
    * 36 px status line (it is that line when there is nothing to list).
