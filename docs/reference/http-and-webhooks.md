@@ -356,11 +356,13 @@ startup compatibility checks still report the runtime as restricted, an
 in-process executor claims nothing and keeps polling; tasks queued in that window
 are claimed once the API becomes operational.
 
-**Busy platform.** A capacity rejection (`WV-OPERATION-CAPACITY` or
-`WV-REQUEST-CAPACITY`) no longer fails a claimed task at once. If one turns away
-the execution slot or the invocation check before the connector starts, the
-executor tries again while the task's lease stays valid, as the SDK does for
-context and credentials (see
+**Busy platform.** In-process executors run connector calls up to the
+`capacity` configured for each entry, apart from the execution capacity that API
+requests share, so a burst of requests does not refuse them. A capacity rejection
+(`WV-OPERATION-CAPACITY` or `WV-REQUEST-CAPACITY`) of a platform call no longer
+fails a claimed task at once. If one turns away the invocation check before the
+connector starts, the executor tries again while the task's lease stays valid,
+as the SDK does for context and credentials (see
 [the worker protocol](worker-protocol.md#retries-and-lost-responses)). Authority
 and credential checks made while the connector runs make at most three attempts
 within one second, so a refusal cannot hold the connector's own resources open.
