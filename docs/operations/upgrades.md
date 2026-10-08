@@ -194,9 +194,19 @@ truncated or incomplete report is not evidence of full compatibility.
 
 **The server also rescans by itself.** Each process requests a compatibility
 rescan every 60 seconds. Automatic and explicit scans share one reservation, so
-an automatic scan that would overlap is skipped instead of queued. A failed scan
-leaves the process restricted until a later scan succeeds, and catalog cleanup
-must succeed before readiness returns.
+an automatic scan that would overlap is skipped instead of queued. A scan
+classifies retained items in its own reserved execution slot, so a burst of API
+requests cannot make it fail. A failed scan leaves the process restricted until
+a later scan succeeds, and catalog cleanup must succeed before readiness
+returns. A rescan that confirms a ready process keeps it ready while it releases
+its catalog connection; if that cleanup fails, readiness is withdrawn. While the
+process is restricted, refused changes answer HTTP 503 `WV-COMPATIBILITY` with
+`Retry-After` set to the seconds until the next automatic rescan.
+
+When a rescan withdraws readiness, the server logs the warning `Compatibility
+rescan withdrew readiness` with the finding kinds and codes and the class of
+any error the scan caught, such as `CatalogError WV-OPERATION-CAPACITY`. The
+warning never includes error messages or connection details.
 
 The capabilities response also reports the effective policy, fixed server
 ceilings, the supported worker convention, and a small readiness projection. An

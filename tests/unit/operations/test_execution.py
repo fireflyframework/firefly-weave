@@ -133,3 +133,48 @@ async def test_debug_slot_covers_inspection_and_actual_thread_lifetime():
         assert await asyncio.to_thread(exited.wait, 2)
     async with debug_execution():
         assert await execute_pure(lambda: "debug-recovered") == "debug-recovered"
+
+
+async def test_inventory_slot_is_reserved_apart_from_request_admission():
+    from firefly_weave.operations.execution import CONTROL_SLOTS, inventory_execution, request_execution
+
+    entered, release, exited = threading.Event(), threading.Event(), threading.Event()
+
+    def blocked():
+        entered.set()
+        try:
+            release.wait(5)
+        finally:
+            exited.set()
+
+    async def classify():
+        async with inventory_execution():
+            await execute_pure(blocked, control=True)
+
+    requests = [request_execution() for _ in range(2)] + [request_execution(control=True) for _ in range(CONTROL_SLOTS)]
+    for request in requests:
+        await request.__aenter__()
+    try:
+        async with inventory_execution():
+            assert await execute_pure(lambda: "classified", control=True) == "classified"
+            assert await execute_pure(lambda: "classified again", control=True) == "classified again"
+            with pytest.raises(CatalogError, match="capacity"):
+                async with inventory_execution():
+                    raise AssertionError("a second inventory owner was admitted")
+    finally:
+        for request in reversed(requests):
+            await request.__aexit__(None, None, None)
+    task = asyncio.create_task(classify())
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        with pytest.raises(CatalogError, match="capacity"):
+            async with inventory_execution():
+                raise AssertionError("a cancelled classification was still running")
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        assert await asyncio.to_thread(exited.wait, 2)
+    async with inventory_execution():
+        assert await execute_pure(lambda: "recovered", control=True) == "recovered"

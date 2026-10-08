@@ -69,13 +69,25 @@ const capacityCodes = new Set([
   "WV-STUDIO-BUSY",
 ]);
 const capacityAttempts = 4;
-/** `Retry-After` in seconds, kept between a quarter second and five seconds. */
+/** The longest pause, in seconds, before a rejected request is sent again. */
+const longestPause = 5;
+/** `Retry-After` in seconds, kept between a quarter second and the longest pause. */
 const retryDelay = (header: string | null) => {
   const seconds = Number(header);
   return Number.isFinite(seconds) && header !== null && header.trim() !== ""
-    ? Math.min(Math.max(seconds, 0.25), 5) * 1000
+    ? Math.min(Math.max(seconds, 0.25), longestPause) * 1000
     : 1000;
 };
+/**
+ * The platform refused a change before it ran: for capacity, or while it confirms
+ * compatibility. A compatibility refusal is sent again only when the platform's next
+ * check falls within one pause; a longer restriction fails at once.
+ */
+const replayable = (status: number, code: string, retryAfter: string | null) =>
+  (status === 429 && capacityCodes.has(code)) ||
+  (status === 503 &&
+    code === "WV-COMPATIBILITY" &&
+    !(Number(retryAfter) > longestPause));
 export class StudioApi {
   session: Session = {
     paired: false,
@@ -105,9 +117,9 @@ export class StudioApi {
     if (body !== undefined) h["Content-Type"] = "application/json";
     if (method !== "GET" && this.session.csrfToken)
       h["X-Weave-CSRF"] = this.session.csrfToken;
-    // A capacity rejection means the host or platform did not admit the request, so a
-    // read, or a change that carries an idempotency key, can be sent again.
-    const replayable = method === "GET" || "Idempotency-Key" in h;
+    // A capacity or compatibility rejection means the host or platform did not admit the
+    // request, so a read, or a change that carries an idempotency key, can be sent again.
+    const safe = method === "GET" || "Idempotency-Key" in h;
     for (let attempt = 1; ; attempt++) {
       const response = await fetch(path, {
         method,
@@ -122,10 +134,13 @@ export class StudioApi {
       if (response.ok) return value as T;
       const error = new ApiError(response.status, value);
       if (
-        replayable &&
+        safe &&
         attempt < capacityAttempts &&
-        response.status === 429 &&
-        capacityCodes.has(error.code)
+        replayable(
+          response.status,
+          error.code,
+          response.headers.get("Retry-After"),
+        )
       ) {
         await this.wait(retryDelay(response.headers.get("Retry-After")));
         continue;
