@@ -63,10 +63,12 @@ export interface SignalScript extends Provenance {
   afterSeconds?: number;
   frame?: FrameKey;
   source?: DataSource;
+  outcome?: never;
 }
 export interface SignalTimeout {
   outcome: "timeout";
   frame?: FrameKey;
+  payload?: never;
 }
 export type SignalEntry = SignalScript | SignalTimeout;
 export interface HumanScript extends Provenance {
@@ -74,10 +76,13 @@ export interface HumanScript extends Provenance {
   data: Json;
   frame?: FrameKey;
   source?: DataSource;
+  outcome?: never;
 }
 export interface HumanExpire {
   outcome: "expire";
   frame?: FrameKey;
+  decision?: never;
+  data?: never;
 }
 export type HumanEntry = HumanScript | HumanExpire;
 export interface AiMemoryMessage {

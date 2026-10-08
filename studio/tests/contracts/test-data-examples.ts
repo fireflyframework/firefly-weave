@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // Compile-only: the documented test data examples, typed. The Python suite
 // validates the same documents against the JSON Schema.
 import type {
+  HumanEntry,
+  SignalEntry,
   StudioDocument,
   StudioTestData,
 } from "../../src/app/editor/state/test-data";
@@ -93,3 +95,9 @@ export const envelope: StudioDocument<StudioTestData> = {
   updated_at: "2026-10-07T10:05:00Z",
   updated_by: "5d6e7f80-1a2b-4c3d-8e9f-0a1b2c3d4e5f",
 };
+
+// The schema takes a script or an outcome in a signal or human entry, never both.
+// @ts-expect-error a timeout carries no payload
+export const mixedSignal: SignalEntry = { outcome: "timeout", payload: {} };
+// @ts-expect-error an expired task carries no data
+export const mixedHuman: HumanEntry = { outcome: "expire", data: null };
