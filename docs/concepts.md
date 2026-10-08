@@ -305,8 +305,8 @@ Use this table to translate what you know:
 | Error end event, terminate end event | **Fail** (`fail`) | Ends the whole run as failed with your code and message, including any other parallel branches |
 | Error boundary event | Not in the language | A failed Action retries when that is safe; otherwise the run is suspended with an incident for an operator. To branch on a business outcome, return it in the Action's output and test it with a Decision |
 | Message throw or end event | **Call an action**, or an integration event subscription | A subscription notifies another system when a run's status changes |
-| Call activity, subprocess | Not in the language | Keep the part inside the same workflow, or make it a separate workflow that your product starts |
-| Loop, multi-instance activity | Not in the language | Use a Parallel with a fixed set of branches, or start one run per item |
+| Call activity, subprocess | **Call a workflow** (`callWorkflow`) | Defined in the [workflow language](contracts.md#steps), but this version does not compile or run it: the compiler reports `WV-COMP-UNSUPPORTED_FEATURE`. Until then, keep the part inside the same workflow, or make it a separate workflow that your product starts |
+| Loop, multi-instance activity | **Loop over items** (`forEach`) | Defined in the [workflow language](contracts.md#steps), but this version does not compile or run it: the compiler reports `WV-COMP-UNSUPPORTED_FEATURE`. Until then, use a Parallel with a fixed set of branches, or start one run per item |
 | Compensation | Not in the language | Model compensating Actions as ordinary steps; Weave never undoes an external effect |
 | Instance migration | Not available | A running run keeps its version; new runs use the new activation |
 | Process monitoring, cockpit | **Runs**, history, and incidents in Studio and the CLI; logs, metrics, and traces | Studio draws a run's graph and marks its current step **Now**; see [follow and manage runs](guides/studio.md#save-publish-activate-and-run), [execution management](guides/execution-management.md), and [observability](operations/observability.md) |
