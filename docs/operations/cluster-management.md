@@ -74,7 +74,7 @@ does not grant deployment authority.
 
 ## 2. Register an existing target
 
-In Studio, open **Operations → Register target**. Choose the adapter, the
+In Studio, open **Operate › Clusters → Register target**. Choose the adapter, the
 existing destination's pinned identity and boundary, the dedicated runner
 application, and capabilities that its local policy will support. Administrators
 can select active application accounts by their available display label. Other
@@ -172,11 +172,12 @@ weave operations deployments create --request deployment.json \
 
 Use the actual returned IDs. `deployment.json` follows the canonical
 `DeploymentRequest` schema: target ID, name, declared `imported` or `managed`
-ownership, and bounded API, worker, or Lumi components. Each component has its role, an immutable
-`repository@sha256:…` image, local configuration alias, replica count, CPU and
-memory limits. Worker components additionally require an admitted worker
-release ID. Configuration aliases must match the runner's local allowlist;
-they are not environment-variable or secret payloads.
+ownership, and bounded API, worker, or Weave AI components
+(API, permission and role names use `lumi`). Each component has its role, an
+immutable `repository@sha256:…` image, local configuration alias, replica
+count, CPU and memory limits. Worker components additionally require an
+admitted worker release ID. Configuration aliases must match the runner's
+local allowlist; they are not environment-variable or secret payloads.
 
 Database migrations are not executable deployment components. Run the release's
 migration job separately using the destination's upgrade runbook, then verify
@@ -219,8 +220,8 @@ requires the same observed worker image. It cannot silently become an image
 update. Desired-deployment edits use `deployments update` with the current
 `--revision`; conflicts require reloading and reviewing the current intent.
 
-Container Apps update plans may contain only worker and Lumi components. If a
-desired deployment includes an API component, record worker/Lumi changes in a
+Container Apps update plans may contain only worker and Weave AI components. If a
+desired deployment includes an API component, record worker/Weave AI changes in a
 separate desired deployment and upgrade the API with the
 [Azure maintenance boundary](azure.md#container-apps-operations-and-maintenance).
 Studio excludes unsupported update choices; the API rejects them before saving
@@ -304,14 +305,16 @@ revisions. It does not inventory physical replicas of inactive or historical
 revisions. A settled observation with zero active replicas therefore does not
 prove that every old process has stopped. Confirm all revisions and their
 replicas through the provider before a maintenance window or runner replacement.
-Worker presence and available task slots are separate signals in **Workers**.
+Worker presence and available task slots are separate signals in
+**Operate › Workers**. **Operate › Clusters › Runners** shows every runner's
+last contact; a runner is online if it made contact in the last 90 seconds.
 
-## Explain a saved record with Lumi
+## Explain a saved record with Weave AI
 
 ![Explicit record selection and current permission checks produce an explanation without deployment actions](../diagrams/lumi-operations.svg)
 
-When Lumi is configured, **Explain with Lumi** opens the assistant from a
-selected Operations record. Choose which saved records to include and send a
+When Weave AI is configured, **Explain with Weave AI** opens the assistant
+from a selected Clusters record. Choose which saved records to include and send a
 question; nothing is sent automatically. A target, desired deployment,
 observation, plan, or operation can provide context. Both `lumi.use` and the
 record's normal `deployment.read` permission are required.
@@ -319,9 +322,9 @@ record's normal `deployment.read` permission are required.
 The explanation uses bounded summaries with image digests, replica and resource
 counts, freshness, ownership, risks, and safe receipt codes. It excludes provider
 configuration, external identities, credentials, paths, and raw logs. It cannot
-create or apply an Operations plan. Treat it as an explanation of saved evidence,
+create or apply a deployment plan. Treat it as an explanation of saved evidence,
 not proof of live cloud health or available worker task capacity. See the
-[Lumi guide](../guides/lumi.md#explain-operations-records) for the opt-in flow.
+[Weave AI guide](../guides/lumi.md#explain-operations-records) for the opt-in flow.
 
 See [Install an Operations runner](operations-runner.md) for local configuration,
 provider setup, capability limits, and recovery after an uncertain operation.
