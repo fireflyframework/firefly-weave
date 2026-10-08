@@ -26,10 +26,12 @@ minutes to read. To edit, you need a text editor or a standards-compliant SVG
 editor, and a Chromium-based browser to check the result.
 
 Weave's own logos and technical diagrams are distributed under the Apache
-License 2.0. The Firefly marks in `assets/brand/` are not: they are trademarks
-of Firefly Software Solutions Inc., used with permission (see `NOTICE`). Logos
-and technical diagrams use editable SVG source, with no scripts, remote fonts,
-embedded raster images, or `foreignObject`.
+License 2.0. The Firefly marks are not: they are trademarks of Firefly Software
+Solutions Inc., used with permission (see `NOTICE`). The source inventory,
+`docs/contributing/source-inventory.toml`, lists every file that carries them:
+`assets/brand/`, the Studio copies and the favicons. Logos and technical
+diagrams use editable SVG source, with no scripts, remote fonts, embedded raster
+images, or `foreignObject`.
 
 ## Choose the right asset
 
