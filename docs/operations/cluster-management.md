@@ -172,12 +172,12 @@ weave operations deployments create --request deployment.json \
 
 Use the actual returned IDs. `deployment.json` follows the canonical
 `DeploymentRequest` schema: target ID, name, declared `imported` or `managed`
-ownership, and bounded API, worker, or Weave AI components
-(API, permission and role names use `lumi`). Each component has its role, an
-immutable `repository@sha256:…` image, local configuration alias, replica
-count, CPU and memory limits. Worker components additionally require an
-admitted worker release ID. Configuration aliases must match the runner's
-local allowlist; they are not environment-variable or secret payloads.
+ownership, and bounded API, worker,
+or Weave AI components (API, permission and role names use `lumi`). Each component
+has its role, an immutable `repository@sha256:…` image, local configuration
+alias, replica count, CPU and memory limits. Worker components additionally
+require an admitted worker release ID. Configuration aliases must match the
+runner's local allowlist; they are not environment-variable or secret payloads.
 
 Database migrations are not executable deployment components. Run the release's
 migration job separately using the destination's upgrade runbook, then verify
