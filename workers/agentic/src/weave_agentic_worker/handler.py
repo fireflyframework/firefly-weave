@@ -20,12 +20,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol, cast
-from urllib.parse import urlsplit
 
 import httpx
+from firefly_weave.ai_policy import AIPolicy, PolicyEndpoint, PolicyFile, PolicyInvalid, from_pairs
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.contracts.agentic import provider_destination_allowed
 from firefly_weave.contracts.connectors import ConnectorFailure
@@ -38,12 +38,16 @@ from firefly_weave.contracts.workers import (
     TaskExecutionContext,
     TaskLease,
 )
+from firefly_weave.private_origins import PrivateOrigins
 from fireflyframework_agentic.models import ModelFactory, ModelOptions, ModelSpec
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_ai.models import Model
 
+from weave_agentic_worker.egress import Resolver
 from weave_agentic_worker.execution import private_framework_logging, run_model
-from weave_agentic_worker.providers import ProviderModel, build_model
+from weave_agentic_worker.providers import BuildOptions, ProviderModel, build_model
+
+ModelBuilder = Callable[[ModelSpec, str, float, BuildOptions], Model | ProviderModel]
 
 
 class Transport(Protocol):
@@ -60,20 +64,42 @@ class Invocation(BaseModel):
 
 @dataclass(frozen=True)
 class WorkerPolicy:
-    models: frozenset[tuple[str, str]]
-    endpoints: frozenset[str]
+    """The model policy one process enforces: its own AI policy copy and its private-origin policy.
+
+    ``source`` is the mounted policy file, re-read when it changes. Without it, ``models`` and
+    ``endpoints`` are exact version 1 pairs and HTTPS endpoints (tests and embedded use).
+    """
+
+    models: frozenset[tuple[str, str]] = frozenset()
+    endpoints: frozenset[str] = frozenset()
+    source: PolicyFile | None = None
+    origins: PrivateOrigins = field(default_factory=PrivateOrigins.empty)
+    resolver: Resolver | None = None
+
+    def current(self) -> AIPolicy:
+        try:
+            if self.source is not None:
+                return self.source.current()
+            return from_pairs(self.models, self.endpoints)
+        except PolicyInvalid:
+            raise ConnectorFailure("LLM_POLICY", "not_started") from None
+
+    def admits(self, provider: str, model: str) -> bool:
+        """True when some approved endpoint could serve this model; checked before any authority lookup."""
+        return self.current().approves_anywhere(provider, model)
+
+    def entry(self, endpoint: str, provider: str, model: str) -> PolicyEndpoint:
+        entry = self.current().entry_for(endpoint)
+        if entry is None or not entry.approves(provider, model):
+            raise ConnectorFailure("LLM_POLICY", "not_started")
+        return entry
+
+    def options(self, entry: PolicyEndpoint) -> BuildOptions:
+        return BuildOptions(entry, self.origins, self.resolver)
 
     def endpoint(self, value: str) -> str:
-        url = urlsplit(value)
-        if (
-            value not in self.endpoints
-            or url.scheme != "https"
-            or not url.hostname
-            or url.username
-            or url.password
-            or url.query
-            or url.fragment
-        ):
+        """The endpoint when the policy lists it (kept for the AI gateway's assistant route)."""
+        if self.current().entry_for(value) is None:
             raise ConnectorFailure("LLM_POLICY", "not_started")
         return value
 
@@ -95,7 +121,7 @@ class AgenticTaskHandler:
         transport: Transport,
         policy: WorkerPolicy,
         *,
-        model_builder: Callable[[ModelSpec, str, float], Model | ProviderModel] = build_model,
+        model_builder: ModelBuilder = build_model,
     ) -> None:
         self.transport, self.policy, self.model_builder = transport, policy, model_builder
         private_framework_logging()
@@ -108,7 +134,7 @@ class AgenticTaskHandler:
             options = ModelOptions.model_validate(profile.options.model_dump(exclude_none=True))
         except (ValidationError, ValueError):
             raise ConnectorFailure("LLM_INPUT", "not_started") from None
-        if (profile.provider, profile.model) not in self.policy.models:
+        if not self.policy.admits(profile.provider, profile.model):
             raise ConnectorFailure("LLM_POLICY", "not_started")
         remaining = min(profile.timeout_seconds, (lease.deadline - datetime.now(UTC)).total_seconds())
         if remaining <= 0:
@@ -155,9 +181,15 @@ class AgenticTaskHandler:
             or slot not in connection.secret_slots
         ):
             raise ConnectorFailure("LLM_CONNECTION", "not_started")
-        endpoint = self.policy.endpoint(endpoint)
-        if not provider_destination_allowed(endpoint, connection.allowed_destinations):
+        entry = self.policy.entry(endpoint, profile.provider, profile.model)
+        try:
+            allowed = provider_destination_allowed(endpoint, connection.allowed_destinations)
+        except ValueError:
+            allowed = False
+        if not allowed:
             raise ConnectorFailure("LLM_POLICY", "not_started")
+        if entry.max_output_tokens is not None and profile.options.max_tokens > entry.max_output_tokens:
+            raise ConnectorFailure("LLM_OPTIONS", "not_started")
         api_version = config.get("apiVersion")
         if profile.provider.startswith("azure-") and (not isinstance(api_version, str) or not api_version):
             raise ConnectorFailure("LLM_CONNECTION", "not_started")
@@ -174,24 +206,25 @@ class AgenticTaskHandler:
             raise ConnectorFailure("LLM_OPTIONS", "not_started") from None
         if profile.provider in {"openai-responses", "azure-responses"}:
             settings["openai_store"] = False
-        try:
-            credential = await self.transport.credentials(
-                CredentialRequest(
-                    lease=lease.proof,
-                    connection_revision_id=connection.revision_id,
-                    slot=slot,
+        secret = ""
+        if entry.credential == "required":
+            try:
+                credential = await self.transport.credentials(
+                    CredentialRequest(lease=lease.proof, connection_revision_id=connection.revision_id, slot=slot)
                 )
-            )
-        except httpx.HTTPStatusError as error:
-            _pre_provider_capacity(error)
-            raise
-        if credential.expires_at <= datetime.now(UTC):
-            raise ConnectorFailure("LLM_CONNECTION", "not_started")
+            except httpx.HTTPStatusError as error:
+                _pre_provider_capacity(error)
+                raise
+            if credential.expires_at <= datetime.now(UTC):
+                raise ConnectorFailure("LLM_CONNECTION", "not_started")
+            secret = credential.value
         starting_provider()
-        owned = self.model_builder(spec, credential.value, remaining_seconds)
+        owned = self.model_builder(spec, secret, remaining_seconds, self.policy.options(entry))
         model = owned.model if isinstance(owned, ProviderModel) else owned
         try:
-            return await run_model(profile, invocation.prompt, invocation.context, model, settings)
+            return await run_model(
+                profile, invocation.prompt, invocation.context, model, settings, context_tokens=entry.context_tokens
+            )
         finally:
             if isinstance(owned, ProviderModel):
                 await owned.close()

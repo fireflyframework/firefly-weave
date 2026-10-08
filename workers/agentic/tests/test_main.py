@@ -18,6 +18,7 @@
 
 import httpx
 import pytest
+from firefly_weave import private_origins as po
 
 from weave_agentic_worker.main import TokenFileAuth, read_policy
 
@@ -43,10 +44,106 @@ def test_policy_is_explicit_and_does_not_accept_wildcard_models(tmp_path):
     policy.write_text(
         '{"models":[{"provider":"openai-chat","model":"gpt-4o"}],"endpoints":["https://api.openai.com/v1"]}'
     )
-    assert read_policy(policy).models == frozenset({("openai-chat", "gpt-4o")})
+    loaded = read_policy(policy, po.PrivateOrigins.empty()).current()
+    assert loaded.approves_anywhere("openai-chat", "gpt-4o") and not loaded.approves_anywhere("openai-chat", "gpt-5")
     policy.write_text('{"models":[{"provider":"openai-chat","model":"*"}],"endpoints":["https://api.openai.com/v1"]}')
     with pytest.raises(ValueError):
-        read_policy(policy)
+        read_policy(policy, po.PrivateOrigins.empty())
+
+
+def test_version_two_policy_needs_its_private_origin_entry(tmp_path):
+    from firefly_weave.ai_policy import render
+
+    origins = po.PrivateOrigins(platform=po.PLATFORM).with_entries(
+        [po.PrivateOrigin(origin="http://ollama:11434", purpose="model", networks=("10.0.5.0/24",), credentials="none")]
+    )
+    endpoint = {
+        "id": "ollama-local",
+        "label": "Ollama",
+        "url": "http://ollama:11434/v1",
+        "providers": ["openai-chat"],
+        "compat": "ollama",
+        "credential": "none",
+        "models": "served",
+    }
+    policy = tmp_path / "policy.json"
+    policy.write_bytes(render([endpoint]))
+    with pytest.raises(ValueError, match="plain HTTP"):
+        read_policy(policy, po.PrivateOrigins.empty())
+    assert read_policy(policy, origins).current().entry_for("http://ollama:11434/v1").served
+
+
+@pytest.mark.parametrize("raw,expected", [(None, 1), ("1", 1), ("4", 4), ("16", 16)])
+def test_capacity_defaults_to_one(monkeypatch, raw, expected):
+    from weave_agentic_worker.main import capacity
+
+    if raw is None:
+        monkeypatch.delenv("WEAVE_AGENTIC_CAPACITY", raising=False)
+    else:
+        monkeypatch.setenv("WEAVE_AGENTIC_CAPACITY", raw)
+    assert capacity() == expected
+
+
+@pytest.mark.parametrize("raw", ["0", "17", "two", "-1"])
+def test_capacity_is_bounded(monkeypatch, raw):
+    from weave_agentic_worker.main import capacity
+
+    monkeypatch.setenv("WEAVE_AGENTIC_CAPACITY", raw)
+    with pytest.raises(ValueError, match="1 to 16"):
+        capacity()
+
+
+def boot_environment(tmp_path, monkeypatch, api):
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        '{"models":[{"provider":"openai-chat","model":"gpt-4o"}],"endpoints":["https://api.openai.com/v1"]}'
+    )
+    token = tmp_path / "token"
+    token.write_text("worker-token")
+    for key in (po.ENV_FILE, "WEAVE_WORKER_OAUTH_CONFIG_FILE", *po.LEGACY_SETTINGS):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("WEAVE_AGENTIC_POLICY_FILE", str(policy))
+    monkeypatch.setenv("WEAVE_API_URL", api)
+    monkeypatch.setenv("WEAVE_WORKER_TOKEN_FILE", str(token))
+    monkeypatch.setenv("WEAVE_ENVIRONMENT_URL", "/environment")
+    monkeypatch.setenv("WEAVE_WORKER_RELEASE_ID", "release-1")
+    monkeypatch.setenv("WEAVE_AGENTIC_CAPACITY", "2")
+
+
+async def test_the_api_client_goes_through_the_pinned_platform_api_transport(tmp_path, monkeypatch):
+    import json
+
+    import weave_agentic_worker.main as main
+
+    boot_environment(tmp_path, monkeypatch, "http://api.weave.test:8080")
+    pinned, requests = [], []
+
+    async def receive(request):
+        requests.append(request)
+        return httpx.Response(503)
+
+    def private_transport(url, purpose, *, max_connections=1):
+        pinned.append((url, purpose, max_connections))
+        return httpx.MockTransport(receive)
+
+    monkeypatch.setattr(main, "private_transport", private_transport)
+    with po.installed(po.PrivateOrigins.empty()), pytest.raises(httpx.HTTPStatusError):
+        await main.main()
+    assert pinned == [("http://api.weave.test:8080", "platform-api", 4)]
+    assert [str(request.url) for request in requests] == ["http://api.weave.test:8080/environment/workers"]
+    assert requests[0].headers["authorization"] == "Bearer worker-token"
+    assert json.loads(requests[0].content)["capacity"] == 2
+
+
+async def test_plain_http_api_without_its_entry_is_refused_before_any_request(tmp_path, monkeypatch):
+    import weave_agentic_worker.main as main
+
+    boot_environment(tmp_path, monkeypatch, "http://api.weave.test:8080")
+    sent = []
+    monkeypatch.setattr(httpx.AsyncClient, "send", lambda *args, **kwargs: sent.append(args))
+    with po.installed(po.PrivateOrigins.empty()), pytest.raises(ValueError, match="Invalid authority"):
+        await main.main()
+    assert sent == []
 
 
 def test_exported_catalog_lock_roundtrips_the_real_compiler(monkeypatch, capsys):
