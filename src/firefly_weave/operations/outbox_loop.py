@@ -18,6 +18,7 @@
 import asyncio
 import logging
 from contextlib import suppress
+from contextvars import Context
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -59,7 +60,9 @@ class OutboxLoop:
                 )
                 if not valid:
                     raise RuntimeError("Outbox traversal requires execute-only scheduler authority")
-            self.task = asyncio.create_task(self.poll(), name="weave-outbox-traversal")
+            # A request can open this loop. An empty context keeps the request's execution
+            # lease and identity, which end with its response, out of the long-lived task.
+            self.task = asyncio.create_task(self.poll(), name="weave-outbox-traversal", context=Context())
         except BaseException:
             await self.close()
             raise
