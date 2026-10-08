@@ -117,9 +117,9 @@ This follows Tauri's [sidecar model](https://v2.tauri.app/develop/sidecar/) and
 
     Both displayed digests must match. For Intel, replace `aarch64-apple-darwin`
     with `x86_64-apple-darwin` in both filenames. Stop if the digest differs.
-4. Open the verified DMG, then drag **Firefly Weave Studio** on the left into
-    **Applications** on the right. The cream and forest installer shows the
-    destination and a gold arrow.
+4. Open the verified DMG, then drag **Firefly Weave Studio** into
+    **Applications**. The installer window shows the app on the left,
+    Applications on the right and an amber arrow.
 5. After copying, verify the installed bundle’s resource integrity in Terminal:
 
     ```sh
@@ -136,9 +136,10 @@ This follows Tauri's [sidecar model](https://v2.tauri.app/develop/sidecar/) and
     If that policy does not permit it, use the browser installation. Do not remove
     quarantine or disable system protections to bypass a refusal.
 
-The background is maintained as `desktop/artwork/dmg-background.svg` with its
-Finder-compatible PNG alongside it. Tauri's DMG settings define the window and
-icon positions; the artwork does not replace the actual app or Applications icons.
+The background is generated as `desktop/artwork/dmg-background.svg`, with its
+Finder-compatible PNG alongside it, by `scripts/brand/weave-lockup.mjs`. Tauri's
+DMG settings define the window and icon positions; the artwork does not replace
+the actual app or Applications icons.
 
 ## Install on Windows
 
@@ -605,7 +606,7 @@ the connection endpoints, compiler availability and owned shutdown. It runs the
 host with a fresh private `WEAVE_CONFIG_HOME`, so it never reads your saved
 platforms or credentials. Build outputs are under
 `desktop/src-tauri/target/release/bundle`; they are ignored, not source artifacts.
-The official Weave symbol is used for application icons.
+Application icons use the official Firefly icon.
 
 ## Platform artifacts and signing
 

@@ -19,6 +19,7 @@
 import json
 import re
 import struct
+import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -46,6 +47,21 @@ GENERATED_SVGS = (
     "studio/public/assets/weave-lockup-reversed.svg",
     "studio/public/assets/weave-lockup-small-reversed.svg",
     "studio/public/assets/firefly-mark.svg",
+)
+
+# Every committed file that contains Firefly marks.
+FIREFLY_MARKS = (
+    *GENERATED_SVGS,
+    "assets/brand/social-preview.png",
+    "desktop/artwork/dmg-background.png",
+    "studio/public/favicon.ico",
+    "studio/public/apple-touch-icon.png",
+    "desktop/src-tauri/icons/32x32.png",
+    "desktop/src-tauri/icons/128x128.png",
+    "desktop/src-tauri/icons/128x128@2x.png",
+    "desktop/src-tauri/icons/icon.png",
+    "desktop/src-tauri/icons/icon.icns",
+    "desktop/src-tauri/icons/icon.ico",
 )
 TEXT_SUFFIXES = frozenset({".svg", ".css", ".html", ".py", ".ts", ".js", ".mjs", ".json", ".md", ".txt"})
 
@@ -137,3 +153,62 @@ def test_macos_icon_master_sits_on_the_apple_grid():
     assert root.get("viewBox") == "0 0 1024 1024"
     tile = root.find(f"{SVG}svg")
     assert (tile.get("x"), tile.get("y"), tile.get("width"), tile.get("height")) == ("100", "100", "824", "824")
+
+
+@pytest.mark.parametrize(
+    ("name", "size"), [("32x32.png", 32), ("128x128.png", 128), ("128x128@2x.png", 256), ("icon.png", 512)]
+)
+def test_desktop_png_icons_have_their_bundle_sizes(name, size):
+    assert png_size((ROOT / "desktop/src-tauri/icons" / name).read_bytes()) == (size, size)
+
+
+def test_windows_icon_holds_every_size_as_a_png_entry():
+    data = (ROOT / "desktop/src-tauri/icons/icon.ico").read_bytes()
+    reserved, kind, count = struct.unpack("<HHH", data[:6])
+    assert (reserved, kind) == (0, 1)
+    sizes = []
+    for index in range(count):
+        width, height, *_, length, offset = struct.unpack("<BBBBHHII", data[6 + 16 * index : 22 + 16 * index])
+        assert png_size(data[offset : offset + length]) == (width or 256, height or 256)
+        sizes.append(width or 256)
+    assert sizes == [16, 24, 32, 48, 64, 256]
+
+
+def test_macos_icon_holds_every_size_up_to_1024():
+    data = (ROOT / "desktop/src-tauri/icons/icon.icns").read_bytes()
+    assert data[:4] == b"icns" and struct.unpack(">I", data[4:8])[0] == len(data)
+    types, at = set(), 8
+    while at < len(data):
+        types.add(data[at : at + 4].decode("ascii"))
+        at += struct.unpack(">I", data[at + 4 : at + 8])[0]
+    assert {"is32", "il32", "ic07", "ic08", "ic09", "ic10", "ic11", "ic12", "ic13", "ic14"} <= types
+
+
+def test_tauri_bundles_the_generated_icons():
+    icons = json.loads(text_of("desktop/src-tauri/tauri.conf.json"))["bundle"]["icon"]
+    assert icons == [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico",
+    ]
+
+
+def test_launch_page_is_charcoal_and_shows_the_lockup():
+    page = text_of("desktop/bootstrap/index.html")
+    assert "background:#10110f;color:#f3f1eb" in page
+    assert '<meta name="color-scheme" content="dark">' in page
+    lockup = '<h1><img src="weave-lockup-reversed.svg" alt="Firefly Weave Studio" width="240" height="44"></h1>'
+    assert lockup in page
+    copy = (ROOT / "desktop/bootstrap/weave-lockup-reversed.svg").read_bytes()
+    assert copy == (ROOT / "assets/brand/weave-lockup-reversed.svg").read_bytes()
+
+
+@pytest.mark.parametrize("path", FIREFLY_MARKS)
+def test_every_firefly_mark_is_inventoried_as_third_party(path):
+    inventory = tomllib.loads(text_of("docs/contributing/source-inventory.toml"))
+    entry = {item["path"]: item for item in inventory["exceptions"]}.get(path)
+    assert entry is not None, f"add a third-party inventory entry for {path}"
+    assert (entry["kind"], entry["license"]) == ("third-party", "LicenseRef-Firefly-Marks")
+    assert "Firefly Software Solutions Inc." in entry["copyright"]
