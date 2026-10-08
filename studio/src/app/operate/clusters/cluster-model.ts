@@ -19,7 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 // it, tests check it.
 import { relativeTime } from "../../format";
 import type { Tone } from "../../status-labels";
-import type { Adapter, Runner } from "../../operations/deployment-contracts";
+import type {
+  Adapter,
+  Plan,
+  Runner,
+} from "../../operations/deployment-contracts";
 
 /** The icon each adapter shows. */
 const icons: Record<Adapter, string> = {
@@ -76,4 +80,70 @@ export function runnerLine(runner: Runner | null, now = Date.now()): string {
   return contact
     ? `Runner offline · last contact ${contact}`
     : "Runner offline";
+}
+
+/** "Scale workers": what a plan changes. */
+const intents: Record<Plan["intent"], string> = {
+  deploy: "Deploy",
+  update: "Update",
+  scale_workers: "Scale workers",
+  drain_workers: "Drain workers",
+};
+export function intentLabel(intent: Plan["intent"]): string {
+  return intents[intent] ?? intent;
+}
+const risks: Record<Plan["risks"][number], string> = {
+  service_interruption: "Service interruption",
+  external_effects: "External effects",
+  adoption: "Adoption",
+  worker_drain: "Worker drain",
+};
+export function riskName(risk: Plan["risks"][number]): string {
+  return risks[risk] ?? risk;
+}
+
+/** How long a plan can still be approved, and how urgent that is. */
+export interface Countdown {
+  /** "4:10", or "Expired". */
+  text: string;
+  /** "Expires soon" from 2 min left; "" otherwise. */
+  note: string;
+  tone: Tone;
+  expired: boolean;
+}
+export function countdown(expiresAt: string, now = Date.now()): Countdown {
+  const left = Math.ceil((Date.parse(expiresAt) - now) / 1000);
+  if (!(left > 0))
+    return { text: "Expired", note: "", tone: "neutral", expired: true };
+  const text = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  if (left <= 30)
+    return { text, note: "Expires soon", tone: "danger", expired: false };
+  if (left <= 120)
+    return { text, note: "Expires soon", tone: "warning", expired: false };
+  return { text, note: "", tone: "neutral", expired: false };
+}
+
+/** How long an expired plan stays in the inbox, so its end is seen. */
+export const EXPIRED_KEPT_MS = 15 * 60_000;
+/** The most plans whose approval the inbox reads in one refresh. */
+export const INBOX_LIMIT = 50;
+
+/**
+ * The plans the inbox reads approvals for: those still open, soonest expiry
+ * first, then those that expired in the last 15 minutes, newest first.
+ */
+export function inboxCandidates(
+  plans: readonly Plan[],
+  now = Date.now(),
+): Plan[] {
+  const open = plans
+    .filter((plan) => Date.parse(plan.expires_at) > now)
+    .sort((a, b) => a.expires_at.localeCompare(b.expires_at));
+  const ended = plans
+    .filter((plan) => {
+      const expires = Date.parse(plan.expires_at);
+      return expires <= now && expires > now - EXPIRED_KEPT_MS;
+    })
+    .sort((a, b) => b.expires_at.localeCompare(a.expires_at));
+  return [...open, ...ended].slice(0, INBOX_LIMIT);
 }

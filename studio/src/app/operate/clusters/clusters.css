@@ -220,3 +220,64 @@ dd {
   overflow-wrap: anywhere;
   text-align: left;
 }
+
+/* Approvals: the countdown keeps its width as it ticks, and the last column
+   fits Review beside Approve plan or Open deployment, so every row lines up
+   with the headings. */
+.approval-table {
+  --cols: minmax(180px, 1fr) 130px minmax(120px, 1fr) 130px 200px;
+}
+.approval-table .table-head,
+.approval-table .resource-row {
+  grid-template-columns: var(--cols);
+}
+.approval-table .row-text {
+  display: grid;
+  min-width: 0;
+}
+.approval-table .row-text strong {
+  overflow-wrap: anywhere;
+}
+.approval-table small {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.countdown {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+}
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+@media (max-width: 1024px) {
+  .approval-table {
+    --cols: minmax(0, 1fr) 130px;
+  }
+  /* The actions sit on their own line, under a heading only screen readers
+     need. */
+  .approval-table [data-wide],
+  .approval-table .table-head > :last-child {
+    display: none;
+  }
+  /* Narrow list tables drop their second heading; this one keeps it. */
+  .approval-table .table-head > :nth-child(2) {
+    display: block;
+  }
+  .approval-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+@media (max-width: 600px) {
+  .approval-table .table-head {
+    display: none;
+  }
+  .approval-table .resource-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}

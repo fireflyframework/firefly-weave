@@ -126,6 +126,7 @@ for (const viewport of [
       const tabs = page.getByRole("tablist", { name: "Clusters sections" });
       await expect(tabs.getByRole("tab")).toHaveText([
         "Targets",
+        "Approvals",
         "Jobs",
         "Runners",
       ]);

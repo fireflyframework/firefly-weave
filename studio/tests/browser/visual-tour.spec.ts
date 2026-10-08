@@ -2838,6 +2838,66 @@ spec:
       page.getByRole("table", { name: "Runners" }).locator(".resource-row"),
     ).toHaveCount(2);
     await shot("89-clusters-runners");
+    await page.route(`${environment}/deployment-plans?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            ["66666666-6666-4666-8666-666666666661", 95, "scale_workers"],
+            ["66666666-6666-4666-8666-666666666662", 540, "update"],
+          ].map(([id, seconds, intent]) => ({
+            id,
+            scope,
+            target_id: targets[0].id,
+            target_revision: 1,
+            deployment_id: "33333333-3333-4333-8333-333333333333",
+            deployment_revision: 3,
+            adapter: "docker-compose",
+            adapter_version: "1",
+            intent,
+            observation_id: "55555555-5555-4555-8555-555555555555",
+            observation_digest: "b".repeat(64),
+            steps: [],
+            risks: ["worker_drain", "service_interruption"],
+            created_at: later(-60),
+            expires_at: later(seconds as number),
+            digest: "c".repeat(64),
+          })),
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route(`${environment}/deployment-plans/*/approval`, (r) =>
+      r.fulfill({ json: null }),
+    );
+    // A long deployment name: the change wraps inside its row.
+    const deployment = "weave-workers-production-eu-west-reporting";
+    await page.route(`${environment}/deployments?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: "33333333-3333-4333-8333-333333333333",
+              target_id: targets[0].id,
+              name: deployment,
+              ownership: "managed",
+              components: [],
+              scope,
+              revision: 3,
+              created_at: "2026-10-03T10:00:00Z",
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.getByRole("tab", { name: /^Approvals/ }).click();
+    await expect(
+      page
+        .getByRole("table", { name: "Plans waiting for an approval" })
+        .locator(".resource-row"),
+    ).toHaveCount(2);
+    await expect(page.getByText(`Scale workers · ${deployment}`)).toBeVisible();
+    await shot("90-clusters-approvals");
   },
 };
 

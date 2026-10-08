@@ -57,7 +57,10 @@ import {
   type Collection,
   type Runner,
 } from "../../operations/deployment-contracts";
+import { ApprovalsInbox } from "./approvals-inbox";
+import { ClusterApprovalsTab } from "./cluster-approvals-tab";
 import { ClusterDeploymentDetail } from "./cluster-deployment-detail";
+import { intentLabel } from "./cluster-model";
 import { ClusterJobDetail } from "./cluster-job-detail";
 import { ClusterJobsTab } from "./cluster-jobs-tab";
 import { ClusterPlanDetail } from "./cluster-plan-detail";
@@ -85,6 +88,7 @@ import { RefreshStatus } from "../refresh-status";
     ClusterPlanDetail,
     ClusterJobDetail,
     ClusterTargetsTab,
+    ClusterApprovalsTab,
     ClusterJobsTab,
     ClusterRunnersTab,
     RefreshStatus,
@@ -249,7 +253,7 @@ import { RefreshStatus } from "../refresh-status";
               [attr.tabindex]="tab === item[0] ? 0 : -1"
               (click)="selectTab(item[0])"
             >
-              {{ item[1] }}
+              {{ tabLabel(item[0], item[1]) }}
             </button>
           }
         </div>
@@ -261,6 +265,9 @@ import { RefreshStatus } from "../refresh-status";
           @switch (tab) {
             @case ("targets") {
               <weave-cluster-targets-tab [page]="this" />
+            }
+            @case ("approvals") {
+              <weave-cluster-approvals-tab [page]="this" />
             }
             @case ("jobs") {
               <weave-cluster-jobs-tab [page]="this" />
@@ -379,9 +386,11 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     browserEnvironment,
     () => this.waiting,
   );
+  readonly inbox = new ApprovalsInbox((path) => this.host.api.request(path));
   tab: ClusterTab = "targets";
   readonly tabs: [ClusterTab, string][] = [
     ["targets", "Targets"],
+    ["approvals", "Approvals"],
     ["jobs", "Jobs"],
     ["runners", "Runners"],
   ];
@@ -487,6 +496,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.editorTarget = null;
     this.error = "";
     this.store.setScope(scope, this.canRead, authority);
+    this.inbox.clear();
     if (scope && this.canRead) void this.readLocation();
   }
   ngOnInit() {
@@ -610,6 +620,67 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
         : 15000,
     );
     if (!loaded) throw new Error("Clusters could not load every section.");
+  }
+  /**
+   * "Approvals (2)": the open plans this person may approve. No count while
+   * the inbox has not loaded or its last read failed, rather than a stale one.
+   */
+  tabLabel(tab: ClusterTab, label: string) {
+    if (tab !== "approvals" || !this.inbox.loaded || this.inbox.error)
+      return label;
+    const now = Date.now();
+    const count = this.inbox.rows.filter(
+      (plan) =>
+        Date.parse(plan.expires_at) > now &&
+        this.host.can("deployment.approve", plan.target_id),
+    ).length;
+    return count ? `${label} (${count})` : label;
+  }
+  async approveFromInbox(plan: Plan) {
+    if (
+      !this.host.can("deployment.approve", plan.target_id) ||
+      !this.fresh(plan.expires_at)
+    )
+      return;
+    const confirmed = await this.host.dialogs.confirm({
+      title: "Approve this plan?",
+      message: `You approve "${intentLabel(plan.intent)}" on ${this.targetName(plan.target_id)}, digest ${plan.digest.slice(0, 12)}. Applying checks this approval and the target again.`,
+      confirmLabel: "Approve plan",
+    });
+    if (!confirmed) return;
+    const result = await this.store.mutate<Approval>(
+      "deployment-plans/" + plan.id + "/approve",
+      { digest: plan.digest },
+    );
+    if (!result) return;
+    this.host.notify("Plan approved.");
+    await this.poller.refresh();
+  }
+  /** Opens a deployment from the inbox, reading it when it isn't loaded. */
+  async openDeploymentById(id: string) {
+    const seq = ++this.detailSequence;
+    try {
+      const value =
+        this.store.deployments.find((item) => item.id === id) ??
+        (await this.store.read("deployments", id));
+      if (value && seq === this.detailSequence)
+        await this.openDeployment(value);
+    } catch (error) {
+      if (seq === this.detailSequence)
+        this.error = describeError(error).message;
+    }
+  }
+  /**
+   * Loads the approvals inbox; false when its plans, or the approval of any
+   * plan it lists, could not be read.
+   */
+  private async loadInbox(): Promise<boolean> {
+    try {
+      await this.inbox.load(this.host.api.environment);
+      return this.inbox.unchecked === 0;
+    } catch {
+      return false;
+    }
   }
   /** A target's name, or "Target 1a2b3c4d" while targets are loading. */
   targetName(id: string) {
@@ -787,11 +858,15 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
           targets: ["targets", "deployments", "runners"],
           jobs: ["jobs"],
           runners: ["runners", "targets"],
-          approvals: [],
+          approvals: ["targets", "deployments"],
         } as Record<ClusterTab, Collection[]>
       )[this.tab];
+      // The inbox loads, and counts, only on the tab that shows it: its
+      // failure never holds back another tab.
+      const inbox = this.tab === "approvals" ? this.loadInbox() : true;
       await Promise.all(names.map((c) => this.store.load(c)));
       arrived(...names);
+      if (!(await inbox)) failed = true;
     }
     this.cdr.markForCheck();
     return !failed;
