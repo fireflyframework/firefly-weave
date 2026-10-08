@@ -283,6 +283,15 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/fixtures/golden/corpus.json"
+kind = "generated"
+source = "scripts/golden_corpus.py"
+reason = "Strict JSON golden corpus of compiled artifacts and kernel transition streams, recorded once from the commit before the language extensions changed the compiler or kernel; never regenerate it to make a change pass."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "tests/fixtures/public/c6-wire.json"
 kind = "commentless"
 reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
