@@ -37,8 +37,9 @@ from firefly_weave.contracts.workers import (
     TaskError,
     TaskLease,
 )
+from firefly_weave.definitions.models import capacity_rejected
 from firefly_weave.email.service import EmailService
-from firefly_weave.operations.execution import request_execution
+from firefly_weave.operations.execution import ReservedSlots, request_execution
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.repository import RuntimeRepository
 from firefly_weave.workers.leases import TaskService
@@ -67,9 +68,13 @@ class ConnectorExecutionService:
             actor = await self.access.load_principal(principal_id, tx=tx)
             return await getattr(self.tasks, name)(tx, *args, actor=actor, scope=scope, context=AuditContext())
 
-    async def execute(self, scope: Scope, principal_id: UUID, lease: TaskLease) -> JsonValue:
+    async def execute(
+        self, scope: Scope, principal_id: UUID, lease: TaskLease, *, reservation: ReservedSlots | None = None
+    ) -> JsonValue:
         self.registry.require_operational()
-        async with request_execution():
+        # A request lease covers the whole connector call. In-process native workers bring their
+        # own reservation instead, whose slots only the call's pure work takes.
+        async with request_execution() if reservation is None else reservation.execution():
             return await self._execute(scope, principal_id, lease)
 
     async def _execute(self, scope: Scope, principal_id: UUID, lease: TaskLease) -> JsonValue:
@@ -152,16 +157,6 @@ class ConnectorExecutionService:
             active = False
 
 
-# Admission rejections: the operation ran nothing, so the identical call may be sent again.
-CAPACITY_CODES = frozenset({"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"})
-
-
-def _capacity_rejected(error: BaseException) -> bool:
-    from firefly_weave.definitions.models import CatalogError
-
-    return isinstance(error, CatalogError) and error.status == 429 and error.code in CAPACITY_CODES
-
-
 class ServiceTransport:
     """The in-process worker transport, with the remote transport's replay policy (sdk/transport.py)."""
 
@@ -182,7 +177,7 @@ class ServiceTransport:
             if error.status == 503 and error.code == "WV-COMPATIBILITY":
                 return []
             # A busy database turned the claim away before it ran: claim nothing and poll again.
-            if _capacity_rejected(error):
+            if capacity_rejected(error):
                 return []
             raise
 
@@ -195,7 +190,7 @@ class ServiceTransport:
         try:
             return await self.service.operation(name, self.scope, self.principal_id, *args)
         except Exception as error:
-            if not _capacity_rejected(error):
+            if not capacity_rejected(error):
                 raise
             rejected = error
         attempts, seconds = (48, 10) if settlement else (3, 1)
@@ -206,7 +201,7 @@ class ServiceTransport:
                     try:
                         return await self.service.operation(name, self.scope, self.principal_id, *args)
                     except Exception as error:
-                        if not _capacity_rejected(error):
+                        if not capacity_rejected(error):
                             raise
                         rejected = error
         except TimeoutError:
