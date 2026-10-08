@@ -128,6 +128,44 @@ def test_cluster_service_names_stay_refused_for_connectors_but_not_for_runners()
         EgressPolicy((origin,), purpose="http-connector", origins=policy).validate(origin + "/api", ("10.231.4.9",))
 
 
+@pytest.mark.parametrize("purpose", ["http-connector", "event-delivery"])
+@pytest.mark.parametrize("host", ["legacy_service", "a" * 64 + ".internal"])
+def test_legacy_networks_keep_host_names_outside_the_canonical_form(purpose, host):
+    # Compose-style underscores and labels over 63 characters reach what the legacy setting reached.
+    base = f"http://{host}:8080"
+    HttpPolicy(("10.0.0.0/8",)).egress(purpose, (base,)).validate(base + "/x", ("10.1.2.3",))
+    for policy, addresses in (
+        (HttpPolicy(), ("10.1.2.3",)),
+        (HttpPolicy(("10.0.0.0/8",)), ("172.16.0.5",)),
+        (HttpPolicy(("10.0.0.0/8",)), ("169.254.169.254",)),
+        (HttpPolicy(("0.0.0.0/0",)), ("100.100.100.200",)),
+    ):
+        with pytest.raises(EgressDenied):
+            policy.egress(purpose, (base,)).validate(base + "/x", addresses)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "metadata.",
+        "METADATA.Google.Internal.",
+        "ｍｅｔａｄａｔａ",  # full-width "metadata"
+        "api.weave-system.svc.",
+        "API.weave-system.SVC.cluster.local.",
+        "legacy_api.weave-system。svc",  # ideographic full stop
+    ],
+)
+def test_refused_names_stay_refused_in_any_spelling_through_a_legacy_entry(host):
+    origins = HttpPolicy(("10.0.0.0/8",)).origins
+    url = f"http://{host}:8080/x"
+    for purpose in ("http-connector", "event-delivery"):
+        with pytest.raises(po.PrivateOriginDenied) as refused:
+            origins.check(purpose, url, ("10.1.2.3",))
+        assert refused.value.reason in {"metadata", "cluster-service"}
+        with pytest.raises(EgressDenied):
+            EgressPolicy((url,), purpose=purpose, origins=origins).validate(url, ("10.1.2.3",))
+
+
 async def test_mixed_answers_for_an_approved_origin_never_open_a_connection():
     async def resolver(host, port):
         return (FIXTURE, "8.8.8.8")

@@ -295,6 +295,18 @@ def _destination_origin(url: str, purpose: str) -> str:
     return canonical_origin(f"{parsed.scheme}://{parsed.netloc}", purpose)
 
 
+def _resolver_name(host: str) -> str:
+    """The name a resolver looks up for ``host``: IDNA-mapped like ``socket.getaddrinfo``, lower
+    case, without the root dot. A trailing dot, full-width letters or an ideographic full stop
+    therefore cannot spell a metadata or cluster-service name past the name rules."""
+    try:
+        name = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        # The resolver cannot encode it either, so no lookup can reach a refused name through it.
+        name = host
+    return name.lower().rstrip(".")
+
+
 def _emit(level: int, record: dict[str, Any]) -> None:
     # One JSON object per line, like the authorization audit; never a URL path or a value.
     _LOG.log(level, json.dumps({"version": 1, **record}, separators=(",", ":"), sort_keys=True))
@@ -362,13 +374,17 @@ class PrivateOrigins(BaseModel):
         return tuple(entry for entry in self.entries if entry.purpose == purpose)
 
     def match(self, purpose: Purpose, url: str) -> PrivateOrigin | None:
-        """The exact entry for the URL's origin, else the purpose's legacy entry, else None."""
+        """The exact entry for the URL's origin, else the purpose's legacy entry, else None.
+
+        Only an exact entry needs a canonical origin. A legacy entry also covers host names its
+        clients accept today outside that form, such as underscores or labels over 63 characters.
+        """
         try:
-            wanted = _destination_origin(url, purpose)
+            wanted: str | None = _destination_origin(url, purpose)
         except ValueError:
-            return None
+            wanted = None
         candidates = self.for_purpose(purpose)
-        exact = [entry for entry in candidates if entry.source == "file" and entry.origin == wanted]
+        exact = [entry for entry in candidates if entry.source == "file" and wanted and entry.origin == wanted]
         if exact:
             return exact[0]
         legacy = [entry for entry in candidates if entry.source == "legacy"]
@@ -427,9 +443,10 @@ class PrivateOrigins(BaseModel):
             refuse("scheme")
         if not host:
             refuse("origin")
-        if host in METADATA_HOSTS:
+        name = _resolver_name(host)
+        if name in METADATA_HOSTS:
             refuse("metadata")
-        if rule.connector and (host.endswith(".svc") or host.endswith(".svc.cluster.local")):
+        if rule.connector and (name.endswith(".svc") or name.endswith(".svc.cluster.local")):
             refuse("cluster-service")
         if not addresses:
             refuse("unresolved")
