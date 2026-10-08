@@ -37,7 +37,7 @@ so that `WEAVE_DOCKER_CONTEXT` is set.
 
 ![Registry, Kubernetes, database, identity, and Weave deployment boundaries](../diagrams/cloud-deployment.svg)
 
-ECR sits at the image boundary (step 2 in the diagram) and EKS runs the green
+ECR sits at the image boundary (step 2 in the diagram) and EKS runs the shaded
 panel. Your AWS access to those services is separate from the Weave principal and
 grants that the API checks.
 [Open diagram at full size](../diagrams/cloud-deployment.svg)

@@ -33,7 +33,7 @@ SPDX-License-Identifier: Apache-2.0
 [Read the documentation](https://fireflyframework.github.io/firefly-weave/) ·
 [Start the platform](https://fireflyframework.github.io/firefly-weave/guides/platform-overview/) ·
 [CLI reference](https://fireflyframework.github.io/firefly-weave/reference/cli/) ·
-[Meet Lumi](#meet-lumi)
+[Weave AI](#weave-ai)
 
 Weave is a durable workflow orchestration and integration platform with human
 tasks, built on [PyFly](https://github.com/fireflyframework/fireflyframework-pyfly).
@@ -58,11 +58,11 @@ visual workspace, with human-task inboxes, email conversations, execution
 management, and administration of people and access. Run Weave as a standalone
 service or embed it in another product.
 
-**New in 0.1.0a11:** configure AI provider connections, Lumi, and workflow AI
+**New in 0.1.0a11:** configure AI provider connections, Weave AI, and workflow AI
 profiles through guided setup with review before saving. Explicitly select
 earlier AI results as [shared context within one execution](docs/guides/shared-ai-context.md).
 See the illustrated [AI workflow guide](docs/guides/ai-workers.md) and
-[Lumi guide](docs/guides/weave-ai.md).
+[Weave AI guide](docs/guides/weave-ai.md).
 
 **Included capabilities:**
 
@@ -72,9 +72,9 @@ See the illustrated [AI workflow guide](docs/guides/ai-workers.md) and
 - **Decision rules and AI tasks.** Versioned decision tables and workflow model
   profiles use the same compiler and durable task protocol. An independent
   Firefly Agentic worker executes the configured provider, model and pattern.
-- **Lumi in Studio.** Ask for help with a workflow, run or simulation; choose
+- **Weave AI in Studio.** Ask for help with a workflow, run or simulation; choose
   what context to share, review proposed source and explicitly apply it to a
-  local draft. Lumi uses its own model configuration.
+  local draft. Weave AI uses its own model configuration.
 - **A clearer editor.** Decision and parallel lanes, immediate valid edits with
   Undo, guided human tasks, and action version selection keep changes visible.
 
@@ -286,24 +286,19 @@ Windows and Linux is not verified.
 
 Azure preproduction checks on alpha10 verified Microsoft Entra ID application
 tokens for a host application and an independent Agentic worker. An Azure OpenAI
-workflow completed through that worker with consistent replay, and Lumi returned
+workflow completed through that worker with consistent replay, and Weave AI returned
 a response through its separate gateway. An HTTP workflow also completed after
 the alpha10 deployment, and five existing run states were unchanged. These checks
 do not verify Entra browser or device-code sign-in for people, other identity providers, or general
 provider availability. See the [capability matrix](docs/capabilities.md) for the
 verified scope.
 
-## Meet Lumi
+## Weave AI
 
-**Lumi is Weave's firefly guide.** Translucent mint wings, a forest-green
-body, and a warm amber lantern bring Weave's colors to life. The lantern
-represents a clear next step through a complex process.
-
-You will find Lumi throughout the documentation and in Studio. Open the
-**Ask Lumi** panel for assistance, and [configure its model](docs/guides/weave-ai.md)
-separately from workflow AI tasks. In diagrams,
-the **Takeaway** band highlights the main idea to remember before moving on.
-Start with the [visual guide](docs/visual-guide.md) to explore the platform together.
+Weave AI is the Studio assistant: open **Ask Weave AI** to get an explanation or
+a proposed draft change for a workflow, run or simulation. It uses its own model
+configuration, separate from workflow AI steps, and never publishes or runs
+anything itself. [Use Weave AI](docs/guides/weave-ai.md) explains setup and review.
 
 ## Contribute and learn more
 

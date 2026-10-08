@@ -60,18 +60,18 @@ Five terms appear throughout this page:
 
 ## Workflow AI and the Studio assistant
 
-![Two separate AI paths: a leased workflow worker and the private Lumi assistant.](diagrams/ai-and-lumi.svg)
+![Two separate AI paths: a leased workflow worker and the private Weave AI assistant.](diagrams/ai-and-lumi.svg)
 
 Read each lane from left to right. The upper lane is part of a durable business
 process: the compiler pins the workflow's model profile, an Agentic worker claims
 a task, and the runtime checks its result before continuing. The lower lane helps
-a person author or understand a process. Lumi uses a separate environment
+a person author or understand a process. Weave AI uses a separate environment
 configuration and an authenticated private gateway. It does not create an
 execution or publish a definition. The person reviews and applies a proposed
 change to a local draft.
 
 The [AI worker guide](guides/ai-workers.md) explains deployment and profile
-budgets; the [Lumi guide](guides/weave-ai.md) explains separate configuration and
+budgets; the [Weave AI guide](guides/weave-ai.md) explains separate configuration and
 context sharing. [Files](guides/files.md) follow a third boundary: PostgreSQL
 stores their chunks separately, while workflows and workers pass verified file
 references with current scope and task authority checks.
@@ -321,7 +321,7 @@ maximum number of changed database rows.
 
 **How to read this diagram:** Each numbered question must pass before the next
 one is asked: who is calling, what they may do in this scope, and which data the
-transaction may touch. The green box adds a separate admission check for secrets.
+transaction may touch. The shaded box adds a separate admission check for secrets.
 
 [Open diagram at full size](diagrams/security-boundaries.svg)
 
@@ -375,7 +375,7 @@ lists the egress limits.
 
 The three diagrams below are selected views of real foreign keys, not a complete
 schema export. Read each row from left to right: one parent table (white) has the
-shown number of child rows (green). `P` stands for the tenant and project columns,
+shown number of child rows (shaded). `P` stands for the tenant and project columns,
 and `E` adds the environment. Keys keep their composite scope. Pins held in JSON
 columns, such as artifact and release pins, are logical references, not foreign
 keys, so a retention plan must account for them and for receipt guarantees too.

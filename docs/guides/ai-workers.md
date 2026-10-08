@@ -23,9 +23,9 @@ continues. For example, a workflow can summarize a support request, then give
 that summary to a person for review. You define the expected result; Weave
 accepts the answer only if it satisfies that contract.
 
-Use [Lumi](weave-ai.md) when *you*, the person using Studio, want an explanation or
-a proposed definition change. Lumi has separate configuration and does not
-execute workflow AI tasks.
+Use [Weave AI](weave-ai.md) when *you*, the person using Studio, want an
+explanation or a proposed definition change. Weave AI has separate configuration
+and does not execute workflow AI tasks.
 
 The examples here use Weave **0.1.0a14** and the **0.1.6 Agentic worker package**,
 whose core dependency is
@@ -71,15 +71,15 @@ against an unchanged alpha12 API, including recovery from explicit admission
 capacity rejections before the model starts. That check used a simulated model.
 A separate Azure acceptance completed one new workflow with `gpt-4o-mini` through
 `azure-chat`: one model request returned the expected `{"ok": true}` result, and
-replay was consistent. Replay did not verify authorization. The API, Lumi and
-Operations services remained on alpha12 with schema 0030; no new Lumi call was
+replay was consistent. Replay did not verify authorization. The API, Weave AI and
+Operations services remained on alpha12 with schema 0030; no new Weave AI call was
 made. This verifies the tested deployment, not general compatibility between
 different versions or providers. See [alpha13 verification](../capabilities.md#alpha13-verification)
 for the exact scope and the separately retained alpha12 acceptance evidence.
 
 ## Set up the responsibilities before authoring
 
-![Operator deploys services and scoped secrets, administrator approves connections and access, then the author configures a workflow or asks Lumi](../diagrams/ai-configuration-roles.svg)
+![Operator deploys services and scoped secrets, administrator approves connections and access, then the author configures a workflow or asks Weave AI](../diagrams/ai-configuration-roles.svg)
 
 [Open the configuration roles diagram at full size](../diagrams/ai-configuration-roles.svg).
 One person can perform several roles, but each configuration still has a separate
@@ -106,12 +106,12 @@ automatically. **Advanced: custom endpoint** is available for an approved proxy
 or compatible service. Azure requires the resource endpoint and API version
 from its administrator. Review shows the exact saved endpoint; hostname case
 and the default HTTPS port are normalized, while the base path and trailing
-slash are preserved. The worker or Lumi gateway must still allow that exact
+slash are preserved. The worker or Weave AI gateway must still allow that exact
 endpoint. Existing endpoint policies are not changed by saving a connection.
 
 **Saved · Not tested** means that the connection configuration passed validation.
 It does not prove provider access, model availability, or worker/gateway readiness.
-Workflow AI profiles and Lumi settings remain separate and select their own model
+Workflow AI profiles and Weave AI settings remain separate and select their own model
 or Azure deployment using the approved connection.
 
 **Hosting Weave in Azure does not select an AI provider.** The Azure operator
@@ -134,7 +134,7 @@ After the administrator has prepared the environment:
    optional generation controls, reasoning strategies and execution limits.
    Start with the `none` reasoning pattern for a single structured answer.
 3. Select that profile on the step. A name such as `summarizer` is local to this
-   workflow; it is not a provider credential or a Lumi setting.
+   workflow; it is not a provider credential or a Weave AI setting.
 4. Supply the **prompt** (the instruction) and **context** (the data to use).
    Map only the input or earlier step data needed for this task. The provider
    receives these values, so omit credentials and unnecessary sensitive data.
@@ -148,7 +148,7 @@ allowing you to continue. Errors such as a per-call timeout longer than the tota
 step timeout must be corrected first. This is a configuration check, not proof
 that the selected model is approved or reachable. Expanding or collapsing
 advanced settings preserves edits; clearing an optional control omits that value.
-Lumi uses the same basic and advanced presentation for its separate profile.
+Weave AI uses the same basic and advanced presentation for its separate profile.
 
 The [AI task inspector reference](studio-step-reference.md#ai-task) explains the
 Studio controls. The following complete source example summarizes a supplied
@@ -241,7 +241,7 @@ after an ambiguous network failure.
 
 ## Configure the provider connection
 
-In Studio, open **Settings → AI setup → New AI connection**. The same action is
+In Studio, open **Settings → AI models → New AI connection**. The same action is
 available from **Connections** and the AI task inspector. You need
 `connection.manage` in the environment. If the provider Connector is not yet
 published, the form explains the prerequisite; an author cannot bypass it.
@@ -467,5 +467,6 @@ To pass results between AI steps in one workflow execution, follow
 [Share context between AI steps](shared-ai-context.md). Context is explicit
 workflow data; it is not a persistent conversation shared by unrelated runs.
 
-For assistance while editing, continue with [Lumi](weave-ai.md). Enabling Lumi is a
-separate setup; it neither starts this worker nor changes any workflow profile.
+For assistance while editing, continue with [Weave AI](weave-ai.md). Enabling
+Weave AI is a separate setup; it neither starts this worker nor changes any
+workflow profile.

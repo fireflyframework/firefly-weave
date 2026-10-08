@@ -98,11 +98,11 @@ were completed on October 7, 2026:
 | Azure AI acceptance | Agentic 0.1.5 with the alpha13 SDK completed one new workflow against the alpha12 API using Azure OpenAI `gpt-4o-mini` through `azure-chat`; exactly one model request returned the expected `{"ok": true}` result; replay was consistent through sequence 2 | Replay reported `authorization_verified: false`; this is one tested deployment and model, not general mixed-version or provider certification |
 
 This accepted deployment combines the alpha13 SDK and Agentic 0.1.5 with the
-alpha12 API, Lumi and Operations services; its database remains at schema 0030.
+alpha12 API, Weave AI and Operations services; its database remains at schema 0030.
 Only the workflow's Agentic release pin changed. The new successful run did not
 replace the suspended alpha12 AI run or alter retained histories. The existing
-Lumi configuration and acceptance were preserved, with no new Lumi call. The
-successful HTTP, Lumi and Operations receipts below remain historical evidence.
+Weave AI configuration and acceptance were preserved, with no new Weave AI call. The
+successful HTTP, Weave AI and Operations receipts below remain historical evidence.
 
 ## Alpha12 delivery and acceptance
 
@@ -117,7 +117,7 @@ acceptance have separate evidence:
 | Core and installed packages | All 17 normal check stages passed, including 3,622 unit/contract cases and installed-artifact checks | Local fixtures do not certify external provider accounts |
 | Backend acceptance | Exact combined coverage of 629 integration and 69 process cases; four fresh queue cases completed 400 tasks with 400 effects and zero task retries | Coverage combines retained passing cases with reviewed affected-case reruns; it is not one successful full release command |
 | Studio | 914 browser cases passed | Six opt-in authentication cases were skipped in this run |
-| Azure preproduction | Alpha12 API migrated to schema 0030; real HTTP run and replay passed; separate Lumi request passed; the Operations runner observed three applications and applied a reviewed same-image Lumi adoption | Alpha12 AI workflow acceptance found a credential-capacity retry defect; its suspended run was retained. The corrected worker's separate alpha13 acceptance is recorded above |
+| Azure preproduction | Alpha12 API migrated to schema 0030; real HTTP run and replay passed; separate Weave AI request passed; the Operations runner observed three applications and applied a reviewed same-image Weave AI adoption | Alpha12 AI workflow acceptance found a credential-capacity retry defect; its suspended run was retained. The corrected worker's separate alpha13 acceptance is recorded above |
 
 The [exact-tag desktop build](https://github.com/fireflyframework/firefly-weave/actions/runs/37595716933)
 verified all four target builds and their installer manifests. Both downloaded
@@ -133,7 +133,7 @@ is retained as evidence; it is not counted as a successful model run.
 | [File integrations](guides/file-connectors.md) | FTP, FTPS, SFTP, SharePoint/OneDrive and Google Drive workers | Real local FTP/FTPS/SFTP servers; simulated Graph and Drive responses | Microsoft and Google accounts not exercised | Six explicit operations; no standalone change-feed trigger yet |
 | [Decision tables](reference/decision-tables.md) | Versioned decision definitions and a dedicated workflow step | Compiler, API and PostgreSQL execution tests | Not applicable | Deterministic rule evaluation; no arbitrary expression execution |
 | [AI tasks](guides/ai-workers.md) | Per-workflow model profiles executed by an independent Agentic worker | Real Agentic library with controlled model transport; PostgreSQL completion/replay and secret classification | Agentic 0.1.5 with the alpha13 SDK completed one Azure OpenAI workflow against the alpha12 API; accepted result and consistent replay checked | Replay did not verify authorization; exact operator model/endpoint policy applies, and external requests can be ambiguous |
-| [Lumi assistant](guides/weave-ai.md) | Separate environment profile and private gateway; opt-in context and reviewed Studio draft proposals | API authorization tests; 7-size Studio browser checks | Azure OpenAI response through the separate Lumi gateway on alpha12; installed alpha10 Studio configuration readback against Azure preproduction | No autonomous publish, activation, or execution; conversation stays in memory |
+| [Weave AI assistant](guides/weave-ai.md) | Separate environment profile and private gateway; opt-in context and reviewed Studio draft proposals | API authorization tests; 7-size Studio browser checks | Azure OpenAI response through the separate Weave AI gateway on alpha12; installed alpha10 Studio configuration readback against Azure preproduction | No autonomous publish, activation, or execution; conversation stays in memory |
 | [Compiler and schemas](reference/compiler.md) | Implemented | Compiler, schema, expression, and canonical-artifact suites | Not applicable | Validation without a catalog is partial and produces no artifact |
 | [Definition lifecycle](reference/api.md) | Implemented | Publication, activation, revision, and scoped API suites | Not applicable | Compiling is separate from authorization and admission |
 | [Durable runtime](reference/schedules-and-timers.md) | Implemented | PostgreSQL, lease, wait, signal, parallel, schedule, and recovery scenarios | Not applicable | External effects can repeat after a crash |
@@ -159,7 +159,7 @@ is retained as evidence; it is not counted as a successful model run.
 | [WhatsApp Cloud API](connectors/whatsapp.md) | Implemented | Wire fixtures, status history, and owned PostgreSQL; composed provider gate passed | Not run | Account policies, templates, and live delivery need separate verification |
 | [Telegram webhook text](connectors/telegram.md) | Implemented | Local TLS fixtures and owned PostgreSQL; composed provider gate passed | Not run | Source-local deduplication; bot and group permissions are provider prerequisites |
 | [Operational limits](operations/configuration.md), [telemetry](operations/observability.md), [retention](operations/retention.md), and [compatibility](operations/upgrades.md) | Implemented | Policy, accounting, contention, telemetry, retention, and upgrade suites | Not applicable | Logical accounting is separate from physical storage; compatibility checks gate readiness |
-| [Container deployment Operations](operations/cluster-management.md) | New in alpha12: scoped targets, observations, immutable reviewed plans and outbound runners | Local Compose lifecycle, adapter policy tests, authorization and reconciliation scenarios | Azure alpha12: complete three-application observation and reviewed same-image Lumi adoption; preserved configuration and verified all historical replicas | Azure target and runner policies keep `scale_workers` disabled; active-revision observations do not prove historical replicas have stopped |
+| [Container deployment Operations](operations/cluster-management.md) | New in alpha12: scoped targets, observations, immutable reviewed plans and outbound runners | Local Compose lifecycle, adapter policy tests, authorization and reconciliation scenarios | Azure alpha12: complete three-application observation and reviewed same-image Weave AI adoption; preserved configuration and verified all historical replicas | Azure target and runner policies keep `scale_workers` disabled; active-revision observations do not prove historical replicas have stopped |
 | [Deployment](operations/deployment.md), [backup and restore](operations/backup-restore.md), and distribution | Implemented | Installed-package, container, process recovery, restore, and queue suites | Not applicable | Restore ownership, grants, schema compatibility, and external systems must be checked in each environment |
 | [AWS, Azure, and GCP deployment recipes](operations/cloud-deployment.md) | Reference guides and Kubernetes manifests | Source review and offline Kubernetes object-shape validation | A separate Azure Container Apps deployment has been exercised; these Kubernetes recipes and AWS/GCP remain unverified | Operator-provisioned infrastructure; database migrations, identity, networking, and recovery need acceptance in the target |
 | Slack and Salesforce | Deferred | Not run | Not run | Not part of this delivery |

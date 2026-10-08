@@ -203,6 +203,6 @@ followed by a check of the live address proves that readers can reach it.
 - [Source documentation and attribution](source-documentation.md): license
   headers, module docstrings, and the inventory for files that cannot carry
   comments.
-- [Visual assets](../visual-assets.md): the logo, Lumi, and how to draw and check
+- [Visual assets](../visual-assets.md): the brand assets, and how to draw and check
   a diagram.
 - [Contributing](../../CONTRIBUTING.md): the complete project checks.
