@@ -45,6 +45,17 @@ INVENTORIED = (
 )
 # The w's strand carries at most this share of the amber in the Firefly logo beside it.
 AMBER_BUDGET = 0.70
+# The strand the thread passes over is drawn in two pieces, the ink path's second and third
+# subpaths: the upper piece right of the thread under the flat top, the lower piece left of it
+# above the apex (the first subpath is the w's left arm; the fourth, its right arm, meets the
+# thread at the apex). Each master's gap between those pieces and the thread, at right angles to
+# the strand, and the least area each piece keeps, upper then lower: half its drawn area.
+CROSSINGS = (
+    ("assets/brand/weave-wordmark.svg", 10, (47, 256)),
+    ("assets/brand/weave-wordmark-small.svg", 14, (19, 203)),
+    # The glyph is the regular w scaled from 120.99 units wide to 36.
+    ("assets/brand/weave-w.svg", 10 * 36 / 120.99, (4, 22)),
+)
 LOCKUP_MARK = "The weave wordmark is a trademark of the Firefly Software Foundation."
 
 
@@ -73,6 +84,22 @@ def area(d: str) -> float:
         pairs = zip(points, points[1:] + points[:1], strict=True)
         total += abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in pairs)) / 2
     return total
+
+
+def corners(d: str) -> list[tuple[float, float]]:
+    values = numbers(d)
+    return list(zip(values[::2], values[1::2], strict=True))
+
+
+def distance_to_outline(point: tuple[float, float], outline: list[tuple[float, float]]) -> float:
+    """Shortest distance from a point to the edges of a closed outline."""
+    px, py = point
+    shortest = math.inf
+    for (ax, ay), (bx, by) in zip(outline, outline[1:] + outline[:1], strict=True):
+        dx, dy = bx - ax, by - ay
+        along = min(1.0, max(0.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+        shortest = min(shortest, math.hypot(px - ax - along * dx, py - ay - along * dy))
+    return shortest
 
 
 @pytest.mark.parametrize("path", MASTERS)
@@ -108,6 +135,17 @@ def test_both_wordmarks_share_eave_and_the_strand():
     # The first four subpaths are the w's strand pieces; the rest is eave.
     eave = {"".join(re.findall(r"M[^M]+", d)[4:]) for d in ink}
     assert len(eave) == 1 and len(threads) == 1
+
+
+@pytest.mark.parametrize(("path", "gap", "floors"), CROSSINGS)
+def test_the_strand_under_the_thread_stops_at_the_crossing_gap(path, gap, floors):
+    root = ET.fromstring(text_of(path))
+    thread = corners(part(root, "thread").get("d"))
+    pieces = re.findall(r"M[^M]+", part(root, "ink").get("d"))[1:3]
+    for piece, floor in zip(pieces, floors, strict=True):
+        nearest = min(distance_to_outline(corner, thread) for corner in corners(piece))
+        assert nearest == pytest.approx(gap, abs=0.02), piece
+        assert area(piece) >= floor, piece
 
 
 @pytest.mark.parametrize(("lockup", "master"), LOCKUPS.items())
