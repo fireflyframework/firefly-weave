@@ -25,11 +25,19 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from firefly_weave.access.scheduler import next_scope, tenant_page
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.recovery import RecoveryService
 from firefly_weave.settings import Settings
 from firefly_weave.triggers.scheduler import Scheduler
+
+
+def failure_cause(error: Exception) -> str:
+    """Name a failed scan by error class and catalog code, never by message or values."""
+    if isinstance(error, CatalogError):
+        return f"{type(error).__name__} {error.code}"
+    return type(error).__name__
 
 
 class RecoveryLoop:
@@ -99,16 +107,20 @@ class RecoveryLoop:
                         await self.recovery._scan_scheduled(authority, 10)
                     else:
                         await self.recovery._scan_terminal_scheduled(authority, 10)
-            except Exception:
-                logging.getLogger(__name__).error("Tenant recovery scan failed; traversal will continue")
+            except Exception as error:
+                logging.getLogger(__name__).error(
+                    "Tenant recovery scan failed (%s); traversal will continue", failure_cause(error)
+                )
                 continue
             if not self.operational():
                 continue
             try:
                 async with asyncio.timeout(budget):
                     await self.schedules._scan_scheduled(authority, 10)
-            except Exception:
-                logging.getLogger(__name__).error("Tenant schedule scan failed; traversal will continue")
+            except Exception as error:
+                logging.getLogger(__name__).error(
+                    "Tenant schedule scan failed (%s); traversal will continue", failure_cause(error)
+                )
 
     async def poll(self) -> None:
         while True:
