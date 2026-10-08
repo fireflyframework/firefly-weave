@@ -139,11 +139,20 @@ def _secret(credential: SecretStr | None) -> str:
     return credential.get_secret_value() if credential is not None else ""
 
 
+def _product_code(code: str) -> str:
+    """Only product codes leave the gateway; anything else reads as an unexpected provider error."""
+    return code if code in AI_ERRORS else "LLM_PROVIDER"
+
+
 def _result(ok: bool, code: str, model: str, latency: int | None = None, **extra: Any) -> dict[str, Any]:
-    # Only product codes leave the gateway; anything else reads as an unexpected provider error.
-    known = code if code == "ok" or code in AI_ERRORS else "LLM_PROVIDER"
     value = AIConnectionTestResult.model_validate(
-        {"ok": ok, "code": known, "latency_ms": latency, "model": model or "none", **extra}
+        {
+            "ok": ok,
+            "code": "ok" if code == "ok" else _product_code(code),
+            "latency_ms": latency,
+            "model": model or "none",
+            **extra,
+        }
     )
     return value.model_dump(mode="json")
 
@@ -209,15 +218,13 @@ def create_app(
 
     async def ask(request: Request) -> JSONResponse:
         async def run(body: GatewayRequest) -> JSONResponse:
+            profile = body.profile
+            # Request problems answer LUMI_INPUT; a failure while building or calling the model never does.
             try:
                 measure_value(body.attachments)
-                profile = body.profile
-                entry = policy.entry(body.endpoint, profile.provider, profile.model)
                 left = _remaining(body.expires_at, profile.timeout_seconds)
                 if profile.provider.startswith("azure-") and not body.api_version:
                     raise ValueError("Azure needs an API version")
-                if entry.credential == "required" and body.credential is None:
-                    raise ValueError("This endpoint needs a credential")
                 spec = ModelSpec(
                     provider=profile.provider,
                     model=profile.model,
@@ -226,8 +233,16 @@ def create_app(
                     api_version=body.api_version,
                 )
                 settings = ModelFactory().settings_for(spec)
-                if profile.provider.endswith("responses"):
-                    settings["openai_store"] = False
+            except ValueError:
+                return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
+            if profile.provider.endswith("responses"):
+                settings["openai_store"] = False
+            try:
+                entry = policy.entry(body.endpoint, profile.provider, profile.model)
+                if entry.credential == "required" and body.credential is None:
+                    return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
+                if entry.max_output_tokens is not None and profile.options.max_tokens > entry.max_output_tokens:
+                    raise ConnectorFailure("LLM_OPTIONS", "not_started")
                 async with asyncio.timeout(left):
                     owned = model_builder(spec, _secret(body.credential), left, policy.options(entry))
                     model = owned.model if isinstance(owned, ProviderModel) else owned
@@ -253,8 +268,6 @@ def create_app(
                 assert isinstance(output, dict)
                 reply = LumiReply.model_validate(output["result"])
                 return JSONResponse(reply.model_dump(by_alias=True))
-            except (ValidationError, ValueError):
-                return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
             except ConnectorFailure as error:
                 return JSONResponse({"code": error.code}, status_code=422)
             except TimeoutError:
@@ -283,6 +296,9 @@ def create_app(
             name = body.model or ""
             try:
                 left = _remaining(body.expires_at, 600)
+            except ValueError:
+                return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
+            try:
                 async with asyncio.timeout(left):
                     listed = policy.current().entry_for(body.endpoint)
                     if listed is None or body.provider not in listed.providers:
@@ -327,8 +343,6 @@ def create_app(
                 return JSONResponse(_result(True, "ok", name, latency, **extra))
             except TimeoutError:
                 return JSONResponse(_result(False, "LLM_TIMEOUT", name))
-            except ValueError:
-                return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
             except ConnectorFailure as error:
                 return JSONResponse(_result(False, error.code, name))
             except Exception as error:
@@ -340,6 +354,9 @@ def create_app(
         async def run(body: DiscoveryRequest) -> JSONResponse:
             try:
                 left = _remaining(body.expires_at, DISCOVERY_SECONDS + 5)
+            except ValueError:
+                return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
+            try:
                 entry = policy.current().entry_for(body.endpoint)
                 if entry is None or body.provider not in entry.providers:
                     raise ConnectorFailure("LLM_POLICY", "not_started")
@@ -393,12 +410,10 @@ def create_app(
                 return JSONResponse({"discovery": "ok", "models": items})
             except TimeoutError:
                 return JSONResponse({"discovery": "LLM_TIMEOUT", "models": []})
-            except ValueError:
-                return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
             except ConnectorFailure as error:
-                return JSONResponse({"discovery": error.code, "models": []})
+                return JSONResponse({"discovery": _product_code(error.code), "models": []})
             except Exception as error:
-                return JSONResponse({"discovery": classify(error).code, "models": []})
+                return JSONResponse({"discovery": _product_code(classify(error).code), "models": []})
 
         return await admitted(request, DiscoveryRequest, run)
 

@@ -240,7 +240,7 @@ SHOWS = {
 AUTH = {"Authorization": "Bearer service-token"}
 
 
-def ollama_gateway_policy(tmp_path, models="served"):
+def ollama_gateway_policy(tmp_path, models="served", **changes):
     path = tmp_path / "ai-policy.json"
     endpoint = {
         "id": "ollama-local",
@@ -252,6 +252,7 @@ def ollama_gateway_policy(tmp_path, models="served"):
         "models": models,
         "contextTokens": 8192,
         "maxOutputTokens": 4096,
+        **changes,
     }
     path.write_bytes(render([endpoint]))
     path.chmod(0o444)
@@ -655,3 +656,62 @@ async def test_an_oversized_listing_is_refused_and_unknown_codes_never_leave(tmp
         tested = await client.post("/v1/test", json=probe_payload(), headers=AUTH)
     assert listed.json() == {"discovery": "LLM_PROVIDER", "models": []}
     assert tested.status_code == 200 and tested.json()["code"] == "LLM_PROVIDER"
+
+
+async def test_a_malformed_provider_answer_is_a_provider_code_not_a_bad_request(tmp_path):
+    async def malformed(request):
+        return httpx2.Response(200, headers={"content-type": "application/json"}, content=b"{not json")
+
+    def builder(spec, secret, timeout, options):
+        return build_model(spec, secret, timeout, options, transport=httpx2.MockTransport(malformed))
+
+    policy = WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"}))
+    endpoint = "https://api.openai.com/v1"
+    async with gateway(tmp_path, builder=builder, policy=policy) as client:
+        listed = await client.post(
+            "/v1/models", json=models_request(endpoint=endpoint, credential="private-key"), headers=AUTH
+        )
+        tested = await client.post(
+            "/v1/test",
+            json=probe_payload(model="fixture-model", endpoint=endpoint, credential="private-key"),
+            headers=AUTH,
+        )
+    assert listed.status_code == 200 and listed.json() == {"discovery": "LLM_PROVIDER", "models": []}
+    assert tested.status_code == 200 and tested.json()["code"] == "LLM_PROVIDER"
+    assert "not json" not in listed.text + tested.text
+
+
+async def test_the_assistant_route_refuses_more_output_than_the_endpoint_allows(tmp_path):
+    built = []
+    ask = payload()
+    ask["profile"]["model"] = "qwen2.5:1.5b"
+    ask["endpoint"] = "http://ollama:11434/v1"
+    del ask["credential"]
+    policy = ollama_gateway_policy(tmp_path, maxOutputTokens=128)
+    async with gateway(tmp_path, builder=lambda *args: built.append(args), policy=policy) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert response.status_code == 422 and response.json() == {"code": "LLM_OPTIONS"} and built == []
+
+
+async def test_discovery_reports_only_product_codes(tmp_path):
+    def foreign(*_):
+        raise ConnectorFailure("NOT_A_PRODUCT_CODE", "not_started")
+
+    policy = WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"}))
+    request = models_request(endpoint="https://api.openai.com/v1", credential="private-key")
+    async with gateway(tmp_path, builder=foreign, policy=policy) as client:
+        response = await client.post("/v1/models", json=request, headers=AUTH)
+    assert response.json() == {"discovery": "LLM_PROVIDER", "models": []}
+
+
+async def test_a_model_side_value_error_on_the_assistant_route_is_not_a_bad_request(tmp_path):
+    def faulty(*_):
+        raise ValueError("provider-canary")
+
+    ask = payload()
+    ask["profile"]["model"] = "qwen2.5:1.5b"
+    ask["endpoint"] = "http://ollama:11434/v1"
+    del ask["credential"]
+    async with gateway(tmp_path, builder=faulty) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert response.status_code == 503 and response.json() == {"code": "LUMI_UNAVAILABLE"}
