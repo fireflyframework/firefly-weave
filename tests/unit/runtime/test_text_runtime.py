@@ -21,6 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from firefly_weave.compiler.api import compile_source, import_artifact
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.expression_types import infer_expression
@@ -62,7 +64,8 @@ def test_the_simulator_runs_text_steps_without_mocks():
     assert view.variables["output"]["lines"] == "paper, ink"
 
 
-def test_a_runtime_type_error_opens_an_incident_and_rolls_back():
+@pytest.mark.parametrize("bad", [["a", None], ["a", {"b": 1}]], ids=["null", "object"])
+def test_a_runtime_type_error_opens_an_incident_and_rolls_back(bad):
     document = {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
@@ -83,7 +86,7 @@ def test_a_runtime_type_error_opens_an_incident_and_rolls_back():
     compiled = compile_source(document, format="object", catalog=CatalogSnapshot.empty())
     assert compiled.ok
     assert "WV-COMP-UNKNOWN_COMPATIBILITY" in {d.code for d in compiled.diagnostics}
-    result = transition(RunState(input={"tags": ["a", {"b": 1}]}), started(), compiled.artifact)
+    result = transition(RunState(input={"tags": bad}), started(), compiled.artifact)
     assert result.state.status == "suspended"
     assert result.state.incident == "WV-EXPR-TYPE"
     assert result.steps == []

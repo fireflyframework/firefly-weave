@@ -404,3 +404,12 @@ def test_an_unknown_feature_name_is_ir_unsupported_even_with_a_valid_digest(text
     text["artifact"]["digest"] = canonical_digest(executable)
     text["activation"]["request"]["artifact_digest"] = text["artifact"]["digest"]
     assert classify_requirement("run", text, ConnectorRegistry(), features=("text.join",)) == "ir_unsupported"
+
+
+def test_the_platform_classifies_against_the_features_it_advertises(text):
+    assert classify_requirement("activation", text, ConnectorRegistry()) is None
+    executable = text["artifact"]["executable"]
+    executable["features"] = ["flow.forEach"]
+    text["artifact"]["digest"] = canonical_digest(executable)
+    text["activation"]["request"]["artifact_digest"] = text["artifact"]["digest"]
+    assert classify_requirement("activation", text, ConnectorRegistry()) == "ir_unsupported"

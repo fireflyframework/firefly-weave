@@ -78,6 +78,16 @@ def action(identifier, value):
     return {"id": identifier, "kind": "action", "dependency": "0" * 64, "with": value, "connection": None}
 
 
+def ai_task(identifier, value):
+    profile = {
+        "provider": "openai-responses",
+        "model": "fixture-model",
+        "options": {"max_tokens": 500},
+        "outputSchema": {"type": "string"},
+    }
+    return {**action(identifier, value), "llmProfile": profile}
+
+
 def graph(*steps, output=None):
     nodes = [
         {"id": "@start", "kind": "start", "scope": [], "path": "/spec"},
@@ -129,6 +139,14 @@ def test_ir_levels_are_ordered_and_v1alpha4_is_accepted_with_the_first_feature()
         pytest.param([action("a", {"array": [JOIN]})], None, IR_VERSION_EXTENSIONS, ["text.join"], id="action-input"),
         pytest.param([], CONCAT, IR_VERSION_EXTENSIONS, ["text.concat"], id="workflow-output"),
         pytest.param([transform("t", lit(CONCAT))], None, IR_VERSION, [], id="operator-shaped-literal-data"),
+        pytest.param([ai_task("a", lit("Summarize"))], None, COMPARISON_IR_VERSION, [], id="ai-task"),
+        pytest.param(
+            [ai_task("a", {"object": {"prompt": CONCAT}})],
+            None,
+            IR_VERSION_EXTENSIONS,
+            ["text.concat"],
+            id="ai-task-with-text-operator",
+        ),
     ],
 )
 def test_requirements_are_the_highest_level_and_every_feature_used(steps, output, version, features):
