@@ -215,6 +215,9 @@ for (const viewport of [
       // view again. Opening Runs only after it knows the person (Workers has
       // left the menu) keeps that startup read out of the count.
       await expect(
+        page.getByRole("button", { name: "Runs", exact: true }),
+      ).toBeVisible();
+      await expect(
         page.getByRole("button", { name: "Workers", exact: true }),
       ).toHaveCount(0);
       let listReads = 0;
@@ -247,6 +250,35 @@ for (const viewport of [
       await page.goBack();
       await expect(page).toHaveURL(/\/home$/);
       await expect(detail).toHaveCount(0);
+    });
+
+    test("closing a run twice at once steps back only once", async ({
+      page,
+    }) => {
+      await connected(page, { capabilities: ["run.read"] });
+      await runRoutes(page);
+      await page.getByRole("button", { name: "Runs", exact: true }).click();
+      await page.getByRole("button", { name: "order-7", exact: true }).click();
+      const detail = page.locator(".record-detail");
+      await expect(page).toHaveURL(new RegExp(`/operate/runs/${runId}$`));
+      await expect(detail.locator("#record-detail-title")).toHaveText(
+        "order-7",
+      );
+      // A second close arrives before the first step back has landed.
+      await detail
+        .getByRole("button", { name: "Close detail" })
+        .evaluate((button: HTMLElement) => {
+          button.click();
+          button.click();
+        });
+      await expect(page).toHaveURL(/\/operate\/runs$/);
+      await expect(detail).toHaveCount(0);
+      await page.evaluate(
+        () => new Promise<void>((resolve) => setTimeout(resolve, 500)),
+      );
+      await expect(page).toHaveURL(/\/operate\/runs$/);
+      await page.goBack();
+      await expect(page).toHaveURL(/\/home$/);
     });
 
     if (viewport.width > 1024) {

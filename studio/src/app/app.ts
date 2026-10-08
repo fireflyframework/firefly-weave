@@ -5280,6 +5280,9 @@ export class App {
    */
   closeRecord() {
     this.selectedRecord = null;
+    // A second close before the first step back lands must not step back
+    // again: that would leave Runs.
+    if (this.closingRun) return;
     const route = viewFromPath(location.pathname);
     if (!route?.id) return;
     if (history.state?.weaveRunPushed) {
