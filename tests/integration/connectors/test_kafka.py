@@ -48,7 +48,7 @@ def kafka_data_directory():
 
 async def docker(*args):
     if os.environ.get("WEAVE_TEST_DOCKER_CONTEXT") != "colima-weave-tests":
-        pytest.fail("D2 requires WEAVE_TEST_DOCKER_CONTEXT=colima-weave-tests", pytrace=False)
+        pytest.fail("Kafka tests require WEAVE_TEST_DOCKER_CONTEXT=colima-weave-tests", pytrace=False)
     process = await asyncio.create_subprocess_exec(
         "docker",
         "--context",
@@ -158,7 +158,7 @@ async def test_real_backend_record_roundtrip(kafka_backend, broker_record, acces
 
 @pytest.fixture
 async def kafka_setup(worker_setup, access_db, services, kafka_backend, broker_record):
-    assert importlib.util.find_spec("firefly_weave.triggers.kafka") is not None, "D2 durable Kafka trigger absent"
+    assert importlib.util.find_spec("firefly_weave.triggers.kafka") is not None, "Durable Kafka trigger absent"
     from firefly_weave.access.audit import AuditContext
     from firefly_weave.connections.registry import ConnectorRegistry
     from firefly_weave.connections.service import ConnectionService

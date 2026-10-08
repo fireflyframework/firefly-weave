@@ -633,6 +633,6 @@ def test_documented_examples_are_clean_offline():
         if "kind:" not in text:
             continue
         result = validate_authoring(text, format="yaml", filename=path.name)
-        # examples/language shows frozen constructs that compile once their language milestone lands.
+        # examples/language shows constructs whose compiler support arrives in a later release.
         findings = [d for d in errors(result) if d.code != "WV-COMP-UNSUPPORTED_FEATURE"]
         assert findings == [], (path.name, codes(result))

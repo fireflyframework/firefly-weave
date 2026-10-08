@@ -15,7 +15,7 @@
 # limitations under the License.
 """Provider verifier design example, excluded from installed service discovery.
 
-Implement the E2 ProviderVerifier port when adding a real provider. Verify raw
+Implement the ProviderVerifier port when adding a real provider. Verify raw
 bytes and configured provider identity before normalization. Event IDs must be
 stable; cap the raw body at 1 MiB and a normalized batch at 100 events. Do not
 infer Weave principals or scope from a sender, dispatch workflows here, perform

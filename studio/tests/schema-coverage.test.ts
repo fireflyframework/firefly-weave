@@ -29,7 +29,7 @@ import { loadLanguageManifest } from "./support/language-manifest";
 
 const root = resolve(import.meta.dirname, "../..");
 
-/** The language manifest's entries (language spec 14.1); Studio compares only `ready` ones. */
+/** The language manifest's entries; Studio compares only `ready` ones. */
 interface Marked {
   studio: "ready" | "pending";
   feature?: string;

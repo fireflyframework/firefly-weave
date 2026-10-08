@@ -17,8 +17,8 @@
 """The language manifest: the single source of step kinds, operators, workflow fields, features and limits.
 
 Served by ``language.read`` and the Studio host's ``GET /studio/contracts/language`` and exported as
-``language-manifest`` (language spec 14.1, contract C5). ``studio`` is ``ready`` once Studio ships a
-descriptor for the entry and ``pending`` until then; Studio's schema coverage test compares only ready entries.
+``language-manifest``. ``studio`` is ``ready`` once Studio ships a descriptor for the entry and ``pending`` until
+then; Studio's schema coverage test compares only ready entries.
 Every change that adds a step kind, operator or workflow field to the definition models adds its entry here.
 """
 
@@ -244,7 +244,7 @@ def _kind(
     return ManifestStepKind.model_validate(value)
 
 
-# Lane A adds the agent entry with AgentStep: kind "agent", group "ai", label "AI agent", studio "pending".
+# AI steps add the agent entry with AgentStep: kind "agent", group "ai", label "AI agent", studio "pending".
 STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
     _kind("action", "ActionStep", "actions", "Action"),
     _kind("llm", "LLMStep", "ai", "AI task"),

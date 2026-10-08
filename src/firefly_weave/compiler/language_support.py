@@ -16,9 +16,9 @@
 
 """Find language constructs whose feature this compiler does not compile yet.
 
-The definition schema accepts every frozen construct (language milestone M0); the compiler reports each use of
-a feature outside ``COMPILED_FEATURES`` as ``WV-COMP-UNSUPPORTED_FEATURE`` instead of lowering it. Each language
-milestone that lands a feature's compiler support adds that feature here.
+The definition schema accepts every construct of the language; the compiler reports each use of a feature
+outside ``COMPILED_FEATURES`` as ``WV-COMP-UNSUPPORTED_FEATURE`` instead of lowering it. A feature joins that
+set in the release that adds its compiler support.
 """
 
 from collections import deque

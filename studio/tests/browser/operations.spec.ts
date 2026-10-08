@@ -15,10 +15,10 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The operations pages (W2-3, W2-4, W2-7, W2-8): per-view columns and one
-// status vocabulary, the run detail as an operator page, live Runs filters,
-// deciding a task with one inline confirmation, one "Send reply", and what
-// local mode and a signed-out platform show instead of dead filters.
+// The operations pages: per-view columns and one status vocabulary, the run
+// detail as an operator page, live Runs filters, deciding a task with one
+// inline confirmation, one "Send reply", and what local mode and a signed-out
+// platform show instead of dead filters.
 import { test, expect, Page, Request } from "@playwright/test";
 import { allCapabilities, connected, offline } from "./support";
 import { acmePlatform, platformHost } from "./platform-host";

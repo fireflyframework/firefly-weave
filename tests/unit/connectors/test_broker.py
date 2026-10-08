@@ -24,7 +24,7 @@ import pytest
 
 def test_out_of_order_receipts_never_skip_pending_record():
     assert importlib.util.find_spec("firefly_weave.connectors.kafka_transport") is not None, (
-        "D2 owned broker transport absent"
+        "Owned broker transport absent"
     )
     from firefly_weave.connectors.kafka_transport import PartitionFrontier
 
@@ -42,7 +42,7 @@ async def test_unknown_advertised_endpoint_has_no_network_or_dns():
     from firefly_weave.connectors.broker import BrokerRoutePin
 
     assert importlib.util.find_spec("firefly_weave.connectors.kafka_transport") is not None, (
-        "D2 owned broker transport absent"
+        "Owned broker transport absent"
     )
     from firefly_weave.connectors.kafka_transport import BrokerEventLoop
 

@@ -137,7 +137,7 @@ describe("modal sheet: Tab stays inside", () => {
 describe("modal sheet: where each panel covers the page", () => {
   it("names a media query per panel", () => {
     // Phones and 200% zoom (1280x720 is 640x360 CSS px); from 768 px the
-    // inspector and the simulation are columns beside the canvas (W3-6, W3-8).
+    // inspector and the simulation are columns beside the canvas.
     expect(sheetWhen.inspector).toBe("(max-width: 767px)");
     expect(sheetWhen.simulation).toBe("(max-width: 767px)");
     // The palette is a popover and the detail floats over the list below 1025.

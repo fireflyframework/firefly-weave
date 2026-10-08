@@ -311,7 +311,7 @@ def infer_expression(
 ) -> InferredType:
     """Infer from already profile-validated schemas keyed by root context names.
 
-    Local/bundled refs and composition remain unknown here; A5 must retain runtime
+    Local/bundled refs and composition remain unknown here; callers must retain runtime
     guards whenever stronger schema containment or operand typing is unproved.
     schema_limits independently bounds generated schema bytes/nodes/depth and
     cumulative expansion/copy work. Runtime limits still govern expressions/data.

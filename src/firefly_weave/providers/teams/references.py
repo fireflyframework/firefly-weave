@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Scoped retained revocation fences; lifecycle effects share E2's admission transaction."""
+"""Scoped retained revocation fences; lifecycle effects share the event admission transaction."""
 
 import json
 from typing import Any, cast

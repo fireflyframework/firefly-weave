@@ -14,12 +14,12 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Scope suggestions: which data an expression at a definition path may reference (language spec 14.3).
+"""Scope suggestions: which data an expression at a definition path may reference.
 
-The signature and the camelCase result shape are frozen in language milestone M0 so that the Studio host's
-``POST /studio/local/scope`` and Studio's offline ``scope.ts`` fallback share one contract. Results come from the
-compiler's own dominance and type analysis, including the inferred outputs of ``forEach``, ``callWorkflow`` and
-``agent`` steps, which Studio does not reimplement.
+The signature and the camelCase result shape are stable so that the Studio host's ``POST /studio/local/scope``
+and Studio's offline ``scope.ts`` fallback share one contract. Results come from the compiler's own dominance and
+type analysis, including the inferred outputs of ``forEach``, ``callWorkflow`` and ``agent`` steps, which Studio
+does not reimplement.
 """
 
 from typing import Literal
@@ -76,6 +76,6 @@ def scope_at(document: JsonObject, path: JsonPointer, *, catalog: CatalogSnapsho
     """Suggestions for the expression at ``path`` (an RFC 6901 pointer into ``document``).
 
     Without a catalog, resources resolve as in offline authoring and their outputs stay unconstrained.
-    Implemented with the loop compiler (language milestone M3); until then it raises ``NotImplementedError``.
+    Arrives with loop compilation in a later release; until then it raises ``NotImplementedError``.
     """
     raise NotImplementedError("Scope suggestions are not available in this version of Firefly Weave")
