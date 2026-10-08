@@ -32,6 +32,7 @@ import { ConnectionDetail } from "../integrations/connection-detail";
 import { NewMenu } from "../templates/new-menu";
 import { localKeepLabel, type LocalDraftEntry } from "../local-drafts";
 import { isDesktopShell } from "../export-file";
+import { OperateState } from "../operate/operate-state";
 import {
   dateWithRelative,
   isoTime,
@@ -124,6 +125,7 @@ const runStatusFilters: [string, string][] = [
     NewMenu,
     RunDetail,
     NgTemplateOutlet,
+    OperateState,
   ],
   styleUrl: "./records-view.css",
   template: `@let h = host();
@@ -327,7 +329,9 @@ const runStatusFilters: [string, string][] = [
           </select>
         }
         <span class="count" role="status">{{
-          h.loading && !rowCount() ? "" : countLabel(v, rowCount())
+          (h.loading && !rowCount()) || refused()
+            ? ""
+            : countLabel(v, rowCount())
         }}</span>
         @if (h.profile && h.workspaceText) {
           <span class="scope-label">{{ h.environmentLabel }}</span>
@@ -345,12 +349,21 @@ const runStatusFilters: [string, string][] = [
           </button>
         </p>
       }
+      @if (v === "runs" && h.runRefused && !h.runsRefused) {
+        <weave-operate-state
+          kind="access"
+          heading="You don't have access to this run"
+          capability="run.read"
+        />
+      }
       <!-- A reload keeps the rows it has: the table (and focus in it) stays. -->
       @if (h.loading && !localTab() && !rowCount()) {
         <div class="empty-state" role="status">
           <span class="loading-spinner"></span>
           <h2>Loading {{ noun() }}…</h2>
         </div>
+      } @else if (refused()) {
+        <weave-operate-state kind="access" capability="run.read" />
       } @else if (!h.profile && v === "workflows" && !localTab()) {
         <div class="empty-state">
           <h2>
@@ -1019,6 +1032,10 @@ export class RecordsView {
     return this.localTab()
       ? this.localRows().length
       : this.host().visibleRecords.length;
+  }
+  /** Runs was refused (403): the page names run.read instead of its rows. */
+  refused() {
+    return this.listView() === "runs" && this.host().runsRefused;
   }
   chooseLibrary(tab: "workflows" | "drafts" | "local") {
     const h = this.host();

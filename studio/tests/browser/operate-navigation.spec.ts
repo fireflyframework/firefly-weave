@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // Operate navigation: the Work and Operate groups, entries shown by
 // capability, the paths from before Operate, and run addresses that open and
 // close the run.
-import { test, expect, Page } from "@playwright/test";
+import { test, expect, Page, Route } from "@playwright/test";
 import { connected, offline } from "./support";
 
 const environment =
@@ -41,6 +41,9 @@ async function navLabels(page: Page) {
         .map((item) => item.textContent?.trim()),
     );
 }
+
+const denied = (r: Route) =>
+  r.fulfill({ status: 403, json: { code: "WV-DENIED", message: "Denied" } });
 
 async function runRoutes(page: Page) {
   await page.route(`${environment}/runs?*`, (r) =>
@@ -279,6 +282,68 @@ for (const viewport of [
       await expect(page).toHaveURL(/\/operate\/runs$/);
       await page.goBack();
       await expect(page).toHaveURL(/\/home$/);
+    });
+
+    test("without run.read Runs names the access it needs, not an empty list", async ({
+      page,
+    }) => {
+      await connected(page, { capabilities: ["status.read"] });
+      await page.route(`${environment}/runs?*`, denied);
+      await page.goto("/operate/runs");
+      await expect(page.locator("#main h1")).toHaveText("Runs");
+      await expect(page.locator("weave-operate-state")).toContainText(
+        "You need run.read in this environment.",
+      );
+      await expect(page.getByText("No runs yet")).toHaveCount(0);
+      await expect(page.locator(".error-banner")).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Runs", exact: true }),
+      ).toHaveCount(0);
+    });
+
+    test("a run link without run.read opens nothing and names the access it needs", async ({
+      page,
+    }) => {
+      await connected(page, { capabilities: ["status.read"] });
+      await page.route(`${environment}/runs?*`, denied);
+      await page.route(`${environment}/runs/${runId}`, denied);
+      await page.goto(`/operate/runs/${runId}`);
+      await expect(page.locator("weave-operate-state")).toContainText(
+        "You need run.read in this environment.",
+      );
+      await expect(page).toHaveURL(/\/operate\/runs$/);
+      await expect(page.locator(".record-detail")).toHaveCount(0);
+      await expect(page.getByText("Run 5e6f7a8b")).toHaveCount(0);
+      await expect(page.locator(".error-banner")).toHaveCount(0);
+    });
+
+    test("a run the person may not read opens nothing and says what access it needs", async ({
+      page,
+    }) => {
+      const hidden = "6f7a8b9c-0000-4000-8000-000000000009";
+      await connected(page, { capabilities: ["run.read"] });
+      await runRoutes(page);
+      await page.route(`${environment}/runs/${hidden}`, denied);
+      await page.goto(`/operate/runs/${hidden}`);
+      const state = page.locator("weave-operate-state");
+      await expect(state).toContainText("You don't have access to this run");
+      await expect(state).toContainText(
+        "You need run.read in this environment.",
+      );
+      await expect(page).toHaveURL(/\/operate\/runs$/);
+      await expect(page.locator(".record-detail")).toHaveCount(0);
+      await expect(page.getByText("Run 6f7a8b9c")).toHaveCount(0);
+      // The runs this person can read stay on the page.
+      await expect(
+        page.getByRole("button", { name: "order-7", exact: true }),
+      ).toBeVisible();
+      await expect(page.locator(".error-banner")).toHaveCount(0);
+      // Opening a run they can read puts the explanation away.
+      await page.getByRole("button", { name: "order-7", exact: true }).click();
+      await expect(
+        page.locator(".record-detail #record-detail-title"),
+      ).toHaveText("order-7");
+      await expect(state).toHaveCount(0);
     });
 
     if (viewport.width > 1024) {

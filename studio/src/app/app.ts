@@ -680,6 +680,10 @@ export class App {
   records: Record<string, unknown>[] = [];
   nextCursor: string | null = null;
   selectedRecord: Record<string, unknown> | null = null;
+  /** The Runs list was refused (403): the page names the access it needs. */
+  runsRefused = false;
+  /** The run whose read was refused (403); it stays until another opens. */
+  runRefused = "";
   loading = false;
   draftId: string = crypto.randomUUID();
   draftRevision: number | undefined;
@@ -1493,6 +1497,8 @@ export class App {
       this.records = [];
       this.nextCursor = null;
       this.taskRunFilter = "";
+      this.runsRefused = false;
+      this.runRefused = "";
     }
     this.view = view;
     await this.router.navigateByUrl(
@@ -5147,12 +5153,20 @@ export class App {
       if (sequence !== this.listSequence || requestedView !== this.view) return;
       this.records = append ? [...this.records, ...result.items] : result.items;
       this.nextCursor = result.next_cursor;
-      if (this.view === "runs") this.rememberRuns(result.items);
+      if (this.view === "runs") {
+        this.rememberRuns(result.items);
+        this.runsRefused = false;
+      }
       if (this.view === "workflows" && this.libraryCollection === "workflows")
         for (const item of result.items) this.rememberVersion(item);
       this.error = "";
     } catch (e) {
-      this.fail(e);
+      // A refused Runs list names the access it needs on the page, instead
+      // of a banner over an empty list that claims there are no runs.
+      if (requestedView === "runs" && describeError(e).status === 403) {
+        if (sequence === this.listSequence && requestedView === this.view)
+          this.runsRefused = true;
+      } else this.fail(e);
     } finally {
       this.cdr.markForCheck();
       if (sequence === this.listSequence) this.loading = false;
@@ -5181,6 +5195,7 @@ export class App {
     }
   }
   async open(record: Record<string, unknown>) {
+    this.runRefused = "";
     this.emailDetail = null;
     this.emailSubmission = null;
     this.runHistory = null;
@@ -5351,12 +5366,14 @@ export class App {
     )[this.view];
     // Unavailable list entries have no readable detail; never guess another collection.
     if (!collection || this.selectedRecord["unavailable"]) return;
+    const id = this.selectedRecord["id"];
+    const view = this.view;
+    let read = false;
     try {
-      const id = this.selectedRecord["id"];
-      const view = this.view;
       const detail = await this.api.request<Record<string, unknown>>(
         `${this.api.environment}/${collection}/${encodeURIComponent(String(id))}`,
       );
+      read = true;
       if (view !== this.view || this.selectedRecord?.["id"] !== id) return;
       if (this.view === "email") {
         this.emailDetail = detail;
@@ -5394,10 +5411,22 @@ export class App {
         void this.findRunTask(detail);
       }
     } catch (e) {
-      this.fail(e);
+      if (!read && view === "runs" && describeError(e).status === 403)
+        this.refuseRun(String(id));
+      else this.fail(e);
     } finally {
       this.cdr.markForCheck();
     }
+  }
+  /**
+   * A run this person may not read opens nothing: its sheet closes, the
+   * address returns to the list as Close does, and the page names the access
+   * it needs. A refusal for a run the person has left changes nothing.
+   */
+  private refuseRun(id: string) {
+    if (this.view !== "runs" || this.selectedRecord?.["id"] !== id) return;
+    this.runRefused = id;
+    this.closeRecord();
   }
   async save() {
     if (!(await this.ensureApplied())) return;
@@ -5719,9 +5748,12 @@ export class App {
   async viewRun(run: Record<string, unknown>) {
     if (this.view !== "runs") await this.navigate("runs");
     if (this.view !== "runs" || !run["id"]) return;
-    if (!this.records.some((r) => r["id"] === run["id"]))
-      this.records = [run, ...this.records];
-    await this.open(this.records.find((r) => r["id"] === run["id"]) ?? run);
+    const listed = this.records.find((r) => r["id"] === run["id"]);
+    if (!listed) this.records = [run, ...this.records];
+    await this.open(listed ?? run);
+    // A run that could not be read leaves no placeholder row behind.
+    if (!listed && this.runRefused === run["id"])
+      this.records = this.records.filter((r) => r !== run);
   }
   applyRunFilters() {
     if (this.runFilterTimer) clearTimeout(this.runFilterTimer);
@@ -6119,6 +6151,8 @@ export class App {
     this.showActivation = false;
     this.exportFallback = null;
     this.records = [];
+    this.runsRefused = false;
+    this.runRefused = "";
     this.closeRecord();
     this.emailDetail = null;
     this.emailSubmission = null;
@@ -7462,8 +7496,12 @@ export class App {
         ? (route.view as View)
         : "home";
     this.selectedRecord = null;
-    // Closing a run came from this page: the list on screen is already current.
-    if (!closing) void this.refresh();
+    // Closing a run came from this page: the list on screen is already current,
+    // and why a run could not be opened stays with it.
+    if (!closing) {
+      this.runRefused = "";
+      void this.refresh();
+    }
     if (route?.id && this.view === "runs") void this.viewRun({ id: route.id });
   }
   @HostListener("window:keydown", ["$event"]) key(event: KeyboardEvent) {
