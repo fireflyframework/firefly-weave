@@ -273,8 +273,8 @@ Open the assistant in any of these ways:
 
 - While you work locally, select **Connect to a platform** on **Home**, in the
   platform menu at the top right, in the designer next to "Saving, publishing
-  and runs need a platform.", or on the **Runs**, **My tasks**, **Email**,
-  **Connections**, and **Workers** pages.
+  and runs need a platform.", or on the **Connections**, **My tasks**,
+  **Email**, **Runs**, **Incidents**, **Workers**, and **Clusters** pages.
 - In **Settings → Platforms**, select **Add platform** while you use a platform,
   or **Connect to a platform** while you work locally.
 

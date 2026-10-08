@@ -75,8 +75,8 @@ import { runnerSetup } from "./deployment-onboarding";
             }}
           </p>
           <p class="hint">
-            Check locally, start the runner, then refresh Operations and observe
-            the target. Contact alone does not prove health.
+            Check locally, start the runner, then select Refresh on Clusters and
+            observe the target. Contact alone does not prove health.
           </p>
         </li>
       </ol>
