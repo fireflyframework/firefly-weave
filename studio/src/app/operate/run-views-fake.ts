@@ -44,9 +44,12 @@ export const fakeEnvironment =
 
 type Kind = "string" | "boolean" | "integer" | "array";
 type Values = Record<string, string | string[] | boolean | number | undefined>;
-// Stricter than the server only on forms it also accepts: a space instead of
-// "T", no seconds, a comma fraction, offsets without a colon, UUIDs without
-// hyphens or braces, and names or versions over 200 characters. Never looser.
+// Never looser than the server: whatever the server refuses, the fake refuses.
+// It is stricter on some forms the server accepts: epoch-number timestamps,
+// "_" or a space instead of "T", no seconds, a comma fraction, offsets without
+// a colon, UUIDs written as urn:uuid:, without hyphens or in braces, and
+// names, versions or keys over 200 characters (counted in UTF-16 units, so
+// keys of 101 to 200 characters outside the BMP also fail here).
 const name = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Mirrors SEMVER_PATTERN in src/firefly_weave/contracts/definitions.py.
@@ -82,10 +85,9 @@ class Rejected extends Error {
 }
 const invalid = (message: string) =>
   new Rejected(problem(422, "WV-VALIDATION", message));
-const contradictory = () =>
-  new Rejected(
-    problem(422, "WV-FILTER", "Invalid filter combination or time range"),
-  );
+/** The message names the failed rule, as RunSummaryQuery words it. */
+const contradictory = (message: string) =>
+  new Rejected(problem(422, "WV-FILTER", message));
 
 const summaryParameters: Record<string, Kind> = {
   workflow: "string",
@@ -279,13 +281,7 @@ function offsetOf(cursor: string | undefined, bound: string): number {
   }
   throw invalid("Invalid scope-bound cursor");
 }
-function page<T>(
-  items: T[],
-  cursor: string | undefined,
-  limit: number,
-  bound: string,
-) {
-  const offset = offsetOf(cursor, bound);
+function page<T>(items: T[], offset: number, limit: number, bound: string) {
   return {
     items: items.slice(offset, offset + limit),
     next_cursor:
@@ -330,16 +326,23 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
   // Every value is checked above, so a value error wins over a filter combination.
   const after = filters.started_after;
   const before = filters.started_before;
+  if (filters.version !== undefined && filters.workflow === undefined)
+    throw contradictory("version requires workflow");
   if (
-    (filters.version !== undefined && filters.workflow === undefined) ||
-    (filters.top_level_only &&
-      (filters.caller_run_id !== undefined || filters.origin === "call")) ||
-    (filters.origin === "test" && !filters.include_test) ||
-    (after !== undefined &&
-      before !== undefined &&
-      (after >= before || before - after > maxRange))
+    filters.top_level_only &&
+    (filters.caller_run_id !== undefined || filters.origin === "call")
   )
-    throw contradictory();
+    throw contradictory(
+      "top_level_only excludes caller_run_id and origin call",
+    );
+  if (filters.origin === "test" && !filters.include_test)
+    throw contradictory("origin test requires include_test");
+  if (after !== undefined && before !== undefined) {
+    if (after >= before)
+      throw contradictory("started_after must be earlier than started_before");
+    if (before - after > maxRange)
+      throw contradictory("The time range is longer than 400 days");
+  }
   const bound = digest(
     JSON.stringify({
       ...filters,
@@ -384,7 +387,7 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
           recordMicros(right.summary[field]),
         ) || compare(left.summary.id, right.summary.id)),
     );
-  const result = page(runs, cursor, limit, bound);
+  const result = page(runs, offsetOf(cursor, bound), limit, bound);
   return {
     status: 200,
     body: {
@@ -411,7 +414,10 @@ function steps(
   const step = text(values, "step", name);
   const include = choice(values, "include", ["output"] as const);
   const limit = limitOf(values, 500, 200);
-  const cursor = cursorOf(values);
+  // The server decodes the cursor, bound to this run and filter, before it
+  // looks the run up, so a foreign cursor on an unknown run is a 422.
+  const bound = digest(JSON.stringify({ runId, step }));
+  const offset = offsetOf(cursorOf(values), bound);
   if (!data.runs.some((run) => run.summary.id === runId))
     return problem(404, "WV-NOT-FOUND", "Run not found");
   const record = data.steps[runId] ?? { complete: true, items: [] };
@@ -435,7 +441,7 @@ function steps(
   return {
     status: 200,
     body: {
-      ...page(items, cursor, limit, digest(JSON.stringify({ runId, step }))),
+      ...page(items, offset, limit, bound),
       complete: record.complete,
     },
   };
@@ -451,7 +457,8 @@ function logs(
   const source = choice(values, "source", logSources);
   const node = text(values, "node_id", name);
   const limit = limitOf(values, 500, 200);
-  const cursor = cursorOf(values);
+  const bound = digest(JSON.stringify({ runId, level, source, node }));
+  const offset = offsetOf(cursorOf(values), bound);
   if (!data.runs.some((run) => run.summary.id === runId))
     return problem(404, "WV-NOT-FOUND", "Run not found");
   const lowest = level === undefined ? 0 : logLevels.indexOf(level);
@@ -469,13 +476,16 @@ function logs(
     );
   return {
     status: 200,
-    body: page(
-      items,
-      cursor,
-      limit,
-      digest(JSON.stringify({ runId, level, source, node })),
-    ),
+    body: page(items, offset, limit, bound),
   };
+}
+
+function decodedSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -493,8 +503,9 @@ export function answerRunViews(
       return summaries(searchParams, data);
     const match = /\/runs\/([^/]+)\/(steps|logs)$/.exec(pathname);
     if (!match) return null;
-    // Run IDs are compared in lower case, as the server normalizes them.
-    const runId = decodeURIComponent(match[1]).toLowerCase();
+    // Run IDs are compared in lower case, as the server normalizes them. An ID
+    // that is not valid percent-encoding is no run ID, like any other bad one.
+    const runId = decodedSegment(match[1]).toLowerCase();
     if (!uuid.test(runId))
       return problem(404, "WV-STUDIO-ROUTE", "Unknown platform operation");
     return match[2] === "steps"

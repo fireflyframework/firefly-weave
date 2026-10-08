@@ -233,6 +233,8 @@ safe `message`, a `request_id`, and `diagnostics`. Quote the `request_id`
 | HTTP 409, `WV-IDEMPOTENCY-CONFLICT` | You reused an `Idempotency-Key` with a different request body | Use a new key for a new request; reuse a key only for an exact retry |
 | HTTP 412, `WV-ETAG` | Your `If-Match` revision is no longer the current one | Read the resource again, merge your change, and resend with the new revision |
 | HTTP 422, `WV-VALIDATION`, `WV-IDEMPOTENCY`, or `WV-ETAG` | The body does not match the contract, a required `Idempotency-Key` is missing, or `If-Match` is not a positive revision | Compare field names and types with the [full reference](api-explorer.md); send the revision as `"2"` or `2` |
+| HTTP 422, `WV-FILTER` | A list query combines filters that contradict each other, or has an invalid time range (empty, or longer than 400 days); the `message` names the rule that failed | Change or remove the filters the message names, then send the request again |
+| HTTP 501, `WV-UNAVAILABLE` | This server does not serve the operation yet | Use an operation this server serves, or ask your operator for a release that serves it |
 | A timeout or lost connection during a change | The outcome is unknown: the change may or may not have happened | Keep the original body and key; read the resource, and retry only with the same key |
 
 ## Request rules: paths, errors, revisions, and retries
@@ -406,9 +408,8 @@ or a history with unavailable or redacted parts, is never reported as success.
 See [history and replay](history-and-replay.md).
 
 **Run summaries, steps, and logs.** `run_summaries.list`, `runs.steps`, and
-`runs.logs` are published so that clients can build against them. Until a
-platform serves them, an authorized request answers `501` with
-`WV-UNAVAILABLE`.
+`runs.logs` are published so that clients can build against them. Until this
+server serves them, an authorized request answers `501` with `WV-UNAVAILABLE`.
 
 - These lists are ordered by time, not by ID: run summaries by start time
   (newest first by default) or by last update, steps by scheduled time, and log
@@ -416,9 +417,10 @@ platform serves them, an authorized request answers `501` with
 - `runs.steps` and `runs.logs` accept a `limit` of 1 to 500 (200 by default).
 - Each cursor is bound to every filter and to the order. After you change a
   filter, start again from the first page.
-- Test runs are left out unless you send `include_test=true`.
+- Test runs are left out unless you send `include_test=true`, and archived runs
+  unless you send `include_archived=true`.
 - A contradictory filter, such as `version` without `workflow`, answers `422`
-  with `WV-FILTER`.
+  with `WV-FILTER`; the message names the rule that failed.
 - Send times as RFC 3339 with an offset. Use `Z`, or encode `+` as `%2B` in the
   query string.
 

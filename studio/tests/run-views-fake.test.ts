@@ -41,6 +41,7 @@ import {
   classifyQueriesWithPython,
   pythonAvailable,
   type QueryModel,
+  rejectionMessagesWithPython,
   validateWithPython,
 } from "./run-views-oracle";
 
@@ -48,15 +49,29 @@ const api = fakeRunViewsApi();
 const ids = (page: RunSummaryPage) => page.items.map((item) => item.id);
 const summary = (page: RunSummaryPage, id: string) =>
   page.items.find((item) => item.id === id) as RunSummary;
-// Query strings refused with WV-FILTER and with WV-VALIDATION.
-const contradictoryQueries = [
-  "version=1.3.0",
-  "top_level_only=true&origin=call",
-  `top_level_only=true&caller_run_id=${fixtureIds.failed}`,
-  "origin=test",
-  "started_after=2026-10-07T12:00:00Z&started_before=2026-10-07T11:00:00Z",
-  "started_after=2025-01-01T00:00:00Z&started_before=2026-10-07T00:00:00Z",
+// Query strings refused with WV-FILTER, each with the rule the server names
+// (the messages of RunSummaryQuery), and with WV-VALIDATION.
+const contradictions: [query: string, message: string][] = [
+  ["version=1.3.0", "version requires workflow"],
+  [
+    "top_level_only=true&origin=call",
+    "top_level_only excludes caller_run_id and origin call",
+  ],
+  [
+    `top_level_only=true&caller_run_id=${fixtureIds.failed}`,
+    "top_level_only excludes caller_run_id and origin call",
+  ],
+  ["origin=test", "origin test requires include_test"],
+  [
+    "started_after=2026-10-07T12:00:00Z&started_before=2026-10-07T11:00:00Z",
+    "started_after must be earlier than started_before",
+  ],
+  [
+    "started_after=2025-01-01T00:00:00Z&started_before=2026-10-07T00:00:00Z",
+    "The time range is longer than 400 days",
+  ],
 ];
+const contradictoryQueries = contradictions.map(([query]) => query);
 const invalidQueries = [
   "colour=red",
   "workflow=a&workflow=b",
@@ -177,6 +192,13 @@ describe("run summaries", () => {
       expect(answerRunViews(`/run-summaries?${query}`), query).toMatchObject({
         status: 422,
         body: { code: "WV-VALIDATION" },
+      });
+  });
+  it("names the failing filter rule as the server does", () => {
+    for (const [query, message] of contradictions)
+      expect(answerRunViews(`/run-summaries?${query}`), query).toEqual({
+        status: 422,
+        body: { code: "WV-FILTER", message },
       });
   });
   it("accepts the first and last representable instants and refuses offsets that leave them", () => {
@@ -323,6 +345,32 @@ describe("run logs", () => {
       { input_tokens: 1004, output_tokens: 41 },
     ]);
     expect((await listRunLogs(api, fixtureIds.succeeded)).items).toEqual([]);
+  });
+  it("checks the cursor before the run exists, as the server does", async () => {
+    const unknown = "00000000-0000-4000-8000-0000000000ff";
+    const steps = await listRunSteps(api, fixtureIds.failed, { limit: 2 });
+    const logs = await listRunLogs(api, fixtureIds.failed, { limit: 1 });
+    for (const [view, cursor] of [
+      ["steps", steps.next_cursor!],
+      ["logs", logs.next_cursor!],
+    ] as const) {
+      expect(
+        answerRunViews(`/runs/${unknown}/${view}?cursor=${cursor}`),
+        view,
+      ).toMatchObject({ status: 422, body: { code: "WV-VALIDATION" } });
+      expect(answerRunViews(`/runs/${unknown}/${view}`), view).toMatchObject({
+        status: 404,
+        body: { code: "WV-NOT-FOUND" },
+      });
+    }
+  });
+  it("answers a run ID that is not valid percent-encoding like any other bad ID", () => {
+    for (const id of ["%zz", "%ff", "%E0%A4%A", "%"])
+      for (const view of ["steps", "logs"])
+        expect(answerRunViews(`/runs/${id}/${view}`), id).toMatchObject({
+          status: 404,
+          body: { code: "WV-STUDIO-ROUTE" },
+        });
   });
   it("leaves other URLs to the caller", () => {
     expect(
@@ -569,6 +617,20 @@ describe.skipIf(!pythonAvailable)("query decisions match parse_query", () => {
     expect(
       differences("RunSummaryQuery", "/run-summaries", summaryQueries),
     ).toEqual([]);
+  });
+  it("names the failing filter rule with the message parse_query raises", () => {
+    const expected = rejectionMessagesWithPython(contradictoryQueries);
+    expect(expected).toEqual(contradictions.map(([, message]) => message));
+    expect(
+      contradictoryQueries.map(
+        (query) =>
+          (
+            answerRunViews(`/run-summaries?${query}`)?.body as {
+              message?: string;
+            }
+          ).message,
+      ),
+    ).toEqual(expected);
   });
   it("answers each run step and run log query string as parse_query does", () => {
     expect(

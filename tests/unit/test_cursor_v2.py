@@ -104,19 +104,26 @@ def test_queries_decode_typed_repeated_and_encoded_values():
 
 
 @pytest.mark.parametrize(
-    "raw",
+    ("raw", "message"),
     [
-        "version=1.3.0",
-        "top_level_only=true&origin=call",
-        "origin=test",
-        "started_after=2026-10-07T12:00:00Z&started_before=2026-10-07T11:00:00Z",
-        "started_after=2025-01-01T00:00:00Z&started_before=2026-10-07T00:00:00Z",
+        ("version=1.3.0", "version requires workflow"),
+        ("top_level_only=true&origin=call", "top_level_only excludes caller_run_id and origin call"),
+        ("origin=test", "origin test requires include_test"),
+        (
+            "started_after=2026-10-07T12:00:00Z&started_before=2026-10-07T11:00:00Z",
+            "started_after must be earlier than started_before",
+        ),
+        (
+            "started_after=2025-01-01T00:00:00Z&started_before=2026-10-07T00:00:00Z",
+            "The time range is longer than 400 days",
+        ),
     ],
 )
-def test_contradictory_filters_answer_wv_filter(raw):
+def test_contradictory_filters_answer_wv_filter_naming_the_rule(raw, message):
     with pytest.raises(CatalogError) as failure:
         parse_query(QueryParams(raw), RunSummaryQuery)
     assert (failure.value.status, failure.value.code) == (422, "WV-FILTER")
+    assert failure.value.message == message
 
 
 @pytest.mark.parametrize(

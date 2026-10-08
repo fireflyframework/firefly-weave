@@ -113,3 +113,32 @@ export function classifyQueriesWithPython(
     }),
   ) as string[];
 }
+
+const messageScript = `
+import json, sys
+from starlette.datastructures import QueryParams
+from firefly_weave.api.transport import parse_query
+from firefly_weave.contracts.run_views import RunSummaryQuery
+from firefly_weave.definitions.models import CatalogError
+def message(raw):
+    try:
+        parse_query(QueryParams(raw), RunSummaryQuery)
+        return ""
+    except CatalogError as error:
+        return error.message
+    except ValueError:
+        return ""
+print(json.dumps([message(raw) for raw in json.load(sys.stdin)]))
+`;
+/**
+ * The message of the CatalogError parse_query raises for each run summary
+ * query string, in order; empty when it raises none.
+ */
+export function rejectionMessagesWithPython(queries: string[]): string[] {
+  return JSON.parse(
+    execFileSync(python, ["-c", messageScript], {
+      ...pythonOptions,
+      input: JSON.stringify(queries),
+    }),
+  ) as string[];
+}

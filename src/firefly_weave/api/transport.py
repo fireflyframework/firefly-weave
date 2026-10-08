@@ -170,7 +170,8 @@ def _query_kinds(model: type[BaseModel]) -> dict[str, Literal["array", "boolean"
 def parse_query[M: BaseModel](params: object, model: type[M]) -> M:
     """Strict query decoding: known names only, one value per scalar, JSON-typed values.
 
-    Filter combinations rejected by the model answer 422 WV-FILTER; other invalid values WV-VALIDATION.
+    Filter combinations rejected by the model answer 422 WV-FILTER, naming the rule that failed (the model's own
+    messages are fixed, safe strings); other invalid values answer WV-VALIDATION.
     """
     from starlette.datastructures import QueryParams
 
@@ -199,6 +200,7 @@ def parse_query[M: BaseModel](params: object, model: type[M]) -> M:
     try:
         return model.model_validate_json(json.dumps(values))
     except ValidationError as error:
-        if any(item["type"] == "weave_filter" for item in error.errors()):
-            raise CatalogError(422, "WV-FILTER", "Invalid filter combination or time range") from None
+        for item in error.errors(include_url=False, include_context=False, include_input=False):
+            if item["type"] == "weave_filter":
+                raise CatalogError(422, "WV-FILTER", item["msg"]) from None
         raise
