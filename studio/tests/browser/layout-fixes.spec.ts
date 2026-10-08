@@ -180,11 +180,9 @@ test.describe("360x740", () => {
     );
     await page.getByRole("button", { name: "Workers", exact: true }).click();
     await page.locator(".resource-row").click();
-    await expect(page.locator(".record-detail")).toContainText(
-      "Task types: crm-lookup",
-    );
-    const facts = page.locator(".record-detail weave-worker-controls dl");
-    await expect(facts).toContainText("Claim mode");
+    await expect(page.locator(".record-detail")).toContainText("crm-lookup");
+    const facts = page.locator(".record-detail weave-worker-detail dl.facts");
+    await expect(facts.first()).toContainText("New tasks");
     const label = await box(facts.locator("dt").first());
     const value = await box(facts.locator("dd").first());
     expect(Math.abs(value.x - label.x)).toBeLessThanOrEqual(1);

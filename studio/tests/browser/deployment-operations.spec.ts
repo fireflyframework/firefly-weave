@@ -1052,10 +1052,10 @@ for (const width of [1440, 390])
       await page.getByRole("button", { name: "Workers", exact: true }).click();
       await expect(
         page.getByRole("table", { name: "Workers", exact: true }),
-      ).toContainText("Registered");
+      ).toContainText("Not seen yet");
       await expect(
         page.getByRole("table", { name: "Workers", exact: true }),
-      ).not.toContainText("Active");
+      ).not.toContainText("Online");
     });
   });
 

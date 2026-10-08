@@ -2734,8 +2734,10 @@ spec:
 
   async workers({ page, shot }) {
     await connected(page, {
-      capabilities: [...allCapabilities, "status.read"],
+      capabilities: [...allCapabilities, "status.read", "worker.drain"],
     });
+    const seen = (seconds: number) =>
+      new Date(Date.now() + seconds * 1000).toISOString();
     const workers = [
       {
         id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
@@ -2744,6 +2746,14 @@ spec:
         capacity: 4,
         principal_id: "22222222-2222-4222-8222-222222222222",
         revoked: false,
+        revision: 3,
+        draining: false,
+        presence: "recent",
+        last_seen_at: seen(-4),
+        presence_expires_at: seen(56),
+        observed_at: seen(0),
+        active_leases: 3,
+        available_capacity: 1,
       },
       {
         id: "7c9e6679-7425-40de-944b-e07fc1f90ae8",
@@ -2751,7 +2761,15 @@ spec:
         task_types: ["email-send"],
         capacity: 1,
         principal_id: "22222222-2222-4222-8222-222222222223",
-        revoked: true,
+        revoked: false,
+        revision: 7,
+        draining: true,
+        presence: "stale",
+        last_seen_at: seen(-3600),
+        presence_expires_at: seen(-3540),
+        observed_at: seen(0),
+        active_leases: 0,
+        available_capacity: null,
       },
     ];
     await page.route(`${environment}/workers?*`, (r) =>

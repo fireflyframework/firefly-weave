@@ -148,6 +148,7 @@ import {
 } from "./format";
 // The operations pages and Settings load lazily (@defer): only these classes.
 import { ClustersPage } from "./operate/clusters/clusters-page";
+import { WorkersPage } from "./operate/workers/workers-page";
 import {
   navEntryVisible,
   viewFromPath,
@@ -327,6 +328,7 @@ const sideEffects: Record<string, string> = {
     DesignerView,
     RecordsView,
     ClustersPage,
+    WorkersPage,
     SettingsPage,
     LumiPanel,
   ],
@@ -5077,7 +5079,12 @@ export class App {
       await this.loadAdministration();
       return;
     }
-    if (this.view === "connect" || this.view === "clusters") return;
+    if (
+      this.view === "connect" ||
+      this.view === "clusters" ||
+      this.view === "workers"
+    )
+      return;
     if (this.view === "home") {
       await this.refreshHome();
       return;
@@ -5102,7 +5109,6 @@ export class App {
       workflows: [this.libraryCollection, false],
       runs: ["runs", true],
       connections: ["connections", true],
-      workers: ["workers", true],
       tasks: ["human-tasks", true],
       email: ["email/conversations", true],
     };
@@ -5328,7 +5334,6 @@ export class App {
         email: "email/conversations",
         runs: "runs",
         connections: "connections",
-        workers: "workers",
       } as Partial<Record<View, string>>
     )[this.view];
     // Unavailable list entries have no readable detail; never guess another collection.
