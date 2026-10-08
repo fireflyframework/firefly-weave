@@ -7281,6 +7281,9 @@ export class App {
         this.selectedRecord?.["id"] === r["id"]
       )
         this.selectedRecord = r;
+      // A cancel or a signal that Check now confirmed: read the open run again.
+      else if (/\/runs\/[^/]+\/(cancel|signals)$/.test(p.path))
+        void this.readDetail();
       this.notify(`Checked. ${p.label} finished.`);
       this.error = "";
       this.errorCode = "";

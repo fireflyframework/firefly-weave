@@ -2636,6 +2636,8 @@ spec:
         "run.purge",
         "run.pause",
         "run.resume",
+        "run.cancel",
+        "run.signal",
       ],
     });
     await runRoutes(page);
@@ -2646,7 +2648,15 @@ spec:
     await expect(page.locator(".record-detail")).toContainText(
       "Workflow expense-review 1.0.0",
     );
+    await expect(
+      page.getByRole("button", { name: "Cancel run", exact: true }),
+    ).toBeVisible();
     await shot("81-runs-detail", { end: ".record-detail, .page-content" });
+    await page.getByRole("button", { name: "Cancel run", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Cancel this run?" }),
+    ).toBeVisible();
+    await shot("94-runs-cancel");
   },
 
   async tasks({ page, shot }) {
