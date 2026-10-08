@@ -82,6 +82,14 @@ def test_the_step_test_examples_round_trip():
     assert st.StepTestView.model_validate_json(json.dumps(VIEW)).model_dump(mode="json") == VIEW
 
 
+@pytest.mark.parametrize("missing", ["draft_id", "draft_revision"])
+def test_a_step_test_names_the_saved_draft_it_runs(missing):
+    # A step kind's body leaves both out; Studio adds them when it sends the request.
+    body = {name: value for name, value in REQUEST.items() if name != missing}
+    with pytest.raises(ValidationError):
+        st.StepTestRequest.model_validate_json(json.dumps(body))
+
+
 @pytest.mark.parametrize(
     ("kind", "seconds", "valid"),
     [("action", 300, True), ("action", 301, False), ("agent", 900, True), ("agent", 901, False)],

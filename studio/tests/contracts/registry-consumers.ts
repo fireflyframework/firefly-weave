@@ -15,8 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Compile-only: registrations written the way an AI step module and a loop or
-// call module write them. `npm run check` type-checks this file; nothing runs it.
+// Compile-only: registrations written the way the AI step components and loop
+// and call support write them. `npm run check` type-checks this file; nothing
+// runs it.
 import { Component, input } from "@angular/core";
 import {
   NDV_REGISTRY_VERSION,
@@ -134,13 +135,10 @@ export const calleeInterface = (kind: KindContext, uses: string): Json | null =>
   kind.workflowContract(uses);
 
 // A kind that can run in an environment answers with the body of
-// POST {ENV}/step-tests, typed as the platform's request, or says why it can't.
-// The draft fields and the timeout belong to the saved draft, not to the step.
-const savedDraft = {
-  draft_id: "0f8f2a10-3c4d-4e5f-8a9b-1c2d3e4f5a6b",
-  draft_revision: 12,
-  timeout_seconds: 120,
-};
+// POST {ENV}/step-tests, typed as the platform's request without the draft
+// identity, or says why it can't. The kind sets everything about the step,
+// including the timeout (an AI agent may ask for up to 900 seconds); the editor
+// adds the saved draft's ID and revision when it sends the request.
 export const actionRealExecution: RealExecutionSupport = {
   request: (ctx) => {
     const uses = ctx.step["uses"];
@@ -149,13 +147,51 @@ export const actionRealExecution: RealExecutionSupport = {
     const input = ctx.sample.resolvedInput();
     if (input.state !== "available")
       return { blocked: "Run the previous steps first." };
-    const body: StepTestRequest = {
-      kind: ctx.step.kind,
-      step_id: ctx.step.id,
-      uses,
-      input: input.value,
-      ...savedDraft,
+    return {
+      body: {
+        kind: ctx.step.kind,
+        step_id: ctx.step.id,
+        uses,
+        input: input.value,
+        timeout_seconds: 120,
+      },
     };
-    return { body };
   },
+};
+
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+    ? true
+    : false;
+type KindBody = Extract<
+  ReturnType<RealExecutionSupport["request"]>,
+  { body: unknown }
+>["body"];
+
+// The two fields the hook leaves out are the platform request's own names.
+export const hookLeavesOutTheDraftIdentity: Equal<
+  Exclude<keyof StepTestRequest, keyof KindBody>,
+  "draft_id" | "draft_revision"
+> = true;
+
+// What the editor sends: the kind's body and the draft it is testing.
+export const sentRequest = (
+  body: KindBody,
+  draft: Pick<StepTestRequest, "draft_id" | "draft_revision">,
+): StepTestRequest => ({ ...body, ...draft });
+
+export const kindCannotSetTheDraft: KindBody = {
+  kind: "action",
+  step_id: "check-customer",
+  input: null,
+  timeout_seconds: 120,
+  // @ts-expect-error draft_id is the editor's, not the kind's
+  draft_id: "0f8f2a10-3c4d-4e5f-8a9b-1c2d3e4f5a6b",
+};
+
+// @ts-expect-error timeout_seconds belongs to the kind's body
+export const kindMustSetTheTimeout: KindBody = {
+  kind: "action",
+  step_id: "a",
+  input: null,
 };

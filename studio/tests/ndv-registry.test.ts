@@ -22,11 +22,12 @@ import {
   RegistryError,
   ndvRegistry,
   registerKind,
+  type NdvContext,
   type ParameterRegistration,
   type StepKindDescriptor,
   type SubNodeSlotSpec,
 } from "../src/app/editor/ndv/registry";
-import { createStep } from "../src/app/model";
+import { createStep, type Step } from "../src/app/model";
 
 const probe = (kind: string, idPrefix = "probe"): StepKindDescriptor => ({
   kind,
@@ -121,6 +122,49 @@ describe("step details registry", () => {
     expect(() =>
       new NdvRegistry().registerSubNodes("agent", [slot("tools", 0)]),
     ).toThrow(RegistryError);
+  });
+
+  it("keeps how a kind runs in an environment, without the draft identity", () => {
+    const registry = new NdvRegistry();
+    registry.registerKind({
+      ...probe("runnable"),
+      real: {
+        request: (ctx) =>
+          ctx.step["uses"]
+            ? {
+                body: {
+                  kind: ctx.step.kind,
+                  step_id: ctx.step.id,
+                  uses: String(ctx.step["uses"]),
+                  input: { id: "c-1" },
+                  timeout_seconds: 120,
+                },
+              }
+            : { blocked: "Choose an action first." },
+      },
+    });
+    const real = registry.kind("runnable")?.real;
+    const at = (step: Step) => ({ step }) as unknown as NdvContext;
+    const step = { ...createStep("transform", "check"), uses: "crm.get@1.0.0" };
+
+    expect(real?.request(at(createStep("transform", "check")))).toEqual({
+      blocked: "Choose an action first.",
+    });
+    const answer = real?.request(at(step));
+    if (!answer || !("body" in answer)) throw new Error("Expected a body");
+    expect(Object.keys(answer.body).sort()).toEqual([
+      "input",
+      "kind",
+      "step_id",
+      "timeout_seconds",
+      "uses",
+    ]);
+    // The editor adds the draft's ID and revision when it sends the request.
+    expect({
+      ...answer.body,
+      draft_id: "0f8f2a10-3c4d-4e5f-8a9b-1c2d3e4f5a6b",
+      draft_revision: 12,
+    }).toMatchObject({ step_id: "check", draft_revision: 12 });
   });
 
   it("registers through the shared functions into the shared registry", () => {

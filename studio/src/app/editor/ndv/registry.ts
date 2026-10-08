@@ -260,8 +260,16 @@ export interface SubNodeSlotSpec {
   entries(ctx: NdvContext): Promise<SubNodeEntry[]>;
 }
 export interface RealExecutionSupport {
-  /** Body for POST {ENV}/step-tests, or why the step can't run in an environment. */
-  request(ctx: NdvContext): { body: StepTestRequest } | { blocked: string };
+  /**
+   * Body for POST {ENV}/step-tests, or why the step can't run in an
+   * environment. The body is the whole request except `draft_id` and
+   * `draft_revision`: the editor adds the saved draft's when it sends it.
+   */
+  request(
+    ctx: NdvContext,
+  ):
+    | { body: Omit<StepTestRequest, "draft_id" | "draft_revision"> }
+    | { blocked: string };
 }
 
 export class RegistryError extends Error {

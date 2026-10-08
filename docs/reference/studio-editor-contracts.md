@@ -124,6 +124,18 @@ pane: `item`, `index` and `loops` (every enclosing loop by step ID).
 `catalog.workflows({callableBy})` lists published workflows; those that don't
 allow that caller stay listed and carry `disabled` with the reason.
 
+### Running a step in an environment
+
+A kind that can run in an environment sets `real` on its descriptor. Its
+`request(ctx)` returns `{body}` or `{blocked}` with the reason the step can't
+run, such as `Choose an action first.` The `body` is a `StepTestRequest`
+(snake_case, see [In an environment](#in-an-environment)) without `draft_id` and
+`draft_revision`: the kind sets `kind`, `step_id`, `input`, the connection and
+release bindings, the side effect it acknowledges, tool mocks, `real_tools` and
+`timeout_seconds`, and the editor adds the saved draft's `draft_id` and
+`draft_revision` when it sends `POST {ENV}/step-tests`. `NdvContext` doesn't
+expose the draft, so a kind can't set those two fields.
+
 ### Coverage against the language manifest
 
 `studio/tests/schema-coverage.test.ts` fails when a step kind the language

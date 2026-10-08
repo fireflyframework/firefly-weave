@@ -15,9 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The AI task descriptor. It describes today's `llm` step; the AI steps
-// replace this module's contents (descriptor, output schema, parameters)
-// rather than registering a second `llm` kind.
+// The AI task descriptor. It describes the `llm` step as it works now; the AI
+// step components replace this module's contents (descriptor, output schema,
+// parameters) rather than registering a second `llm` kind.
 import { registerKind, type StepKindDescriptor } from "../registry";
 import { common } from "./shared";
 
