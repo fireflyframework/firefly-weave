@@ -22,6 +22,10 @@ import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import { propertyFields, supportedOperators } from "../src/app/property-grid";
 import { createStep, freshWorkflow, kinds } from "../src/app/model";
+import { readyKinds } from "../src/app/editor/language-manifest";
+import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
+import { ndvRegistry } from "../src/app/editor/ndv/registry";
+import { loadLanguageManifest } from "./support/language-manifest";
 
 const root = resolve(import.meta.dirname, "../..");
 
@@ -132,6 +136,34 @@ describe.skipIf(!available)(
           .map((entry) => entry.name)
           .sort(),
       );
+    });
+  },
+);
+
+// Step details need a descriptor for every kind the language marks ready;
+// kinds still marked pending may lack one.
+const registryManifest = loadLanguageManifest();
+describe.skipIf(!registryManifest)(
+  "step details registry against the language manifest",
+  () => {
+    it("has a descriptor for every kind marked ready", async () => {
+      await loadKindRegistrations();
+      const registered = new Set(ndvRegistry.kinds().map((d) => d.kind));
+      expect(
+        readyKinds(registryManifest!).filter((kind) => !registered.has(kind)),
+      ).toEqual([]);
+    });
+    it("registers only kinds the manifest lists, with their features", async () => {
+      await loadKindRegistrations();
+      const listed = new Map(
+        registryManifest!.step_kinds.map((entry) => [entry.kind, entry]),
+      );
+      for (const descriptor of ndvRegistry.kinds()) {
+        expect(listed.has(descriptor.kind), descriptor.kind).toBe(true);
+        expect(descriptor.feature ?? null, descriptor.kind).toBe(
+          listed.get(descriptor.kind)?.feature ?? null,
+        );
+      }
     });
   },
 );
