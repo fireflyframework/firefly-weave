@@ -147,7 +147,7 @@ import {
   workspaceShort,
 } from "./format";
 // The operations pages and Settings load lazily (@defer): only these classes.
-import { OperationsView } from "./operations/operations-view";
+import { ClustersPage } from "./operate/clusters/clusters-page";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
@@ -321,7 +321,7 @@ const sideEffects: Record<string, string> = {
     ToastHost,
     DesignerView,
     RecordsView,
-    OperationsView,
+    ClustersPage,
     SettingsPage,
     LumiPanel,
   ],
@@ -360,7 +360,7 @@ export class App {
     detail?: string;
   } | null = null;
   lumiOpen = false;
-  private readonly operationsView = viewChild(OperationsView);
+  private readonly operationsView = viewChild(ClustersPage);
   get lumiOperationAttachments() {
     return this.view === "operations"
       ? (this.operationsView()?.lumiAttachments ?? [])

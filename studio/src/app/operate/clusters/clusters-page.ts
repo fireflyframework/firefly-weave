@@ -26,28 +26,20 @@ import {
   OnDestroy,
   inject,
 } from "@angular/core";
-import { NgTemplateOutlet } from "@angular/common";
 import { Router } from "@angular/router";
-import type { App } from "../app";
-import type { LumiOperationAttachment } from "../lumi/lumi-state";
-import { describeError } from "../errors";
-import {
-  DeploymentReconciliation,
-  type ReconcileRequest,
-} from "./deployment-reconciliation";
-import { DeploymentEditor } from "./deployment-editor";
-import {
-  DeploymentPlanBuilder,
-  type PlanRequest,
-} from "./deployment-plan-builder";
-import type { Schema } from "../task-schema";
-import { RunnerSetup } from "./runner-setup";
+import type { App } from "../../app";
+import type { LumiOperationAttachment } from "../../lumi/lumi-state";
+import { describeError } from "../../errors";
+import type { ReconcileRequest } from "../../operations/deployment-reconciliation";
+import { DeploymentEditor } from "../../operations/deployment-editor";
+import type { PlanRequest } from "../../operations/deployment-plan-builder";
+import type { Schema } from "../../task-schema";
 import type {
   RunnerApplication,
   AdmittedWorkerRelease,
-} from "./deployment-onboarding";
-import { TargetWizard } from "./target-wizard";
-import { OperationsStore } from "./deployment-store";
+} from "../../operations/deployment-onboarding";
+import { TargetWizard } from "../../operations/target-wizard";
+import { OperationsStore } from "../../operations/deployment-store";
 import {
   adapterLabels,
   observationState,
@@ -61,21 +53,27 @@ import {
   type Job,
   type Approval,
   type Collection,
-} from "./deployment-contracts";
+} from "../../operations/deployment-contracts";
+import { ClusterDeploymentDetail } from "./cluster-deployment-detail";
+import { ClusterJobDetail } from "./cluster-job-detail";
+import { ClusterOverview } from "./cluster-overview";
+import { ClusterPlanDetail } from "./cluster-plan-detail";
+import { ClusterTargetDetail } from "./cluster-target-detail";
 
 @Component({
-  selector: "weave-operations-view",
+  selector: "weave-clusters-page",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [
     TargetWizard,
-    RunnerSetup,
-    NgTemplateOutlet,
     DeploymentEditor,
-    DeploymentPlanBuilder,
-    DeploymentReconciliation,
+    ClusterTargetDetail,
+    ClusterDeploymentDetail,
+    ClusterPlanDetail,
+    ClusterJobDetail,
+    ClusterOverview,
   ],
-  styleUrl: "./operations-view.css",
+  styleUrl: "./clusters.css",
   template: `
     <header class="operations-heading">
       <div>
@@ -212,494 +210,22 @@ import {
           />
         </section>
       } @else if (screen === "target" && target) {
-        <section class="operations-panel">
-          <p class="eyebrow">DEPLOYMENT TARGET</p>
-          <h2 tabindex="-1">{{ target.name }}</h2>
-          <dl>
-            <dt>Runtime</dt>
-            <dd>{{ adapterLabels[target.adapter] }}</dd>
-            <dt>External identity</dt>
-            <dd>{{ target.external_identity }}</dd>
-            <dt>Allowed boundary</dt>
-            <dd>{{ target.boundary }}</dd>
-            <dt>Authority revision</dt>
-            <dd>{{ target.revision }}</dd>
-            <dt>Permitted operations</dt>
-            <dd>{{ target.capabilities.join(", ") }}</dd>
-          </dl>
-          @if (target.disabled) {
-            <p class="notice">
-              This target is disabled. No new operation can start.
-            </p>
-          }
-          <p class="hint">
-            Permitted operations are policy, not proof of a working adapter. A
-            runner must independently support the operation within its local
-            authority.
-          </p>
-          @if (can("target.manage")) {
-            <button [disabled]="store.mutating" (click)="editTargetAuthority()">
-              Edit target authority
-            </button>
-          }
-          @if (can("deployment.plan")) {
-            <button
-              class="primary"
-              [disabled]="store.mutating || target.disabled"
-              (click)="observe()"
-            >
-              Observe target
-            </button>
-          }
-        </section>
-        <section class="operations-panel">
-          <weave-runner-setup
-            [target]="target"
-            [baseUrl]="host.profile!.baseUrl"
-            [registered]="runnerPresent"
-            [observed]="observationState(latestObservation) === 'current'"
-            (administration)="host.navigate('settings')"
-          />
-        </section>
-        <section class="operations-panel">
-          <h2>Observed resources</h2>
-          @if (store.loading.has("observations")) {
-            <p role="status">Loading observation…</p>
-          } @else if (store.errors.observations) {
-            <p role="alert">{{ store.errors.observations }}</p>
-          } @else if (latestObservation; as observation) {
-            <p>
-              <strong>{{ observationState(observation) }}</strong> · Observed
-              {{ observation.observed_at }} · Expires
-              {{ observation.expires_at }}
-            </p>
-            <p class="hint">
-              An observation is a bounded snapshot. It does not guarantee
-              current availability.
-            </p>
-            <ul class="resource-cards">
-              @for (
-                resource of observation.resources;
-                track resource.external_identity
-              ) {
-                <li>
-                  <strong>{{ resource.name }}</strong
-                  ><span>{{ resource.kind }} · {{ resource.state }}</span
-                  ><span
-                    >{{ resource.ready_replicas }} ready of
-                    {{ resource.replicas }} observed replicas</span
-                  ><code>{{
-                    resource.image || "Image identity unavailable"
-                  }}</code>
-                </li>
-              } @empty {
-                <li>No resources were reported in this observation.</li>
-              }
-            </ul>
-          } @else {
-            <p>
-              No observation yet. Request one after installing the authorized
-              runner.
-            </p>
-          }
-        </section>
-        <section class="operations-panel">
-          <h2>Outbound runners</h2>
-          <p class="hint">
-            Current contact is presence, not container health or available
-            worker capacity.
-          </p>
-          @if (store.errors.runners) {
-            <p role="alert">{{ store.errors.runners }}</p>
-          }
-          <ul class="resource-cards">
-            @for (runner of store.runners; track runner.id) {
-              <li>
-                <code>{{ runner.id }}</code
-                ><strong>{{
-                  runner.revoked
-                    ? "Revoked"
-                    : fresh(runner.expires_at)
-                      ? "Recent contact"
-                      : "Contact expired"
-                }}</strong
-                ><span>Last contact {{ runner.last_seen }}</span
-                ><span
-                  >Reported capabilities:
-                  {{ runner.capabilities.join(", ") }}</span
-                >
-              </li>
-            } @empty {
-              <li>No runner registration has been returned.</li>
-            }
-          </ul>
-        </section>
-        <section class="operations-panel">
-          <h2>Deployments</h2>
-          @if (can("target.manage")) {
-            <button
-              [disabled]="store.mutating || target.disabled"
-              (click)="editDeployment()"
-            >
-              Record desired deployment
-            </button>
-          }
-          <ng-container [ngTemplateOutlet]="deploymentList" />
-        </section>
+        <weave-cluster-target-detail [page]="this" />
       } @else if (screen === "deployment" && deployment) {
-        <section class="operations-panel">
-          <p class="eyebrow">DESIRED DEPLOYMENT</p>
-          <h2 tabindex="-1">{{ deployment.name }}</h2>
-          <p>Revision {{ deployment.revision }} · {{ deployment.ownership }}</p>
-          <p class="hint">
-            Desired components are intent, not observed availability. Imported
-            intent requires explicit review of a deployment plan before changes.
-            Ownership here records declared intent; it is not automatically
-            changed by a successful job.
-          </p>
-          <div class="actions">
-            @if (can("target.manage")) {
-              <button [disabled]="store.mutating" (click)="editDeployment()">
-                Edit desired deployment
-              </button>
-            }
-            @if (can("deployment.plan")) {
-              <button
-                [disabled]="
-                  store.mutating || !relatedTarget || relatedTarget.disabled
-                "
-                (click)="planning = true"
-              >
-                Create plan
-              </button>
-            }
-            <button (click)="readTarget(deployment.target_id)">
-              View target and observation
-            </button>
-          </div>
-          <ul class="resource-cards">
-            @for (component of deployment.components; track component.name) {
-              <li>
-                <strong>{{ component.name }}</strong
-                ><span
-                  >{{ component.kind }} · {{ component.replicas }} desired
-                  replicas</span
-                ><code>{{ component.image }}</code
-                ><span
-                  >Runner configuration reference:
-                  {{ component.configuration }}</span
-                >
-              </li>
-            }
-          </ul>
-        </section>
-        @if (planning && relatedTarget) {
-          <section class="operations-panel">
-            <weave-deployment-plan-builder
-              [target]="relatedTarget"
-              [deployment]="deployment"
-              [observations]="store.observations"
-              [busy]="store.mutating"
-              [error]="store.mutationError"
-              (submit)="createPlan($event)"
-              (cancel)="cancelDraft()"
-            />
-            @if (store.cursors.observations) {
-              <button (click)="loadMore('observations')">
-                Load more observations
-              </button>
-            }
-          </section>
-        }
-        <section class="operations-panel">
-          <h2>Plans</h2>
-          @if (store.errors.plans) {
-            <p role="alert">{{ store.errors.plans }}</p>
-          }
-          <ul class="resource-cards">
-            @for (plan of store.plans; track plan.id) {
-              <li>
-                <button (click)="openPlan(plan)">
-                  {{ plan.intent }} · {{ plan.created_at }}</button
-                ><span>{{
-                  fresh(plan.expires_at) ? "Review required" : "Expired"
-                }}</span
-                ><code>{{ plan.digest }}</code>
-              </li>
-            } @empty {
-              <li>No plan has been returned for this deployment.</li>
-            }
-          </ul>
-        </section>
+        <weave-cluster-deployment-detail [page]="this" />
       } @else if (screen === "plan" && plan) {
-        <section class="operations-panel">
-          <p class="eyebrow">IMMUTABLE PLAN</p>
-          <h2 tabindex="-1">Review {{ plan.intent }}</h2>
-          <p>
-            Target revision {{ plan.target_revision }} · Deployment revision
-            {{ plan.deployment_revision }}
-          </p>
-          <dl>
-            <dt>Reviewed digest</dt>
-            <dd>
-              <code>{{ plan.digest }}</code>
-            </dd>
-            <dt>Observation digest</dt>
-            <dd>
-              <code>{{ plan.observation_digest }}</code>
-            </dd>
-            <dt>Expires</dt>
-            <dd>{{ plan.expires_at }}</dd>
-            <dt>Estimated cost / duration</dt>
-            <dd>Not available</dd>
-          </dl>
-          @if (!fresh(plan.expires_at)) {
-            <p class="notice">
-              @if (recoverApply) {
-                This plan has expired. An unchanged recovery request can
-                retrieve an earlier accepted result; a new apply remains
-                blocked.
-              } @else {
-                This plan has expired. Create and review a new plan before
-                applying.
-              }
-            </p>
-          }
-          <h3>Changes and preconditions</h3>
-          <ul class="resource-cards">
-            @for (step of plan.steps; track step.component.name) {
-              <li>
-                <strong>{{ step.action }} {{ step.component.name }}</strong
-                ><span
-                  >{{ step.component.kind }} ·
-                  {{ step.component.replicas }} desired replicas</span
-                ><code>{{ step.component.image }}</code
-                ><span
-                  >Expected external version:
-                  {{ step.expected_version || "Resource must not exist" }}</span
-                >
-              </li>
-            }
-          </ul>
-          <h3>Operational risks</h3>
-          <ul>
-            @for (risk of plan.risks; track risk) {
-              <li>{{ riskLabel(risk) }}</li>
-            } @empty {
-              <li>No additional risks were reported by the planner.</li>
-            }
-          </ul>
-          <p class="hint">
-            Approval and apply use this exact digest. The server rechecks
-            authority, revisions and observation. Cancellation cannot undo
-            external effects.
-          </p>
-          @if (approval) {
-            <p role="status">Approval recorded for {{ approval.digest }}</p>
-            <p class="hint">
-              Recorded approval is historical evidence. Apply rechecks the
-              approver’s current authority and all plan preconditions.
-            </p>
-          } @else {
-            <p class="hint">
-              Approval has not been confirmed in this view. Applying requires a
-              recorded approval for this exact digest; the server checks it
-              again.
-            </p>
-          }
-          <div class="actions">
-            @if (can("deployment.approve")) {
-              <button
-                [disabled]="store.mutating || !fresh(plan.expires_at)"
-                (click)="approve()"
-              >
-                Approve reviewed plan
-              </button>
-            }
-            @if (can("deployment.apply")) {
-              <button
-                class="primary"
-                [disabled]="
-                  store.mutating || (!fresh(plan.expires_at) && !recoverApply)
-                "
-                (click)="apply()"
-              >
-                {{
-                  recoverApply ? "Recover apply result" : "Apply approved plan"
-                }}
-              </button>
-            }
-          </div>
-        </section>
+        <weave-cluster-plan-detail [page]="this" />
       } @else if (screen === "job" && job) {
-        <section class="operations-panel">
-          <p class="eyebrow">DURABLE OPERATION</p>
-          <h2 tabindex="-1">
-            {{
-              job.kind === "observe"
-                ? "Observe target"
-                : "Apply deployment plan"
-            }}
-          </h2>
-          <p role="status">
-            <strong>{{ job.state.replaceAll("_", " ") }}</strong>
-          </p>
-          <dl>
-            <dt>Job ID</dt>
-            <dd>
-              <code>{{ job.id }}</code>
-            </dd>
-            <dt>Created</dt>
-            <dd>{{ job.created_at }}</dd>
-            <dt>Deadline</dt>
-            <dd>{{ job.deadline }}</dd>
-            <dt>Target revision</dt>
-            <dd>{{ job.target_revision }}</dd>
-          </dl>
-          @if (job.state === "reconciliation_required") {
-            <p class="notice">
-              The external result is uncertain. Observe the target and review
-              what changed before creating another plan. Do not retry blindly.
-            </p>
-          }
-          @if (job.receipt; as receipt) {
-            <h3>Operation receipt</h3>
-            <p>{{ receipt.code.replaceAll("_", " ") }}</p>
-            <ul>
-              @for (resource of receipt.changed_resources; track resource) {
-                <li>{{ resource }}</li>
-              }
-            </ul>
-            @if (receipt.external_effects_may_continue) {
-              <p class="notice">
-                External effects may continue. Cancellation is not a rollback.
-              </p>
-            }
-          }
-          @if (
-            job.state === "reconciliation_required" &&
-            can("deployment.apply") &&
-            can("deployment.approve") &&
-            relatedTarget
-          ) {
-            <weave-deployment-reconciliation
-              [job]="job"
-              [target]="relatedTarget"
-              [observations]="store.observations"
-              [busy]="store.mutating"
-              (submit)="reconcile($event)"
-            />
-            @if (store.cursors.observations) {
-              <button (click)="loadMore('observations')">
-                Load more observations
-              </button>
-            }
-          }
-          @if (can("deployment.cancel") && !terminalJobs.has(job.state)) {
-            <button [disabled]="store.mutating" (click)="cancelJob()">
-              Cancel operation
-            </button>
-          }
-          <button
-            [disabled]="store.mutating"
-            (click)="readTarget(job.target_id)"
-          >
-            View target and observation
-          </button>
-        </section>
+        <weave-cluster-job-detail [page]="this" />
       } @else if (screen === "overview") {
-        <section class="operations-panel">
-          <div class="panel-heading">
-            <div>
-              <h2>Deployment targets</h2>
-              <p>Existing container runtimes and their explicit boundaries.</p>
-            </div>
-            @if (can("target.manage")) {
-              <button class="primary" (click)="startRegistration()">
-                Register target
-              </button>
-            }
-          </div>
-          @if (store.loading.has("targets")) {
-            <p role="status">Loading targets…</p>
-          }
-          @if (store.errors.targets) {
-            <p role="alert">{{ store.errors.targets }}</p>
-          }
-          <ul class="resource-cards">
-            @for (item of store.targets; track item.id) {
-              <li>
-                <button (click)="openTarget(item)">{{ item.name }}</button
-                ><span
-                  >{{ adapterLabels[item.adapter] }} · {{ item.boundary }}</span
-                ><span>{{ item.disabled ? "Disabled" : "Registered" }}</span>
-              </li>
-            } @empty {
-              @if (!store.loading.has("targets") && !store.errors.targets) {
-                <li>
-                  No deployment target has been returned in this environment.
-                </li>
-              }
-            }
-          </ul>
-          @if (store.cursors.targets) {
-            <button (click)="loadMore('targets')">Load more targets</button>
-          }
-        </section>
-        <section class="operations-panel">
-          <h2>Deployments</h2>
-          <ng-container [ngTemplateOutlet]="deploymentList" />
-        </section>
-        <section class="operations-panel">
-          <h2>Operations history</h2>
-          @if (store.errors.jobs) {
-            <p role="alert">{{ store.errors.jobs }}</p>
-          }
-          <ul class="resource-cards">
-            @for (item of store.jobs; track item.id) {
-              <li>
-                <button (click)="openJob(item)">
-                  {{ item.kind }} · {{ item.created_at }}</button
-                ><span>{{ item.state.replaceAll("_", " ") }}</span>
-              </li>
-            } @empty {
-              <li>No operation has been returned.</li>
-            }
-          </ul>
-          @if (store.cursors.jobs) {
-            <button (click)="loadMore('jobs')">Load more operations</button>
-          }
-        </section>
+        <weave-cluster-overview [page]="this" />
       } @else {
         <p role="status">Loading selected resource…</p>
       }
-      <ng-template #deploymentList>
-        @if (store.errors.deployments) {
-          <p role="alert">{{ store.errors.deployments }}</p>
-        }
-        <ul class="resource-cards">
-          @for (item of store.deployments; track item.id) {
-            <li>
-              <button (click)="openDeployment(item)">{{ item.name }}</button
-              ><span
-                >{{ item.ownership }} · desired revision
-                {{ item.revision }}</span
-              >
-            </li>
-          } @empty {
-            <li>No deployment has been returned.</li>
-          }
-        </ul>
-        @if (store.cursors.deployments) {
-          <button (click)="loadMore('deployments')">
-            Load more deployments
-          </button>
-        }
-      </ng-template>
     }
   `,
 })
-export class OperationsView implements DoCheck, OnDestroy {
+export class ClustersPage implements DoCheck, OnDestroy {
   @Input({ required: true }) host!: App;
   private cdr = inject(ChangeDetectorRef);
   private element = inject<ElementRef<HTMLElement>>(ElementRef);

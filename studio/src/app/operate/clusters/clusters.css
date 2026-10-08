@@ -37,7 +37,7 @@ h3 {
   margin-top: 0;
 }
 .eyebrow {
-  font-size: 11px;
+  font: var(--type-caption);
   font-weight: 600;
   letter-spacing: 0.09em;
   color: var(--muted);

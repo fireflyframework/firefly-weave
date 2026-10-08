@@ -251,7 +251,7 @@ for (const width of [1440, 390])
         .getByRole("button", { name: "Observe target", exact: true })
         .click();
       await expect(
-        page.locator("weave-operations-view").getByRole("status"),
+        page.locator("weave-clusters-page").getByRole("status"),
       ).toHaveText("queued");
       await expect(
         page.getByRole("heading", { name: "Operation receipt", exact: true }),
@@ -698,7 +698,7 @@ for (const width of [1440, 390])
         external_operation_stopped: true,
       });
       await expect(
-        page.locator("weave-operations-view").getByRole("status"),
+        page.locator("weave-clusters-page").getByRole("status"),
       ).toHaveText("failed");
       await expect(page.getByText("reconciled", { exact: true })).toBeVisible();
     });
@@ -972,7 +972,7 @@ for (const width of [1440, 390])
         .getByRole("button", { name: "Recover apply result", exact: true })
         .click();
       await expect(
-        page.locator("weave-operations-view").getByRole("status"),
+        page.locator("weave-clusters-page").getByRole("status"),
       ).toHaveText("queued");
       expect(keys).toHaveLength(2);
       expect(keys[1]).toBe(keys[0]);
