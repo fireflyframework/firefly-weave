@@ -143,7 +143,7 @@ Keep credentials, `.env` files, `.superpowers`, `.secrets`, `.local`, dependency
 directories, local databases, logs and disposable builds/renders out of publication.
 Review actual package and public-tree inventories rather than relying only on
 ignore rules. Requested editable SVG diagrams are source deliverables. Follow the
-[visual assets guide](docs/visual-assets.md); preserve the approved logo/banner identity.
+[visual assets guide](docs/visual-assets.md); regenerate Firefly artwork, never redraw it.
 
 Report security concerns through the [security policy](SECURITY.md), not an issue
 containing credentials or exploit details. Contribution does not imply a response

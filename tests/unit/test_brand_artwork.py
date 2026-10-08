@@ -17,6 +17,7 @@
 """Brand artwork beyond Studio: generated marks, desktop icons, badges and the retired palette."""
 
 import json
+import math
 import re
 import struct
 import tomllib
@@ -91,10 +92,6 @@ LEGACY_SCAN_ROOTS = (
     "studio/src",
     "docs/diagrams",
     "docs/stylesheets",
-)
-# Deleted when the documentation header and favicon switch to the Firefly files.
-LEGACY_SCAN_EXEMPT = frozenset(
-    {"assets/weave-logo.svg", "assets/weave-logo-mono.svg", "assets/weave-logo-reversed.svg"}
 )
 
 TEXT_SUFFIXES = frozenset({".svg", ".css", ".html", ".py", ".ts", ".js", ".mjs", ".json", ".md", ".txt"})
@@ -335,9 +332,49 @@ def test_no_retired_palette_color_remains(folder):
     offenders = []
     for path in sorted((ROOT / folder).rglob("*")):
         relative = path.relative_to(ROOT).as_posix()
-        if not path.is_file() or path.suffix not in TEXT_SUFFIXES or relative in LEGACY_SCAN_EXEMPT:
+        if not path.is_file() or path.suffix not in TEXT_SUFFIXES:
             continue
         if {"node_modules", "__pycache__"} & set(path.relative_to(ROOT).parts):
             continue
         offenders += [f"{relative}: {color}" for color in sorted(colors(text_of(relative)) & LEGACY_HEX)]
     assert offenders == []
+
+
+def test_visual_assets_records_the_committed_lockup_measurements():
+    root = svg_root("assets/brand/weave-lockup-reversed.svg")
+    width, height = (float(value) for value in root.get("viewBox").split()[2:])
+    firefly = float(root.find(f"{SVG}svg").get("width"))
+    for name in ("weave-lockup-color", "weave-lockup-small-reversed"):
+        other = svg_root(f"assets/brand/{name}.svg")
+        assert other.get("viewBox") == root.get("viewBox")
+        assert float(other.find(f"{SVG}svg").get("width")) == firefly
+    page = " ".join(text_of("docs/visual-assets.md").split())
+    ratio = firefly / width
+    assert f"FW = {firefly:g} units" in page and f"lockup width = {width:g} units" in page
+    assert f"lockup height = {height:g} units" in page and f"ratio FW / width = {ratio:.4f}" in page
+    for rendered in (192, 240):
+        assert f"{rendered * ratio:.1f} pixels" in page
+    for x in (11, 16, 32, 48):
+        assert f"X = {x} pixels: {width * x / 108:.1f}" in page and f"{firefly * x / 108:.1f} pixels" in page
+    assert f"{height * 11 / 108:.1f} pixels" in page
+    regular, small = math.ceil(80 / ratio), math.ceil(48 / ratio)
+    assert f"at least {regular} pixels wide" in page and f"at least {small} pixels" in page
+
+
+def test_visual_assets_records_the_artwork_sizes():
+    page = " ".join(text_of("docs/visual-assets.md").split())
+    banner, dmg = svg_root("assets/banner.svg"), svg_root("desktop/artwork/dmg-background.svg")
+    assert f"{banner.get('width')} × {banner.get('height')} pixels" in page
+    assert f"{dmg.get('width')} × {dmg.get('height')} pixels" in page
+    assert " × ".join(svg_root("desktop/artwork/app-icon-macos.svg").get("viewBox").split()[2:]) in page
+    social = png_size((ROOT / "assets/brand/social-preview.png").read_bytes())
+    assert f"{social[0]} × {social[1]} pixels" in page
+
+
+def test_visual_assets_describes_the_drawn_wordmark():
+    page = " ".join(text_of("docs/visual-assets.md").split())
+    for name in ("weave-wordmark.svg", "weave-wordmark-small.svg", "weave-w.svg"):
+        assert f"assets/brand/{name}" in page
+    width, height = svg_root("assets/brand/weave-wordmark.svg").get("viewBox").split()[2:]
+    assert f"{float(width):g} × {float(height):g} units" in page
+    assert "title case" not in page

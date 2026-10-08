@@ -16,83 +16,163 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Use the Weave logo and diagrams
+# Use the Firefly Weave brand assets and draw diagrams
 
-Use this page when you place the Weave logo in a document or slide, or when you
-draw or change a diagram in this documentation. It tells you which file to use
-on which background, the colors and type to keep, the rules every technical
-diagram follows, and how to check a change at its real size. It takes about ten
-minutes to read. To edit, you need a text editor or a standards-compliant SVG
-editor, and a Chromium-based browser to check the result.
+Use this page when you place the Firefly Weave logo in a page, document or slide,
+when you need a brand color or font, or when you draw or change a diagram in this
+documentation. It tells you who owns each asset, which file to use on which
+background, the rules every technical diagram follows, how to regenerate the
+artwork, and how to check a change at its real size. It takes about ten minutes
+to read.
 
-Weave's own logos and technical diagrams are distributed under the Apache
-License 2.0. The Firefly marks are not: they are trademarks of Firefly Software
-Solutions Inc., used with permission (see `NOTICE`). The source inventory,
-`docs/contributing/source-inventory.toml`, lists every file that carries them:
-`assets/brand/`, the Studio copies and the favicons. Logos and technical
-diagrams use editable SVG source, with no scripts, remote fonts, embedded raster
-images, or `foreignObject`.
+## Who owns what
+
+| Asset | Owner | License |
+| --- | --- | --- |
+| The Firefly name, the firefly wordmark with its spark and chevron, and the Firefly icon | Firefly Software Solutions Inc. | Trademarks and proprietary artwork, used by the Firefly Software Foundation with permission; not licensed under the Apache License 2.0 (see [NOTICE](../NOTICE)) |
+| The Weave name and the Weave wordmark, the woven w and "eave", including the w alone | Firefly Software Foundation | Trademarks. The three master files are first-party and Apache-2.0 as copyright works, but the license grants no trademark rights in the name or the drawing (Apache License 2.0, section 6; see [NOTICE](../NOTICE)) |
+| The Firefly Weave logo, which combines the Firefly logo and the Weave wordmark | Both owners | Recorded as third-party wherever it appears, because the Firefly part is not Apache-2.0 |
+| Firefly Weave code, documentation, diagrams and badges | Firefly Software Foundation | Apache License 2.0 |
+| The Manrope typeface | The Manrope Project Authors | SIL Open Font License 1.1 ([OFL.txt](../assets/fonts/manrope/OFL.txt)) |
+| Studio icons, derived from Lucide | Lucide contributors | ISC, with MIT for the parts from Feather ([license](../studio/public/licenses/lucide-LICENSE.txt)) |
+
+The [source inventory](contributing/source-inventory.toml) records every file
+that contains Firefly marks as a third-party asset, and names both owners where
+the file also holds the Weave wordmark. Those files carry a trademark comment
+instead of the Apache-2.0 header; the three wordmark masters carry the Apache-2.0
+header and a trademark line.
 
 ## Choose the right asset
 
-| Asset | Use it for | Native size |
+![The Firefly Weave logo in paper on charcoal](../assets/brand/weave-lockup-reversed.svg){ width="320" }
+
+![The Firefly Weave logo in charcoal, shown on a paper panel](../assets/brand/weave-lockup-color.svg){ width="320" }
+
+| Asset | Use it for | Size |
 | --- | --- | --- |
-| [Weave symbol](../assets/weave-logo.svg) | The forest and jade mark on white or light neutral surfaces | 256 × 256 |
-| [Monochrome symbol](../assets/weave-logo-mono.svg) | One-color reproduction on light surfaces | 256 × 256 |
-| [Reversed symbol](../assets/weave-logo-reversed.svg) | The white mark on dark surfaces; the website header uses it | 256 × 256 |
-| [Banner](../assets/banner.svg) | The README and project overview; it has an opaque white background | 1120 × 280 |
-| Badges for the [license](../assets/badges/license.svg), [Python version](../assets/badges/python.svg), and [maturity](../assets/badges/alpha.svg) | Small labels that state facts from the source tree. There is no CI, release, coverage, or live-provider badge | 28 pixels high |
+| [Logo, reversed](../assets/brand/weave-lockup-reversed.svg) | Studio, the desktop launch page, the banner, the social preview and the DMG: paper ink and an amber strand for charcoal and every dark surface | 1368.66 × 248.25 units |
+| [Logo, color](../assets/brand/weave-lockup-color.svg) | Light surfaces outside the product, such as slides and print: charcoal ink and a gold strand for paper and white | 1368.66 × 248.25 units |
+| [Small logo, reversed](../assets/brand/weave-lockup-small-reversed.svg) | The documentation header and other dark placements where the Firefly part is 48 to 80 pixels wide | 1368.66 × 248.25 units |
+| [Weave wordmark](../assets/brand/weave-wordmark.svg) and [small wordmark](../assets/brand/weave-wordmark-small.svg) | The drawn w and "eave" that the logo and the small logo are built from; sources for the generator, not for placing on a page | 535.26 × 116 units |
+| [The w alone](../assets/brand/weave-w.svg) | A Weave-only glyph, 32 pixels or larger; no placement uses it yet | 56 × 56 tile |
+| [Firefly icon](../assets/brand/firefly-icon.svg) | The documentation favicon and the Windows and Linux application icons | 56 × 56 tile |
+| [Small Firefly icon](../assets/brand/firefly-icon-small.svg) | Icon sizes below 32 pixels, with a solid chevron | 56 × 56 tile |
+| [Firefly mark](../assets/brand/firefly-mark.svg) | The collapsed Studio sidebar, on a transparent background | 56 × 56 |
+| [Social preview](../assets/brand/social-preview.png) | The GitHub repository card; an administrator uploads it in the repository settings | 1280 × 640 pixels |
+| [Banner](../assets/banner.svg) | The README and the documentation home; it carries its own charcoal ground | 1120 × 280 pixels |
+| Badges for the [license](../assets/badges/license.svg), [Python version](../assets/badges/python.svg), and [maturity](../assets/badges/alpha.svg) | Small labels that state facts from the source tree | 28 pixels high |
+| [macOS icon master](../desktop/artwork/app-icon-macos.svg) and the [DMG background](../desktop/artwork/dmg-background.svg) | The desktop app's icon and installer window | 1024 × 1024 and 720 × 480 pixels |
 | Technical diagrams in `docs/diagrams/` | Explaining how Weave works; the [visual guide](visual-guide.md) lists every one | 960 or 1120 pixels wide |
 
-## The symbol, colors, and type
+## The Firefly Weave logo
 
-The Weave symbol is a compact woven W: two diagonal bands with a transparent
-underpass. Flat ends and an even band weight keep it readable at small sizes.
-Forest and a single jade accent connect it to the Firefly family without using
-PyFly's mark. The banner pairs the symbol with a one-color wordmark, the
-descriptor "Workflow orchestration and integration", and a quieter line,
-"Part of the Firefly Framework ecosystem".
+The logo is the official Firefly compact logo, a hairline separator and the Weave
+wordmark, built with the Firefly co-brand geometry; it reads "firefly› │ weave".
+Its unit, X, is the Firefly x-height: the height of the chevron.
 
-| Color | Value | Used for |
+- **Separator.** It sits 1X after the chevron, is 1.25 times the height of the
+  Firefly logo, is centered on the x-height, and is 0.04X wide, in the ink color
+  at 55% opacity.
+- **Weave wordmark.** It is drawn, never typed: a lowercase w woven from two
+  strands, then "eave" as unaltered Manrope Medium (500) outlines at the size and
+  tracking of the firefly wordmark. The w stands on the x-height, like the Firefly
+  letters, and its strands run at the slant of the v in "eave". The wordmark
+  starts 1X after the separator on the Firefly baseline. Every logo file holds
+  paths only, no live text.
+- **The strand.** The second strand passes over the first, which stops short of it
+  by the crossing gap: 10 units in the logo and 14 in the small logo, so the
+  crossing stays open on a 1x screen. Do not narrow the gap. The strand is the
+  only amber in the wordmark, and it carries at most 0.70 times the amber of the
+  Firefly logo beside it.
+- **Colors.** Paper ink (`#F3F1EB`) with an amber strand (`#FFB34A`) on charcoal
+  and every dark surface; charcoal ink (`#10110F`) with a gold strand (`#855414`)
+  on paper and white, because amber is only 1.58:1 on paper. The spark and chevron
+  stay amber in both.
+- **Clear space.** Keep 1X free on every side. Layouts reserve it; the files do
+  not include it.
+- **Small logo.** The same construction with a solid chevron, no light trail and
+  the small wordmark, whose crossing gap is wider.
+
+The generator prints four measurements for every logo file, and all three share
+one box: FW = 619.4 units, lockup width = 1368.66 units, lockup height = 248.25
+units, ratio FW / width = 0.4526. The Firefly part of a placement is its rendered
+width times that ratio, so a placement is checked by arithmetic:
+
+| Placement | Rendered size | Firefly part | File |
+| --- | --- | --- | --- |
+| Studio sidebar, expanded | 192 pixels wide, 35 high | 86.9 pixels | Logo |
+| Studio pairing pages | 240 pixels wide | 108.6 pixels | Logo |
+| Desktop launch page | 240 pixels wide, 44 high | 108.6 pixels | Logo |
+| Documentation header | X = 11 pixels: 139.4 × 25.3 pixels | 63.1 pixels | Small logo |
+| README banner | X = 32 pixels: 405.5 pixels wide | 183.5 pixels | Logo |
+| Social preview | X = 48 pixels: 608.3 pixels wide | 275.3 pixels | Logo |
+| DMG background | X = 16 pixels: 202.8 pixels wide | 91.8 pixels | Logo |
+
+**Minimum sizes.** Use the logo only when its Firefly part is at least 80 pixels
+wide, which makes the logo at least 177 pixels wide. Use the small logo when the
+Firefly part is 48 to 80 pixels wide, at least 107 pixels for the whole logo, and
+the Firefly icon (16 pixels at least) below that. The whole logo is never narrower
+than 160 pixels, except the small logo.
+
+**Never** redraw, recolor, retype or rearrange the logo or the wordmark, put any
+part of the wordmark other than the w's strand in amber, use the amber strand on
+paper, place the logo inside a diagram, or reproduce it as text or ASCII art. CLI
+help prints the product name, Firefly Weave, instead.
+
+## Colors
+
+Studio and the desktop app use one dark set of semantic tokens in
+`studio/src/styles.css`, and components use only those tokens. The anchors are:
+
+| Token | Value | Use |
 | --- | --- | --- |
-| Forest | `#173D34` | The wordmark and the primary band |
-| Jade | `#367D68` | The single accent band |
-| Slate | `#62706A` | Secondary text in the banner |
-| White | `#FFFFFF` | The banner background |
-| Mist | `#EEF4F0` | An optional neutral surround |
+| `--bg` | `#10110F` (charcoal) | App background, sidebar and page |
+| `--surface` | `#1A1B17` | Panels, cards, dialogs |
+| `--raised` | `#1F201C` | Menus, popovers, toasts, node cards |
+| `--text` | `#F3F1EB` (paper) | Text, 16.76:1 on charcoal |
+| `--muted` | `#BFB8AB` (stone) | Secondary text |
+| `--accent` | `#FFB34A` (amber) | The primary action, focus, selection and the live run |
+| `--link` | `#FACC8A` | Links and tertiary buttons |
 
-Do not add neon accents, gradients, outlines, or shadows to the symbol. The
-monochrome and reversed variants keep the same geometry and the transparent
-underpass.
+Amber is never a status color, a large background or decoration, and never
+carries text on a light surface. The documentation site uses one dark scheme on
+charcoal. Diagrams, the exported workflow graph and the Swagger UI body of the
+API explorer stay light, on paper.
 
-The wordmark uses the system font stack `Avenir Next, Segoe UI, Arial, sans-serif`
-at semibold weight (600) with restrained tracking. No font file is distributed or
-embedded, so the installed fallback fonts may change letter widths slightly. Keep
-the wordmark on one line and in one color. In the banner, the descriptor and the
-ecosystem line share one left alignment.
+Diagrams use this light palette:
 
-## Place the logo and banner
+| Role | Value |
+| --- | --- |
+| Text and dark fills | Ink `#272820` |
+| Secondary text, edges, icons and arrowheads | Muted `#62645B` |
+| Accent text, number discs and the Takeaway heading | Gold `#855414`, with white numerals |
+| Data labels | Slate `#4A5D65` |
+| Diagram ground | Paper `#F3F1EB` |
+| Bands and panels | Band `#EAE7DF` |
+| Third-party systems | `#E6E8E6` |
+| Hairlines | Line `#D8D4CA` |
+| Card strokes | Stone `#BFB8AB` |
+| Cautions | Warm tint `#FFF0D8`, with gold strokes and text |
+| Warm strokes | Amber line `#F0A33C`, never text |
+| Nodes | White `#FFFFFF` |
 
-- **Keep the proportions.** Scale proportionately and keep each `viewBox`.
-- **Leave room.** Keep at least one band width of clear space around the visible
-  symbol. Do not add an avatar tile or crop into the tips.
-- **Match the background.** Use the reversed symbol on dark backgrounds instead
-  of placing the forest and jade version there.
-- **Mind small sizes.** At 16 pixels the silhouette identifies the symbol; the
-  crossing becomes clear at 24 pixels and above.
-- **Show the banner at a readable width.** Its wordmark stays readable in a
-  480-pixel preview; the ecosystem line is intentionally subordinate. Its opaque
-  white background works on light and dark pages.
+## Type and icons
 
-When you edit the XML directly or in an SVG editor, keep each `viewBox`, the
-accessible `<title>` and `<desc>`, the license comment, and the underpass mask.
+Studio and this website use Manrope from their own files, never from a font
+service. Artwork outlines its Manrope text, so it renders the same everywhere.
+Diagrams use Arial (`Arial, Helvetica, sans-serif`) and Menlo or Consolas for
+code: a page loads a diagram as an image, which cannot use the website's font.
+
+Studio icons are Lucide drawings rendered through `<weave-icon>`. To add one,
+add its name to the map in [the icon generator](../studio/scripts/build-icons.mjs);
+never paste inline SVG.
 
 ## Draw or change a technical diagram
 
 A diagram earns its place when it answers one question a reader has, such as
 "what happens between my request and the result?". Every diagram in
 `docs/diagrams/` follows these rules; `scripts/check_docs.py` enforces the
-structural ones.
+structural ones and `scripts/recolor_diagrams.py --check` the colors.
 
 | Rule | Why |
 | --- | --- |
@@ -100,15 +180,20 @@ structural ones.
 | `role="img"`, a `<title>`, a `<desc>`, and a `viewBox` on the root element | Screen readers announce the title and read the description; the `viewBox` lets the image scale. Missing pieces fail the documentation check |
 | No `<script>`, `<foreignObject>`, or embedded `<image>` | Diagrams stay inert and self-contained; any of these fails the documentation check |
 | Width 1120 pixels for new diagrams; older diagrams are 960 | Text stays readable when the page shows the image at full width |
-| Arial for text (`Arial, Helvetica, sans-serif`), Menlo or Consolas for code | These fonts are installed almost everywhere, so labels do not reflow |
+| Arial for text, Menlo or Consolas for code | These fonts are installed almost everywhere, so labels do not reflow |
 | Text at least 16 pixels | Labels stay legible at 100% zoom |
-| Forest `#173D34` and jade `#367D68` on mist `#EEF4F0`, with warm `#FFF7E5` for cautions | Diagrams look like one family and keep enough contrast |
-| Most diagrams end with a "Takeaway" band | One sentence tells the reader what to remember |
+| The diagram palette above, on a paper ground | Diagrams look like one family on their paper panels; any other color fails the recolor check |
+| Most diagrams end with a "Takeaway" band, with no artwork | One sentence tells the reader what to remember |
+| No Firefly logo inside a diagram | The marks stay in their own asset files |
 | A `<desc>` that states everything the picture shows | Readers who cannot see the image get the same facts |
 
 **Every label must be true.** Check each command, path, field, and error code in
 a diagram against the code, exactly as you would in prose. A diagram must not
 promise a guarantee or a verification that the code and tests do not provide.
+
+**Convert an older diagram.** Run `python3 scripts/recolor_diagrams.py` to map
+the earlier palette to this one; it fails, and writes nothing, when it meets a
+color it does not know.
 
 **Embed it the same way everywhere.** In the page, put the image, then a
 one- or two-sentence reading guide, then a full-size link. Many pages start the
@@ -124,6 +209,51 @@ reading guide with **How to read this diagram:**, as in this pattern:
 
 Then add a row for the new diagram to the [visual guide](visual-guide.md), which
 connects each figure to the reader's question and the page that explains it.
+
+## Regenerate the brand assets
+
+Firefly artwork is generated, never edited by hand. The wordmark is a drawing:
+to change it, edit its three masters (`weave-wordmark.svg`,
+`weave-wordmark-small.svg` and `weave-w.svg` in `assets/brand/`) and run the
+generator again. You need access to the private Firefly Brand Kit 2.0.0 and
+Node.js 22.12 or later.
+
+1. Clone the kit outside this repository. In the kit, install its packages and
+   build its logo pack:
+
+    ```sh
+    # Install the kit's locked packages without download scripts.
+    npm ci --ignore-scripts
+    # Build the logo pack; the final CMYK PDF step needs Python with reportlab and may fail.
+    npm run build -- --only logo
+    # Expected: no output, so no drawing carries the old paper value.
+    grep -ril f3f3e9 dist/Firefly-Brand-Kit/02-Logo/svg
+    ```
+
+2. From the kit root, run the composer with the path of your Firefly Weave
+   checkout. It imports the kit's logo and type modules at run time, reads the
+   wordmark masters from your checkout, writes the generated files in the asset
+   table above, and prints the measurements:
+
+    ```sh
+    node /path/to/firefly-weave/scripts/brand/weave-lockup.mjs --out /path/to/firefly-weave
+    ```
+
+3. From your Firefly Weave checkout, rebuild the desktop icons with the Tauri
+   CLI, then copy `icon.icns` from the first folder and `32x32.png`,
+   `128x128.png`, `128x128@2x.png` and `icon.png` from the second into
+   `desktop/src-tauri/icons/`. The composer writes `icon.ico` itself, with the
+   solid chevron below 32 pixels.
+
+    ```sh
+    npm --prefix desktop ci
+    npm --prefix desktop run tauri -- icon "$PWD/desktop/artwork/app-icon-macos.svg" -o "$HOME/.cache/firefly-weave/icons-macos"
+    npm --prefix desktop run tauri -- icon "$PWD/assets/brand/firefly-icon.svg" -o "$HOME/.cache/firefly-weave/icons-full"
+    ```
+
+4. Review `git status`, check each changed file at its real size, and keep the
+   files' inventory entries. Kit scripts, data and icons never enter this
+   repository; only the generated files do.
 
 ## Check a change at its real size
 
@@ -146,47 +276,20 @@ and the PNG is exactly 960 × 940 pixels. On macOS it may also print
 `CVDisplayLinkCreateWithCGDisplay failed` lines; they do not affect the image.
 Open the PNG and check it.
 
-To render the logo variants at exact pixel sizes instead, you can use Node.js
-with the optional [sharp](https://sharp.pixelplumbing.com/) package. It is an
-authoring tool, not a product dependency. Record the renderer version, because
-installed fallback fonts change the result:
-
-```sh
-# Record the renderer and library versions used for this render.
-node -p 'require("sharp").versions'
-# Render the symbol at 256 pixels wide and the banner at 960 pixels wide.
-node -e 'require("sharp")(process.argv[1]).resize({width: Number(process.argv[3])}).png().toFile(process.argv[2])' \
-  assets/weave-logo.svg /tmp/weave-symbol.png 256
-node -e 'require("sharp")(process.argv[1]).resize({width: Number(process.argv[3])}).png().toFile(process.argv[2])' \
-  assets/banner.svg /tmp/weave-banner.png 960
-```
-
-Expected: the first command prints each bundled library with its version; the
-PNGs are 256 × 256 and 960 × 240 pixels. Change the input, output, and width for the
-other variants and sizes.
-
 **What to check before you ship an edit:**
 
-- **Diagrams:** read every label at the native width and at about 900 pixels.
-  Look for clipped or overlapping text, arrows that cross labels, and a reading
-  guide that matches the picture. On narrow screens, readers should open the
-  full-size SVG instead of a shrunken image.
-- **Symbol variants:** inspect each at 16, 24, 32, 64, and 256 pixels on its
-  intended background. Check the clear space, silhouette, crossing gaps, and
-  optical alignment.
+- **Diagrams:** read every label at the native width and at about 900 pixels, on
+  the paper panel of the dark website. Look for clipped or overlapping text,
+  arrows that cross labels, and a reading guide that matches the picture.
+- **Logo and icons:** inspect the logo at each placement in the table above and
+  the icons at 16, 24, 32, 64, and 256 pixels on their intended backgrounds.
+  Check the clear space, that the small sizes use the solid chevron, and that the
+  woven w's crossing stays open at its smallest placement.
 - **Banner:** inspect it at 960 and 480 pixels.
 - **Screenshots:** wait until fonts and images have loaded before you capture,
   and confirm that the saved PNG really shows the artwork. Give each attempt its
   own file name so a failed capture is never confused with a corrected one, and
   keep previews outside the repository.
-
-## Mascot artwork
-
-Firefly Weave no longer uses a mascot. Studio, the documentation, the API
-explorer and exported graph drawings carry no character artwork, and diagrams
-end with a plain **Takeaway** band. Machine JSON output contains no branding.
-CLI help uses the official logo; progress animation settings are in the
-[CLI reference](reference/cli.md#local-platform-commands).
 
 ## Next steps
 
