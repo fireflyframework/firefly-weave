@@ -18,6 +18,10 @@
 
 import asyncio
 import json
+import math
+from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -42,10 +46,49 @@ from firefly_weave.email.service import EmailService
 from firefly_weave.operations.execution import request_execution
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.repository import RuntimeRepository
+from firefly_weave.sdk._settlement import check_settlement, settlement_deadline
 from firefly_weave.workers.leases import TaskService
 
 if TYPE_CHECKING:
     from firefly_weave.providers.teams.references import TeamsReferences
+
+
+async def _admitted[Result](proof: LeaseProof, call: Callable[[], Awaitable[Result]], *, waits: bool = False) -> Result:
+    """Run a platform call of a native handler, again while the platform rejects it for capacity.
+
+    A rejection committed nothing, so the identical call may be sent again. Before the connector
+    starts (`waits`), the owning handler holds nothing else and retries while its lease watchdog
+    remains authoritative, like a remote worker's context and credentials (sdk/transport.py).
+    Checks made while the connector runs, which may hold its own resources, and calls from any
+    other task make at most three attempts within one second.
+    """
+    try:
+        return await call()
+    except Exception as error:
+        if not capacity_rejected(error):
+            raise
+        rejected = error
+    deadline = settlement_deadline(proof) if waits else None
+    if deadline is None:
+        attempts, window = 3, asyncio.timeout(1)
+    else:
+        attempts = math.ceil(max(0, deadline - asyncio.get_running_loop().time()) / 0.05) + 1
+        window = asyncio.timeout_at(deadline)
+    try:
+        async with window:
+            for retry in range(attempts - 1):
+                await asyncio.sleep(min(0.05 * 2 ** min(retry, 3), 0.25))
+                check_settlement(proof)
+                try:
+                    return await call()
+                except Exception as error:
+                    if not capacity_rejected(error):
+                        raise
+                    rejected = error
+    except TimeoutError:
+        if not window.expired():
+            raise
+    raise rejected
 
 
 @service
@@ -70,38 +113,59 @@ class ConnectorExecutionService:
 
     async def execute(self, scope: Scope, principal_id: UUID, lease: TaskLease) -> JsonValue:
         self.registry.require_operational()
-        async with request_execution():
+        async with AsyncExitStack() as stack:
+            await _admitted(lease.proof, lambda: stack.enter_async_context(request_execution()), waits=True)
             return await self._execute(scope, principal_id, lease)
 
     async def _execute(self, scope: Scope, principal_id: UUID, lease: TaskLease) -> JsonValue:
-        adapter, invocation = await self.operation("invocation", scope, principal_id, lease.proof)
+        invocation_check = partial(self.operation, "invocation", scope, principal_id, lease.proof)
+        adapter, invocation = await _admitted(lease.proof, invocation_check, waits=True)
         active = True
+
+        async def current[Result](call: Callable[[], Awaitable[Result]], refusal: str) -> Result:
+            async def attempt() -> Result:
+                # Every attempt rechecks, so a retry cannot outlive the handler.
+                if not active:
+                    raise ValueError(refusal)
+                return await call()
+
+            return await _admitted(lease.proof, attempt)
 
         async def credentials(slot: str) -> ResolvedSecret:
             if not active or slot not in invocation.connection.secret_refs:
                 raise ValueError("Credential unavailable")
             actor = await self.access.load_principal(principal_id)
-            return await self.tasks.credentials(
-                CredentialRequest(lease=lease.proof, connection_revision_id=invocation.connection.id, slot=slot),
-                actor=actor,
-                scope=scope,
-                context=AuditContext(),
+            return await current(
+                partial(
+                    self.tasks.credentials,
+                    CredentialRequest(lease=lease.proof, connection_revision_id=invocation.connection.id, slot=slot),
+                    actor=actor,
+                    scope=scope,
+                    context=AuditContext(),
+                ),
+                "Credential unavailable",
             )
 
         async def authorize() -> None:
             self.registry.require_operational()
             if not active:
                 raise ValueError("Connector authority unavailable")
-            current_adapter, current = await self.operation("invocation", scope, principal_id, lease.proof)
-            if current_adapter != adapter or current != invocation:
+            current_adapter, checked = await current(invocation_check, "Connector authority unavailable")
+            if current_adapter != adapter or checked != invocation:
                 raise ValueError("Connector authority changed")
             actor = await self.access.load_principal(principal_id)
             for slot in invocation.connection.secret_refs:
-                await self.tasks.credential_authority(
-                    CredentialRequest(lease=lease.proof, connection_revision_id=invocation.connection.id, slot=slot),
-                    actor=actor,
-                    scope=scope,
-                    context=AuditContext(),
+                await current(
+                    partial(
+                        self.tasks.credential_authority,
+                        CredentialRequest(
+                            lease=lease.proof, connection_revision_id=invocation.connection.id, slot=slot
+                        ),
+                        actor=actor,
+                        scope=scope,
+                        context=AuditContext(),
+                    ),
+                    "Connector authority unavailable",
                 )
 
         async def reference(identifier: UUID, generation: int, activity_id: str | None) -> JsonObject:
