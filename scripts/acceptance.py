@@ -535,6 +535,17 @@ def _audit(plan: Plan, recorder: Recorder, prefixes: Sequence[str]) -> list[str]
     return sorted(set(left))
 
 
+def _released(recorder: Recorder, commands: Sequence[Sequence[str]]) -> bool:
+    """Run every release command; True only when all of them succeeded (a failure never skips the rest)."""
+    released = True
+    for argv in commands:
+        try:
+            released = recorder.run(argv, check=False).returncode == 0 and released
+        except StageFailed:
+            released = False
+    return released
+
+
 def down(plan: Plan, recorder: Recorder) -> None:
     if plan.keep:
         plan.state["resources_left"] = ["kept with --keep"]
@@ -554,10 +565,8 @@ def down(plan: Plan, recorder: Recorder) -> None:
             ).stdout.split()
             if ids:
                 recorder.run([*docker, kind, "rm", *ids], check=False, timeout=120)
-    if plan.state.get("egress_rules"):
-        for argv in egress_release_rules():
-            recorder.run(argv, check=False)
-        plan.state["egress_rules"] = False
+    if plan.state.get("egress_rules") and _released(recorder, egress_release_rules()):
+        plan.state["egress_rules"] = False  # while set, the audit lists the egress block as a leftover
     left = _audit(plan, recorder, prefixes)
     plan.state["resources_left"] = left
     if left:

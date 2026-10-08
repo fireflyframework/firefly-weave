@@ -19,6 +19,7 @@
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -219,3 +220,70 @@ def test_a_resumed_run_refuses_a_different_subnet(tmp_path, capsys):
     assert acceptance.main([*argv, "--stages", "collect", "--subnet", "10.246.15.0/24"]) == 2
     assert "run's own --subnet" in capsys.readouterr().err
     assert not (run / "stages.json").exists()
+
+
+class FakeRecorder:
+    """Stands in for Recorder in `down`: Docker listings come back empty and iptables commands succeed
+    unless their action (-D, -F, -X) is in ``failing`` (non-zero exit) or ``raising`` (StageFailed)."""
+
+    def __init__(self, failing=(), raising=()):
+        self.failing, self.raising, self.iptables = set(failing), set(raising), []
+
+    def run(self, argv, **kwargs):
+        code = 0
+        if list(argv[:3]) == ["sudo", "-n", "iptables"]:
+            self.iptables.append(list(argv))
+            if argv[4] in self.raising:
+                raise acceptance.StageFailed("sudo timed out")
+            code = 1 if argv[4] in self.failing else 0
+        return subprocess.CompletedProcess(list(argv), code, stdout="", stderr="")
+
+
+def blocked_plan(tmp_path):
+    plan = acceptance.Plan(tmp_path, RUN, "pr", "default", True, False, {"profile": "pr", "egress_rules": True})
+    plan.private.mkdir()
+    plan.evidence.mkdir()
+    return plan
+
+
+def every_stage_passed(plan):
+    return [
+        {"name": name, "argv": plan.stage_argv(name), "exit": 0, "seconds": 1.0, "commands": []}
+        for name in acceptance.STAGES
+    ]
+
+
+@pytest.mark.parametrize("trouble", [{"failing": {"-D"}}, {"failing": {"-X"}}, {"raising": {"-F"}}])
+def test_a_failed_egress_release_stays_visible_as_a_leftover(tmp_path, trouble):
+    plan = blocked_plan(tmp_path)
+    recorder = FakeRecorder(**trouble)
+    with pytest.raises(acceptance.StageFailed, match="iptables:WEAVE-ACCEPTANCE"):
+        acceptance.down(plan, recorder)
+    assert [argv[4] for argv in recorder.iptables] == ["-D", "-F", "-X"]  # one failure never skips the rest
+    assert plan.state["egress_rules"] is True
+    assert plan.state["resources_left"] == ["iptables:WEAVE-ACCEPTANCE"]
+    assert plan.private.is_dir()
+    # Even with every stage recorded as passed, the leftover makes the run incomplete and names it.
+    summary = acceptance.summarize(plan, every_stage_passed(plan))
+    assert summary["complete"] is False
+    assert summary["resources_left"] == ["iptables:WEAVE-ACCEPTANCE"]
+
+
+def test_a_complete_egress_release_leaves_nothing_listed(tmp_path):
+    plan = blocked_plan(tmp_path)
+    recorder = FakeRecorder()
+    acceptance.down(plan, recorder)
+    assert [argv[4] for argv in recorder.iptables] == ["-D", "-F", "-X"]
+    assert plan.state["egress_rules"] is False
+    assert plan.state["resources_left"] == []
+    assert not plan.private.exists()
+    summary = acceptance.summarize(plan, every_stage_passed(plan))
+    assert summary["complete"] is True and summary["resources_left"] == []
+
+
+def test_down_without_an_egress_block_runs_no_iptables_command(tmp_path):
+    plan = blocked_plan(tmp_path)
+    plan.state["egress_rules"] = False
+    recorder = FakeRecorder()
+    acceptance.down(plan, recorder)
+    assert recorder.iptables == [] and plan.state["resources_left"] == []
