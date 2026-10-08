@@ -378,9 +378,9 @@ test.describe("1440x900", () => {
       }));
     await expect(lockup).toBeVisible();
     await expect(mark).toBeHidden();
-    expect(await drawn(lockup)).toMatchObject({ loaded: true, width: 200 });
-    // The box is reserved before the SVG loads (200 x 248.25/1427.4 = 34.8).
-    await expect(lockup).toHaveAttribute("width", "200");
+    expect(await drawn(lockup)).toMatchObject({ loaded: true, width: 192 });
+    // The box is reserved before the SVG loads (192 x 248.25/1368.66 = 34.8).
+    await expect(lockup).toHaveAttribute("width", "192");
     await expect(lockup).toHaveAttribute("height", "35");
     // At 1280px and below the sidebar narrows: the 32px mark in a 44px box.
     await page.setViewportSize({ width: 1280, height: 720 });

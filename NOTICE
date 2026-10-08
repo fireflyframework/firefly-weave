@@ -17,6 +17,12 @@ redistribute them apart from unmodified copies of this product. The source
 inventory, docs/contributing/source-inventory.toml, lists every file that
 carries them.
 
+Weave marks. The Weave name and the Weave logo, the weave wordmark with its
+woven w, are trademarks of the Firefly Software Foundation, and the Apache
+License 2.0 grants no permission to use them except as its section 6 allows:
+reasonable and customary use in describing the origin of the work and
+reproducing the content of this NOTICE file.
+
 Manrope. Studio includes the Manrope typeface, Copyright 2019 The Manrope
 Project Authors (https://github.com/sharanda/manrope), licensed under the SIL
 Open Font License, Version 1.1 (assets/fonts/manrope/OFL.txt).

@@ -19,25 +19,25 @@ version = 1
 [[exceptions]]
 path = "assets/brand/weave-lockup-reversed.svg"
 kind = "third-party"
-source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs compact logo, composed by scripts/brand/weave-lockup.mjs"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+source = "Firefly Brand Kit 2.0.0 (private) compact logo and the first-party weave wordmark (assets/brand/weave-wordmark.svg), composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
 path = "assets/brand/weave-lockup-color.svg"
 kind = "third-party"
-source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs compact logo, composed by scripts/brand/weave-lockup.mjs"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+source = "Firefly Brand Kit 2.0.0 (private) compact logo and the first-party weave wordmark (assets/brand/weave-wordmark.svg), composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
 path = "assets/brand/weave-lockup-small-reversed.svg"
 kind = "third-party"
-source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs compact logo with a solid chevron, composed by scripts/brand/weave-lockup.mjs"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+source = "Firefly Brand Kit 2.0.0 (private) compact logo with a solid chevron and the first-party weave wordmark (assets/brand/weave-wordmark-small.svg), composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
@@ -68,16 +68,16 @@ license = "LicenseRef-Firefly-Marks"
 path = "studio/public/assets/weave-lockup-reversed.svg"
 kind = "third-party"
 source = "Byte-identical copy of assets/brand/weave-lockup-reversed.svg"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
 path = "studio/public/assets/weave-lockup-small-reversed.svg"
 kind = "third-party"
 source = "Byte-identical copy of assets/brand/weave-lockup-small-reversed.svg"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
