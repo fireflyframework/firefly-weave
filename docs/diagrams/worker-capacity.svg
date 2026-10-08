@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 -->
 
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 860" role="img" aria-labelledby="title description">
-<title id="title">Capacity is more than a replica count</title><desc id="description">Container replicas, authenticated worker presence, and task slots are distinct. Pausing new task claims allows active leases to finish; scaling containers down can terminate them.</desc>
+<title id="title">Capacity is more than a replica count</title><desc id="description">Container replicas, authenticated worker presence, and task slots are distinct. Draining a worker stops new task claims so active leases can finish; scaling containers down can terminate them.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367d68"/></marker></defs>
 <rect width="900" height="860" rx="24" fill="#eef4f0"/>
 <g font-family="Inter,Arial,sans-serif" fill="#173d34">
@@ -41,7 +41,7 @@ SPDX-License-Identifier: Apache-2.0
 <text x="124" y="585" font-size="18" fill="#4d655d" font-weight="400">Available slots are shown only for a recent, eligible worker.</text>
 <rect x="40" y="649" width="820" height="165" rx="14" fill="#173d34"/>
 <text x="66" y="689" font-size="23" fill="#ffffff" font-weight="700">A safe sequence when reducing capacity</text>
-<text x="66" y="725" font-size="18" fill="#edf5ef" font-weight="400">Pause new tasks → let active leases finish → review a scale-down plan.</text>
+<text x="66" y="725" font-size="18" fill="#edf5ef" font-weight="400">Drain the worker → let active leases finish → review a scale-down plan.</text>
 <text x="66" y="758" font-size="18" fill="#edf5ef" font-weight="400">Resume lets the worker claim again. Revocation removes its authority.</text>
 <text x="66" y="787" font-size="17" fill="#cadfd2" font-weight="400">Provider scaling does not automatically drain a matching worker instance.</text>
 </g></svg>
