@@ -47,3 +47,16 @@ def test_filter_cursor_rejects_changed_business_context_and_archive_selection():
 def test_filters_reject_invalid_status_and_unbounded_keys(value):
     with pytest.raises(ValidationError):
         RunListFilters.model_validate(value)
+
+
+def test_explicit_id_queries_retain_exact_legacy_cursor_collections():
+    from firefly_weave.contracts.run_views import RunListQuery
+
+    old = RunListFilters(business_key="invoice", correlation_key="thread", status="waiting", include_archived=True)
+    query = RunListQuery(
+        order="id", business_key="invoice", correlation_key="thread", status=["waiting"], include_archived=True
+    )
+    assert query.cursor_collection() == old.cursor_collection()
+    assert query.model_copy(update={"include_test": True}).cursor_collection() != old.cursor_collection()
+    assert query.model_copy(update={"status": ["waiting", "failed"]}).cursor_collection() != old.cursor_collection()
+    assert query.model_copy(update={"order": "started_desc"}).cursor_collection() != old.cursor_collection()

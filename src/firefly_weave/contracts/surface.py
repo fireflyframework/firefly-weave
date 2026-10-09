@@ -1413,7 +1413,6 @@ OPERATIONS = {
             RunSummaryPage,
             "run.read",
             query=RunSummaryQuery,
-            served=False,
         ),
         Operation(
             "runs.steps",
@@ -1422,7 +1421,6 @@ OPERATIONS = {
             StepFactPage,
             "run.read",
             query=RunStepQuery,
-            served=False,
         ),
         Operation(
             "runs.logs",

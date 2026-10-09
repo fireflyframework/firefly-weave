@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -102,6 +102,7 @@ from firefly_weave.contracts.public import (
     catalog_lock,
 )
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
+from firefly_weave.contracts.run_views import RunListOrder, RunListQuery
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
     RunView,
@@ -221,7 +222,7 @@ class WeaveClient:
         body: BaseModel | None = None,
         revision: int | None = None,
         idempotency_key: str | None = None,
-        query: dict[str, str | int] | None = None,
+        query: Mapping[str, str | int | list[str]] | None = None,
         adapter: str | None = None,
     ) -> Any:
         """Typed registry boundary also used by the thin CLI; no arbitrary URL input."""
@@ -715,24 +716,36 @@ class WeaveClient:
         correlation_key: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        order: RunListOrder = "started_desc",
+        query: RunListQuery | None = None,
     ) -> Page[RunView | UnavailableResource]:
+        values: dict[str, str | int | list[str]]
+        if query is not None:
+            values = {
+                key: str(value).lower() if isinstance(value, bool) else value
+                for key, value in query.model_dump(mode="json", exclude_none=True).items()
+                if not isinstance(value, list) or value
+            }
+        else:
+            values = {
+                **self._page(limit, cursor),
+                "order": order,
+                "include_archived": str(include_archived).lower(),
+                **{
+                    key: value
+                    for key, value in {
+                        "business_key": business_key,
+                        "correlation_key": correlation_key,
+                        "status": status,
+                    }.items()
+                    if value is not None
+                },
+            }
         return cast(
             Page[RunView | UnavailableResource],
             await self.invoke(
                 "runs.list",
-                query={
-                    **self._page(limit, cursor),
-                    **{
-                        key: value
-                        for key, value in {
-                            "business_key": business_key,
-                            "correlation_key": correlation_key,
-                            "status": status,
-                        }.items()
-                        if value is not None
-                    },
-                    "include_archived": str(include_archived).lower(),
-                },
+                query=values,
             ),
         )
 

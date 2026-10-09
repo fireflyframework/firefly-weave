@@ -72,7 +72,7 @@ def test_snapshot_documents_each_operation_exactly():
             "method": "GET",
             "path": environment + "/run-summaries",
             "capability": "run.read",
-            "served": False,
+            "served": True,
             "query": [
                 "workflow",
                 "version",
@@ -94,16 +94,16 @@ def test_snapshot_documents_each_operation_exactly():
                 "limit",
                 "cursor",
             ],
-            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500", "501"],
+            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500"],
             "response": "RunSummaryPage",
         },
         "runs.steps": {
             "method": "GET",
             "path": environment + "/runs/{identifier}/steps",
             "capability": "run.read",
-            "served": False,
+            "served": True,
             "query": ["step", "include", "limit", "cursor"],
-            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500", "501"],
+            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500"],
             "response": "StepFactPage",
         },
         "runs.logs": {

@@ -208,12 +208,22 @@ class BodyBoundary:
             None,
         )
         status = 500
+        unavailable = False
+        problem = bytearray()
         started = time.monotonic()
 
         async def observed_send(message: Message) -> None:
-            nonlocal status
+            nonlocal status, unavailable
             if message["type"] == "http.response.start":
                 status = message["status"]
+            elif message["type"] == "http.response.body" and status == 501:
+                problem.extend(message.get("body", b"")[: max(0, 8193 - len(problem))])
+                if not message.get("more_body") and len(problem) <= 8192:
+                    try:
+                        decoded = json.loads(problem)
+                        unavailable = isinstance(decoded, dict) and decoded.get("code") == "WV-UNAVAILABLE"
+                    except (ValueError, RecursionError):
+                        pass
             await send(message)
 
         try:
@@ -223,7 +233,13 @@ class BodyBoundary:
             telemetry.record(
                 "request",
                 operation=operation,
-                status="ok" if status < 400 else "rejected" if status < 500 else "failed",
+                status="unavailable"
+                if unavailable
+                else "ok"
+                if status < 400
+                else "rejected"
+                if status < 500
+                else "failed",
                 duration=time.monotonic() - started,
             )
 

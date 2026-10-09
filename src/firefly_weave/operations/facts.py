@@ -53,6 +53,8 @@ FACT_TABLES: tuple[str, str, str, str, str] = (
 
 SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
+_AUTHOR_KEY: TypeAdapter[str] = TypeAdapter(InstanceKeyText)
+_AUTHOR_NODE: TypeAdapter[str] = TypeAdapter(ResourceName)
 
 
 def author_instance(key: str) -> InstanceView | None:
@@ -60,9 +62,9 @@ def author_instance(key: str) -> InstanceView | None:
         raise ValueError("Instance key must be text")
     if key.startswith("@"):
         return None
-    TypeAdapter(InstanceKeyText).validate_python(key, strict=True)
+    _AUTHOR_KEY.validate_python(key, strict=True)
     value = instance_view(key)
-    TypeAdapter(ResourceName).validate_python(value.node_id, strict=True)
+    _AUTHOR_NODE.validate_python(value.node_id, strict=True)
     return value
 
 

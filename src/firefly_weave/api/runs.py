@@ -25,9 +25,11 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
-from firefly_weave.api.transport import page_request, page_response
+from firefly_weave.api.transport import canonical_path, decode_cursor, decode_cursor_v2, parse_query
 from firefly_weave.contracts.human_tasks import ManualControlRequest
-from firefly_weave.contracts.runtime import RunListFilters, SignalRequest, StartRunRequest
+from firefly_weave.contracts.run_views import RunListQuery
+from firefly_weave.contracts.runtime import SignalRequest, StartRunRequest
+from firefly_weave.operations.fact_positions import RunPosition, run_position
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.signals import SignalService
 
@@ -82,25 +84,24 @@ class RunController:
     @operation("runs.list")
     async def discover(self, request: Request) -> JSONResponse:
         scope = request_scope(request, environment=True)
-        values: dict[str, str | bool] = {
-            key: request.query_params[key] for key in RunListFilters.model_fields if key in request.query_params
-        }
-        if "include_archived" in values:
-            if values["include_archived"] not in {"true", "false"}:
-                raise ValueError("include_archived must be true or false")
-            values["include_archived"] = values["include_archived"] == "true"
-        filters = RunListFilters.model_validate(values)
-        collection = filters.cursor_collection()
-        limit, cursor = page_request(request, scope, collection)
+        query = parse_query(request.query_params, RunListQuery)
+        position: RunPosition | UUID | None = None
+        if query.order == "id":
+            position = (
+                decode_cursor(query.cursor, scope, query.cursor_collection())
+                if canonical_path(request.url.path)
+                else UUID(query.cursor)
+                if query.cursor
+                else None
+            )
+        else:
+            position = run_position(decode_cursor_v2(query.cursor, scope, query.cursor_collection()))
         result = await self.service.list(
-            request.state.principal,
-            scope,
-            limit=limit,
-            cursor=cursor,
-            filters=filters,
-            context=request.state.audit_context,
+            request.state.principal, scope, query=query, position=position, context=request.state.audit_context
         )
-        return JSONResponse(page_response(result, scope, collection, request.url.path))
+        if query.order == "id" and not canonical_path(request.url.path) and result["next_cursor"] is not None:
+            result["next_cursor"] = str(decode_cursor(result["next_cursor"], scope, query.cursor_collection()))
+        return JSONResponse(result)
 
     @operation("runs.pause")
     async def pause(self, request: Request) -> JSONResponse:

@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run summaries, steps and logs authorize run.read twice, validate, then answer 501 until served."""
+"""Scoped operational reads preserve current authority and classified metadata."""
 
 import json
 from contextlib import asynccontextmanager
@@ -42,12 +42,19 @@ CONTEXT = AuditContext()
 class ReadUnit:
     def __init__(self) -> None:
         self.opened = 0
+        self.inside = False
+        self.tx = SimpleNamespace(session=object(), scope=SCOPE)
+        self.reads = []
 
     @asynccontextmanager
     async def open(self, scope, *, mutation=True):
         assert scope == SCOPE and mutation is False
         self.opened += 1
-        yield SimpleNamespace(session=object())
+        self.inside = True
+        try:
+            yield self.tx
+        finally:
+            self.inside = False
 
 
 def principal(role: str | None = "viewer", *, active: bool = True, scope: Scope = SCOPE) -> Principal:
@@ -59,6 +66,7 @@ def service_with(monkeypatch, current: Principal | None) -> tuple[RunViewService
     unit = ReadUnit()
 
     async def load(session, identifier):
+        assert unit.inside and session is unit.tx.session
         assert current is not None
         return current.model_copy(update={"id": identifier})
 
@@ -100,7 +108,7 @@ async def call(service: RunViewService, actor: Principal, operation: str):
 OPERATIONS = ("run_summaries.list", "runs.steps", "runs.logs")
 
 
-@pytest.mark.parametrize("operation", OPERATIONS)
+@pytest.mark.parametrize("operation", ["runs.logs"])
 @pytest.mark.parametrize("role", ["viewer", "execution_manager"])
 async def test_run_readers_reach_the_not_served_answer(monkeypatch, operation, role):
     actor = principal(role)
@@ -141,7 +149,7 @@ async def test_environment_scope_is_required(monkeypatch):
     "method,path,query",
     [
         ("summaries", "/run-summaries", "workflow=invoice-approval&include_test=true&order=started_desc&limit=50"),
-        ("steps", f"/runs/{RUN}/steps", "include=output&limit=500"),
+        ("steps", f"/runs/{RUN}/steps", "limit=500"),
         ("logs", f"/runs/{RUN}/logs", "level=warning&node_id=send"),
     ],
 )
@@ -149,9 +157,13 @@ async def test_controller_validates_then_delegates(monkeypatch, method, path, qu
     actor = principal("viewer")
     service, _ = service_with(monkeypatch, actor)
     controller = RunViewController(service)
-    with pytest.raises(CatalogError) as failure:
-        await getattr(controller, method)(request(path, query, actor, identifier=method != "summaries"))
-    assert failure.value.status == 501
+    if method == "logs":
+        with pytest.raises(CatalogError) as failure:
+            await controller.logs(request(path, query, actor))
+        assert failure.value.status == 501
+    else:
+        response = await getattr(controller, method)(request(path, query, actor, identifier=method != "summaries"))
+        assert response.status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -194,9 +206,8 @@ async def test_controller_rejects_cursors_from_another_filter_or_run(monkeypatch
     steps = encode_cursor_v2(SCOPE, RunStepQuery().cursor_collection(uuid4()), [None, "send"], "send[3]")
     with pytest.raises(ValueError, match="cursor"):
         await controller.steps(request("/", f"cursor={steps}", actor))
-    accepted = encode_cursor_v2(SCOPE, RunStepQuery().cursor_collection(RUN), [None, "send"], "send[3]")
-    with pytest.raises(CatalogError):
-        await controller.steps(request("/", f"cursor={accepted}", actor))
+    accepted = encode_cursor_v2(SCOPE, RunStepQuery().cursor_collection(RUN), [None, "send", "send[3]"], "send[3]")
+    assert (await controller.steps(request("/", f"cursor={accepted}", actor))).status_code == 200
     assert unit.opened == 1
 
 
@@ -210,3 +221,227 @@ async def test_not_served_problem_reaches_clients_as_501():
         "code": "WV-UNAVAILABLE",
         "message": "This server does not serve runs.logs yet",
     }
+
+
+@pytest.fixture(autouse=True)
+def empty_repository(monkeypatch):
+    from firefly_weave.operations.fact_reads import FactReadRepository
+
+    async def summaries(repository, query, position):
+        return []
+
+    async def steps(repository, run_id, query, position):
+        return [], True
+
+    monkeypatch.setattr(FactReadRepository, "summary_rows", summaries)
+    monkeypatch.setattr(FactReadRepository, "step_rows", steps)
+
+
+async def test_fresh_authority_and_fact_read_share_transaction(monkeypatch):
+    from firefly_weave.operations.fact_reads import FactReadRepository
+
+    actor = principal()
+    service, unit = service_with(monkeypatch, actor)
+    events = []
+
+    async def load(session, identifier):
+        assert unit.inside
+        events.append(("principal", session))
+        return actor
+
+    async def rows(repository, query, position):
+        assert unit.inside
+        events.append(("facts", repository.tx.session))
+        return []
+
+    monkeypatch.setattr("firefly_weave.operations.run_views.load_principal", load)
+    monkeypatch.setattr(FactReadRepository, "summary_rows", rows)
+    result = await service.summaries(actor, SCOPE, RunSummaryQuery(), None, context=CONTEXT)
+    assert result.items == [] and unit.opened == 1
+    assert [event[0] for event in events] == ["principal", "facts"]
+    assert events[0][1] is events[1][1]
+
+
+async def test_invalid_typed_cursor_precedes_run_lookup(monkeypatch):
+    service, unit = service_with(monkeypatch, principal())
+    with pytest.raises(ValueError):
+        await service.steps(principal(), SCOPE, RUN, RunStepQuery(), ([None, "send"], "send"), context=CONTEXT)
+    assert unit.opened == 0
+
+
+async def test_sdk_list_retains_old_keywords_and_encodes_repeated_status():
+    import httpx
+
+    from firefly_weave.contracts.run_views import RunListQuery
+    from firefly_weave.sdk.client import WeaveClient
+
+    calls = []
+
+    def receive(request):
+        calls.append(request)
+        return httpx.Response(200, json={"items": [], "next_cursor": None})
+
+    async with WeaveClient(
+        "https://platform.example", lambda: "token", SCOPE, transport=httpx.MockTransport(receive)
+    ) as client:
+        await client.list_runs(
+            limit=12,
+            business_key="invoice",
+            correlation_key="thread",
+            status="waiting",
+            include_archived=True,
+            order="id",
+        )
+        await client.list_runs(query=RunListQuery(status=["waiting", "failed"], include_test=True, limit=5))
+    assert dict(calls[0].url.params) == {
+        "limit": "12",
+        "business_key": "invoice",
+        "correlation_key": "thread",
+        "status": "waiting",
+        "include_archived": "true",
+        "order": "id",
+    }
+    assert calls[1].url.params.get_list("status") == ["failed", "waiting"]
+    assert calls[1].url.params["include_test"] == "true"
+    assert calls[1].url.params["order"] == "started_desc"
+
+
+async def test_runs_route_uses_strict_filters_and_preserves_explicit_id_cursor():
+    from firefly_weave.api.runs import RunController
+    from firefly_weave.api.transport import encode_cursor, encode_cursor_v2
+    from firefly_weave.contracts.run_views import RunListQuery
+    from firefly_weave.contracts.runtime import RunListFilters
+    from firefly_weave.operations.fact_positions import RunPosition
+
+    calls = []
+
+    class Service:
+        async def list(self, actor, scope, **kwargs):
+            calls.append(kwargs)
+            return {"items": [], "next_cursor": None}
+
+    controller = RunController(Service(), None)
+    cursor = encode_cursor(SCOPE, RunListFilters(status="waiting").cursor_collection(), RUN)
+    response = await controller.discover(
+        request(
+            "/api/v1/tenants/t/projects/p/environments/e/runs", f"order=id&status=waiting&cursor={cursor}", principal()
+        )
+    )
+    assert response.status_code == 200 and calls[-1]["position"] == RUN
+    query = RunListQuery(status=["failed", "waiting"])
+    cursor = encode_cursor_v2(SCOPE, query.cursor_collection(), None, str(RUN))
+    await controller.discover(
+        request(
+            "/api/v1/tenants/t/projects/p/environments/e/runs",
+            f"status=waiting&status=failed&cursor={cursor}",
+            principal(),
+        )
+    )
+    assert calls[-1]["position"] == RunPosition(None, RUN)
+    for value in (
+        "top_level_only=true&origin=call",
+        "include_archived=yes",
+        "colour=red",
+        "limit=101",
+        "workflow=one&workflow=two",
+        "order=started_desc&cursor=" + encode_cursor(SCOPE, "runs", RUN),
+    ):
+        with pytest.raises((ValueError, CatalogError)):
+            await controller.discover(request("/api/v1/tenants/t/projects/p/environments/e/runs", value, principal()))
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("count", [499, 500, 501, 100000, 100001])
+async def test_historical_stream_is_bounded_and_always_closed(monkeypatch, count):
+    from firefly_weave.operations import fact_reads
+
+    monkeypatch.setattr(fact_reads, "LEGACY_SECONDS", 60)
+    closed = []
+    maximum_heap = []
+
+    class Stream:
+        def mappings(self):
+            return self
+
+        async def partitions(self, size):
+            assert size == 500
+            for start in range(0, count, size):
+                yield [
+                    {"node_id": f"send[{index}]", "status": "completed"}
+                    for index in range(start, min(count, start + size))
+                ]
+
+        async def close(self):
+            closed.append(True)
+
+    class Session:
+        async def stream(self, statement, params, **kwargs):
+            assert kwargs["execution_options"] == {"yield_per": 500}
+            return Stream()
+
+    async def metadata(repository, run_id):
+        return {"node_kinds": {"send": "action"}}
+
+    original = fact_reads.heapq.heappush
+
+    def pushed(heap, item):
+        original(heap, item)
+        maximum_heap.append(len(heap))
+
+    monkeypatch.setattr(fact_reads.FactReadRepository, "metadata", metadata)
+    monkeypatch.setattr(fact_reads.heapq, "heappush", pushed)
+    repository = fact_reads.FactReadRepository(SimpleNamespace(session=Session(), scope=SCOPE))
+    if count > 100000:
+        with pytest.raises(CatalogError) as failure:
+            await repository.historical_steps(RUN, None, None, 1)
+        assert (failure.value.status, failure.value.code) == (429, "WV-RUNTIME-LIMIT")
+    else:
+        rows, complete = await repository.historical_steps(RUN, None, None, 1)
+        assert not complete and [row["instance_key"] for row in rows] == [
+            "send[0]",
+            "send[10000]" if count == 100000 else "send[100]",
+        ]
+    assert closed == [True] and max(maximum_heap) == 2
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_historical_stream_timeout_and_cancellation_close_cursor(monkeypatch, cancel):
+    import asyncio
+
+    from firefly_weave.operations import fact_reads
+
+    started = asyncio.Event()
+    closed = []
+
+    class Stream:
+        def mappings(self):
+            return self
+
+        async def partitions(self, size):
+            started.set()
+            await asyncio.Event().wait()
+            yield []
+
+        async def close(self):
+            closed.append(True)
+
+    class Session:
+        async def stream(self, *args, **kwargs):
+            return Stream()
+
+    async def metadata(*args):
+        return {"node_kinds": {}}
+
+    monkeypatch.setattr(fact_reads.FactReadRepository, "metadata", metadata)
+    repository = fact_reads.FactReadRepository(SimpleNamespace(session=Session(), scope=SCOPE))
+    task = asyncio.create_task(repository.historical_steps(RUN, None, None, 1))
+    await started.wait()
+    if cancel:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        with pytest.raises(CatalogError) as failure:
+            await task
+        assert (failure.value.status, failure.value.code) == (429, "WV-RUNTIME-LIMIT")
+    assert closed == [True]

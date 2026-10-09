@@ -35,10 +35,9 @@
         "412",
         "413",
         "422",
-        "500",
-        "501"
+        "500"
       ],
-      "served": false
+      "served": true
     },
     "runs.logs": {
       "capability": "run.read",
@@ -86,10 +85,9 @@
         "412",
         "413",
         "422",
-        "500",
-        "501"
+        "500"
       ],
-      "served": false
+      "served": true
     }
   },
   "schemas": {
@@ -182,7 +180,7 @@
       "$id": "run-list-query.schema.json",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
-      "description": "`runs.list` filters, with ID order retained for existing callers.",
+      "description": "Chronological `runs.list` filters, with explicit ID order for legacy cursors.",
       "properties": {
         "activation_id": {
           "anyOf": [
@@ -283,7 +281,7 @@
         },
         "order": {
           "$ref": "#/$defs/RunListOrder",
-          "default": "id"
+          "default": "started_desc"
         },
         "origin": {
           "anyOf": [

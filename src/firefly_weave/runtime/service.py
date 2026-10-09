@@ -28,6 +28,7 @@ from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
+from firefly_weave.api.transport import encode_cursor, encode_cursor_v2
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.expressions import ExpressionFailure
@@ -35,6 +36,8 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation
 from firefly_weave.contracts.human_tasks import ManualControlRequest
 from firefly_weave.contracts.operations import CancelRunRequest
+from firefly_weave.contracts.public import UnavailableResource
+from firefly_weave.contracts.run_views import RunListQuery
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
     RunListFilters,
@@ -44,6 +47,8 @@ from firefly_weave.contracts.runtime import (
 )
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
+from firefly_weave.operations.fact_positions import RunPosition
+from firefly_weave.operations.fact_reads import FactReadRepository, summary_of
 from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction
@@ -607,18 +612,40 @@ class RuntimeService:
         limit: int = 50,
         cursor: UUID | None = None,
         filters: RunListFilters | None = None,
+        query: RunListQuery | None = None,
+        position: RunPosition | UUID | None = None,
         context: AuditContext,
     ) -> dict[str, Any]:
         from firefly_weave.access.repository import load_principal
-        from firefly_weave.persistence.paging import page_ids
+
+        legacy_adapter = query is None and (filters is not None or cursor is not None)
+        if query is None:
+            values = (filters or RunListFilters()).model_dump(mode="json")
+            values["status"] = [values["status"]] if values["status"] is not None else []
+            query = RunListQuery.model_validate_json(
+                json.dumps({**values, "limit": limit, "order": "id" if legacy_adapter else "started_desc"})
+            )
+            position = cursor
+        elif filters is not None or cursor is not None:
+            raise ValueError("Use either a query or legacy list arguments")
+        if query.order != "id" and isinstance(position, UUID):
+            raise ValueError("Chronological order requires a time position")
+        if query.order == "id" and isinstance(position, RunPosition):
+            raise ValueError("ID order requires an ID position")
 
         self.require(actor, scope, "run.read", context)
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
             actor = await load_principal(tx.session, actor.id)
             self.require(actor, scope, "run.read", context)
-            ids = await page_ids(tx, "runs", limit, cursor, run_filters=(filters or RunListFilters()).model_dump())
+            rows = await FactReadRepository(tx).legacy_rows(query, position)
+            limit = query.limit
             items = []
-            for identifier in ids[:limit]:
+            for row in rows[:limit]:
+                identifier = row["run_id"]
+                summary = summary_of(row)
+                if isinstance(summary, UnavailableResource):
+                    items.append(summary.model_dump(mode="json"))
+                    continue
                 try:
                     items.append(
                         (await self.read(actor, scope, identifier, context=context, tx=tx)).model_dump(mode="json")
@@ -634,4 +661,18 @@ class RuntimeService:
                             "omissions": [{"path": "", "reason": "classification_unavailable"}],
                         }
                     )
-            return {"items": items, "next_cursor": str(ids[limit - 1]) if len(ids) > limit else None}
+            next_cursor = None
+            if len(rows) > limit:
+                last = rows[limit - 1]
+                if query.order == "id":
+                    next_cursor = (
+                        str(last["run_id"])
+                        if legacy_adapter
+                        else encode_cursor(scope, query.cursor_collection(), last["run_id"])
+                    )
+                else:
+                    at = last["updated_at"] if query.order == "updated_desc" else last["started_at"]
+                    next_cursor = encode_cursor_v2(
+                        scope, query.cursor_collection(), at.isoformat() if at else None, str(last["run_id"])
+                    )
+            return {"items": items, "next_cursor": next_cursor}

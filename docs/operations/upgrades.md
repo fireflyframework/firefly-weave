@@ -148,6 +148,26 @@ policy update, and this release has no in-place policy-change operation: a
 mismatch leaves the runtime restricted. Never rewrite the fingerprint or counters
 by hand to force readiness.
 
+## Run list and timeline compatibility
+
+The server now serves run summaries and step timelines. `runs.list` changes its
+default to `started_desc`, with `started_asc` and `updated_desc` also available.
+Clients that continue a legacy v1 cursor must send `order=id` and retain its
+original filters. New filters bind ID cursors to the normalized query; time
+orders use v2 cursors. Restart pagination after changing filters or order.
+
+The update-time order is a live view: a later update can move an item between
+pages. Refresh from the first page to see the latest ordering. Unknown historical
+times sort last and are never replaced by the fact projection's creation date.
+Restored runs reappear even though their archive lifecycle record is retained.
+
+Old runs may have incomplete timelines. The server reads their missing author
+step metadata in batches of 500, retaining only the requested page candidates.
+A request stops after 100,000 keys or two seconds with `429 WV-RUNTIME-LIMIT`;
+the time budget can be reached first. Synthetic control instances do not count
+toward completeness or the key cap. Step outputs remain optional and classified.
+`runs.logs` still answers authorized requests with `501 WV-UNAVAILABLE`.
+
 ## Operational fact storage
 
 The `0031_operations_facts` migration adds five scoped operational projections

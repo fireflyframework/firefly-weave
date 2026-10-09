@@ -412,13 +412,20 @@ Replay reports `consistent`, `inconsistent`, or `incomplete`: a history prefix,
 or a history with unavailable or redacted parts, is never reported as success.
 See [history and replay](history-and-replay.md).
 
-**Run summaries, steps, and logs.** `run_summaries.list`, `runs.steps`, and
-`runs.logs` are published so that clients can build against them. Until this
-server serves them, an authorized request answers `501` with `WV-UNAVAILABLE`.
+**Run summaries, steps, and logs.** `run_summaries.list` and `runs.steps` serve
+scoped operational metadata after checking both token and current permissions.
+`runs.logs` remains a published contract: an authorized request answers `501`
+with `WV-UNAVAILABLE`.
 
-- These lists are ordered by time, not by ID: run summaries by start time
-  (newest first by default) or by last update, steps by scheduled time, and log
-  entries by time.
+- Run summaries and `runs.list` default to `order=started_desc`. They also accept
+  `started_asc` and `updated_desc`; `runs.list` additionally accepts `order=id`.
+  Use explicit `order=id` with legacy v1 cursors. The original business-key,
+  correlation-key, single-status and archive filters retain their v1 collection;
+  additional filters bind the cursor to the normalized query.
+- Chronological lists use v2 cursors with UUID tie breakers and unknown times
+  last. `updated_desc` is a live view: updates can move a run between pages,
+  so refresh from the first page to see its latest position. Steps sort by
+  scheduled time, static step ID and full instance key; unknown times sort last.
 - `runs.steps` and `runs.logs` accept a `limit` of 1 to 500 (200 by default).
 - Each cursor is bound to every filter and to the order. After you change a
   filter, start again from the first page.
@@ -428,6 +435,16 @@ server serves them, an authorized request answers `501` with `WV-UNAVAILABLE`.
   with `WV-FILTER`; the message names the rule that failed.
 - Send times as RFC 3339 with an offset. Use `Z`, or encode `+` as `%2B` in the
   query string.
+
+Step timelines do not read payloads unless `include=output` is requested. Only
+the displayed outputs are fetched, after checking the bounded run artifact and
+classifying each output. An omitted output carries an omission reason; a
+returned JSON `null` is distinct from an omitted output. Synthetic control
+instances do not appear. `complete=false` means the run has author step
+instances without facts, even when they fall outside the current page or filter.
+Their unknown timestamps remain null. Legacy metadata is streamed in batches
+of 500, up to 100,000 keys and two seconds per request; exceeding either budget
+answers `429 WV-RUNTIME-LIMIT`.
 
 **Answers that say "unavailable".** Cancellation and task completion can return
 an unavailable acknowledgment when the platform cannot classify the historical

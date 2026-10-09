@@ -579,7 +579,8 @@ def test_query_digest_coverage_includes_every_filter():
     assert plain.cursor_collection() != plain.model_copy(update={"has_handled_errors": False}).cursor_collection()
     with pytest.raises(ValidationError):
         parse(RunSummaryQuery, {"order": "id"})
-    assert RunListQuery().order == "id"
+    assert RunListQuery().order == "started_desc"
+    assert RunListQuery(order="id").order == "id"
     assert RunListQuery().cursor_collection().startswith("runs:")
     assert RunListQuery().cursor_collection() != plain.cursor_collection()
     assert (

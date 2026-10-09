@@ -20,6 +20,14 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Serve bounded run summaries and classified step timelines with fresh scoped
+  authorization. Timeline output remains optional; legacy timings stay unknown.
+  Logs remain unavailable with HTTP 501.
+- Change `runs.list` to newest-started-first order. Existing v1 cursors remain
+  supported with explicit `order=id`; chronological orders use v2 cursors.
+  Update-time pagination is a live view and may require a refresh after changes.
+  Restored executions reappear in every order.
+
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.
 - Update Studio's YAML parser to 2.8.3 so deeply nested documents produce a

@@ -28,7 +28,7 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, field_validator, model_validator
@@ -39,6 +39,9 @@ from firefly_weave.contracts.instance_keys import InstanceKeyTextOrEmpty, node_o
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.values import FiniteFloat, JsonData, SafeInteger
 from firefly_weave.operations.redaction import Omission
+
+if TYPE_CHECKING:
+    from firefly_weave.contracts.runtime import RunListFilters
 
 type RunStatus = Literal["queued", "running", "waiting", "suspended", "succeeded", "failed", "cancelled", "timed_out"]
 type RunOrigin = Literal["manual", "webhook", "schedule", "broker", "email", "provider", "retry", "call", "test"]
@@ -349,14 +352,30 @@ class RunSummaryQuery(ContractModel):
 
 
 class RunListQuery(RunSummaryQuery):
-    """`runs.list` filters, with ID order retained for existing callers."""
+    """Chronological `runs.list` filters, with explicit ID order for legacy cursors."""
 
     # The list schema also permits ID order; the summary schema keeps chronological orders only.
-    order: RunListOrder = "id"  # type: ignore[assignment]
+    order: RunListOrder = "started_desc"  # type: ignore[assignment]
 
     def cursor_collection(self) -> str:
+        legacy = self.legacy_filters()
+        if legacy is not None:
+            return legacy.cursor_collection()
         filters = self.model_dump(mode="json", exclude={"order", "limit", "cursor"})
         return f"runs:{_digest(filters)}:{self.order}"
+
+    def legacy_filters(self) -> RunListFilters | None:
+        from firefly_weave.contracts.runtime import RunListFilters
+
+        excluded = {"order", "limit", "cursor", "business_key", "correlation_key", "status", "include_archived"}
+        if self.order != "id" or len(self.status) > 1 or self.model_dump(exclude=excluded, exclude_defaults=True):
+            return None
+        return RunListFilters(
+            business_key=self.business_key,
+            correlation_key=self.correlation_key,
+            status=self.status[0] if self.status else None,
+            include_archived=self.include_archived,
+        )
 
 
 class RunStepQuery(ContractModel):
