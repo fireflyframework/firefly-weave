@@ -388,9 +388,11 @@ def _compose(state: dict[str, Any]) -> list[str]:
     if platform_origins.has_egress(state):
         command.extend(["-f", str(platform_origins.compose_override(state))])
     if state.get("mode") == "docker":
-        from firefly_weave.sdk import platform_docker
+        from firefly_weave.sdk import platform_ai, platform_docker
 
         command.extend(["-f", str(platform_docker.dependencies(state))])
+        for path in platform_ai.compose_files(state):
+            command.extend(["-f", str(path)])
     return command
 
 
@@ -1378,9 +1380,10 @@ def stop(directory: Path) -> dict[str, Any]:
         if not (directory / "postgres.env").is_file() or not (directory / "identity.env").is_file():
             raise PlatformError("Setup did not reach dependency creation; no services need stopping.")
         if state.get("mode") == "docker":
-            from firefly_weave.sdk import platform_docker
+            from firefly_weave.sdk import platform_ai, platform_docker
 
             platform_docker.stop(state)
+            platform_ai.stop_services(state)
         _run(
             state,
             "dependencies-stop",
