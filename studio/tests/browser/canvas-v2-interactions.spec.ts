@@ -199,6 +199,7 @@ test("canvas controls stay at the bottom left with the minimap above", async ({
 test("empty workflow hint fits one line and its open slot is selected", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
   const canvas = await openNewWorkflow(page);
   const hint = canvas.root.locator(".empty-hint");
   expect(
@@ -207,6 +208,10 @@ test("empty workflow hint fits one line and its open slot is selected", async ({
         element.clientHeight / parseFloat(getComputedStyle(element).lineHeight),
     ),
   ).toBeLessThan(1.1);
+  const area = (await canvas.root.boundingBox())!;
+  const hintBox = (await hint.boundingBox())!;
+  expect(hintBox.x).toBeGreaterThanOrEqual(area.x);
+  expect(hintBox.x + hintBox.width).toBeLessThanOrEqual(area.x + area.width);
   await canvas.insertTarget("Add first step").click();
   await expect(canvas.root.locator(".empty-slot")).toHaveCSS(
     "border-top-color",
