@@ -23,8 +23,9 @@ import { useNewEditor } from "./canvas-po";
 const FRAME_BUDGET_MS = 16.7;
 /**
  * Animation-frame intervals are quantized to the display's refresh, so a
- * steady 60 Hz reads between 16.6 and 16.8 ms. A dropped frame reads 33 ms or
- * more, which this allowance still fails.
+ * steady 60 Hz reads between 16.6 and 16.8 ms. A frame that misses a refresh
+ * reads 33 ms or more, which this allowance still fails once such frames are
+ * more than 5 % of the frames that handled a wheel event (the p95).
  */
 const VSYNC_ALLOWANCE_MS = 1;
 const OPEN_BUDGET_MS = 1000;
@@ -85,33 +86,64 @@ async function applyChanges(page: Page) {
     .click();
 }
 
+/** Intervals between animation frames, smallest first, in milliseconds. */
+interface FrameIntervals {
+  /** Every frame while the gesture ran, idle ones too. */
+  all: number[];
+  /** Only the frames that follow a wheel event (see `sampleFrames`). */
+  afterWheel: number[];
+}
+
 /**
- * Runs `gesture` while recording the time between animation frames, and
- * returns the intervals smallest first. The first interval runs from the start
- * of sampling to the next frame, so it is not a frame and is left out.
+ * Runs `gesture` while recording the time between animation frames. Between
+ * two wheel events the page waits for Playwright, and those idle frames are
+ * always fast, so the statistic that gates a pan or zoom is `afterWheel`: a
+ * wheel event is handled just before a frame's callbacks, and the work it
+ * caused (layout, paint) delays the next frame, so the interval kept is the
+ * one that starts at the first frame after the event. The first interval runs
+ * from the start of sampling to the next frame, so it is not a frame and is
+ * left out.
  */
-async function sampleFrames(page: Page, gesture: () => Promise<void>) {
+async function sampleFrames(
+  page: Page,
+  gesture: () => Promise<void>,
+): Promise<FrameIntervals> {
   await page.evaluate(() => {
-    const w = window as unknown as { frames: number[]; sampling: boolean };
-    w.frames = [];
-    w.sampling = true;
-    let last = performance.now();
+    const w = window as unknown as { stopSampling: () => FrameIntervals };
+    const all: number[] = [];
+    const afterWheel: number[] = [];
+    let wheeled = false;
+    let armed = false;
+    let last: number | undefined;
+    const onWheel = () => (wheeled = true);
     const frame = (time: number) => {
-      if (!w.sampling) return;
-      w.frames.push(time - last);
+      if (last !== undefined) {
+        all.push(time - last);
+        if (armed) afterWheel.push(time - last);
+      }
+      armed = wheeled;
+      wheeled = false;
       last = time;
-      requestAnimationFrame(frame);
+      handle = requestAnimationFrame(frame);
     };
-    requestAnimationFrame(frame);
+    window.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    let handle = requestAnimationFrame(frame);
+    w.stopSampling = () => {
+      cancelAnimationFrame(handle);
+      window.removeEventListener("wheel", onWheel, { capture: true });
+      return { all, afterWheel };
+    };
   });
   await gesture();
   await page.waitForTimeout(100);
-  const frames = await page.evaluate(() => {
-    const w = window as unknown as { frames: number[]; sampling: boolean };
-    w.sampling = false;
-    return w.frames.slice(1);
-  });
-  return frames.sort((a, b) => a - b);
+  const frames = await page.evaluate(() =>
+    (
+      window as unknown as { stopSampling: () => FrameIntervals }
+    ).stopSampling(),
+  );
+  frames.all.sort((a, b) => a - b);
+  frames.afterWheel.sort((a, b) => a - b);
+  return frames;
 }
 
 /** The 95th percentile of values sorted smallest first. */
@@ -143,7 +175,7 @@ test("records pointer frame latency for 50/250/1000 step workflows", async ({
     const bounds = await node.boundingBox();
     expect(bounds).not.toBeNull();
     let interaction = 0;
-    const frames = await sampleFrames(page, async () => {
+    const { all: frames } = await sampleFrames(page, async () => {
       await page.mouse.move(bounds!.x + 40, bounds!.y + 20);
       await page.mouse.down();
       interaction = Date.now();
@@ -219,7 +251,7 @@ test("the new canvas opens 200 steps within a second and pans and zooms within a
       step3.x + step3.width / 2,
       step3.y + step3.height / 2,
     );
-    const panFrames = await sampleFrames(page, async () => {
+    const pan = await sampleFrames(page, async () => {
       for (let i = 0; i < 45; i++) await page.mouse.wheel(40, 0);
     });
     const movedTo = (await canvas
@@ -230,7 +262,7 @@ test("the new canvas opens 200 steps within a second and pans and zooms within a
     );
     // Out to the smallest zoom, in past the opening zoom, and back out to it,
     // so both thresholds of level of detail are crossed in each direction.
-    const zoomFrames = await sampleFrames(page, async () => {
+    const zoom = await sampleFrames(page, async () => {
       await page.keyboard.down("Control");
       for (let i = 0; i < 14; i++) await page.mouse.wheel(0, 30);
       expect(await zoomPercent(), "zoomed out").toBeLessThanOrEqual(30);
@@ -239,16 +271,24 @@ test("the new canvas opens 200 steps within a second and pans and zooms within a
       for (let i = 0; i < 12; i++) await page.mouse.wheel(0, 30);
       await page.keyboard.up("Control");
     });
-    const frames = [...panFrames, ...zoomFrames].sort((a, b) => a - b);
-    const p95FrameMs = p95(frames);
+    // The gate is the p95 of the frames that handled a wheel event; the
+    // numbers over every frame are recorded next to it.
+    const handled = [...pan.afterWheel, ...zoom.afterWheel].sort(
+      (a, b) => a - b,
+    );
+    const all = [...pan.all, ...zoom.all].sort((a, b) => a - b);
+    const p95FrameMs = p95(handled);
     result.measurements.push({
       count,
       openMs,
       p95FrameMs,
-      panP95FrameMs: p95(panFrames),
-      zoomP95FrameMs: p95(zoomFrames),
-      maxFrameMs: frames[frames.length - 1],
-      samples: frames.length,
+      panP95FrameMs: p95(pan.afterWheel),
+      zoomP95FrameMs: p95(zoom.afterWheel),
+      maxFrameMs: handled[handled.length - 1],
+      samples: handled.length,
+      allFramesP95Ms: p95(all),
+      allFramesMaxMs: all[all.length - 1],
+      allFrames: all.length,
     });
     // Only 200 steps are asserted; 1,000 steps are recorded for the PR.
     if (count === 200) {
