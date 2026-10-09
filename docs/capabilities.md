@@ -51,8 +51,12 @@ permissions, and real delivery still need checking in your deployment.
 ## Which release this page describes
 
 Weave is an alpha workflow and integration platform. This documentation targets
-**`0.1.0a14`**, with PyFly 26.9.15 and database schema revision
-`0030_worker_presence`, unchanged from alpha12. Alpha14 adds the detached Docker
+**`0.1.0a15`**, with PyFly 26.9.15 and database schema revision
+`0030_worker_presence`, unchanged from alpha12. Alpha15 adds text templates
+(`concat` and `join`), development-only private origins for the Docker
+development platform, plain-HTTP no-code connections with a "Not encrypted"
+warning, and the Firefly identity in Studio, the desktop app, the CLI and this
+site. Alpha14 adds the detached Docker
 development launcher and a credential-gated macOS notarization path. Actual Apple
 notarization requires a Developer ID certificate and an accepted submission.
 Alpha13 corrects worker context

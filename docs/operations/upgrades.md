@@ -44,6 +44,7 @@ the desktop app never migrates a platform.
 | alpha12 | `0030_worker_presence` | Adds scoped deployment Operations persistence, runner fencing and reconciliation, and worker presence/drain state. Explicitly migrate the server before using Operations; new roles are never granted automatically. Provider credentials stay on separately operated runners. |
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
+| alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -290,6 +291,70 @@ Perform these checks in order for each project and execution path:
 Do not infer provider delivery from API readiness alone. Keep the prior artifact,
 the source database, the backup, and protected migration evidence until the
 upgraded deployment and its recovery procedure have been verified.
+
+## What changes in alpha15
+
+Alpha15 adds no schema migration: the head stays `0030_worker_presence`, as in
+alpha12 to alpha14, and no role is added or changed. Follow the procedure above
+as usual; the migration command reports the schema as current. Then check these
+changes before you reopen traffic:
+
+- **Upgrade CLIs and SDKs with the server.** Connection test answers carry a new
+  `encrypted` field, `false` for an `http://` connection. CLIs and SDKs from
+  alpha14 or earlier cannot read `weave connections test` answers for HTTP
+  connections from an alpha15 server. Catalog list pages can also contain a new
+  item for a version the server does not run (`unavailable: true`,
+  `reason: ir_unsupported`, `missing_features`), and older SDKs and CLIs reject
+  such a page.
+- **Reads of versions and runs the server cannot run answer 422.** Reading a
+  definition version that needs a language feature the server does not list, or
+  repeating the publish request that created it, answers HTTP 422
+  `WV-IR-UNSUPPORTED` with `result.missing_features` instead of HTTP 409
+  `WV-LEGACY-UNAVAILABLE`. Reading a run that waits for an upgrade, sending it a
+  signal, or reporting a task result for it answers the same way. Runs with
+  unavailable legacy evidence still answer HTTP 409 `WV-LEGACY-UNAVAILABLE`.
+  Treat the 422 as "this server is too old", not as lost data.
+- **`email_receipts.dispatch` can answer 429.** When Weave refuses the dispatch
+  for capacity, the operation answers HTTP 429 (`WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`) with `Retry-After`, where it used to answer HTTP 200
+  with state `blocked`. The receipt keeps its state, and the next pending scan
+  dispatches it. A script that read `blocked` from that answer should retry the
+  429 instead.
+- **Native executors run up to their configured capacity.** In-process native
+  connector calls no longer share the two execution work slots of API requests.
+  Each `WEAVE_NATIVE_EXECUTORS` entry now runs up to its `capacity` at once,
+  where before a third concurrent call failed. Before you restart, check that
+  each entry's `capacity` is what the connector's destinations can take.
+- **Runs wait after a rollback instead of being blocked.** An alpha15 server that
+  does not list a language feature that a run in progress uses leaves the run
+  waiting until a server that runs it takes over; see
+  [runs that need a newer server](#runs-that-need-a-newer-server). Alpha14 and
+  earlier predate language features and block such runs permanently. Before you
+  roll back from alpha15 to alpha14, let every run that uses `concat` or `join`
+  finish, or cancel it.
+- **Legacy private-network settings map into the private-origin policy.**
+  `WEAVE_HTTP_PRIVATE_NETWORKS`, `WEAVE_MAIL_PRIVATE_NETWORKS`, and
+  `WEAVE_POSTGRES_PRIVATE_NETWORKS` (with `WEAVE_POSTGRES_PLAINTEXT_NETWORKS`)
+  keep their reach. At startup the API maps each one that is set to "Legacy
+  setting" entries of the same policy that a `WEAVE_PRIVATE_ORIGINS_FILE` feeds,
+  and logs a `private_origins.legacy` warning that names the setting. Keep using
+  these settings in deployments; the private-origin file is what
+  `weave platform up --allow-private-origin` writes for the Docker development
+  platform. All four are now parsed strictly: a CIDR with host bits set, such as
+  `10.0.0.1/8` instead of `10.0.0.0/8`, or more than 128 networks stops the API
+  at startup, so check their values before you restart.
+- **IR `weave/ir-v1alpha4` appears only with text operators.** A workflow that
+  uses `concat` or `join` compiles to `weave/ir-v1alpha4` with a `features`
+  list. Every other workflow keeps its IR version and digest, so existing
+  activations and pinned artifacts are unaffected. Alpha14 and earlier servers
+  refuse v1alpha4 artifacts: publish and activate such workflows only once every
+  server that runs them is on alpha15. The capabilities response lists
+  `weave/ir-v1alpha4` in `ir_versions` and the features in `language_features`.
+- **Compatibility refusals say when to retry.** `503 WV-COMPATIBILITY` answers
+  now carry `Retry-After` with the seconds until the next automatic rescan.
+- **Workers and local platforms.** The Agentic and Files workers 0.1.7 pin core
+  0.1.0a15. A local platform still has [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade):
+  set up alpha15 from its own checkout in a new directory.
 
 ## After the upgrade: clients and sign-in
 

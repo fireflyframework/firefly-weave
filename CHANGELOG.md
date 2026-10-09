@@ -18,65 +18,46 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
-## Unreleased
+## 0.1.0a15
 
-- No-code HTTP connections accept `http://` base URLs and warn that traffic is not encrypted.
-- Add development-only private origins to the Docker development platform:
-  `weave platform up --allow-private-origin ORIGIN` (repeatable) lets HTTP
-  connector actions and signed webhooks reach a local `http://` test service at
-  that exact origin on the installation's own egress network. The API reads the
-  approved entries from the read-only file named by `WEAVE_PRIVATE_ORIGINS_FILE`
-  and refuses to start when that file is malformed, a symbolic link, or writable
-  by other users.
-- Parse `WEAVE_HTTP_PRIVATE_NETWORKS`, `WEAVE_MAIL_PRIVATE_NETWORKS`, and the
-  PostgreSQL private and plaintext network settings strictly at startup: a CIDR
-  with host bits set, or more than 128 networks, in any of them stops the API.
-  Before, the HTTP and mail settings accepted a CIDR with host bits set and
-  failed the requests that used it, and the HTTP and PostgreSQL settings had no
-  limit. Reach is otherwise unchanged.
-- Connection test answers carry a new `encrypted` field. CLIs and SDKs older
-  than this release cannot read `weave connections test` answers for HTTP
-  connections from an upgraded server; upgrade the CLI and SDK together with the
-  server.
-- Keep an integration event delivery recoverable when Weave refuses one of its
-  database transactions for capacity (`WV-OPERATION-CAPACITY`). The delivery
-  stays `leased` instead of moving to `retry` with `DELIVERY_FAILED` or to an
-  `AUTHORITY_REVOKED` incident. When the lease expires, the attempt is recorded
-  as `ACK_UNKNOWN` and the same event ID is delivered again. The attempt still
-  counts, so a delivery refused on every attempt ends in a `DELIVERY_EXHAUSTED`
-  incident.
-- Native connector tasks no longer fail with `HANDLER_FAILED` when Weave refuses
-  one of their platform calls for capacity (`WV-OPERATION-CAPACITY` or
-  `WV-REQUEST-CAPACITY`). The invocation check before the connector starts is
-  sent again while the task's lease is valid; authority and credential checks
-  made while the connector runs get up to three attempts within one second.
-- Native connector calls no longer share the two execution work slots of API
-  requests, so a burst of requests no longer refuses them. They run up to the
-  `capacity` configured for each `WEAVE_NATIVE_EXECUTORS` entry.
-- `email_receipts.dispatch` answers HTTP 429 (`WV-OPERATION-CAPACITY` or
-  `WV-REQUEST-CAPACITY`) when Weave refuses the dispatch for capacity, where it
-  used to answer HTTP 200 with state `blocked`. The receipt keeps its state, and
-  the next pending scan dispatches it.
-- Draw "weave" in the Firefly Weave logo as a wordmark whose w is woven from two
-  strands, one amber, instead of typed text, in Studio, on the desktop launch
-  page and installer, and in the README banner and social preview. NOTICE names
-  the Weave name and logo as trademarks of the Firefly Software Foundation.
-- Show the product name, Firefly Weave, at the top of CLI help instead of ASCII
-  logo art, and say Weave AI in CLI prompts and in server and worker messages.
-  API paths, permissions, roles and error codes keep `lumi`.
-- Give the desktop app the Firefly icon, a charcoal DMG background as tall as
-  the installer window, and a charcoal launch page in a charcoal window that
-  opens without a white flash, and draw exported workflow graphs, the API
-  explorer, the README banner, shields and badges with the Firefly identity.
+### Workflow language
+
+- Build text in expressions with `concat`, which joins one or more strings,
+  numbers, or Booleans, and `join`, which joins a list of them with a separator.
+  Numbers are written as JavaScript writes them (`2.0` becomes `2`). The compiler
+  reports an operand that can never be text as `WV-COMP-TYPE_MISMATCH` and guards
+  one that might not be at run time. Decision table rules cannot use either
+  operator yet (`WV-DECISION-OPERATOR`), and Studio does not edit them yet.
+- Compile a workflow that uses `concat` or `join` to `weave/ir-v1alpha4`, with
+  `text.concat`, `text.join`, or both in the executable's new `features` list.
+  Every other workflow keeps its IR version and digest.
+- List the language features a platform runs in `language_features` in the
+  capabilities response, and add `weave/ir-v1alpha4` to `ir_versions`. An older
+  platform omits `language_features`, which means none. Activating a workflow
+  that needs a feature the platform does not list answers HTTP 422
+  `WV-IR-UNSUPPORTED` with `result.missing_features`; artifact import and the
+  compatibility report call it `ir_unsupported`.
+- Add the language manifest, which lists the step kinds, operators, workflow
+  fields, language features, and limits a platform supports:
+  `GET /api/v1/tenants/{tenant}/projects/{project}/language` (`catalog.read`),
+  `weave remote language`, `WeaveClient.language()`, the Studio host, and
+  `language-manifest.schema.json` from `weave schema export`. The capabilities
+  response now lists all ten runnable step kinds in `step_kinds`.
+- Accept `forEach`, `callWorkflow`, and `spec.callable` in workflow definitions
+  and the workflow schema, so documents can be prepared for loops and workflow
+  calls. The compiler refuses `forEach` and `callWorkflow` with
+  `WV-COMP-UNSUPPORTED_FEATURE` until a release runs them; `callable` only
+  declares an interface and compiles. Existing documents and artifacts keep
+  their bytes and digests.
 - Runs in progress whose workflow uses a language feature the server does not
   run, for example after rolling back to an earlier release that lists fewer
   language features, now wait for an upgrade instead of being blocked for good.
   The server offers none of their tasks to workers, leaves their deadlines and
   expired attempts pending, records nothing about them, and does not let them
   hold back other runs. After the upgrade they continue, and deadlines that
-  passed in the meantime apply then. A server that predates language features
-  still blocks such runs permanently, so finish or cancel them before rolling
-  back that far.
+  passed in the meantime apply then. A server that predates language features,
+  such as 0.1.0a14, still blocks such runs permanently, so finish or cancel them
+  before rolling back that far.
 - Reading such a run, sending it a signal, or reporting a task result for it
   answers HTTP 422 `WV-IR-UNSUPPORTED` with `result.missing_features` instead of
   HTTP 409 `WV-LEGACY-UNAVAILABLE`. Reading a definition version the server does
@@ -87,14 +68,163 @@ SPDX-License-Identifier: Apache-2.0
   does not run: `unavailable: true`, `reason: ir_unsupported`, and
   `missing_features`. SDKs and CLIs older than this release reject such a page;
   upgrade them together with the server.
+
+### Connections and private networks
+
+- Accept `http://` base URLs in no-code HTTP connections, as HTTP connector
+  actions already do, and never send plain text silently: `weave connections
+  create`, `read`, and `test` and `weave connector import-openapi --target
+  builtin` print a "Not encrypted" warning on standard error, and Studio's
+  connection form shows a **Not encrypted** notice. Private, loopback, and CGNAT
+  addresses still need an approved entry, and machine-token endpoints stay
+  HTTPS-only.
+- Connection test answers carry a new `encrypted` field. CLIs and SDKs older
+  than this release cannot read `weave connections test` answers for HTTP
+  connections from an upgraded server; upgrade the CLI and SDK together with the
+  server.
+- Add development-only private origins to the Docker development platform:
+  `weave platform up --allow-private-origin ORIGIN` (repeatable) lets HTTP
+  connector actions and signed webhooks reach a local `http://` test service at
+  that exact origin on the installation's own egress network. The API reads the
+  approved entries from the read-only file named by `WEAVE_PRIVATE_ORIGINS_FILE`
+  and refuses to start when that file is malformed, a symbolic link, or writable
+  by other users. Requests to an approved origin never follow redirects, and
+  Weave refuses the connection when it cannot tell whether the address belongs
+  to the platform itself.
+- Map `WEAVE_HTTP_PRIVATE_NETWORKS`, `WEAVE_MAIL_PRIVATE_NETWORKS`, and
+  `WEAVE_POSTGRES_PRIVATE_NETWORKS` at startup to "Legacy setting" entries of
+  the same private-origin policy, with a `private_origins.legacy` warning and
+  unchanged reach.
+- Parse `WEAVE_HTTP_PRIVATE_NETWORKS`, `WEAVE_MAIL_PRIVATE_NETWORKS`, and the
+  PostgreSQL private and plaintext network settings strictly at startup: a CIDR
+  with host bits set, or more than 128 networks, in any of them stops the API.
+  Before, the HTTP and mail settings accepted a CIDR with host bits set and
+  failed the requests that used it, and the HTTP and PostgreSQL settings had no
+  limit. Reach is otherwise unchanged.
+
+### Reliability under load
+
+- Keep a platform ready when a compatibility rescan confirms it. A burst of API
+  requests no longer makes the periodic rescan restrict the platform until the
+  next one, and changes are no longer refused for a moment while a confirming
+  rescan cleans up. `503 WV-COMPATIBILITY` answers carry `Retry-After`, the
+  seconds until the next automatic rescan, and a rescan that withdraws readiness
+  logs `Compatibility rescan withdrew readiness` with the finding kinds and codes.
+- Retry a Studio read, or a change that carries an idempotency key, after
+  `503 WV-COMPATIBILITY` when `Retry-After` is 5 seconds or less, within the
+  existing limit of four attempts.
+- Background work that starts when a compatibility check makes the platform
+  ready, such as event delivery, native connectors, broker and provider inboxes,
+  and recovery, no longer keeps failing with `WV-OPERATION-CAPACITY` after the
+  check's response ends, and no longer carries that request's identity.
+- Give recovery, the provider and email inboxes, and Kafka consumers their own
+  execution capacity, so a burst of API requests no longer refuses their work.
+  Recovery and schedule scan failures now log the error class and code, for
+  example `Tenant recovery scan failed (CatalogError WV-OPERATION-CAPACITY)`.
+- Native connector calls no longer share the two execution work slots of API
+  requests, so a burst of requests no longer refuses them. They run up to the
+  `capacity` configured for each `WEAVE_NATIVE_EXECUTORS` entry.
+- Native connector tasks no longer fail with `HANDLER_FAILED` when Weave refuses
+  one of their platform calls for capacity (`WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`). The invocation check before the connector starts is
+  sent again while the task's lease is valid; authority and credential checks
+  made while the connector runs get up to three attempts within one second.
+- A schedule whose run start is refused for capacity stays enabled and fires the
+  same occurrence, with the same key, on the next scan, instead of being blocked
+  with `WV-SCHEDULE-READINESS`. An occurrence still refused when its minute ends
+  is skipped like any other missed minute.
+- Provider receipts refused for capacity stay `pending` with the reason
+  `transient_failure` and the usual cooldown instead of being blocked.
+- `email_receipts.dispatch` answers HTTP 429 (`WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`) when Weave refuses the dispatch for capacity, where it
+  used to answer HTTP 200 with state `blocked`. The receipt keeps its state, and
+  the next pending scan dispatches it.
+- Keep an integration event delivery recoverable when Weave refuses one of its
+  database transactions for capacity (`WV-OPERATION-CAPACITY`). The delivery
+  stays `leased` instead of moving to `retry` with `DELIVERY_FAILED` or to an
+  `AUTHORITY_REVOKED` incident. When the lease expires, the attempt is recorded
+  as `ACK_UNKNOWN` and the same event ID is delivered again. The attempt still
+  counts, so a delivery refused on every attempt ends in a `DELIVERY_EXHAUSTED`
+  incident.
+
+### API
+
+- Publish the run summary, step, and log operations (`run_summaries.list`,
+  `runs.steps`, and `runs.logs`) and their schemas so clients can build against
+  them. They require `run.read` and validate their queries and cursors; this
+  release answers an authorized, valid request with HTTP 501 `WV-UNAVAILABLE`.
+
+### Studio, desktop app, and CLI
+
+- Give Studio one dark theme built from design tokens, the self-hosted Manrope
+  typeface, and Lucide icons. The sidebar and pairing pages show the Firefly
+  Weave logo; the collapsed sidebar and narrow windows show the Firefly mark,
+  and the browser tab the Firefly favicon.
+- Remove the Lumi mascot from Studio, the API explorer, exported workflow
+  graphs, the README, and the documentation diagrams.
+- Say Weave AI throughout Studio: **Ask Weave AI**, **Weave AI settings**,
+  **Explain with Weave AI**, the **AI models** settings card, and the role labels
+  **Weave AI user** and **Weave AI manager**. Show the product name, Firefly
+  Weave, at the top of CLI help instead of ASCII logo art, and say Weave AI in
+  CLI prompts and in server and worker messages. API paths, permissions, roles,
+  storage names, and error codes keep `lumi`.
+- Draw "weave" in the Firefly Weave logo as a wordmark whose w is woven from two
+  strands, one amber, instead of typed text, in Studio, on the desktop launch
+  page and installer, and in the README banner and social preview.
+- Give the desktop app the Firefly icon, a charcoal DMG background as tall as
+  the installer window, and a charcoal launch page in a charcoal window that
+  opens without a white flash, and draw exported workflow graphs, the API
+  explorer, the README banner, shields, and badges with the Firefly identity.
+- Keep the values typed into a **Call an action** step's input fields when you
+  switch to **Write one expression for the whole input**. Before, the expression
+  opened on the input as it was when the step was selected, and the first edit
+  replaced the typed values. Switching back to field-by-field input while the
+  expression is invalid keeps it in view with the usual message.
+- Studio no longer marks a workflow it just opened or created as Unsaved before
+  any edit when it is not connected to a platform.
+- NOTICE states that the Firefly name, logo, and icon are trademarks of Firefly
+  Software Solutions Inc., used with permission and not licensed under the
+  Apache License 2.0, and that the Weave name and logo are trademarks of the
+  Firefly Software Foundation. It adds the Manrope and Lucide notices.
+
+### Documentation
+
 - Restyle the documentation site in one dark scheme with the Firefly Weave logo,
-  the Firefly favicon and self-hosted Manrope, and recolor every diagram to the
+  the Firefly favicon, and self-hosted Manrope, and recolor every diagram to the
   Firefly light palette on paper panels.
 - Call the Studio assistant Weave AI throughout the documentation. Its guide is
   now [Use Weave AI](docs/guides/weave-ai.md); [the previous guide](docs/guides/lumi.md)
-  points to it. API paths, permissions and role names keep `lumi`.
-- Studio no longer marks a workflow it just opened or created as Unsaved before
-  any edit when it is not connected to a platform.
+  points to it. API paths, permissions, and role names keep `lumi`.
+- Add the [Studio editor contracts](docs/reference/studio-editor-contracts.md)
+  reference for the step details registry, the test data schema, and the step
+  execution bodies that the next Studio editor builds on. Studio does not use
+  them yet.
+
+### Development and testing
+
+- Run Studio's unit tests, a cross-platform browser subset, and a portable
+  Python subset on macOS and Windows in CI, next to the Linux checks.
+- Add acceptance journeys against a real Docker platform with its PostgreSQL and
+  Keycloak, the Acme API fixture, and the Studio host (`scripts/acceptance.py`).
+  The `Acceptance` workflow runs the `pr` profile on Linux with container egress
+  blocked.
+- Fail the checks when the Python package, the worker packages, the desktop app,
+  the documented install pins, and the upgrade table do not name one release.
+- Replay a recorded corpus of compiled artifacts and kernel transitions for
+  every example workflow, so a change that alters an existing digest fails the
+  checks.
+
+### Versions and schema
+
+- Bump the Python package and browser Studio bundle to `0.1.0a15` and the
+  desktop product to `0.1.0-alpha.15`; the native internal installer counter is
+  `0.1.15`.
+- Pin the Agentic and Files 0.1.7 packages to core 0.1.0a15. The Agentic Weave
+  AI gateway now introduces the assistant as Weave AI; Files has a dependency
+  update only.
+- Schema revision remains `0030_worker_presence`; no new database migration is
+  added, and no role is added or changed. See [upgrade a platform safely](docs/operations/upgrades.md#what-changes-in-alpha15)
+  for the behavior changes to check.
 
 ## 0.1.0a14
 
