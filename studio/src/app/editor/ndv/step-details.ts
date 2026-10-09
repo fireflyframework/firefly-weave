@@ -400,9 +400,11 @@ export class StepDetails {
       );
     else if (focus.kind === "region")
       found = control(root.querySelector(`[data-region="${focus.region}"]`));
+    const name = root.querySelector<HTMLElement>(".sd-name:not([disabled])");
     found ??=
       control(panel?.querySelector("[data-param]")) ??
-      root.querySelector<HTMLElement>(".sd-name") ??
+      (name && visible(name) ? name : null) ??
+      control(root) ??
       root;
     found.focus();
   }

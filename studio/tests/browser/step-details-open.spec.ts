@@ -259,22 +259,64 @@ for (const size of sizes) {
       await details.close();
       await expect(details.node("check-two")).toBeFocused();
     });
-    test("Start opens the trigger with double-click and Enter and returns focus", async ({
+    for (const opening of ["double-click", "Enter"] as const)
+      test(`Start opens the trigger with ${opening}, owns Escape and returns focus`, async ({
+        page,
+      }) => {
+        const details = await openStepFixture(page);
+        if (opening === "double-click") await details.trigger().dblclick();
+        else await details.trigger().press("Enter");
+        await expect(details.dialogFor("Manual form trigger")).toBeVisible();
+        await expect(
+          details.dialog.getByRole("button", {
+            name: "Manual form trigger",
+            exact: true,
+          }),
+        ).toBeDisabled();
+        await expect
+          .poll(() =>
+            details.dialog.evaluate((dialog) => {
+              const active = document.activeElement;
+              return (
+                !!active &&
+                dialog.contains(active) &&
+                active.matches(
+                  "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])",
+                )
+              );
+            }),
+          )
+          .toBe(true);
+        await page.keyboard.press("Escape");
+        await expect(details.dialog).toHaveCount(0);
+        await expect(details.trigger()).toBeFocused();
+      });
+    test("Previous from the first step focuses the trigger dialog and Escape returns to Start", async ({
       page,
     }) => {
       const details = await openStepFixture(page);
-      await details.trigger().dblclick();
+      await details.open("check-customer");
+      await details.dialog
+        .getByRole("button", { name: "Previous step", exact: true })
+        .click();
       await expect(details.dialogFor("Manual form trigger")).toBeVisible();
-      await details.close();
+      await expect
+        .poll(() =>
+          details.dialog.evaluate((dialog) => {
+            const active = document.activeElement;
+            return (
+              !!active &&
+              dialog.contains(active) &&
+              active.matches(
+                "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])",
+              )
+            );
+          }),
+        )
+        .toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(details.dialog).toHaveCount(0);
       await expect(details.trigger()).toBeFocused();
-      await details.trigger().press("Enter");
-      await expect(details.dialogFor("Manual form trigger")).toBeVisible();
-      await expect(
-        details.dialog.getByRole("button", {
-          name: "Manual form trigger",
-          exact: true,
-        }),
-      ).toBeDisabled();
     });
     test("Enter in Outline opens details and closing returns to its row", async ({
       page,
