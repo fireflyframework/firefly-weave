@@ -32,6 +32,21 @@ whose core dependency is
 pinned to that Weave version. The catalog references below retain their own
 `1.0.0` definition and task versions.
 
+## Run AI tasks on a local model with Ollama
+
+On the Docker development platform, one command sets up everything an AI task
+needs to run on a model on your computer: the AI gateway, the Agentic worker, the
+AI policy, the development-only private-origin entries for the model endpoint and
+an `ollama-local` connection that uses no credential.
+
+```sh
+# Development only: run Ollama in a Weave-managed container and pull a small model.
+weave platform ai enable --ollama container --model qwen2.5:1.5b --yes
+```
+
+[Run AI tasks with Ollama](ollama.md) covers the modes, the models and the error
+codes. The rest of this guide covers providers you deploy yourself.
+
 ## Follow one AI task from authoring to completion
 
 ![Six stages from an author's typed AI task through administrator binding, a durable task lease, an approved model call, validation, and accepted run evidence](../diagrams/ai-workflow-lifecycle.svg)
@@ -285,33 +300,80 @@ approved for your deployment. The supported provider selectors are
 `openai-chat`, `openai-responses`, `azure-chat`, `azure-responses`, and `anthropic`.
 Model IDs and Azure deployment names are supplied explicitly.
 
-The server validates this configuration without provider I/O. The generic
-connection test returns unsuccessful because this connection is executed by the
-remote worker; it does not claim to test provider credentials. A successful AI
-task is the end-to-end provider check.
+The server validates this configuration without provider I/O. A connection test
+(`weave connections test ID`) calls one model through the AI gateway when the
+platform has one: the first approved model the endpoint lists, because this test
+names none. It uses the connection's credential (none for a keyless connection)
+and no tool probe; without a gateway it reports failure rather than claiming a
+provider check. The `ai_connections.test` operation (`connection.manage`) tests the
+model you name, reports the answer time and whether the model can call tools, and
+never returns the model's text. AI connection tests, dedicated or generic, share a
+limit of six per minute per person and answer 429 `WV-AI-RATE-LIMITED` beyond it;
+the other problem codes are in
+[Run AI tasks with Ollama](ollama.md#when-something-goes-wrong). A successful AI
+task remains the end-to-end check of the worker and the result contract.
+
+A connection may use `http://` only for an origin that the platform's
+private-origin policy approves for model calls with no credentials, such as a
+local Ollama. Such a connection sets `secretRef.apiKey` to the reserved handle
+`no-credential`, which is never resolved, leased, logged or sent.
 
 ## Apply the worker's model and endpoint policy
 
-Mount a policy file owned by the operator:
+Mount an AI policy file owned by the operator. The worker reads it from
+`WEAVE_AGENTIC_POLICY_FILE` and the AI gateway from `WEAVE_LUMI_POLICY_FILE`; both
+read it again when it changes, so edits need no restart. A file that becomes
+invalid stops every model call with `LLM_POLICY` until it is fixed.
 
 ```json
 {
-  "models": [{"provider": "openai-chat", "model": "gpt-4o"}],
-  "endpoints": ["https://api.openai.com/v1"]
+  "version": 2,
+  "endpoints": [
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "url": "https://api.openai.com/v1",
+      "providers": ["openai-chat", "openai-responses"],
+      "credential": "required",
+      "models": ["gpt-5-mini", "gpt-5"],
+      "contextTokens": 128000
+    }
+  ]
 }
 ```
 
-These are exact allowlists, with no wildcard model or endpoint selection. The
-model name above illustrates the format; use models available to your provider
-account. A workflow cannot set a provider URL, secret value, custom tool class,
-or arbitrary model settings. Every task must satisfy the deployment policy and
-its bound connection's destination list. Configure the worker's network policy
-to allow only those provider destinations and Weave.
+| Field | Meaning |
+| --- | --- |
+| `id`, `label` | A short identifier (lowercase letters, digits and hyphens) and a display name; each endpoint's identifier and URL appears once |
+| `url`, `providers` | The exact endpoint URL connections store, and the providers it serves |
+| `credential` | `required` (the connection's secret handle is leased) or `none` (no credential is ever sent) |
+| `models` | Exact model names, or `served` for any model the endpoint lists (only for an origin the private-origin policy approves) |
+| `contextTokens` | The context window; a prompt that cannot fit fails with `LLM_CONTEXT_LIMIT` before any request |
+| `maxOutputTokens` | The largest `options.max_tokens` a step may ask for; larger values fail with `LLM_OPTIONS` |
+| `compat` | `ollama` for an Ollama endpoint, otherwise omitted |
+| `structuredOutput` | How the endpoint returns structured results: `tool` (the default), `native` (the default for `compat: ollama`) or `prompted`. Typed AI task results are requested through a tool call |
+| `caBundle` | An absolute CA file for a private HTTPS endpoint |
+
+The model names above illustrate the format; use models available to your provider
+account. A workflow cannot set a provider URL, secret value, custom tool class, or
+arbitrary model settings. Every task must satisfy the deployment policy and its
+bound connection's destination list. Configure the worker's network policy to
+allow only those provider destinations and Weave.
+
+The policy never grants network access. Plain HTTP and private addresses are
+reachable only through an exact entry of the private-origin policy
+(`WEAVE_PRIVATE_ORIGINS_FILE`) with `purpose: model`, and a plain HTTP endpoint
+must use `credential: none`: Weave never sends a model credential over plain
+HTTP, and public model endpoints are always reached over HTTPS. A version 1
+policy (`{"models": [{"provider", "model"}], "endpoints": [url]}`) still approves
+exactly the pairs it lists; the worker and the AI gateway log a warning to migrate it.
 
 The provider clients disable environment proxies, redirects, and automatic SDK
-retries. Model options are checked by the pinned Agentic `ModelOptions` and
-provider settings resolver. Unsupported options fail before credential lookup;
-they are not silently dropped.
+retries, connect only to addresses the private-origin policy allows, check the
+socket peer before sending, and send only model paths (never Ollama's pull or
+delete routes). Model options are checked by the pinned Agentic `ModelOptions`
+and provider settings resolver. Unsupported options fail before credential
+lookup; they are not silently dropped.
 
 ## Start the worker
 
@@ -325,6 +387,8 @@ Provide these explicit deployment settings:
 | `WEAVE_WORKER_TOKEN_FILE` | Mounted worker access-token file; use this or OAuth configuration, never both. |
 | `WEAVE_WORKER_OAUTH_CONFIG_FILE` | Mounted client-credentials configuration JSON; alternative to the access-token file. |
 | `WEAVE_AGENTIC_POLICY_FILE` | Mounted policy JSON file |
+| `WEAVE_AGENTIC_CAPACITY` | Concurrent tasks, 1 to 16; default 1, the right value for one local Ollama |
+| `WEAVE_PRIVATE_ORIGINS_FILE` | Mounted private-origin policy; plain HTTP to the API or the token endpoint needs its `platform-api` and `worker-auth` entries |
 
 Choose exactly one authentication mode:
 
@@ -354,13 +418,14 @@ OAuth configuration is fixed when the worker starts. The client secret is read
 again on token acquisition, and a cached token is refreshed before its reported
 expiry. Acquisition is bounded to ten seconds, ignores environment proxies,
 does not follow redirects, and does not retry. Tokens are attached only to the
-configured HTTPS Weave API origin. A refused API request is not replayed after
+configured Weave API origin, which must use HTTPS unless an exact `platform-api`
+private-origin entry lists it. A refused API request is not replayed after
 refresh, which avoids silently repeating a state-changing operation.
 
 The worker principal needs only its task/credential grants. The worker registers
-one instance with capacity one and drains on `SIGTERM` or `SIGINT`. Lease renewal
-failure cancels the running model call. No database or administrator credentials
-are needed.
+one instance with the capacity `WEAVE_AGENTIC_CAPACITY` sets (one by default) and
+drains on `SIGTERM` or `SIGINT`. Lease renewal failure cancels the running model
+call. No database or administrator credentials are needed.
 
 ```sh
 workers/agentic/.venv/bin/weave-agentic-worker
@@ -413,8 +478,10 @@ The only completion payload is:
 
 Raw reasoning traces, provider response objects, credentials, and exception text
 are not returned or logged. The worker disables framework/provider content logs
-and reports safe failure codes such as `LLM_LIMIT`, `LLM_TIMEOUT`, and
-`LLM_OUTPUT`. Responses API storage is disabled.
+and reports safe failure codes such as `LLM_MODEL_NOT_FOUND`, `LLM_UNREACHABLE`,
+`LLM_LIMIT`, `LLM_TIMEOUT`, and `LLM_OUTPUT`; the full list, with what to do, is in
+[Run AI tasks with Ollama](ollama.md#when-something-goes-wrong). Responses API
+storage is disabled.
 
 Accepted results are durable workflow data. The profile's `outputSchema` is
 part of the pinned result contract: a result containing an `x-secret` or
@@ -461,7 +528,7 @@ models, environments, or interactive Entra sign-in for people.
 | A connection handle exists but credentials are unavailable | Ask the operator to check the exact environment-scoped secret grant and secret source; a new grant needs an API rollout. |
 | Activation cannot bind a worker or connection | Check the admitted release, task capability, worker authority, and exact connection-revision grant. |
 | The task waits without being claimed | Check that the independently deployed worker is running, authenticated, and has capacity for its admitted release. |
-| The call fails with a safe LLM error | Check the allowed model/endpoint, provider access, output contract, and configured budgets. A generic connection test does not validate remote provider credentials. |
+| The call fails with a safe LLM error | Check the allowed model/endpoint, provider access, output contract, and configured budgets. A connection test calls the model through the AI gateway. |
 
 To pass results between AI steps in one workflow execution, follow
 [Share context between AI steps](shared-ai-context.md). Context is explicit

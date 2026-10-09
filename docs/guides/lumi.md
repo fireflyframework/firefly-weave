@@ -147,11 +147,16 @@ Set these gateway environment variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `WEAVE_LUMI_POLICY_FILE` | Mounted JSON file listing exact permitted provider/model pairs and provider endpoints; same shape as the AI worker policy. |
+| `WEAVE_LUMI_POLICY_FILE` | Mounted AI policy file (version 2, or the version 1 shape); the same file as the AI worker's. |
+| `WEAVE_LUMI_GATEWAY_HOST` | Listener address; defaults to `0.0.0.0`. The local platform uses `127.0.0.1` in the API's network namespace. |
 | `WEAVE_LUMI_GATEWAY_TOKEN_FILE` | Mounted service token shared only with the API deployment. |
 | `WEAVE_LUMI_GATEWAY_PORT` | Internal listener port; defaults to `8090`. |
 
-Run the gateway behind a private TLS ingress. Its only route is `POST /v1/lumi`.
+Run the gateway behind a private TLS ingress. Its routes are `POST /v1/lumi`
+(assistant replies), `POST /v1/test` (AI connection tests) and `POST /v1/models`
+(model discovery). The API calls a sibling route at the path next to its
+configured endpoint: it reaches `/v1/test` beside `/v1/lumi`.
+
 Restrict ingress to the API service and configure ingress request/body limits and
 idle timeouts for the selected model budget. The container itself speaks HTTP on
 its private listener; never expose that listener directly to browsers or the
@@ -168,11 +173,15 @@ Configure the API using operator-owned settings, not a browser-provided URL:
 }
 ```
 
-Supply that JSON as `WEAVE_LUMI_GATEWAY`. The API requires HTTPS, does not follow
-redirects, ignores proxy environment variables, and performs no automatic retry.
-Both processes reread the mounted service token for every request, allowing
-rotation. Deploy overlapping rotation changes carefully: the token file contains
-one active token, so mismatched deployments fail closed.
+Supply that JSON as `WEAVE_LUMI_GATEWAY`. The API requires HTTPS, except plain
+HTTP to a loopback IP address (for example `127.0.0.1`) that the private-origin
+file lists as an exact `model` entry with `credentials: loopback`, as on the local
+platform. The endpoint names its route without a trailing slash, and the API
+refuses one that ends in a slash. The API does not follow redirects, ignores proxy
+environment variables, and performs no automatic retry. Both processes reread
+the mounted service token for every request, allowing rotation. Deploy
+overlapping rotation changes carefully: the token file contains one active token,
+so mismatched deployments fail closed.
 
 ## Configure an environment
 

@@ -161,6 +161,12 @@ def test_help_lists_the_ai_commands():
         assert command in result.output
 
 
+def test_the_platform_introduction_points_to_the_ai_commands():
+    result = CliRunner().invoke(cli, ["platform", "--help"])
+    assert result.exit_code == 0
+    assert " ".join(result.output.split()).count("use ai (development only)") == 1
+
+
 @pytest.mark.parametrize(("typed", "accepted"), [("y\n", True), ("n\n", False), ("\n", False), ("", False)])
 def test_a_terminal_asks_on_standard_error_and_a_closed_prompt_declines(monkeypatch, tmp_path, typed, accepted):
     monkeypatch.setattr(platform_cli, "_interactive_stdin", lambda: True)

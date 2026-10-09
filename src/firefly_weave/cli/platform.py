@@ -83,6 +83,7 @@ def platform(ctx: click.Context, directory: Path) -> None:
     terminal, run demo to save your first real workflow execution, then user
     to create a development person who can sign in to Studio and the CLI.
     To run built-in HTTP connector actions, use integrations and secret.
+    To run AI tasks on a local Ollama model, use ai (development only).
     """
     ctx.obj = directory.absolute()
 
