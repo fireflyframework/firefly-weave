@@ -719,50 +719,67 @@ for (const size of screenSizes) {
         yamlFile("many-paths.yaml", wide(7)),
       );
       await details.open(longId);
-      const audit = async () =>
-        details.dialog.evaluate((dialog, touch) => {
-          const controls = [
-            ...dialog.querySelectorAll<HTMLElement>(
-              "button:not([disabled]), a[href], input",
-            ),
-          ].filter(
-            (e) =>
-              e.getClientRects().length > 0 &&
-              getComputedStyle(e).visibility !== "hidden",
-          );
-          return {
-            width: document.documentElement.scrollWidth,
-            viewport: window.innerWidth,
-            failures: controls.flatMap((e) => {
-              const r = e.getBoundingClientRect();
-              const hit = document.elementFromPoint(
-                r.x + r.width / 2,
-                r.y + r.height / 2,
-              );
-              const minimum = touch ? 44 : 24;
-              return r.width < minimum ||
-                r.height < minimum ||
-                r.x < 0 ||
-                r.right > window.innerWidth ||
-                r.y < 0 ||
-                r.bottom > window.innerHeight ||
-                !hit ||
-                !e.contains(hit)
-                ? [
-                    {
-                      name:
-                        e.getAttribute("aria-label") || e.textContent?.trim(),
-                      width: r.width,
-                      height: r.height,
-                      x: r.x,
-                      y: r.y,
-                      reached: !!hit && e.contains(hit),
-                    },
-                  ]
-                : [];
-            }),
-          };
-        }, size.width <= 768);
+      const audit = async () => {
+        const failures = [];
+        for (const control of await details.dialog
+          .locator("button:not([disabled]), a[href], input")
+          .all()) {
+          if (!(await control.isVisible())) continue;
+          await control.evaluate((element) => {
+            for (
+              let parent = element.parentElement;
+              parent;
+              parent = parent.parentElement
+            ) {
+              if (
+                parent.scrollHeight > parent.clientHeight &&
+                /^(auto|scroll)$/.test(getComputedStyle(parent).overflowY)
+              ) {
+                const bounds = parent.getBoundingClientRect();
+                const target = element.getBoundingClientRect();
+                parent.scrollTop +=
+                  target.y -
+                  bounds.y -
+                  (parent.clientHeight - target.height) / 2;
+                break;
+              }
+            }
+          });
+          const failure = await control.evaluate((e, touch) => {
+            const r = e.getBoundingClientRect();
+            const hit = document.elementFromPoint(
+              r.x + r.width / 2,
+              r.y + r.height / 2,
+            );
+            const minimum = touch ? 44 : 24;
+            return r.width < minimum ||
+              r.height < minimum ||
+              r.x < 0 ||
+              r.right > window.innerWidth ||
+              r.y < 0 ||
+              r.bottom > window.innerHeight ||
+              !hit ||
+              !e.contains(hit)
+              ? {
+                  name: e.getAttribute("aria-label") || e.textContent?.trim(),
+                  width: r.width,
+                  height: r.height,
+                  x: r.x,
+                  y: r.y,
+                  reached: !!hit && e.contains(hit),
+                }
+              : null;
+          }, size.width <= 768);
+          if (failure) failures.push(failure);
+        }
+        return {
+          width: await page.evaluate(
+            () => document.documentElement.scrollWidth,
+          ),
+          viewport: size.width,
+          failures,
+        };
+      };
       const first = await audit();
       expect(first.width).toBeLessThanOrEqual(first.viewport);
       expect(first.failures).toEqual([]);

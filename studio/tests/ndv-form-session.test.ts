@@ -16,6 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
+import { readFileSync } from "node:fs";
+import { parse } from "yaml";
+import type { Workflow } from "../src/app/model";
 import {
   ElementRef,
   Injector,
@@ -391,4 +394,474 @@ it("keeps a published action's rendered identity while fresh providers still loa
     { value: "sql.lookup@1.0.0", label: "sql.lookup@1.0.0" },
   ]);
   injector.destroy();
+});
+
+function session(target: string) {
+  const model = new StructuredCanvasAdapter();
+  model.replace(
+    parse(
+      readFileSync(
+        new URL("./fixtures/step-details.yaml", import.meta.url),
+        "utf8",
+      ),
+    ) as Workflow,
+  );
+  const notes: string[] = [];
+  const host = {
+    model,
+    error: "",
+    perform(edit: () => void) {
+      try {
+        edit();
+      } catch (error) {
+        host.error = (error as Error).message;
+      }
+    },
+    notify: (text: string) => void notes.push(text),
+    undo: () => model.undo(),
+    catalogContracts: new Map(),
+    decisionContracts: new Map(),
+    actionVersions: [],
+    label: (kind: string) => kind,
+    editingLocked: false,
+    profile: null,
+    api: {} as never,
+    diagnostics: null,
+    diagnosticsDefinition: null,
+    cacheDecisionContract: () => undefined,
+    can: () => true,
+    refreshView: () => undefined,
+  } as unknown as StepDetailsHost;
+  const controller = new StepDetailsController(host);
+  const form = new FormSession(host, controller, openRequest(target), {
+    confirm: async () => true,
+    announce: () => undefined,
+  });
+  return { model, form, notes };
+}
+
+describe("form sessions", () => {
+  it("adds, moves and refuses to remove decision paths through the decision's branches", () => {
+    const { model, form } = session("route-by-value");
+    const cases = form.state("parameters").fields[0].spec.children!(
+      form.controller.step("route-by-value")!,
+      form.controller.kindContext(),
+    )[0];
+    expect(form.structure(cases)).toBe("cases");
+    expect(form.removeReason(cases, 0)).toBe("Move or delete its steps first.");
+    form.listAdd(cases);
+    expect((model.definition.spec.steps[2]["cases"] as unknown[]).length).toBe(
+      3,
+    );
+    form.listMove(cases, 2, 0);
+    expect(
+      (model.definition.spec.steps[2]["cases"] as { when?: unknown }[])[0].when,
+    ).toBeUndefined();
+  });
+  it("labels a path with its condition and the step it leads to", () => {
+    const { form } = session("route-by-value");
+    expect(form.rowInfo(["cases", 0])).toEqual({
+      chip: "amount > 1000",
+      next: "notify-sales",
+    });
+    expect(form.rowInfo(["cases", 1])).toEqual({
+      chip: "tier is gold",
+      next: "summarize",
+    });
+    expect(form.rowInfo(["default"])).toEqual({
+      chip: "Otherwise",
+      next: "fan-out",
+    });
+  });
+  it("renames an answer with its paths", () => {
+    const { model, form } = session("notify-sales");
+    const answers = form
+      .state("parameters")
+      .fields.find((f) => f.spec.id === "answers")!.spec;
+    expect(form.structure(answers)).toBe("answers");
+    form.listRename(answers, 0, "accept");
+    const task = model.nodes().find((n) => n.step.id === "notify-sales")!.step;
+    expect(task["decisions"]).toEqual(["accept", "reject"]);
+  });
+  it("collapses optional children at their default into add buttons", () => {
+    const { form } = session("route-by-value");
+    const paths = form.state("parameters").fields[0].spec;
+    const otherwise = paths.children!(
+      form.controller.step("route-by-value")!,
+      form.controller.kindContext(),
+    )[1];
+    const { shown, collapsed } = form.children(otherwise);
+    expect(shown).toEqual([]);
+    expect(collapsed.map((c) => c.label)).toEqual(["Path result"]);
+    form.expandChild(collapsed[0]);
+    expect(form.children(otherwise).shown.map((e) => e.spec.label)).toEqual([
+      "Path result",
+    ]);
+  });
+});
+
+describe("nested collection ownership", () => {
+  function nested() {
+    const f = setup();
+    const child: ParamSpec = {
+      id: "nested",
+      path: ["message"],
+      type: "text",
+      label: "Message",
+      mapping: "both",
+    };
+    const group: ParamSpec = {
+      id: "group",
+      path: ["prompt"],
+      type: "fields",
+      label: "Context",
+      children: () => [child],
+    };
+    const descriptor = f.controller.descriptor("summarize")!;
+    f.controller.descriptor = () => ({
+      ...descriptor,
+      form: () => ({ fields: [group] }),
+    });
+    f.session.write(group, {
+      mode: "mapped",
+      expression: { object: { message: { ref: "/input/name" } } },
+    });
+    expect(f.errors).toEqual([]);
+    expect(f.session.read(group)).toEqual({
+      mode: "mapped",
+      expression: { object: { message: { ref: "/input/name" } } },
+    });
+    return { ...f, group, child: f.session.childSpec(child, group.path) };
+  }
+  it("returns a live nested mapping to Fixed and Undo restores it", async () => {
+    const f = nested();
+    const pending = f.session.setMode(f.child, "fixed");
+    f.answer();
+    await pending;
+    expect(f.session.read(f.child).mode).not.toBe("mapped");
+    f.model.undo();
+    expect(f.session.read(f.child)).toEqual({
+      mode: "mapped",
+      expression: { ref: "/input/name" },
+    });
+  });
+  it("maps a nested Fixed field without inventing path authority", async () => {
+    const f = nested();
+    f.session.clear(f.child);
+    await f.session.setMode(f.child, "mapped");
+    expect(f.session.mode(f.child)).toBe("mapped");
+    const arbitrary = { ...f.child, path: ["prompt", "unknown"] };
+    await f.session.setMode(arbitrary, "mapped");
+    expect(f.session.mode(arbitrary)).toBe("fixed");
+  });
+  it("maps a whole structured descriptor and returns to rows using its original authority", async () => {
+    const f = nested();
+    f.session.mapWhole(f.group);
+    expect(f.session.mode(f.group)).toBe("mapped");
+    f.session.write(f.group, { mode: "mapped", expression: { ref: "/input" } });
+    const pending = f.session.useRows(f.group);
+    f.answer();
+    await pending;
+    expect(f.session.entries(f.group)).toEqual({ kind: "object", keys: [] });
+  });
+  for (const change of [
+    "edit",
+    "readOnly",
+    "hidden",
+    "schema",
+    "close",
+  ] as const)
+    it(`refuses a delayed nested replacement after ${change}`, async () => {
+      const f = nested();
+      const pending = f.session.setMode(f.child, "fixed");
+      if (change === "edit")
+        f.session.write(f.child, {
+          mode: "mapped",
+          expression: { ref: "/input/new" },
+        });
+      if (change === "readOnly") f.host.editingLocked = true;
+      if (change === "hidden")
+        f.group.children = () => [
+          { ...f.child, path: ["message"], showWhen: () => false },
+        ];
+      if (change === "schema")
+        f.group.children = () => [
+          { ...f.child, path: ["message"], type: "number" },
+        ];
+      if (change === "close") f.close();
+      const before = JSON.stringify(f.model.definition);
+      f.answer();
+      await pending;
+      expect(JSON.stringify(f.model.definition)).toBe(before);
+    });
+  it("preserves nested feature-gating", () => {
+    const f = nested();
+    f.group.children = () => [
+      { ...f.child, path: ["message"], feature: "future.feature", default: "" },
+    ];
+    const parts = f.session.children(f.group);
+    expect(parts.shown[0].disabled).toBe(
+      "Update the platform to use this (future.feature).",
+    );
+  });
+  for (const change of ["edit", "readOnly", "close"] as const)
+    it(`refuses Use rows after ${change}`, async () => {
+      const f = nested();
+      f.session.write(f.group, {
+        mode: "mapped",
+        expression: { ref: "/input" },
+      });
+      const pending = f.session.useRows(f.group);
+      if (change === "edit")
+        f.session.write(f.group, {
+          mode: "mapped",
+          expression: { ref: "/input/new" },
+        });
+      if (change === "readOnly") f.host.editingLocked = true;
+      if (change === "close") f.close();
+      const before = JSON.stringify(f.model.definition);
+      f.answer();
+      await pending;
+      expect(JSON.stringify(f.model.definition)).toBe(before);
+    });
+  it("refuses Use rows when a generated group schema changes during confirmation", async () => {
+    const f = nested();
+    f.session.write(f.group, { mode: "mapped", expression: { ref: "/input" } });
+    const pending = f.session.useRows(f.group);
+    f.group.children = () => [
+      { ...f.child, path: ["message"], type: "number" },
+    ];
+    const before = JSON.stringify(f.model.definition);
+    f.answer();
+    await pending;
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+  });
+  it("enforces maximum answer count at the mutation boundary", () => {
+    const f = session("notify-sales");
+    const answers = f.form
+      .state("parameters")
+      .fields.find((e) => e.spec.id === "answers")!.spec;
+    f.form.setList(answers, () =>
+      Array.from({ length: 33 }, (_, i) => ({
+        mode: "fixed" as const,
+        value: `answer-${i}`,
+      })),
+    );
+    expect(f.form.list(answers)).toHaveLength(2);
+  });
+});
+
+describe("collection mutation and row lifetime", () => {
+  function rows() {
+    const f = setup();
+    const list: ParamSpec = {
+      id: "rows",
+      path: ["context"],
+      type: "list",
+      label: "Rows",
+      item: {
+        id: "item",
+        path: [],
+        type: "text",
+        label: "Item",
+        mapping: "both",
+      },
+    };
+    const original = f.controller.descriptor("summarize")!;
+    f.controller.descriptor = () => ({
+      ...original,
+      form: () => ({ fields: [list] }),
+    });
+    f.session.write(list, {
+      mode: "mapped",
+      expression: { array: [{ ref: "/input/a" }, { ref: "/input/b" }] },
+    });
+    return { ...f, list, child: f.session.itemSpec(list, 0, list.item!) };
+  }
+  it("refuses a pending replacement after moving a same-ID row", async () => {
+    const f = rows();
+    const pending = f.session.setMode(f.child, "fixed");
+    f.session.listMove(f.list, 0, 1);
+    const before = JSON.stringify(f.model.definition);
+    f.answer();
+    await pending;
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.session.list(f.list)).toEqual([
+      { mode: "mapped", expression: { ref: "/input/b" } },
+      { mode: "mapped", expression: { ref: "/input/a" } },
+    ]);
+  });
+  it("remounts rows after reorder and removal while preserving identities on child typing", () => {
+    const f = rows();
+    const key = f.session.rowKey(f.list, 0);
+    f.session.write(f.child, { mode: "fixed", value: "typing" });
+    expect(f.session.rowKey(f.list, 0)).toBe(key);
+    f.session.listMove(f.list, 0, 1);
+    const moved = f.session.rowKey(f.list, 0);
+    expect(moved).not.toBe(key);
+    f.model.undo();
+    expect(f.session.rowKey(f.list, 0)).not.toBe(moved);
+    const undo = f.session.rowKey(f.list, 0);
+    f.session.listRemove(f.list, 0);
+    expect(f.session.rowKey(f.list, 0)).not.toBe(undo);
+  });
+  it("blocks nested writes under a read-only parent", () => {
+    const f = rows();
+    f.list.readOnly = () => "Managed by the platform.";
+    const before = JSON.stringify(f.model.definition);
+    f.session.write(f.child, { mode: "fixed", value: "wrong" });
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+  });
+  it("keeps a canceled whole mapping unchanged", async () => {
+    const f = rows();
+    f.session.write(f.list, { mode: "mapped", expression: { ref: "/input" } });
+    const form = new FormSession(
+      f.host,
+      f.controller,
+      openRequest("summarize"),
+      { confirm: async () => false, announce: () => undefined },
+    );
+    await form.useRows(f.list);
+    expect(form.read(f.list)).toEqual({
+      mode: "mapped",
+      expression: { ref: "/input" },
+    });
+  });
+});
+
+it("does not transfer a row's empty Mapped draft after reorder", async () => {
+  const f = setup();
+  const list: ParamSpec = {
+    id: "rows",
+    path: ["context"],
+    type: "list",
+    label: "Rows",
+    item: {
+      id: "item",
+      path: [],
+      type: "text",
+      label: "Item",
+      mapping: "both",
+    },
+  };
+  const original = f.controller.descriptor("summarize")!;
+  f.controller.descriptor = () => ({
+    ...original,
+    form: () => ({ fields: [list] }),
+  });
+  f.session.write(list, { mode: "fixed", value: ["first", "second"] });
+  const child = f.session.itemSpec(list, 0, list.item!);
+  await f.session.setMode(child, "mapped");
+  expect(f.session.mode(child)).toBe("mapped");
+  f.session.listMove(list, 0, 1);
+  expect(f.session.mode(child)).toBe("fixed");
+});
+
+it("keeps a keyed row's name when its value returns to Fixed", async () => {
+  const f = setup();
+  const group: ParamSpec = {
+    id: "values",
+    path: ["context"],
+    type: "keyValue",
+    label: "Values",
+  };
+  const original = f.controller.descriptor("summarize")!;
+  f.controller.descriptor = () => ({
+    ...original,
+    form: () => ({ fields: [group] }),
+  });
+  f.session.write(group, {
+    mode: "mapped",
+    expression: { object: { customer: { ref: "/input/name" } } },
+  });
+  const child = f.session.keyedSpec(group, "customer");
+  const pending = f.session.setMode(child, "fixed");
+  f.answer();
+  await pending;
+  expect(f.session.keyed(group)).toEqual([
+    ["customer", { mode: "fixed", value: "" }],
+  ]);
+});
+
+it("clears row drafts when Undo restores a different row at the same path", async () => {
+  const f = setup();
+  const list: ParamSpec = {
+    id: "rows",
+    path: ["context"],
+    type: "list",
+    label: "Rows",
+    item: {
+      id: "item",
+      path: [],
+      type: "text",
+      label: "Item",
+      mapping: "both",
+    },
+  };
+  const descriptor = f.controller.descriptor("summarize")!;
+  f.controller.descriptor = () => ({
+    ...descriptor,
+    form: () => ({ fields: [list] }),
+  });
+  f.session.write(list, { mode: "fixed", value: ["first", "second"] });
+  f.session.rowKey(list, 0);
+  f.session.listMove(list, 0, 1);
+  f.session.rowKey(list, 0);
+  const child = f.session.itemSpec(list, 0, list.item!);
+  await f.session.setMode(child, "mapped");
+  f.model.undo();
+  f.session.rowKey(list, 0);
+  expect(f.session.mode(child)).toBe("fixed");
+});
+
+it("resolves generated nested object children inside a list without repeating their relative prefix", async () => {
+  const { paramsFromSchema } = await import(
+    "../src/app/editor/ndv/params/schema-params"
+  );
+  const f = setup();
+  const schema = {
+    type: "object",
+    required: ["items"],
+    properties: {
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["address"],
+          properties: {
+            address: {
+              type: "object",
+              required: ["city"],
+              properties: {
+                city: { type: "string" },
+                secret: { type: "string", "x-secret": true },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const form = paramsFromSchema(schema, ["context"], { idPrefix: "input." });
+  const descriptor = f.controller.descriptor("summarize")!;
+  f.controller.descriptor = () => ({ ...descriptor, form: () => form });
+  const list = form.fields[0];
+  f.session.write(list, {
+    mode: "mapped",
+    expression: {
+      array: [
+        { object: { address: { object: { city: { ref: "/input/name" } } } } },
+      ],
+    },
+  });
+  const row = f.session.itemSpec(list, 0, list.item!);
+  const address = f.session.children(row).shown[0].spec;
+  const children = f.session.children(address).shown;
+  expect(children.map((entry) => entry.spec.label)).toEqual(["City"]);
+  const city = children[0].spec;
+  expect(city.path).toEqual(["context", "items", 0, "address", "city"]);
+  const pending = f.session.setMode(city, "fixed");
+  f.answer();
+  await pending;
+  expect(f.session.read(city).mode).not.toBe("mapped");
 });

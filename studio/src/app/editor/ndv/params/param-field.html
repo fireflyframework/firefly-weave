@@ -28,12 +28,19 @@ SPDX-License-Identifier: Apache-2.0
   (focusout)="left()"
 >
   <div class="param-label-row">
-    <label
-      class="param-label"
-      [for]="ids.control"
-      [id]="ids.control + '-label'"
-      >{{ spec.label }}</label
-    >
+    @if (isGroup()) {
+      <span class="param-label" [id]="ids.control + '-label'">{{
+        spec.label
+      }}</span>
+    } @else {
+      <label
+        class="param-label"
+        [class.sr-only]="row()"
+        [for]="ids.control"
+        [id]="ids.control + '-label'"
+        >{{ spec.label }}</label
+      >
+    }
     @if (spec.required) {
       <span class="param-required" aria-hidden="true">*</span>
     }
@@ -101,8 +108,38 @@ SPDX-License-Identifier: Apache-2.0
         [describedBy]="describedBy()"
         [readOnly]="reason"
       />
+    } @else if (
+      isGroup() && spec.path.length && !session().collectionRows(spec)
+    ) {
+      <p class="param-deferred" [id]="ids.control">
+        This imported value is edited with Edit as YAML for now.
+      </p>
     } @else {
       @switch (spec.type) {
+        @case ("list") {
+          <weave-list-field
+            [session]="session()"
+            [spec]="spec"
+            [labelId]="ids.control + '-label'"
+            [readOnly]="reason"
+          />
+        }
+        @case ("keyValue") {
+          <weave-key-value-field
+            [session]="session()"
+            [spec]="spec"
+            [labelId]="ids.control + '-label'"
+            [readOnly]="reason"
+          />
+        }
+        @case ("fields") {
+          <weave-fields-field
+            [session]="session()"
+            [spec]="spec"
+            [readOnly]="reason"
+            [labelId]="ids.control + '-label'"
+          />
+        }
         @case ("multiline") {
           <textarea
             class="param-input param-multiline"
@@ -314,6 +351,13 @@ SPDX-License-Identifier: Apache-2.0
   </div>
   <p
     class="param-line"
+    [hidden]="
+      row() &&
+      line.kind !== 'error' &&
+      line.kind !== 'warning' &&
+      !numberProblem() &&
+      !jsonProblem
+    "
     [id]="ids.line"
     [attr.data-kind]="numberProblem() || jsonProblem ? 'error' : line.kind"
     [attr.role]="line.kind === 'error' ? 'alert' : null"

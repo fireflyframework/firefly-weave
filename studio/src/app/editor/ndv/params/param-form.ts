@@ -26,6 +26,7 @@ import {
 import type { FormName, FormSession } from "./form-session";
 import { canonicalJson } from "../../../forms/core/json";
 import type { FieldEntry } from "./form-model";
+import { AddOption } from "./add-option";
 import { ParamField } from "./param-field";
 
 @Component({
@@ -33,7 +34,7 @@ import { ParamField } from "./param-field";
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   encapsulation: ViewEncapsulation.None,
-  imports: [ParamField],
+  imports: [ParamField, AddOption],
   styleUrl: "./params.css",
   template: `@let state = session().state(name());
     <div class="param-form">
@@ -43,6 +44,9 @@ import { ParamField } from "./param-field";
           [spec]="entry.spec"
           [entry]="entry"
         />
+      }
+      @if (state.addable.length && !session().controller.readOnlyReason()) {
+        <weave-add-option [session]="session()" [options]="state.addable" />
       }
     </div>`,
 })

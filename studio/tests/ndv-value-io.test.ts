@@ -24,6 +24,10 @@ import {
   isDefault,
   mapped,
   readEntries,
+  readList,
+  readKeyed,
+  writeList,
+  writeKeyed,
   readParam,
   resetChanges,
   writeParam,
@@ -393,4 +397,127 @@ describe("applying a change the way a saved edit does", () => {
       ]),
     ).toThrow(new EditError(message));
   });
+});
+
+describe("lists and keyed rows", () => {
+  const mail: Step = {
+    id: "send",
+    kind: "action",
+    uses: "flow.send@1.0.0",
+    with: {
+      object: {
+        to: { array: [{ literal: "a@x.test" }, { ref: "/input/email" }] },
+      },
+    },
+  };
+  const to = spec(["with", "to"], { type: "list" });
+  it("reads and rewrites a list inside an expression", () => {
+    expect(readList(subject(mail), to)).toEqual([
+      fixed("a@x.test"),
+      mapped({ ref: "/input/email" }),
+    ]);
+    const [change] = writeList(subject(mail), to, (items) => [
+      items[1],
+      items[0],
+      fixed("c@x.test"),
+    ]);
+    expect(change.value).toEqual({
+      object: {
+        to: {
+          array: [
+            { ref: "/input/email" },
+            { literal: "a@x.test" },
+            { literal: "c@x.test" },
+          ],
+        },
+      },
+    });
+  });
+  it("reads and rewrites keyed rows in their order", () => {
+    const shape: Step = {
+      id: "shape",
+      kind: "transform",
+      value: {
+        object: {
+          customer: { ref: "/input/customerId" },
+          amount: { ref: "/input/amount" },
+        },
+      },
+    };
+    const value = { ...spec(["value"], { type: "keyValue" }) };
+    const s = { ...subject(shape), roots: [["value"]] };
+    expect(readKeyed(s, value).map(([key]) => key)).toEqual([
+      "customer",
+      "amount",
+    ]);
+    const [change] = writeKeyed(s, value, (entries) => [
+      entries[1],
+      entries[0],
+      ["note", fixed("hi")],
+    ]);
+    expect(
+      Object.keys((change.value as { object: Record<string, unknown> }).object),
+    ).toEqual(["amount", "customer", "note"]);
+  });
+  it("rewrites a plain list as JSON", () => {
+    const task: Step = {
+      id: "review",
+      kind: "humanTask",
+      decisions: ["approve", "reject"],
+    };
+    const answers = spec(["decisions"], { type: "list" });
+    const [change] = writeList(
+      { ...subject(task), roots: [] },
+      answers,
+      (items) => [...items, fixed("escalate")],
+    );
+    expect(change).toEqual({
+      scope: "step",
+      path: ["decisions"],
+      value: ["approve", "reject", "escalate"],
+    });
+  });
+});
+
+it("retains opaque row expressions and refuses duplicate keyed writes", () => {
+  const expression = { ref: "/input/name", literal: "opaque" };
+  const shape: Step = {
+    id: "shape",
+    kind: "transform",
+    value: {
+      object: { a: expression, b: { literal: { nested: [1, true, null] } } },
+    },
+  };
+  const s = { ...subject(shape), roots: [["value"]] };
+  const field = spec(["value"], { type: "keyValue" });
+  const [change] = writeKeyed(s, field, (entries) => [
+    ...entries,
+    ["c", fixed("added")],
+  ]);
+  expect(change.value).toEqual({
+    object: {
+      a: expression,
+      b: { literal: { nested: [1, true, null] } },
+      c: { literal: "added" },
+    },
+  });
+  expect(() =>
+    writeKeyed(s, field, (entries) => [...entries, ["a", fixed("duplicate")]]),
+  ).toThrow(FormWriteError);
+});
+
+it("preserves untouched nested expression shapes when adding or reordering rows", () => {
+  const original = { object: { nested: { literal: { a: [1, true, null] } } } };
+  const s = {
+    ...subject({
+      id: "shape",
+      kind: "transform",
+      value: { array: [original, { ref: "/input/name" }] },
+    }),
+    roots: [["value"]],
+  };
+  const list = spec(["value"], { type: "list" });
+  expect(
+    writeList(s, list, (items) => [items[1], items[0], fixed("new")])[0].value,
+  ).toEqual({ array: [{ ref: "/input/name" }, original, { literal: "new" }] });
 });

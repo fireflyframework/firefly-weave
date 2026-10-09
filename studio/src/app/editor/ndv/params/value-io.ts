@@ -304,3 +304,125 @@ export function applyChange(
     step: subject.step ? (write(subject.step) as Step) : null,
   };
 }
+
+function nodeOf(subject: FormSubject, spec: ValueSpec): Bound | undefined {
+  const located = locate(subject, spec);
+  if (located.kind === "plain") {
+    const value = getAt(located.base, located.path);
+    return value === undefined ? undefined : literalBound(value);
+  }
+  return nodeAt(located, spec);
+}
+
+export function readList(subject: FormSubject, spec: ValueSpec): ParamValue[] {
+  const node = nodeOf(subject, spec);
+  return node?.kind === "array" ? node.items.map(fromBound) : [];
+}
+export function readKeyed(
+  subject: FormSubject,
+  spec: ValueSpec,
+): [string, ParamValue][] {
+  const node = nodeOf(subject, spec);
+  return node?.kind === "object"
+    ? Object.entries(node.entries).map(([key, child]) => [
+        key,
+        fromBound(child),
+      ])
+    : [];
+}
+
+function writeNode(
+  subject: FormSubject,
+  spec: ValueSpec,
+  node: Bound,
+): FormChange[] {
+  const located = locate(subject, spec);
+  if (located.kind === "plain") {
+    const literal = literalValue(node);
+    if (literal === undefined)
+      throw new FormWriteError("This list holds fixed values only.");
+    return [
+      { scope: located.scope, path: located.path, value: literal as Json },
+    ];
+  }
+  if (!located.rest.length)
+    return [
+      {
+        scope: located.scope,
+        path: located.root,
+        value: encode(node) as Expression,
+      },
+    ];
+  const current = getAt(located.base, located.root);
+  const bound: Bound =
+    current === undefined
+      ? { kind: "object", entries: {} }
+      : decode(current, located.schema);
+  if (bound.kind !== "object" && bound.kind !== "array")
+    throw new FormWriteError(
+      "This input is mapped as a whole. Choose Map field by field first.",
+    );
+  return [
+    {
+      scope: located.scope,
+      path: located.root,
+      value: encode(set(bound, located.rest, node)) as Expression,
+    },
+  ];
+}
+
+export function writeList(
+  subject: FormSubject,
+  spec: ValueSpec,
+  update: (items: ParamValue[]) => ParamValue[],
+): FormChange[] {
+  const original = nodeOf(subject, spec);
+  const nodes = original?.kind === "array" ? original.items : [];
+  const current = nodes.map(fromBound);
+  const source = new Map(current.map((item, index) => [item, nodes[index]]));
+  const items = update(current).filter((item) => item.mode !== "absent");
+  if (
+    items.length === current.length &&
+    items.every((item, index) => item === current[index])
+  )
+    return [];
+  return writeNode(subject, spec, {
+    kind: "array",
+    items: items.map((item) => source.get(item) ?? asBound(item)),
+  });
+}
+
+export function writeKeyed(
+  subject: FormSubject,
+  spec: ValueSpec,
+  update: (entries: [string, ParamValue][]) => [string, ParamValue][],
+): FormChange[] {
+  const original = nodeOf(subject, spec);
+  const nodes =
+    original?.kind === "object" ? Object.entries(original.entries) : [];
+  const current: [string, ParamValue][] = nodes.map(([key, node]) => [
+    key,
+    fromBound(node),
+  ]);
+  const source = new Map(
+    current.map(([, value], index) => [value, nodes[index][1]]),
+  );
+  const updated = update(current);
+  if (new Set(updated.map(([key]) => key)).size !== updated.length)
+    throw new FormWriteError("Choose a unique name for each field.");
+  const entries = updated.filter(([, value]) => value.mode !== "absent");
+  if (
+    entries.length === current.length &&
+    entries.every(
+      ([key, value], index) =>
+        key === current[index][0] && value === current[index][1],
+    )
+  )
+    return [];
+  return writeNode(subject, spec, {
+    kind: "object",
+    entries: Object.fromEntries(
+      entries.map(([key, value]) => [key, source.get(value) ?? asBound(value)]),
+    ),
+  });
+}

@@ -41,6 +41,9 @@ import { Icon } from "../../../icon";
 import { RowMenu, type RowMenuItem } from "../../../row-menu";
 import type { Choice, Json, ParamSpec } from "../registry";
 import type { FieldEntry } from "./form-model";
+import { ListField } from "./list-field";
+import { KeyValueField } from "./key-value-field";
+import { FieldsField } from "./fields-field";
 import { FormulaField } from "./formula-field";
 import type { FormSession } from "./form-session";
 import { normalizeIdentifier } from "./identifiers";
@@ -65,10 +68,20 @@ const UNIT_CODE: Record<string, string> = {
   selector: "weave-param-field",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, RowMenu, Select, Toggletip, FormulaField],
+  imports: [
+    Icon,
+    RowMenu,
+    Select,
+    Toggletip,
+    FormulaField,
+    ListField,
+    KeyValueField,
+    FieldsField,
+  ],
   templateUrl: "./param-field.html",
   host: {
     class: "param-host",
+    "[class.is-option]": "entry().option && isGroup()",
     "[attr.data-param]": "spec().id",
     "[attr.data-mode]": "mode()",
     "[attr.data-required-empty]": "session().requiredEmpty(spec()) ? '' : null",
@@ -78,6 +91,12 @@ export class ParamField {
   session = input.required<FormSession>();
   spec = input.required<ParamSpec>();
   entry = input.required<FieldEntry>();
+  row = input(false);
+  isGroup(): boolean {
+    return ["list", "keyValue", "fields", "conditions", "schema"].includes(
+      this.spec().type,
+    );
+  }
   readonly String = String;
   private readonly formula = viewChild(FormulaField);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -171,8 +190,31 @@ export class ParamField {
         disabled: true,
         run: () => undefined,
       });
+    if (
+      ["list", "keyValue", "fields"].includes(spec.type) &&
+      spec.mapping !== "fixed" &&
+      this.session()
+        .subject()
+        .roots.some((root) => String(root[0]) === String(spec.path[0]))
+    )
+      items.push(
+        this.session().wholeMapping(spec)
+          ? {
+              label: "Use rows",
+              disabled: locked,
+              run: () => void session.useRows(spec),
+            }
+          : {
+              label:
+                spec.type === "list"
+                  ? "Map the whole list"
+                  : "Map the whole input",
+              disabled: locked,
+              run: () => this.setMode("mapped"),
+            },
+      );
     items.push({ label: "Copy value", run: () => void this.copyValue() });
-    if (this.entry().option)
+    if (this.entry().option && !spec.required)
       items.push({
         label: "Remove option",
         danger: true,

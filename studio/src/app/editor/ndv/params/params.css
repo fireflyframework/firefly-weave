@@ -297,3 +297,241 @@ SPDX-License-Identifier: Apache-2.0
     min-width: var(--control-touch);
   }
 }
+
+.param-list,
+.param-kv,
+.param-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.param-row,
+.param-kv-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 44px;
+  gap: var(--space-2);
+  align-items: center;
+}
+.param-kv-row {
+  grid-template-columns: 18px minmax(90px, 150px) minmax(0, 1fr) 44px;
+}
+.param-row.is-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.param-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.param-row.is-card > weave-fields-field {
+  padding: var(--space-3);
+}
+.param-grip {
+  color: var(--subtle);
+}
+.param-up {
+  transform: rotate(-90deg);
+}
+.param-chip-out {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 24px;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-caption);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--flow-line);
+  border-radius: var(--radius-pill);
+}
+.param-next {
+  font: var(--type-caption);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.param-group-add,
+.param-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+.param-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 var(--space-2);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+}
+.param-chip-text,
+.param-chip-new {
+  width: 12ch;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: var(--type-label);
+}
+.param-chip-new {
+  border-bottom: 1px dashed var(--field-border);
+}
+.step-details button.param-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  min-height: 44px;
+  font: var(--type-label);
+  color: var(--link);
+}
+.param-kv-hint {
+  font: var(--type-small);
+  color: var(--subtle);
+}
+.add-option {
+  position: relative;
+  display: inline-block;
+  align-self: flex-start;
+}
+.step-details button.add-option-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  font: var(--type-button);
+  color: var(--text);
+  background: transparent;
+  border: 1px dashed var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.add-option-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 6;
+  width: min(440px, 80vw);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.step-details button.add-option-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 6px var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.step-details button.add-option-item:is(:hover, :focus-visible) {
+  background: var(--hover);
+}
+.add-option-item b {
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.add-option-item span {
+  font: var(--type-caption);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.add-option-item[aria-disabled="true"] b {
+  color: var(--disabled-ink);
+}
+.add-option-item[aria-disabled="true"] span {
+  color: var(--subtle);
+}
+.add-option-empty {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.param-host.is-option > .param {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.param-row-value {
+  min-width: 0;
+  width: 100%;
+}
+.param-card-head {
+  width: 100%;
+  flex-wrap: wrap;
+  box-sizing: border-box;
+}
+.param-list .icon-button,
+.param-kv .icon-button,
+.param-chip .icon-button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.param-list .param-input,
+.param-kv .param-input {
+  min-height: 44px;
+}
+@media (max-width: 600px) {
+  .param-kv-row {
+    grid-template-columns: 18px minmax(0, 1fr) 44px;
+  }
+  .param-kv-row > .param-row-value {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .param-kv-row > button {
+    grid-column: 3;
+    grid-row: 1 / 3;
+  }
+  .add-option-item {
+    flex-direction: column;
+  }
+  .add-option-item span {
+    white-space: normal;
+  }
+  .param-next {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+.step-details
+  :is(.param-kv, .param-list)
+  :is(.param-mode button, .param-menu button, .ref-pill-button) {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.step-details
+  weave-param-field:has(weave-key-value-field, weave-list-field)
+  > .param
+  > .param-label-row
+  button {
+  min-width: 44px;
+  min-height: 44px;
+}
