@@ -154,6 +154,83 @@ async function runPage(
   return { run, detail };
 }
 
+test("Retry run finds later activations and uncached version metadata", async ({
+  page,
+}) => {
+  const { detail } = await runPage(page, "failed", [
+    "run.retry",
+    "catalog.read",
+  ]);
+  const laterVersion = "a3333333-3333-4333-8333-333333333333";
+  await page.route(`${environment}/activations?*`, (r) =>
+    r.fulfill({
+      json: new URL(r.request().url()).searchParams.has("cursor")
+        ? { items: [activation("act-later", laterVersion)], next_cursor: null }
+        : {
+            items: [
+              activation("act-same", sameVersion),
+              activation("act-new", newVersion),
+              ...Array.from({ length: 48 }, (_, i) => ({
+                ...activation(`other-${i}`, sameVersion),
+                name: `other-workflow-${i}`,
+              })),
+            ],
+            next_cursor: "later",
+          },
+    }),
+  );
+  await page.route(`${project}/workflows?*`, (r) =>
+    r.fulfill({
+      json: new URL(r.request().url()).searchParams.has("cursor")
+        ? {
+            items: [
+              { id: laterVersion, name: "expense-review", version: "1.3.0" },
+            ],
+            next_cursor: null,
+          }
+        : {
+            items: [
+              { id: sameVersion, name: "expense-review", version: "1.0.0" },
+            ],
+            next_cursor: "versions",
+          },
+    }),
+  );
+  await detail.getByRole("button", { name: "Retry run", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Retry this run" });
+  await expect(
+    dialog.getByLabel("Version to run").locator("option").nth(2),
+  ).toHaveText("Latest active version (1.3.0)");
+});
+
+test("Retry run explains bounded activation reads without claiming latest", async ({
+  page,
+}) => {
+  const { detail } = await runPage(page, "failed", [
+    "run.retry",
+    "catalog.read",
+  ]);
+  let reads = 0;
+  await page.route(`${environment}/activations?*`, (r) => {
+    reads++;
+    return r.fulfill({
+      json: {
+        items: [activation("act-new", newVersion)],
+        next_cursor: `page-${reads}`,
+      },
+    });
+  });
+  await detail.getByRole("button", { name: "Retry run", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Retry this run" });
+  await expect(dialog).toContainText(
+    "Studio could not check every active version",
+  );
+  await expect(
+    dialog.getByLabel("Version to run").locator("option").nth(2),
+  ).toHaveText("Newer active version (1.2.0)");
+  expect(reads).toBe(10);
+});
+
 const cancelRun = async (page: Page, detail: Locator, reason = "Stop it") => {
   await detail.getByRole("button", { name: "Cancel run", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Cancel this run?" });

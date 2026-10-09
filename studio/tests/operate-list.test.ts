@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
 import {
+  ListReads,
   environmentOf,
   listFailure,
   readPages,
@@ -120,5 +121,24 @@ describe("what a page reads from", () => {
       key,
     );
     expect(scopeKeyOf(host({ signInEnded: true }))).not.toBe(key);
+  });
+});
+
+describe("coordinating list reads", () => {
+  it("runs a queued refresh after its append finishes, including after failures", async () => {
+    const sequence = new ListReads();
+    const rows: number[] = [1];
+    let finish!: () => void;
+    const append = sequence.run(async () => {
+      await new Promise<void>((resolve) => (finish = resolve));
+      rows.push(2);
+      throw Error("answer lost");
+    });
+    const failed = expect(append).rejects.toThrow("answer lost");
+    const refresh = sequence.run(async () => [...rows]);
+    await new Promise((resolve) => setTimeout(resolve));
+    finish();
+    await failed;
+    expect(await refresh).toEqual([1, 2]);
   });
 });

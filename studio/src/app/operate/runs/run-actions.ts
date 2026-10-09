@@ -29,7 +29,7 @@ import { shortId } from "../../format";
 import { sheetWhen } from "../../modal-sheet";
 import type { Node } from "../../model";
 import type { StartRunRequest } from "../../run/start-run-dialog";
-import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
+import { MAX_PAGES, REASON_LIMIT, tooLongMessage } from "../operate-limits";
 import { terminalRunStatuses, type RunStatus } from "../run-contracts";
 
 type Json = Record<string, unknown>;
@@ -95,6 +95,7 @@ export function retryChoices(
   run: Json,
   activations: readonly Json[],
   versions: ReadonlyMap<string, { name: string; version: string }>,
+  complete = true,
 ): RetryChoices | null {
   const own = isRecord(run["activation"]) ? run["activation"] : null;
   const id = text(own?.["id"]);
@@ -117,15 +118,14 @@ export function retryChoices(
         versionOf(activation),
     )
     .sort((a, b) => compareVersions(versionOf(b), versionOf(a)))[0];
-  const newer =
-    latest && (!same || compareVersions(versionOf(latest), same) > 0);
+  const newer = latest && same && compareVersions(versionOf(latest), same) > 0;
   const labels = new Map([
     [id, same ? `Same version (${same})` : "Same version"],
   ]);
   if (newer)
     labels.set(
       text(latest["id"]),
-      `Latest active version (${versionOf(latest)})`,
+      `${complete ? "Latest" : "Newer"} active version (${versionOf(latest)})`,
     );
   return {
     activations: newer ? [own, latest] : [own],
@@ -173,6 +173,7 @@ export interface RunTarget {
 
 /** The Retry run dialog while it is open. */
 export interface RetryDialog extends RetryChoices {
+  notice: string;
   target: RunTarget;
   input: Json;
   keys: { business_key?: string; correlation_key?: string };
@@ -416,15 +417,53 @@ export class RunActions {
     if (!target || !isTerminal(run) || !host.can("run.retry", target.id))
       return;
     let activations: Json[] = [];
+    const versions = new Map(host.workflowVersions);
+    let complete = true;
     if (host.can("catalog.read"))
       try {
-        activations = (await host.api.page("activations", true)).items;
+        let cursor: string | undefined;
+        for (let page = 0; page < MAX_PAGES; page++) {
+          if (!this.alive || !this.current(target)) return;
+          const result = await host.api.page("activations", true, cursor);
+          activations.push(...result.items);
+          cursor = result.next_cursor ?? undefined;
+          if (!cursor) break;
+        }
+        complete = !cursor;
+        const own = isRecord(run["activation"]) ? run["activation"] : {};
+        const needed = new Set(
+          [own, ...activations]
+            .filter(
+              (a) => a === own || (a["name"] === own["name"] && !a["retired"]),
+            )
+            .map((a) =>
+              text(isRecord(a["request"]) ? a["request"]["version_id"] : ""),
+            )
+            .filter((id) => id && !versions.get(id)?.version),
+        );
+        cursor = undefined;
+        for (let page = 0; needed.size && page < MAX_PAGES; page++) {
+          if (!this.alive || !this.current(target)) return;
+          const result = await host.api.page("workflows", false, cursor);
+          for (const item of result.items) {
+            const id = text(item["id"]);
+            if (!needed.has(id) || !text(item["version"])) continue;
+            versions.set(id, {
+              name: text(item["name"]),
+              version: text(item["version"]),
+            });
+            needed.delete(id);
+          }
+          cursor = result.next_cursor ?? undefined;
+          if (!cursor) break;
+        }
+        complete &&= needed.size === 0;
       } catch {
-        // Without the list, the run's own version is still offered.
+        complete = false;
+        // The run's own version stays available after a failed catalog read.
       }
-    // The person may have moved on while the activations were read.
-    if (!this.current(target)) return;
-    const choices = retryChoices(run, activations, host.workflowVersions);
+    if (!this.alive || !this.current(target)) return;
+    const choices = retryChoices(run, activations, versions, complete);
     if (!choices) {
       host.fail(
         new Error(
@@ -435,6 +474,9 @@ export class RunActions {
     }
     this.retry = {
       ...choices,
+      notice: complete
+        ? ""
+        : " Studio could not check every active version. A newer version may exist beyond the versions shown.",
       target,
       input: retryInput(run),
       keys: {

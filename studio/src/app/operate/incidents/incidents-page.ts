@@ -39,6 +39,7 @@ import { ModalSheet, sheetWhen } from "../../modal-sheet";
 import { toneAttribute } from "../../status-labels";
 import { MAX_PAGES } from "../operate-limits";
 import {
+  ListReads,
   environmentOf,
   listFailure,
   readPages,
@@ -180,14 +181,34 @@ const noEvents: RecentEvents = {
             @if (filters.status === "active" && !filters.code) {
               <weave-operate-state
                 kind="empty"
-                heading="No active incidents"
-                text="Runs that stop on an uncertain step show here until someone decides what happens next."
+                [heading]="
+                  nextCursor
+                    ? 'No active incidents among loaded incidents'
+                    : 'No active incidents'
+                "
+                [text]="
+                  nextCursor
+                    ? canLoadMore
+                      ? 'More incidents may match on later pages. Load more to check.'
+                      : 'More active incidents may exist beyond the page limit.'
+                    : 'Runs that stop on an uncertain step show here until someone decides what happens next.'
+                "
               />
             } @else {
               <weave-operate-state
                 kind="empty"
-                heading="No incidents match these filters"
-                text="Change the filters to see more incidents."
+                [heading]="
+                  nextCursor
+                    ? 'No loaded incidents match these filters'
+                    : 'No incidents match these filters'
+                "
+                [text]="
+                  nextCursor
+                    ? canLoadMore
+                      ? 'More incidents may match on later pages. Load more or change the filters.'
+                      : 'More incidents may match beyond the page limit. Change the filters to check the loaded records.'
+                    : 'Change the filters to see more incidents.'
+                "
               >
                 <button type="button" (click)="setFilters(defaults)">
                   Show active incidents
@@ -269,11 +290,20 @@ const noEvents: RecentEvents = {
                 }
               </div>
             </div>
-            @if (nextCursor) {
-              <button type="button" class="load-more" (click)="loadMore()">
-                Load more incidents
-              </button>
-            }
+          }
+          @if (canLoadMore) {
+            <button
+              type="button"
+              class="load-more"
+              [disabled]="appending"
+              (click)="loadMore()"
+            >
+              Load more incidents
+            </button>
+          } @else if (nextCursor) {
+            <p role="status">
+              Showing up to 500 incidents. More incidents may exist.
+            </p>
           }
         </div>
         @if (selected) {
@@ -357,6 +387,12 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
    */
   private pending = new Map<string, { key: string; receipt: string }>();
   private pages = 1;
+  private readonly listReads = new ListReads();
+  appending = false;
+
+  get canLoadMore() {
+    return !!this.nextCursor && this.pages < MAX_PAGES;
+  }
   private scopeKey = "";
   private generation = 0;
   private alive = true;
@@ -392,6 +428,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.failure = null;
     this.pending.clear();
     this.pages = 1;
+    this.appending = false;
     this.filters = incidentFiltersFromQuery(location.search);
     if (this.scope && this.host.identity && this.readable)
       void this.poller.refresh();
@@ -411,51 +448,69 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   }
   private async load() {
     const scope = this.scope;
-    if (!scope || !this.host.identity || !this.readable) return;
+    if (!scope || !this.host.identity || !this.readable) return false;
     const generation = this.generation;
-    try {
-      const { items, cursor } = await readPages<IncidentRecord>(
-        (query) => this.host.api.request(`${scope}/incidents?${query}`),
-        this.pages,
-      );
-      if (generation !== this.generation) return;
-      this.incidents = items;
-      this.nextCursor = cursor;
-      this.loaded = true;
-      this.forbidden = false;
-      this.error = null;
-      const fresh = this.selected
-        ? items.find((item) => item.id === this.selected!.id)
-        : undefined;
-      if (fresh && !isUnavailableIncident(fresh) && !this.resolving)
-        this.selected = fresh;
-    } catch (error) {
-      if (generation !== this.generation) return;
-      ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
-      throw error;
-    } finally {
-      if (this.alive) this.cdr.markForCheck();
-    }
+    return this.listReads.run(async () => {
+      if (generation !== this.generation) return false;
+      try {
+        const { items, cursor } = await readPages<IncidentRecord>((query) => {
+          if (generation !== this.generation)
+            throw Error("List scope changed.");
+          return this.host.api.request(`${scope}/incidents?${query}`);
+        }, this.pages);
+        if (generation !== this.generation) return false;
+        this.incidents = items;
+        this.nextCursor = cursor;
+        this.loaded = true;
+        this.forbidden = false;
+        this.error = null;
+        const fresh = this.selected
+          ? items.find((item) => item.id === this.selected!.id)
+          : undefined;
+        if (fresh && !isUnavailableIncident(fresh) && !this.resolving)
+          this.selected = fresh;
+        return true;
+      } catch (error) {
+        if (generation !== this.generation) return false;
+        ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
+        throw error;
+      } finally {
+        if (this.alive) this.cdr.markForCheck();
+      }
+    });
   }
   async loadMore() {
     const scope = this.scope;
-    const cursor = this.nextCursor;
-    if (!scope || !cursor) return;
+    if (
+      !scope ||
+      !this.host.identity ||
+      !this.readable ||
+      !this.canLoadMore ||
+      this.appending
+    )
+      return;
     const generation = this.generation;
+    this.appending = true;
     try {
-      const page = await readPages<IncidentRecord>(
-        (query) => this.host.api.request(`${scope}/incidents?${query}`),
-        1,
-        cursor,
-      );
-      if (generation !== this.generation) return;
-      this.incidents = [...this.incidents, ...page.items];
-      this.nextCursor = page.cursor;
-      this.pages = Math.min(this.pages + 1, MAX_PAGES);
+      await this.listReads.run(async () => {
+        if (generation !== this.generation || !this.canLoadMore) return;
+        const page = await readPages<IncidentRecord>(
+          (query) => this.host.api.request(`${scope}/incidents?${query}`),
+          1,
+          this.nextCursor,
+        );
+        if (generation !== this.generation) return;
+        this.incidents = [...this.incidents, ...page.items];
+        this.nextCursor = page.cursor;
+        this.pages++;
+        this.forbidden = false;
+        this.error = null;
+      });
     } catch (error) {
       if (generation === this.generation)
         ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
     } finally {
+      if (generation === this.generation) this.appending = false;
       if (this.alive) this.cdr.markForCheck();
     }
   }

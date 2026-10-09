@@ -180,7 +180,14 @@ function shell(open: string | null = first) {
     exportFallback: null,
     api: {
       environment: "/env",
-      page: async () => ({ items: [], next_cursor: null }),
+      page: async (
+        _collection?: string,
+        _environment?: boolean,
+        _cursor?: string,
+      ): Promise<{ items: Json[]; next_cursor: string | null }> => ({
+        items: [],
+        next_cursor: null,
+      }),
     },
     can: () => true,
     runNodes: () => [],
@@ -396,4 +403,92 @@ describe("a command's answer belongs to the run it was sent for", () => {
     expect(s.calls.notices).toEqual([]);
     expect(s.calls.failures).toEqual([]);
   });
+});
+
+describe("reading versions for a retry", () => {
+  it("compares a retired original version using uncached metadata", async () => {
+    const s = shell();
+    s.host.selectedRecord = {
+      ...run,
+      activation: activation("same", "2.0.0", { retired: true }),
+    };
+    s.host.api.page = async (collection) => ({
+      items:
+        collection === "activations"
+          ? [activation("older", "1.2.0")]
+          : [{ id: "v-2.0.0", name: "expense-review", version: "2.0.0" }],
+      next_cursor: null,
+    });
+    await s.actions.openRetry();
+    expect(s.actions.retry?.activations.map((a) => a["id"])).toEqual(["same"]);
+    expect(s.actions.retry?.labels.get("same")).toBe("Same version (2.0.0)");
+  });
+
+  it("offers only the original when its version cannot be compared", async () => {
+    const s = shell();
+    s.host.selectedRecord = { ...run, activation: activation("same", "2.0.0") };
+    s.host.api.page = async (collection) => ({
+      items: collection === "activations" ? [activation("older", "1.2.0")] : [],
+      next_cursor: null,
+    });
+    await s.actions.openRetry();
+    expect(s.actions.retry?.activations.map((a) => a["id"])).toEqual(["same"]);
+    expect(s.actions.retry?.initial).toBe("same");
+    expect(s.actions.retry?.notice).toContain(
+      "could not check every active version",
+    );
+  });
+
+  it("bounds missing version metadata and keeps the shell cache unchanged", async () => {
+    const s = shell();
+    s.host.selectedRecord = run;
+    let workflowReads = 0;
+    s.host.api.page = async (collection) => {
+      if (collection === "activations")
+        return {
+          items: [activation("known", "1.2.0"), activation("unknown", "2.0.0")],
+          next_cursor: null,
+        };
+      workflowReads++;
+      return {
+        items: [{ id: "unrelated", name: "other", version: "9.0.0" }],
+        next_cursor: "more",
+      };
+    };
+    await s.actions.openRetry();
+    expect(workflowReads).toBe(10);
+    expect(s.actions.retry?.labels.get("known")).toBe(
+      "Newer active version (1.2.0)",
+    );
+    expect(s.actions.retry?.notice).toContain(
+      "could not check every active version",
+    );
+    expect(s.host.workflowVersions.has("unrelated")).toBe(false);
+  });
+
+  for (const change of ["close", "identity", "environment", "destroy"])
+    it(`stops retry catalog paging after ${change}`, async () => {
+      const s = shell();
+      s.host.selectedRecord = run;
+      let release!: (value: {
+        items: Json[];
+        next_cursor: string | null;
+      }) => void;
+      let reads = 0;
+      s.host.api.page = async () => {
+        reads++;
+        return new Promise((resolve) => (release = resolve));
+      };
+      const reading = s.actions.openRetry();
+      await s.settle();
+      if (change === "close") s.moveTo(null);
+      if (change === "identity")
+        s.host.identity = { principal_id: "other", grants: [] };
+      if (change === "environment") s.host.api.environment = "/other";
+      if (change === "destroy") s.actions.destroy();
+      release({ items: [activation("new", "1.2.0")], next_cursor: "more" });
+      await reading;
+      expect(reads).toBe(1);
+      expect(s.actions.retry).toBeNull();
+    });
 });

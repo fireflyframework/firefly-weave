@@ -83,6 +83,183 @@ async function workers(page: Page, capabilities: string[]) {
 const rows = (page: Page) =>
   page.getByRole("table", { name: "Workers" }).locator(".resource-row");
 
+test("filtered workers can reach matching rows on a later page", async ({
+  page,
+}) => {
+  await workers(page, ["status.read"]);
+  await page.route(`${environment}/workers?*`, (r) =>
+    r.fulfill({
+      json: new URL(r.request().url()).searchParams.has("cursor")
+        ? { items: [worker(stale, { presence: "stale" })], next_cursor: null }
+        : {
+            items: Array.from({ length: 50 }, (_, i) =>
+              worker("18888888-8888-4888-8888-" + String(i).padStart(12, "0")),
+            ),
+            next_cursor: "next",
+          },
+    }),
+  );
+  await page.goto("/operate/workers?presence=offline");
+  const more = page.getByRole("button", { name: "Load more workers" });
+  await expect(more).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /loaded workers/ }),
+  ).toBeVisible();
+  await more.click();
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page)).toContainText("Offline");
+});
+
+test("workers coalesce repeated appends and refresh all loaded pages", async ({
+  page,
+}) => {
+  await workers(page, ["status.read"]);
+  let pending: Route | undefined;
+  let appends = 0;
+  let refreshed = false;
+  await page.route(`${environment}/workers?*`, (r) => {
+    const cursor = new URL(r.request().url()).searchParams.get("cursor");
+    if (cursor) {
+      appends++;
+      if (!pending) {
+        pending = r;
+        return;
+      }
+    }
+    return r
+      .fulfill({
+        json: {
+          items: cursor ? [worker(stale)] : [worker(online)],
+          next_cursor: cursor ? null : "next",
+        },
+      })
+      .then(() => {
+        if (!cursor && pending) refreshed = true;
+      });
+  });
+  await page.goto("/operate/workers");
+  await expect(rows(page)).toHaveCount(1);
+  // Dispatch two events in one turn, including when the first disables the control.
+  await page
+    .getByRole("button", { name: "Load more workers" })
+    .evaluate((button) => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  await expect.poll(() => appends).toBe(1);
+  await expect(
+    page.getByRole("button", { name: "Load more workers" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await pending!.fulfill({
+    json: { items: [worker(stale)], next_cursor: null },
+  });
+  await expect.poll(() => refreshed).toBe(true);
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }),
+  ).not.toHaveAttribute("aria-disabled", "true");
+  await expect(rows(page)).toHaveCount(2);
+  expect(appends).toBe(2);
+});
+
+test("workers keep an append requested during a delayed refresh", async ({
+  page,
+}) => {
+  await workers(page, ["status.read"]);
+  let refresh: Route | undefined;
+  let reads = 0;
+  await page.route(`${environment}/workers?*`, (r) => {
+    const cursor = new URL(r.request().url()).searchParams.get("cursor");
+    if (!cursor && ++reads === 2) {
+      refresh = r;
+      return;
+    }
+    return r.fulfill({
+      json: {
+        items: cursor ? [worker(stale)] : [worker(online)],
+        next_cursor: cursor ? null : "next",
+      },
+    });
+  });
+  await page.goto("/operate/workers");
+  await expect(rows(page)).toHaveCount(1);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => !!refresh).toBe(true);
+  await page.getByRole("button", { name: "Load more workers" }).click();
+  await refresh!.fulfill({
+    json: { items: [worker(online)], next_cursor: "next" },
+  });
+  await expect(rows(page)).toHaveCount(2);
+});
+
+test("workers stop at the page limit and explain remaining records", async ({
+  page,
+}) => {
+  await workers(page, ["status.read"]);
+  let reads = 0;
+  await page.route(`${environment}/workers?*`, (r) => {
+    reads++;
+    return r.fulfill({
+      json: {
+        items: [
+          worker("19999999-9999-4999-8999-" + String(reads).padStart(12, "0")),
+        ],
+        next_cursor: `page-${reads}`,
+      },
+    });
+  });
+  await page.goto("/operate/workers");
+  for (let i = 1; i < 10; i++) {
+    await expect(rows(page)).toHaveCount(i);
+    await page.getByRole("button", { name: "Load more workers" }).click();
+  }
+  await expect(rows(page)).toHaveCount(10);
+  await expect(
+    page.getByRole("button", { name: "Load more workers" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("More workers may exist.", { exact: false }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => reads).toBe(20);
+  await expect(rows(page)).toHaveCount(10);
+});
+
+test("workers discard an append queued after the page closes", async ({
+  page,
+}) => {
+  await workers(page, ["status.read"]);
+  let delayed: Route | undefined;
+  let reads = 0;
+  let appends = 0;
+  await page.route(`${environment}/workers?*`, (r) => {
+    const cursor = new URL(r.request().url()).searchParams.get("cursor");
+    if (cursor) appends++;
+    if (!cursor && ++reads === 2) {
+      delayed = r;
+      return;
+    }
+    return r.fulfill({
+      json: { items: [worker(online)], next_cursor: "next" },
+    });
+  });
+  await page.goto("/operate/workers");
+  await expect(rows(page)).toHaveCount(1);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => !!delayed).toBe(true);
+  await page.getByRole("button", { name: "Load more workers" }).click();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Home", exact: true }),
+  ).toBeVisible();
+  await delayed!.fulfill({
+    json: { items: [worker(online)], next_cursor: "next" },
+  });
+  await page.goto("/operate/workers");
+  await expect(rows(page)).toHaveCount(1);
+  expect(appends).toBe(0);
+});
+
 for (const viewport of [
   { width: 1440, height: 900 },
   { width: 600, height: 500 },

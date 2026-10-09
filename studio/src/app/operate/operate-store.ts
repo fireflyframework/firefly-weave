@@ -54,6 +54,7 @@ export function pollDelay(intervalMs: number, failures: number): number {
 /**
  * Loads a page now and then on an interval while the page is visible. The
  * load throws to report a failure; the page shows the failure itself.
+ * Returning false skips freshness when no answer was applied.
  *
  * While `paused` says so (a form is open), a scheduled load is skipped: it
  * does not load, does not count as a success and does not count as a failure.
@@ -72,7 +73,7 @@ export class Poller {
   private unsubscribe: (() => void) | null = null;
 
   constructor(
-    private readonly load: () => Promise<void>,
+    private readonly load: () => Promise<void | boolean>,
     private intervalMs: number,
     private readonly env: PollEnvironment = browserEnvironment,
     private readonly paused: () => boolean = () => false,
@@ -140,9 +141,10 @@ export class Poller {
 
   private async execute() {
     try {
-      await this.load();
-      this.failures = 0;
-      this.lastSuccessAt = this.env.now();
+      if ((await this.load()) !== false) {
+        this.failures = 0;
+        this.lastSuccessAt = this.env.now();
+      }
     } catch {
       this.failures++;
     } finally {

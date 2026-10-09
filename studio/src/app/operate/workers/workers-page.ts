@@ -38,6 +38,7 @@ import { ModalSheet, sheetWhen } from "../../modal-sheet";
 import { toneAttribute } from "../../status-labels";
 import { MAX_PAGES } from "../operate-limits";
 import {
+  ListReads,
   environmentOf,
   listFailure,
   readPages,
@@ -216,8 +217,18 @@ import {
         @if (workers.length) {
           <weave-operate-state
             kind="empty"
-            heading="No workers match these filters"
-            text="Change or clear the filters to see more workers."
+            [heading]="
+              nextCursor
+                ? 'No loaded workers match these filters'
+                : 'No workers match these filters'
+            "
+            [text]="
+              nextCursor
+                ? canLoadMore
+                  ? 'More workers may match on later pages. Load more or change the filters.'
+                  : 'More workers may match beyond the page limit. Change the filters to check the loaded records.'
+                : 'Change or clear the filters to see more workers.'
+            "
           >
             <button type="button" (click)="clearFilters()">
               Clear filters
@@ -226,8 +237,12 @@ import {
         } @else {
           <weave-operate-state
             kind="empty"
-            heading="No workers yet"
-            text="Workers appear when a worker release starts in this environment."
+            [heading]="nextCursor ? 'No loaded workers' : 'No workers yet'"
+            [text]="
+              nextCursor
+                ? 'More workers may exist on later pages.'
+                : 'Workers appear when a worker release starts in this environment.'
+            "
           />
         }
       } @else {
@@ -321,11 +336,6 @@ import {
                 }
               </div>
             </div>
-            @if (nextCursor) {
-              <button type="button" class="load-more" (click)="loadMore()">
-                Load more workers
-              </button>
-            }
           </div>
           @if (selected) {
             <section
@@ -347,6 +357,18 @@ import {
             </section>
           }
         </div>
+      }
+      @if (canLoadMore) {
+        <button
+          type="button"
+          class="load-more"
+          [disabled]="appending"
+          (click)="loadMore()"
+        >
+          Load more workers
+        </button>
+      } @else if (nextCursor) {
+        <p role="status">Showing up to 500 workers. More workers may exist.</p>
       }
     }
   `,
@@ -385,6 +407,12 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   /** The worker the latest read is for: an older answer never replaces it. */
   private opening = "";
   private pages = 1;
+  private readonly listReads = new ListReads();
+  appending = false;
+
+  get canLoadMore() {
+    return !!this.nextCursor && this.pages < MAX_PAGES;
+  }
   private scopeKey = "";
   private generation = 0;
   /** Set while the page steps back to its list: that popstate is its own. */
@@ -418,6 +446,7 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
     this.detailError = null;
     this.opening = "";
     this.pages = 1;
+    this.appending = false;
     this.readLocation();
     if (this.scope && this.host.identity && this.readable)
       void this.poller.refresh();
@@ -453,50 +482,68 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   }
   private async load() {
     const scope = this.scope;
-    if (!scope || !this.host.identity || !this.readable) return;
+    if (!scope || !this.host.identity || !this.readable) return false;
     const generation = this.generation;
-    try {
-      const { items, cursor } = await readPages<WorkerRecord>(
-        (query) => this.host.api.request(`${scope}/workers?${query}`),
-        this.pages,
-      );
-      if (generation !== this.generation) return;
-      this.workers = items;
-      this.nextCursor = cursor;
-      this.loaded = true;
-      this.forbidden = false;
-      this.error = null;
-      const fresh = this.selected
-        ? items.find((item) => item.id === this.selected!.id)
-        : undefined;
-      if (fresh && !isUnavailableWorker(fresh)) this.selected = fresh;
-    } catch (error) {
-      if (generation !== this.generation) return;
-      ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
-      throw error;
-    } finally {
-      this.cdr.markForCheck();
-    }
+    return this.listReads.run(async () => {
+      if (generation !== this.generation) return false;
+      try {
+        const { items, cursor } = await readPages<WorkerRecord>((query) => {
+          if (generation !== this.generation)
+            throw Error("List scope changed.");
+          return this.host.api.request(`${scope}/workers?${query}`);
+        }, this.pages);
+        if (generation !== this.generation) return false;
+        this.workers = items;
+        this.nextCursor = cursor;
+        this.loaded = true;
+        this.forbidden = false;
+        this.error = null;
+        const fresh = this.selected
+          ? items.find((item) => item.id === this.selected!.id)
+          : undefined;
+        if (fresh && !isUnavailableWorker(fresh)) this.selected = fresh;
+        return true;
+      } catch (error) {
+        if (generation !== this.generation) return false;
+        ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
+        throw error;
+      } finally {
+        this.cdr.markForCheck();
+      }
+    });
   }
   async loadMore() {
     const scope = this.scope;
-    const cursor = this.nextCursor;
-    if (!scope || !cursor) return;
+    if (
+      !scope ||
+      !this.host.identity ||
+      !this.readable ||
+      !this.canLoadMore ||
+      this.appending
+    )
+      return;
     const generation = this.generation;
+    this.appending = true;
     try {
-      const page = await readPages<WorkerRecord>(
-        (query) => this.host.api.request(`${scope}/workers?${query}`),
-        1,
-        cursor,
-      );
-      if (generation !== this.generation) return;
-      this.workers = [...this.workers, ...page.items];
-      this.nextCursor = page.cursor;
-      this.pages = Math.min(this.pages + 1, MAX_PAGES);
+      await this.listReads.run(async () => {
+        if (generation !== this.generation || !this.canLoadMore) return;
+        const page = await readPages<WorkerRecord>(
+          (query) => this.host.api.request(`${scope}/workers?${query}`),
+          1,
+          this.nextCursor,
+        );
+        if (generation !== this.generation) return;
+        this.workers = [...this.workers, ...page.items];
+        this.nextCursor = page.cursor;
+        this.pages++;
+        this.forbidden = false;
+        this.error = null;
+      });
     } catch (error) {
       if (generation === this.generation)
         ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
     } finally {
+      if (generation === this.generation) this.appending = false;
       this.cdr.markForCheck();
     }
   }

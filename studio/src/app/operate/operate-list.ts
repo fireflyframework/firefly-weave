@@ -78,3 +78,14 @@ export function listFailure(error: unknown): {
   const plain = describeError(error);
   return { error: plain, forbidden: plain.status === 403 };
 }
+
+/** Refresh and Load more share one sequence so neither overwrites the other. */
+export class ListReads {
+  private tail: Promise<unknown> = Promise.resolve();
+
+  run<T>(read: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(read);
+    this.tail = result.catch(() => undefined);
+    return result;
+  }
+}

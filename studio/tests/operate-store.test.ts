@@ -88,6 +88,14 @@ describe("pollDelay", () => {
 });
 
 describe("Poller", () => {
+  it("does not report freshness for a skipped or superseded load", async () => {
+    const browser = new FakeBrowser();
+    const poller = new Poller(async () => false, 10_000, browser);
+    await poller.refresh();
+    expect(poller.lastSuccessAt).toBeNull();
+    expect(poller.failures).toBe(0);
+  });
+
   it("loads at once, then on the interval", async () => {
     const browser = new FakeBrowser();
     let loads = 0;

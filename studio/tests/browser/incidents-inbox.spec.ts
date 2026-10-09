@@ -127,6 +127,188 @@ async function settle(page: Page, url: string, release: () => void) {
   );
 }
 
+test("filtered incidents can reach matching rows on a later page", async ({
+  page,
+}) => {
+  await inbox(page, ["incident.read"]);
+  await page.route(`${environment}/incidents?*`, (r) =>
+    r.fulfill({
+      json: new URL(r.request().url()).searchParams.has("cursor")
+        ? { items: [incident(active)], next_cursor: null }
+        : {
+            items: Array.from({ length: 50 }, (_, i) =>
+              incident(
+                "98888888-8888-4888-8888-" + String(i).padStart(12, "0"),
+                { status: "resolved" },
+              ),
+            ),
+            next_cursor: "next",
+          },
+    }),
+  );
+  await page.goto("/operate/incidents");
+  const more = page.getByRole("button", { name: "Load more incidents" });
+  await expect(more).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /loaded incidents/ }),
+  ).toBeVisible();
+  await more.click();
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page)).toContainText("WV-TASK-AMBIGUOUS");
+});
+
+test("incidents coalesce repeated appends and refresh all loaded pages", async ({
+  page,
+}) => {
+  await inbox(page, ["incident.read"]);
+  let pending: Route | undefined;
+  let appends = 0;
+  let refreshed = false;
+  await page.route(`${environment}/incidents?*`, (r) => {
+    const cursor = new URL(r.request().url()).searchParams.get("cursor");
+    if (cursor) {
+      appends++;
+      if (!pending) {
+        pending = r;
+        return;
+      }
+    }
+    return r
+      .fulfill({
+        json: {
+          items: cursor ? [incident(active)] : [incident(resolved)],
+          next_cursor: cursor ? null : "next",
+        },
+      })
+      .then(() => {
+        if (!cursor && pending) refreshed = true;
+      });
+  });
+  await page.goto("/operate/incidents?status=all");
+  await expect(rows(page)).toHaveCount(1);
+  // Dispatch two events in one turn, including when the first disables the control.
+  await page
+    .getByRole("button", { name: "Load more incidents" })
+    .evaluate((button) => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  await expect.poll(() => appends).toBe(1);
+  await expect(
+    page.getByRole("button", { name: "Load more incidents" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await pending!.fulfill({
+    json: { items: [incident(active)], next_cursor: null },
+  });
+  await expect.poll(() => refreshed).toBe(true);
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }),
+  ).not.toHaveAttribute("aria-disabled", "true");
+  await expect(rows(page)).toHaveCount(2);
+  expect(appends).toBe(2);
+});
+
+test("incidents keep an append requested during a delayed refresh", async ({
+  page,
+}) => {
+  await inbox(page, ["incident.read"]);
+  let refresh: Route | undefined;
+  let reads = 0;
+  await page.route(`${environment}/incidents?*`, (r) => {
+    const cursor = new URL(r.request().url()).searchParams.get("cursor");
+    if (!cursor && ++reads === 2) {
+      refresh = r;
+      return;
+    }
+    return r.fulfill({
+      json: {
+        items: cursor ? [incident(active)] : [incident(resolved)],
+        next_cursor: cursor ? null : "next",
+      },
+    });
+  });
+  await page.goto("/operate/incidents?status=all");
+  await expect(rows(page)).toHaveCount(1);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => !!refresh).toBe(true);
+  await page.getByRole("button", { name: "Load more incidents" }).click();
+  await refresh!.fulfill({
+    json: { items: [incident(resolved)], next_cursor: "next" },
+  });
+  await expect(rows(page)).toHaveCount(2);
+});
+
+test("incidents stop at the page limit and explain remaining records", async ({
+  page,
+}) => {
+  await inbox(page, ["incident.read"]);
+  let reads = 0;
+  await page.route(`${environment}/incidents?*`, (r) => {
+    reads++;
+    return r.fulfill({
+      json: {
+        items: [
+          incident(
+            "19999999-9999-4999-8999-" + String(reads).padStart(12, "0"),
+          ),
+        ],
+        next_cursor: `page-${reads}`,
+      },
+    });
+  });
+  await page.goto("/operate/incidents");
+  for (let i = 1; i < 10; i++) {
+    await expect(rows(page)).toHaveCount(i);
+    await page.getByRole("button", { name: "Load more incidents" }).click();
+  }
+  await expect(rows(page)).toHaveCount(10);
+  await expect(
+    page.getByRole("button", { name: "Load more incidents" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("More incidents may exist.", { exact: false }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => reads).toBe(20);
+  await expect(rows(page)).toHaveCount(10);
+});
+
+test("incidents discard an append queued after the page closes", async ({
+  page,
+}) => {
+  await inbox(page, ["incident.read"]);
+  let delayed: Route | undefined;
+  let reads = 0;
+  let appends = 0;
+  await page.route(`${environment}/incidents?*`, (r) => {
+    const cursor = new URL(r.request().url()).searchParams.get("cursor");
+    if (cursor) appends++;
+    if (!cursor && ++reads === 2) {
+      delayed = r;
+      return;
+    }
+    return r.fulfill({
+      json: { items: [incident(active)], next_cursor: "next" },
+    });
+  });
+  await page.goto("/operate/incidents");
+  await expect(rows(page)).toHaveCount(1);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => !!delayed).toBe(true);
+  await page.getByRole("button", { name: "Load more incidents" }).click();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Home", exact: true }),
+  ).toBeVisible();
+  await delayed!.fulfill({
+    json: { items: [incident(active)], next_cursor: "next" },
+  });
+  await page.goto("/operate/incidents");
+  await expect(rows(page)).toHaveCount(1);
+  expect(appends).toBe(0);
+});
+
 for (const viewport of [
   { width: 1440, height: 900 },
   { width: 600, height: 500 },

@@ -183,7 +183,8 @@ const isRecord = (value: unknown): value is Json =>
         [description]="
           'Starts a new run linked to run ' +
           short(id) +
-          ' with the input below.'
+          ' with the input below.' +
+          retry.notice
         "
         submitLabel="Retry run"
         busyLabel="Retrying…"
