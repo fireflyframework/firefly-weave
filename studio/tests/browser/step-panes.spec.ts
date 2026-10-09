@@ -81,7 +81,7 @@ for (const size of [
       await expect(source).toHaveValue("step:check-customer");
       await source.selectOption("input");
       await expect(
-        input.getByRole("listitem", { name: /^Customer ID, Text/ }),
+        input.getByRole("listitem", { name: /^customerId, Text/ }),
       ).toBeVisible();
       const schema = input.getByRole("radio", { name: "Schema", exact: true });
       await schema.focus();

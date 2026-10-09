@@ -62,7 +62,7 @@ describe("data panes", () => {
     expect(
       schemaRows(schema).map((r) => [r.label, r.depth, r.typeLabel]),
     ).toEqual([
-      ["Customer ID", 0, "Text"],
+      ["customerId", 0, "Text"],
       ["amount", 0, "Number"],
       ["shipping", 0, "Group"],
       ["country", 1, "Text"],
@@ -100,7 +100,7 @@ describe("data panes", () => {
     expect(defaultSource(sources)).toBe("step:score");
     expect(
       sourceRows(scope.entries, "input").map((r) => [r.label, r.ref]),
-    ).toContainEqual(["Customer ID", "/input/customerId"]);
+    ).toContainEqual(["customerId", "/input/customerId"]);
     expect(sourceRows(scope.entries, "step:check").map((r) => r.ref)).toEqual([
       "/steps/check/output/ok",
     ]);

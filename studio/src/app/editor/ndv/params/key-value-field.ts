@@ -32,6 +32,7 @@ import type { ParamSpec } from "../registry";
 import type { FieldEntry } from "./form-model";
 import type { FormSession } from "./form-session";
 import { ParamField } from "./param-field";
+import { canMapFields } from "./drag-map";
 
 @Component({
   selector: "weave-key-value-field",
@@ -107,6 +108,15 @@ import { ParamField } from "./param-field";
             spec().addLabel ?? "Add field"
           }}
         </button>
+        @if (!session().mappingReason(spec())) {
+          <button
+            type="button"
+            class="text-link param-add"
+            (click)="addAllFields()"
+          >
+            <weave-icon name="plus" [size]="16" />Add all fields
+          </button>
+        }
       }
     </div>`,
 })
@@ -141,6 +151,10 @@ export class KeyValueField {
       [name, { mode: "fixed", value: "" }],
     ]);
     this.focusRow(this.session().keyed(this.spec()).length - 1);
+  }
+  addAllFields() {
+    if (canMapFields(this.element.nativeElement, this.session()))
+      this.session().addAllFields(this.spec());
   }
   private focusRow(index: number) {
     const session = this.session();

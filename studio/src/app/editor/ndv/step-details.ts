@@ -65,10 +65,12 @@ import { docsUrl, headerSubtitle } from "./header";
 import { adjacent, breadcrumb, neighbors } from "./navigation";
 import { recipeOf } from "./owned/owned-actions";
 import { FormSession } from "./params/form-session";
-import { parsePointer } from "../../forms/core/json";
+import { getAt, parsePointer } from "../../forms/core/json";
 import { pathStartsWith } from "./params/paths";
 import { ParameterForm } from "./params/param-form";
-import { ndvRegistry } from "./registry";
+import { DragMap, activeDrag, canMapFields } from "./params/drag-map";
+import { mappedRefs, type DragRef } from "./params/drop";
+import { ndvRegistry, type ParamSpec } from "./registry";
 import { renameHint, renameWithExtras, type RenameResult } from "./rename";
 import type { StepDetailsController } from "./step-details-controller";
 import type { StepDetailsHost } from "./step-details-host";
@@ -79,6 +81,16 @@ import {
   type StepDetailsRequest,
   type StepDetailsTab,
 } from "./step-details-service";
+
+interface MapMenu {
+  drag: DragRef;
+  label: string;
+  row: HTMLElement;
+  session: FormSession;
+  targets: { spec: ParamSpec; label: string; owns: () => boolean }[];
+  top: number;
+  left: number;
+}
 
 export const KEY_PLATFORM: KeyPlatform =
   typeof navigator !== "undefined" &&
@@ -116,6 +128,7 @@ const visible = (element: HTMLElement): boolean =>
     RowMenu,
     Modal,
     ParameterForm,
+    DragMap,
     InputPane,
     OutputPane,
     TestEventPane,
@@ -150,6 +163,7 @@ export class StepDetails {
       this.sessionCache.opening !== opening ||
       !this.sessionCache.session.isCurrent()
     ) {
+      untracked(() => this.clearMapping());
       this.sessionCache = {
         request,
         controller,
@@ -231,7 +245,17 @@ export class StepDetails {
       this.host().tick();
       untracked(() => this.keepTarget());
     });
-    afterEveryRender(() => this.recoverLayoutFocus());
+    afterEveryRender(() => {
+      this.recoverLayoutFocus();
+      const menu = this.mapMenu();
+      if (
+        menu &&
+        (!menu.session.isCurrent() ||
+          !menu.row.isConnected ||
+          menu.targets.some((target) => !target.owns()))
+      )
+        this.clearMapping();
+    });
 
     const observer = new ResizeObserver(([entry]) => {
       this.dragEnd();
@@ -248,6 +272,7 @@ export class StepDetails {
     inject(DestroyRef).onDestroy(() => {
       this.dragEnd();
       observer.disconnect();
+      this.clearMapping();
     });
   }
 
@@ -868,6 +893,132 @@ export class StepDetails {
     ).focus();
   }
 
+  readonly mapMenu = signal<MapMenu | null>(null);
+  private readonly mappingDrag = viewChild(DragMap);
+  private clearMapping() {
+    this.mapMenu.set(null);
+    this.mappingDrag()?.end();
+    activeDrag.set(null);
+  }
+  mappedRefs(): string[] {
+    const subject = this.session().subject();
+    if (this.target() === "$end")
+      return mappedRefs(subject.workflow.spec["output"]);
+    return [
+      ...new Set(
+        subject.roots.flatMap((root) => mappedRefs(getAt(subject.step, root))),
+      ),
+    ];
+  }
+  openMapTo(row: HTMLElement) {
+    const ref = row.dataset["ref"];
+    const session = this.session();
+    const pane = this.inputPane();
+    const source = pane
+      ?.rows(pane.selectedSource())
+      .find((entry) => entry.ref === ref);
+    if (!source || !session.isCurrent()) return;
+    const box = row.getBoundingClientRect();
+    const label = source.label;
+    const specs = session.mapTargets();
+    const menu: MapMenu = {
+      drag: { ref: ref!, breadcrumb: label, schema: {} },
+      label,
+      row,
+      session,
+      targets: specs.map((spec) => ({
+        spec,
+        owns: session.owns(spec),
+        label:
+          specs.filter((other) => other.label === spec.label).length > 1
+            ? `${spec.label} · ${spec.path.slice(1).join(" › ")}`
+            : spec.label,
+      })),
+      top: Math.max(8, Math.min(box.bottom + 4, window.innerHeight - 248)),
+      left: Math.max(8, Math.min(box.left, window.innerWidth - 288)),
+    };
+    this.mapMenu.set(menu);
+    setTimeout(() => {
+      if (
+        this.lifetime.destroyed ||
+        this.mapMenu() !== menu ||
+        !session.isCurrent()
+      )
+        return;
+      const element =
+        this.dialog().nativeElement.querySelector<HTMLElement>(".sd-map-menu");
+      (
+        element?.querySelector<HTMLElement>("[role=menuitem]") ?? element
+      )?.focus();
+    });
+  }
+  closeMapMenu() {
+    const menu = this.mapMenu();
+    this.mapMenu.set(null);
+    if (menu?.session.isCurrent() && menu.row.isConnected) menu.row.focus();
+  }
+  mapTo(target: MapMenu["targets"][number]) {
+    const menu = this.mapMenu();
+    if (
+      !menu ||
+      !menu.targets.includes(target) ||
+      !target.owns() ||
+      menu.session !== this.session()
+    )
+      return this.clearMapping();
+    this.mapMenu.set(null);
+    const selector = `[data-param-path="${CSS.escape(JSON.stringify(target.spec.path))}"]`;
+    const field =
+      this.dialog().nativeElement.querySelector<HTMLElement>(selector);
+    if (
+      !field ||
+      !canMapFields(field, menu.session) ||
+      !menu.session.applyDrop(target.spec, menu.drag, { caret: null })
+    ) {
+      menu.row.focus();
+      return;
+    }
+    this.tab.set("parameters");
+    if (this.layout() === "sheet") this.pane.set("parameters");
+    setTimeout(() => {
+      if (
+        this.lifetime.destroyed ||
+        !menu.session.isCurrent() ||
+        this.session() !== menu.session
+      )
+        return;
+      const control = this.dialog().nativeElement.querySelector<HTMLElement>(
+        `.sd-tabpanel:not([hidden]) ${selector} .param-control :is(input, textarea, button, [tabindex='0'])`,
+      );
+      control?.focus({ preventScroll: true });
+      control?.scrollIntoView({ block: "center", inline: "nearest" });
+    });
+  }
+  mapMenuKey(event: KeyboardEvent) {
+    const items = [
+      ...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(
+        "[role=menuitem]",
+      ),
+    ];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const index =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? items.length - 1
+            : (at + (event.key === "ArrowDown" ? 1 : items.length - 1)) %
+              items.length;
+      items[index]?.focus();
+    } else if (event.key === "Escape" || event.key === "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeMapMenu();
+    }
+  }
+
   // ---------------------------------------------------------------- keys
   key(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
@@ -888,6 +1039,14 @@ export class StepDetails {
   run(command: KeymapCommand, event: KeyboardEvent) {
     const host = this.host();
     switch (command) {
+      case "mapTo": {
+        const row = (event.target as HTMLElement).closest<HTMLElement>(
+          ".sd-input .data-row[data-ref]",
+        );
+        if (!row) return;
+        event.preventDefault();
+        return this.openMapTo(row);
+      }
       case "searchPane": {
         const region = this.regionOf(event.target as HTMLElement);
         if (region === "input" && this.showPane("input") && this.inputPane()) {
@@ -937,6 +1096,8 @@ export class StepDetails {
   }
   private escape(event: KeyboardEvent) {
     event.preventDefault();
+    if (this.mapMenu()) return this.closeMapMenu();
+    if (activeDrag()) return this.clearMapping();
     if (this.renaming() !== null) {
       this.renaming.set(null);
       return this.focusName();

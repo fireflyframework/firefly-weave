@@ -486,3 +486,45 @@ weave-step-details {
     right: calc(var(--sd-output, 28%) - 22px);
   }
 }
+
+.sd-map-menu {
+  position: fixed;
+  z-index: 6;
+  width: min(280px, calc(100vw - 16px));
+  max-height: min(240px, calc(100vh - 16px));
+  overflow: auto;
+  padding: var(--space-1);
+  background: var(--raised);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.sd-map-title,
+.sd-map-empty {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  font: var(--type-caption);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.step-details .sd-map-menu button[role="menuitem"] {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  min-width: 44px;
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  font: var(--type-body);
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+.step-details .sd-map-menu button[role="menuitem"]:is(:hover, :focus-visible) {
+  background: var(--hover);
+}
+.step-details .sd-map-menu :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}

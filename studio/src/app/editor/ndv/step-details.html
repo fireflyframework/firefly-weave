@@ -136,7 +136,7 @@ SPDX-License-Identifier: Apache-2.0
         @if (target() === "$trigger") {
           <weave-test-event-pane [session]="session()" />
         } @else {
-          <weave-input-pane [session]="session()" />
+          <weave-input-pane [session]="session()" [mapped]="mappedRefs()" />
         }
       </div>
     </section>
@@ -281,6 +281,7 @@ SPDX-License-Identifier: Apache-2.0
         class="sd-tabpanel"
         role="tabpanel"
         id="sd-panel-parameters"
+        [weaveDragMap]="session()"
         aria-labelledby="sd-tab-parameters"
         [hidden]="tab() !== 'parameters'"
       >
@@ -411,5 +412,36 @@ SPDX-License-Identifier: Apache-2.0
         </button>
       </div>
     </weave-modal>
+  }
+  @if (mapMenu(); as menu) {
+    <div
+      class="sd-map-menu"
+      role="menu"
+      tabindex="-1"
+      [attr.aria-label]="'Map ' + menu.label + ' to'"
+      [style.top.px]="menu.top"
+      [style.left.px]="menu.left"
+      (keydown)="mapMenuKey($event)"
+      (focusout)="
+        $event.relatedTarget &&
+        !$any($event.currentTarget).contains($event.relatedTarget)
+          ? mapMenu.set(null)
+          : null
+      "
+    >
+      <p class="sd-map-title" aria-hidden="true">Map {{ menu.label }} to</p>
+      @for (target of menu.targets; track $index) {
+        <button
+          type="button"
+          role="menuitem"
+          tabindex="-1"
+          (click)="mapTo(target)"
+        >
+          {{ target.label }}
+        </button>
+      } @empty {
+        <p class="sd-map-empty">This step has no field that takes data.</p>
+      }
+    </div>
   }
 </section>

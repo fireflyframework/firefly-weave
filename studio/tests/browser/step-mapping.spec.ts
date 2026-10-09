@@ -21,6 +21,8 @@ import { resolve } from "node:path";
 import { parse, stringify } from "yaml";
 import {
   openStepFixture,
+  openConnectedFixture,
+  type StepDetailsPage,
   sizes,
   stepFixture,
   withLanguageFeatures,
@@ -532,3 +534,995 @@ for (const size of sizes) {
     });
   });
 }
+
+const withLimit = () =>
+  yamlFile(
+    "limit.yaml",
+    readFileSync(stepFixture, "utf8").replace(
+      "with: {object: {parameters: {object: {customerId: {ref: /input/customerId}}}}}",
+      "with: {object: {parameters: {object: {customerId: {ref: /input/customerId}}}, limit: {literal: 25}}}",
+    ),
+  );
+
+for (const size of sizes)
+  test.describe(`drag-to-map at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    const sheet = size.width < 768;
+    const showInput = (details: StepDetailsPage) =>
+      sheet
+        ? details.dialog
+            .getByRole("tablist", { name: "Step details panes" })
+            .getByRole("tab", { name: "Input" })
+            .click()
+        : Promise.resolve();
+    /** Maps an Input row to a field: by drag where both panes show, else with Map to…. */
+    const map = async (
+      details: StepDetailsPage,
+      row: string,
+      fieldId: string,
+      label: string,
+      edge = false,
+    ) => {
+      await showInput(details);
+      const source = details.dialog
+        .locator(".sd-input")
+        .getByRole("listitem", { name: new RegExp(`^${row}, `) });
+      if (sheet) {
+        await source.focus();
+        await details.page.keyboard.press("Enter");
+        await details.page
+          .getByRole("menu", { name: `Map ${row} to` })
+          .getByRole("menuitem", { name: label, exact: true })
+          .click();
+        return;
+      }
+      const target = details.field(fieldId);
+      const control =
+        fieldId === "value"
+          ? target.locator(":scope > .param > .param-label-row")
+          : target.locator(".param-control :is(input, textarea)").first();
+      const box = (await control.boundingBox())!;
+      await source.dragTo(control, {
+        targetPosition: { x: edge ? box.width - 4 : 8, y: box.height / 2 },
+      });
+    };
+
+    test("dragging onto a number replaces it with Undo, and onto text keeps the text", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openConnectedFixture(page, withLimit());
+      await details.open("lookup");
+      await expect(
+        details.field("input.limit").getByRole("textbox", { name: "Limit" }),
+      ).toHaveValue("25");
+      await map(details, "amount", "input.limit", "Limit");
+      await expect(page.locator(".toast-region")).toContainText(
+        "Replaced 25 with check-customer › amount.",
+      );
+      await expect(details.dialog.locator("[aria-live=polite]")).toHaveText(
+        "Mapped check-customer › amount to Limit",
+      );
+      await page
+        .locator(".toast-region")
+        .getByRole("button", { name: "Undo" })
+        .click();
+      await expect(
+        details.field("input.limit").getByRole("textbox", { name: "Limit" }),
+      ).toHaveValue("25");
+      await details.close();
+      await details.open("summarize");
+      await showInput(details);
+      await details.dialog
+        .locator(".sd-input")
+        .getByRole("combobox", { name: "Input source" })
+        .selectOption("input");
+      await map(details, "customerId", "prompt", "Prompt", true);
+      await details.close();
+      const prompt = JSON.stringify(
+        parse(await sourceText(page)).spec.steps.find(
+          (s: { id: string }) => s.id === "summarize",
+        ).prompt,
+      );
+      expect(prompt).toContain("Summarize the order");
+      expect(prompt).toContain("/input/customerId");
+    });
+
+    test("a mapped Input field carries the check mark", async ({ page }) => {
+      const details = await openStepFixture(page);
+      await details.open("lookup");
+      await showInput(details);
+      const input = details.dialog.locator(".sd-input");
+      await input
+        .getByRole("combobox", { name: "Input source" })
+        .selectOption("input");
+      await expect(
+        input.getByRole("listitem", {
+          name: "customerId, Text, mapped in this step",
+        }),
+      ).toBeVisible();
+      await expect(
+        input.getByRole("listitem", { name: "email, Text", exact: true }),
+      ).toBeVisible();
+    });
+
+    test("Map to… maps a field without a pointer", async ({ page }) => {
+      const details = await openStepFixture(page);
+      await details.open("check-customer");
+      await showInput(details);
+      const email = details.dialog
+        .locator(".sd-input")
+        .getByRole("listitem", { name: /^email, / });
+      await email.focus();
+      await page.keyboard.press("Enter");
+      const menu = page.getByRole("menu", { name: "Map email to" });
+      await expect(menu.getByRole("menuitem").first()).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
+      await expect(email).toBeFocused();
+      await expect(details.dialog).toBeVisible();
+      await page.keyboard.press("Enter");
+      await menu.getByRole("menuitem", { name: "Fields", exact: true }).click();
+      await details.close();
+      const value = parse(await sourceText(page)).spec.steps[0].value;
+      expect(JSON.stringify(value)).toContain('"email":{"ref":"/input/email"}');
+    });
+
+    test("key-value rows take drops and Add all fields", async ({ page }) => {
+      const details = await openStepFixture(page);
+      await details.open("check-customer");
+      await map(details, "email", "value", "Fields");
+      if (sheet)
+        await details.dialog
+          .getByRole("tablist", { name: "Step details panes" })
+          .getByRole("tab", { name: "Parameters" })
+          .click();
+      await details
+        .field("value")
+        .getByRole("button", { name: "Add all fields" })
+        .click();
+      await expect(details.dialog.locator("[aria-live=polite]")).toHaveText(
+        "Added 3 fields to Fields",
+      );
+      await details.close();
+      const keys = Object.keys(
+        parse(await sourceText(page)).spec.steps[0].value.object,
+      );
+      expect(keys).toEqual([
+        "customer",
+        "amount",
+        "email",
+        "customerId",
+        "status",
+        "tier",
+      ]);
+    });
+  });
+
+for (const size of [
+  ...sizes,
+  { tag: "360x640", width: 360, height: 640 },
+  { tag: "640x360", width: 640, height: 360 },
+]) {
+  test.describe(`mapping safety at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    const messages = new WeakMap<object, string[]>();
+    test.beforeEach(({ page }) => {
+      const errors: string[] = [];
+      messages.set(page, errors);
+      page.on("pageerror", (e) => errors.push(e.message));
+      page.on("console", (e) => {
+        if (e.type() === "error") errors.push(e.text());
+      });
+    });
+    test.afterEach(({ page }) => expect(messages.get(page)).toEqual([]));
+    const inputPane = async (details: StepDetailsPage) => {
+      if (size.width < 768)
+        await details.dialog
+          .getByRole("tablist", { name: "Step details panes" })
+          .getByRole("tab", { name: "Input", exact: true })
+          .click();
+      return details.dialog.locator(".sd-input");
+    };
+    test("the keyboard menu has usable targets, focus, and one Undo for an escaped key", async ({
+      page,
+    }) => {
+      const workflow = parse(readFileSync(stepFixture, "utf8"));
+      workflow.spec.inputSchema.properties["a/b~c"] = {
+        type: "string",
+        title: "Special field",
+      };
+      workflow.spec.steps[0].value.object.payload = {
+        literal: { ref: "/input/email" },
+      };
+      const details = await openStepFixture(
+        page,
+        yamlFile("escaped.yaml", stringify(workflow)),
+      );
+      await details.openWithKeyboard("check-customer");
+      const input = await inputPane(details);
+      await expect(
+        input.getByRole("listitem", { name: "email, Text", exact: true }),
+      ).toBeVisible();
+      const source = input.getByRole("listitem", {
+        name: "a/b~c, Text",
+        exact: true,
+      });
+      await expect(source).toHaveAttribute("title", "Special field");
+      await source.focus();
+      await page.keyboard.press("Enter");
+      const menu = page.getByRole("menu", { name: "Map a/b~c to" });
+      await expect(menu.getByRole("menuitem").first()).toBeFocused();
+      const geometry = await menu.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const controls = [
+          ...element.querySelectorAll<HTMLElement>("button"),
+        ].map((button) => {
+          const b = button.getBoundingClientRect();
+          const inside = b.top >= box.top && b.bottom <= box.bottom;
+          const hit =
+            !inside ||
+            button.contains(
+              document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2),
+            );
+          return { width: b.width, height: b.height, hit };
+        });
+        const focus = getComputedStyle(document.activeElement!);
+        return {
+          left: box.left,
+          right: box.right,
+          top: box.top,
+          bottom: box.bottom,
+          controls,
+          focus: focus.outlineStyle,
+        };
+      });
+      expect(geometry.left).toBeGreaterThanOrEqual(0);
+      expect(geometry.right).toBeLessThanOrEqual(size.width);
+      expect(geometry.top).toBeGreaterThanOrEqual(0);
+      expect(geometry.bottom).toBeLessThanOrEqual(size.height);
+      expect(geometry.focus).not.toBe("none");
+      for (const control of geometry.controls) {
+        expect(control.width).toBeGreaterThanOrEqual(44);
+        expect(control.height).toBeGreaterThanOrEqual(44);
+        expect(control.hit).toBe(true);
+      }
+      await page.screenshot({
+        path: test.info().outputPath(`map-menu-${size.tag}.png`),
+      });
+      await page.keyboard.press("End");
+      await expect(menu.getByRole("menuitem").last()).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(menu).toHaveCount(0);
+      await expect(source).toBeFocused();
+      await page.keyboard.press("Enter");
+      await menu.getByRole("menuitem", { name: "Fields", exact: true }).click();
+      await expect(
+        details
+          .field("value")
+          .getByRole("textbox", { name: "Name of row 4", exact: true }),
+      ).toHaveValue("a/b~c");
+      if (size.width < 768)
+        await expect(
+          details.dialog
+            .getByRole("tablist", { name: "Step details panes" })
+            .getByRole("tab", { name: "Parameters", exact: true }),
+        ).toHaveAttribute("aria-selected", "true");
+      const focused = details
+        .field("value")
+        .getByRole("textbox", { name: "Name of row 1", exact: true });
+      await expect(focused).toBeFocused();
+      const focusedGeometry = await focused.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const points = [
+          [box.left + 4, box.top + 4],
+          [box.right - 4, box.bottom - 4],
+          [box.left + box.width / 2, box.top + box.height / 2],
+        ];
+        return {
+          top: box.top,
+          bottom: box.bottom,
+          hits: points.map(([x, y]) =>
+            element.contains(document.elementFromPoint(x, y)),
+          ),
+        };
+      });
+      expect(focusedGeometry.top).toBeGreaterThanOrEqual(0);
+      expect(focusedGeometry.bottom).toBeLessThanOrEqual(size.height);
+      expect(focusedGeometry.hits).toEqual([true, true, true]);
+      await page.screenshot({
+        path: test.info().outputPath(`mapped-fields-${size.tag}.png`),
+      });
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(
+        details
+          .field("value")
+          .getByRole("textbox", { name: "Name of row 4", exact: true }),
+      ).toHaveCount(0);
+      await details.close();
+      expect(parse(await sourceText(page)).spec.steps[0].value).toEqual(
+        workflow.spec.steps[0].value,
+      );
+    });
+    test("an opaque template refuses mapping without success or losing its value", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const expression = {
+        op: {
+          name: "concat",
+          args: [{ literal: "Preserve " }, { ref: "/input/a~1b" }],
+        },
+      };
+      const details = await openStepFixture(page, mappedWorkflow(expression));
+      await details.openWithKeyboard("summarize");
+      const input = await inputPane(details);
+      await input
+        .getByRole("combobox", { name: "Input source" })
+        .selectOption("input");
+      const row = input.getByRole("listitem", {
+        name: "email, Text",
+        exact: true,
+      });
+      await row.focus();
+      await page.keyboard.press("Enter");
+      await page
+        .getByRole("menu", { name: "Map email to" })
+        .getByRole("menuitem", { name: "Prompt", exact: true })
+        .click();
+      await expect(row).toBeFocused();
+      await expect(details.dialog.locator("[aria-live=polite]")).toHaveText(
+        /cannot be edited as text/,
+      );
+      await details.close();
+      expect(
+        parse(await sourceText(page)).spec.steps.find(
+          (s: { id: string }) => s.id === "summarize",
+        ).prompt,
+      ).toEqual(expression);
+    });
+  });
+}
+
+test.describe("pointer mapping", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test("a long text drop follows the visible glyphs after source focus resets horizontal scrolling", async ({
+    page,
+  }) => {
+    const workflow = parse(readFileSync(stepFixture, "utf8"));
+    const human = workflow.spec.steps.find(
+      (step: { id: string }) => step.id === "route-by-value",
+    ).cases[0].steps[0];
+    const text = "Review this customer carefully. ".repeat(8);
+    human.title = { literal: text };
+    const details = await openConnectedFixture(
+      page,
+      yamlFile("scrolling-title.yaml", stringify(workflow)),
+    );
+    await details.openWithKeyboard("notify-sales");
+    const input = details.dialog.locator(".sd-input");
+    await input
+      .getByRole("combobox", { name: "Input source" })
+      .selectOption("input");
+    const source = input.getByRole("listitem", {
+      name: "email, Text",
+      exact: true,
+    });
+    const control = details
+      .field("title")
+      .getByRole("textbox", { name: "Title", exact: true });
+    await control.focus();
+    await control.press("End");
+    expect(
+      await control.evaluate((element) => element.scrollLeft),
+    ).toBeGreaterThan(0);
+    const point = await control.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      const context = document.createElement("canvas").getContext("2d")!;
+      context.font = style.font;
+      return {
+        x:
+          parseFloat(style.paddingLeft) +
+          parseFloat(style.borderLeftWidth) +
+          context.measureText("Review ").width,
+        y: box.height / 2,
+      };
+    });
+    await source.hover();
+    await page.mouse.down();
+    // Native source focus blurs the input; Chromium returns its text to the start.
+    expect(await control.evaluate((element) => element.scrollLeft)).toBe(0);
+    const box = (await control.boundingBox())!;
+    await page.mouse.move(box.x + point.x, box.y + point.y, { steps: 12 });
+    await page.mouse.move(box.x + point.x, box.y + point.y);
+    await page.mouse.up();
+    await expect(control).toHaveValue(
+      `Review {{ input.email }}${text.slice(7)}`,
+    );
+    expect(
+      await control.evaluate(
+        (element) => (element as HTMLInputElement).selectionStart,
+      ),
+    ).toBe(7 + 17);
+    await details.close();
+    expect(
+      parse(await sourceText(page)).spec.steps.find(
+        (step: { id: string }) => step.id === "route-by-value",
+      ).cases[0].steps[0].title,
+    ).toEqual({
+      op: {
+        name: "concat",
+        args: [
+          { literal: "Review " },
+          { ref: "/input/email" },
+          { literal: text.slice(7) },
+        ],
+      },
+    });
+  });
+  test("canceling a text drop keeps its text and selection without leaving a mirror", async ({
+    page,
+  }) => {
+    const text = "Hello 🙂\nSecond line";
+    const details = await openConnectedFixture(
+      page,
+      mappedWorkflow({ literal: text }),
+    );
+    await details.openWithKeyboard("summarize");
+    const input = details.dialog.locator(".sd-input");
+    await input
+      .getByRole("combobox", { name: "Input source" })
+      .selectOption("input");
+    const source = input.getByRole("listitem", {
+      name: "email, Text",
+      exact: true,
+    });
+    const control = details
+      .field("prompt")
+      .getByRole("textbox", { name: "Prompt" });
+    await control.focus();
+    await control.press("ControlOrMeta+Home");
+    await control.press("ArrowRight");
+    const selection = await control.evaluate(
+      (element) => (element as HTMLTextAreaElement).selectionStart,
+    );
+    const bodyChildren = await page.locator("body > *").count();
+    const box = (await control.boundingBox())!;
+    await source.hover();
+    await page.mouse.down();
+    await page.mouse.move(box.x + 20, box.y + 20, { steps: 12 });
+    await page.mouse.move(box.x + 20, box.y + 20);
+    await expect(details.field("prompt")).toHaveAttribute(
+      "data-drop-hover",
+      "",
+    );
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await expect(control).toHaveValue(text);
+    expect(
+      await control.evaluate(
+        (element) => (element as HTMLTextAreaElement).selectionStart,
+      ),
+    ).toBe(selection);
+    await expect(page.locator("body > *")).toHaveCount(bodyChildren);
+    await expect(
+      details.dialog.locator("[data-drop-hover], [data-fit]"),
+    ).toHaveCount(0);
+    await details.close();
+    expect(
+      parse(await sourceText(page)).spec.steps.find(
+        (step: { id: string }) => step.id === "summarize",
+      ).prompt,
+    ).toEqual({ literal: text });
+  });
+  test("a multiline drop inserts at the pointer while keeping both sides of the text", async ({
+    page,
+  }) => {
+    await withLanguageFeatures(page);
+    const details = await openStepFixture(
+      page,
+      mappedWorkflow({ literal: "Hello there\nSecond line" }),
+    );
+    await details.openWithKeyboard("summarize");
+    await details.dialog
+      .locator(".sd-input")
+      .getByRole("combobox", { name: "Input source" })
+      .selectOption("input");
+    const source = details.dialog
+      .locator(".sd-input")
+      .getByRole("listitem", { name: "email, Text", exact: true });
+    const control = details
+      .field("prompt")
+      .getByRole("textbox", { name: "Prompt" });
+    const point = await control.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const context = document.createElement("canvas").getContext("2d")!;
+      context.font = style.font;
+      return {
+        x:
+          parseFloat(style.paddingLeft) +
+          parseFloat(style.borderLeftWidth) +
+          context.measureText("Hello ").width,
+        y:
+          parseFloat(style.paddingTop) +
+          parseFloat(style.borderTopWidth) +
+          parseFloat(style.lineHeight) / 2,
+      };
+    });
+    await source.dragTo(control, { targetPosition: point });
+    await expect(control).toHaveValue(
+      "Hello {{ input.email }}there\nSecond line",
+    );
+    await expect(control).toBeFocused();
+    expect(
+      await control.evaluate(
+        (element) => (element as HTMLTextAreaElement).selectionStart,
+      ),
+    ).toBe(23);
+    await details.close();
+    expect(
+      parse(await sourceText(page)).spec.steps.find(
+        (s: { id: string }) => s.id === "summarize",
+      ).prompt,
+    ).toEqual({
+      op: {
+        name: "concat",
+        args: [
+          { literal: "Hello " },
+          { ref: "/input/email" },
+          { literal: "there\nSecond line" },
+        ],
+      },
+    });
+  });
+  test("a wrapped multiline drop uses the visible line and removes its layout mirror", async ({
+    page,
+  }) => {
+    const text = "W".repeat(150) + "\nTail🙂";
+    const details = await openConnectedFixture(
+      page,
+      mappedWorkflow({ literal: text }),
+    );
+    await details.openWithKeyboard("summarize");
+    const input = details.dialog.locator(".sd-input");
+    await input
+      .getByRole("combobox", { name: "Input source" })
+      .selectOption("input");
+    const source = input.getByRole("listitem", {
+      name: "email, Text",
+      exact: true,
+    });
+    const control = details
+      .field("prompt")
+      .getByRole("textbox", { name: "Prompt" });
+    const position = await control.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const context = document.createElement("canvas").getContext("2d")!;
+      context.font = style.font;
+      const width =
+        element.clientWidth -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight);
+      let count = 0;
+      while (context.measureText("W".repeat(count + 1)).width <= width) count++;
+      return {
+        at: count + 3,
+        point: {
+          x:
+            parseFloat(style.paddingLeft) +
+            parseFloat(style.borderLeftWidth) +
+            context.measureText("WWW").width,
+          y:
+            parseFloat(style.paddingTop) +
+            parseFloat(style.borderTopWidth) +
+            parseFloat(style.lineHeight) * 1.5,
+        },
+      };
+    });
+    const bodyChildren = await page.locator("body > *").count();
+    await source.dragTo(control, { targetPosition: position.point });
+    const before = text.slice(0, position.at),
+      after = text.slice(position.at);
+    await expect(control).toHaveValue(`${before}{{ input.email }}${after}`);
+    expect(
+      await control.evaluate(
+        (element) => (element as HTMLTextAreaElement).selectionStart,
+      ),
+    ).toBe(position.at + 17);
+    await expect(page.locator("body > *")).toHaveCount(bodyChildren);
+    await page.screenshot({
+      path: test.info().outputPath("wrapped-text-desktop.png"),
+    });
+    await details.close();
+    expect(
+      parse(await sourceText(page)).spec.steps.find(
+        (s: { id: string }) => s.id === "summarize",
+      ).prompt,
+    ).toEqual({
+      op: {
+        name: "concat",
+        args: [
+          { literal: before },
+          { ref: "/input/email" },
+          { literal: after },
+        ],
+      },
+    });
+  });
+  test("a drop beside Unicode text preserves complete characters and the second line", async ({
+    page,
+  }) => {
+    const before = "Hello 🙂e\u0301👩‍💻",
+      after = " world\nNext line";
+    const details = await openConnectedFixture(
+      page,
+      mappedWorkflow({ literal: before + after }),
+    );
+    await details.openWithKeyboard("summarize");
+    const input = details.dialog.locator(".sd-input");
+    await input
+      .getByRole("combobox", { name: "Input source" })
+      .selectOption("input");
+    const source = input.getByRole("listitem", {
+      name: "email, Text",
+      exact: true,
+    });
+    const control = details
+      .field("prompt")
+      .getByRole("textbox", { name: "Prompt" });
+    const point = await control.evaluate((element, prefix) => {
+      const style = getComputedStyle(element);
+      const context = document.createElement("canvas").getContext("2d")!;
+      context.font = style.font;
+      return {
+        x:
+          parseFloat(style.paddingLeft) +
+          parseFloat(style.borderLeftWidth) +
+          context.measureText(prefix).width,
+        y:
+          parseFloat(style.paddingTop) +
+          parseFloat(style.borderTopWidth) +
+          parseFloat(style.lineHeight) / 2,
+      };
+    }, before);
+    await source.dragTo(control, { targetPosition: point });
+    await expect(control).toHaveValue(`${before}{{ input.email }}${after}`);
+    expect(
+      await control.evaluate(
+        (element) => (element as HTMLTextAreaElement).selectionStart,
+      ),
+    ).toBe(before.length + 17);
+    await details.close();
+    expect(
+      parse(await sourceText(page)).spec.steps.find(
+        (s: { id: string }) => s.id === "summarize",
+      ).prompt,
+    ).toEqual({
+      op: {
+        name: "concat",
+        args: [
+          { literal: before },
+          { ref: "/input/email" },
+          { literal: after },
+        ],
+      },
+    });
+  });
+});
+
+for (const size of sizes) {
+  test(`an existing number and row reference can be remapped and undone at ${size.tag}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    const workflow = parse(readFileSync(stepFixture, "utf8"));
+    workflow.spec.steps.find(
+      (step: { id: string }) => step.id === "lookup",
+    ).with.object.limit = { ref: "/input/amount" };
+    const details = await openConnectedFixture(
+      page,
+      yamlFile("remap.yaml", stringify(workflow)),
+    );
+    const showInput = async () => {
+      if (size.width < 768)
+        await details.dialog
+          .getByRole("tablist", { name: "Step details panes" })
+          .getByRole("tab", { name: "Input", exact: true })
+          .click();
+      return details.dialog.locator(".sd-input");
+    };
+    await details.openWithKeyboard("lookup");
+    const input = await showInput();
+    const amount = input.getByRole("listitem", {
+      name: "amount, Number",
+      exact: true,
+    });
+    if (size.width < 768) {
+      await amount.focus();
+      await page.keyboard.press("Enter");
+      await page
+        .getByRole("menu", { name: "Map amount to" })
+        .getByRole("menuitem", { name: "Limit", exact: true })
+        .click();
+    } else
+      await amount.dragTo(
+        details
+          .field("input.limit")
+          .getByRole("button", { name: "reference Input Amount", exact: true }),
+      );
+    await expect(
+      details.field("input.limit").getByRole("button", {
+        name: "reference check-customer Amount",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.locator(".toast-region")).toContainText(
+      "Replaced the previous mapping with check-customer › amount.",
+    );
+    await page
+      .locator(".toast-region")
+      .getByRole("button", { name: "Undo", exact: true })
+      .click();
+    await expect(
+      details
+        .field("input.limit")
+        .getByRole("button", { name: "reference Input Amount", exact: true }),
+    ).toBeVisible();
+    await details.close();
+    await details.openWithKeyboard("check-customer");
+    const email = (await showInput()).getByRole("listitem", {
+      name: "email, Text",
+      exact: true,
+    });
+    const row = details.field("value").locator(".param-row-value").first();
+    if (size.width < 768) {
+      await email.focus();
+      await page.keyboard.press("Enter");
+      await page
+        .getByRole("menu", { name: "Map email to" })
+        .getByRole("menuitem", { name: "Value · customer", exact: true })
+        .click();
+    } else
+      await email.dragTo(
+        row.getByRole("button", {
+          name: "reference Input Customer ID",
+          exact: true,
+        }),
+      );
+    await expect(
+      row.getByRole("button", { name: "reference Input Email", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".toast-region")).toContainText(
+      "Replaced the previous mapping with Input › email.",
+    );
+    await page
+      .locator(".toast-region")
+      .getByRole("button", { name: "Undo", exact: true })
+      .click();
+    await expect(
+      row.getByRole("button", {
+        name: "reference Input Customer ID",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await details.close();
+    const stored = parse(await sourceText(page));
+    expect(stored.spec.steps[0].value).toEqual(workflow.spec.steps[0].value);
+    expect(
+      stored.spec.steps.find((step: { id: string }) => step.id === "lookup")
+        .with.object.limit,
+    ).toEqual({ ref: "/input/amount" });
+  });
+  test(`a whole-object mapping has an accessible no-target menu at ${size.tag}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    const workflow = parse(readFileSync(stepFixture, "utf8"));
+    workflow.spec.steps[0].value = { ref: "/input" };
+    const details = await openStepFixture(
+      page,
+      yamlFile("whole.yaml", stringify(workflow)),
+    );
+    await details.openWithKeyboard("check-customer");
+    if (size.width < 768)
+      await details.dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Input", exact: true })
+        .click();
+    const row = details.dialog
+      .locator(".sd-input")
+      .getByRole("listitem", { name: /^email, / });
+    await row.focus();
+    await page.keyboard.press("Enter");
+    const menu = page.getByRole("menu", { name: "Map email to" });
+    await expect(menu).toBeFocused();
+    await expect(menu).toHaveText(/This step has no field that takes data/);
+    await expect(menu.getByRole("menuitem")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(row).toBeFocused();
+    await expect(details.dialog).toBeVisible();
+    await details.close();
+    expect(parse(await sourceText(page)).spec.steps[0].value).toEqual({
+      ref: "/input",
+    });
+  });
+}
+
+test.describe("drag cancellation and scrolling", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const longFields = () => {
+    const workflow = parse(readFileSync(stepFixture, "utf8"));
+    workflow.spec.steps[0].value = {
+      object: Object.fromEntries(
+        Array.from({ length: 35 }, (_, i) => [`field${i}`, { literal: "" }]),
+      ),
+    };
+    return workflow;
+  };
+  test("a sticky nested target wins and Escape cancels without changing data", async ({
+    page,
+  }) => {
+    const workflow = longFields();
+    const details = await openStepFixture(
+      page,
+      yamlFile("sticky.yaml", stringify(workflow)),
+    );
+    await details.openWithKeyboard("check-customer");
+    const source = details.dialog
+      .locator(".sd-input")
+      .getByRole("listitem", { name: "email, Text", exact: true });
+    const nested = details.field("value").locator(".param-row-value").first();
+    const targetBox = (await nested.boundingBox())!;
+    const control = nested.getByRole("textbox", { name: "Value", exact: true });
+    const controlBox = (await control.boundingBox())!;
+    await source.hover();
+    await page.mouse.down();
+    await page.mouse.move(
+      targetBox.x + targetBox.width + 5,
+      controlBox.y + controlBox.height / 2,
+      { steps: 12 },
+    );
+    // Chromium emits dragover on a movement after entering the final element.
+    await page.mouse.move(
+      targetBox.x + targetBox.width + 5,
+      controlBox.y + controlBox.height / 2,
+    );
+    await expect(nested).toHaveAttribute("data-drop-hover", "");
+    await expect(nested).toHaveAttribute("data-fit", "fits");
+    await expect(details.field("value")).not.toHaveAttribute(
+      "data-drop-hover",
+      "",
+    );
+    await page.screenshot({
+      path: test.info().outputPath("sticky-drag-desktop.png"),
+    });
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await expect(
+      details.dialog.locator("[data-drop-hover], [data-fit]"),
+    ).toHaveCount(0);
+    await expect(control).toHaveValue("");
+    await source.dragTo(control);
+    await expect(
+      nested.getByRole("button", { name: /reference Input Email/ }),
+    ).toBeVisible();
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(
+      nested.getByRole("textbox", { name: "Value", exact: true }),
+    ).toHaveValue("");
+    await details.close();
+    expect(parse(await sourceText(page)).spec.steps[0].value).toEqual(
+      workflow.spec.steps[0].value,
+    );
+  });
+  test("holding a dragged field near the bottom scrolls the Parameters pane", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(
+      page,
+      yamlFile("scroll.yaml", stringify(longFields())),
+    );
+    await details.openWithKeyboard("check-customer");
+    const pane = details.dialog.locator("#sd-panel-parameters");
+    const box = (await pane.boundingBox())!;
+    const source = details.dialog
+      .locator(".sd-input")
+      .getByRole("listitem", { name: "email, Text", exact: true });
+    await source.hover();
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height - 12, {
+      steps: 12,
+    });
+    await expect
+      .poll(() => pane.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(48);
+    await page.screenshot({
+      path: test.info().outputPath("autoscroll-desktop.png"),
+    });
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await expect(
+      details.dialog.locator("[data-drop-hover], [data-fit]"),
+    ).toHaveCount(0);
+    await details.close();
+  });
+});
+
+for (const size of sizes) {
+  test(`mapping leaves an unapplied number intact at ${size.tag}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    const details = await openConnectedFixture(page, withLimit());
+    await details.openWithKeyboard("lookup");
+    const limit = details
+      .field("input.limit")
+      .getByRole("textbox", { name: "Limit" });
+    await limit.fill("unfinished");
+    if (size.width < 768)
+      await details.dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Input", exact: true })
+        .click();
+    const row = details.dialog
+      .locator(".sd-input")
+      .getByRole("listitem", { name: /^amount, / });
+    await row.focus();
+    await page.keyboard.press("Enter");
+    await page
+      .getByRole("menu", { name: "Map amount to" })
+      .getByRole("menuitem", { name: "Limit", exact: true })
+      .click();
+    await expect(details.dialog.locator("[aria-live=polite]")).toHaveText(
+      /unapplied value/,
+    );
+    if (size.width < 768)
+      await details.dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Parameters", exact: true })
+        .click();
+    await expect(limit).toHaveValue("unfinished");
+    if (size.width >= 768) {
+      await row.dragTo(limit);
+      await expect(limit).toHaveValue("unfinished");
+    }
+    await details.close();
+    expect(
+      parse(await sourceText(page)).spec.steps.find(
+        (s: { id: string }) => s.id === "lookup",
+      ).with.object.limit,
+    ).toEqual({ literal: 25 });
+  });
+}
+
+test("Add all fields keeps an unapplied child draft and all existing rows", async ({
+  page,
+}) => {
+  const workflow = parse(readFileSync(stepFixture, "utf8"));
+  workflow.spec.steps[0].value.object.payload = { literal: { keep: "value" } };
+  const details = await openStepFixture(
+    page,
+    yamlFile("draft.yaml", stringify(workflow)),
+  );
+  await details.openWithKeyboard("check-customer");
+  const invalid = details.field("value").locator("textarea");
+  await invalid.fill("{");
+  await details
+    .field("value")
+    .getByRole("button", { name: "Add all fields", exact: true })
+    .click();
+  await expect(invalid).toHaveValue("{");
+  await expect(details.dialog.locator("[aria-live=polite]")).toHaveText(
+    /unapplied value/,
+  );
+  await expect(
+    details
+      .field("value")
+      .getByRole("textbox", { name: "Name of row 4", exact: true }),
+  ).toHaveCount(0);
+  await details.close();
+  expect(parse(await sourceText(page)).spec.steps[0].value).toEqual(
+    workflow.spec.steps[0].value,
+  );
+});

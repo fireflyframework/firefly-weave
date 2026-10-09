@@ -83,6 +83,7 @@ export function writeViews(
 export interface TreeRow {
   key: string;
   label: string;
+  title?: string;
   depth: number;
   typeLabel: string;
   types: string[];
@@ -114,7 +115,8 @@ export function schemaRows(schema: unknown, maxDepth = 4): TreeRow[] {
           : key;
       rows.push({
         key: `${prefix}/${escapeSegment(key)}`,
-        label: title,
+        label: key,
+        title,
         depth,
         typeLabel: typeLabel(child),
         types: schemaTypes(child),
@@ -188,12 +190,16 @@ export function sourceRows(entries: ScopeEntry[], source: string): TreeRow[] {
       : entries.filter((entry) => entry.ref === root)
   ).map((entry) => ({
     key: entry.ref,
-    label: entry.label,
+    label: entry.path.at(-1) ?? entry.label,
+    title: entry.label,
     depth: Math.max(0, entry.path.length - 1),
     typeLabel: entry.typeLabel,
     types: entry.types,
     ref: entry.ref,
-    breadcrumb: entry.breadcrumb.replace(/^Workflow input(?= ›|$)/, "Input"),
+    breadcrumb: [
+      entry.source === "input" ? "Input" : entry.stepId,
+      ...entry.path,
+    ].join(" › "),
     schema: entry.schema,
   }));
 }

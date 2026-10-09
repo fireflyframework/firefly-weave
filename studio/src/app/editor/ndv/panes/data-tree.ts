@@ -22,7 +22,8 @@ import { ChangeDetectionStrategy, Component, input } from "@angular/core";
 import { Icon } from "../../../icon";
 import { dragSchema, typeIcon, type TreeRow } from "./views";
 
-export const REF_MIME = "application/x-weave-ref";
+import { activeDrag, REF_MIME } from "../params/drag-map";
+export { REF_MIME } from "../params/drag-map";
 
 @Component({
   selector: "weave-data-tree",
@@ -37,6 +38,10 @@ export const REF_MIME = "application/x-weave-ref";
         [attr.draggable]="row.ref ? 'true' : null"
         [attr.tabindex]="row.ref ? 0 : null"
         [attr.data-ref]="row.ref ?? null"
+        [attr.title]="row.title ?? null"
+        [attr.aria-description]="
+          row.title && row.title !== row.label ? row.title : null
+        "
         [attr.aria-label]="
           row.label +
           ', ' +
@@ -44,6 +49,7 @@ export const REF_MIME = "application/x-weave-ref";
           (mapped().includes(row.ref ?? '') ? ', mapped in this step' : '')
         "
         (dragstart)="drag($event, row)"
+        (dragend)="endDrag()"
       >
         @if (row.ref) {
           <weave-icon
@@ -78,17 +84,19 @@ export class DataTree {
   icon(row: TreeRow): string {
     return typeIcon(row.types, row.typeLabel);
   }
+  endDrag() {
+    activeDrag.set(null);
+  }
   drag(event: DragEvent, row: TreeRow) {
     if (!row.ref || !event.dataTransfer) return;
+    const drag = {
+      ref: row.ref,
+      breadcrumb: row.breadcrumb ?? row.label,
+      schema: dragSchema(row.schema ?? {}),
+    };
+    activeDrag.set(drag);
     event.dataTransfer.effectAllowed = "copy";
-    event.dataTransfer.setData(
-      REF_MIME,
-      JSON.stringify({
-        ref: row.ref,
-        breadcrumb: row.breadcrumb,
-        schema: dragSchema(row.schema ?? {}),
-      }),
-    );
+    event.dataTransfer.setData(REF_MIME, JSON.stringify(drag));
     event.dataTransfer.setData("text/plain", row.ref);
   }
 }

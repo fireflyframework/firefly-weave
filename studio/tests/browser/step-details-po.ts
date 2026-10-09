@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // real clicks, double-clicks and keys, never `force`.
 import { expect, type Locator, type Page } from "@playwright/test";
 import { resolve } from "node:path";
-import { offline } from "./support";
+import { connected, offline } from "./support";
 
 export const stepFixture = resolve("tests/fixtures/step-details.yaml");
 /** Each journey runs on a desktop and at the smallest supported editor size. */
@@ -50,9 +50,10 @@ export const yamlFile = (name: string, text: string): WorkflowFile => ({
 export async function openStepFixture(
   page: Page,
   file: WorkflowFile = stepFixture,
+  start: (page: Page) => Promise<unknown> = offline,
 ): Promise<StepDetailsPage> {
   await withNewEditor(page);
-  await offline(page);
+  await start(page);
   await page.getByLabel("Choose a workflow file").setInputFiles(file);
   await expect(page.locator(".editor-bar")).toBeVisible();
   const canvas = page.getByLabel("Workflow canvas", { exact: true });
@@ -68,8 +69,9 @@ export async function withLanguageFeatures(
   page: Page,
   features = ["text.concat", "text.join"],
 ) {
-  await page.route("**/studio/contracts/language", (route) =>
-    route.fulfill({ json: { features } }),
+  await page.route(
+    /\/studio\/(?:contracts\/language|api\/api\/v1\/tenants\/[^/]+\/projects\/[^/]+\/language)$/,
+    (route) => route.fulfill({ json: { features } }),
   );
 }
 
@@ -134,3 +136,14 @@ export class StepDetailsPage {
     await expect(this.dialog).toHaveCount(0);
   }
 }
+
+/** Open the step fixture with the platform catalog available. */
+export const openConnectedFixture = (
+  page: Page,
+  file: WorkflowFile = stepFixture,
+) =>
+  openStepFixture(page, file, async (p) => {
+    const result = await connected(p);
+    await withLanguageFeatures(p);
+    return result;
+  });

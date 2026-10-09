@@ -55,6 +55,14 @@ SPDX-License-Identifier: Apache-2.0
       />
     }
     <span class="param-spacer"></span>
+    @if (fit(); as fits) {
+      <span
+        class="param-drop-label"
+        [attr.data-fit]="fits.fit"
+        aria-hidden="true"
+        >{{ fits.text }}</span
+      >
+    }
     <div class="param-tools" (keydown)="toolsKey($event)">
       @if (mode() !== null && spec.mapping === "both") {
         <div

@@ -48,6 +48,13 @@ import { FormulaField } from "./formula-field";
 import type { FormSession } from "./form-session";
 import { normalizeIdentifier } from "./identifiers";
 import { Toggletip } from "./toggletip";
+import {
+  activeDrag,
+  canMapFields,
+  caretFromPoint,
+  type FieldDrop,
+} from "./drag-map";
+import { partsToText } from "./template-text";
 import { ABSENT } from "./value-io";
 
 let sequence = 0;
@@ -81,8 +88,13 @@ const UNIT_CODE: Record<string, string> = {
   templateUrl: "./param-field.html",
   host: {
     class: "param-host",
+    "[attr.data-fit]": "fit()?.fit ?? null",
+    "(weavefielddragstart)": "beginDrop()",
+    "(weavefielddrop)": "dropped($event)",
+    "(weavefieldmappingcheck)": "checkMapping($event)",
     "[class.is-option]": "entry().option && isGroup()",
     "[attr.data-param]": "spec().id",
+    "[attr.data-param-path]": "pathKey()",
     "[attr.data-mode]": "mode()",
     "[attr.data-required-empty]": "session().requiredEmpty(spec()) ? '' : null",
   },
@@ -112,7 +124,84 @@ export class ParamField {
   } | null = null;
   private choicesLoading = false;
   private choicesError = "";
-  numberText: string | null = null;
+  private pendingNumber: string | null = null;
+  private numberOwner: { session: FormSession; descriptor: string } | null =
+    null;
+  get numberText(): string | null {
+    if (
+      this.numberOwner?.session !== this.session() ||
+      this.numberOwner.descriptor !== canonicalJson(this.spec())
+    )
+      this.pendingNumber = null;
+    return this.pendingNumber;
+  }
+  set numberText(value: string | null) {
+    this.numberOwner = {
+      session: this.session(),
+      descriptor: canonicalJson(this.spec()),
+    };
+    this.pendingNumber = value;
+  }
+  pathKey(): string {
+    return JSON.stringify(this.spec().path);
+  }
+  checkMapping(event: Event) {
+    if (
+      this.numberProblem() ||
+      this.jsonProblem ||
+      this.formula()?.templateError() ||
+      this.formula()?.typedRef
+    )
+      event.preventDefault();
+  }
+
+  private dropOwner: {
+    session: FormSession;
+    spec: ParamSpec;
+    owns: () => boolean;
+  } | null = null;
+  beginDrop() {
+    const session = this.session(),
+      spec = this.spec();
+    this.dropOwner = { session, spec, owns: session.owns(spec) };
+  }
+  fit() {
+    const drag = activeDrag();
+    return drag ? this.session().dropFit(this.spec(), drag) : null;
+  }
+  dropped(event: Event) {
+    const owner = this.dropOwner;
+    this.dropOwner = null;
+    if (
+      !owner ||
+      !owner.owns() ||
+      this.session() !== owner.session ||
+      canonicalJson(this.spec()) !== canonicalJson(owner.spec)
+    )
+      return;
+    if (!canMapFields(this.element.nativeElement, this.session())) return;
+    const { drag, x, y, shift } = (event as CustomEvent<FieldDrop>).detail;
+    const control = this.element.nativeElement.querySelector(
+      ".param-control input:not([type=checkbox]), .param-control textarea",
+    );
+    const session = this.session(),
+      spec = this.spec();
+    const caret = caretFromPoint(control, x, y);
+    const old = session.read(spec);
+    const text =
+      control instanceof HTMLInputElement ||
+      control instanceof HTMLTextAreaElement
+        ? control.value
+        : null;
+    const prefix = text === null ? "" : text.slice(0, caret ?? text.length);
+    const after =
+      session.templates(spec) && text !== null
+        ? (old.mode === "fixed" ? partsToText([{ text: prefix }]) : prefix)
+            .length + partsToText([{ ref: drag.ref }]).length
+        : undefined;
+    if (session.applyDrop(spec, drag, { caret, shift }))
+      this.focusControl(session, spec, false, after);
+  }
 
   ids() {
     const id = this.spec().id.replace(/[^A-Za-z0-9_-]/g, "-");
@@ -244,6 +333,7 @@ export class ParamField {
     session = this.session(),
     spec = this.spec(),
     pick = false,
+    caret?: number,
   ) {
     setTimeout(() => {
       if (
@@ -258,11 +348,16 @@ export class ParamField {
           this.focusControl(session, spec);
           return;
         }
-        this.element.nativeElement
-          .querySelector<HTMLElement>(
-            ".param-control :is(input, textarea, select, button, [tabindex='0'])",
-          )
-          ?.focus();
+        const control = this.element.nativeElement.querySelector<HTMLElement>(
+          ".param-control :is(input, textarea, select, button, [tabindex='0'])",
+        );
+        control?.focus();
+        if (
+          caret !== undefined &&
+          (control instanceof HTMLInputElement ||
+            control instanceof HTMLTextAreaElement)
+        )
+          control.setSelectionRange(caret, caret);
       }
     });
   }
@@ -310,7 +405,6 @@ export class ParamField {
   // ---------------------------------------------------------- writing
   left() {
     this.session().touch(this.spec());
-    this.numberText = null;
   }
   text(event: Event) {
     const value = (event.target as HTMLInputElement).value;

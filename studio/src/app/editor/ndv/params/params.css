@@ -536,3 +536,50 @@ SPDX-License-Identifier: Apache-2.0
   min-width: 44px;
   min-height: 44px;
 }
+
+/* The hovered field keeps its label and explains the drop in words. */
+.param-drop-label {
+  display: none;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+weave-param-field[data-drop-hover] > .param > .param-label-row {
+  position: relative;
+}
+weave-param-field[data-drop-hover]
+  > .param
+  > .param-label-row
+  > .param-drop-label {
+  display: block;
+  position: absolute;
+  pointer-events: none;
+  left: 0;
+  top: 100%;
+  z-index: 3;
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  background: var(--raised);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+}
+.param-drop-label[data-fit="fits"] {
+  color: var(--accent);
+}
+.param-drop-label:is([data-fit="mismatch"], [data-fit="refused"]) {
+  color: var(--danger-ink);
+}
+weave-param-field[data-drop-hover] > .param {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}
+weave-param-field[data-drop-hover][data-fit="unknown"] > .param {
+  outline-color: var(--border-hover);
+}
+weave-param-field[data-drop-hover]:is(
+    [data-fit="mismatch"],
+    [data-fit="refused"]
+  )
+  > .param {
+  outline: 2px dashed var(--danger);
+}

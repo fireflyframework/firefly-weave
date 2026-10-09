@@ -35,6 +35,17 @@ import {
   type FieldEntry,
   type FormState,
 } from "./form-model";
+import {
+  childEntries,
+  nearestRoot,
+  planDrop,
+  rowKey,
+  dropFit,
+  parseDrag,
+  type DragRef,
+} from "./drop";
+import { dragSchema } from "../panes/views";
+import { uiKey } from "../../state/browser-store";
 import { expressionRoot, WORKFLOW_ROOTS, samePath } from "./paths";
 import {
   ABSENT,
@@ -83,6 +94,8 @@ export class FormSession {
 
   private readonly model;
   private readonly opened;
+  private readonly profile;
+  private readonly account;
 
   constructor(
     readonly host: StepDetailsHost,
@@ -93,11 +106,15 @@ export class FormSession {
   ) {
     this.model = host.model;
     this.opened = host.model.opened;
+    this.profile = canonicalJson(host.profile);
+    this.account = host.stepDataScope;
   }
 
   isCurrent(): boolean {
     return (
       this.active() &&
+      this.profile === canonicalJson(this.host.profile) &&
+      this.account === this.host.stepDataScope &&
       this.host.model === this.model &&
       this.model.opened === this.opened
     );
@@ -349,6 +366,242 @@ export class FormSession {
     );
   }
 
+  /** Only live expression destinations can receive a mapping. */
+  mappingReason(spec: ParamSpec): string | null {
+    const entry = this.resolve(spec);
+    if (!this.isCurrent() || !entry)
+      return "This field is no longer available.";
+    const locked = this.controller.readOnlyReason() ?? this.readOnly(entry);
+    if (locked) return locked;
+    if (spec.mapping === "fixed") return "This field takes a fixed value.";
+    if (["keyValue", "list"].includes(spec.type) && this.wholeMapping(spec))
+      return "Use rows before adding fields.";
+    const roots =
+      (spec.scope ?? "step") === "workflow"
+        ? WORKFLOW_ROOTS
+        : this.subject().roots;
+    if (
+      (spec.scope ?? "step") === "action" ||
+      !expressionRoot(spec.path, roots) ||
+      this.structure(spec)
+    )
+      return "This field takes a fixed value.";
+    if (
+      spec.type === "list" &&
+      (!spec.item || !["both", "mapped"].includes(spec.item.mapping ?? ""))
+    )
+      return "This list takes fixed values.";
+    if (this.mode(spec) === null && spec.type !== "keyValue")
+      return "This field takes a fixed value.";
+    return null;
+  }
+  /** Resolve transport hints against the exact target's lexical scope. */
+  dragReference(spec: ParamSpec, drag: DragRef): DragRef | null {
+    if (
+      typeof drag?.ref !== "string" ||
+      !parseDrag(JSON.stringify({ ref: drag.ref }))
+    )
+      return null;
+    const entry = this.scope(spec).find((entry) => entry.ref === drag.ref);
+    if (!entry) return null;
+    return {
+      ref: entry.ref,
+      breadcrumb: [
+        entry.source === "input" ? "Input" : entry.stepId,
+        ...entry.path,
+      ].join(" › "),
+      schema: dragSchema(entry.schema),
+    };
+  }
+  dropFit(spec: ParamSpec, drag: DragRef) {
+    const reason = this.mappingReason(spec);
+    if (reason) return { fit: "refused" as const, text: reason };
+    const reference = this.dragReference(spec, drag);
+    if (!reference)
+      return {
+        fit: "refused" as const,
+        text: "This field cannot read that data.",
+      };
+    if (!["keyValue", "list"].includes(spec.type)) {
+      const plan = planDrop(spec, this.read(spec), reference, {
+        caret: null,
+        templates: this.templates(spec),
+        mode: this.mode(spec),
+      });
+      if (plan.kind === "refuse")
+        return { fit: "refused" as const, text: plan.reason };
+    }
+    return dropFit(
+      spec,
+      this.mode(spec),
+      this.expected(spec),
+      reference,
+      this.templates(spec),
+    );
+  }
+  applyDrop(
+    spec: ParamSpec,
+    drag: DragRef,
+    options: { caret: number | null; shift?: boolean },
+  ): boolean {
+    const reason = this.mappingReason(spec);
+    if (reason) {
+      this.announce(reason);
+      return false;
+    }
+    const reference = this.dragReference(spec, drag);
+    if (!reference) {
+      this.announce("This field cannot read that data.");
+      return false;
+    }
+    if (spec.type === "keyValue")
+      return this.dropRows(spec, reference, !!options.shift);
+    if (spec.type === "list") {
+      if (this.wholeMapping(spec)) {
+        this.announce("Use rows before adding an item.");
+        return false;
+      }
+      const ok = this.setList(spec, (items) => [
+        ...items,
+        { mode: "mapped", expression: { ref: reference.ref } },
+      ]);
+      if (ok) this.mapped(spec, reference);
+      return ok;
+    }
+    const plan = planDrop(spec, this.read(spec), reference, {
+      caret: options.caret,
+      templates: this.templates(spec),
+      mode: this.mode(spec),
+    });
+    if (plan.kind === "refuse") {
+      this.announce(plan.reason);
+      return false;
+    }
+    if (!this.write(spec, plan.next, `${spec.id}:drop:${++this.rowOperation}`))
+      return false;
+    this.mapped(spec, reference);
+    if (plan.replaced !== null) {
+      const revision = this.model.revision;
+      this.host.notify(
+        `Replaced ${plan.replaced} with ${reference.breadcrumb}.`,
+        {
+          label: "Undo",
+          run: () => {
+            if (
+              this.host.model === this.model &&
+              this.model.opened === this.opened &&
+              this.model.revision === revision &&
+              this.profile === canonicalJson(this.host.profile) &&
+              this.account === this.host.stepDataScope
+            )
+              this.host.undo();
+          },
+        },
+      );
+    } else this.tipOnce();
+    return true;
+  }
+  private mapped(spec: ParamSpec, drag: DragRef) {
+    const fit = dropFit(
+      spec,
+      this.mode(spec),
+      this.expected(spec),
+      drag,
+      this.templates(spec),
+    );
+    this.announce(
+      `Mapped ${drag.breadcrumb} to ${spec.label}${fit.fit === "mismatch" ? `. ${fit.text}.` : ""}`,
+    );
+  }
+  private dropRows(spec: ParamSpec, drag: DragRef, all: boolean): boolean {
+    if (this.wholeMapping(spec)) {
+      this.announce("Use rows before adding fields.");
+      return false;
+    }
+    const taken = new Set(this.keyed(spec).map(([key]) => key));
+    const children = all ? childEntries(this.scope(spec), drag.ref) : [];
+    const refs = children.length
+      ? children.map((entry) => entry.ref)
+      : [drag.ref];
+    const rows = refs.map((ref): [string, ParamValue] => {
+      const key = rowKey(ref, taken);
+      taken.add(key);
+      return [key, { mode: "mapped", expression: { ref } }];
+    });
+    if (!this.setKeyed(spec, (entries) => [...entries, ...rows])) return false;
+    this.announce(
+      rows.length === 1
+        ? `Mapped ${drag.breadcrumb} to ${spec.label}`
+        : `Added ${rows.length} fields to ${spec.label}`,
+    );
+    this.tipOnce();
+    return true;
+  }
+  addAllFields(spec: ParamSpec): boolean {
+    if (spec.type !== "keyValue" || this.mappingReason(spec)) return false;
+    if (this.wholeMapping(spec)) {
+      this.announce("Use rows before adding fields.");
+      return false;
+    }
+    const scope = this.scope(spec);
+    const taken = new Set(this.keyed(spec).map(([key]) => key));
+    const rows: [string, ParamValue][] = [];
+    for (const entry of childEntries(scope, nearestRoot(scope))) {
+      const key = entry.path.at(-1) ?? entry.label;
+      if (taken.has(key)) continue;
+      taken.add(key);
+      rows.push([key, { mode: "mapped", expression: { ref: entry.ref } }]);
+    }
+    if (!rows.length) {
+      this.announce("Every field is already here.");
+      return false;
+    }
+    if (!this.setKeyed(spec, (entries) => [...entries, ...rows])) return false;
+    this.announce(`Added ${rows.length} fields to ${spec.label}`);
+    return true;
+  }
+  /** Map to offers collection additions and their visible expression leaves. */
+  mapTargets(): ParamSpec[] {
+    const out: ParamSpec[] = [];
+    const visit = (entry: FieldEntry, depth = 0) => {
+      if (depth > 32 || this.readOnly(entry)) return;
+      const spec = entry.spec;
+      if (spec.type === "fields" && !this.wholeMapping(spec)) {
+        this.children(spec).shown.forEach((child) => visit(child, depth + 1));
+      } else if (!this.mappingReason(spec)) out.push(spec);
+      if (spec.type === "list" && spec.item && !this.wholeMapping(spec)) {
+        const indices =
+          this.structure(spec) === "branches"
+            ? this.keyed(spec).map(([key]) => key)
+            : this.list(spec).map((_, i) => i);
+        indices.forEach((index) =>
+          visit(
+            this.childEntry(this.itemSpec(spec, index, spec.item!)),
+            depth + 1,
+          ),
+        );
+      }
+      if (spec.type === "keyValue" && !this.wholeMapping(spec))
+        this.keyed(spec).forEach(([key]) =>
+          visit(this.childEntry(this.keyedSpec(spec, key)), depth + 1),
+        );
+    };
+    this.state("parameters").fields.forEach((entry) => visit(entry));
+    return out;
+  }
+  private tipOnce() {
+    try {
+      const key = uiKey("weave.ndv.dropTip.v1");
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, "1");
+    } catch {
+      return;
+    }
+    this.host.notify(
+      "Tip: focus a field in Input and press Enter to map it without dragging.",
+    );
+  }
+
   // -------------------------------------------------------------- data
   private rootPointer(spec: ParamSpec): { stepId: string; field: string } {
     if ((spec.scope ?? "step") === "workflow") {
@@ -494,8 +747,8 @@ export class FormSession {
     spec: ParamSpec,
     update: (items: ParamValue[]) => ParamValue[],
     field = `${spec.id}:rows:${++this.rowOperation}`,
-  ): void {
-    if (!this.editable(spec)) return;
+  ): boolean {
+    if (!this.editable(spec)) return false;
     try {
       let allowed = true;
       const changes = writeList(this.subject(), spec, (items) => {
@@ -503,18 +756,22 @@ export class FormSession {
         allowed = this.validCount(spec, next.length);
         return allowed ? next : items;
       });
-      if (allowed && this.commit(changes, field)) this.invalidateRows(spec);
+      if (allowed && this.commit(changes, field)) {
+        this.invalidateRows(spec);
+        return true;
+      }
     } catch (error) {
       if (error instanceof FormWriteError) this.host.notify(error.message);
       else throw error;
     }
+    return false;
   }
   setKeyed(
     spec: ParamSpec,
     update: (entries: [string, ParamValue][]) => [string, ParamValue][],
     field = `${spec.id}:rows:${++this.rowOperation}`,
-  ): void {
-    if (!this.editable(spec)) return;
+  ): boolean {
+    if (!this.editable(spec)) return false;
     try {
       let allowed = true;
       const changes = writeKeyed(this.subject(), spec, (entries) => {
@@ -522,11 +779,15 @@ export class FormSession {
         allowed = this.validCount(spec, next.length);
         return allowed ? next : entries;
       });
-      if (allowed && this.commit(changes, field)) this.invalidateRows(spec);
+      if (allowed && this.commit(changes, field)) {
+        this.invalidateRows(spec);
+        return true;
+      }
     } catch (error) {
       if (error instanceof FormWriteError) this.host.notify(error.message);
       else throw error;
     }
+    return false;
   }
   /** Lists whose structure belongs to the step: a decision's paths, a parallel's branches, a human task's answers. */
   structure(spec: ParamSpec): "cases" | "branches" | "answers" | null {
@@ -580,7 +841,7 @@ export class FormSession {
       const answers = this.answers(spec);
       let n = answers.length + 1;
       while (answers.includes(`answer-${n}`)) n++;
-      return this.setList(spec, () =>
+      return void this.setList(spec, () =>
         [...answers, `answer-${n}`].map((a) => ({ mode: "fixed", value: a })),
       );
     }
@@ -621,13 +882,13 @@ export class FormSession {
     if (structure === "cases" || structure === "branches")
       return this.branches("remove", String(at));
     if (structure === "answers")
-      return this.setList(spec, () =>
+      return void this.setList(spec, () =>
         this.answers(spec)
           .filter((_, i) => i !== at)
           .map((a) => ({ mode: "fixed", value: a })),
       );
     if (typeof at === "string")
-      return this.setKeyed(spec, (entries) =>
+      return void this.setKeyed(spec, (entries) =>
         entries.filter(([key]) => key !== at),
       );
     this.setList(spec, (items) => items.filter((_, i) => i !== at));
@@ -664,7 +925,7 @@ export class FormSession {
       return;
     }
     if (spec.type === "keyValue") {
-      return this.setKeyed(spec, (entries) => {
+      return void this.setKeyed(spec, (entries) => {
         const next = [...entries];
         const [moved] = next.splice(from, 1);
         next.splice(to, 0, moved);
