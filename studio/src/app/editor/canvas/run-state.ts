@@ -51,20 +51,50 @@ export function tileRun(id: string, run: CanvasRun | null): TileRun {
   return finished ? "done" : null;
 }
 
+const NO_GROUPS: ReadonlySet<string> = new Set();
+
+/**
+ * The decisions and parallel steps the run is inside: a group is reached when
+ * any step on one of its paths is, however deep, though a run records the
+ * group itself only when it finishes. `parentOf` names the group whose path
+ * holds a step.
+ */
+export function groupsEntered(
+  run: CanvasRun | null,
+  parentOf: (id: string) => string | null,
+): ReadonlySet<string> {
+  const groups = new Set<string>();
+  if (!run) return groups;
+  for (const id of [...run.current, ...run.active, ...run.done]) {
+    let group = parentOf(id);
+    // Stopping at a group already added: the ones above it are in too.
+    while (group && !groups.has(group)) {
+      groups.add(group);
+      group = parentOf(group);
+    }
+  }
+  return groups;
+}
+
 /**
  * Taken when the run finished the step the edge leaves and reached the one
- * it enters (either may be absent); live while the run goes on, taken once
- * it ended, skipped when it ended elsewhere. An edge naming no step stays idle.
+ * it enters (either may be absent; `inside` adds the groups the run is in,
+ * which count as reached); live while the run goes on, taken once it ended,
+ * skipped when it ended elsewhere. An edge naming no step stays idle.
  */
 export function edgeRun(
   edge: { leaves: string | null; enters: string | null },
   run: CanvasRun | null,
+  inside: ReadonlySet<string> = NO_GROUPS,
 ): EdgeRun {
   if (!run || (edge.leaves === null && edge.enters === null)) return "idle";
   const reached = (id: string) =>
     run.done.includes(id) || (id === "$end" && run.status === "succeeded");
   const here = (id: string) =>
-    reached(id) || run.current.includes(id) || run.active.includes(id);
+    reached(id) ||
+    run.current.includes(id) ||
+    run.active.includes(id) ||
+    inside.has(id);
   const taken =
     (edge.leaves === null || reached(edge.leaves)) &&
     (edge.enters === null || here(edge.enters));

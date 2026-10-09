@@ -89,6 +89,33 @@ async function press(page: Page, button: Locator) {
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 }
 
+/** A decision whose second path waits, then a step after it. */
+const routed = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: routed, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    properties:
+      amount: {type: number, title: Amount}
+  outputSchema: {type: object}
+  steps:
+    - {id: check, kind: transform, value: {ref: /input}}
+    - id: route
+      kind: switch
+      cases:
+        - when: {op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}
+          steps:
+            - {id: review, kind: wait, durationSeconds: 300}
+          output: {literal: {}}
+      default:
+        steps:
+          - {id: auto-approve, kind: transform, value: {literal: {approved: true}}}
+        output: {literal: {}}
+    - {id: record, kind: transform, value: {literal: {}}}
+  output: {literal: {}}
+`;
+
 const waitingAtWait = () =>
   debugSession(1, "waiting", ["wait-1"], ["action-1"], {
     "wait-1": later(60),
@@ -210,31 +237,6 @@ test("while a simulation runs the selection toolbar and the keys change no step,
 test("a finished simulation draws the edges it took in success and the path it didn't take dashed", async ({
   page,
 }) => {
-  const routed = `apiVersion: weave/v1alpha1
-kind: Workflow
-metadata: {name: routed, version: 1.0.0}
-spec:
-  inputSchema:
-    type: object
-    properties:
-      amount: {type: number, title: Amount}
-  outputSchema: {type: object}
-  steps:
-    - {id: check, kind: transform, value: {ref: /input}}
-    - id: route
-      kind: switch
-      cases:
-        - when: {op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}
-          steps:
-            - {id: review, kind: wait, durationSeconds: 300}
-          output: {literal: {}}
-      default:
-        steps:
-          - {id: auto-approve, kind: transform, value: {literal: {approved: true}}}
-        output: {literal: {}}
-    - {id: record, kind: transform, value: {literal: {}}}
-  output: {literal: {}}
-`;
   const canvas = await simulate(page, routed, [
     debugSession(
       1,
@@ -274,4 +276,60 @@ spec:
       "4px, 4px",
     );
   }
+});
+
+test("a simulation that waits inside a path draws the way into the decision and down that path in the live color, and the rest idle", async ({
+  page,
+}) => {
+  const canvas = await simulate(page, routed, [
+    debugSession(1, "waiting", ["review"], ["check"], {
+      review: later(300),
+    }),
+  ]);
+  const live = await tokenColor(page, "--live");
+  for (const key of [
+    "$trigger:manual>check",
+    "check>route",
+    "route>route:case 1",
+    "route:case 1>review",
+  ]) {
+    await expect(canvas.edgeLine(key)).toHaveClass(/\blive\b/);
+    await expect(canvas.edgeLine(key)).toHaveCSS("stroke", live);
+  }
+  for (const key of [
+    "review>$join:route",
+    "route>route:default",
+    "route:default>auto-approve",
+    "auto-approve>$join:route",
+    "route>record",
+    "record>$end",
+  ])
+    await expect(canvas.edgeLine(key)).toHaveClass(/\bidle\b/);
+});
+
+test("a simulation that failed inside a path keeps the way into the decision taken and draws the other paths as not taken", async ({
+  page,
+}) => {
+  const canvas = await simulate(page, routed, [
+    debugSession(1, "failed", ["review"], ["check"]),
+  ]);
+  const success = await tokenColor(page, "--success");
+  for (const key of [
+    "$trigger:manual>check",
+    "check>route",
+    "route>route:case 1",
+    "route:case 1>review",
+  ]) {
+    await expect(canvas.edgeLine(key)).toHaveClass(/\btaken\b/);
+    await expect(canvas.edgeLine(key)).toHaveCSS("stroke", success);
+  }
+  for (const key of [
+    "review>$join:route",
+    "route>route:default",
+    "route:default>auto-approve",
+    "auto-approve>$join:route",
+    "route>record",
+    "record>$end",
+  ])
+    await expect(canvas.edgeLine(key)).toHaveClass(/\bskipped\b/);
 });

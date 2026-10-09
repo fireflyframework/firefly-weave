@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   edgeRun,
+  groupsEntered,
   pulses,
   tileRun,
   type CanvasRun,
@@ -130,5 +131,76 @@ describe("an edge's run state", () => {
     expect(pulses("live", run({ mode: "simulated" }))).toBe(false);
     expect(pulses("done", run({ mode: "real" }))).toBe(false);
     expect(pulses("live", null)).toBe(false);
+  });
+});
+
+describe("the groups a run is inside", () => {
+  // route holds review and the nested group inner (which holds deep).
+  const holder: Record<string, string> = {
+    review: "route",
+    inner: "route",
+    deep: "inner",
+  };
+  const parentOf = (id: string) => holder[id] ?? null;
+
+  it("is every group that holds a step the run is at or finished, however deep", () => {
+    expect(groupsEntered(null, parentOf).size).toBe(0);
+    expect(groupsEntered(run({ done: ["check"] }), parentOf).size).toBe(0);
+    expect([
+      ...groupsEntered(run({ active: ["review"], done: ["check"] }), parentOf),
+    ]).toEqual(["route"]);
+    expect(
+      [...groupsEntered(run({ current: ["deep"] }), parentOf)].sort(),
+    ).toEqual(["inner", "route"]);
+    expect([
+      ...groupsEntered(
+        run({ status: "failed", done: ["review", "check"] }),
+        parentOf,
+      ),
+    ]).toEqual(["route"]);
+  });
+
+  it("makes the edge into a group taken or live as soon as the run is inside it, though the run records the group only when its join completes", () => {
+    const into = { leaves: "check", enters: "route" };
+    const fromTrigger = { leaves: null, enters: "route" };
+    const waiting = run({
+      status: "waiting",
+      current: ["review"],
+      active: ["review"],
+      done: ["check"],
+    });
+    const inside = groupsEntered(waiting, parentOf);
+    expect(edgeRun(into, waiting)).toBe("idle");
+    expect(edgeRun(into, waiting, inside)).toBe("live");
+    expect(edgeRun(fromTrigger, waiting, inside)).toBe("live");
+    for (const status of ["failed", "cancelled", "timed_out"]) {
+      const ended = run({ ...waiting, status });
+      expect(edgeRun(into, ended)).toBe("skipped");
+      expect(edgeRun(into, ended, groupsEntered(ended, parentOf))).toBe(
+        "taken",
+      );
+    }
+  });
+
+  it("leaves the edges that leave a group to the group's own finish", () => {
+    const leavingNested = { leaves: "inner", enters: null };
+    const waiting = run({ status: "waiting", active: ["deep"] });
+    const inside = groupsEntered(waiting, parentOf);
+    // Inside the nested group is not out of it: this edge waits for its join.
+    expect(edgeRun(leavingNested, waiting, inside)).toBe("idle");
+    expect(
+      edgeRun(
+        leavingNested,
+        run({ status: "failed", active: ["deep"] }),
+        groupsEntered(run({ status: "failed", active: ["deep"] }), parentOf),
+      ),
+    ).toBe("skipped");
+    expect(
+      edgeRun(
+        leavingNested,
+        run({ status: "succeeded", done: ["deep", "inner"] }),
+        groupsEntered(run({ done: ["deep", "inner"] }), parentOf),
+      ),
+    ).toBe("taken");
   });
 });

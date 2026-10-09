@@ -105,6 +105,7 @@ import { neighbor, placesOf, type Direction } from "./navigation";
 import { NodeTile, type TileView } from "./node-tile";
 import {
   edgeRun,
+  groupsEntered,
   pulses,
   tileRun,
   type CanvasRun,
@@ -612,14 +613,19 @@ export class CanvasView implements OnInit, DoCheck {
       hovered: string,
       locked: boolean,
       run: CanvasRun | null,
-    ): EdgeView[] =>
-      layout.edges.map((edge) => ({
+      places: Map<string, StepPlace>,
+    ): EdgeView[] => {
+      // A run records a decision or parallel step only when it finishes, so
+      // the way into one counts once the run is at a step inside it.
+      const inside = groupsEntered(run, (id) => places.get(id)?.parent ?? null);
+      return layout.edges.map((edge) => ({
         edge,
         d: edgePath(edge),
-        state: edgeRun(edge, run),
+        state: edgeRun(edge, run, inside),
         shown: hovered === edge.key,
         plus: locked ? null : (onEdges.get(edge.key) ?? null),
-      })),
+      }));
+    },
   );
   edges(): EdgeView[] {
     return this.edgesMemo(
@@ -628,6 +634,7 @@ export class CanvasView implements OnInit, DoCheck {
       this.hoveredEdge,
       this.locked(),
       this.host().canvasRun(),
+      this.places(),
     );
   }
   private readonly chipsMemo = memo((layout: LtrLayout): SubNodeView[] => {
