@@ -34,8 +34,9 @@ import socket
 import sys
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -87,6 +88,10 @@ _RESERVED_HOSTS = frozenset(
 )
 # The API limits AI connection tests per person, and the AI gateway its concurrent calls; both clear within a minute.
 _WAIT_CODES = frozenset({"WV-AI-RATE-LIMITED", "WV-LUMI-CAPACITY"})
+# The smallest context an AI policy endpoint accepts.
+MIN_CONTEXT = 512
+# The installation whose enable is running: it starts the AI services itself, after its image stage.
+_ENABLING: ContextVar[str | None] = ContextVar("weave_platform_ai_enabling", default=None)
 Confirm = Callable[[str], bool]
 Notice = Callable[[str], None]
 
@@ -128,7 +133,9 @@ def receipt(directory: Path) -> dict[str, Any] | None:
             if type(port) is not int or not 1024 <= port <= 65535:
                 raise ValueError("Ollama port required")
         context = value.get("context_tokens")
-        if context is not None and (type(context) is not int or not 1 <= context <= ai_policy.DEFAULT_CONTEXT_TOKENS):
+        if context is not None and (
+            type(context) is not int or not MIN_CONTEXT <= context <= ai_policy.DEFAULT_CONTEXT_TOKENS
+        ):
             raise ValueError("Context size out of bounds")
         return value
     except (OSError, ValueError, KeyError, TypeError):
@@ -160,6 +167,15 @@ def _plain_errors(command: str) -> Iterator[None]:
             "Weave could not safely read or write a file in the installation directory (it is missing, a link, "
             f"a directory or readable by others). Check the directory, then rerun weave platform ai {command}."
         ) from None
+
+
+@contextmanager
+def _enabling(directory: str) -> Iterator[None]:
+    token = _ENABLING.set(directory)
+    try:
+        yield
+    finally:
+        _ENABLING.reset(token)
 
 
 @contextmanager
@@ -405,13 +421,72 @@ def _pull(value: dict[str, Any], name: str, *, confirm: Confirm, progress: Notic
         ) from None
 
 
-def _discover(value: dict[str, Any], found: dict[str, Any]) -> bool:
-    served = [item.model_dump(mode="json") for item in found["models"]]
-    measured = [item.context_tokens for item in found["models"] if item.context_tokens]
-    context = min([ai_policy.DEFAULT_CONTEXT_TOKENS, *measured])
-    changed = (value.get("served"), value.get("context_tokens")) != (served, context)
-    value["served"], value["context_tokens"] = served, context
+class _Approval(NamedTuple):
+    """What the policy approves, its context bound, the model that lowered it, and models left out."""
+
+    models: str | list[str]
+    context_tokens: int
+    lowered_by: str | None
+    left_out: list[str]
+
+
+def _approved(value: dict[str, Any]) -> _Approval:
+    """The policy's approval from the chosen one and Ollama's measurements.
+
+    Every approved model Ollama measured bounds the endpoint's context. A model under 512 tokens
+    cannot be bounded, so it is left out of the approval by name, and a served approval then
+    lists the other served models.
+    """
+    facts = {item["name"]: item.get("context_tokens") for item in value.get("served", [])}
+    approval = value.get("approval", "served")
+    names = list(facts) if approval == "served" else list(approval)
+    small = [name for name in names if isinstance(facts.get(name), int) and facts[name] < MIN_CONTEXT]
+    kept = [name for name in names if name not in small]
+    lowest = min(((facts[name], name) for name in kept if isinstance(facts.get(name), int)), default=None)
+    models: str | list[str] = "served" if approval == "served" and not small else kept
+    if lowest is None or lowest[0] >= ai_policy.DEFAULT_CONTEXT_TOKENS:
+        return _Approval(models, ai_policy.DEFAULT_CONTEXT_TOKENS, None, small)
+    return _Approval(models, lowest[0], lowest[1], small)
+
+
+def _write_policy(state: dict[str, Any], value: dict[str, Any]) -> bool:
+    """Write the policy for the approved models Weave can bound; the receipt keeps the approval as chosen."""
+    approved = _approved(value)
+    value["context_tokens"] = approved.context_tokens
+    view = {**value, "approval": approved.models}
+    changed = files.write_policy(state, view)
+    value["policy_sha256"] = view["policy_sha256"]
     return changed
+
+
+def _listing(value: dict[str, Any]) -> dict[str, Any]:
+    models = _approved(value).models
+    return {
+        "approval": "served" if models == "served" else "listed",
+        "approved": [] if models == "served" else list(models),
+    }
+
+
+def _discover(value: dict[str, Any], found: dict[str, Any]) -> bool:
+    before = (value.get("served"), value.get("context_tokens"))
+    value["served"] = [item.model_dump(mode="json") for item in found["models"]]
+    value["context_tokens"] = _approved(value).context_tokens
+    return (value["served"], value["context_tokens"]) != before
+
+
+def _test_model(value: dict[str, Any]) -> str:
+    """The model enable tests: a requested one, else an approved model that calls tools, never an unapproved one."""
+    approved = _approved(value).models
+    tools: dict[str, Any] = {str(item["name"]): item.get("tools") for item in value.get("served", [])}
+    names = list(tools) if approved == "served" else [name for name in approved if name in tools]
+    candidates = [str(name) for name in value.get("models", []) if name in names]
+    candidates += [name for name in names if tools[name] == "yes"] + names
+    if not candidates:
+        raise local.PlatformError(
+            "No approved model served at this endpoint can run AI tasks. Rerun weave platform ai enable "
+            "--model NAME with a chat model, or approve one with weave platform ai models approve."
+        )
+    return candidates[0]
 
 
 def _models(
@@ -567,11 +642,16 @@ async def _server_records(
 
 def _warnings(value: dict[str, Any]) -> list[str]:
     found = []
-    context = value.get("context_tokens")
-    if isinstance(context, int) and context < ai_policy.DEFAULT_CONTEXT_TOKENS:
+    approved = _approved(value)
+    if approved.lowered_by is not None:
         found.append(
-            f"The served models report {context:,} tokens of context; longer prompts fail with LLM_CONTEXT_LIMIT."
+            f"{approved.lowered_by} reports {approved.context_tokens:,} tokens of context, so prompts to this "
+            f"endpoint are limited to {approved.context_tokens:,} tokens; longer prompts fail with LLM_CONTEXT_LIMIT."
         )
+    found += [
+        f"{name} reports fewer than {MIN_CONTEXT} tokens of context, so it is left out of the approval."
+        for name in approved.left_out
+    ]
     if value["mode"] == "host":
         found.append(
             "Start Ollama with OLLAMA_CONTEXT_LENGTH=8192 so it keeps the 8,192 tokens of context Weave assumes."
@@ -590,7 +670,7 @@ def _summary(directory: Path, value: dict[str, Any], **extra: Any) -> dict[str, 
         "mode": value["mode"],
         "endpoint": value["endpoint"],
         "models": value.get("models", []),
-        "approval": "served" if value.get("approval", "served") == "served" else "listed",
+        "approval": _listing(value)["approval"],
         "connection": files.CONNECTION,
         "connection_revision_id": value.get("connection_revision_id"),
         "release_id": value.get("release_id"),
@@ -628,7 +708,7 @@ def enable(
     state, scope = local._workspace(directory, "that runs AI tasks")
     if state.get("mode") != "docker":
         raise local.PlatformError("AI needs the Docker platform; create one with weave platform up.")
-    with _plain_errors("enable"), _locks(directory):
+    with _plain_errors("enable"), _locks(directory), _enabling(state["directory"]):
         # Read the installation again under its lock: a command that finished meanwhile is never undone.
         state = local._load(directory)
         saved = receipt(directory)
@@ -645,11 +725,18 @@ def enable(
         value.setdefault("stage", "preflight")
         value.setdefault("approval", "served")
         changed: list[str] = []
+        # True when this run changed compose.ai.json since the last time it was reported.
+        rendered = False
 
         def advance(stage: str | None = None) -> None:
+            nonlocal rendered
             if stage is not None and STAGES.index(stage) > STAGES.index(value["stage"]):
                 value["stage"] = stage
             _save(directory, value)
+            # compose.ai.json renders the receipt, so it changes with every save: an interrupted run
+            # never leaves the two out of step, and the first save restores a changed file.
+            if "compose" in value and files.write_compose(state, value):
+                rendered = True
 
         networks, found = _networks(state, mode, origin)
         value["networks"] = networks
@@ -662,8 +749,9 @@ def enable(
         if mode == "container":
             value.setdefault("compose", "ollama")
             advance()
-            if files.write_compose(state, value):
+            if rendered:
                 changed.append("ollama")
+            rendered = False
             progress("Starting the Weave-managed Ollama service")
             local._run(
                 state,
@@ -685,13 +773,11 @@ def enable(
             changed.append("models")
         advance("models")
 
-        rewritten = False
         if platform_origins.set_ai_entries(state, entries):
             changed.append("origins")
-            # The services configuration names the private-origin copy by its content.
-            rewritten = "compose" in value and files.write_compose(state, value)
+        # The services configuration names the private-origin copy by its content; this save rewrites it.
         advance("origins")
-        if files.write_policy(state, value):
+        if _write_policy(state, value):
             changed.append("policy")
         advance("policy")
         settings_changed = files.write_settings(state, value)
@@ -735,7 +821,7 @@ def enable(
 
         value["compose"] = "all"
         advance()
-        compose_changed = files.write_compose(state, value) or rewritten
+        compose_changed = rendered
         if mode == "host" and compose_changed:
             progress("Adding the host gateway address to Keycloak's network namespace")
             local._run(
@@ -779,7 +865,7 @@ def enable(
             )
         )
         advance("online")
-        model = (value["models"] or [item["name"] for item in value["served"]])[0]
+        model = _test_model(value)
         test = asyncio.run(
             _with_client(
                 api,
@@ -832,24 +918,20 @@ def status(directory: Path, *, transport: httpx.AsyncBaseTransport | None = None
             "stage": "not_enabled",
             "next": [local._command(directory, "ai enable --ollama auto")],
         }
+    local._check_engine(state)
     warnings = _warnings(value)
     if value.get("policy_sha256"):
         try:
             files.verify_policy(state, value)
         except local.PlatformError as error:
             warnings.append(str(error))
-    approval = value.get("approval", "served")
     result: dict[str, Any] = {
         "ok": True,
         "enabled": value["stage"] == "ready",
         "stage": value["stage"],
         "mode": value["mode"],
         "endpoint": value.get("endpoint"),
-        "models": {
-            "approval": "served" if approval == "served" else "listed",
-            "approved": [] if approval == "served" else list(approval),
-            "served": value.get("served", []),
-        },
+        "models": {**_listing(value), "served": value.get("served", [])},
         "context_tokens": value.get("context_tokens"),
         "release_id": value.get("release_id"),
         "connection": files.CONNECTION,
@@ -897,6 +979,8 @@ def disable(directory: Path, *, remove_model_data: bool = False, notice: Notice 
             raise local.PlatformError("AI was never enabled in this installation; nothing was changed.")
         names = files.service_names(value) if "compose" in value and value["stage"] != "disabled" else []
         if names:
+            # Restore the services file from the receipt first, so a stale or changed file never blocks removal.
+            files.write_compose(state, value)
             local._run(
                 state,
                 "ai-remove",
@@ -944,13 +1028,13 @@ def _provider(provider: str) -> None:
 def _approval(state: dict[str, Any], value: dict[str, Any], updated: str | list[str]) -> dict[str, Any]:
     changed = value.get("approval") != updated
     value["approval"] = updated
-    files.write_policy(state, value)
+    _write_policy(state, value)
     _save(Path(state["directory"]), value)
     return {
         "ok": True,
-        "approval": "served" if updated == "served" else "listed",
-        "approved": [] if updated == "served" else list(updated),
+        **_listing(value),
         "changed": changed,
+        "warnings": _warnings(value),
         "message": "The Agentic worker and the AI gateway apply the policy at their next call; no restart is needed.",
     }
 
@@ -987,11 +1071,12 @@ def models_refresh(directory: Path) -> dict[str, Any]:
     """Read the served models again from the platform network and update the policy's context size."""
     with _plain_errors("models refresh"), _locks(directory):
         state, value = _ready(directory)
+        local._check_engine(state)
         found = _probe(state, value["ollama_origin"], host_gateway=value["mode"] == "host")
         if found["version"] is None:
             raise local.PlatformError(f"Weave could not reach Ollama at {value['ollama_origin']}; nothing was changed.")
         changed = _discover(value, found)
-        files.write_policy(state, value)
+        _write_policy(state, value)
         _save(Path(state["directory"]), value)
         return {
             "ok": True,
@@ -1010,9 +1095,10 @@ def models_pull(
         raise local.PlatformError("Use an exact Ollama model name, such as qwen3:4b.")
     with _plain_errors("models pull"), _locks(directory):
         state, value = _ready(directory)
+        local._check_engine(state)
         _pull(value, name, confirm=confirm, progress=progress)
         _discover(value, _probe(state, value["ollama_origin"], host_gateway=value["mode"] == "host"))
-        files.write_policy(state, value)
+        _write_policy(state, value)
         _save(Path(state["directory"]), value)
         return {"ok": True, "pulled": name, "served": value["served"]}
 
@@ -1034,8 +1120,18 @@ def api_environment(state: dict[str, Any]) -> tuple[dict[str, str], list[dict[st
 def start_services(state: dict[str, Any], notice: Notice) -> None:
     """weave platform start and up bring the AI services back once enable has completed."""
     value = receipt(Path(state["directory"]))
-    if value is None or value["stage"] != "ready":
+    if value is None or value["stage"] != "ready" or _ENABLING.get() == state["directory"]:
         return
+    image = str(value.get("image_id"))
+    try:
+        found = local._run(state, "ai-image-check", [*_docker(state), "image", "inspect", image, "--format", "{{.Id}}"])
+    except local.PlatformError:
+        found = b""
+    if found.decode().strip() != image:
+        raise local.PlatformError(
+            "The Agentic worker image is missing from Docker, so the AI services were not started. "
+            "Run weave platform ai enable to rebuild it."
+        )
     notice("Starting the AI services")
     local._run(
         state,
@@ -1045,6 +1141,8 @@ def start_services(state: dict[str, Any], notice: Notice) -> None:
             "up",
             "--detach",
             "--no-deps",
+            "--pull",
+            "never",
             "--wait",
             "--wait-timeout",
             "300",

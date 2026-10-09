@@ -34,7 +34,7 @@ from ai_platform_support import (  # noqa: F401
     owned_fixture,
 )
 
-from firefly_weave import ollama
+from firefly_weave import ai_policy, ollama
 from firefly_weave.contracts.public import Problem
 from firefly_weave.sdk import platform, platform_ai, platform_ai_files, platform_docker, platform_origins
 from firefly_weave.sdk.errors import WeaveError
@@ -45,6 +45,9 @@ CONNECTOR = "66666666-6666-4666-8666-666666666666"
 RELEASE = "44444444-4444-4444-8444-444444444444"
 REVISION = "77777777-7777-4777-8777-777777777777"
 MODEL = "qwen2.5:1.5b"
+REBUILT = "sha256:" + "a" * 64
+# The real Docker start, kept before the harness replaces it.
+DOCKER_START = platform_docker.start
 
 
 class Server:
@@ -122,6 +125,7 @@ def harness_fixture(owned, monkeypatch):
     )
     h = SimpleNamespace(directory=directory, runner=runner, served=[], pulls=[], starts=[], addresses=["10.246.21.9"])
     h.server = Server()
+    h.contexts, h.tools = {}, {}
 
     def probe(command):
         reachable = h.addresses is not None
@@ -129,7 +133,9 @@ def harness_fixture(owned, monkeypatch):
             "addresses": h.addresses or [],
             "version": "0.12.3" if reachable else None,
             "models": [
-                ollama.ServedModel(name=name, size_bytes=1, context_tokens=32768, tools="yes").model_dump(mode="json")
+                ollama.ServedModel(
+                    name=name, size_bytes=1, context_tokens=h.contexts.get(name, 32768), tools=h.tools.get(name, "yes")
+                ).model_dump(mode="json")
                 for name in h.served
             ],
         }
@@ -695,12 +701,191 @@ def test_a_platform_network_broader_than_its_own_subnet_is_refused_clearly(harne
 
 def test_a_policy_the_services_would_refuse_reads_as_a_platform_error(harness):
     h = harness
+    enable(h)
+    value = saved(h)
+    value["approval"] = [f"model-{index}:1b" for index in range(ai_policy.MAX_MODELS)]
+    platform._write(h.directory / "ai.json", value, replace=True)
+    with pytest.raises(platform.PlatformError, match="endpoints/0/models.*rerun weave platform ai models approve"):
+        platform_ai.models_approve(h.directory, provider="openai-chat", model="one-more:1b")
 
-    def tiny(command):
-        model = ollama.ServedModel(name=MODEL, size_bytes=1, context_tokens=256, tools="yes").model_dump(mode="json")
-        return (ollama.MARKER + json.dumps({"addresses": h.addresses, "version": "0.12.3", "models": [model]})).encode()
 
-    h.runner.answers["ai-probe"] = tiny
-    with pytest.raises(platform.PlatformError, match="contextTokens.*rerun weave platform ai enable"):
-        enable(h)
-    assert not (h.directory / "ai-config" / "ai-policy.json").exists()
+class Images:
+    """Docker's images for the Agentic worker: built, inspected, removed, and needed by Compose to start it."""
+
+    def __init__(self, h):
+        self.present, self.next = {IMAGE}, IMAGE
+
+        def build(command):
+            with open(command[command.index("--iidfile") + 1], "w") as stream:
+                stream.write(self.next)
+            self.present.add(self.next)
+            return b""
+
+        def check(command):
+            image = command[command.index("inspect") + 1]
+            if image not in self.present:
+                raise platform.PlatformError("Stage ai-image-check failed.")
+            return image.encode()
+
+        def services(command):
+            worker = json.loads((h.directory / "compose.ai.json").read_text())["services"]["agentic-worker"]
+            if worker["image"] not in self.present:
+                raise platform.PlatformError("Stage ai-services failed.")
+            return b""
+
+        h.runner.answers.update(
+            {
+                "ai-image-build": build,
+                "ai-image-inspect": lambda command: json.dumps(
+                    [{"Id": command[-1], "Config": {"User": "65532:65532"}}]
+                ).encode(),
+                "ai-image-check": check,
+                "ai-services": services,
+            }
+        )
+
+
+def docker_start(h, monkeypatch):
+    """Use the real Docker start, with its identity and build steps answered."""
+    monkeypatch.setattr(platform_docker, "start", DOCKER_START)
+    monkeypatch.setattr(platform_docker, "_build", lambda state, notice: None)
+    monkeypatch.setattr(platform, "_wait_identity", lambda state: None)
+    monkeypatch.setattr(platform, "_repair_login_client", lambda state, notice: None)
+    monkeypatch.setattr(platform, "_execution_environment", lambda state, notice: {})
+    h.runner.answers["identity-container"] = b"c" * 64
+
+
+def policy(h):
+    (endpoint,) = json.loads((h.directory / "ai-config" / "ai-policy.json").read_text())["endpoints"]
+    return endpoint
+
+
+@pytest.mark.parametrize("mode", ["host", "url"])
+def test_a_rebuild_stopped_before_its_release_leaves_every_command_working(harness, monkeypatch, mode):
+    h = harness
+    docker_start(h, monkeypatch)
+    images = Images(h)
+    h.addresses, h.served = ["192.168.5.2"], [MODEL]
+    choice = (
+        {"ollama_mode": "host"}
+        if mode == "host"
+        else {"ollama_mode": None, "ollama_url": "http://ollama.acceptance.test:11434"}
+    )
+    enable(h, **choice)
+    images.present.clear()
+    images.next = REBUILT
+    h.runner.answers["ai-catalog"] = platform.PlatformError("Stage ai-catalog failed.")
+    with pytest.raises(platform.PlatformError, match="ai-catalog"):
+        enable(h, **choice)
+    assert saved(h)["image_id"] == REBUILT
+    platform.start(h.directory)
+    platform.stop(h.directory)
+    h.runner.answers["ai-catalog"] = catalog_output()
+    assert enable(h, **choice)["stage"] == "ready"
+    platform.start(h.directory)
+    assert platform_ai.disable(h.directory)["disabled"] is True
+
+
+def test_disable_restores_the_services_file_from_the_receipt_before_removing(harness):
+    h = harness
+    enable(h)
+    path = h.directory / "compose.ai.json"
+    path.write_text(path.read_text().replace("65532:65532", "0:0"))
+    assert platform_ai.disable(h.directory)["disabled"] is True
+    removal = next(command for name, command in h.runner.calls if name == "ai-remove")
+    assert "agentic-worker" in removal and not path.exists()
+
+
+def test_enable_rebuilds_a_removed_worker_image_and_start_names_the_way_out(harness, monkeypatch):
+    h = harness
+    docker_start(h, monkeypatch)
+    images = Images(h)
+    enable(h)
+    images.present.clear()
+    images.next = REBUILT
+    services = h.runner.names().count("ai-services")
+    with pytest.raises(platform.PlatformError, match="Run weave platform ai enable"):
+        platform.start(h.directory)
+    assert h.runner.names().count("ai-services") == services
+    result = enable(h)
+    assert result["stage"] == "ready" and "image" in result["changed"] and saved(h)["image_id"] == REBUILT
+    platform.start(h.directory)
+    command = [command for name, command in h.runner.calls if name == "ai-services"][-1]
+    assert command[command.index("--pull") + 1] == "never"
+
+
+def test_platform_start_starts_ai_services_after_the_api_is_ready_and_stop_stops_them_first(harness, monkeypatch):
+    h = harness
+    docker_start(h, monkeypatch)
+    enable(h)
+    before = len(h.runner.calls)
+    platform.start(h.directory)
+    assert in_order(h.runner.names()[before:], ["dependencies-start", "api-start", "ai-image-check", "ai-services"])
+    before = len(h.runner.calls)
+    platform.stop(h.directory)
+    assert in_order(h.runner.names()[before:], ["api-stop", "ai-stop", "dependencies-stop"])
+    monkeypatch.setattr(platform, "_probe", lambda url, issuer=None: False)
+    before = len(h.runner.calls)
+    with pytest.raises(platform.PlatformError, match="not ready"):
+        platform.start(h.directory)
+    assert "ai-services" not in h.runner.names()[before:]
+
+
+def test_the_context_bound_follows_the_approved_models_and_names_the_one_that_lowers_it(harness):
+    h = harness
+    h.served, h.contexts = [MODEL, "nomic-embed-text:v1.5"], {"nomic-embed-text:v1.5": 2048}
+    enable(h)
+    assert policy(h)["contextTokens"] == 2048 and saved(h)["context_tokens"] == 2048
+    warnings = platform_ai.status(h.directory)["warnings"]
+    assert any("nomic-embed-text:v1.5" in warning and "2,048" in warning for warning in warnings)
+    platform_ai.models_approve(h.directory, provider="openai-chat", model=MODEL)
+    assert policy(h)["contextTokens"] == 8192
+    assert not any("nomic-embed-text" in warning for warning in platform_ai.status(h.directory)["warnings"])
+    platform_ai.models_approve(h.directory, provider="openai-chat", model="nomic-embed-text:v1.5")
+    assert policy(h)["contextTokens"] == 2048
+    platform_ai.models_remove(h.directory, provider="openai-chat", model="nomic-embed-text:v1.5")
+    assert policy(h)["contextTokens"] == 8192
+    h.served.append("small:1b")
+    h.contexts["small:1b"] = 4096
+    platform_ai.models_approve(h.directory, provider="openai-chat", served=True)
+    platform_ai.models_refresh(h.directory)
+    assert policy(h)["contextTokens"] == 2048
+
+
+def test_a_model_under_512_tokens_is_left_out_of_the_approval_with_a_warning(harness):
+    h = harness
+    h.served, h.contexts = [MODEL, "all-minilm:22m"], {"all-minilm:22m": 256}
+    assert enable(h)["stage"] == "ready"
+    assert policy(h)["models"] == [MODEL] and policy(h)["contextTokens"] == 8192
+    assert any("all-minilm:22m" in warning for warning in platform_ai.status(h.directory)["warnings"])
+    exact = platform_ai.models_approve(h.directory, provider="openai-chat", model="all-minilm:22m")
+    assert exact["approved"] == [] and policy(h)["models"] == []
+    assert any("all-minilm:22m" in warning for warning in exact["warnings"])
+
+
+def test_the_connection_test_uses_an_approved_chat_model(harness):
+    h = harness
+    h.served, h.tools = ["all-minilm:22m", MODEL], {"all-minilm:22m": "no"}
+    enable(h, models=[])
+    assert ("test", MODEL) in h.server.calls and ("test", "all-minilm:22m") not in h.server.calls
+    h.served.insert(0, "aaa:1b")
+    platform_ai.models_refresh(h.directory)
+    platform_ai.models_approve(h.directory, provider="openai-chat", model=MODEL)
+    enable(h, models=[], verify=True)
+    assert h.server.calls[-2:] == [("test", MODEL), ("smoke", MODEL)]
+
+
+@pytest.mark.parametrize("command", ["status", "refresh", "pull"])
+def test_status_and_model_reads_refuse_a_docker_context_that_points_elsewhere(harness, monkeypatch, command):
+    h = harness
+    enable(h)
+    calls = len(h.runner.calls)
+    monkeypatch.setattr(platform, "_docker", lambda context: ("unix:///other.sock", "other-engine"))
+    run = {
+        "status": lambda: platform_ai.status(h.directory),
+        "refresh": lambda: platform_ai.models_refresh(h.directory),
+        "pull": lambda: platform_ai.models_pull(h.directory, "qwen3:4b", confirm=lambda text: True),
+    }[command]
+    with pytest.raises(platform.PlatformError, match="different engine"):
+        run()
+    assert len(h.runner.calls) == calls and len(h.pulls) == 1
