@@ -201,6 +201,32 @@ describe("form contract", () => {
     expect(formProblems(kind("result", form), step, ctx)).toEqual([]);
   });
 
+  it("allows a mapped list item that lands in one of the step's expression fields", () => {
+    const form: FormSpec = {
+      fields: [
+        {
+          ...text("cases", ["cases"]),
+          type: "list",
+          item: {
+            ...text("case", []),
+            type: "fields",
+            children: () => [text("result", ["output"], { mapping: "both" })],
+          },
+        },
+      ],
+    };
+    const withCases = (paths: (string | number)[][]) => ({
+      ...kind("route", form),
+      fields: () => paths.map((path) => ({ path, label: "Path result" })),
+    });
+    expect(
+      formProblems(withCases([["cases", 0, "output"]]), step, ctx),
+    ).toEqual([]);
+    expect(formProblems(withCases([["value"]]), step, ctx)).toEqual([
+      'route offers Fixed and Mapped for "result", which isn\'t an expression.',
+    ]);
+  });
+
   it("allows custom components only for the decision table grid and the AI agent slots", () => {
     const grid: FormSpec = {
       fields: [

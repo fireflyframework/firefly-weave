@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // step components replace this module's contents (descriptor, output schema,
 // parameters) rather than registering a second `llm` kind.
 import { registerKind, type StepKindDescriptor } from "../registry";
+import { llmForm } from "./forms/llm-form";
 import { common } from "./shared";
 
 export const llmKind: StepKindDescriptor = {
@@ -28,6 +29,7 @@ export const llmKind: StepKindDescriptor = {
     { path: ["context"], label: "Context" },
   ],
   pinnable: true,
+  form: llmForm,
 };
 
 export function register(): void {

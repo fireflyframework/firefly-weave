@@ -21,6 +21,16 @@ SPDX-License-Identifier: Apache-2.0
 import { conditionSummary } from "../../../designer/conditions";
 import { branchTitle, type Step } from "../../../model";
 import { registerKind, type StepKindDescriptor } from "../registry";
+import { decisionTableForm, transformForm } from "./forms/data-forms";
+import {
+  failForm,
+  parallelForm,
+  signalForm,
+  signalSettings,
+  switchForm,
+  waitForm,
+} from "./forms/flow-forms";
+import { humanForm, humanSettings } from "./forms/human-form";
 import { common, field, isRecord, schemaOf, specOf } from "./shared";
 
 const uses = (step: Step) => String(step["uses"] ?? "");
@@ -59,12 +69,14 @@ export const decisionTableKind: StepKindDescriptor = {
     },
   ],
   pinnable: false,
+  form: decisionTableForm,
 };
 
 export const transformKind: StepKindDescriptor = {
   ...common("transform", "transform", "data"),
   fields: () => [field("Value", "value")],
   pinnable: false,
+  form: transformForm,
 };
 
 export const switchKind: StepKindDescriptor = {
@@ -97,6 +109,7 @@ export const switchKind: StepKindDescriptor = {
     { id: "default", label: "Otherwise", containerPath: ["default", "steps"] },
   ],
   pinnable: false,
+  form: switchForm,
 };
 
 export const parallelKind: StepKindDescriptor = {
@@ -118,18 +131,22 @@ export const parallelKind: StepKindDescriptor = {
       containerPath: ["branches", name, "steps"],
     })),
   pinnable: false,
+  form: parallelForm,
 };
 
 export const waitKind: StepKindDescriptor = {
   ...common("wait", "wait", "wait"),
   fields: () => [],
   pinnable: false,
+  form: waitForm,
 };
 
 export const signalKind: StepKindDescriptor = {
   ...common("signal", "signal", "wait"),
   fields: () => [],
   pinnable: false,
+  form: signalForm,
+  settings: signalSettings,
   script: "signal",
 };
 
@@ -140,6 +157,8 @@ export const humanTaskKind: StepKindDescriptor = {
     field("Context", "context"),
   ],
   pinnable: false,
+  form: humanForm,
+  settings: humanSettings,
   script: "human",
 };
 
@@ -149,6 +168,7 @@ export const failKind: StepKindDescriptor = {
   outputs: () => [],
   outputSchema: () => null,
   pinnable: false,
+  form: failForm,
 };
 
 export const builtInKinds: readonly StepKindDescriptor[] = [

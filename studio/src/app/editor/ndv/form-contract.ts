@@ -46,19 +46,30 @@ export interface ParamEntry {
   expression: boolean;
 }
 
-/** Whether a field's own path, in its scope, holds an expression. */
-function holdsExpression(spec: ParamSpec, stepRoots: readonly Path[]): boolean {
-  const scope = spec.scope ?? "step";
+/** Whether a place in a scope holds an expression. */
+function holdsExpression(
+  scope: string,
+  path: Path,
+  stepRoots: readonly Path[],
+): boolean {
   return (
-    (scope === "step" && !!expressionRoot(spec.path, stepRoots)) ||
-    (scope === "workflow" && !!expressionRoot(spec.path, WORKFLOW_ROOTS))
+    (scope === "step" && !!expressionRoot(path, stepRoots)) ||
+    (scope === "workflow" && !!expressionRoot(path, WORKFLOW_ROOTS))
   );
+}
+
+/** Where a list item sits: its scope and its path, with index 0 for any index. */
+interface ItemPlace {
+  scope: string;
+  path: Path;
 }
 
 /**
  * Every field of a form with its options, children and list items, depth
- * first. A list item's paths are relative to the item, so the item and its
- * children are inside an expression exactly when their list is; any other
+ * first. A list item's paths are relative to the item, so an item and its
+ * children are judged at the item's place in the step: inside an expression
+ * when their list is, or when the item's own fields are expression fields of
+ * the step (a decision path's result at `["cases", 0, "output"]`). Any other
  * field is judged by its own path. `stepRoots` are the step's expression
  * fields; without them, step-scoped fields count as outside an expression.
  */
@@ -69,23 +80,21 @@ export function allParams(
   stepRoots: readonly Path[] = [],
 ): ParamEntry[] {
   const out: ParamEntry[] = [];
-  const visit = (
-    spec: ParamSpec,
-    relative: boolean,
-    listExpression: boolean,
-    depth: number,
-  ) => {
+  const visit = (spec: ParamSpec, item: ItemPlace | null, depth: number) => {
     if (depth > 8) return;
-    const expression = relative
-      ? listExpression
-      : holdsExpression(spec, stepRoots);
-    out.push({ spec, relative, expression });
-    if (spec.item) visit(spec.item, true, expression, depth + 1);
+    const scope = item?.scope ?? spec.scope ?? "step";
+    const path = item ? [...item.path, ...spec.path] : spec.path;
+    out.push({
+      spec,
+      relative: item !== null,
+      expression: holdsExpression(scope, path, stepRoots),
+    });
+    if (spec.item) visit(spec.item, { scope, path: [...path, 0] }, depth + 1);
     for (const child of spec.children?.(step, ctx) ?? [])
-      visit(child, relative, expression, depth + 1);
+      visit(child, item, depth + 1);
   };
   for (const spec of [...(form?.fields ?? []), ...(form?.options ?? [])])
-    visit(spec, false, false, 0);
+    visit(spec, null, 0);
   return out;
 }
 
