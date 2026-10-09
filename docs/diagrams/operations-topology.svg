@@ -21,83 +21,83 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1442" viewBox="0 0 960 1442" role="img" aria-labelledby="title desc">
 <title id="title">One installation, separate running processes</title><desc id="desc">The local walkthrough as separate processes. Terminal 1 is the operator: session.env keeps paths and ports, runtime.env selects authorities, retained receipts hold real IDs, and startup never migrates. The top row has PostgreSQL, which stores runs, grants and leases behind application and catalog logins in an owned container; the API in terminal 2, which verifies tokens, checks local grants, runs readiness and scheduling, and has no migration URL; and Keycloak, which issues access tokens from its own database for local development only. The API uses PostgreSQL, and a dashed trust line shows that it verifies Keycloak tokens. The bottom row has the optional native executor, which uses the application and catalog database with a pinned release, grants and egress policy; the remote worker, which claims and completes tasks over HTTP through the API with an admitted release and no database credentials, and sends its effect to the receiver; and the receiver in terminal 3, whose effects.sqlite receipts let the same operation key survive a restart. The native executor also reads the receiver. To resume, reuse the same context, project, files and receipts, start dependencies, verify readiness, start the API and the required executors, and verify a real run.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1342" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">One installation, separate running processes</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Keep configuration ownership, database access, and external effects visible.</text>
-<rect x="40" y="125" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="153" font-size="19" font-weight="600" fill="#173D34">READ THE CONNECTION LABELS  •  Dashed line: token verification trust</text>
-<rect x="40" y="203" width="880" height="123" rx="18" fill="#EEF4F0"/>
-<g transform="translate(60 227) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="15" r="10"/><path d="M9 51V41c0-20 38-20 38 0v10"/></g>
-<text x="140" y="242" font-size="25" font-weight="700" fill="#173D34">Terminal 1 • Operator</text>
-<text x="140" y="276" font-size="21" font-weight="400" fill="#173D34">session.env keeps paths/ports; runtime.env selects authorities.</text>
-<text x="140" y="306" font-size="21" font-weight="400" fill="#173D34">Retained receipts hold real IDs. Startup never migrates.</text>
-<rect x="40" y="365" width="260" height="255" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(60 384) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
-<text x="58" y="466" font-size="24" font-weight="700" fill="#173D34">PostgreSQL</text>
-<text x="58" y="504" font-size="20" font-weight="400" fill="#173D34">Runs, grants, leases.</text>
-<text x="58" y="531" font-size="20" font-weight="400" fill="#173D34">App and catalog logins.</text>
-<text x="58" y="558" font-size="20" font-weight="400" fill="#173D34">Owned container.</text>
-<rect x="360" y="365" width="240" height="255" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(378 384) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
-<text x="378" y="466" font-size="24" font-weight="700" fill="#173D34">Terminal 2 • API</text>
-<text x="378" y="504" font-size="20" font-weight="400" fill="#173D34">Verifies tokens and</text>
-<text x="378" y="531" font-size="20" font-weight="400" fill="#173D34">checks local grants.</text>
-<text x="378" y="558" font-size="20" font-weight="400" fill="#173D34">Readiness, scheduling.</text>
-<text x="378" y="585" font-size="20" font-weight="400" fill="#173D34">No migration URL.</text>
-<rect x="660" y="365" width="260" height="255" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(680 384) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
-<text x="678" y="466" font-size="24" font-weight="700" fill="#173D34">Keycloak</text>
-<text x="678" y="504" font-size="20" font-weight="400" fill="#173D34">Issues access tokens.</text>
-<text x="678" y="531" font-size="20" font-weight="400" fill="#173D34">Its own database.</text>
-<text x="678" y="558" font-size="20" font-weight="400" fill="#173D34">For local development;</text>
-<text x="678" y="585" font-size="20" font-weight="400" fill="#173D34">production uses yours.</text>
-<rect x="40" y="714" width="260" height="255" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(60 733) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
-<text x="58" y="815" font-size="24" font-weight="700" fill="#173D34">Native executor</text>
-<text x="58" y="853" font-size="20" font-weight="400" fill="#173D34">Optional process.</text>
-<text x="58" y="880" font-size="20" font-weight="400" fill="#173D34">App and catalog DB.</text>
-<text x="58" y="907" font-size="20" font-weight="400" fill="#173D34">Pinned release, grants.</text>
-<text x="58" y="934" font-size="20" font-weight="400" fill="#173D34">Egress policy applies.</text>
-<rect x="360" y="714" width="240" height="255" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(378 733) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
-<text x="378" y="815" font-size="24" font-weight="700" fill="#173D34">Remote worker</text>
-<text x="378" y="853" font-size="20" font-weight="400" fill="#173D34">Claims and completes</text>
-<text x="378" y="880" font-size="20" font-weight="400" fill="#173D34">tasks over HTTP.</text>
-<text x="378" y="907" font-size="20" font-weight="400" fill="#173D34">Admitted release.</text>
-<text x="378" y="934" font-size="20" font-weight="400" fill="#173D34">No DB credentials.</text>
-<rect x="660" y="714" width="260" height="255" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(680 733) scale(0.8)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
-<text x="678" y="815" font-size="24" font-weight="700" fill="#173D34">Receiver</text>
-<text x="678" y="853" font-size="20" font-weight="400" fill="#173D34">Runs in terminal 3.</text>
-<text x="678" y="880" font-size="20" font-weight="400" fill="#173D34">effects.sqlite receipts.</text>
-<text x="678" y="907" font-size="20" font-weight="400" fill="#173D34">Same operation key</text>
-<text x="678" y="934" font-size="20" font-weight="400" fill="#173D34">survives a restart.</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1342" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">One installation, separate running processes</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">Keep configuration ownership, database access, and external effects visible.</text>
+<rect x="40" y="125" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="153" font-size="19" font-weight="600" fill="#272820">READ THE CONNECTION LABELS  •  Dashed line: token verification trust</text>
+<rect x="40" y="203" width="880" height="123" rx="18" fill="#EAE7DF"/>
+<g transform="translate(60 227) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="15" r="10"/><path d="M9 51V41c0-20 38-20 38 0v10"/></g>
+<text x="140" y="242" font-size="25" font-weight="700" fill="#272820">Terminal 1 • Operator</text>
+<text x="140" y="276" font-size="21" font-weight="400" fill="#272820">session.env keeps paths/ports; runtime.env selects authorities.</text>
+<text x="140" y="306" font-size="21" font-weight="400" fill="#272820">Retained receipts hold real IDs. Startup never migrates.</text>
+<rect x="40" y="365" width="260" height="255" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(60 384) scale(0.8)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="58" y="466" font-size="24" font-weight="700" fill="#272820">PostgreSQL</text>
+<text x="58" y="504" font-size="20" font-weight="400" fill="#272820">Runs, grants, leases.</text>
+<text x="58" y="531" font-size="20" font-weight="400" fill="#272820">App and catalog logins.</text>
+<text x="58" y="558" font-size="20" font-weight="400" fill="#272820">Owned container.</text>
+<rect x="360" y="365" width="240" height="255" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(378 384) scale(0.8)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
+<text x="378" y="466" font-size="24" font-weight="700" fill="#272820">Terminal 2 • API</text>
+<text x="378" y="504" font-size="20" font-weight="400" fill="#272820">Verifies tokens and</text>
+<text x="378" y="531" font-size="20" font-weight="400" fill="#272820">checks local grants.</text>
+<text x="378" y="558" font-size="20" font-weight="400" fill="#272820">Readiness, scheduling.</text>
+<text x="378" y="585" font-size="20" font-weight="400" fill="#272820">No migration URL.</text>
+<rect x="660" y="365" width="260" height="255" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(680 384) scale(0.8)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="678" y="466" font-size="24" font-weight="700" fill="#272820">Keycloak</text>
+<text x="678" y="504" font-size="20" font-weight="400" fill="#272820">Issues access tokens.</text>
+<text x="678" y="531" font-size="20" font-weight="400" fill="#272820">Its own database.</text>
+<text x="678" y="558" font-size="20" font-weight="400" fill="#272820">For local development;</text>
+<text x="678" y="585" font-size="20" font-weight="400" fill="#272820">production uses yours.</text>
+<rect x="40" y="714" width="260" height="255" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(60 733) scale(0.8)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
+<text x="58" y="815" font-size="24" font-weight="700" fill="#272820">Native executor</text>
+<text x="58" y="853" font-size="20" font-weight="400" fill="#272820">Optional process.</text>
+<text x="58" y="880" font-size="20" font-weight="400" fill="#272820">App and catalog DB.</text>
+<text x="58" y="907" font-size="20" font-weight="400" fill="#272820">Pinned release, grants.</text>
+<text x="58" y="934" font-size="20" font-weight="400" fill="#272820">Egress policy applies.</text>
+<rect x="360" y="714" width="240" height="255" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(378 733) scale(0.8)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
+<text x="378" y="815" font-size="24" font-weight="700" fill="#272820">Remote worker</text>
+<text x="378" y="853" font-size="20" font-weight="400" fill="#272820">Claims and completes</text>
+<text x="378" y="880" font-size="20" font-weight="400" fill="#272820">tasks over HTTP.</text>
+<text x="378" y="907" font-size="20" font-weight="400" fill="#272820">Admitted release.</text>
+<text x="378" y="934" font-size="20" font-weight="400" fill="#272820">No DB credentials.</text>
+<rect x="660" y="714" width="260" height="255" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(680 733) scale(0.8)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
+<text x="678" y="815" font-size="24" font-weight="700" fill="#272820">Receiver</text>
+<text x="678" y="853" font-size="20" font-weight="400" fill="#272820">Runs in terminal 3.</text>
+<text x="678" y="880" font-size="20" font-weight="400" fill="#272820">effects.sqlite receipts.</text>
+<text x="678" y="907" font-size="20" font-weight="400" fill="#272820">Same operation key</text>
+<text x="678" y="934" font-size="20" font-weight="400" fill="#272820">survives a restart.</text>
 <path class="edge" d="M358 525H303"/>
-<text x="330" y="510" font-size="17" font-weight="600" fill="#173D34" text-anchor="middle">DB</text>
+<text x="330" y="510" font-size="17" font-weight="600" fill="#272820" text-anchor="middle">DB</text>
 <path class="edge" stroke-dasharray="7 5" d="M658 525H603"/>
-<text x="630" y="510" font-size="17" font-weight="600" fill="#173D34" text-anchor="middle">Trust</text>
+<text x="630" y="510" font-size="17" font-weight="600" fill="#272820" text-anchor="middle">Trust</text>
 <path class="edge" d="M170 710V624"/>
-<text x="184" y="674" font-size="18" font-weight="600" fill="#173D34">DB authority</text>
+<text x="184" y="674" font-size="18" font-weight="600" fill="#272820">DB authority</text>
 <path class="edge" d="M480 710V624"/>
-<text x="494" y="674" font-size="18" font-weight="600" fill="#173D34">HTTP</text>
+<text x="494" y="674" font-size="18" font-weight="600" fill="#272820">HTTP</text>
 <path class="edge" d="M602 881H656"/>
-<text x="630" y="866" font-size="17" font-weight="600" fill="#173D34" text-anchor="middle">Effect</text>
+<text x="630" y="866" font-size="17" font-weight="600" fill="#272820" text-anchor="middle">Effect</text>
 <path class="edge" d="M170 971V1018H790V973"/>
-<text x="346" y="1006" font-size="21" font-weight="600" fill="#173D34">Native read of the receiver</text>
-<text x="48" y="1068" font-size="21" font-weight="400" fill="#173D34">The remote worker also gets its API token from Keycloak.</text>
-<rect x="40" y="1104" width="880" height="194" rx="16" fill="#FFF7E5"/>
-<g transform="translate(59 1124) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1148" font-size="23" font-weight="700" fill="#367D68">Resume the retained installation</text>
-<text x="60" y="1187" font-size="21" font-weight="400" fill="#173D34">Reuse the same context, project, files, and receiver receipts.</text>
-<text x="60" y="1216" font-size="21" font-weight="400" fill="#173D34">Start the dependencies and verify readiness, then start the API and</text>
-<text x="60" y="1245" font-size="21" font-weight="400" fill="#173D34">the required admitted executors. Verify a real run, and replace a</text>
-<text x="60" y="1274" font-size="21" font-weight="400" fill="#173D34">process deliberately when its configuration changes.</text>
+<text x="346" y="1006" font-size="21" font-weight="600" fill="#272820">Native read of the receiver</text>
+<text x="48" y="1068" font-size="21" font-weight="400" fill="#272820">The remote worker also gets its API token from Keycloak.</text>
+<rect x="40" y="1104" width="880" height="194" rx="16" fill="#FFF0D8"/>
+<g transform="translate(59 1124) scale(0.7)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1148" font-size="23" font-weight="700" fill="#855414">Resume the retained installation</text>
+<text x="60" y="1187" font-size="21" font-weight="400" fill="#272820">Reuse the same context, project, files, and receiver receipts.</text>
+<text x="60" y="1216" font-size="21" font-weight="400" fill="#272820">Start the dependencies and verify readiness, then start the API and</text>
+<text x="60" y="1245" font-size="21" font-weight="400" fill="#272820">the required admitted executors. Verify a real run, and replace a</text>
+<text x="60" y="1274" font-size="21" font-weight="400" fill="#272820">process deliberately when its configuration changes.</text>
 <g id="takeaway">
-<rect x="0" y="1348" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1377" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1408" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Keep process identities separate and reuse the installation’s saved receipts.</text>
+<rect x="0" y="1348" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1377" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1408" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Keep process identities separate and reuse the installation’s saved receipts.</text>
 </g>
 </svg>

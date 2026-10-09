@@ -456,8 +456,10 @@ server checks as Studio and the CLI.
 In a [simulation](../reference/simulation.md), the debugger's `human_decision`
 command takes the step ID and a `{decision, data}` payload. It is a simulated
 fact, not a real human receipt. Studio's **Simulate** offers the same with
-**Submit decision**. Workflows with human tasks compile as `weave/ir-v1alpha2`;
-workflows without them keep the earlier alpha1 format.
+**Submit decision**. A workflow with human tasks compiles to
+`weave/ir-v1alpha2` or higher, because the version is the highest level any
+construct in the workflow needs; see the
+[IR version](../reference/compiler.md#executable-and-source-envelope) rules.
 
 ## If something goes wrong
 

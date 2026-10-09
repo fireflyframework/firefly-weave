@@ -16,6 +16,7 @@
 
 """Check site link translation, private-file boundaries, and literal code examples."""
 
+import json
 import re
 import runpy
 import subprocess
@@ -160,10 +161,34 @@ def test_strict_build_retains_theme_assets_and_public_navigation(tmp_path):
     assert not (output / "implementation-status/index.html").exists()
     assert not (output / "contributing/source-inventory.toml").exists()
     assert not (output / ".superpowers").exists()
+    assert 'src="assets/brand/weave-lockup-small-reversed.svg"' in home
+    assert 'href="assets/brand/firefly-icon.svg"' in home
+    stylesheet = (output / "stylesheets/weave.css").read_text(encoding="utf-8")
+    fonts = re.findall(r'url\("\.\./(assets/fonts/manrope/[^"]+\.woff2)"\)', stylesheet)
+    assert len(fonts) == 2 and all((output / font).is_file() for font in fonts)
+    assert (output / "assets/fonts/manrope/OFL.txt").is_file()
+    brand = (output / "visual-assets/index.html").read_text(encoding="utf-8")
+    assert 'src="../assets/brand/weave-lockup-reversed.svg#gh-dark-mode-only"' in brand
+    assert 'src="../assets/brand/weave-lockup-color.svg#gh-light-mode-only"' in brand
+    assert "{ width" not in brand
+    assert 'img[src*="weave-lockup-reversed.svg"]' in stylesheet
+    assert 'img[src*="weave-lockup-color.svg"]' in stylesheet
+    assert 'src$="weave-lockup' not in stylesheet
+    assert not list(output.rglob("weave-logo*.svg"))
+    pointer = (output / "guides/lumi/index.html").read_text(encoding="utf-8")
+    assert '<a href="../weave-ai/">Use Weave AI</a>' in pointer
+    assert re.search(r"<title>The Weave AI guide has moved\b", pointer)
+    search = json.loads((output / "search/search_index.json").read_text(encoding="utf-8"))
+    assert {entry["title"] for entry in search["docs"] if entry["location"] == "guides/lumi/"} == {
+        "The Weave AI guide has moved"
+    }
+    assert (output / "guides/weave-ai/index.html").is_file()
+    reference = (output / "reference/api-explorer/index.html").read_text(encoding="utf-8")
+    assert re.search(r"<h3 [^>]*>Weave AI", reference)
+    assert ">Lumi<" not in reference
 
 
 def test_generated_api_reference_matches_exported_contract_and_links_every_schema(tmp_path):
-    import json
     from html.parser import HTMLParser
 
     from firefly_weave.contracts.openapi import export_openapi
@@ -208,6 +233,7 @@ def test_api_reference_renders_operation_contract_and_schema_crosslinks():
     from firefly_weave.contracts.openapi import export_openapi
 
     document = HOOK["api_reference"](export_openapi())
+    assert "### Weave AI" in document and "### Lumi" not in document
     assert 'id="operation-compiler.compile"' in document
     assert 'href="#schema-CompilerRequest"' in document
     assert 'id="schema-CompilerRequest"' in document

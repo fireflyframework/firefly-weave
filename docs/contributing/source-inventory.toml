@@ -19,25 +19,25 @@ version = 1
 [[exceptions]]
 path = "assets/brand/weave-lockup-reversed.svg"
 kind = "third-party"
-source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs compact logo, composed by scripts/brand/weave-lockup.mjs"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+source = "Firefly Brand Kit 2.0.0 (private) compact logo and the first-party weave wordmark (assets/brand/weave-wordmark.svg), composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
 path = "assets/brand/weave-lockup-color.svg"
 kind = "third-party"
-source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs compact logo, composed by scripts/brand/weave-lockup.mjs"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+source = "Firefly Brand Kit 2.0.0 (private) compact logo and the first-party weave wordmark (assets/brand/weave-wordmark.svg), composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
 path = "assets/brand/weave-lockup-small-reversed.svg"
 kind = "third-party"
-source = "Firefly Brand Kit 2.0.0 (private), scripts/logo.mjs compact logo with a solid chevron, composed by scripts/brand/weave-lockup.mjs"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+source = "Firefly Brand Kit 2.0.0 (private) compact logo with a solid chevron and the first-party weave wordmark (assets/brand/weave-wordmark-small.svg), composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
@@ -68,16 +68,16 @@ license = "LicenseRef-Firefly-Marks"
 path = "studio/public/assets/weave-lockup-reversed.svg"
 kind = "third-party"
 source = "Byte-identical copy of assets/brand/weave-lockup-reversed.svg"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
 path = "studio/public/assets/weave-lockup-small-reversed.svg"
 kind = "third-party"
 source = "Byte-identical copy of assets/brand/weave-lockup-small-reversed.svg"
-reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
-copyright = "Copyright 2026 Firefly Software Solutions Inc."
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
 license = "LicenseRef-Firefly-Marks"
 
 [[exceptions]]
@@ -283,6 +283,15 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/fixtures/golden/corpus.json"
+kind = "generated"
+source = "scripts/golden_corpus.py"
+reason = "Strict JSON golden corpus of compiled artifacts and kernel transition streams, recorded once from the commit before the language extensions changed the compiler or kernel; never regenerate it to make a change pass."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "tests/fixtures/public/c6-wire.json"
 kind = "commentless"
 reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
@@ -443,63 +452,6 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
-path = "desktop/src-tauri/icons/128x128.png"
-kind = "commentless"
-reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
-
-[[exceptions]]
-path = "desktop/src-tauri/icons/128x128@2x.png"
-kind = "commentless"
-reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
-
-[[exceptions]]
-path = "desktop/src-tauri/icons/32x32.png"
-kind = "commentless"
-reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
-
-[[exceptions]]
-path = "desktop/src-tauri/icons/icon.icns"
-kind = "commentless"
-reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
-
-[[exceptions]]
-path = "desktop/src-tauri/icons/icon.ico"
-kind = "commentless"
-reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
-
-[[exceptions]]
-path = "desktop/src-tauri/icons/icon.png"
-kind = "commentless"
-reason = "Native icon derived from the official Apache-licensed Weave SVG; binary packaging format."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
-
-
-[[exceptions]]
-path = "desktop/artwork/dmg-background.png"
-kind = "commentless"
-reason = "Installer background raster generated from the adjacent Apache-licensed SVG using CairoSVG; Finder requires PNG."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
-
-[[exceptions]]
 path = "studio/tests/fixtures/language/instance-keys.json"
 kind = "generated"
 source = "scripts/language_fixtures.py"
@@ -513,6 +465,15 @@ path = "studio/tests/fixtures/language/manifest.json"
 kind = "generated"
 source = "scripts/language_fixtures.py"
 reason = "Strict JSON snapshot of the language manifest shared by the Python and Studio suites; regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/tests/fixtures/language/template-segments.json"
+kind = "generated"
+source = "scripts/language_fixtures.py"
+reason = "Strict JSON template segment cases and their saved form shared by the Python and Studio suites; regenerate with the generator, which also checks freshness."
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"
@@ -620,3 +581,99 @@ reason = "Strict JSON Schema of Studio test data, read at runtime; JSON has no c
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"
+
+[[exceptions]]
+path = "assets/banner.svg"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) logo, the first-party weave wordmark and Manrope outlines, composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "assets/brand/social-preview.png"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) logo, the first-party weave wordmark and Manrope outlines, composed and rendered by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/artwork/app-icon-macos.svg"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) icon(), placed on the Apple icon grid by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/artwork/dmg-background.svg"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) logo, the first-party weave wordmark and Manrope outlines, composed by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/artwork/dmg-background.png"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) logo, the first-party weave wordmark and Manrope outlines, rendered by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/bootstrap/weave-lockup-reversed.svg"
+kind = "third-party"
+source = "Byte-identical copy of assets/brand/weave-lockup-reversed.svg"
+reason = "Firefly trademark artwork used with permission and the Foundation's weave wordmark; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc. (Firefly logo); Copyright 2026 Firefly Software Foundation (weave wordmark)"
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/32x32.png"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) icon(), rendered from assets/brand/firefly-icon.svg by the Tauri CLI icon command"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/128x128.png"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) icon(), rendered from assets/brand/firefly-icon.svg by the Tauri CLI icon command"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/128x128@2x.png"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) icon(), rendered from assets/brand/firefly-icon.svg by the Tauri CLI icon command"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/icon.png"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) icon(), rendered from assets/brand/firefly-icon.svg by the Tauri CLI icon command"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/icon.icns"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) icon(), rendered from desktop/artwork/app-icon-macos.svg by the Tauri CLI icon command"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"
+
+[[exceptions]]
+path = "desktop/src-tauri/icons/icon.ico"
+kind = "third-party"
+source = "Firefly Brand Kit 2.0.0 (private) icon(), 16 and 24 px solid and 32 to 256 px with trail, rendered by scripts/brand/weave-lockup.mjs"
+reason = "Firefly trademark artwork used with permission; not Apache-2.0; see NOTICE."
+copyright = "Copyright 2026 Firefly Software Solutions Inc."
+license = "LicenseRef-Firefly-Marks"

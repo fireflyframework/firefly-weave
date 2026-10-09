@@ -21,76 +21,76 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1593" viewBox="0 0 960 1593" role="img" aria-labelledby="title desc">
 <title id="title">Follow the event in the direction it travels</title><desc id="desc">Three rows, each read left to right. Inbound A, your sender uses Weave signatures: an HMAC covers the exact bytes, timestamp, and eventId, and Weave checks the signature and current authority; one transaction admits the run or signal together with its receipt, and HTTP 202 follows the commit while the run may still be executing. Inbound B, a vendor uses its own protocol: the Teams, WhatsApp, or Telegram source authenticates the raw bytes, and Weave commits facts, receipts, and a pending intent, then acknowledges; a later dispatch rechecks source and target authority and starts or signals the pinned target, settling runtime and receipt together. Outbound, Weave sends lifecycle notifications: the source transaction stores the integration event and its delivery intents, and the outbox dispatcher leases a bounded HTTP attempt; the receiver verifies the timestamp and HMAC, durably deduplicates eventId, and acknowledges after commit, and the dispatcher records success, retry, or an incident. Outbound retries keep the same event body and identity, every lane needs current scoped authority, and no receipt alone proves a finished workflow or delivery. Calling an API from a workflow step is an Action and is not shown here.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1493" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Follow the event in the direction it travels</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">An acknowledgment means different things for a signed webhook, provider</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">inbox, and outbound notification.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</text>
-<text x="48" y="242" font-size="24" font-weight="700" fill="#173D34">INBOUND A • Your sender uses Weave signatures</text>
-<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="309" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 47 21L5 49l8-21z M13 28h39"/></g>
-<text x="58.0" y="366" font-size="24" font-weight="700" fill="#173D34">Send the signed envelope</text>
-<text x="58.0" y="410" font-size="22" font-weight="400" fill="#173D34">HMAC covers the exact bytes,</text>
-<text x="58.0" y="438" font-size="22" font-weight="400" fill="#173D34">timestamp, and eventId. Weave checks</text>
-<text x="58.0" y="466" font-size="22" font-weight="400" fill="#173D34">the signature and current authority.</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1493" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Follow the event in the direction it travels</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">An acknowledgment means different things for a signed webhook, provider</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">inbox, and outbound notification.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</text>
+<text x="48" y="242" font-size="24" font-weight="700" fill="#272820">INBOUND A • Your sender uses Weave signatures</text>
+<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="309" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 286) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 47 21L5 49l8-21z M13 28h39"/></g>
+<text x="58.0" y="366" font-size="24" font-weight="700" fill="#272820">Send the signed envelope</text>
+<text x="58.0" y="410" font-size="22" font-weight="400" fill="#272820">HMAC covers the exact bytes,</text>
+<text x="58.0" y="438" font-size="22" font-weight="400" fill="#272820">timestamp, and eventId. Weave checks</text>
+<text x="58.0" y="466" font-size="22" font-weight="400" fill="#272820">the signature and current authority.</text>
 <path class="edge" d="M465.0 389.5h29"/>
-<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="309" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
-<text x="518.0" y="366" font-size="24" font-weight="700" fill="#173D34">Commit receipt and runtime</text>
-<text x="518.0" y="410" font-size="22" font-weight="400" fill="#173D34">One transaction admits the run or</text>
-<text x="518.0" y="438" font-size="22" font-weight="400" fill="#173D34">signal together with its receipt.</text>
-<text x="518.0" y="466" font-size="22" font-weight="400" fill="#173D34">HTTP 202 follows the commit; the</text>
-<text x="518.0" y="494" font-size="22" font-weight="400" fill="#173D34">run may still be executing.</text>
-<text x="48" y="574" font-size="24" font-weight="700" fill="#173D34">INBOUND B • A vendor uses its own protocol</text>
-<rect x="40.0" y="595" width="420.0" height="281" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="641" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
-<text x="58.0" y="698" font-size="24" font-weight="700" fill="#173D34">Authenticate and store inbox</text>
-<text x="58.0" y="742" font-size="22" font-weight="400" fill="#173D34">Teams, WhatsApp, or Telegram</text>
-<text x="58.0" y="770" font-size="22" font-weight="400" fill="#173D34">authenticates the raw bytes. Weave</text>
-<text x="58.0" y="798" font-size="22" font-weight="400" fill="#173D34">commits facts, receipts, and a</text>
-<text x="58.0" y="826" font-size="22" font-weight="400" fill="#173D34">pending intent, then acknowledges.</text>
+<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="309" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 286) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="518.0" y="366" font-size="24" font-weight="700" fill="#272820">Commit receipt and runtime</text>
+<text x="518.0" y="410" font-size="22" font-weight="400" fill="#272820">One transaction admits the run or</text>
+<text x="518.0" y="438" font-size="22" font-weight="400" fill="#272820">signal together with its receipt.</text>
+<text x="518.0" y="466" font-size="22" font-weight="400" fill="#272820">HTTP 202 follows the commit; the</text>
+<text x="518.0" y="494" font-size="22" font-weight="400" fill="#272820">run may still be executing.</text>
+<text x="48" y="574" font-size="24" font-weight="700" fill="#272820">INBOUND B • A vendor uses its own protocol</text>
+<rect x="40.0" y="595" width="420.0" height="281" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="641" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 618) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="58.0" y="698" font-size="24" font-weight="700" fill="#272820">Authenticate and store inbox</text>
+<text x="58.0" y="742" font-size="22" font-weight="400" fill="#272820">Teams, WhatsApp, or Telegram</text>
+<text x="58.0" y="770" font-size="22" font-weight="400" fill="#272820">authenticates the raw bytes. Weave</text>
+<text x="58.0" y="798" font-size="22" font-weight="400" fill="#272820">commits facts, receipts, and a</text>
+<text x="58.0" y="826" font-size="22" font-weight="400" fill="#272820">pending intent, then acknowledges.</text>
 <path class="edge" d="M465.0 735.5h29"/>
-<rect x="500.0" y="595" width="420.0" height="281" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="641" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
-<text x="518.0" y="698" font-size="24" font-weight="700" fill="#173D34">Dispatch the pending intent</text>
-<text x="518.0" y="742" font-size="22" font-weight="400" fill="#173D34">Recheck source and target</text>
-<text x="518.0" y="770" font-size="22" font-weight="400" fill="#173D34">authority, then start or signal the</text>
-<text x="518.0" y="798" font-size="22" font-weight="400" fill="#173D34">pinned target; runtime and receipt</text>
-<text x="518.0" y="826" font-size="22" font-weight="400" fill="#173D34">settle together.</text>
-<text x="48" y="934" font-size="24" font-weight="700" fill="#173D34">OUTBOUND • Weave sends lifecycle notifications</text>
-<rect x="40.0" y="955" width="420.0" height="281" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="1001" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 978) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
-<text x="58.0" y="1058" font-size="24" font-weight="700" fill="#173D34">Record the lifecycle change</text>
-<text x="58.0" y="1102" font-size="22" font-weight="400" fill="#173D34">The source transaction stores the</text>
-<text x="58.0" y="1130" font-size="22" font-weight="400" fill="#173D34">integration event and its delivery</text>
-<text x="58.0" y="1158" font-size="22" font-weight="400" fill="#173D34">intents. The outbox dispatcher then</text>
-<text x="58.0" y="1186" font-size="22" font-weight="400" fill="#173D34">leases a bounded HTTP attempt.</text>
+<rect x="500.0" y="595" width="420.0" height="281" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="641" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 618) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
+<text x="518.0" y="698" font-size="24" font-weight="700" fill="#272820">Dispatch the pending intent</text>
+<text x="518.0" y="742" font-size="22" font-weight="400" fill="#272820">Recheck source and target</text>
+<text x="518.0" y="770" font-size="22" font-weight="400" fill="#272820">authority, then start or signal the</text>
+<text x="518.0" y="798" font-size="22" font-weight="400" fill="#272820">pinned target; runtime and receipt</text>
+<text x="518.0" y="826" font-size="22" font-weight="400" fill="#272820">settle together.</text>
+<text x="48" y="934" font-size="24" font-weight="700" fill="#272820">OUTBOUND • Weave sends lifecycle notifications</text>
+<rect x="40.0" y="955" width="420.0" height="281" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="1001" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 978) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="58.0" y="1058" font-size="24" font-weight="700" fill="#272820">Record the lifecycle change</text>
+<text x="58.0" y="1102" font-size="22" font-weight="400" fill="#272820">The source transaction stores the</text>
+<text x="58.0" y="1130" font-size="22" font-weight="400" fill="#272820">integration event and its delivery</text>
+<text x="58.0" y="1158" font-size="22" font-weight="400" fill="#272820">intents. The outbox dispatcher then</text>
+<text x="58.0" y="1186" font-size="22" font-weight="400" fill="#272820">leases a bounded HTTP attempt.</text>
 <path class="edge" d="M465.0 1095.5h29"/>
-<rect x="500.0" y="955" width="420.0" height="281" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="1001" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 978) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 47 21L5 49l8-21z M13 28h39"/></g>
-<text x="518.0" y="1058" font-size="24" font-weight="700" fill="#173D34">Receiver commits its effect</text>
-<text x="518.0" y="1102" font-size="22" font-weight="400" fill="#173D34">Verify timestamp and HMAC, durably</text>
-<text x="518.0" y="1130" font-size="22" font-weight="400" fill="#173D34">deduplicate eventId, and acknowledge</text>
-<text x="518.0" y="1158" font-size="22" font-weight="400" fill="#173D34">after commit. The dispatcher records</text>
-<text x="518.0" y="1186" font-size="22" font-weight="400" fill="#173D34">success, retry, or an incident.</text>
-<rect x="40" y="1284" width="880" height="165" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1304) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1328" font-size="23" font-weight="700" fill="#326B88">An acknowledgment is evidence at one boundary</text>
-<text x="60" y="1367" font-size="21" font-weight="400" fill="#173D34">Outbound retries keep the same event body and identity. Every lane needs</text>
-<text x="60" y="1396" font-size="21" font-weight="400" fill="#173D34">current scoped authority; no receipt alone proves a finished workflow or</text>
-<text x="60" y="1425" font-size="21" font-weight="400" fill="#173D34">delivery. Calling an API from a workflow step is an Action, not shown here.</text><g id="takeaway">
-<rect x="0" y="1499" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1528" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1559" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Read an acknowledgment in the context of the boundary that produced it.</text>
+<rect x="500.0" y="955" width="420.0" height="281" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="1001" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 978) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m5 7 47 21L5 49l8-21z M13 28h39"/></g>
+<text x="518.0" y="1058" font-size="24" font-weight="700" fill="#272820">Receiver commits its effect</text>
+<text x="518.0" y="1102" font-size="22" font-weight="400" fill="#272820">Verify timestamp and HMAC, durably</text>
+<text x="518.0" y="1130" font-size="22" font-weight="400" fill="#272820">deduplicate eventId, and acknowledge</text>
+<text x="518.0" y="1158" font-size="22" font-weight="400" fill="#272820">after commit. The dispatcher records</text>
+<text x="518.0" y="1186" font-size="22" font-weight="400" fill="#272820">success, retry, or an incident.</text>
+<rect x="40" y="1284" width="880" height="165" rx="16" fill="#E6E8E6"/>
+<g transform="translate(59 1304) scale(0.7)" stroke="#4A5D65" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1328" font-size="23" font-weight="700" fill="#4A5D65">An acknowledgment is evidence at one boundary</text>
+<text x="60" y="1367" font-size="21" font-weight="400" fill="#272820">Outbound retries keep the same event body and identity. Every lane needs</text>
+<text x="60" y="1396" font-size="21" font-weight="400" fill="#272820">current scoped authority; no receipt alone proves a finished workflow or</text>
+<text x="60" y="1425" font-size="21" font-weight="400" fill="#272820">delivery. Calling an API from a workflow step is an Action, not shown here.</text><g id="takeaway">
+<rect x="0" y="1499" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1528" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1559" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Read an acknowledgment in the context of the boundary that produced it.</text>
 </g>
 </svg>

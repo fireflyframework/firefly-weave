@@ -39,3 +39,28 @@ def test_runner_check_invalid_file_emits_no_config_or_secret_contents(tmp_path):
     result = CliRunner().invoke(cli, ["operations", "runner", "check", "--config", str(path)])
     assert result.exit_code != 0
     assert "do-not-echo" not in result.output
+
+
+def test_runner_setup_names_the_lumi_role_as_the_weave_ai_gateway(tmp_path):
+    answers = [
+        "https://weave.example",
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+        "00000000-0000-0000-0000-000000000003",
+        "00000000-0000-0000-0000-000000000004",
+        "docker-compose",
+        "/usr/local/bin/docker",
+        "default",
+        "weave",
+        "daemon-id",
+        "/srv/weave/compose.yaml",
+        "/srv/weave/runner.lock",
+        "weave-ai-gateway",
+    ]
+    result = CliRunner().invoke(
+        cli,
+        ["operations", "runner", "setup", "--output", str(tmp_path / "runner.json")],
+        input="\n".join(answers) + "\n",
+    )
+    assert "Component role (lumi = Weave AI gateway) (api, worker, lumi):" in result.output
+    assert "Lumi" not in result.output

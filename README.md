@@ -22,18 +22,18 @@ SPDX-License-Identifier: Apache-2.0
 
 **Define a business process, connect its steps to other systems and to people, and follow every case.**
 
-[![Release](https://img.shields.io/github/v/release/fireflyframework/firefly-weave?include_prereleases&label=release&color=367D68)](https://github.com/fireflyframework/firefly-weave/releases)
+[![Release](https://img.shields.io/github/v/release/fireflyframework/firefly-weave?include_prereleases&label=release&color=474A42)](https://github.com/fireflyframework/firefly-weave/releases)
 [![Checks](https://github.com/fireflyframework/firefly-weave/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fireflyframework/firefly-weave/actions/workflows/ci.yml)
 [![Documentation](https://github.com/fireflyframework/firefly-weave/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/fireflyframework/firefly-weave/actions/workflows/docs.yml)
-[![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-367D68?logo=python&logoColor=white)](pyproject.toml)
-[![Built with PyFly](https://img.shields.io/badge/Built_with-PyFly-173D34)](https://github.com/fireflyframework/fireflyframework-pyfly)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-173D34)](LICENSE)
-[![Maturity: alpha](https://img.shields.io/badge/Status-alpha-D6A646)](docs/capabilities.md)
+[![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-474A42?logo=python&logoColor=white)](pyproject.toml)
+[![Built with PyFly](https://img.shields.io/badge/Built_with-PyFly-474A42)](https://github.com/fireflyframework/fireflyframework-pyfly)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-474A42)](LICENSE)
+[![Maturity: alpha](https://img.shields.io/badge/Status-alpha-855414)](docs/capabilities.md)
 
 [Read the documentation](https://fireflyframework.github.io/firefly-weave/) ·
 [Start the platform](https://fireflyframework.github.io/firefly-weave/guides/platform-overview/) ·
 [CLI reference](https://fireflyframework.github.io/firefly-weave/reference/cli/) ·
-[Meet Lumi](#meet-lumi)
+[Weave AI](#weave-ai)
 
 Weave is a durable workflow orchestration and integration platform with human
 tasks, built on [PyFly](https://github.com/fireflyframework/fireflyframework-pyfly).
@@ -53,16 +53,16 @@ maps service tasks, user tasks, gateways, and timers to Weave steps.
 
 ## What you get
 
-The **v0.1.0a14 alpha** release provides the **API, CLI, Python SDK, and Studio**
+The **v0.1.0a15 alpha** release provides the **API, CLI, Python SDK, and Studio**
 visual workspace, with human-task inboxes, email conversations, execution
 management, and administration of people and access. Run Weave as a standalone
 service or embed it in another product.
 
-**New in 0.1.0a11:** configure AI provider connections, Lumi, and workflow AI
+**New in 0.1.0a11:** configure AI provider connections, Weave AI, and workflow AI
 profiles through guided setup with review before saving. Explicitly select
 earlier AI results as [shared context within one execution](docs/guides/shared-ai-context.md).
 See the illustrated [AI workflow guide](docs/guides/ai-workers.md) and
-[Lumi guide](docs/guides/lumi.md).
+[Weave AI guide](docs/guides/weave-ai.md).
 
 **Included capabilities:**
 
@@ -72,16 +72,16 @@ See the illustrated [AI workflow guide](docs/guides/ai-workers.md) and
 - **Decision rules and AI tasks.** Versioned decision tables and workflow model
   profiles use the same compiler and durable task protocol. An independent
   Firefly Agentic worker executes the configured provider, model and pattern.
-- **Lumi in Studio.** Ask for help with a workflow, run or simulation; choose
+- **Weave AI in Studio.** Ask for help with a workflow, run or simulation; choose
   what context to share, review proposed source and explicitly apply it to a
-  local draft. Lumi uses its own model configuration.
+  local draft. Weave AI uses its own model configuration.
 - **A clearer editor.** Decision and parallel lanes, immediate valid edits with
   Undo, guided human tasks, and action version selection keep changes visible.
 
 Read the [capability matrix](docs/capabilities.md) for tested boundaries and
 live-provider checks that remain environment-specific.
 
-Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha14-browser-application)
+Studio runs in your browser from the [installed CLI](docs/guides/studio.md#install-the-alpha15-browser-application)
 or as a [desktop app](docs/guides/desktop.md). The macOS desktop bundles
 are ad-hoc signed, not Developer ID signed or notarized, so macOS may ask you to
 approve them; do not use the alpha5 macOS installers, which were damaged. The
@@ -119,7 +119,7 @@ integration code. Each has its own guide, so you can stop at the result you need
 ## Install and discover the CLI
 
 On macOS, Linux, or WSL, install **Python 3.12 or newer** with `venv` support,
-then run this block in Bash or Zsh. It installs the pinned **v0.1.0a14 alpha**
+then run this block in Bash or Zsh. It installs the pinned **v0.1.0a15 alpha**
 into your user account without `sudo`, Git, or Docker:
 
 ```sh
@@ -127,12 +127,12 @@ into your user account without `sudo`, Git, or Docker:
   # Stop if downloading the installer fails.
   set -o pipefail
   curl --proto '=https' --tlsv1.2 -fsSL \
-    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a14/install.sh \
-    | sh -s -- --version v0.1.0a14
+    https://github.com/fireflyframework/firefly-weave/releases/download/v0.1.0a15/install.sh \
+    | sh -s -- --version v0.1.0a15
 )
 ```
 
-Expected: `Installed Firefly Weave 0.1.0a14:` followed by the command's path. Then
+Expected: `Installed Firefly Weave 0.1.0a15:` followed by the command's path. Then
 make the default command directory available in this terminal and look around:
 
 ```sh
@@ -146,7 +146,7 @@ weave help workflow
 weave docs platform
 ```
 
-Expected: `Firefly Weave 0.1.0a14`, the command overview, the `workflow`
+Expected: `Firefly Weave 0.1.0a15`, the command overview, the `workflow`
 commands, and the address of the platform guide. You do not need to learn every
 command first: help explains each family and its next steps. The
 [installation guide](docs/installation.md) covers choosing Python, a permanent
@@ -179,7 +179,7 @@ Compose files and setup helpers. Clone the tag that matches the CLI:
 
 ```sh
 # Keep the platform files at the same version as the CLI.
-git clone --branch v0.1.0a14 --single-branch https://github.com/fireflyframework/firefly-weave.git
+git clone --branch v0.1.0a15 --single-branch https://github.com/fireflyframework/firefly-weave.git
 cd firefly-weave
 
 # Check prerequisites, then start a persistent Docker platform and a sign-in account.
@@ -265,7 +265,7 @@ path, and the detailed diagrams.
 
 ## Current release and limits
 
-The recommended installation is **v0.1.0a14**, an **alpha** release. Download
+The recommended installation is **v0.1.0a15**, an **alpha** release. Download
 packages and checksums from
 [GitHub Releases](https://github.com/fireflyframework/firefly-weave/releases).
 The documentation on a branch describes the source on that branch; a release tag
@@ -286,24 +286,19 @@ Windows and Linux is not verified.
 
 Azure preproduction checks on alpha10 verified Microsoft Entra ID application
 tokens for a host application and an independent Agentic worker. An Azure OpenAI
-workflow completed through that worker with consistent replay, and Lumi returned
+workflow completed through that worker with consistent replay, and Weave AI returned
 a response through its separate gateway. An HTTP workflow also completed after
 the alpha10 deployment, and five existing run states were unchanged. These checks
 do not verify Entra browser or device-code sign-in for people, other identity providers, or general
 provider availability. See the [capability matrix](docs/capabilities.md) for the
 verified scope.
 
-## Meet Lumi
+## Weave AI
 
-**Lumi is Weave's firefly guide.** Translucent mint wings, a forest-green
-body, and a warm amber lantern bring Weave's colors to life. The lantern
-represents a clear next step through a complex process.
-
-You will find Lumi throughout the documentation and in Studio. Open the
-**Ask Lumi** panel for assistance, and [configure its model](docs/guides/lumi.md)
-separately from workflow AI tasks. In diagrams,
-the **Takeaway** band highlights the main idea to remember before moving on.
-Start with the [visual guide](docs/visual-guide.md) to explore the platform together.
+Weave AI is the Studio assistant: open **Ask Weave AI** to get an explanation or
+a proposed draft change for a workflow, run or simulation. It uses its own model
+configuration, separate from workflow AI steps, and never publishes or runs
+anything itself. [Use Weave AI](docs/guides/weave-ai.md) explains setup and review.
 
 ## Contribute and learn more
 

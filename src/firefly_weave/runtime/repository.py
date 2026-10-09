@@ -322,6 +322,8 @@ class RuntimeRepository:
         return [dict(row) for row in rows.mappings()]
 
     async def candidates(self, release: UUID, task_references: list[str], *, limit: int = 100) -> list[UUID]:
+        from firefly_weave.runtime.admission import runnable, runnable_parameters
+
         rows = await self.tx.session.execute(
             text(
                 f"SELECT id FROM task_intents WHERE {SCOPE} AND worker_release_id=:release "
@@ -330,9 +332,16 @@ class RuntimeRepository:
                 "AND (next_attempt_at IS NULL OR "
                 "next_attempt_at<=clock_timestamp()) AND ((payload->>'task_type') || '@' || "
                 "(payload->>'task_version')) "
-                "=ANY(cast(:references AS text[])) ORDER BY id LIMIT :limit"
+                "=ANY(cast(:references AS text[])) "
+                f"AND (SELECT {runnable('r')} FROM runs r WHERE r.id=task_intents.run_id) ORDER BY id LIMIT :limit"
             ),
-            {**self.params, "release": release, "references": task_references, "limit": limit},
+            {
+                **self.params,
+                **runnable_parameters(),
+                "release": release,
+                "references": task_references,
+                "limit": limit,
+            },
         )
         return list(rows.scalars())
 
@@ -389,9 +398,12 @@ class RuntimeRepository:
     async def scanner_runs(self, limit: int) -> list[dict[str, Any]]:
         if not 1 <= limit <= 100:
             raise ValueError("Bounded scanner page required")
+        from firefly_weave.runtime.admission import runnable, runnable_parameters
+
         return await self.rows(
             f"SELECT id FROM runs WHERE {SCOPE} AND state->>'status' IN ('queued','waiting','suspended') "
-            "AND (EXISTS (SELECT 1 FROM run_deadlines d WHERE d.run_id=runs.id AND NOT d.consumed "
+            # CASE reads the artifact only for a due run: the planner cannot evaluate THEN first.
+            "AND CASE WHEN (EXISTS (SELECT 1 FROM run_deadlines d WHERE d.run_id=runs.id AND NOT d.consumed "
             "AND d.deadline<=clock_timestamp()) OR (state->>'status'='waiting' AND EXISTS "
             "(SELECT 1 FROM signal_receipts s WHERE s.run_id=runs.id AND NOT s.consumed AND s.name IN "
             "(SELECT n->>'name' FROM jsonb_array_elements(CASE WHEN "
@@ -410,18 +422,24 @@ class RuntimeRepository:
             "WHERE n->>'kind' IN ('signal','humanTask') AND n->>'id'=d.node_id AND NOT EXISTS "
             "(SELECT 1 FROM signal_receipts s WHERE s.run_id=runs.id AND s.name=n->>'name' "
             "AND s.accepted_at<d.deadline)))))) "
+            f"THEN {runnable('runs')} ELSE false END "
             "ORDER BY id LIMIT :limit FOR UPDATE SKIP LOCKED",
             limit=limit,
+            **runnable_parameters(),
         )
 
     async def expired_ready(self, limit: int) -> list[UUID]:
+        from firefly_weave.runtime.admission import runnable, runnable_parameters
+
         rows = await self.rows(
             f"SELECT id FROM task_intents WHERE {SCOPE} AND status='ready' "
             "AND run_id NOT IN (SELECT run_id FROM run_policy_blocks UNION SELECT run_id FROM "
             "runtime_capacity_blocks WHERE active) "
             f"AND run_id IN (SELECT id FROM runs WHERE {SCOPE} AND state->>'status'='waiting') "
-            "AND cast(payload->>'deadline' AS timestamptz)<=clock_timestamp() ORDER BY id LIMIT :limit",
+            "AND cast(payload->>'deadline' AS timestamptz)<=clock_timestamp() "
+            f"AND (SELECT {runnable('r')} FROM runs r WHERE r.id=task_intents.run_id) ORDER BY id LIMIT :limit",
             limit=limit,
+            **runnable_parameters(),
         )
         return [row["id"] for row in rows]
 

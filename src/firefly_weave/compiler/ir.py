@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Collection
 from typing import Annotated, Literal, cast
 
 from pydantic import AfterValidator, Field, model_validator
@@ -28,6 +29,7 @@ from firefly_weave.compiler.catalog import CatalogResource, FrozenDocument, Reso
 from firefly_weave.compiler.decision_tables import validate_decision_expressions
 from firefly_weave.compiler.expressions import COLLECTION_COMPARISONS
 from firefly_weave.compiler.schema_profile import SCHEMA_ARRAYS, SCHEMA_MAPS, SCHEMA_SINGLE
+from firefly_weave.contracts import language_features
 from firefly_weave.contracts.definitions import (
     ActionDefinition,
     ActionSpec,
@@ -56,7 +58,7 @@ from firefly_weave.contracts.definitions import (
     load_definition,
 )
 from firefly_weave.contracts.diagnostics import Diagnostic, SourceRange
-from firefly_weave.contracts.language_features import LanguageFeature
+from firefly_weave.contracts.language_features import OPERATOR_FEATURES, LanguageFeature
 from firefly_weave.contracts.llm import LLMProfile
 from firefly_weave.contracts.values import JsonObject, JsonObjectData, JsonValue, UnicodeString
 
@@ -65,8 +67,10 @@ type NodeId = Annotated[UnicodeString, Field(min_length=1)]
 IR_VERSION = "weave/ir-v1alpha1"
 HUMAN_IR_VERSION = "weave/ir-v1alpha2"
 COMPARISON_IR_VERSION = "weave/ir-v1alpha3"
-# The IR version that carries language features; the model accepts it in a later release.
+# The IR version that carries language features.
 IR_VERSION_EXTENSIONS = "weave/ir-v1alpha4"
+# Executable IR versions in ascending order; a workflow needs the highest level any of its constructs requires.
+IR_LEVELS = (IR_VERSION, HUMAN_IR_VERSION, COMPARISON_IR_VERSION, IR_VERSION_EXTENSIONS)
 
 
 def _sorted_unique(features: list[LanguageFeature]) -> list[LanguageFeature]:
@@ -407,41 +411,84 @@ class IRGraph(ContractModel):
         return self
 
 
-def workflow_ir_version(graph: IRGraph) -> str:
-    """Select features from typed expression positions, never similarly shaped literal/schema data."""
+def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
+    """The IR version and the sorted language features a workflow graph needs.
+
+    Reads every node and every typed expression position, never similarly shaped literal or schema data, and takes
+    the highest level any construct requires: human tasks need v1alpha2; collection operators, decision tables and AI
+    tasks need v1alpha3; any language feature needs v1alpha4.
+    """
+    level = 0
+    features: set[LanguageFeature] = set()
     expressions: list[Expression] = []
-    human = False
     for node in graph.nodes:
         if isinstance(node, DecisionTableNode):
-            return COMPARISON_IR_VERSION
-        if isinstance(node, (EndNode, BranchOutputNode)):
+            level = max(level, 2)
+            expressions.append(node.input)
+        elif isinstance(node, (EndNode, BranchOutputNode)):
             expressions.append(node.output)
         elif isinstance(node, TransformNode):
             expressions.append(node.value)
         elif isinstance(node, ActionNode):
             if node.llm_profile is not None:
-                return COMPARISON_IR_VERSION
+                level = max(level, 2)
             expressions.append(node.input)
         elif isinstance(node, HumanTaskNode):
-            human = True
+            level = max(level, 1)
             expressions.extend((node.title, node.context))
         elif isinstance(node, SwitchNode):
             expressions.extend(case.when for case in node.cases)
     while expressions:
         expression = expressions.pop()
         if isinstance(expression, OpExpression):
-            if expression.op.name in COLLECTION_COMPARISONS:
-                return COMPARISON_IR_VERSION
+            name = expression.op.name
+            if name in COLLECTION_COMPARISONS:
+                level = max(level, 2)
+            if name in OPERATOR_FEATURES:
+                features.add(OPERATOR_FEATURES[name])
             expressions.extend(expression.op.args)
         elif isinstance(expression, ObjectExpression):
             expressions.extend(expression.object.values())
         elif isinstance(expression, ArrayExpression):
             expressions.extend(expression.array)
-    return HUMAN_IR_VERSION if human else IR_VERSION
+    return IR_LEVELS[3 if features else level], sorted(features)
+
+
+def accepted_ir_versions(features: Collection[str]) -> list[str]:
+    """The IR versions a platform running ``features`` accepts: v1alpha4 joins with the first feature."""
+    return list(IR_LEVELS if features else IR_LEVELS[:3])
+
+
+class UnsupportedIR(ValueError):
+    """An executable whose IR version or language features this platform does not run (``ir_unsupported``)."""
+
+    def __init__(self, missing: tuple[str, ...]) -> None:
+        self.missing = missing
+        super().__init__("ir_unsupported")
+
+
+def require_supported_ir(executable: object, features: Collection[str] | None = None) -> None:
+    """Refuse an executable this platform cannot run, before strict validation reads it.
+
+    ``features`` defaults to the advertised ones. An unknown IR version, or a ``features`` list of names that
+    are not all advertised (unknown names included), raises ``UnsupportedIR`` naming the missing features.
+    Any other malformed shape is left to strict validation.
+    """
+    if not isinstance(executable, dict):
+        return
+    advertised = language_features.ADVERTISED_FEATURES if features is None else features
+    declared = executable.get("features", [])
+    missing: tuple[str, ...] = ()
+    if isinstance(declared, list) and all(isinstance(name, str) for name in declared):
+        missing = tuple(sorted(set(cast(list[str], declared)) - set(advertised)))
+    if missing or executable.get("irVersion") not in accepted_ir_versions(advertised):
+        raise UnsupportedIR(missing)
 
 
 class ExecutableBase(ContractModel):
-    ir_version: Literal["weave/ir-v1alpha1", "weave/ir-v1alpha2", "weave/ir-v1alpha3"] = Field(alias="irVersion")
+    ir_version: Literal["weave/ir-v1alpha1", "weave/ir-v1alpha2", "weave/ir-v1alpha3", "weave/ir-v1alpha4"] = Field(
+        alias="irVersion"
+    )
     api_version: Literal["weave/v1alpha1"] = Field(alias="apiVersion")
     metadata: Metadata
     dependencies: list[Dependency]
@@ -456,6 +503,8 @@ class ExecutableBase(ContractModel):
     def references(self) -> ExecutableBase:
         if self.features and self.ir_version != IR_VERSION_EXTENSIONS:
             raise ValueError("Language features require weave/ir-v1alpha4")
+        if self.ir_version == IR_VERSION_EXTENSIONS and not self.features:
+            raise ValueError("weave/ir-v1alpha4 requires language features")
         identities = [(d.kind, d.reference) for d in self.dependencies]
         if len(set(identities)) != len(identities):
             raise ValueError("Duplicate dependency identity")
@@ -477,11 +526,11 @@ class WorkflowIR(ExecutableBase):
 
     @model_validator(mode="after")
     def workflow_references(self) -> WorkflowIR:
-        required = workflow_ir_version(self.graph)
-        if required == COMPARISON_IR_VERSION and self.ir_version != COMPARISON_IR_VERSION:
-            raise ValueError("Collection comparisons require ir-v1alpha3")
-        if required == HUMAN_IR_VERSION and self.ir_version == IR_VERSION:
-            raise ValueError("Human tasks require ir-v1alpha2 or newer")
+        required, features = workflow_requirements(self.graph)
+        if self.features != features:
+            raise ValueError("Language features must be exactly the features the graph uses")
+        if IR_LEVELS.index(self.ir_version) < IR_LEVELS.index(required):
+            raise ValueError(f"The graph requires {required} or newer")
         if self.input_schema not in self.schemas or self.output_schema not in self.schemas:
             raise ValueError("Unknown workflow schema")
         actions = {d.digest for d in self.dependencies if d.kind == "Action"}
@@ -500,10 +549,22 @@ class ActionIR(ExecutableBase):
     kind: Literal["Action"]
     spec: ActionSpec
 
+    @model_validator(mode="after")
+    def no_features(self) -> ActionIR:
+        if self.features:
+            raise ValueError("Action executables use no language features")
+        return self
+
 
 class ConnectorIR(ExecutableBase):
     kind: Literal["Connector"]
     spec: ConnectorSpec
+
+    @model_validator(mode="after")
+    def no_features(self) -> ConnectorIR:
+        if self.features:
+            raise ValueError("Connector executables use no language features")
+        return self
 
 
 class DecisionTableIR(ExecutableBase):

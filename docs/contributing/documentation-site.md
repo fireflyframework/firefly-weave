@@ -30,9 +30,9 @@ Node.js, Docker, or a running platform.
 The website renders the same public Markdown that readers browse on GitHub.
 [MkDocs](https://www.mkdocs.org/) and
 [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) provide the
-navigation, search, code copying, and the light and dark layouts. The official
-Weave artwork and local system fonts keep the site aligned with the project
-identity. A small [build hook](../../scripts/docs_hook.py) adds the root project
+navigation, search, and code copying. One dark scheme, the Firefly Weave logo,
+and Manrope served from the site's own files keep it aligned with Studio and the
+brand. A small [build hook](../../scripts/docs_hook.py) adds the root project
 pages, the approved artwork, and an API reference generated from the code.
 
 ## 1. Preview a change
@@ -119,9 +119,9 @@ command works, so run every new example yourself.
 5. **Add new diagrams to the catalog.** Put the SVG in `docs/diagrams/`, follow
    [visual assets](../visual-assets.md#draw-or-change-a-technical-diagram), and add a
    row to the [visual guide](../visual-guide.md).
-6. **Look at the rendered page** at desktop and phone widths, in both the light
-   and dark appearances. Try search, keyboard navigation, code copying, and the
-   page's diagram links.
+6. **Look at the rendered page** at desktop and phone widths; diagrams sit on
+   paper panels on the dark site. Try search, keyboard navigation, code copying,
+   and the page's diagram links.
 
 Do not wrap Markdown captions or links in raw HTML. Markdown link processing can
 stop inside raw HTML, so a page may look correct in one renderer and break in
@@ -203,6 +203,6 @@ followed by a check of the live address proves that readers can reach it.
 - [Source documentation and attribution](source-documentation.md): license
   headers, module docstrings, and the inventory for files that cannot carry
   comments.
-- [Visual assets](../visual-assets.md): the logo, Lumi, and how to draw and check
+- [Visual assets](../visual-assets.md): the brand assets, and how to draw and check
   a diagram.
 - [Contributing](../../CONTRIBUTING.md): the complete project checks.

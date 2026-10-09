@@ -25,7 +25,7 @@ from pydantic import Field, TypeAdapter
 from firefly_weave.compiler.analyzer import AnalysisResult, AnalyzedStep
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.compiler.expressions import measure_value
-from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, IR_VERSION, Executable, IRGraph, workflow_ir_version
+from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, IR_VERSION, Executable, IRGraph, workflow_requirements
 from firefly_weave.compiler.llm import llm_input
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.limits import Limits
@@ -259,7 +259,10 @@ class _Lowerer:
             self.budget.charge(spec)
             value["spec"] = spec
         if self.result.kind == "Workflow":
-            value["irVersion"] = workflow_ir_version(IRGraph.model_validate(value["graph"]))
+            version, features = workflow_requirements(IRGraph.model_validate(value["graph"]))
+            value["irVersion"] = version
+            if features:
+                value["features"] = cast(list[JsonValue], list(features))
         elif self.result.kind == "DecisionTable":
             value["irVersion"] = COMPARISON_IR_VERSION
         measure_value(value, limits=self.budget.limits.value_limits())

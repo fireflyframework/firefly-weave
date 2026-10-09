@@ -31,13 +31,13 @@ Studio writes the same versioned definition language that you can edit as YAML
 or build with the CLI and the Python SDK, so every choice here is visible in
 the **Source** tab.
 
-**This page describes the Studio 0.1.0a14 editor.** The step kinds and native
+**This page describes the Studio 0.1.0a15 editor.** The step kinds and native
 human tasks are also part of alpha6, but several controls described here, such
 as the canvas step picker, the searchable action picker, the **Value** /
 typed input rows with **Use data** and **Calculate…**, the schema designer, the API action builder,
 and the simulation setup and panel, are new in 0.1.0a7. An alpha6 or earlier
 browser bundle does not have them; to see the same screens,
-[install the alpha14 browser application](studio.md#install-the-alpha14-browser-application).
+[install the alpha15 browser application](studio.md#install-the-alpha15-browser-application).
 
 **How to use this page:**
 
@@ -197,7 +197,7 @@ slot**, then map **AI prompt** and **AI context** using Value, Data or Formula.
 
 Open **Configure workflow AI profiles** to create or edit a named profile in a
 dialog with room for the form. It uses the same **Model → Connection → Review**
-structure as Lumi, but saves only to this workflow. To use another connection
+structure as Weave AI, but saves only to this workflow. To use another connection
 slot without changing the model, select that slot directly in the inspector.
 
 1. **Model:** choose the provider, model, and maximum response length, then
@@ -227,7 +227,7 @@ read. See [Share context between AI steps](shared-ai-context.md) for a complete
 example and the limits across branches, waits, and retries.
 
 Provider credentials belong to an authorized connection, not the prompt or
-profile. Workflow AI profiles are separate from Studio's Lumi assistant settings.
+profile. Workflow AI profiles are separate from Studio's Weave AI settings.
 The [AI worker guide](ai-workers.md) covers deployment, supported providers,
 credential binding and execution limits. A configured inspector alone does not
 install the action or start a worker.

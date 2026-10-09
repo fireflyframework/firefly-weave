@@ -142,3 +142,19 @@ async def test_api_explorer_header_carries_no_mascot():
     assert "lumi" not in page.lower()
     assert "<svg" not in page
     assert "<header><h1>Firefly Weave · API explorer</h1>" in page
+
+
+async def test_api_explorer_header_is_charcoal_with_amber_links_above_a_paper_body():
+    from firefly_weave.api.documentation import install_documentation
+
+    app = Starlette()
+    install_documentation(app)
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://localhost") as client:
+        page = (await client.get("/docs")).text
+    style = re.search(r"<style>(.*?)</style>", page, re.DOTALL).group(1)
+    rules = {selector.strip(): body for selector, body in re.findall(r"([^{}]+)\{([^}]*)\}", style)}
+    assert "background: #F3F1EB" in rules["body"]
+    assert "background: #10110F" in rules["header"] and "color: #F3F1EB" in rules["header"]
+    assert "color: #FFB34A" in rules["header a"]
+    for legacy in ("#EEF4F0", "#173D34", "#8EE3DC"):
+        assert legacy.lower() not in page.lower()

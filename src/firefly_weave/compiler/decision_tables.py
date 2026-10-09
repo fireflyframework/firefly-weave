@@ -24,6 +24,7 @@ from pydantic import ValidationError
 
 from firefly_weave.compiler.expressions import (
     DEFAULT_LIMITS,
+    TEXT_OPERATORS,
     ExpressionSession,
     count_expression_nodes,
     measure_value,
@@ -34,6 +35,9 @@ from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.definitions import DecisionTableSpec
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
+
+# Plain-language messages for decision codes whose generic compiler message would mislead.
+DECISION_MESSAGES = {"WV-DECISION-OPERATOR": "Decision rules cannot use text operators yet."}
 
 
 class DecisionFailure(ValueError):
@@ -88,9 +92,13 @@ def validate_decision_expressions(spec: JsonObject, *, limits: Limits = DEFAULT_
                     for index, value in enumerate(cast(list[JsonValue], current["array"]))
                 )
             elif "op" in current:
+                operation = cast(JsonObject, current["op"])
+                # Text operators stay out of decision rules, so decision table executables keep weave/ir-v1alpha3.
+                if operation["name"] in TEXT_OPERATORS:
+                    raise DecisionFailure("OPERATOR", location + "/op/name")
                 pending.extend(
                     (cast(JsonObject, value), f"{location}/op/args/{index}")
-                    for index, value in enumerate(cast(list[JsonValue], cast(JsonObject, current["op"])["args"]))
+                    for index, value in enumerate(cast(list[JsonValue], operation["args"]))
                 )
 
 

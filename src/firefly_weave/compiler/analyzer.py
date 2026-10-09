@@ -31,10 +31,16 @@ from firefly_weave.compiler.action_config import (
     ActionConfigValidator,
 )
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot, FrozenDocument, ResourceKind
-from firefly_weave.compiler.decision_tables import DecisionFailure, expression_roots, validate_decision_expressions
+from firefly_weave.compiler.decision_tables import (
+    DECISION_MESSAGES,
+    DecisionFailure,
+    expression_roots,
+    validate_decision_expressions,
+)
 from firefly_weave.compiler.expression_types import InferredType, infer_expression
 from firefly_weave.compiler.expressions import (
     COLLECTION_COMPARISONS,
+    TEXT_OPERATORS,
     ExpressionFailure,
     count_expression_nodes,
     measure_value,
@@ -54,6 +60,22 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 
 _DEFAULT_LIMITS = Limits()
 _DEFAULT_SCHEMA_LIMITS = SchemaLimits()
+# Text operator operands: (the schema every accepted value fits, schemas that reject the operand outright). An operand
+# is rejected when its declared type, or for a list its declared item type, can never be text; an empty list still
+# passes because it has no items to convert.
+_TEXT_PART: JsonObject = {"type": ["string", "integer", "number", "boolean"]}
+_NOT_TEXT_PART: JsonObject = {"type": ["null", "object", "array"]}
+_TEXT_LIST: tuple[JsonObject, tuple[JsonObject, ...]] = (
+    {"type": "array", "items": _TEXT_PART},
+    (
+        {"type": ["null", "object", "string", "number", "integer", "boolean"]},
+        {"type": "array", "items": _NOT_TEXT_PART},
+    ),
+)
+_SEPARATOR: tuple[JsonObject, tuple[JsonObject, ...]] = (
+    {"type": "string"},
+    ({"type": ["null", "object", "array", "number", "integer", "boolean"]},),
+)
 _POINTER = re.compile(r"^/spec(?:/(?:[^~/]|~[01])*)*$")
 _MESSAGES = {
     "UNKNOWN_COMPATIBILITY": "Schema containment is unproved; runtime validation is required.",
@@ -357,7 +379,7 @@ class _Analyzer:
                         severity="error",
                         stage="semantic",
                         path=base + failure.path.removeprefix("/spec"),
-                        message="Decision rule violates its expression contract.",
+                        message=DECISION_MESSAGES.get(failure.code, "Decision rule violates its expression contract."),
                     )
                 )
             finally:
@@ -638,6 +660,11 @@ class _Analyzer:
                     self.issue("TYPE_MISMATCH" if definite else "UNKNOWN_COMPATIBILITY", path, unknown=not definite)
                 if not definite:
                     self.guard(path, "operator_operands", {})
+        elif name in TEXT_OPERATORS:
+            rules = [(_TEXT_PART, (_NOT_TEXT_PART,))] * len(children) if name == "concat" else [_TEXT_LIST, _SEPARATOR]
+            for (child, child_path), result, (accepted, rejected) in zip(children, inferred, rules, strict=True):
+                if result.classification != "missing":
+                    self.text_operand(child, child_path, result.schema, accepted, rejected)
         elif name in COLLECTION_COMPARISONS:
             # Membership accepts every JSON needle; only the container's type constrains it.
             domain = frozenset({"string", "array", "object", "number", "integer", "boolean", "null"})
@@ -657,6 +684,29 @@ class _Analyzer:
                     self.issue("TYPE_MISMATCH" if definite else "UNKNOWN_COMPATIBILITY", path, unknown=not definite)
                 if not definite:
                     self.guard(path, "operator_operands", {})
+
+    def text_operand(
+        self, operand: JsonObject, path: str, schema: JsonObject, accepted: JsonObject, rejected: tuple[JsonObject, ...]
+    ) -> None:
+        """One text operator operand: provably wrong is TYPE_MISMATCH; unproved needs an operand guard."""
+        try:
+            outcome = check_compatibility(schema, accepted, self.bundle, limits=self.schema_limits)
+            if outcome == "compatible":
+                return
+            # A literal is one exact value, so an incompatible literal always fails at run time.
+            definite = (outcome == "incompatible" and "const" in schema) or any(
+                check_compatibility(schema, wrong, self.bundle, limits=self.schema_limits) == "compatible"
+                for wrong in rejected
+            )
+        except TypeCheckLimit:
+            self.issue("RESOURCE_LIMIT", path)
+            return
+        if definite:
+            self.issue("TYPE_MISMATCH", path)
+            return
+        if not self.reads_pending(operand):
+            self.issue("UNKNOWN_COMPATIBILITY", path, unknown=True)
+        self.guard(path, "operator_operands", {})
 
     def connection(self, step: JsonObject, action: JsonObject, path: str) -> None:
         requirement = cast(JsonObject | None, action.get("connection"))

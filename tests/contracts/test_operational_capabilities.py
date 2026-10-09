@@ -90,6 +90,18 @@ def ready_state():
     return SimpleNamespace(ready=True, report=Report())
 
 
+async def test_capabilities_list_the_language_features_and_ir_versions_this_platform_runs():
+    from firefly_weave.contracts.language import language_manifest
+
+    controller, request, _, _, _ = controller_fixture(ready_state())
+    result = await controller.capabilities(request)
+    manifest = language_manifest()
+    assert result["language_features"] == manifest.features == ["text.concat", "text.join"]
+    assert result["ir_versions"] == manifest.ir_versions
+    assert result["ir_versions"][-1] == "weave/ir-v1alpha4"
+    assert "forEach" not in result["step_kinds"] and "callWorkflow" not in result["step_kinds"]
+
+
 async def test_native_injection_declares_actual_policy_and_enforcement_limits():
     from firefly_weave.connections.secret_execution import SECRET_SLOTS
     from firefly_weave.operations.compatibility_catalog import WORKER_PROTOCOL

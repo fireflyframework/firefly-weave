@@ -21,64 +21,64 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1621" viewBox="0 0 960 1621" role="img" aria-labelledby="title desc">
 <title id="title">Keep one SQL invocation in one transaction</title><desc id="desc">Five steps read top to bottom. 1, publish a reviewed SQL operation of kind read, command or idempotent-command with a pinned statement and parameter schema; input cannot choose SQL identifiers. 2, the connection fixes the database, IP, TLS policy and secret handle, and workflow input supplies parameter values only. 3, the executor authorizes, connects, begins, checks table metadata, authorizes again, binds values, executes, and validates the full bounded output before commit. 4, for idempotent-command only, the operation key, request fingerprint, business change and saved result commit together, so a matching duplicate recovers the saved result. 5, an acknowledged commit returns validated rows or an affected count; a lost commit acknowledgment becomes SQL_COMMIT_UNKNOWN and needs reconciliation before a retry. The external database transaction stays separate from Weave's own transaction.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1521" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Keep one SQL invocation in one transaction</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">The external business database transaction is separate from Weave’s runtime</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">transaction.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
-<rect x="40" y="232" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
-<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Publish a reviewed SQL operation</text>
-<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Choose read, command, or idempotent-command.</text>
-<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">Pin the statement and parameter schema.</text>
-<text x="168" y="372" font-size="18" font-weight="600" fill="#367D68">ACTION • Input cannot choose SQL identifiers</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1521" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Keep one SQL invocation in one transaction</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">The external business database transaction is separate from Weave’s runtime</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">transaction.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">READ DOWN  •  Each arrow carries the result into the next step</text>
+<rect x="40" y="232" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="249" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 264) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="168" y="275" font-size="25" font-weight="700" fill="#272820">1. Publish a reviewed SQL operation</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#272820">Choose read, command, or idempotent-command.</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#272820">Pin the statement and parameter schema.</text>
+<text x="168" y="372" font-size="18" font-weight="600" fill="#855414">ACTION • Input cannot choose SQL identifiers</text>
 <path class="edge" d="M480 394v35"/>
-<rect x="40" y="442" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="459" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 474) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="19" r="12"/><path d="m27 28 22 22 M36 37l7-7 M43 44l7-7"/></g>
-<text x="168" y="485" font-size="25" font-weight="700" fill="#173D34">2. Bind the database and parameter values</text>
-<text x="168" y="524" font-size="22" font-weight="400" fill="#173D34">Connection fixes database, IP, TLS policy, and secret handle.</text>
-<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">Workflow input supplies parameter values only.</text>
-<text x="168" y="582" font-size="18" font-weight="600" fill="#367D68">CONNECTION + INPUT • Credentials stay outside the workflow</text>
+<rect x="40" y="442" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="459" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 474) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="19" r="12"/><path d="m27 28 22 22 M36 37l7-7 M43 44l7-7"/></g>
+<text x="168" y="485" font-size="25" font-weight="700" fill="#272820">2. Bind the database and parameter values</text>
+<text x="168" y="524" font-size="22" font-weight="400" fill="#272820">Connection fixes database, IP, TLS policy, and secret handle.</text>
+<text x="168" y="553" font-size="22" font-weight="400" fill="#272820">Workflow input supplies parameter values only.</text>
+<text x="168" y="582" font-size="18" font-weight="600" fill="#855414">CONNECTION + INPUT • Credentials stay outside the workflow</text>
 <path class="edge" d="M480 604v35"/>
-<rect x="40" y="652" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="669" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 684) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
-<text x="168" y="695" font-size="25" font-weight="700" fill="#173D34">3. Execute in the external database</text>
-<text x="168" y="734" font-size="22" font-weight="400" fill="#173D34">Authorize, connect, begin, and check table metadata.</text>
-<text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">Authorize again, bind values, execute the reviewed operation,</text>
-<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">then validate the full bounded output before commit.</text>
-<text x="168" y="821" font-size="18" font-weight="600" fill="#367D68">TRANSACTION • No successful output before validation</text>
+<rect x="40" y="652" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="669" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 684) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="168" y="695" font-size="25" font-weight="700" fill="#272820">3. Execute in the external database</text>
+<text x="168" y="734" font-size="22" font-weight="400" fill="#272820">Authorize, connect, begin, and check table metadata.</text>
+<text x="168" y="763" font-size="22" font-weight="400" fill="#272820">Authorize again, bind values, execute the reviewed operation,</text>
+<text x="168" y="792" font-size="22" font-weight="400" fill="#272820">then validate the full bounded output before commit.</text>
+<text x="168" y="821" font-size="18" font-weight="600" fill="#855414">TRANSACTION • No successful output before validation</text>
 <path class="edge" d="M480 843v35"/>
-<rect x="40" y="891" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="908" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 923) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m19 35-5 5c-14 14-28-1-14-14l10-10c10-10 23-2 19 7 M36 21l5-5c14-14 28 1 14 14L45 40c-10 10-23 2-19-7 M18 36l19-17" transform="translate(1 0) scale(.94)"/></g>
-<text x="168" y="934" font-size="25" font-weight="700" fill="#173D34">4. For idempotent-command, commit evidence too</text>
-<text x="168" y="973" font-size="22" font-weight="400" fill="#173D34">Operation key, request fingerprint, business change, and saved</text>
-<text x="168" y="1002" font-size="22" font-weight="400" fill="#173D34">result commit together.</text>
-<text x="168" y="1031" font-size="22" font-weight="400" fill="#173D34">A matching duplicate recovers that saved result.</text>
-<text x="168" y="1060" font-size="18" font-weight="600" fill="#367D68">IDEMPOTENCY • This rule applies to idempotent-command only</text>
+<rect x="40" y="891" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="908" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 923) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m19 35-5 5c-14 14-28-1-14-14l10-10c10-10 23-2 19 7 M36 21l5-5c14-14 28 1 14 14L45 40c-10 10-23 2-19-7 M18 36l19-17" transform="translate(1 0) scale(.94)"/></g>
+<text x="168" y="934" font-size="25" font-weight="700" fill="#272820">4. For idempotent-command, commit evidence too</text>
+<text x="168" y="973" font-size="22" font-weight="400" fill="#272820">Operation key, request fingerprint, business change, and saved</text>
+<text x="168" y="1002" font-size="22" font-weight="400" fill="#272820">result commit together.</text>
+<text x="168" y="1031" font-size="22" font-weight="400" fill="#272820">A matching duplicate recovers that saved result.</text>
+<text x="168" y="1060" font-size="18" font-weight="600" fill="#855414">IDEMPOTENCY • This rule applies to idempotent-command only</text>
 <path class="edge" d="M480 1082v35"/>
-<rect x="40" y="1130" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="1147" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1162) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
-<text x="168" y="1173" font-size="25" font-weight="700" fill="#173D34">5. Distinguish confirmed commit from uncertainty</text>
-<text x="168" y="1212" font-size="22" font-weight="400" fill="#173D34">Acknowledged commit returns validated rows or affected count.</text>
-<text x="168" y="1241" font-size="22" font-weight="400" fill="#173D34">Lost commit acknowledgment becomes SQL_COMMIT_UNKNOWN;</text>
-<text x="168" y="1270" font-size="22" font-weight="400" fill="#173D34">reconcile before retrying.</text>
-<text x="168" y="1299" font-size="18" font-weight="600" fill="#367D68">RESULT • Unknown is not a confirmed rollback</text>
-<rect x="40" y="1341" width="880" height="136" rx="16" fill="#FFF7E5"/>
-<g transform="translate(59 1361) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1385" font-size="23" font-weight="700" fill="#367D68">Two databases mean two boundaries</text>
-<text x="60" y="1424" font-size="21" font-weight="400" fill="#173D34">A durable Weave task record does not make the external database part of</text>
-<text x="60" y="1453" font-size="21" font-weight="400" fill="#173D34">Weave’s transaction.</text><g id="takeaway">
-<rect x="0" y="1527" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1556" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1587" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">An uncertain SQL commit needs reconciliation before another attempt.</text>
+<rect x="40" y="1130" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="1147" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 1162) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
+<text x="168" y="1173" font-size="25" font-weight="700" fill="#272820">5. Distinguish confirmed commit from uncertainty</text>
+<text x="168" y="1212" font-size="22" font-weight="400" fill="#272820">Acknowledged commit returns validated rows or affected count.</text>
+<text x="168" y="1241" font-size="22" font-weight="400" fill="#272820">Lost commit acknowledgment becomes SQL_COMMIT_UNKNOWN;</text>
+<text x="168" y="1270" font-size="22" font-weight="400" fill="#272820">reconcile before retrying.</text>
+<text x="168" y="1299" font-size="18" font-weight="600" fill="#855414">RESULT • Unknown is not a confirmed rollback</text>
+<rect x="40" y="1341" width="880" height="136" rx="16" fill="#FFF0D8"/>
+<g transform="translate(59 1361) scale(0.7)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1385" font-size="23" font-weight="700" fill="#855414">Two databases mean two boundaries</text>
+<text x="60" y="1424" font-size="21" font-weight="400" fill="#272820">A durable Weave task record does not make the external database part of</text>
+<text x="60" y="1453" font-size="21" font-weight="400" fill="#272820">Weave’s transaction.</text><g id="takeaway">
+<rect x="0" y="1527" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1556" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1587" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">An uncertain SQL commit needs reconciliation before another attempt.</text>
 </g>
 </svg>

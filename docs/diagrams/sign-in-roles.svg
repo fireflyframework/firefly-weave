@@ -18,26 +18,26 @@ SPDX-License-Identifier: Apache-2.0
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1260" viewBox="0 0 1120 1260" role="img" aria-labelledby="title desc">
 <title id="title">Who does what when people connect and sign in</title>
 <desc id="desc">Four separate jobs. An administrator configures token verification with WEAVE_OIDC_PROVIDERS, publishes public sign-in settings and allowed flows with WEAVE_CLIENT_SIGN_IN, registers a public login client with PKCE and loopback callbacks at the identity provider, and links each person and grants access. Each person enters the server address, reviews the identity provider once, signs in at the provider in a browser or with a code, and picks an authorized workspace. Local pairing only connects Studio's page to the Studio host on the same computer and grants nothing on the platform. The platform checks grants on every request; hiding a button in Studio is only a convenience.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.b{font-size:20px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.lbl{font-size:17px}.w{fill:#FFFFFF}.wm{fill:#CEE4D8}.n{font-size:17px;font-weight:700;fill:#FFFFFF}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.ret{fill:none;stroke:#367D68;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.life{fill:none;stroke:#A8C8B9;stroke-width:2;stroke-dasharray:6 6}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.iconw{fill:none;stroke:#FFFFFF;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.halo{paint-order:stroke;stroke:#EEF4F0;stroke-width:7px;stroke-linejoin:round}</style>
-<rect width="1120" height="1150" rx="24" fill="#EEF4F0"/>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.b{font-size:20px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#62645B}.lbl{font-size:17px}.w{fill:#FFFFFF}.wm{fill:#D8D4CA}.n{font-size:17px;font-weight:700;fill:#FFFFFF}.arrow{fill:none;stroke:#62645B;stroke-width:3;marker-end:url(#arrow)}.ret{fill:none;stroke:#62645B;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.life{fill:none;stroke:#BFB8AB;stroke-width:2;stroke-dasharray:6 6}.icon{fill:none;stroke:#62645B;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.iconw{fill:none;stroke:#FFFFFF;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.halo{paint-order:stroke;stroke:#EAE7DF;stroke-width:7px;stroke-linejoin:round}</style>
+<rect width="1120" height="1150" rx="24" fill="#EAE7DF"/>
 <text class="title" x="40" y="55">Who does what when people connect</text>
 <text class="p" x="40" y="90">An administrator prepares the platform once. Each person then connects and signs in.</text>
 <rect x="40" y="120" width="1040" height="362" rx="18" fill="white"/>
 <g class="icon" transform="translate(62 146)"><path d="M3 2l20-7 20 7v20c0 14-20 24-20 24S3 36 3 22Z"/><path d="M14 18l7 7 13-16"/></g>
 <text class="h" x="124" y="166">Administrator · once per platform</text>
 <text class="small" x="124" y="194">Local development: weave platform setup does steps 1–3 with its own Keycloak; weave platform user, step 4.</text>
-<circle cx="84" cy="231" r="15" fill="#367D68"/><text class="n" x="84" y="237" text-anchor="middle">1</text>
+<circle cx="84" cy="231" r="15" fill="#855414"/><text class="n" x="84" y="237" text-anchor="middle">1</text>
 <text class="b" x="116" y="238">Configure token verification</text>
 <text class="small" x="116" y="264">WEAVE_OIDC_PROVIDERS: issuer, signing keys (JWKS), audience, and which client IDs sign in people.</text>
-<circle cx="84" cy="289" r="15" fill="#367D68"/><text class="n" x="84" y="295" text-anchor="middle">2</text>
+<circle cx="84" cy="289" r="15" fill="#855414"/><text class="n" x="84" y="295" text-anchor="middle">2</text>
 <text class="b" x="116" y="296">Publish the sign-in settings</text>
 <text class="small" x="116" y="322">WEAVE_CLIENT_SIGN_IN: the login client, scopes, and allowed flows (browser, device). No secrets.</text>
-<circle cx="84" cy="347" r="15" fill="#367D68"/><text class="n" x="84" y="353" text-anchor="middle">3</text>
+<circle cx="84" cy="347" r="15" fill="#855414"/><text class="n" x="84" y="353" text-anchor="middle">3</text>
 <text class="b" x="116" y="354">Register the login client at your identity provider</text>
 <text class="small" x="116" y="380">A public client with PKCE S256, plus the device code grant if people may sign in with a code.</text>
 <text class="small" x="116" y="404">Callbacks http://127.0.0.1/callback and http://[::1]/callback, accepting any loopback port.</text>
-<circle cx="84" cy="429" r="15" fill="#367D68"/><text class="n" x="84" y="435" text-anchor="middle">4</text>
+<circle cx="84" cy="429" r="15" fill="#855414"/><text class="n" x="84" y="435" text-anchor="middle">4</text>
 <text class="b" x="116" y="436">Link each person and grant access</text>
 <text class="small" x="116" y="462">Link provider, issuer, and subject to a principal; grant roles in a tenant, project, or environment.</text>
 <path class="arrow" d="M84 482V548"/>
@@ -47,26 +47,26 @@ SPDX-License-Identifier: Apache-2.0
 <g class="icon" transform="translate(64 578)"><circle cx="20" cy="10" r="9"/><path d="M2 43V31c0-15 36-15 36 0v12"/></g>
 <text class="h" x="124" y="602">Person · on each computer</text>
 <text class="small" x="124" y="630">In Studio, choose Connect to a platform. In a terminal, run weave auth setup SERVER.</text>
-<circle cx="84" cy="669" r="15" fill="#367D68"/><text class="n" x="84" y="675" text-anchor="middle">1</text>
+<circle cx="84" cy="669" r="15" fill="#855414"/><text class="n" x="84" y="675" text-anchor="middle">1</text>
 <text class="b" x="116" y="676">Enter the server address</text>
 <text class="small" x="116" y="702">For example weave.example.com. HTTPS is required except on this computer (loopback).</text>
-<circle cx="84" cy="727" r="15" fill="#367D68"/><text class="n" x="84" y="733" text-anchor="middle">2</text>
+<circle cx="84" cy="727" r="15" fill="#855414"/><text class="n" x="84" y="733" text-anchor="middle">2</text>
 <text class="b" x="116" y="734">Review the identity provider once</text>
 <text class="small" x="116" y="760">The saved platform pins the issuer and login client; changing them needs a new review.</text>
-<circle cx="84" cy="785" r="15" fill="#367D68"/><text class="n" x="84" y="791" text-anchor="middle">3</text>
+<circle cx="84" cy="785" r="15" fill="#855414"/><text class="n" x="84" y="791" text-anchor="middle">3</text>
 <text class="b" x="116" y="792">Sign in at your identity provider</text>
 <text class="small" x="116" y="818">In a browser on this computer, or with a code on another device. Weave never sees your password.</text>
-<circle cx="84" cy="843" r="15" fill="#367D68"/><text class="n" x="84" y="849" text-anchor="middle">4</text>
+<circle cx="84" cy="843" r="15" fill="#855414"/><text class="n" x="84" y="849" text-anchor="middle">4</text>
 <text class="b" x="116" y="850">Pick an authorized workspace</text>
 <text class="small" x="116" y="876">You see only the tenants, projects, and environments your grants allow.</text>
-<rect x="40" y="916" width="510" height="204" rx="16" fill="#FFF7E5"/>
+<rect x="40" y="916" width="510" height="204" rx="16" fill="#FFF0D8"/>
 <g class="icon" transform="translate(64 940)"><rect width="44" height="32" rx="4"/><path d="M0 10h44M13 40h18M22 32v8"/></g>
 <text class="h" x="128" y="966">Local pairing is not sign-in</text>
 <text class="p" x="64" y="1012">Studio’s page pairs with the Studio host</text>
 <text class="p" x="64" y="1040">on this computer (127.0.0.1 only). In a</text>
 <text class="p" x="64" y="1068">browser, type the one-time terminal code.</text>
 <text class="small" x="64" y="1100">Pairing grants nothing on the platform.</text>
-<rect x="570" y="916" width="510" height="204" rx="16" fill="#173D34"/>
+<rect x="570" y="916" width="510" height="204" rx="16" fill="#272820"/>
 <g class="iconw" transform="translate(594 940)"><path d="M6 14V9a14 14 0 0 1 28 0v5"/><rect x="0" y="14" width="40" height="28" rx="5"/><path d="M20 24v8"/></g>
 <text class="h w" x="656" y="966">The platform decides access</text>
 <text class="p w" x="594" y="1012">Server-side grants check every request</text>
@@ -74,8 +74,8 @@ SPDX-License-Identifier: Apache-2.0
 <text class="p w" x="594" y="1068">Provider role claims do not grant access.</text>
 <text class="small wm" x="594" y="1100">Hidden buttons in Studio are only a convenience.</text>
 <g id="takeaway">
-<rect x="0" y="1162" width="1120" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1191" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1222" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Sign-in proves who you are. Only the platform’s grants decide what you may do.</text>
+<rect x="0" y="1162" width="1120" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1191" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1222" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Sign-in proves who you are. Only the platform’s grants decide what you may do.</text>
 </g>
 </svg>

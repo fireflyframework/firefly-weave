@@ -29,6 +29,8 @@ exclude_docs: |
   implementation-status.md
   superpowers/
   .superpowers/
+not_in_nav: |
+  guides/lumi.md
 hooks:
   - scripts/docs_hook.py
 validation:
@@ -45,23 +47,12 @@ theme:
   name: material
   language: en
   font: false
-  logo: assets/weave-logo-reversed.svg
-  favicon: assets/weave-logo.svg
+  logo: assets/brand/weave-lockup-small-reversed.svg
+  favicon: assets/brand/firefly-icon.svg
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark appearance
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: custom
-      accent: custom
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to light appearance
+    scheme: slate
+    primary: custom
+    accent: custom
   features:
     - navigation.tabs
     - navigation.sections
@@ -113,7 +104,7 @@ nav:
       - Run AI steps: guides/ai-workers.md
       - Run AI tasks with Ollama: guides/ollama.md
       - Share context between AI steps: guides/shared-ai-context.md
-      - Configure Lumi assistance: guides/lumi.md
+      - Use Weave AI: guides/weave-ai.md
       - Manage runs and business cases: guides/execution-management.md
       - Resolve incidents, cancel, and retry: reference/incident-operations.md
       - See a workflow as a graph: guides/workflow-graphs.md

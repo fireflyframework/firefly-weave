@@ -90,7 +90,7 @@ def test_root_help_explains_public_command_families_without_generated_boilerplat
 
 
 @pytest.mark.parametrize("width", [32, 48, 80])
-def test_help_ascii_banner_and_entry_points_fit_terminal(width):
+def test_help_header_and_entry_points_fit_terminal(width):
     result = CliRunner().invoke(cli, ["--help"], prog_name="weave", terminal_width=width)
     assert result.exit_code == 0, result.output
     banner = result.output.split("Usage:")[0]
@@ -101,6 +101,16 @@ def test_help_ascii_banner_and_entry_points_fit_terminal(width):
     assert "weave docs platform" in result.output
     assert "worker deploy" in result.output
     assert "Start here" in result.output
+
+
+@pytest.mark.parametrize(
+    ("width", "header"),
+    [(59, ["Firefly Weave", ""]), (60, ["Firefly Weave", "Workflow orchestration and integration", ""])],
+)
+def test_help_descriptor_appears_from_60_columns(width, header):
+    result = CliRunner().invoke(cli, ["--help"], prog_name="weave", terminal_width=width)
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[: len(header)] == header
 
 
 @pytest.mark.parametrize("path", [["init"], ["docs"], ["worker", "deploy"], ["workflow", "simulate"]])

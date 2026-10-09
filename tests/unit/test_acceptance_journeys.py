@@ -129,7 +129,7 @@ def test_the_committed_map_is_valid():
     enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
     assert enablement.capabilities["acceptance-foundations"] is True
     landed = [name for name, value in enablement.capabilities.items() if value]
-    assert landed == ["ai-gateway", "acceptance-foundations"]
+    assert landed == ["text-operators", "ai-gateway", "acceptance-foundations"]
     assert enablement.journey_steps("J0") == tuple(f"J0.{n}" for n in range(1, 15))
     assert enablement.profiles["pr"] == ("J0", "J1", "J2", "J3", "J5", "J8", "J9")
     assert enablement.criteria["J3"] == ("SC1", "SC3", "SC7")

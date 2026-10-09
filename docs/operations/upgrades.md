@@ -37,13 +37,14 @@ the desktop app never migrates a platform.
 | alpha5 | `0025_run_lifecycle` | New migrations for human tasks, email, run filters, and execution lifecycle state |
 | alpha6 | `0025_run_lifecycle` | macOS packaging correction; no new migration |
 | alpha7 | `0025_run_lifecycle` | No new migration; adds optional server settings for [published sign-in](#after-the-upgrade-clients-and-sign-in) and the executor `build` field, whose default `image` keeps existing executor configuration valid |
-| alpha8 | `0028_files` | Adds decision-table artifacts, separate Lumi configuration, file metadata/chunks/retention, and new scoped file and assistant roles. Existing grants do not automatically gain these roles. |
+| alpha8 | `0028_files` | Adds decision-table artifacts, separate Weave AI configuration, file metadata/chunks/retention, and new scoped file and assistant roles. Existing grants do not automatically gain these roles. |
 | alpha9 | `0028_files` | No new schema migration. Adds guided AI configuration and renewable worker OAuth2 authentication. |
-| alpha10 | `0028_files` | No new schema migration. Restores Lumi access through the Studio host; explicit selection supersedes pending canvas fitting, and initial empty fields no longer steal focus. |
+| alpha10 | `0028_files` | No new schema migration. Restores Weave AI access through the Studio host; explicit selection supersedes pending canvas fitting, and initial empty fields no longer steal focus. |
 | alpha11 | `0028_files` | Studio AI setup wizards and explicit same-execution shared AI context; no server behavior or schema change. Updating the local Studio host and assets does not require redeploying an alpha10 server. |
 | alpha12 | `0030_worker_presence` | Adds scoped deployment Operations persistence, runner fencing and reconciliation, and worker presence/drain state. Explicitly migrate the server before using Operations; new roles are never granted automatically. Provider credentials stay on separately operated runners. |
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
+| alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -218,7 +219,7 @@ older server may omit this declaration; omission does not imply readiness.
 | --- | --- |
 | `authority_missing`, `inventory_incomplete` | Repair catalog connectivity or authority and rerun the scan |
 | `policy_mismatch` | Restore the policy matching the database; never edit counters or fingerprints |
-| `ir_unsupported`, `artifact_invalid` | Inspect the pinned definition and select a compatible artifact; preserve historical bytes |
+| `ir_unsupported`, `artifact_invalid` | Inspect the pinned definition and select a compatible artifact; preserve historical bytes. `ir_unsupported` also covers language features the server does not list in `language_features`, for example `text.concat` after a rollback: upgrade the server instead of editing the artifact. Runs in progress that use such a feature [wait for a server that runs it](#runs-that-need-a-newer-server), unless the server predates language features. |
 | `action_unavailable`, `connector_unsupported`, `provider_requirement_unsupported` | Restore the exact required release or package, or use an explicit supported migration |
 | `worker_protocol_unsupported` | Use a compatible worker and server convention; never relabel an existing release |
 | `legacy_policy_blocked` | Inspect historical classification limits; preserve withheld evidence instead of bypassing policy |
@@ -231,6 +232,43 @@ Restricted mode never permits arbitrary execution, and you must not rewrite
 retained definitions to silence findings. See
 [incident operations](../reference/incident-operations.md) and
 [retention](retention.md) for the supported controls.
+
+### Runs that need a newer server
+
+A server that lists `language_features` in its capabilities, but not a feature
+that a run in progress uses, cannot run that run. This happens, for example,
+after you roll back from a release that added `flow.forEach` to one that did
+not. The server leaves the run waiting and records nothing about it:
+
+- It never offers the run's tasks to workers, applies its deadlines, or retries
+  its attempts, and it never blocks the run. The run does not hold back the
+  deadlines of other runs.
+- Compatibility reports the run as `ir_unsupported`, so the server stays
+  restricted while the run is in progress. Other runs then advance only through
+  cancellation and terminal deadlines, such as overall timeouts, and workers
+  cannot claim tasks, renew leases, or report results.
+- Reading the run, sending it a signal, or reporting a task result for it
+  answers HTTP 422 `WV-IR-UNSUPPORTED` with `result.missing_features`, and run
+  lists show it, and incident lists its incidents, as unavailable. Reading its
+  pinned definition version answers the same way, and catalog lists show that
+  version as an unavailable item with `reason: ir_unsupported` and the same
+  `missing_features`. Runs with unavailable legacy evidence still answer HTTP
+  409 `WV-LEGACY-UNAVAILABLE`.
+
+Upgrade the server again to resume the run. Deadlines that passed in the
+meantime apply then, and an expired lease is recovered like any lost attempt:
+an action that is safe to repeat is retried while it has attempts and time
+left, and otherwise an incident opens for you to reconcile. Cancelling the run
+on the older server records only the cancellation, as for
+[runs with unavailable legacy evidence](../reference/incident-operations.md#runs-with-unavailable-legacy-evidence),
+and its state stays withheld after you upgrade. To keep a run's full record,
+let it finish or cancel it before you roll back.
+
+**A server whose capabilities do not list `language_features` predates
+language features.** It cannot recognize such a run, treats it as legacy
+evidence, and can block it permanently; a blocked run's tasks are never offered
+to workers again, even after you upgrade. Before you roll back to such a
+server, let every run that uses a language feature finish, or cancel it.
 
 ## Verify before admitting traffic
 
@@ -253,6 +291,70 @@ Perform these checks in order for each project and execution path:
 Do not infer provider delivery from API readiness alone. Keep the prior artifact,
 the source database, the backup, and protected migration evidence until the
 upgraded deployment and its recovery procedure have been verified.
+
+## What changes in alpha15
+
+Alpha15 adds no schema migration: the head stays `0030_worker_presence`, as in
+alpha12 to alpha14, and no role is added or changed. Follow the procedure above
+as usual; the migration command reports the schema as current. Then check these
+changes before you reopen traffic:
+
+- **Upgrade CLIs and SDKs with the server.** Connection test answers carry a new
+  `encrypted` field, `false` for an `http://` connection. CLIs and SDKs from
+  alpha14 or earlier cannot read `weave connections test` answers for HTTP
+  connections from an alpha15 server. Catalog list pages can also contain a new
+  item for a version the server does not run (`unavailable: true`,
+  `reason: ir_unsupported`, `missing_features`), and older SDKs and CLIs reject
+  such a page.
+- **Reads of versions and runs the server cannot run answer 422.** Reading a
+  definition version that needs a language feature the server does not list, or
+  repeating the publish request that created it, answers HTTP 422
+  `WV-IR-UNSUPPORTED` with `result.missing_features` instead of HTTP 409
+  `WV-LEGACY-UNAVAILABLE`. Reading a run that waits for an upgrade, sending it a
+  signal, or reporting a task result for it answers the same way. Runs with
+  unavailable legacy evidence still answer HTTP 409 `WV-LEGACY-UNAVAILABLE`.
+  Treat the 422 as "this server is too old", not as lost data.
+- **`email_receipts.dispatch` can answer 429.** When Weave refuses the dispatch
+  for capacity, the operation answers HTTP 429 (`WV-OPERATION-CAPACITY` or
+  `WV-REQUEST-CAPACITY`) with `Retry-After`, where it used to answer HTTP 200
+  with state `blocked`. The receipt keeps its state, and the next pending scan
+  dispatches it. A script that read `blocked` from that answer should retry the
+  429 instead.
+- **Native executors run up to their configured capacity.** In-process native
+  connector calls no longer share the two execution work slots of API requests.
+  Each `WEAVE_NATIVE_EXECUTORS` entry now runs up to its `capacity` at once,
+  where before a third concurrent call failed. Before you restart, check that
+  each entry's `capacity` is what the connector's destinations can take.
+- **Runs wait after a rollback instead of being blocked.** An alpha15 server that
+  does not list a language feature that a run in progress uses leaves the run
+  waiting until a server that runs it takes over; see
+  [runs that need a newer server](#runs-that-need-a-newer-server). Alpha14 and
+  earlier predate language features and block such runs permanently. Before you
+  roll back from alpha15 to alpha14, let every run that uses `concat` or `join`
+  finish, or cancel it.
+- **Legacy private-network settings map into the private-origin policy.**
+  `WEAVE_HTTP_PRIVATE_NETWORKS`, `WEAVE_MAIL_PRIVATE_NETWORKS`, and
+  `WEAVE_POSTGRES_PRIVATE_NETWORKS` (with `WEAVE_POSTGRES_PLAINTEXT_NETWORKS`)
+  keep their reach. At startup the API maps each one that is set to "Legacy
+  setting" entries of the same policy that a `WEAVE_PRIVATE_ORIGINS_FILE` feeds,
+  and logs a `private_origins.legacy` warning that names the setting. Keep using
+  these settings in deployments; the private-origin file is what
+  `weave platform up --allow-private-origin` writes for the Docker development
+  platform. All four are now parsed strictly: a CIDR with host bits set, such as
+  `10.0.0.1/8` instead of `10.0.0.0/8`, or more than 128 networks stops the API
+  at startup, so check their values before you restart.
+- **IR `weave/ir-v1alpha4` appears only with text operators.** A workflow that
+  uses `concat` or `join` compiles to `weave/ir-v1alpha4` with a `features`
+  list. Every other workflow keeps its IR version and digest, so existing
+  activations and pinned artifacts are unaffected. Alpha14 and earlier servers
+  refuse v1alpha4 artifacts: publish and activate such workflows only once every
+  server that runs them is on alpha15. The capabilities response lists
+  `weave/ir-v1alpha4` in `ir_versions` and the features in `language_features`.
+- **Compatibility refusals say when to retry.** `503 WV-COMPATIBILITY` answers
+  now carry `Retry-After` with the seconds until the next automatic rescan.
+- **Workers and local platforms.** The Agentic and Files workers 0.1.7 pin core
+  0.1.0a15. A local platform still has [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade):
+  set up alpha15 from its own checkout in a new directory.
 
 ## After the upgrade: clients and sign-in
 

@@ -122,7 +122,9 @@ def setup(output: Path) -> None:
     while len(components) < 100:
         component = {
             "name": click.prompt("Service or deployment name"),
-            "kind": click.prompt("Component role", type=click.Choice(["api", "worker", "lumi"])),
+            "kind": click.prompt(
+                "Component role (lumi = Weave AI gateway)", type=click.Choice(["api", "worker", "lumi"])
+            ),
             "configuration": click.prompt("Local configuration alias", default="current"),
         }
         if adapter in {"kubernetes", "azure-container-apps"}:

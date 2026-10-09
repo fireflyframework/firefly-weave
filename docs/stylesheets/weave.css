@@ -16,52 +16,89 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 
-:root {
-  --md-text-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --md-code-font: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  --md-primary-fg-color: #173d34;
-  --md-primary-fg-color--light: #367d68;
-  --md-primary-fg-color--dark: #123229;
-  --md-accent-fg-color: #28644f;
+/* Manrope (SIL Open Font License 1.1, assets/fonts/manrope/OFL.txt), served by this site. */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("../assets/fonts/manrope/manrope-latin-ext-wght-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-[data-md-color-scheme="default"] {
-  --md-default-fg-color: #253e36;
-  --md-default-fg-color--light: #4d655d;
-  --md-default-bg-color: #ffffff;
-  --md-code-bg-color: #eef4f0;
-  --md-typeset-a-color: #28644f;
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("../assets/fonts/manrope/manrope-latin-wght-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* One dark scheme on the brand charcoal; diagrams keep their own paper panels. */
+:root,
 [data-md-color-scheme="slate"] {
-  --md-hue: 157;
-  --md-default-bg-color: #162a24;
-  --md-default-fg-color: #eef4f0;
-  --md-default-fg-color--light: #b9cec4;
-  --md-code-bg-color: #20382f;
-  --md-typeset-a-color: #91d3b5;
-  --md-accent-fg-color: #a7e6c9;
+  --md-text-font: "Manrope";
+  --md-code-font: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --md-primary-fg-color: #10110f;
+  --md-primary-fg-color--light: #1a1b17;
+  --md-primary-fg-color--dark: #10110f;
+  --md-primary-bg-color: #f3f1eb;
+  --md-primary-bg-color--light: rgb(243 241 235 / 0.7);
+  --md-default-bg-color: #10110f;
+  --md-default-fg-color: #f3f1eb;
+  --md-default-fg-color--light: #bfb8ab;
+  --md-code-bg-color: #1a1b17;
+  --md-typeset-a-color: #facc8a;
+  --md-accent-fg-color: #ffb34a;
+  --md-accent-fg-color--transparent: rgb(255 179 74 / 0.1);
+  --md-typeset-mark-color: rgb(255 179 74 / 0.3);
+  --md-footer-bg-color: #10110f;
+  --md-footer-bg-color--dark: #10110f;
+  --md-footer-fg-color: #f3f1eb;
 }
 
-.md-header, .md-tabs { background-color: #173d34; }
-.md-header__button.md-logo img { width: 1.9rem; height: 1.9rem; }
-.md-header__title { font-weight: 650; letter-spacing: -.025em; }
+.md-header { border-bottom: 1px solid #474a42; }
+/* The small lockup at X = 11 px: 248.25 units x 11 / 108 = 25.28 px high and 1368.66 x 11 / 108 = 139.4 px wide, leaving
+   1X above and below. The drawer rule repeats Material's own selector so this later stylesheet wins. */
+.md-header__button.md-logo img,
+.md-nav__title .md-nav__button.md-logo img { height: 25.28px; width: auto; }
+/* Where the header shows the lockup, it names the product; narrower screens keep the site name. The page title still
+   appears on scroll. */
+@media screen and (min-width: 76.25em) {
+  .md-header__title .md-header__topic:first-child { visibility: hidden; }
+}
+.md-header__title { font-weight: 600; letter-spacing: -.025em; }
 .md-grid { max-width: 76rem; }
 .md-typeset { font-size: .82rem; line-height: 1.7; }
 .md-typeset h1 { color: var(--md-default-fg-color); font-weight: 700; letter-spacing: -.035em; }
-.md-typeset h2 { font-weight: 650; letter-spacing: -.02em; }
-.md-typeset h3 { font-weight: 650; }
+.md-typeset h2 { font-weight: 600; letter-spacing: -.02em; }
+.md-typeset h3 { font-weight: 600; }
 .md-typeset p, .md-typeset ul, .md-typeset ol { max-width: 78ch; }
 .md-typeset a { text-underline-offset: .16em; }
 .md-typeset p a, .md-typeset li a { text-decoration: underline; }
 .md-typeset a.headerlink { text-decoration: none; }
-.md-typeset pre { border: 1px solid #367d6833; border-radius: .2rem; }
+.md-typeset pre { border: 1px solid #474a42; border-radius: .2rem; }
 .md-typeset table:not([class]) { font-size: .74rem; }
 .md-typeset table:not([class]) th { background: var(--md-code-bg-color); }
-.md-typeset img[src*="diagrams/"] { background: #fff; border-radius: .2rem; }
+/* Diagrams stay light, each on its own paper panel. */
+.md-typeset img[src*="diagrams/"] { background: #f3f1eb; border-radius: 6px; }
+/* The brand page shows both lockups 320 px wide. The source links end in GitHub's theme fragments, so these selectors
+   match inside the URL. The header logo sits outside .md-typeset and keeps its own size. Material hides images with
+   those fragments for the other color scheme, so the page shows both lockups on purpose. */
+[data-md-color-scheme] .md-typeset img[src*="weave-lockup-reversed.svg"],
+[data-md-color-scheme] .md-typeset img[src*="weave-lockup-color.svg"] {
+  display: inline;
+  width: 320px;
+  max-width: 100%;
+  height: auto;
+}
+/* The color lockup is for paper and white surfaces. */
+.md-typeset img[src*="weave-lockup-color.svg"] { background: #f3f1eb; border-radius: 6px; padding: 16px; }
 .md-typeset img[src$="banner.svg"] { width: 100%; height: auto; border-radius: .2rem; }
-.md-nav__link--active { font-weight: 650; }
-.md-footer { background: #173d34; }
+.md-nav__link--active { font-weight: 600; }
 :focus-visible { outline: 3px solid var(--md-accent-fg-color); outline-offset: 3px; }
 
 @media (max-width: 44.984375em) {

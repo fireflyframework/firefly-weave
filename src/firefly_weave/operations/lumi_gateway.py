@@ -58,7 +58,7 @@ class LumiGatewaySettings(BaseModel):
     @model_validator(mode="after")
     def trusted_service(self) -> "LumiGatewaySettings":
         if bool(self.endpoint) != bool(self.token_file):
-            raise ValueError("Lumi gateway endpoint and token file must be configured together")
+            raise ValueError("Weave AI gateway endpoint and token file must be configured together")
         if self.endpoint:
             url = urlsplit(self.endpoint)
             secure = url.scheme == "https" or (url.scheme == "http" and _loopback(url.hostname))
@@ -135,9 +135,9 @@ class LumiGatewayClient:
         credential: str,
     ) -> LumiReply:
         if not self.configured:
-            raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Lumi is not configured")
+            raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Weave AI is not configured")
         if self.active >= self.settings.max_concurrency:
-            raise CatalogError(429, "WV-LUMI-CAPACITY", "Lumi is busy; try again later")
+            raise CatalogError(429, "WV-LUMI-CAPACITY", "Weave AI is busy; try again later")
         self.active += 1
         try:
             assert self.settings.endpoint
@@ -155,9 +155,9 @@ class LumiGatewayClient:
                 raw = await self._post(self.settings.endpoint, body, timeout, 1048576)
             return LumiReply.model_validate_json(raw)
         except TimeoutError:
-            raise CatalogError(504, "WV-LUMI-TIMEOUT", "Lumi did not respond in time") from None
+            raise CatalogError(504, "WV-LUMI-TIMEOUT", "Weave AI did not respond in time") from None
         except Exception:
-            raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Lumi is unavailable") from None
+            raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Weave AI is unavailable") from None
         finally:
             self.active -= 1
 

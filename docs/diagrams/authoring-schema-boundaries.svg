@@ -21,71 +21,71 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1508" viewBox="0 0 960 1508" role="img" aria-labelledby="title desc">
 <title id="title">Check the object you receive and return</title><desc id="desc">Three pairs of cards compare boundaries for the echo workflow, whose input is an object with one required string named message and no extra fields. 1, validate the input: {"message": "Hello"} matches the input schema; {"message": 42} has the wrong type, {"message": "Hi", "x": 1} has an extra field, and {} is missing message, so starting a run fails with WV-RUNTIME-INPUT and no run starts. 2, choose what the transform reads: ref /input copies the entire object, which satisfies the object output schema and compiles; ref /input/message selects only the string, which cannot satisfy an object output schema, so compilation fails with WV-COMP-TYPE_MISMATCH. 3, keep data references and schema references separate: ref is a JSON Pointer into workflow data and never reads a file or runs Python; $ref points inside the schema or to a schema bundle you supply, and Weave never downloads or reads schema files. Values marked x-secret or writeOnly are rejected when present, including null and empty values; optional fields may be absent and defaults do not insert data.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1408" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Check the object you receive and return</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Echo expects an object with one required string named message. Extra fields</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">are rejected.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">COMPARE EACH PAIR  •  Each row explains a different boundary</text>
-<text x="48" y="242" font-size="24" font-weight="700" fill="#173D34">1 • Validate the input</text>
-<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="309" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="22"/><path d="M17 28l8 8 15-17"/></g>
-<text x="58.0" y="366" font-size="24" font-weight="700" fill="#173D34">Accepted input</text>
-<text x="58.0" y="410" font-size="22" font-weight="400" fill="#173D34">{&quot;message&quot;: &quot;Hello&quot;}</text>
-<text x="58.0" y="438" font-size="22" font-weight="400" fill="#173D34">message is present and is a string.</text>
-<text x="58.0" y="496" font-size="18" font-weight="600" fill="#326B88">VALID • Matches the input schema</text>
-<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="309" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="22"/><path d="M20 20l16 16M36 20 20 36"/></g>
-<text x="518.0" y="366" font-size="24" font-weight="700" fill="#173D34">Rejected input</text>
-<text x="518.0" y="410" font-size="22" font-weight="400" fill="#173D34">{&quot;message&quot;: 42}: wrong type</text>
-<text x="518.0" y="438" font-size="22" font-weight="400" fill="#173D34">{&quot;message&quot;: &quot;Hi&quot;, &quot;x&quot;: 1}: extra field</text>
-<text x="518.0" y="466" font-size="22" font-weight="400" fill="#173D34">{}: message is missing</text>
-<text x="518.0" y="496" font-size="18" font-weight="600" fill="#326B88">INVALID • WV-RUNTIME-INPUT; no run starts</text>
-<text x="48" y="574" font-size="24" font-weight="700" fill="#173D34">2 • Choose what the transform reads</text>
-<rect x="40.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="641" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m19 35-5 5c-14 14-28-1-14-14l10-10c10-10 23-2 19 7 M36 21l5-5c14-14 28 1 14 14L45 40c-10 10-23 2-19-7 M18 36l19-17" transform="translate(1 0) scale(.94)"/></g>
-<text x="58.0" y="698" font-size="24" font-weight="700" fill="#173D34">ref: /input</text>
-<text x="58.0" y="742" font-size="22" font-weight="400" fill="#173D34">Copies the entire object.</text>
-<text x="58.0" y="770" font-size="22" font-weight="400" fill="#173D34">The object satisfies the output</text>
-<text x="58.0" y="798" font-size="22" font-weight="400" fill="#173D34">schema.</text>
-<text x="58.0" y="830" font-size="18" font-weight="600" fill="#326B88">COMPILES • ok: true</text>
-<rect x="500.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="641" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m19 35-5 5c-14 14-28-1-14-14l10-10c10-10 23-2 19 7 M36 21l5-5c14-14 28 1 14 14L45 40c-10 10-23 2-19-7 M18 36l19-17" transform="translate(1 0) scale(.94)"/></g>
-<text x="518.0" y="698" font-size="24" font-weight="700" fill="#173D34">ref: /input/message</text>
-<text x="518.0" y="742" font-size="22" font-weight="400" fill="#173D34">Selects only the string inside it.</text>
-<text x="518.0" y="770" font-size="22" font-weight="400" fill="#173D34">A bare string cannot satisfy an</text>
-<text x="518.0" y="798" font-size="22" font-weight="400" fill="#173D34">object output schema.</text>
-<text x="518.0" y="830" font-size="18" font-weight="600" fill="#326B88">FAILS • WV-COMP-TYPE_MISMATCH</text>
-<text x="48" y="906" font-size="24" font-weight="700" fill="#173D34">3 • Keep data references and schema references separate</text>
-<rect x="40.0" y="927" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="973" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 950) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
-<text x="58.0" y="1030" font-size="24" font-weight="700" fill="#173D34">ref selects workflow data</text>
-<text x="58.0" y="1074" font-size="22" font-weight="400" fill="#173D34">/input/message is a JSON Pointer</text>
-<text x="58.0" y="1102" font-size="22" font-weight="400" fill="#173D34">into workflow data. It never reads a</text>
-<text x="58.0" y="1130" font-size="22" font-weight="400" fill="#173D34">file or runs Python.</text>
-<rect x="500.0" y="927" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="973" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 950) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
-<text x="518.0" y="1030" font-size="24" font-weight="700" fill="#173D34">$ref selects a schema</text>
-<text x="518.0" y="1074" font-size="22" font-weight="400" fill="#173D34">Points inside the schema or to a</text>
-<text x="518.0" y="1102" font-size="22" font-weight="400" fill="#173D34">schema bundle you supply. Weave</text>
-<text x="518.0" y="1130" font-size="22" font-weight="400" fill="#173D34">never downloads or reads schema</text>
-<text x="518.0" y="1158" font-size="22" font-weight="400" fill="#173D34">files.</text>
-<rect x="40" y="1228" width="880" height="136" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1248) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1272" font-size="23" font-weight="700" fill="#326B88">Classified data is checked too</text>
-<text x="60" y="1311" font-size="21" font-weight="400" fill="#173D34">Present values marked x-secret or writeOnly are rejected, including null and</text>
-<text x="60" y="1340" font-size="21" font-weight="400" fill="#173D34">empty values. Optional fields may be absent; defaults do not insert data.</text><g id="takeaway">
-<rect x="0" y="1414" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1443" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1474" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Check the data at each boundary, not just the schema that describes it.</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1408" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Check the object you receive and return</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">Echo expects an object with one required string named message. Extra fields</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">are rejected.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">COMPARE EACH PAIR  •  Each row explains a different boundary</text>
+<text x="48" y="242" font-size="24" font-weight="700" fill="#272820">1 • Validate the input</text>
+<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="309" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 286) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="22"/><path d="M17 28l8 8 15-17"/></g>
+<text x="58.0" y="366" font-size="24" font-weight="700" fill="#272820">Accepted input</text>
+<text x="58.0" y="410" font-size="22" font-weight="400" fill="#272820">{&quot;message&quot;: &quot;Hello&quot;}</text>
+<text x="58.0" y="438" font-size="22" font-weight="400" fill="#272820">message is present and is a string.</text>
+<text x="58.0" y="496" font-size="18" font-weight="600" fill="#4A5D65">VALID • Matches the input schema</text>
+<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="309" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 286) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="22"/><path d="M20 20l16 16M36 20 20 36"/></g>
+<text x="518.0" y="366" font-size="24" font-weight="700" fill="#272820">Rejected input</text>
+<text x="518.0" y="410" font-size="22" font-weight="400" fill="#272820">{&quot;message&quot;: 42}: wrong type</text>
+<text x="518.0" y="438" font-size="22" font-weight="400" fill="#272820">{&quot;message&quot;: &quot;Hi&quot;, &quot;x&quot;: 1}: extra field</text>
+<text x="518.0" y="466" font-size="22" font-weight="400" fill="#272820">{}: message is missing</text>
+<text x="518.0" y="496" font-size="18" font-weight="600" fill="#4A5D65">INVALID • WV-RUNTIME-INPUT; no run starts</text>
+<text x="48" y="574" font-size="24" font-weight="700" fill="#272820">2 • Choose what the transform reads</text>
+<rect x="40.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="641" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 618) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m19 35-5 5c-14 14-28-1-14-14l10-10c10-10 23-2 19 7 M36 21l5-5c14-14 28 1 14 14L45 40c-10 10-23 2-19-7 M18 36l19-17" transform="translate(1 0) scale(.94)"/></g>
+<text x="58.0" y="698" font-size="24" font-weight="700" fill="#272820">ref: /input</text>
+<text x="58.0" y="742" font-size="22" font-weight="400" fill="#272820">Copies the entire object.</text>
+<text x="58.0" y="770" font-size="22" font-weight="400" fill="#272820">The object satisfies the output</text>
+<text x="58.0" y="798" font-size="22" font-weight="400" fill="#272820">schema.</text>
+<text x="58.0" y="830" font-size="18" font-weight="600" fill="#4A5D65">COMPILES • ok: true</text>
+<rect x="500.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="641" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 618) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m19 35-5 5c-14 14-28-1-14-14l10-10c10-10 23-2 19 7 M36 21l5-5c14-14 28 1 14 14L45 40c-10 10-23 2-19-7 M18 36l19-17" transform="translate(1 0) scale(.94)"/></g>
+<text x="518.0" y="698" font-size="24" font-weight="700" fill="#272820">ref: /input/message</text>
+<text x="518.0" y="742" font-size="22" font-weight="400" fill="#272820">Selects only the string inside it.</text>
+<text x="518.0" y="770" font-size="22" font-weight="400" fill="#272820">A bare string cannot satisfy an</text>
+<text x="518.0" y="798" font-size="22" font-weight="400" fill="#272820">object output schema.</text>
+<text x="518.0" y="830" font-size="18" font-weight="600" fill="#4A5D65">FAILS • WV-COMP-TYPE_MISMATCH</text>
+<text x="48" y="906" font-size="24" font-weight="700" fill="#272820">3 • Keep data references and schema references separate</text>
+<rect x="40.0" y="927" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="973" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 950) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
+<text x="58.0" y="1030" font-size="24" font-weight="700" fill="#272820">ref selects workflow data</text>
+<text x="58.0" y="1074" font-size="22" font-weight="400" fill="#272820">/input/message is a JSON Pointer</text>
+<text x="58.0" y="1102" font-size="22" font-weight="400" fill="#272820">into workflow data. It never reads a</text>
+<text x="58.0" y="1130" font-size="22" font-weight="400" fill="#272820">file or runs Python.</text>
+<rect x="500.0" y="927" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="973" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 950) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="518.0" y="1030" font-size="24" font-weight="700" fill="#272820">$ref selects a schema</text>
+<text x="518.0" y="1074" font-size="22" font-weight="400" fill="#272820">Points inside the schema or to a</text>
+<text x="518.0" y="1102" font-size="22" font-weight="400" fill="#272820">schema bundle you supply. Weave</text>
+<text x="518.0" y="1130" font-size="22" font-weight="400" fill="#272820">never downloads or reads schema</text>
+<text x="518.0" y="1158" font-size="22" font-weight="400" fill="#272820">files.</text>
+<rect x="40" y="1228" width="880" height="136" rx="16" fill="#E6E8E6"/>
+<g transform="translate(59 1248) scale(0.7)" stroke="#4A5D65" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1272" font-size="23" font-weight="700" fill="#4A5D65">Classified data is checked too</text>
+<text x="60" y="1311" font-size="21" font-weight="400" fill="#272820">Present values marked x-secret or writeOnly are rejected, including null and</text>
+<text x="60" y="1340" font-size="21" font-weight="400" fill="#272820">empty values. Optional fields may be absent; defaults do not insert data.</text><g id="takeaway">
+<rect x="0" y="1414" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1443" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1474" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Check the data at each boundary, not just the schema that describes it.</text>
 </g>
 </svg>
