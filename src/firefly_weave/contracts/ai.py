@@ -24,7 +24,7 @@ from the step or connection, never from a provider response.
 from collections.abc import Mapping
 from typing import Literal, NamedTuple
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from firefly_weave.contracts.definitions import ContractModel
 
@@ -112,3 +112,26 @@ class AIConnectionTestResult(ContractModel):
     model: str = Field(min_length=1, max_length=200)
     tool_calling: ToolCalling = "unknown"
     context_tokens: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+
+
+class AIModel(ContractModel):
+    """Allowlisted model facts returned by discovery."""
+
+    name: str = Field(min_length=1, max_length=200, pattern=MODEL_NAME_PATTERN)
+    approved: bool
+    available: bool
+    tools: Literal["yes", "no", "unknown"] = "unknown"
+    context_tokens: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+    size_bytes: int | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
+    family: str | None = Field(default=None, max_length=100, exclude_if=lambda value: value is None)
+
+
+class GatewayModelList(ContractModel):
+    discovery: Literal["ok"] | AIErrorCode
+    models: list[AIModel] = Field(default_factory=list, max_length=150)
+
+    @model_validator(mode="after")
+    def unique_names(self) -> "GatewayModelList":
+        if len({row.name for row in self.models}) != len(self.models):
+            raise ValueError("Each model appears once")
+        return self

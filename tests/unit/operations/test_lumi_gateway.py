@@ -352,3 +352,231 @@ async def test_a_gateway_answer_that_is_not_an_object_is_unavailable(tmp_path, a
             {"endpoint": "http://ollama:11434/v1"}, None, provider="openai-chat", model=None, probe_tools=False
         )
     assert (failed.value.status, failed.value.code) == (503, "WV-AI-GATEWAY-UNAVAILABLE") and client.active == 0
+
+
+MODEL = {"name": "qwen3:4b", "approved": True, "available": True, "tools": "yes"}
+MODELS = {"discovery": "ok", "models": [MODEL]}
+
+
+def discovery_client(tmp_path, transport, *, max_concurrency=1):
+    return LumiGatewayClient(
+        LumiGatewaySettings(
+            endpoint="https://trusted.invalid/v1/lumi",
+            token_file=service_token(tmp_path),
+            max_concurrency=max_concurrency,
+        ),
+        transport=transport,
+    )
+
+
+async def test_discovery_posts_to_the_sibling_route_and_rereads_rotated_tokens(tmp_path):
+    from datetime import UTC, datetime
+
+    seen = []
+
+    def respond(request):
+        seen.append(request)
+        return httpx.Response(200, json=MODELS)
+
+    client = discovery_client(tmp_path, httpx.MockTransport(respond))
+    before = datetime.now(UTC)
+    result = await client.models({"endpoint": "http://ollama:11434/v1"}, None, provider="openai-chat")
+    after = datetime.now(UTC)
+    assert result.model_dump(mode="json") == MODELS and client.active == 0
+    assert str(seen[0].url) == "https://trusted.invalid/v1/models"
+    body = json.loads(seen[0].content)
+    assert body == {"provider": "openai-chat", "endpoint": "http://ollama:11434/v1", "expires_at": body["expires_at"]}
+    expires = datetime.fromisoformat(body["expires_at"])
+    assert (expires - before).total_seconds() >= 15
+    assert (expires - after).total_seconds() <= 15
+    assert set(seen[0].extensions["timeout"].values()) == {20.0}
+    (tmp_path / "token").write_text("rotated-token")
+    await client.models(
+        {"endpoint": "https://azure.example.com/openai", "apiVersion": "2024-10-21"},
+        "private-key",
+        provider="azure-chat",
+    )
+    assert [request.headers["authorization"] for request in seen] == ["Bearer service-token", "Bearer rotated-token"]
+    body = json.loads(seen[1].content)
+    assert body["credential"] == "private-key" and body["api_version"] == "2024-10-21"
+    assert "private-key" not in str(seen[1].url)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        [],
+        "ok",
+        None,
+        {**MODELS, "credential": "canary"},
+        {"discovery": "ok", "models": [MODEL, MODEL]},
+        {"discovery": "ok", "models": [{**MODEL, "name": "bad name"}]},
+        {"discovery": "ok", "models": [{**MODEL, "available": "true"}]},
+        {"discovery": "ok", "models": [{**MODEL, "prompt": "canary"}]},
+        {"discovery": "ok", "models": [{**MODEL, "name": f"m-{index}"} for index in range(151)]},
+    ],
+)
+async def test_discovery_rejects_malformed_gateway_payloads_without_echoing_them(tmp_path, answer):
+    client = discovery_client(tmp_path, httpx.MockTransport(lambda request: httpx.Response(200, json=answer)))
+    with pytest.raises(CatalogError) as failed:
+        await client.models({"endpoint": "http://ollama:11434/v1"}, None, provider="openai-chat")
+    assert (failed.value.status, failed.value.code) == (503, "WV-AI-GATEWAY-UNAVAILABLE")
+    assert "canary" not in str(failed.value) and client.active == 0
+
+
+@pytest.mark.parametrize("size", [262144, 262145])
+async def test_discovery_enforces_the_streamed_byte_bound(tmp_path, size):
+    payload = json.dumps(MODELS).encode()
+
+    class Stream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield payload
+            yield b" " * (size - len(payload))
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = Stream()
+    client = discovery_client(tmp_path, httpx.MockTransport(lambda request: httpx.Response(200, stream=stream)))
+    if size == 262144:
+        assert (await client.models({"endpoint": "https://cloud.example/v1"}, None, provider="openai-chat")).model_dump(
+            mode="json"
+        ) == MODELS
+    else:
+        with pytest.raises(CatalogError) as failed:
+            await client.models({"endpoint": "https://cloud.example/v1"}, None, provider="openai-chat")
+        assert failed.value.code == "WV-AI-GATEWAY-UNAVAILABLE"
+    assert stream.closed and client.active == 0
+
+
+@pytest.mark.parametrize("status", [302, 500])
+async def test_discovery_never_redirects_or_retries(tmp_path, status):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(status, headers={"Location": "https://foreign.invalid"}, json={"secret": "canary"})
+
+    client = discovery_client(tmp_path, httpx.MockTransport(respond))
+    with pytest.raises(CatalogError) as failed:
+        await client.models({"endpoint": "https://cloud.example/v1"}, None, provider="openai-chat")
+    assert failed.value.code == "WV-AI-GATEWAY-UNAVAILABLE" and "canary" not in str(failed.value)
+    assert len(requests) == 1 and client.active == 0
+
+
+async def test_discovery_without_a_gateway_names_the_missing_gateway():
+    with pytest.raises(CatalogError) as failed:
+        await LumiGatewayClient(LumiGatewaySettings()).models(
+            {"endpoint": "http://ollama:11434/v1"}, None, provider="openai-chat"
+        )
+    assert (failed.value.status, failed.value.code) == (503, "WV-AI-GATEWAY-MISSING")
+
+
+async def test_discovery_cancellation_closes_owned_stream_and_client_and_releases_shared_capacity(tmp_path):
+    entered = asyncio.Event()
+
+    class Stream(httpx.AsyncByteStream):
+        closed = False
+        cancelled = False
+
+        async def __aiter__(self):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled = True
+            yield b""
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = Stream()
+
+    class Transport(httpx.AsyncBaseTransport):
+        closed = False
+        requests = 0
+
+        async def handle_async_request(self, request):
+            self.requests += 1
+            return httpx.Response(200, stream=stream)
+
+        async def aclose(self):
+            self.closed = True
+
+    transport = Transport()
+    client = discovery_client(tmp_path, transport)
+    config = {"endpoint": "http://ollama:11434/v1"}
+    running = asyncio.create_task(client.models(config, None, provider="openai-chat"))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        configuration = LumiConfiguration(
+            revision=1,
+            connection_revision_id=uuid4(),
+            profile={
+                "provider": "openai-chat",
+                "model": "fixture",
+                "options": {"max_tokens": 100},
+                "outputSchema": LUMI_REPLY_SCHEMA,
+            },
+        )
+        for call in (
+            client.models(config, None, provider="openai-chat"),
+            client.test(config, None, provider="openai-chat", model=None, probe_tools=False),
+            client.ask(configuration, LumiAskRequest(message="Help"), [], config, "key"),
+        ):
+            with pytest.raises(CatalogError) as busy:
+                await call
+            assert (busy.value.status, busy.value.code) == (429, "WV-LUMI-CAPACITY")
+    finally:
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+    assert stream.cancelled and stream.closed and transport.closed
+    assert transport.requests == 1 and client.active == 0
+
+
+async def test_discovery_owns_the_outer_deadline_and_closes_the_client(tmp_path, monkeypatch):
+    # Advance only this call's real timeout; preserve the requested provider expiration and transport grace.
+    timeout = asyncio.timeout
+    budgets = []
+
+    def short_timeout(seconds):
+        budgets.append(seconds)
+        return timeout(0.01)
+
+    monkeypatch.setattr(asyncio, "timeout", short_timeout)
+    cancelled = asyncio.Event()
+
+    async def respond(request):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    client = discovery_client(tmp_path, httpx.MockTransport(respond))
+    with pytest.raises(CatalogError) as failed:
+        await client.models({"endpoint": "http://ollama:11434/v1"}, None, provider="openai-chat")
+    assert budgets == [20.0]
+    assert (failed.value.status, failed.value.code) == (504, "WV-AI-GATEWAY-TIMEOUT")
+    assert cancelled.is_set() and client.active == 0
+
+
+async def test_discovery_transport_ignores_environment_proxies(tmp_path, monkeypatch):
+    from firefly_weave.operations import lumi_gateway
+
+    original = httpx.AsyncClient
+    options = []
+
+    def recorded(**kwargs):
+        options.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(lumi_gateway.httpx, "AsyncClient", recorded)
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:8080")
+    client = discovery_client(tmp_path, httpx.MockTransport(lambda request: httpx.Response(200, json=MODELS)))
+    assert (
+        await client.models({"endpoint": "https://cloud.example/v1"}, None, provider="openai-chat")
+    ).discovery == "ok"
+    assert options[0]["trust_env"] is False and options[0]["follow_redirects"] is False

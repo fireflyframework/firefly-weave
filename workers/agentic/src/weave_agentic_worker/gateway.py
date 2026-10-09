@@ -61,6 +61,7 @@ from weave_agentic_worker.discovery import (
     first_model,
     ollama_models,
     provider_models,
+    unique_model_items,
 )
 from weave_agentic_worker.egress import PinnedModelTransport, resolve
 from weave_agentic_worker.errors import classify
@@ -405,7 +406,7 @@ def create_app(
                             for name in listed
                             if name not in names
                         ]
-                return JSONResponse({"discovery": "ok", "models": items})
+                return JSONResponse({"discovery": "ok", "models": unique_model_items(items)})
             except TimeoutError:
                 return JSONResponse({"discovery": "LLM_TIMEOUT", "models": []})
             except ConnectorFailure as error:

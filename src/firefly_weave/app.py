@@ -89,6 +89,7 @@ from firefly_weave.files.service import FileService
 from firefly_weave.files.worker_service import WorkerFileService
 from firefly_weave.observability import OwnedMeterConfiguration, OwnedTracingConfiguration, TelemetryDrops
 from firefly_weave.operations.ai_connections import AIConnectionService, GatewayConnectionTester
+from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.event_delivery import OutboxDispatcher
@@ -193,6 +194,12 @@ def make_app(
     resources = DatabaseResources(settings)
     pyfly.context.container.register_instance(Settings, settings)
     pyfly.context.container.register_instance(LumiGatewayClient, LumiGatewayClient(settings.lumi))
+    pyfly.context.container.register_instance(
+        APIAIPolicy,
+        APIAIPolicy(
+            Path(settings.ai_policy_file) if settings.ai_policy_file is not None else None, settings.private_origins
+        ),
+    )
     pyfly.context.container.register_instance(DatabaseResources, resources)
     registry = registry if registry is not None else ConnectorRegistry(settings.connector_packages)
     pyfly.context.container.register_instance(ConnectorRegistry, registry)
@@ -292,6 +299,7 @@ def make_app(
                 HistoryService,
                 LumiService,
                 LumiController,
+                APIAIPolicy,
                 AIConnectionService,
                 AIController,
                 DebugService,
