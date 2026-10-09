@@ -239,6 +239,7 @@ test("while a simulation runs the canvas offers no + and moves nothing, but stil
     ).toHaveAttribute("aria-disabled", "true");
   }
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
   const slot = canvas.root.locator(".lane-slot");
   await expect(slot).toHaveAttribute("aria-disabled", "true");
   await press(page, slot);
@@ -267,11 +268,12 @@ test("while a simulation runs the canvas offers no + and moves nothing, but stil
   );
   await canvas.tileBody("approval").focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator(".inspector-header h2")).toHaveText(
-    "Wait for signal",
-  );
+  await expect(
+    page.getByRole("dialog", { name: "Step details: approval", exact: true }),
+  ).toBeVisible();
   await canvas.closeInspector();
   const before = (await canvas.tileBody("action-1").boundingBox())!.y;
+  await canvas.tileBody("approval").hover();
   await page.mouse.wheel(0, 120);
   await expect
     .poll(async () => (await canvas.tileBody("action-1").boundingBox())!.y)

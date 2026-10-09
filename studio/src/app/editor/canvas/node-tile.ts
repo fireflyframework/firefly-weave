@@ -81,7 +81,7 @@ export interface TileView {
       @if (v.kind !== "end") {
         <weave-icon class="tile-icon" [name]="v.icon" />
       }
-      @if (v.badge; as badge) {
+      @if (!issueBadge() && v.badge; as badge) {
         <span
           class="tile-badge"
           [attr.data-tone]="badge.tone"
@@ -93,6 +93,28 @@ export interface TileView {
         </span>
       }
     </button>
+    @if (issueBadge(); as badge) {
+      <button
+        type="button"
+        class="tile-issue f-drag-blocker"
+        data-action="issues"
+        [style.--zoom]="zoom()"
+        [attr.tabindex]="v.tabIndex"
+        [attr.aria-label]="'Show issues for ' + v.title + ': ' + badge.text"
+        [attr.title]="badge.text"
+      >
+        <span
+          class="tile-badge"
+          [attr.data-tone]="badge.tone"
+          [attr.data-badge]="badge.kind"
+          aria-hidden="true"
+        >
+          @for (icon of badge.icons; track icon) {
+            <weave-icon [name]="icon" [size]="16" />
+          }
+        </span>
+      </button>
+    }
     @if (v.kind !== "trigger") {
       <span class="handle handle-in" aria-hidden="true"></span>
     }
@@ -115,6 +137,12 @@ export class NodeTile {
   view = input.required<TileView>();
   zoom = input(1);
 
+  issueBadge() {
+    const badge = this.view().badge;
+    return badge && ["error", "setup", "warning"].includes(badge.kind)
+      ? badge
+      : null;
+  }
   labelScale() {
     return labelScale(this.zoom());
   }

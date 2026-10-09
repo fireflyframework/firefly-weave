@@ -25,6 +25,7 @@ export type StepDetailsTab = "parameters" | "settings";
 export type Region = "header" | "input" | "parameters" | "output";
 export type FocusTarget =
   | { kind: "first" }
+  | { kind: "rename" }
   | { kind: "firstRequiredEmpty" }
   | { kind: "field"; id: string; tab: StepDetailsTab }
   | { kind: "region"; region: Region }

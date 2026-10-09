@@ -28,6 +28,7 @@ import {
   signal,
   untracked,
 } from "@angular/core";
+import type { CanvasView } from "../canvas/canvas-view";
 import { HttpActionClient } from "../../integrations/http-action-client";
 import { ConnectorActions } from "./owned/connector-actions";
 import { OwnedDocuments } from "./owned/owned-documents";
@@ -53,6 +54,7 @@ import { loadKindRegistrations } from "./kinds";
 })
 export class StepDetailsMount {
   host = input.required<StepDetailsHost>();
+  canvas = input<CanvasView>();
   readonly details = inject(StepDetailsService);
   readonly ready = signal(false);
   private readonly lifetime = inject(DestroyRef);
@@ -125,24 +127,35 @@ export class StepDetailsMount {
   closed(target: string) {
     this.details.close();
     const host = this.host();
+    const model = host.model;
+    const opened = model.opened;
+    const opening = this.details.opening();
+    const selected = model.selected;
+    const current = () =>
+      !this.lifetime.destroyed &&
+      this.host() === host &&
+      host.model === model &&
+      model.opened === opened &&
+      model.selected === selected &&
+      this.details.opening() === opening &&
+      !this.details.isOpen();
+    const canvas = this.canvas();
+    if (canvas) {
+      canvas.restoreFocus(target, () => current() && this.canvas() === canvas);
+      return;
+    }
     const selector =
       target === "$trigger"
         ? ".start-node button"
         : `[data-outline="${CSS.escape(target)}"]`;
     const opener = document.querySelector<HTMLElement>(selector);
-    if (target === "$trigger" || opener?.getClientRects().length) {
-      const model = host.model;
-      const opened = model.opened;
+    if (opener?.getClientRects().length) {
       setTimeout(() => {
-        if (
-          this.lifetime.destroyed ||
-          this.details.isOpen() ||
-          host.model !== model ||
-          model.opened !== opened
-        )
-          return;
-        document.querySelector<HTMLElement>(selector)?.focus();
+        if (!current()) return;
+        const element = document.querySelector<HTMLElement>(selector);
+        if (element?.isConnected && element.getClientRects().length)
+          element.focus();
       });
-    } else if (!target.startsWith("$")) host.focusStep(target);
+    } else if (!target.startsWith("$") && current()) host.focusStep(target);
   }
 }

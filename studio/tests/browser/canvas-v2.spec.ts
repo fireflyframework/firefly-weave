@@ -378,31 +378,42 @@ test.describe("the left-to-right canvas", () => {
     page,
   }) => {
     const canvas = await openWorkflow(page);
-    const focusedIn = (field: string) =>
-      page.evaluate(
-        (key) => !!document.activeElement?.closest(`[data-field="${key}"]`),
-        field,
-      );
-    await canvas.tileBody("$trigger:manual").click();
-    await expect.poll(() => focusedIn("spec/inputSchema")).toBe(true);
-    await canvas.tileBody("$end").click();
-    await expect.poll(() => focusedIn("spec/output")).toBe(true);
+    for (const [id, title] of [
+      ["$trigger:manual", "Manual form trigger"],
+      ["$end", "End"],
+    ]) {
+      await canvas.tileBody(id).click();
+      await expect(
+        page.getByRole("dialog", { name: /^Step details: / }),
+      ).toHaveCount(0);
+      await canvas.tileBody(id).dblclick();
+      await expect(
+        page.getByRole("dialog", {
+          name: `Step details: ${title}`,
+          exact: true,
+        }),
+      ).toBeVisible();
+      await canvas.closeInspector();
+      await expect(canvas.tileBody(id)).toBeFocused();
+    }
   });
 
-  test("selects a clicked step, shows it in the inspector and makes it the canvas's Tab stop", async ({
+  test("selects a clicked step without opening details and makes it the canvas's Tab stop", async ({
     page,
   }) => {
     const canvas = await openWorkflow(page);
+    await canvas.closeInspector();
     await canvas.tileBody("prepare-request").click();
     await expect(canvas.tileBody("prepare-request")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     await expect(
-      page
-        .getByRole("complementary", { name: "Inspector" })
-        .getByRole("heading", { name: "Transform" }),
-    ).toBeVisible();
+      page.getByRole("complementary", { name: "Inspector" }),
+    ).toBeHidden();
+    await expect(
+      page.getByRole("dialog", { name: /^Step details: / }),
+    ).toHaveCount(0);
     await expect(canvas.tileBody("prepare-request")).toHaveAttribute(
       "tabindex",
       "0",

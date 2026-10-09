@@ -20,7 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 // diagnostics strip. Loaded lazily (@defer) when a workflow opens, so the
 // initial bundle stays small; the shell passes itself as the host and keeps
 // owning the workflow and every command.
-import { ChangeDetectionStrategy, Component, input } from "@angular/core";
+import {
+  ChangeDetectionStrategy,
+  Component,
+  input,
+  viewChild,
+} from "@angular/core";
 import { FFlowModule } from "@foblex/flow";
 import { Icon } from "../icon";
 import { StepDetailsMount } from "../editor/ndv/step-details-mount";
@@ -1234,11 +1239,12 @@ import type { App } from "../app";
         </div>
       }
     </section>
-    <weave-step-details-mount [host]="h" />`,
+    <weave-step-details-mount [host]="h" [canvas]="canvas()" />`,
 })
 export class DesignerView {
   /** The editor shell. */
   host = input.required<App>();
+  readonly canvas = viewChild(CanvasView);
   closeHelp(details: HTMLDetailsElement, event: Event) {
     details.open = false;
     details.querySelector("summary")?.focus();

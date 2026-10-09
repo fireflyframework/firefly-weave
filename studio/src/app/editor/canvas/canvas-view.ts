@@ -256,8 +256,10 @@ export class CanvasView implements OnInit, DoCheck {
   private revealed = "";
   private readonly positions = new WeakMap<LtrTile, Point>();
 
+  private readonly lifetime = inject(DestroyRef);
+
   constructor() {
-    inject(DestroyRef).onDestroy(() => clearTimeout(this.panningTimer));
+    this.lifetime.onDestroy(() => clearTimeout(this.panningTimer));
     inject(FControlSchemeController).setScheme({
       nodeMove: () => false,
       createConnection: () => false,
@@ -696,7 +698,10 @@ export class CanvasView implements OnInit, DoCheck {
       return;
     }
     const action = control.dataset["action"];
-    if (action === "tile") {
+    if (action === "issues") {
+      const id = control.closest<HTMLElement>("[data-tile]")?.dataset["tile"];
+      if (id && event.detail < 2) void this.host().openStep(id, "issues");
+    } else if (action === "tile") {
       const id = control.closest<HTMLElement>("[data-tile]")?.dataset["tile"];
       if (id) void this.openTile(id, event);
     } else if (action === "insert") this.insertAt(control);
@@ -708,6 +713,9 @@ export class CanvasView implements OnInit, DoCheck {
     }
   }
   doubleClick(event: MouseEvent) {
+    if (event.shiftKey || event.ctrlKey || event.metaKey || this.suppressClick)
+      return;
+    if ((event.target as Element).closest(".tile-issue")) return;
     const tile = (event.target as Element)
       .closest(".tile-body")
       ?.closest("[data-tile]");
@@ -719,14 +727,12 @@ export class CanvasView implements OnInit, DoCheck {
     else void this.host().openStep(id, "details");
   }
   /**
-   * A click selects the step and shows its details; with Shift, Ctrl or
-   * Command it adds the step to the selection, or takes it out.
+   * A click selects; with Shift, Ctrl or Command it adds the step to the
+   * selection, or takes it out. Opening belongs to double-click and keys.
    */
   private async openTile(id: string, event: MouseEvent) {
     const h = this.host();
-    if (id.startsWith("$trigger:"))
-      return h.openWorkflowSection("spec/inputSchema");
-    if (id === "$end") return h.openWorkflowSection("spec/output");
+    if (id.startsWith("$trigger:") || id === "$end") return;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggledCovering(this.selection, id, this.places());
       this.seenSelected = this.selection.focus ?? "";
@@ -736,7 +742,7 @@ export class CanvasView implements OnInit, DoCheck {
     }
     this.selection = only(id);
     this.seenSelected = id;
-    await h.selectStep(id, true);
+    await h.selectStep(id, false);
   }
   private insertAt(control: HTMLElement) {
     const h = this.host();
@@ -1254,6 +1260,29 @@ export class CanvasView implements OnInit, DoCheck {
       this.setView({ zoom: this.view.zoom, pan });
   }
 
+  /** Returns from a dialog to a current tile, revealing it after any resize. */
+  restoreFocus(target: string, current: () => boolean) {
+    const id =
+      target === "$trigger"
+        ? this.layout().tiles.find((tile) => tile.id.startsWith("$trigger:"))
+            ?.id
+        : target;
+    if (!id || this.lifetime.destroyed || !current()) return;
+    this.revealTile(id);
+    this.cdr.markForCheck();
+    afterNextRender(
+      () =>
+        setTimeout(() => {
+          if (this.lifetime.destroyed || !current()) return;
+          const tile = this.root().nativeElement.querySelector<HTMLElement>(
+            `[data-tile="${CSS.escape(id)}"] .tile-body`,
+          );
+          if (tile?.isConnected) tile.focus({ preventScroll: true });
+        }),
+      { injector: this.injector },
+    );
+  }
+
   // ---------------------------------------- selection, box and minimap
 
   clearSelection() {
@@ -1295,12 +1324,27 @@ export class CanvasView implements OnInit, DoCheck {
       )
     )
       return;
+    const target = event.target as HTMLElement;
+    const tile = target.classList.contains("tile-body");
+    const wasHeld = this.space;
     this.space = event.type === "keydown";
     if (this.space) {
       if (!event.repeat) this.spacePanned = false;
-    } else if (this.spacePanned) {
-      event.preventDefault();
+      if (tile) event.preventDefault();
+    } else {
+      const panned = this.spacePanned;
       this.spacePanned = false;
+      if (panned || tile) event.preventDefault();
+      if (
+        wasHeld &&
+        !panned &&
+        tile &&
+        !event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      )
+        this.run("openStepDetails", target);
     }
   }
   dragStarted(event: FDragStartedEvent) {

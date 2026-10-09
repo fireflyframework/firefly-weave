@@ -100,6 +100,11 @@ export class CanvasPage {
    * them for a step added with the step picker, so there is nothing to hide.
    */
   async closeInspector() {
+    const details = this.page.getByRole("dialog", { name: /^Step details: / });
+    if (await details.isVisible()) {
+      await details.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(details).toHaveCount(0);
+    }
     const inspector = this.page.getByRole("complementary", {
       name: "Inspector",
     });

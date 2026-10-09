@@ -865,6 +865,14 @@ export class App implements CanvasHost {
     opened: number;
     continueRevision?: number;
   } | null = null;
+  private inspectorRename: {
+    from: string;
+    to: string;
+    model: StructuredCanvasAdapter;
+    opened: number;
+    revision: number;
+    source: string;
+  } | null = null;
   private actionChoiceRevision: number | null = null;
   private committingInspector = false;
   renameDraft = "";
@@ -2049,7 +2057,16 @@ export class App implements CanvasHost {
       const compare = JSON.stringify;
       if (pending.scope === "rename") {
         if (pending.id === pending.text) return;
+        this.inspectorRename = null;
         this.model.renameStep(pending.id, pending.text);
+        this.inspectorRename = {
+          from: pending.id,
+          to: pending.text.trim(),
+          model: this.model,
+          opened: this.model.opened,
+          revision: this.model.revision,
+          source: this.model.source,
+        };
         this.inspectorStepId = this.model.selected;
         this.renameDraft = this.model.selected;
         // Renaming must not remount the grid and erase invalid sibling text.
@@ -3258,6 +3275,12 @@ export class App implements CanvasHost {
   }
   /** The workflow settings, focused on Inputs or Result. */
   async openWorkflowSection(section: WorkflowSection) {
+    if (stepDetailsEnabled(this as StepDetailsHost)) {
+      await this.openStepDetails(
+        section === "spec/inputSchema" ? "$trigger" : "$end",
+      );
+      return;
+    }
     if (!(await this.deselect())) return;
     this.showInspector = true;
     this.cdr.markForCheck();
@@ -3291,7 +3314,35 @@ export class App implements CanvasHost {
     this.moveTo(id, { ...insert, point: { x: 0, y: 0 }, label: "" });
   }
   /** Selects a step and moves focus into its details: their title, or the step name to rename it. */
-  async openStep(id: string, focus: "details" | "rename") {
+  async openStep(id: string, focus: "details" | "rename" | "issues") {
+    // Blur can rename the tile before its double-click reaches the canvas.
+    const renamed = this.inspectorRename;
+    this.inspectorRename = null;
+    if (
+      renamed &&
+      renamed.from === id &&
+      renamed.model === this.model &&
+      renamed.opened === this.model.opened &&
+      renamed.revision === this.model.revision &&
+      renamed.source === this.model.source &&
+      renamed.to === this.model.selected &&
+      !this.nodes.some((node) => node.step.id === id)
+    )
+      id = renamed.to;
+    if (stepDetailsEnabled(this as StepDetailsHost)) {
+      await this.openStepDetails(id, {
+        focus: {
+          kind:
+            focus === "rename"
+              ? "rename"
+              : focus === "issues"
+                ? "firstIssue"
+                : "first",
+        },
+        revealAll: focus === "issues",
+      });
+      return;
+    }
     const node = this.nodes.find((n) => n.step.id === id);
     if (!node) return;
     await this.select(node);

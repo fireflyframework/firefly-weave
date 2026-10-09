@@ -201,6 +201,27 @@ weave-canvas-view,
   }
 }
 
+/* An issue's artwork stays small; its independent button stays finger-sized. */
+.canvas-v2 .tile-issue {
+  position: absolute;
+  top: calc(-0.5 * var(--control-touch) / var(--zoom, 1));
+  right: calc(-0.5 * var(--control-touch) / var(--zoom, 1));
+  width: calc(var(--control-touch) / var(--zoom, 1));
+  height: calc(var(--control-touch) / var(--zoom, 1));
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  pointer-events: auto;
+}
+.canvas-v2 .tile-issue .tile-badge {
+  top: 50%;
+  right: 50%;
+  transform: translate(50%, -50%);
+  pointer-events: none;
+}
+
 /* Corner badge */
 .canvas-v2 .tile-badge {
   position: absolute;
@@ -743,6 +764,7 @@ weave-canvas-view,
     .join-label,
     .lane-slot-label,
     .tile-badge,
+    .tile-issue,
     .handle,
     .sub-node-chip,
     .sub-node-handle,

@@ -63,11 +63,24 @@ test.describe("the canvas keyboard map", () => {
       await expect(canvas.tileBody(id)).toHaveAttribute("aria-pressed", "true");
     }
     await page.keyboard.press("Enter");
-    await expect(page.locator(".inspector-header h2")).toBeFocused();
-    await expect(page.locator(".inspector-header h2")).toHaveText("Decision");
+    const details = page.getByRole("dialog", {
+      name: "Step details: route",
+      exact: true,
+    });
+    await expect(details).toBeVisible();
+    await expect
+      .poll(() =>
+        details.evaluate((dialog) => dialog.contains(document.activeElement)),
+      )
+      .toBe(true);
+    await canvas.closeInspector();
     await canvas.tileBody("approval").focus();
     await page.keyboard.press("F2");
-    await expect(page.locator("#step-name-input")).toBeFocused();
+    await expect(
+      page
+        .getByRole("dialog", { name: "Step details: approval", exact: true })
+        .getByRole("textbox", { name: "Step name" }),
+    ).toBeFocused();
   });
 
   test("arrow keys reveal distant steps with their labels and pointer targets intact", async ({
@@ -131,8 +144,16 @@ test.describe("the canvas keyboard map", () => {
     await name.hover();
     await expect(name).toHaveAttribute("title", last);
     await page.keyboard.press("Enter");
-    await expect(page.locator(".inspector-header h2")).toBeFocused();
-    await expect(page.locator("#step-name-input")).toHaveValue(last);
+    const details = page.getByRole("dialog", {
+      name: `Step details: ${last}`,
+      exact: true,
+    });
+    await expect(details).toBeVisible();
+    await expect
+      .poll(() =>
+        details.evaluate((dialog) => dialog.contains(document.activeElement)),
+      )
+      .toBe(true);
   });
 
   test("N and / open the step picker after the focused step; Ctrl or Command+D duplicates and Delete deletes with Undo", async ({

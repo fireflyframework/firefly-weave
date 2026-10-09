@@ -40,7 +40,9 @@ for (const size of sizes)
       await details.openWithKeyboard("check-customer");
       await details.close();
       await insertStep(page, "Call an action");
-      const chip = page.locator(".node-chip").first();
+      const chip = page.locator(
+        '.tile-node[data-tile="call-action-1"] .tile-issue',
+      );
       await chip.scrollIntoViewIfNeeded();
       await chip.click();
       await expect(details.dialog).toBeVisible();

@@ -62,6 +62,8 @@ import { docsUrl, headerSubtitle } from "./header";
 import { adjacent, breadcrumb, neighbors } from "./navigation";
 import { recipeOf } from "./owned/owned-actions";
 import { FormSession } from "./params/form-session";
+import { parsePointer } from "../../forms/core/json";
+import { pathStartsWith } from "./params/paths";
 import { ParameterForm } from "./params/param-form";
 import { ndvRegistry } from "./registry";
 import { renameHint, renameWithExtras, type RenameResult } from "./rename";
@@ -710,6 +712,45 @@ export class StepDetails {
       });
   }
   applyFocus(focus: FocusTarget) {
+    if (focus.kind === "rename") {
+      this.startRename();
+      return;
+    }
+    if (focus.kind === "firstIssue" || focus.kind === "path") {
+      const session = this.session();
+      const fields = (["parameters", "settings"] as const).flatMap((tab) =>
+        session
+          .state(tab)
+          .fields.filter(({ spec }) =>
+            this.dialog().nativeElement.querySelector(
+              `[data-param="${CSS.escape(spec.id)}"]`,
+            ),
+          )
+          .map(({ spec }) => ({ tab, spec })),
+      );
+      const paths =
+        focus.kind === "path"
+          ? [focus.path]
+          : this.controller()
+              .diagnostics(this.target())
+              .flatMap((issue) => {
+                const path = parsePointer(issue.path);
+                return path ? [path] : [];
+              });
+      const reported = paths.flatMap((path) =>
+        fields
+          .filter(
+            ({ spec }) => spec.path.length && pathStartsWith(path, spec.path),
+          )
+          .sort((a, b) => b.spec.path.length - a.spec.path.length),
+      );
+      const field =
+        reported[0] ?? fields.find(({ spec }) => session.requiredEmpty(spec));
+      if (field) {
+        this.applyFocus({ kind: "field", id: field.spec.id, tab: field.tab });
+        return;
+      }
+    }
     const region = focus.kind === "region" ? focus.region : "parameters";
     if (this.layout() === "sheet") {
       const pane = region === "header" ? "parameters" : region;
