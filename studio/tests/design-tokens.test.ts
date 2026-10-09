@@ -303,7 +303,7 @@ describe("design tokens", () => {
     // A .css file, a `styles: [...]` array, a `styles: \`...\`` literal and a
     // shared `const …Styles` stylesheet: all four shapes must be found.
     for (const name of [
-      "operations/operations-view.css",
+      "operate/clusters/clusters.css",
       "workspace-picker.ts",
       "integrations/ai-setup-wizard.ts",
       "integrations/http-action-styles.ts",
@@ -362,12 +362,11 @@ describe("design tokens", () => {
       /graph-flow|node-|canvas-chip/.test(selector);
     const small = all.filter((d) => px(d) < 12 && !canvas(d.selector));
     expect(small.map((d) => `${d.selector}: ${d.value}`)).toEqual([]);
-    // Component styles follow the rule too. These five 11px declarations
+    // Component styles follow the rule too. These four 11px declarations
     // predate the rule and are product sizes this change does not own: the
     // list may only shrink, so a new one fails and a fixed one must leave it.
     const known = [
       "forms/ui/schema-designer.ts: .sd-json pre",
-      "operations/operations-view.css: .eyebrow",
       "task-form.ts: .schema-map-row button, .schema-remove",
       "task-form.ts: .schema-null",
       "templates/new-menu.ts: .new-menu-list small",

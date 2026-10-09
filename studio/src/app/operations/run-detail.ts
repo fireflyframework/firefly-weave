@@ -20,7 +20,11 @@ SPDX-License-Identifier: Apache-2.0
 // the technical details only on request. Part of the lazy operations chunk.
 import {
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
+  DoCheck,
+  OnDestroy,
+  inject,
   input,
   signal,
 } from "@angular/core";
@@ -28,6 +32,8 @@ import { FFlowModule } from "@foblex/flow";
 import type { App } from "../app";
 import { copyText } from "../connection";
 import { Icon } from "../icon";
+import { RunActions, runState } from "../operate/runs/run-actions";
+import { StartRunDialog } from "../run/start-run-dialog";
 import type { Node } from "../model";
 import { absoluteTime, isoTime, relativeTime, shortId } from "../format";
 import {
@@ -55,7 +61,7 @@ const isRecord = (value: unknown): value is Json =>
   selector: "weave-run-detail",
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: true,
-  imports: [Icon, FFlowModule],
+  imports: [Icon, FFlowModule, StartRunDialog],
   styleUrl: "./run-detail.css",
   template: `@let h = host();
     @let run = h.selectedRecord!;
@@ -88,7 +94,7 @@ const isRecord = (value: unknown): value is Json =>
       <button
         class="icon-button"
         aria-label="Close detail"
-        (click)="h.selectedRecord = null"
+        (click)="h.closeRecord()"
       >
         <weave-icon name="close" />
       </button>
@@ -122,6 +128,14 @@ const isRecord = (value: unknown): value is Json =>
       </div>
     }
     <div class="action-row run-controls">
+      @if (waiting() && h.can("run.signal", id)) {
+        <button
+          [disabled]="h.busy !== '' || h.unknownCommand"
+          (click)="actions.signal()"
+        >
+          Send signal
+        </button>
+      }
       @if (!h.runTerminal() && paused() && h.can("run.resume", id)) {
         <button
           [disabled]="h.busy !== '' || h.unknownCommand"
@@ -137,7 +151,57 @@ const isRecord = (value: unknown): value is Json =>
           Pause run
         </button>
       }
+      @if (!h.runTerminal() && h.can("run.cancel", id)) {
+        <button
+          class="danger"
+          [disabled]="h.busy !== '' || h.unknownCommand"
+          (click)="actions.cancel()"
+        >
+          Cancel run
+        </button>
+      }
+      @if (h.runTerminal() && h.can("run.retry", id)) {
+        <button
+          [disabled]="h.busy !== '' || h.unknownCommand"
+          (click)="actions.openRetry()"
+        >
+          Retry run
+        </button>
+      }
+      <button
+        class="tertiary"
+        [attr.aria-disabled]="actions.exporting ? 'true' : null"
+        (click)="actions.exportHistory()"
+      >
+        <weave-icon name="download" [size]="16" />Export history
+      </button>
     </div>
+    @if (actions.retry; as retry) {
+      <weave-start-run-dialog
+        heading="Retry this run"
+        closeLabel="Close retry this run"
+        [description]="
+          'Starts a new run linked to run ' +
+          short(id) +
+          ' with the input below.' +
+          retry.notice
+        "
+        submitLabel="Retry run"
+        busyLabel="Retrying…"
+        [api]="h.api"
+        [fileAccess]="h.fileAccess"
+        [activations]="retry.activations"
+        [labels]="retry.labels"
+        [initialActivationId]="retry.initial"
+        [initialInput]="retry.input"
+        [initialKeys]="retry.keys"
+        [versions]="h.workflowVersions"
+        [busy]="h.busy !== '' || h.unknownCommand"
+        [failure]="retry.failure"
+        (start)="actions.confirmRetry($event)"
+        (cancel)="actions.retry = null"
+      />
+    }
     @if (h.runCanvas; as canvas) {
       <section class="run-workflow" aria-labelledby="run-graph-title">
         <h3 id="run-graph-title">Workflow {{ workflowName() }}</h3>
@@ -350,8 +414,22 @@ const isRecord = (value: unknown): value is Json =>
       </button>
     </div>`,
 })
-export class RunDetail {
+export class RunDetail implements DoCheck, OnDestroy {
   host = input.required<App>();
+  private cdr = inject(ChangeDetectorRef);
+  /** Cancel run, Retry run, Send signal and Export history. */
+  readonly actions = new RunActions(
+    () => this.host(),
+    () => this.cdr.markForCheck(),
+  );
+
+  ngDoCheck() {
+    // A Retry run dialog belongs to the run it was opened for.
+    this.actions.follow(this.text(this.run()["id"]));
+  }
+  ngOnDestroy() {
+    this.actions.destroy();
+  }
 
   private run(): Json {
     return this.host().selectedRecord ?? {};
@@ -367,6 +445,10 @@ export class RunDetail {
   }
   tone() {
     return toneAttribute(statusTone("run", runStatus(this.run())));
+  }
+  /** Waiting for an event; a paused run still is, and may be sent a signal. */
+  waiting() {
+    return runState(this.run()) === "waiting";
   }
   paused() {
     const state = this.run()["state"];

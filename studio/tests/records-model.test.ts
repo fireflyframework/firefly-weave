@@ -64,7 +64,8 @@ describe("list columns and rows", () => {
       "Revision",
     ]);
     expect(columns.email).toEqual(["Conversation", "Last message", "Status"]);
-    expect(columns.workers).toEqual(["Worker", "Status", "Registered limit"]);
+    // Workers moved to their own Operate page.
+    expect(Object.keys(columns)).not.toContain("workers");
   });
 
   it("counts in words", () => {
@@ -127,32 +128,11 @@ describe("list columns and rows", () => {
     );
   });
 
-  it("does not infer worker liveness from registration", () => {
-    expect(rowStatus("workers", { revoked: false, capacity: 8 })).toEqual({
-      label: "Registered",
-      tone: "neutral",
-    });
-    expect(rowStatus("workers", { revoked: true, capacity: 8 })).toEqual({
-      label: "Revoked",
-      tone: "danger",
-    });
-    expect(rowStatus("workers", { unavailable: true })).toEqual({
-      label: "Unavailable",
-      tone: "danger",
-    });
-  });
-
-  it("reads connectors and workers in words", () => {
+  it("reads connectors in words", () => {
     expect(connectorLabel("weave-http@2.0.0")).toBe("weave-http 2.0.0");
     expect(rowSecondary("connections", { connector: "weave-http@2.0.0" })).toBe(
       "weave-http 2.0.0",
     );
-    const worker = {
-      id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-      task_types: ["crm-lookup", "email-send"],
-    };
-    expect(rowTitle("workers", worker)).toBe("Worker 7c9e6679");
-    expect(rowSecondary("workers", worker)).toBe("crm-lookup, email-send");
   });
 
   it("measures how long a run took", () => {

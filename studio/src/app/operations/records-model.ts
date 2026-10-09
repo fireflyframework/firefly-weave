@@ -28,13 +28,7 @@ import {
   type Tone,
 } from "../status-labels";
 
-export type ListView =
-  | "workflows"
-  | "runs"
-  | "tasks"
-  | "email"
-  | "connections"
-  | "workers";
+export type ListView = "workflows" | "runs" | "tasks" | "email" | "connections";
 type Json = Record<string, unknown>;
 const isRecord = (value: unknown): value is Json =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -65,7 +59,6 @@ export const columns: Record<ListView, string[]> = {
   tasks: ["Task", "Status", "Due"],
   connections: ["Connection", "Connector", "Revision"],
   email: ["Conversation", "Last message", "Status"],
-  workers: ["Worker", "Status", "Registered limit"],
 };
 
 const nouns: Record<ListView, [string, string]> = {
@@ -74,7 +67,6 @@ const nouns: Record<ListView, [string, string]> = {
   tasks: ["task", "tasks"],
   connections: ["connection", "connections"],
   email: ["conversation", "conversations"],
-  workers: ["worker", "workers"],
 };
 /** "3 runs", "1 task". */
 export function countLabel(view: ListView, count: number) {
@@ -114,7 +106,6 @@ export function rowTitle(
   if (record["unavailable"])
     return {
       runs: "Unavailable run",
-      workers: "Unavailable worker",
       connections: "Unavailable connection",
       tasks: "Unavailable task",
       email: "Unavailable conversation",
@@ -127,8 +118,6 @@ export function rowTitle(
         text(record["business_key"]) ||
         `Run ${shortId(record["id"])}`
       );
-    case "workers":
-      return `Worker ${shortId(record["id"])}`;
     case "tasks":
       return text(record["title"]) || "Human task";
     case "email":
@@ -174,10 +163,6 @@ export function rowSecondary(
         text(record["from"]) ||
         text(record["sender"])
       );
-    case "workers": {
-      const types = record["task_types"];
-      return Array.isArray(types) ? types.map(String).join(", ") : "";
-    }
     case "workflows": {
       if (context.library === "local") return localKeepLabel();
       if (context.library === "drafts") return "Not published yet";
@@ -212,15 +197,6 @@ export function rowStatus(
         "task",
         record["status"],
         !!context.principal && record["claimant_id"] === context.principal,
-      );
-    case "workers":
-      return pill(
-        "worker",
-        record["unavailable"]
-          ? "unavailable"
-          : record["revoked"]
-            ? "revoked"
-            : "registered",
       );
     case "email": {
       const state = text(record["last_state"]) || text(record["state"]);
