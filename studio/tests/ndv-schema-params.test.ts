@@ -183,6 +183,75 @@ describe("fields from a schema", () => {
       "input.label",
     ]);
   });
+  it("shows a map whose values refer back to the map, without looping", () => {
+    const viaDefs = paramsFromSchema(
+      {
+        type: "object",
+        required: ["tree"],
+        properties: { tree: { $ref: "#/$defs/Tree" } },
+        $defs: {
+          Tree: {
+            type: "object",
+            additionalProperties: { $ref: "#/$defs/Tree" },
+          },
+        },
+      },
+      ["with"],
+      { idPrefix: "input." },
+    );
+    const direct = paramsFromSchema(
+      {
+        type: "object",
+        required: ["m"],
+        properties: {
+          m: {
+            type: "object",
+            additionalProperties: { $ref: "#/properties/m" },
+          },
+        },
+      },
+      ["with"],
+      { idPrefix: "input." },
+    );
+    expect(viaDefs.fields.map((f) => [f.id, f.type])).toEqual([
+      ["input.tree", "keyValue"],
+    ]);
+    expect(direct.fields.map((f) => [f.id, f.type])).toEqual([
+      ["input.m", "keyValue"],
+    ]);
+  });
+  it("still omits a self-referencing map whose values are secret", () => {
+    const form = paramsFromSchema(
+      {
+        type: "object",
+        required: ["m"],
+        properties: {
+          m: {
+            type: "object",
+            additionalProperties: { $ref: "#/properties/m", "x-secret": true },
+          },
+        },
+      },
+      ["with"],
+      { idPrefix: "input." },
+    );
+    expect([...form.fields, ...(form.options ?? [])]).toEqual([]);
+  });
+  it("edits a list whose items refer back to the list as JSON, without looping", () => {
+    const form = paramsFromSchema(
+      {
+        type: "object",
+        required: ["l"],
+        properties: { l: { type: "array", items: { $ref: "#/properties/l" } } },
+      },
+      ["with"],
+      { idPrefix: "input." },
+    );
+    // The classic resolver cuts this reference cycle and the form edits it as JSON.
+    expect(form.fields.map((f) => [f.id, f.type])).toEqual([
+      ["input.l", "json"],
+    ]);
+  });
   it("counts a required constant as set by its constant", () => {
     const form = paramsFromSchema(
       {

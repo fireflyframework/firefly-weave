@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // field takes Fixed or Mapped values at its data path inside the expression.
 import { isFileSchema } from "../../../forms/core/file-reference";
 import { memberField } from "../../../forms/core/form-model";
+import { canonicalJson } from "../../../forms/core/json";
 import { fieldsOf, type FieldInfo } from "../../../forms/core/resolve";
 import type { FormSpec, ParamSpec, ParamType, Path } from "../registry";
 
@@ -77,16 +78,24 @@ const exampleText = (value: unknown): string =>
 
 /**
  * A secret anywhere in a value: the value itself, or the items or values of
- * a list or map (recursively). A form never writes one into workflow source.
+ * a list, table or map (recursively). A form never writes one into workflow
+ * source. `ancestors` holds the schemas of the containers above this one: a
+ * schema that refers back to one of them (a map whose values are the map) has
+ * already been scanned there, so the walk stops instead of looping.
  */
-const holdsSecret = (info: FieldInfo): boolean => {
+const holdsSecret = (
+  info: FieldInfo,
+  ancestors: ReadonlySet<string> = new Set(),
+): boolean => {
   if (info.secret) return true;
-  // Only containers have items or values; memberField gives any other kind a
-  // fresh placeholder member, which would recurse forever.
+  // memberField gives any non-container a fresh placeholder member, so only
+  // containers are followed.
   if (info.kind !== "list" && info.kind !== "table" && info.kind !== "map")
     return false;
+  const key = canonicalJson(info.schema);
+  if (ancestors.has(key)) return false;
   const member = memberField(info);
-  return member !== null && holdsSecret(member);
+  return member !== null && holdsSecret(member, new Set([...ancestors, key]));
 };
 
 /**
