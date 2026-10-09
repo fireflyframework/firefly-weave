@@ -39,6 +39,7 @@ import {
   command,
   connected,
   newWorkflow,
+  sourceText,
   tokenColor,
 } from "./support";
 
@@ -46,7 +47,12 @@ const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 type Session = ReturnType<typeof debugSession>;
 
 /** Opens `source` on the new canvas and starts today's simulation, answered by `replies`. */
-async function simulate(page: Page, source: string, replies: Session[]) {
+async function simulate(
+  page: Page,
+  source: string,
+  replies: Session[],
+  beforeStart?: (canvas: CanvasPage) => Promise<void>,
+) {
   const artifact = simulationArtifact();
   test.skip(!artifact, "Needs the repository's Python environment.");
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -76,6 +82,7 @@ async function simulate(page: Page, source: string, replies: Session[]) {
   const canvas = new CanvasPage(page);
   await canvas.ready();
   await canvas.closeInspector();
+  await beforeStart?.(canvas);
   await command(page, "Simulate");
   const setup = page.getByRole("dialog", { name: "Simulate this workflow" });
   await setup.getByLabel(/customer ?id/i).fill("c-104");
@@ -186,7 +193,33 @@ test("while a simulation runs the canvas offers no + and moves nothing, but stil
     "  output: { literal: {} }",
     "    - id: fan\n      kind: parallel\n      branches:\n        empty: {steps: [], output: {literal: {}}}\n  output: { literal: {} }",
   );
-  const canvas = await simulate(page, lockedSource, [waitingAtWait()]);
+  const viewport = async (canvas: CanvasPage) => {
+    const download = page.waitForEvent("download", (file) =>
+      file.suggestedFilename().endsWith(".layout.json"),
+    );
+    await command(page, "Save to file");
+    const stream = await (await download).createReadStream();
+    const parts: Buffer[] = [];
+    for await (const part of stream!) parts.push(part);
+    return JSON.parse(Buffer.concat(parts).toString()).viewport;
+  };
+  let exportedViewportBefore: unknown;
+  let sourceBefore = "";
+  const unsaved = page
+    .locator(".editor-identity .status-chip")
+    .filter({ hasText: "Unsaved" });
+  let unsavedBefore = 0;
+  const canvas = await simulate(
+    page,
+    lockedSource,
+    [waitingAtWait()],
+    async (canvas) => {
+      sourceBefore = await sourceText(page);
+      await canvas.ready();
+      exportedViewportBefore = await viewport(canvas);
+      unsavedBefore = await unsaved.count();
+    },
+  );
   await expect(canvas.root).toHaveClass(/\blocked\b/);
   await expect(canvas.root.locator(".plus-stub, .edge-plus")).toHaveCount(0);
   const tile = (await canvas.tileBody("approval").boundingBox())!;
@@ -243,6 +276,9 @@ test("while a simulation runs the canvas offers no + and moves nothing, but stil
   await expect
     .poll(async () => (await canvas.tileBody("action-1").boundingBox())!.y)
     .not.toBe(before);
+  expect(await viewport(canvas)).toEqual(exportedViewportBefore);
+  expect(await sourceText(page)).toBe(sourceBefore);
+  await expect(unsaved).toHaveCount(unsavedBefore);
 });
 
 test("while a simulation runs the selection toolbar and the keys change no step, and say why", async ({
