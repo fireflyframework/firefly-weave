@@ -30,6 +30,7 @@ from firefly_weave.contracts.ai import AIConnectionTestRequest, AIModelsQuery
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.ai_connections import AIConnectionService
 from firefly_weave.operations.ai_models import AIModelService
+from firefly_weave.operations.ai_readiness import AIReadinessService
 from firefly_weave.operations.ephemeral import until_disconnect
 
 MAX_REQUEST_BYTES = 65536
@@ -47,8 +48,8 @@ async def _body(request: Request) -> bytes:
 @rest_controller
 @request_mapping("")
 class AIController:
-    def __init__(self, service: AIConnectionService, models: AIModelService) -> None:
-        self.service, self.model_service = service, models
+    def __init__(self, service: AIConnectionService, models: AIModelService, readiness: AIReadinessService) -> None:
+        self.service, self.model_service, self.readiness_service = service, models, readiness
 
     @operation("ai_connections.test")
     async def test_connection(self, request: Request) -> JSONResponse:
@@ -82,4 +83,11 @@ class AIController:
             context=request.state.audit_context,
         )
         result = await until_disconnect(work, request.receive) if query.refresh else await work
+        return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
+    @operation("ai_readiness.read")
+    async def readiness(self, request: Request) -> JSONResponse:
+        result = await self.readiness_service.read(
+            request.state.principal, request_scope(request, environment=True), context=request.state.audit_context
+        )
         return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})

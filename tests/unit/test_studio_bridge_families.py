@@ -86,6 +86,7 @@ def pair(browser):
         ("POST", f"{ENVIRONMENT}/ai/connections/{RESOURCE}/test"),
         ("GET", f"{ENVIRONMENT}/ai/endpoints"),
         ("GET", f"{ENVIRONMENT}/ai/models"),
+        ("GET", f"{ENVIRONMENT}/ai/readiness"),
     ],
 )
 def test_studio_journeys_are_bridged(tmp_path, method, path):
@@ -129,6 +130,9 @@ def test_studio_journeys_are_bridged(tmp_path, method, path):
         ("POST", ENVIRONMENT.replace("000000000003", "000000000009") + f"/ai/connections/{RESOURCE}/test", 403),
         ("GET", f"{ENVIRONMENT}/ai/connections/{RESOURCE}/test", 404),
         ("POST", f"{ENVIRONMENT}/ai/models", 404),
+        ("POST", f"{ENVIRONMENT}/ai/readiness", 404),
+        ("GET", f"{ENVIRONMENT}/ai/readiness/extra", 404),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/readiness", 403),
         ("POST", f"{ENVIRONMENT}/ai/endpoints", 404),
         ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/models", 403),
         ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/endpoints", 403),

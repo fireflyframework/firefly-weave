@@ -929,7 +929,7 @@ def refresh_http(model_service, tmp_path, monkeypatch):
 
     monkeypatch.setattr(s.connections, "create_revision", save)
     controller = ConnectionController(s.connections, s.service)
-    ai = AIController(s.tests, s.service)
+    ai = AIController(s.tests, s.service, SimpleNamespace())
 
     async def request(route):
         operation, handler, body = {

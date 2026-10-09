@@ -192,7 +192,7 @@ class BodyBoundary:
             scope["type"] == "http"
             and len(path) <= 8192
             and any(
-                name in {"ai_endpoints.list", "ai_models.list"} and pattern.fullmatch(path)
+                name in {"ai_endpoints.list", "ai_models.list", "ai_readiness.read"} and pattern.fullmatch(path)
                 for name, _, pattern in self.routes
             )
         ):

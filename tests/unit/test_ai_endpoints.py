@@ -59,7 +59,7 @@ async def test_model_queries_are_strict_before_service_access(query):
     service = SimpleNamespace(models=AsyncMock())
     request = Request({"type": "http", "query_string": query.encode(), "headers": []})
     with pytest.raises(ValueError):
-        await controller()(SimpleNamespace(), service).models(request)
+        await controller()(SimpleNamespace(), service, SimpleNamespace()).models(request)
     service.models.assert_not_awaited()
 
 
@@ -83,7 +83,7 @@ async def test_metadata_routes_return_no_store(method):
     )
     request.state.principal = SimpleNamespace()
     request.state.audit_context = AuditContext()
-    answer = await getattr(handler(SimpleNamespace(), service), method)(request)
+    answer = await getattr(handler(SimpleNamespace(), service, SimpleNamespace()), method)(request)
     assert answer.headers["Cache-Control"] == "no-store"
     assert json.loads(answer.body) == response.model_dump(mode="json")
 
@@ -111,7 +111,11 @@ async def test_native_application_resolves_one_shared_model_service_and_both_rou
             assert model_service.tests is context.get_bean(AIConnectionService)
             assert context.get_bean(AIController).model_service is model_service
             assert context.get_bean(ConnectionController).ai_models is model_service
-            for suffix, identifier in [("endpoints", "ai_endpoints.list"), ("models", "ai_models.list")]:
+            for suffix, identifier in [
+                ("endpoints", "ai_endpoints.list"),
+                ("models", "ai_models.list"),
+                ("readiness", "ai_readiness.read"),
+            ]:
                 scope = {
                     "type": "http",
                     "method": "GET",
@@ -161,7 +165,7 @@ async def test_metadata_http_replies_always_disable_storage(root_path, telemetry
             raise CatalogError(503, "WV-AI-POLICY", "The AI policy is unavailable")
         return AIEndpointsResult(policy="absent")
 
-    controller = AIController(SimpleNamespace(), SimpleNamespace(endpoints=endpoints))
+    controller = AIController(SimpleNamespace(), SimpleNamespace(endpoints=endpoints), SimpleNamespace())
     advice = ErrorAdvice()
 
     async def denied(request, error):
@@ -281,7 +285,7 @@ async def test_metadata_header_boundary_leaves_non_http_protocols_unchanged():
     assert output == [{"type": "lifespan.startup.complete"}]
 
 
-@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list"])
+@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list", "ai_readiness.read"])
 @pytest.mark.parametrize("canonical", [False, True])
 @pytest.mark.parametrize("telemetry", [False, True])
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
@@ -325,7 +329,7 @@ async def test_mounted_metadata_replies_preserve_response_and_telemetry(
         assert records and records[0][1]["operation"] == "other"
 
 
-@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list"])
+@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list", "ai_readiness.read"])
 @pytest.mark.parametrize("canonical", [False, True])
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
 async def test_native_mounted_authentication_errors_disable_metadata_storage(monkeypatch, operation, canonical, method):
@@ -365,7 +369,7 @@ async def test_native_mounted_authentication_errors_disable_metadata_storage(mon
 
 
 @pytest.mark.parametrize("canonical", [False, True])
-@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list"])
+@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list", "ai_readiness.read"])
 @pytest.mark.parametrize(
     "root_path,prefix,suffix,expected",
     [
@@ -405,3 +409,23 @@ async def test_metadata_matching_uses_one_exact_router_mount(root_path, prefix, 
     assert [(name.lower(), value) for name, value in messages[0]["headers"] if name.lower() == b"cache-control"] == [
         (b"cache-control", b"no-store" if expected else b"public")
     ]
+
+
+async def test_readiness_controller_registers_catalog_authority_and_safe_response():
+    import firefly_weave.api.ai as module
+
+    assert "ai_readiness.read" in OPERATIONS, "Readiness route is unavailable"
+    operation = OPERATIONS["ai_readiness.read"]
+    assert operation.capability == "catalog.read" and operation.method == "GET"
+    readiness = SimpleNamespace(read=AsyncMock(return_value=SimpleNamespace(model_dump=lambda **kw: {"items": []})))
+    request = Request(
+        {
+            "type": "http",
+            "headers": [],
+            "path_params": {key: str(uuid4()) for key in ("tenant", "project", "environment")},
+        }
+    )
+    request.state.principal = SimpleNamespace()
+    request.state.audit_context = AuditContext()
+    response = await module.AIController(SimpleNamespace(), SimpleNamespace(), readiness).readiness(request)
+    assert response.headers["cache-control"] == "no-store" and json.loads(response.body) == {"items": []}

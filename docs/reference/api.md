@@ -342,6 +342,26 @@ policy returns unknown approval and no models. A failed refresh replaces prior
 health with its safe discovery code and an empty model list. Discovery traffic
 always runs through the configured AI gateway.
 
+`ai_readiness.read` returns eight ordered checks for installed worker releases,
+published AI definitions, worker presence, current connections, secret grants,
+worker credential authorization, recent AI tests and Weave AI configuration.
+It reads one consistent snapshot and never calls the gateway, resolves a secret
+value or changes platform state. The key check confirms an operator grant;
+it does not confirm that the secret provider currently holds a value.
+
+The checklist requires `catalog.read` and rechecks current permissions. Restricted
+items are `unknown` with a required role, without identifiers, configuration or
+hidden counts. Connections use the latest revision per name across all connector
+types. A successful dedicated AI test must be less than 24 hours old; generic
+tests and missing, malformed or future timestamps cannot establish health.
+
+Each collection is limited to 1,000 matching records, with an 8 MiB cumulative
+read budget. A complete observation that exceeds either bound is `unknown`,
+never a healthy partial result. Responses, including errors, disable storage
+with `Cache-Control: no-store`. Fixes contain server-owned guidance or currently
+available operations; execution still requires the operation's own authority.
+
+
 ### Health probes
 
 `GET /health/live` answers `{"status":"up"}` while the process runs, and
@@ -593,6 +613,7 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `connections.test` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/connections/{identifier}/test` | connection.manage |
 | `ai_endpoints.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/endpoints` | catalog.read |
 | `ai_models.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/models` | catalog.read |
+| `ai_readiness.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/readiness` | catalog.read |
 | `ai_connections.test` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/connections/{identifier}/test` | connection.manage |
 | `runs.start` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs` | run.start |
 | `runs.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs` | run.read |

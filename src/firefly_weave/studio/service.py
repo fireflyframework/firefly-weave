@@ -78,6 +78,7 @@ STUDIO_FAMILIES = frozenset(
         "ai_connections",
         "ai_endpoints",
         "ai_models",
+        "ai_readiness",
         "files",
         "lumi",
         "connector_descriptors",

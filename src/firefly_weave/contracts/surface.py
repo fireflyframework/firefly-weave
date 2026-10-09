@@ -33,6 +33,7 @@ from firefly_weave.contracts.ai import (
     AIEndpointsResult,
     AIModelsQuery,
     AIModelsResult,
+    AIReadinessResult,
 )
 from firefly_weave.contracts.bindable_connections import BindableConnection, BindableConnectionQuery
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
@@ -1389,6 +1390,7 @@ OPERATIONS = {
             RetirementRequest,
             request_required=False,
         ),
+        Operation("ai_readiness.read", ENVIRONMENT + "/ai/readiness", "GET", AIReadinessResult, "catalog.read"),
         Operation("ai_endpoints.list", ENVIRONMENT + "/ai/endpoints", "GET", AIEndpointsResult, "catalog.read"),
         Operation(
             "ai_models.list", ENVIRONMENT + "/ai/models", "GET", AIModelsResult, "catalog.read", query=AIModelsQuery
