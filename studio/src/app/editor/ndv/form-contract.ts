@@ -35,9 +35,14 @@ export const CUSTOM_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
   agent: ["slots", "tools"],
 };
 
-/** A field of a form, with whether its value is an expression (Fixed | Mapped needs one). */
+/**
+ * A field of a form. `relative` is the declared flag: a list item or one of its
+ * children, whose paths are relative to the item. `expression` says whether the
+ * value is an expression (Fixed | Mapped needs one).
+ */
 export interface ParamEntry {
   spec: ParamSpec;
+  relative: boolean;
   expression: boolean;
 }
 
@@ -54,13 +59,14 @@ function holdsExpression(spec: ParamSpec, stepRoots: readonly Path[]): boolean {
  * Every field of a form with its options, children and list items, depth
  * first. A list item's paths are relative to the item, so the item and its
  * children are inside an expression exactly when their list is; any other
- * field is judged by its own path.
+ * field is judged by its own path. `stepRoots` are the step's expression
+ * fields; without them, step-scoped fields count as outside an expression.
  */
 export function allParams(
   form: FormSpec | undefined,
   step: Step,
   ctx: KindContext,
-  stepRoots: readonly Path[],
+  stepRoots: readonly Path[] = [],
 ): ParamEntry[] {
   const out: ParamEntry[] = [];
   const visit = (
@@ -73,7 +79,7 @@ export function allParams(
     const expression = relative
       ? listExpression
       : holdsExpression(spec, stepRoots);
-    out.push({ spec, expression });
+    out.push({ spec, relative, expression });
     if (spec.item) visit(spec.item, true, expression, depth + 1);
     for (const child of spec.children?.(step, ctx) ?? [])
       visit(child, relative, expression, depth + 1);

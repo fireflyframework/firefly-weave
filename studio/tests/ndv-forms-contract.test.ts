@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
-import { formProblems } from "../src/app/editor/ndv/form-contract";
+import { allParams, formProblems } from "../src/app/editor/ndv/form-contract";
 import {
   expressionRoot,
   pathKey,
@@ -210,6 +210,29 @@ describe("form contract", () => {
     expect(formProblems(kind("decisionTable", grid), step, ctx)).toEqual([]);
     expect(formProblems(kind("transform", grid), step, ctx)).toEqual([
       'transform uses a custom component for "grid"; only the decision table grid and the AI agent slots may.',
+    ]);
+  });
+});
+
+describe("allParams", () => {
+  it("reports relative for list items and absolute for top-level fields", () => {
+    const form: FormSpec = {
+      fields: [
+        text("value", ["value"]),
+        {
+          ...text("rows", ["rows"]),
+          type: "list",
+          item: text("row", [], { mapping: "both" }),
+        },
+      ],
+      options: [text("note", ["note"])],
+    };
+    const entries = allParams(form, step, ctx);
+    expect(entries.map(({ spec, relative }) => [spec.id, relative])).toEqual([
+      ["value", false],
+      ["rows", false],
+      ["row", true],
+      ["note", false],
     ]);
   });
 });
