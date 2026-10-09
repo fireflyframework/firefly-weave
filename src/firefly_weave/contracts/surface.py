@@ -27,6 +27,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from firefly_weave.compiler.catalog import CatalogLock
+from firefly_weave.contracts.ai import AIConnectionTestRequest, AIConnectionTestResult
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
 from firefly_weave.contracts.catalog import (
     Activation,
@@ -1365,6 +1366,14 @@ OPERATIONS = {
             "connection.manage",
             RetirementRequest,
             request_required=False,
+        ),
+        Operation(
+            "ai_connections.test",
+            ENVIRONMENT + "/ai/connections/{identifier}/test",
+            "POST",
+            AIConnectionTestResult,
+            "connection.manage",
+            AIConnectionTestRequest,
         ),
         Operation(
             "runs.start", ENVIRONMENT + "/runs", "POST", RunView, "run.start", StartRunRequest, (201,), idempotency=True

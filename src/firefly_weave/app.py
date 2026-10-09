@@ -40,6 +40,7 @@ from firefly_weave.access.identity_links import IdentityResolver
 from firefly_weave.access.oidc import OIDCVerifier
 from firefly_weave.access.service import AccessService
 from firefly_weave.api.access import AccessController
+from firefly_weave.api.ai import AIController
 from firefly_weave.api.client_configuration import ClientConfigurationController
 from firefly_weave.api.compiler import CompilerController
 from firefly_weave.api.connections import ConnectionController
@@ -87,6 +88,7 @@ from firefly_weave.files.human import HumanFileService
 from firefly_weave.files.service import FileService
 from firefly_weave.files.worker_service import WorkerFileService
 from firefly_weave.observability import OwnedMeterConfiguration, OwnedTracingConfiguration, TelemetryDrops
+from firefly_weave.operations.ai_connections import AIConnectionService, GatewayConnectionTester
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.event_delivery import OutboxDispatcher
@@ -185,7 +187,7 @@ def make_app(
     # schema mutation, remote config or administrative endpoints before startup.
     if any(name.startswith("PYFLY_") for name in os.environ):
         raise ValueError("Use Weave settings; PYFLY_* overrides are not supported")
-    # Connection checks and every C8 client in this process use the policy loaded at startup.
+    # Connection checks and every private-origin client in this process use the policy loaded at startup.
     private_origins.install(settings.private_origins)
     pyfly = PyFlyApplication(WeaveApplication, config_path=Path(__file__).with_name("pyfly.yaml"))
     resources = DatabaseResources(settings)
@@ -254,7 +256,10 @@ def make_app(
             await pyfly.startup()
             registry.resolve_services(pyfly.context)
             registry.register_descriptor(HTTP_PROFILE_DESCRIPTOR, pyfly.context.get_bean(HttpProfileConnector))
-            registry.register_descriptor(AGENTIC_DESCRIPTOR, AgenticConnectionAdapter())
+            registry.register_descriptor(
+                AGENTIC_DESCRIPTOR,
+                AgenticConnectionAdapter(GatewayConnectionTester(pyfly.context.get_bean(LumiGatewayClient))),
+            )
             for name, descriptor in FILE_DESCRIPTORS.items():
                 registry.register_descriptor(descriptor, FileConnectionAdapter(name))
             pyfly.context.get_bean(ConnectorRegistry).register_descriptor(
@@ -285,6 +290,8 @@ def make_app(
                 HistoryService,
                 LumiService,
                 LumiController,
+                AIConnectionService,
+                AIController,
                 DebugService,
                 DebugController,
                 OperationsController,
