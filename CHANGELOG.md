@@ -226,6 +226,23 @@ SPDX-License-Identifier: Apache-2.0
   added, and no role is added or changed. See [upgrade a platform safely](docs/operations/upgrades.md#what-changes-in-alpha15)
   for the behavior changes to check.
 
+Verified on macOS (Apple silicon) before tagging: the full local check gate (17
+stages, including 5,070 unit and contract tests, the Agentic and Files worker
+suites, and building, installing, and checking the 0.1.0a15 core and 0.1.7
+worker packages); Studio's type check, 793 unit tests, production build, and
+browser suite (934 passed and 6 environment-gated tests skipped; one test that
+timed out under full parallel load passed ten times on rerun); 612 integration
+tests against a real PostgreSQL 17; and the release acceptance profile against
+a real Docker platform with PostgreSQL 17 and Keycloak 26.7.4, where every
+enabled bring-up step passed, the secret scan found nothing, and no container,
+network, or volume was left behind. The integration tests that need Kafka,
+Keycloak, or built release images, the process recovery, restore, and
+queue-load suites, the acceptance journeys beyond bring-up, an upgrade from an
+alpha14 installation, the desktop installers on Windows and Linux, Weave AI and
+AI workflows, Developer ID signing, and Apple notarization are **not verified**
+for this release. macOS installers remain ad-hoc signed and not notarized, and
+Windows installers remain unsigned.
+
 ## 0.1.0a14
 
 - Add a detached Docker development platform through `weave platform up`,
