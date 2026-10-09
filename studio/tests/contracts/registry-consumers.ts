@@ -286,3 +286,23 @@ export const tableChoices = (ctx: NdvContext): Promise<Choice[]> =>
     .then((rows) => rows.map((row) => ({ value: row.uses, label: row.title })));
 export const ownedMethod = (kind: KindContext, uses: string): Json | null =>
   kind.ownedAction?.(uses) ?? null;
+
+export const projectedTableInput: ParamSpec = {
+  id: "amount",
+  path: ["with", "amount"],
+  type: "number",
+  label: "Amount",
+  mapping: "both",
+  referenceProjection: {
+    pointer: "/input",
+    values: { amount: { ref: "/input/amount" } },
+  },
+};
+export const invalidProjectedTableInput: ParamSpec = {
+  ...projectedTableInput,
+  referenceProjection: {
+    pointer: "/input",
+    // @ts-expect-error projected values are formulas, not raw JSON values
+    values: { amount: 20 },
+  },
+};

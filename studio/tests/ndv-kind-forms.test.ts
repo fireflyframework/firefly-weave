@@ -16,7 +16,10 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
+import { execFileSync } from "node:child_process";
+import { delimiter, resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { python, pythonAvailable, repository } from "./python-path";
 import { allParams, formProblems } from "../src/app/editor/ndv/form-contract";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import {
@@ -497,18 +500,74 @@ describe("transform", () => {
     expect(types(fresh("transform", { value: { ref: "/input" } }))).toEqual([
       ["value", "keyValue", "both"],
     ]);
+  });
+  it("edits a text template as one required multiline field", () => {
+    const value = {
+      op: {
+        name: "concat",
+        args: [{ literal: "Hello " }, { ref: "/input/name" }],
+      },
+    };
+    const step = fresh("transform", { value });
+    const workflow = freshWorkflow();
+    const ctx = context(workflow, ["text.concat"]);
+    const field = transformForm(step).fields[0];
+    expect(field).toMatchObject({
+      path: ["value"],
+      label: "Text",
+      type: "multiline",
+      required: true,
+      mapping: "both",
+      templateCapable: true,
+    });
+    expect(formProblems(ndvRegistry.kind("transform")!, step, ctx)).toEqual([]);
+    const subject = stepSubject(
+      ndvRegistry.kind("transform")!,
+      step,
+      ctx,
+      null,
+    );
+    expect(readParam(subject, field)).toEqual({
+      mode: "mapped",
+      expression: value,
+    });
+    const changed = writeParam(subject, field, fixed("Hello everyone")).reduce(
+      applyChange,
+      subject,
+    );
+    expect(changed.step!["value"]).toEqual({ literal: "Hello everyone" });
+    const fixedField = transformForm(changed.step!).fields[0];
+    expect(fixedField.label).toBe("Text");
+    expect(readParam(changed, fixedField)).toEqual(fixed("Hello everyone"));
+    const reset = resetChanges(changed, fixedField).reduce(
+      applyChange,
+      changed,
+    );
+    expect(reset.step!["value"]).toEqual({ literal: "" });
+    expect(
+      fieldRules(
+        fixedField,
+        readParam(reset, fixedField),
+        readEntries(reset, fixedField),
+      ),
+    ).toMatchObject([{ code: "required" }]);
+    expect(step["value"]).toBe(value);
+  });
+  it("keeps other formulas on the fields editor", () => {
     expect(
       types(
         fresh("transform", {
-          value: { op: { name: "concat", args: [{ literal: "a" }] } },
+          value: {
+            op: {
+              name: "join",
+              args: [{ ref: "/input/names" }, { literal: ", " }],
+            },
+          },
         }),
       ),
     ).toEqual([["value", "keyValue", "both"]]);
   });
   it("edits a value that isn't a set of fields as JSON", () => {
-    expect(types(fresh("transform", { value: { literal: "text" } }))).toEqual([
-      ["value-any", "json", "both"],
-    ]);
     expect(types(fresh("transform", { value: { literal: [1, 2] } }))).toEqual([
       ["value-any", "json", "both"],
     ]);
@@ -571,7 +630,10 @@ describe("decision table", () => {
     });
   });
   it("keeps a whole mapping as one Table input field with the rows inside", () => {
-    const step = fresh("decisionTable", { uses: "payment-policy@1.0.0" });
+    const step = fresh("decisionTable", {
+      uses: "payment-policy@1.0.0",
+      with: { ref: "/steps/customer" },
+    });
     const { spec } = shown(step).state.fields[1];
     expect(spec).toMatchObject({
       id: "input",
@@ -583,6 +645,235 @@ describe("decision table", () => {
       spec.children!(step, context(freshWorkflow())).map((c) => c.label),
     ).toEqual(["Amount"]);
   });
+  it("shows every required input of the chosen table without changing the source", () => {
+    const step = fresh("decisionTable", { uses: "payment-policy@1.0.0" });
+    const workflow = freshWorkflow();
+    workflow.spec.inputSchema = {
+      type: "object",
+      additionalProperties: false,
+      required: ["amount", "tier", "customer/id~"],
+      properties: {
+        amount: { type: "number" },
+        tier: { type: "string" },
+        "customer/id~": { type: "string" },
+      },
+    };
+    const ctx = {
+      ...context(workflow),
+      tableContract: () =>
+        ({
+          ...table,
+          spec: {
+            inputSchema: {
+              ...table.spec.inputSchema,
+              required: ["amount", "missing", "customer/id~"],
+              properties: {
+                ...table.spec.inputSchema.properties,
+                missing: { type: "string" },
+                "customer/id~": { type: "string" },
+              },
+            },
+          },
+        }) as Json,
+    };
+    const descriptor = ndvRegistry.kind("decisionTable")!;
+    const form = decisionTableForm(step, ctx);
+    const subject = stepSubject(descriptor, step, ctx, null);
+    const state = formState(form, formEnv(subject, step, ctx));
+    expect(state.fields.map(({ spec }) => spec.id)).toEqual([
+      "table",
+      "input.amount",
+      "input.missing",
+      "input.customer/id~",
+    ]);
+    expect(state.addable.map(({ spec }) => spec.id)).toEqual(["input.tier"]);
+    const [, amount, missing, customer] = form.fields;
+    expect(readParam(subject, amount)).toEqual({
+      mode: "mapped",
+      expression: { ref: "/input/amount" },
+    });
+    expect(readParam(subject, customer)).toEqual({
+      mode: "mapped",
+      expression: { ref: "/input/customer~1id~0" },
+    });
+    expect(readParam(subject, missing)).toEqual({ mode: "absent" });
+    expect(
+      fieldRules(
+        missing,
+        readParam(subject, missing),
+        readEntries(subject, missing),
+      ),
+    ).toMatchObject([{ code: "required" }]);
+    expect(formProblems(descriptor, step, ctx)).toEqual([]);
+    expect(step["with"]).toEqual({ ref: "/input" });
+    const changed = writeParam(subject, amount, fixed(42)).reduce(
+      applyChange,
+      subject,
+    );
+    expect(changed.step!["with"]).toEqual({
+      object: {
+        amount: { literal: 42 },
+        tier: { ref: "/input/tier" },
+        "customer/id~": { ref: "/input/customer~1id~0" },
+      },
+    });
+    expect(step["with"]).toEqual({ ref: "/input" });
+    const reopened = decisionTableForm(changed.step!, ctx);
+    expect(readParam(changed, reopened.fields[1])).toEqual(fixed(42));
+    expect(readParam(changed, reopened.fields[3])).toEqual({
+      mode: "mapped",
+      expression: { ref: "/input/customer~1id~0" },
+    });
+    expect(readParam(changed, reopened.options![0])).toEqual({
+      mode: "mapped",
+      expression: { ref: "/input/tier" },
+    });
+  });
+  it("leaves unmatched inputs empty even when the workflow has no input fields", () => {
+    const step = fresh("decisionTable", { uses: "payment-policy@1.0.0" });
+    const workflow = freshWorkflow();
+    workflow.spec.inputSchema = { type: "object", additionalProperties: false };
+    const ctx = context(workflow);
+    const subject = stepSubject(
+      ndvRegistry.kind("decisionTable")!,
+      step,
+      ctx,
+      null,
+    );
+    const form = decisionTableForm(step, ctx);
+    expect(form.fields.map((f) => f.label)).toEqual(["Table", "Amount"]);
+    expect(readParam(subject, form.fields[1])).toEqual({ mode: "absent" });
+    const changed = writeParam(subject, form.fields[1], fixed(7)).reduce(
+      applyChange,
+      subject,
+    );
+    expect(changed.step!["with"]).toEqual({ literal: { amount: 7 } });
+  });
+  it.each([
+    {
+      type: "object",
+      properties: { amount: { type: "number" } },
+      required: ["amount"],
+    },
+    {
+      type: "object",
+      properties: { amount: { type: "number" } },
+      required: ["amount"],
+      additionalProperties: false,
+      patternProperties: { "^extra": { type: "string" } },
+    },
+    {
+      type: "object",
+      properties: { amount: { type: "number" } },
+      additionalProperties: false,
+    },
+    {},
+  ])(
+    "preserves the whole input when its fields cannot be enumerated losslessly (%j)",
+    (schema) => {
+      const step = fresh("decisionTable", { uses: "payment-policy@1.0.0" });
+      const workflow = freshWorkflow();
+      workflow.spec.inputSchema = schema;
+      const ctx = context(workflow);
+      const form = decisionTableForm(step, ctx);
+      expect(form.fields.map((f) => f.label)).toEqual(["Table", "Table input"]);
+      const subject = stepSubject(
+        ndvRegistry.kind("decisionTable")!,
+        step,
+        ctx,
+        null,
+      );
+      expect(readParam(subject, form.fields[1])).toEqual({
+        mode: "mapped",
+        expression: { ref: "/input" },
+      });
+      expect(
+        writeParam(subject, form.fields[1], {
+          mode: "mapped",
+          expression: { ref: "/input" },
+        }).reduce(applyChange, subject).step!["with"],
+      ).toEqual({ ref: "/input" });
+    },
+  );
+  it("keeps arbitrary whole formulas unchanged on opening", () => {
+    const value = {
+      op: { name: "get", args: [{ ref: "/input" }, { literal: "customer" }] },
+    };
+    const step = fresh("decisionTable", {
+      uses: "payment-policy@1.0.0",
+      with: value,
+    });
+    expect(shown(step).labels).toEqual(["Table", "Table input"]);
+    const ctx = context(freshWorkflow());
+    const subject = stepSubject(
+      ndvRegistry.kind("decisionTable")!,
+      step,
+      ctx,
+      null,
+    );
+    expect(readParam(subject, decisionTableForm(step, ctx).fields[1])).toEqual({
+      mode: "mapped",
+      expression: value,
+    });
+    expect(step["with"]).toBe(value);
+  });
+  it.skipIf(!pythonAvailable())(
+    "preserves extra runtime keys through the platform evaluator",
+    () => {
+      const step = fresh("decisionTable", { uses: "payment-policy@1.0.0" });
+      const workflow = freshWorkflow();
+      workflow.spec.inputSchema = {
+        type: "object",
+        required: ["amount"],
+        properties: { amount: { type: "number" } },
+      };
+      const ctx = context(workflow);
+      const form = decisionTableForm(step, ctx);
+      expect(form.fields[1].label).toBe("Table input");
+      const subject = stepSubject(
+        ndvRegistry.kind("decisionTable")!,
+        step,
+        ctx,
+        null,
+      );
+      const changed = writeParam(
+        subject,
+        form.fields[1],
+        readParam(subject, form.fields[1]),
+      ).reduce(applyChange, subject);
+      const result = JSON.parse(
+        execFileSync(
+          python,
+          [
+            "-c",
+            [
+              "import json, sys",
+              "from firefly_weave.compiler.expressions import evaluate",
+              "expressions = json.load(sys.stdin)",
+              "print(json.dumps([evaluate(value, {'input': {'amount': 7, 'extra': {'name': 'Ada'}}}) for value in expressions]))",
+            ].join("\n"),
+          ],
+          {
+            input: JSON.stringify([step["with"], changed.step!["with"]]),
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PYTHONPATH: [
+                resolve(repository, "src"),
+                process.env["PYTHONPATH"],
+              ]
+                .filter(Boolean)
+                .join(delimiter),
+            },
+          },
+        ),
+      );
+      expect(result).toEqual([
+        { amount: 7, extra: { name: "Ada" } },
+        { amount: 7, extra: { name: "Ada" } },
+      ]);
+    },
+  );
 });
 
 describe("form environment", () => {
@@ -839,10 +1130,15 @@ describe("removing and resetting", () => {
     ]);
     expect(keepers(fresh("transform"))).toEqual(["value"]);
     expect(keepers(fresh("transform", { value: { literal: "text" } }))).toEqual(
-      ["value-any"],
+      ["value-text"],
     );
     expect(
-      keepers(fresh("decisionTable", { uses: "payment-policy@1.0.0" })),
+      keepers(
+        fresh("decisionTable", {
+          uses: "payment-policy@1.0.0",
+          with: { ref: "/steps/customer" },
+        }),
+      ),
     ).toEqual(["input"]);
     expect(workflowKeepers()).toEqual([
       "inputSchema",

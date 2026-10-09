@@ -155,6 +155,15 @@ export interface ParamSpec {
   description?: string;
   /** "both": Fixed | Mapped (expression paths only); "fixed": structure; "mapped": references only. */
   mapping?: "both" | "fixed" | "mapped";
+  /**
+   * Read a whole reference as individual input fields without rewriting it.
+   * The first changed field writes these mappings as an object. Options stay
+   * at their default until that object is written or the option is added.
+   */
+  referenceProjection?: {
+    pointer: string;
+    values: Record<string, Expression>;
+  };
   /** Text fields that become templates with text.concat. */
   templateCapable?: boolean;
   choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);

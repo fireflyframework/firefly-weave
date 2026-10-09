@@ -91,6 +91,8 @@ type Located =
       schema: unknown;
     };
 
+type ValueSpec = Pick<ParamSpec, "path" | "scope" | "referenceProjection">;
+
 function locate(
   subject: FormSubject,
   spec: Pick<ParamSpec, "path" | "scope">,
@@ -123,32 +125,40 @@ export function fromBound(node: Bound): ParamValue {
     : fixed(literal as Json);
 }
 
-function nodeAt(
+function rootNode(
   located: Extract<Located, { kind: "expression" }>,
+  spec: ValueSpec,
 ): Bound | undefined {
   const expression = getAt(located.base, located.root);
   if (expression === undefined) return undefined;
   const bound = decode(expression, located.schema);
+  return located.rest.length &&
+    bound.kind === "ref" &&
+    bound.pointer === spec.referenceProjection?.pointer
+    ? decode({ object: spec.referenceProjection.values }, located.schema)
+    : bound;
+}
+
+function nodeAt(
+  located: Extract<Located, { kind: "expression" }>,
+  spec: ValueSpec,
+): Bound | undefined {
+  const bound = rootNode(located, spec);
+  if (!bound) return undefined;
   return located.rest.length ? get(bound, located.rest) : bound;
 }
 
-export function readParam(
-  subject: FormSubject,
-  spec: Pick<ParamSpec, "path" | "scope">,
-): ParamValue {
+export function readParam(subject: FormSubject, spec: ValueSpec): ParamValue {
   const located = locate(subject, spec);
   if (located.kind === "plain") {
     const value = getAt(located.base, located.path);
     return value === undefined ? ABSENT : fixed(value as Json);
   }
-  const node = nodeAt(located);
+  const node = nodeAt(located, spec);
   return node ? fromBound(node) : ABSENT;
 }
 
-export function readEntries(
-  subject: FormSubject,
-  spec: Pick<ParamSpec, "path" | "scope">,
-): Entries {
+export function readEntries(subject: FormSubject, spec: ValueSpec): Entries {
   const located = locate(subject, spec);
   const node: Bound | undefined =
     located.kind === "plain"
@@ -156,7 +166,7 @@ export function readEntries(
           const value = getAt(located.base, located.path);
           return value === undefined ? undefined : literalBound(value);
         })()
-      : nodeAt(located);
+      : nodeAt(located, spec);
   if (!node) return { kind: "absent" };
   if (node.kind === "object")
     return { kind: "object", keys: Object.keys(node.entries) };
@@ -184,7 +194,7 @@ function asBound(next: ParamValue): Bound {
 
 export function writeParam(
   subject: FormSubject,
-  spec: Pick<ParamSpec, "path" | "scope">,
+  spec: ValueSpec,
   next: ParamValue,
 ): FormChange[] {
   // Removing what is already absent changes nothing: no key is created,
@@ -208,11 +218,14 @@ export function writeParam(
               : next.expression,
       },
     ];
-  const current = getAt(located.base, root);
-  const bound: Bound =
-    current === undefined
-      ? { kind: "object", entries: {} }
-      : decode(current, located.schema);
+  // A field editor can write its displayed value back on blur. Keep the whole
+  // reference until the person actually changes a projected row.
+  if (spec.referenceProjection && jsonEqual(readParam(subject, spec), next))
+    return [];
+  const bound: Bound = rootNode(located, spec) ?? {
+    kind: "object",
+    entries: {},
+  };
   if (bound.kind !== "object" && bound.kind !== "array")
     throw new FormWriteError(
       "This input is mapped as a whole. Choose Map field by field first.",
@@ -226,6 +239,19 @@ export function writeParam(
 
 /** True when the field holds nothing, or exactly its default. */
 export function isDefault(subject: FormSubject, spec: ParamSpec): boolean {
+  const located = locate(subject, spec);
+  if (
+    spec.referenceProjection &&
+    located.kind === "expression" &&
+    located.rest.length
+  ) {
+    const bound = decode(getAt(located.base, located.root));
+    if (
+      bound.kind === "ref" &&
+      bound.pointer === spec.referenceProjection.pointer
+    )
+      return true;
+  }
   const current = readParam(subject, spec);
   if (current.mode === "absent") return true;
   if (current.mode === "mapped") return false;

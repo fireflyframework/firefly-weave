@@ -66,6 +66,63 @@ const spec = (
   ...extra,
 });
 
+describe("projected input fields", () => {
+  const projected = spec(["with", "amount"], {
+    type: "number",
+    required: true,
+    referenceProjection: {
+      pointer: "/input",
+      values: {
+        amount: { ref: "/input/amount" },
+        tier: { ref: "/input/tier" },
+      },
+    },
+  });
+  it("keeps the whole reference when its displayed mapping is written unchanged", () => {
+    const original = subject({
+      id: "table",
+      kind: "decisionTable",
+      with: { ref: "/input" },
+    });
+    expect(
+      writeParam(original, projected, mapped({ ref: "/input/amount" })),
+    ).toEqual([]);
+    expect(original.step!["with"]).toEqual({ ref: "/input" });
+  });
+  it("removes one projected option while keeping the other mappings", () => {
+    const original = subject({
+      id: "table",
+      kind: "decisionTable",
+      with: { ref: "/input" },
+    });
+    const option = { ...projected, path: ["with", "tier"], required: false };
+    expect(isDefault(original, option)).toBe(true);
+    const removed = resetChanges(original, option).reduce(
+      applyChange,
+      original,
+    );
+    expect(removed.step!["with"]).toEqual({
+      object: { amount: { ref: "/input/amount" } },
+    });
+    expect(isDefault(removed, option)).toBe(true);
+    expect(readParam(removed, projected)).toEqual(
+      mapped({ ref: "/input/amount" }),
+    );
+  });
+  it("does not apply a stale projection to another whole reference", () => {
+    const original = subject({
+      id: "table",
+      kind: "decisionTable",
+      with: { ref: "/steps/table-input" },
+    });
+    expect(readParam(original, projected)).toEqual(ABSENT);
+    expect(() => writeParam(original, projected, fixed(20))).toThrow(
+      FormWriteError,
+    );
+    expect(original.step!["with"]).toEqual({ ref: "/steps/table-input" });
+  });
+});
+
 describe("reading field values", () => {
   it("reads plain step fields as fixed values", () => {
     const wait: Step = { id: "wait-1", kind: "wait", durationSeconds: 60 };
