@@ -45,6 +45,7 @@ the desktop app never migrates a platform.
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
+| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -146,6 +147,39 @@ the same policy as the database. Rerunning an already-current migration is not a
 policy update, and this release has no in-place policy-change operation: a
 mismatch leaves the runtime restricted. Never rewrite the fingerprint or counters
 by hand to force readiness.
+
+## Operational fact storage
+
+The `0031_operations_facts` migration adds five scoped operational projections
+and two bounded traversal cursors. It does not add columns to stored runs or
+events. Apply it explicitly with all writers stopped, using the procedure above.
+
+The migration holds schema locks in one transaction and reads retained runs in
+UUID order, at most 10,000 IDs per batch. Its history work is proportional to the
+number of runs and events. Classification fetches one bounded run at a time;
+event timestamps are aggregated per batch. Allow temporary disk space for all
+five projections, their indexes, and transaction/WAL overhead. Rehearse against a
+restored copy to measure the maintenance window: measured 10,000-, 200,000- and
+1,000,000-run deployment durations are not yet available.
+
+Historical run times come from accepted events. Missing, malformed or oversized
+evidence remains unavailable, and malformed lifecycle values remain unknown
+instead of being labeled as queued. A run requiring an unsupported IR version or
+language feature keeps that separate classification. Historical origins remain
+unknown unless an explicit start, retry or matching start receipt proves them.
+Signal delivery receipts do not establish how a run started. Historical step
+and task times are not invented, and older workers have an unknown registration
+time and empty identity until observed. Each run projection records when its
+coverage began.
+
+The new facts count toward ordinary storage usage. Active executions reserve
+additional capacity for bounded terminal fact updates, including allocation
+provenance. Backfill inventories retained data without granting extra admission
+capacity: a platform already above a quota can still migrate, but new work must
+satisfy the unchanged quotas. Purging an authorized archived run also removes
+its run, step, task and incident facts; deleting a worker removes its facts.
+The two cursor tables hold only one row per tenant or environment and have no
+business payload or retained history.
 
 ## Start and inspect compatibility
 

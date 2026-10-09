@@ -505,3 +505,56 @@ async def replica_apps(authenticated_client):
     async with second.router.lifespan_context(second):
         assert first.state.pyfly.context is not second.state.pyfly.context
         yield first, second
+
+
+@pytest.fixture
+async def operations_case(worker_setup, access_db, provisioned):
+    from types import SimpleNamespace
+
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.contracts.runtime import StartRunRequest
+    from firefly_weave.persistence.uow import UnitOfWork
+
+    tasks, runtime, workers, actor, scope, activation, instances = worker_setup
+    sessions, owner, access, url = access_db
+    uow = UnitOfWork(sessions)
+
+    async def start(key="run"):
+        return await runtime.start(
+            actor, scope, StartRunRequest(activation_id=activation.id, input=3), key, context=AuditContext()
+        )
+
+    async def rows(sql, **params):
+        async with uow.open(scope, mutation=False) as tx:
+            return [
+                dict(row)
+                for row in (
+                    await tx.session.execute(
+                        text(sql),
+                        {
+                            "tenant": scope.tenant_id,
+                            "project": scope.project_id,
+                            "environment": scope.environment_id,
+                            **params,
+                        },
+                    )
+                ).mappings()
+            ]
+
+    return SimpleNamespace(
+        admin=provisioned[0],
+        tasks=tasks,
+        runtime=runtime,
+        workers=workers,
+        actor=actor,
+        scope=scope,
+        activation=activation,
+        instances=instances,
+        sessions=sessions,
+        owner=owner,
+        access=access,
+        url=url,
+        tx=lambda: uow.open(scope),
+        start=start,
+        rows=rows,
+    )
