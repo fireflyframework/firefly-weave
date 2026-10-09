@@ -59,9 +59,9 @@ const slot = (id: string, max: number | null = 1): SubNodeSlotSpec => ({
 });
 
 describe("step details registry", () => {
-  it("is version 1", () => {
-    expect(NDV_REGISTRY_VERSION).toBe(1);
-    expect(new NdvRegistry().version).toBe(1);
+  it("is version 2", () => {
+    expect(NDV_REGISTRY_VERSION).toBe(2);
+    expect(new NdvRegistry().version).toBe(2);
   });
 
   it("keeps kinds in registration order", () => {

@@ -15,16 +15,17 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The step details registry, version 1: the one place step kinds, their
+// The step details registry, version 2: the one place step kinds, their
 // parameter components and AI agent slots are registered. Step details, the
 // canvas and the Add a step panel read it. Changing a type here changes the
-// contract every registering module compiles against, so it needs version 2.
+// contract every registering module compiles against, so it needs version 3;
+// version 2 added the declarative Parameters and Settings forms.
 import type { Signal, Type } from "@angular/core";
 import type { ReferenceScope, Schema } from "../../forms/core/scope";
 import type { Step, Workflow } from "../../model";
 import type { StepTestRequest } from "../state/execution";
 
-export const NDV_REGISTRY_VERSION = 1 as const;
+export const NDV_REGISTRY_VERSION = 2 as const;
 export type Json =
   | null
   | boolean
@@ -68,6 +69,8 @@ export interface KindContext {
   tableContract(uses: string): Json | null;
   /** Callee interface for `callWorkflow`: {inputSchema, outputSchema, callable}, or null when unknown. */
   workflowContract(uses: string): Json | null;
+  /** The recipe of an action this workflow owns (its method, path, timeout and retry), or null. */
+  ownedAction?(uses: string): Json | null;
 }
 export interface FieldSpec {
   /** Relative to the step, e.g. ["with"], ["cases", 0, "when"]. */
@@ -87,6 +90,102 @@ export interface OutputHandle {
   id: string;
   label: string;
   containerPath?: Path;
+}
+
+/** What a Parameters or Settings tab shows: default fields, then options offered by Add option. */
+export interface FormSpec {
+  /** Shown by default, in order. */
+  fields: ParamSpec[];
+  /** Offered by Add option, in order; shown once added, or always while required and visible. */
+  options?: ParamSpec[];
+}
+export type ParamType =
+  | "text"
+  | "multiline"
+  | "number"
+  | "duration"
+  | "boolean"
+  | "select"
+  | "multiSelect"
+  | "dateTime"
+  | "json"
+  | "list"
+  | "keyValue"
+  | "fields"
+  | "conditions"
+  | "resource"
+  | "connection"
+  | "model"
+  | "schema"
+  | "formula"
+  | "fileRef"
+  | "urlTemplate"
+  | "notice"
+  | "custom";
+export interface Choice {
+  value: Json;
+  label: string;
+  description?: string;
+  /** Why the choice can't be used; it stays visible. */
+  disabled?: string;
+  group?: string;
+}
+/** One field of a form, drawn by the shared renderer. */
+export interface ParamSpec {
+  /** Stable within the kind: the `data-param` test hook and the diagnostics key. */
+  id: string;
+  /**
+   * Where the value lives, relative to the step (default), the workflow, or the
+   * workflow-owned action. A path that starts with one of the step's expression
+   * fields continues as a data path inside that expression.
+   */
+  path: Path;
+  scope?: "step" | "workflow" | "action";
+  type: ParamType;
+  /** A sentence-case noun phrase. */
+  label: string;
+  required?: boolean;
+  /** The language default: a placeholder or a preselected choice. */
+  default?: Json;
+  /** An example value, when there is no default. */
+  placeholder?: string;
+  /** One short sentence under the field. */
+  hint?: string;
+  /** Longer help behind the "?" toggletip. */
+  description?: string;
+  /** "both": Fixed | Mapped (expression paths only); "fixed": structure; "mapped": references only. */
+  mapping?: "both" | "fixed" | "mapped";
+  /** Text fields that become templates with text.concat. */
+  templateCapable?: boolean;
+  choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);
+  min?: number;
+  max?: number;
+  /** list only: fewest and most items. */
+  minItems?: number;
+  maxItems?: number;
+  units?: ("seconds" | "minutes" | "hours" | "days")[];
+  maxLength?: number;
+  /** Normalized on blur like step names. */
+  identifier?: boolean;
+  showWhen?(step: Step, ctx: KindContext): boolean;
+  /** Why `showWhen` hides it now; Add option lists it disabled with this reason. */
+  hiddenReason?(step: Step, ctx: KindContext): string;
+  /** When showWhen turns false: "clear" (default) removes the stored value in the same undo step; "keep" leaves it. */
+  whenHidden?: "clear" | "keep";
+  /** list items; their paths are relative to the item. */
+  item?: ParamSpec;
+  /** fields rows and nested groups; their paths are absolute. */
+  children?(step: Step, ctx: KindContext): ParamSpec[];
+  /** "Add recipient", "Add header". */
+  addLabel?: string;
+  /** list only: chips for short identifier lists such as answers. */
+  display?: "rows" | "chips";
+  /** A manifest feature gate; disabled with the reason when missing. */
+  feature?: string;
+  /** The reason it is read-only, shown as the hint; null when editable. */
+  readOnly?(step: Step, ctx: KindContext): string | null;
+  /** type "custom" only: the subNode key of this kind's registerParameters() registration. */
+  component?: string;
 }
 
 export interface StepKindDescriptor {
@@ -117,6 +216,10 @@ export interface StepKindDescriptor {
   /** Test data scripts the simulator needs for this kind. */
   script?: "signal" | "human" | "ai-turns";
   real?: RealExecutionSupport;
+  /** The Parameters tab, drawn by the shared form renderer. */
+  form?(step: Step, ctx: KindContext): FormSpec;
+  /** Settings rows other than On error, Notes and About this step, which step details adds itself. */
+  settings?(step: Step, ctx: KindContext): FormSpec;
 }
 
 export interface ParameterRegistration {
@@ -172,7 +275,7 @@ export interface Edit {
 }
 
 export interface NdvContext {
-  readonly version: 1;
+  readonly version: 2;
   /** Immutable snapshot; edits go through edit(). */
   readonly step: Step;
   readonly workflow: Workflow;
@@ -214,6 +317,8 @@ export interface NdvContext {
     workflows(filter?: {
       callableBy?: string;
     }): Promise<{ uses: string; title: string; disabled?: string }[]>;
+    /** Published decision tables, newest version first. */
+    tables(): Promise<{ uses: string; title: string }[]>;
   };
   connections: {
     slot(name: string): { connector: string; required: boolean } | null;
