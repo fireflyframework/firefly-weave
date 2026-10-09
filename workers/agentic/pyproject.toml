@@ -20,13 +20,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "weave-agentic-worker"
-version = "0.1.6"
+version = "0.1.7"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 description = "Lease-bound Firefly Agentic model worker for Firefly Weave"
 requires-python = ">=3.13,<3.15"
 dependencies = [
-  "firefly-weave==0.1.0a14",
+  "firefly-weave==0.1.0a15",
   "pyfly[oauth2-client] @ https://github.com/fireflyframework/fireflyframework-pyfly/releases/download/v26.09.15/pyfly-26.9.15-py3-none-any.whl#sha256=c712b314cbaaaaec9aa7ec7f256fb8a31e6faf228e3bd52715356fd689c8943b",
   "fireflyframework-agentic @ https://github.com/fireflyframework/fireflyframework-agentic/releases/download/v26.09.0/fireflyframework_agentic-26.9.0-py3-none-any.whl#sha256=a6ecb82abd54c9a1d4fa71af46593b57228ed3336e41ea0f0e821724d9bf0224",
   "httpx>=0.28.1,<1",

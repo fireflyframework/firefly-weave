@@ -86,8 +86,8 @@ decides which features the platform has. With the alpha7 CLI from
 directory, and keep any checkout you already use for development untouched:
 
 ```sh
-# Download the alpha14 release's operator files into a new directory.
-git clone --branch v0.1.0a14 --single-branch https://github.com/fireflyframework/firefly-weave.git firefly-weave-local
+# Download the alpha15 release's operator files into a new directory.
+git clone --branch v0.1.0a15 --single-branch https://github.com/fireflyframework/firefly-weave.git firefly-weave-local
 # Run the following steps from that matching checkout.
 cd firefly-weave-local
 ```
@@ -351,8 +351,8 @@ Studio is the visual editor. Because the CLI and Studio share saved platforms,
 Studio opens already connected to the platform you saved in step 6.
 
 **First install Studio's browser application** if you have not yet: download
-the matching alpha14 bundle and install it as in
-[Install the alpha14 browser application](studio.md#install-the-alpha14-browser-application).
+the matching alpha15 bundle and install it as in
+[Install the alpha15 browser application](studio.md#install-the-alpha15-browser-application).
 Then start Studio:
 
 ```sh
