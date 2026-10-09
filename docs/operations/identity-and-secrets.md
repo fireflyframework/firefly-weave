@@ -52,7 +52,7 @@ sign-in settings, so its people sign in with a
 
 Follow the numbers: Weave first checks who is calling (1), then whether that
 principal may perform the operation in this scope (2), and finally limits which
-data the database transaction can touch (3). The green box is the separate check
+data the database transaction can touch (3). The shaded box is the separate check
 for secrets.
 
 [Open diagram at full size](../diagrams/security-boundaries.svg)

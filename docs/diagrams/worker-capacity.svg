@@ -18,30 +18,30 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 860" role="img" aria-labelledby="title description">
 <title id="title">Capacity is more than a replica count</title><desc id="description">Container replicas, authenticated worker presence, and task slots are distinct. Draining a worker stops new task claims so active leases can finish; scaling containers down can terminate them.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367d68"/></marker></defs>
-<rect width="900" height="860" rx="24" fill="#eef4f0"/>
-<g font-family="Inter,Arial,sans-serif" fill="#173d34">
-<text x="40" y="48" font-size="17" fill="#367d68">FIREFLY WEAVE · OPERATIONS</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
+<rect width="900" height="860" rx="24" fill="#EAE7DF"/>
+<g font-family="Arial,Helvetica,sans-serif" fill="#272820">
+<text x="40" y="48" font-size="17" fill="#855414">FIREFLY WEAVE · OPERATIONS</text>
 <text x="40" y="92" font-size="30" font-weight="700">Capacity is more than a replica count</text>
-<text x="40" y="127" font-size="18" fill="#4d655d" font-weight="400">Read each signal for what it proves, and keep its timestamp visible.</text>
-<rect x="40" y="162" width="820" height="137" rx="14" fill="white" stroke="#c6d8ce"/>
-<g transform="translate(62 186)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="38" height="40" rx="5"/><path d="M10 15h20M10 25h20M10 35h11"/></g>
-<text x="124" y="205" font-size="22" fill="#173d34" font-weight="700">Container capacity</text>
-<text x="124" y="240" font-size="18" fill="#4d655d" font-weight="400">Desired replicas say what the deployment should run.</text>
-<text x="124" y="267" font-size="18" fill="#4d655d" font-weight="400">Observed ready replicas say what the provider reports now.</text>
-<rect x="40" y="321" width="820" height="137" rx="14" fill="white" stroke="#c6d8ce"/>
-<g transform="translate(62 345)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="21" cy="23" r="20"/><path d="M10 23l8 8 16-19"/></g>
-<text x="124" y="364" font-size="22" fill="#173d34" font-weight="700">Worker presence</text>
-<text x="124" y="399" font-size="18" fill="#4d655d" font-weight="400">Recent means the worker has contacted Weave within its presence window.</text>
-<text x="124" y="426" font-size="18" fill="#4d655d" font-weight="400">Unknown or stale does not mean that all its task slots are free.</text>
-<rect x="40" y="480" width="820" height="137" rx="14" fill="white" stroke="#c6d8ce"/>
-<g transform="translate(62 504)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="20" cy="7" rx="19" ry="7"/><path d="M1 7v29c0 11 38 11 38 0V7M1 21c0 10 38 10 38 0"/></g>
-<text x="124" y="523" font-size="22" fill="#173d34" font-weight="700">Task capacity</text>
-<text x="124" y="558" font-size="18" fill="#4d655d" font-weight="400">Active leases count work that is still owned by this worker.</text>
-<text x="124" y="585" font-size="18" fill="#4d655d" font-weight="400">Available slots are shown only for a recent, eligible worker.</text>
-<rect x="40" y="649" width="820" height="165" rx="14" fill="#173d34"/>
+<text x="40" y="127" font-size="18" fill="#62645B" font-weight="400">Read each signal for what it proves, and keep its timestamp visible.</text>
+<rect x="40" y="162" width="820" height="137" rx="14" fill="white" stroke="#D8D4CA"/>
+<g transform="translate(62 186)" fill="none" stroke="#62645B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="38" height="40" rx="5"/><path d="M10 15h20M10 25h20M10 35h11"/></g>
+<text x="124" y="205" font-size="22" fill="#272820" font-weight="700">Container capacity</text>
+<text x="124" y="240" font-size="18" fill="#62645B" font-weight="400">Desired replicas say what the deployment should run.</text>
+<text x="124" y="267" font-size="18" fill="#62645B" font-weight="400">Observed ready replicas say what the provider reports now.</text>
+<rect x="40" y="321" width="820" height="137" rx="14" fill="white" stroke="#D8D4CA"/>
+<g transform="translate(62 345)" fill="none" stroke="#62645B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="21" cy="23" r="20"/><path d="M10 23l8 8 16-19"/></g>
+<text x="124" y="364" font-size="22" fill="#272820" font-weight="700">Worker presence</text>
+<text x="124" y="399" font-size="18" fill="#62645B" font-weight="400">Recent means the worker has contacted Weave within its presence window.</text>
+<text x="124" y="426" font-size="18" fill="#62645B" font-weight="400">Unknown or stale does not mean that all its task slots are free.</text>
+<rect x="40" y="480" width="820" height="137" rx="14" fill="white" stroke="#D8D4CA"/>
+<g transform="translate(62 504)" fill="none" stroke="#62645B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="20" cy="7" rx="19" ry="7"/><path d="M1 7v29c0 11 38 11 38 0V7M1 21c0 10 38 10 38 0"/></g>
+<text x="124" y="523" font-size="22" fill="#272820" font-weight="700">Task capacity</text>
+<text x="124" y="558" font-size="18" fill="#62645B" font-weight="400">Active leases count work that is still owned by this worker.</text>
+<text x="124" y="585" font-size="18" fill="#62645B" font-weight="400">Available slots are shown only for a recent, eligible worker.</text>
+<rect x="40" y="649" width="820" height="165" rx="14" fill="#272820"/>
 <text x="66" y="689" font-size="23" fill="#ffffff" font-weight="700">A safe sequence when reducing capacity</text>
-<text x="66" y="725" font-size="18" fill="#edf5ef" font-weight="400">Drain the worker → let active leases finish → review a scale-down plan.</text>
-<text x="66" y="758" font-size="18" fill="#edf5ef" font-weight="400">Resume lets the worker claim again. Revocation removes its authority.</text>
-<text x="66" y="787" font-size="17" fill="#cadfd2" font-weight="400">Provider scaling does not automatically drain a matching worker instance.</text>
+<text x="66" y="725" font-size="18" fill="#EAE7DF" font-weight="400">Drain the worker → let active leases finish → review a scale-down plan.</text>
+<text x="66" y="758" font-size="18" fill="#EAE7DF" font-weight="400">Resume lets the worker claim again. Revocation removes its authority.</text>
+<text x="66" y="787" font-size="17" fill="#D8D4CA" font-weight="400">Provider scaling does not automatically drain a matching worker instance.</text>
 </g></svg>

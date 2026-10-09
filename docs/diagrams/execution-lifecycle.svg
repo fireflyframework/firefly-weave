@@ -18,9 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="840" viewBox="0 0 1120 840" role="img" aria-labelledby="title desc">
 <title id="title">Find the case. Choose the run. Manage its history.</title>
 <desc id="desc">Business key order-1042 groups two runs, a payment run waiting for a human decision and a completed shipping run, each with its own run ID. When a run has finished: 1, retain it and inspect its tasks and history in the normal run list (Studio: Runs; CLI: weave runs list); 2, archive it to hide it while keeping its records, and restore it to show it again (Studio: Archive run; CLI: weave runs archive); 3, purge the content of an archived run to remove its data, typing the exact run ID to confirm (Studio: Delete run data; CLI: weave runs purge). Only finished runs can be archived; purge needs the run.purge permission, live leases or retained references block it, and nothing is partially deleted. A small deletion receipt and access audit remain; external systems and backups are managed separately.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:22px;font-weight:700}.p{font-size:19px}.s{font-size:17px;fill:#4D655D}.c{font-size:17px}.line{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
-<rect width="1120" height="734" rx="24" fill="#EEF4F0"/>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}.title{font-size:30px;font-weight:700}.h{font-size:22px;font-weight:700}.p{font-size:19px}.s{font-size:17px;fill:#62645B}.c{font-size:17px}.line{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}.icon{fill:none;stroke:#62645B;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="1120" height="734" rx="24" fill="#EAE7DF"/>
 <text class="title" x="36" y="53">Find the case. Choose the run. Manage its history.</text>
 <text class="p" x="36" y="89">Keys group related work; the run ID selects one exact run.</text>
 <rect x="36" y="123" width="318" height="186" rx="15" fill="white"/>
@@ -39,15 +39,15 @@ SPDX-License-Identifier: Apache-2.0
 <text class="h" x="421" y="428">2. Archive</text><text class="p" x="421" y="462">Hide it; keep its records.</text><text class="s" x="421" y="498">Restore it to show it again.</text>
 <text class="c" x="421" y="534"><tspan font-weight="700">Studio:</tspan> Archive run</text><text class="c" x="421" y="560"><tspan font-weight="700">CLI:</tspan> weave runs archive</text>
 <path class="line" d="M706 490H749"/>
-<rect x="764" y="390" width="320" height="200" rx="15" fill="#FFF7E5" stroke="#D6A646"/>
+<rect x="764" y="390" width="320" height="200" rx="15" fill="#FFF0D8" stroke="#F0A33C"/>
 <text class="h" x="785" y="428">3. Purge the content</text><text class="p" x="785" y="462">Remove the run’s data.</text><text class="s" x="785" y="498">Type the exact run ID to confirm.</text>
 <text class="c" x="785" y="534"><tspan font-weight="700">Studio:</tspan> Delete run data</text><text class="c" x="785" y="560"><tspan font-weight="700">CLI:</tspan> weave runs purge</text>
 <text class="p" x="36" y="632">Only finished runs can be archived. Purge needs an archived run and the run.purge</text>
 <text class="p" x="36" y="660">permission; live leases or retained references block it, and nothing is partially deleted.</text>
 <text class="s" x="36" y="694">A small deletion receipt and access audit remain. External systems and backups are managed separately.</text>
 <g id="takeaway">
-<rect x="0" y="740" width="1120" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="769" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="800" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Search by key, then act on one exact run ID.</text>
+<rect x="0" y="740" width="1120" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="769" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="800" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Search by key, then act on one exact run ID.</text>
 </g>
 </svg>

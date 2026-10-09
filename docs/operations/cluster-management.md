@@ -172,12 +172,12 @@ weave operations deployments create --request deployment.json \
 
 Use the actual returned IDs. `deployment.json` follows the canonical
 `DeploymentRequest` schema: target ID, name, declared `imported` or `managed`
-ownership, and bounded API, worker,
-or Weave AI components (API, permission and role names use `lumi`). Each component
-has its role, an immutable `repository@sha256:…` image, local configuration
-alias, replica count, CPU and memory limits. Worker components additionally
-require an admitted worker release ID. Configuration aliases must match the
-runner's local allowlist; they are not environment-variable or secret payloads.
+ownership, and bounded API, worker, or Weave AI components (API, permission and
+role names use `lumi`). Each component has its role, an immutable
+`repository@sha256:…` image, local configuration alias, replica count, CPU and
+memory limits. Worker components additionally require an admitted worker
+release ID. Configuration aliases must match the runner's local allowlist;
+they are not environment-variable or secret payloads.
 
 Database migrations are not executable deployment components. Run the release's
 migration job separately using the destination's upgrade runbook, then verify
@@ -313,8 +313,8 @@ last contact; a runner is online if it made contact in the last 90 seconds.
 
 ![Explicit record selection and current permission checks produce an explanation without deployment actions](../diagrams/lumi-operations.svg)
 
-When Weave AI is configured, **Explain with Weave AI** opens the assistant
-from a selected Clusters record. Choose which saved records to include and send a
+When Weave AI is configured, **Explain with Weave AI** opens the assistant from a
+selected Clusters record. Choose which saved records to include and send a
 question; nothing is sent automatically. A target, desired deployment,
 observation, plan, or operation can provide context. Both `lumi.use` and the
 record's normal `deployment.read` permission are required.
@@ -324,7 +324,8 @@ counts, freshness, ownership, risks, and safe receipt codes. It excludes provide
 configuration, external identities, credentials, paths, and raw logs. It cannot
 create or apply a deployment plan. Treat it as an explanation of saved evidence,
 not proof of live cloud health or available worker task capacity. See the
-[Weave AI guide](../guides/lumi.md#explain-operations-records) for the opt-in flow.
+[Weave AI guide](../guides/weave-ai.md#explain-operations-records) for the
+opt-in flow.
 
 See [Install an Operations runner](operations-runner.md) for local configuration,
 provider setup, capability limits, and recovery after an uncertain operation.

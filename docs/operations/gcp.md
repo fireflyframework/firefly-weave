@@ -38,7 +38,7 @@ so that `WEAVE_DOCKER_CONTEXT` is set.
 ![Registry, Kubernetes, database, identity, and Weave deployment boundaries](../diagrams/cloud-deployment.svg)
 
 Artifact Registry sits at the image boundary (step 2 in the diagram) and GKE runs
-the green panel. The image-pull identity belongs to the cluster; your own sign-in
+the shaded panel. The image-pull identity belongs to the cluster; your own sign-in
 and Weave's application identities have different jobs.
 [Open diagram at full size](../diagrams/cloud-deployment.svg)
 

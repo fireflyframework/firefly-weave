@@ -243,11 +243,10 @@ Set `context` to the subscription UUID, `boundary` to the resource group,
 shared private path, and each component's `container` to its existing container
 name. Use the Azure public cloud management endpoint.
 
-Observation supports API, worker, and Weave AI components
-(API, permission and role names use `lumi`). Configure new Azure targets and
-runner policies with `observe` only. After environment-specific acceptance,
-enable `update` for existing **worker and Weave AI apps in Single revision
-mode**. Keep `scale_workers` disabled in both policies for alpha12
+Observation supports API, worker, and Weave AI components. Configure new Azure
+targets and runner policies with `observe` only. After environment-specific
+acceptance, enable `update` for existing **worker and Weave AI apps in Single
+revision mode**. Keep `scale_workers` disabled in both policies for alpha12
 Azure deployments. The implemented scaling path has not established an
 all-revision physical shutdown guarantee.
 

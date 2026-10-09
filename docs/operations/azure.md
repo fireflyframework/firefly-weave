@@ -39,7 +39,7 @@ so that `WEAVE_DOCKER_CONTEXT` is set.
 
 ![Registry, Kubernetes, database, identity, and Weave deployment boundaries](../diagrams/cloud-deployment.svg)
 
-ACR sits at the image boundary (step 2 in the diagram) and AKS runs the green
+ACR sits at the image boundary (step 2 in the diagram) and AKS runs the shaded
 panel. Registry push access, node pull access, and Weave application grants are
 three separate permissions.
 [Open diagram at full size](../diagrams/cloud-deployment.svg)
@@ -205,10 +205,10 @@ before accepting the environment. See the
 [capability verification](../capabilities.md#alpha13-verification) for the
 alpha13 worker checks, separate live AI acceptance and historical alpha12
 delivery table. The accepted Azure deployment used Agentic 0.1.5 and the alpha13
-SDK against the unchanged alpha12 API, Lumi and Operations services with schema
+SDK against the unchanged alpha12 API, Weave AI and Operations services with schema
 0030. One new Azure OpenAI workflow succeeded with a consistent replay;
 authorization was not verified by replay. The earlier suspended AI run and
-successful HTTP and Lumi evidence were preserved, with no new Lumi call. This
+successful HTTP and Weave AI evidence were preserved, with no new Weave AI call. This
 acceptance applies to that exact deployment, not arbitrary mixed versions.
 
 ## If something goes wrong
