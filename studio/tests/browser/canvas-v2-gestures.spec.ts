@@ -387,6 +387,47 @@ test.describe("canvas gestures", () => {
     await expect(canvas.tileBody("record-result")).toBeFocused();
   });
 
+  test("after Escape hides a toolbar, right-click still opens the step's menu, at every level of detail", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    const moveTo = page.getByRole("menuitem", { name: "Move to…" });
+    /** Escape hid the step's toolbar; right-click brings its menu anyway. */
+    const rightClickAfterEscape = async (id: string) => {
+      await page.keyboard.press("Escape");
+      await expect(canvas.root.locator(".tile-toolbar")).toHaveCount(0);
+      await canvas.tileBody(id).click({ button: "right" });
+      await expect(moveTo).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(moveTo).toHaveCount(0);
+    };
+    // A hovered step.
+    await canvas.tileBody("prepare-request").hover();
+    await rightClickAfterEscape("prepare-request");
+    // A selected step with focus, the pointer elsewhere.
+    await canvas.tileBody("approval").click();
+    await expect(canvas.tileBody("approval")).toBeFocused();
+    const away = await canvas.emptySpot();
+    await page.mouse.move(away.x, away.y);
+    await expect(
+      canvas.root.getByRole("group", { name: "Commands for approval" }),
+    ).toBeVisible();
+    await rightClickAfterEscape("approval");
+    // Labels hidden (below 40%), then plain tiles (below 30%).
+    const zoomOut = canvas.root.getByRole("button", {
+      name: "Zoom out",
+      exact: true,
+    });
+    const has = (level: string) =>
+      canvas.root.evaluate((root, l) => root.classList.contains(l), level);
+    for (const level of ["lod-compact", "lod-minimal"]) {
+      for (let i = 0; i < 12 && !(await has(level)); i++) await zoomOut.click();
+      await expect(canvas.root).toHaveClass(new RegExp(`\\b${level}\\b`));
+      await canvas.tileBody("record-result").hover();
+      await rightClickAfterEscape("record-result");
+    }
+  });
+
   test("below 30% Move to… still shows where a step can go and focuses one of them", async ({
     page,
   }) => {

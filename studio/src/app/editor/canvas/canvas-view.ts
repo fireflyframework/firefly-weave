@@ -719,7 +719,7 @@ export class CanvasView implements OnInit, DoCheck {
       },
     ];
   }
-  /** Right-click on a step opens its More menu. */
+  /** Right-click on a step opens its More menu, also after Escape hid its toolbar. */
   contextMenu(event: MouseEvent) {
     const id = (event.target as Element)
       .closest?.("[data-step]")
@@ -727,6 +727,7 @@ export class CanvasView implements OnInit, DoCheck {
     if (!id) return;
     event.preventDefault();
     this.hoveredTile = id;
+    this.dismissed = this.dismissed.filter((step) => step !== id);
     this.cdr.markForCheck();
     afterNextRender(
       () =>
