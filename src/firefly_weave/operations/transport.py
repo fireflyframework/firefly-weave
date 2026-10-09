@@ -186,6 +186,26 @@ class BodyBoundary:
         await send({"type": "http.response.body", "body": body})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = scope.get("path", "")
+        if (
+            scope["type"] == "http"
+            and len(path) <= 8192
+            and any(
+                name in {"ai_endpoints.list", "ai_models.list"} and pattern.fullmatch(path)
+                for name, _, pattern in self.routes
+            )
+        ):
+            original_send = send
+
+            async def metadata_send(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    headers = [
+                        (key, value) for key, value in message.get("headers", []) if key.lower() != b"cache-control"
+                    ]
+                    message = {**message, "headers": [*headers, (b"cache-control", b"no-store")]}
+                await original_send(message)
+
+            send = metadata_send
         telemetry = getattr(getattr(scope.get("app"), "state", None), "telemetry_service", None)
         if scope["type"] != "http" or telemetry is None:
             await self._serve(scope, receive, send)

@@ -318,6 +318,30 @@ accepts it. The rules for using a key:
   creates a new revision. Debug commands
   have no idempotency guarantee.
 
+### AI discovery
+
+`ai_endpoints.list` returns the operator-approved endpoint presets, without network
+rules or credential locations. `ai_models.list` requires a `connection` revision
+ID and returns approved cached metadata with `catalog.read`; it does not require
+connection binding or management permission. Both operations recheck current
+permissions in the selected environment and return `Cache-Control: no-store`.
+
+Set `refresh=true` to discover models through the AI gateway. This also requires
+`connection.manage`. Refreshes and AI connection tests share six admissions per
+minute per person. A test and its automatic refresh use one admission. A saved AI
+connection refreshes after the save commits, using its own admission; a refresh
+failure preserves the successful save or test result. In-process callers that
+supply a save transaction must invoke `AIModelService.refresh_after` only after
+they commit that transaction.
+
+The cache retains metadata only, for up to five minutes, with at most 128 records,
+8 MiB in total and 256 KiB per record. Entries are isolated by environment,
+revision and policy content. A restart, another API process or an expired entry
+can return `discovery: "unknown"`; a passive read never calls a provider. An absent
+policy returns unknown approval and no models. A failed refresh replaces prior
+health with its safe discovery code and an empty model list. Discovery traffic
+always runs through the configured AI gateway.
+
 ### Health probes
 
 `GET /health/live` answers `{"status":"up"}` while the process runs, and
@@ -567,6 +591,8 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `connections.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/connections` | connection.manage |
 | `connections.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/connections/{identifier}` | connection.manage |
 | `connections.test` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/connections/{identifier}/test` | connection.manage |
+| `ai_endpoints.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/endpoints` | catalog.read |
+| `ai_models.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/models` | catalog.read |
 | `ai_connections.test` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/connections/{identifier}/test` | connection.manage |
 | `runs.start` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs` | run.start |
 | `runs.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs` | run.read |

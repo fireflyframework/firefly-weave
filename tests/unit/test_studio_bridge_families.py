@@ -84,6 +84,8 @@ def pair(browser):
         ("GET", f"{ENVIRONMENT}/runs/{RESOURCE}/steps"),
         ("GET", f"{ENVIRONMENT}/runs/{RESOURCE}/logs"),
         ("POST", f"{ENVIRONMENT}/ai/connections/{RESOURCE}/test"),
+        ("GET", f"{ENVIRONMENT}/ai/endpoints"),
+        ("GET", f"{ENVIRONMENT}/ai/models"),
     ],
 )
 def test_studio_journeys_are_bridged(tmp_path, method, path):
@@ -126,6 +128,10 @@ def test_studio_journeys_are_bridged(tmp_path, method, path):
         ("GET", f"{ENVIRONMENT}/runs/not-a-uuid/logs", 404),
         ("POST", ENVIRONMENT.replace("000000000003", "000000000009") + f"/ai/connections/{RESOURCE}/test", 403),
         ("GET", f"{ENVIRONMENT}/ai/connections/{RESOURCE}/test", 404),
+        ("POST", f"{ENVIRONMENT}/ai/models", 404),
+        ("POST", f"{ENVIRONMENT}/ai/endpoints", 404),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/models", 403),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/endpoints", 403),
     ],
 )
 def test_bridge_boundaries_hold(tmp_path, method, path, status):

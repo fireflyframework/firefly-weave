@@ -25,9 +25,11 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
-from firefly_weave.contracts.ai import AIConnectionTestRequest
+from firefly_weave.api.transport import parse_query
+from firefly_weave.contracts.ai import AIConnectionTestRequest, AIModelsQuery
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.ai_connections import AIConnectionService
+from firefly_weave.operations.ai_models import AIModelService
 from firefly_weave.operations.ephemeral import until_disconnect
 
 MAX_REQUEST_BYTES = 65536
@@ -45,8 +47,8 @@ async def _body(request: Request) -> bytes:
 @rest_controller
 @request_mapping("")
 class AIController:
-    def __init__(self, service: AIConnectionService) -> None:
-        self.service = service
+    def __init__(self, service: AIConnectionService, models: AIModelService) -> None:
+        self.service, self.model_service = service, models
 
     @operation("ai_connections.test")
     async def test_connection(self, request: Request) -> JSONResponse:
@@ -61,4 +63,23 @@ class AIController:
             ),
             request.receive,
         )
+        return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
+    @operation("ai_endpoints.list")
+    async def endpoints(self, request: Request) -> JSONResponse:
+        result = await self.model_service.endpoints(
+            request.state.principal, request_scope(request, environment=True), context=request.state.audit_context
+        )
+        return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
+    @operation("ai_models.list")
+    async def models(self, request: Request) -> JSONResponse:
+        query = parse_query(request.query_params, AIModelsQuery)
+        work = self.model_service.models(
+            request.state.principal,
+            request_scope(request, environment=True),
+            query,
+            context=request.state.audit_context,
+        )
+        result = await until_disconnect(work, request.receive) if query.refresh else await work
         return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})

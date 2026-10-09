@@ -22,6 +22,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import UUID
 
 from pyfly.client.ports.outbound import BoundedHttpClientPort
 from pyfly.container.bean import bean
@@ -34,9 +35,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.applications import Starlette
 
 from firefly_weave import __version__, private_origins
+from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authentication import AuthenticationFilter, AuthenticationService, VerifierSet
 from firefly_weave.access.authorization import AuthorizationService
 from firefly_weave.access.identity_links import IdentityResolver
+from firefly_weave.access.models import Principal
 from firefly_weave.access.oidc import OIDCVerifier
 from firefly_weave.access.service import AccessService
 from firefly_weave.api.access import AccessController
@@ -79,6 +82,7 @@ from firefly_weave.connectors.kafka import KafkaConnector
 from firefly_weave.connectors.kafka_transport import BrokerClients, require_driver
 from firefly_weave.connectors.manifest import HTTP_DESCRIPTOR, KAFKA_DESCRIPTOR, POSTGRES_DESCRIPTOR
 from firefly_weave.connectors.postgresql import PostgresConnector, PostgresPolicy
+from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, AgenticConnectionAdapter
 from firefly_weave.contracts.file_connectors import FILE_DESCRIPTORS, FileConnectionAdapter
 from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
@@ -91,6 +95,7 @@ from firefly_weave.files.service import FileService
 from firefly_weave.files.worker_service import WorkerFileService
 from firefly_weave.observability import OwnedMeterConfiguration, OwnedTracingConfiguration, TelemetryDrops
 from firefly_weave.operations.ai_connections import AIConnectionService, GatewayConnectionTester
+from firefly_weave.operations.ai_models import AIModelService
 from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.debug.store import DebugService
@@ -271,7 +276,19 @@ def make_app(
                 AgenticConnectionAdapter(GatewayConnectionTester(pyfly.context.get_bean(LumiGatewayClient))),
             )
             # Generic tests of AI connections call the AI gateway too, so they share its per-person limit.
-            pyfly.context.get_bean(ConnectionService).test_admission = pyfly.context.get_bean(AIConnectionService).admit
+            connections = pyfly.context.get_bean(ConnectionService)
+            ai_tests = pyfly.context.get_bean(AIConnectionService)
+            ai_models = pyfly.context.get_bean(AIModelService)
+            connections.test_admission = ai_tests.admit
+
+            async def refresh_models(
+                actor: Principal, scope: Scope, revision_id: UUID, deadline: float, context: AuditContext
+            ) -> None:
+                await ai_models.refresh_after(
+                    actor, scope, revision_id, admitted=True, deadline=deadline, context=context
+                )
+
+            connections.refresh = ai_tests.refresh = refresh_models
             for name, descriptor in FILE_DESCRIPTORS.items():
                 registry.register_descriptor(descriptor, FileConnectionAdapter(name))
             pyfly.context.get_bean(ConnectorRegistry).register_descriptor(
@@ -305,6 +322,7 @@ def make_app(
                 LumiController,
                 APIAIPolicy,
                 AIConnectionService,
+                AIModelService,
                 AIController,
                 DebugService,
                 DebugController,

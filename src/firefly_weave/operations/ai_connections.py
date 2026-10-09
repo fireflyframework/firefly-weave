@@ -28,7 +28,7 @@ import json
 import re
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
@@ -49,6 +49,8 @@ from firefly_weave.contracts.ai import MODEL_NAME_PATTERN, AIConnectionTestReque
 from firefly_weave.contracts.connectors import BoundConnection, ConnectionRevision, ConnectionTestResult
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
+
+type AIRefreshHook = Callable[[Principal, Scope, UUID, float, AuditContext], Awaitable[None]]
 
 TESTS_PER_MINUTE = 6
 # The same bound the generic connection test gives secret resolution.
@@ -94,6 +96,7 @@ class AIConnectionService:
     def __init__(self, connections: ConnectionService, gateway: LumiGatewayClient) -> None:
         self.connections, self.gateway = connections, gateway
         self.limiter = AIRateLimit()
+        self.refresh: AIRefreshHook | None = None
 
     async def test(
         self,
@@ -117,17 +120,23 @@ class AIConnectionService:
                 "WV-AI-GATEWAY-MISSING",
                 "Tests need the AI gateway. Run weave platform ai enable, or ask an operator to deploy it.",
             )
-        credential = await self._credential(scope, revision)
-        await self.connections.revalidate(actor, scope, revision, "connection.manage", context)
-        raw = await self.gateway.test(
-            dict(revision.config),
-            credential,
-            provider=str(revision.config.get("provider")),
-            model=request.model,
-            probe_tools=request.probe_tools,
-        )
+        deadline = time.monotonic() + 130.0
+        credential = await self.credential(scope, revision)
+        try:
+            await self.connections.revalidate(actor, scope, revision, "connection.manage", context)
+            raw = await self.gateway.test(
+                dict(revision.config),
+                credential,
+                provider=str(revision.config.get("provider")),
+                model=request.model,
+                probe_tools=request.probe_tools,
+            )
+        finally:
+            credential = None
         result = _gateway_result(raw, request.model)
         await self._record(actor, scope, revision, result, context)
+        if self.refresh is not None and deadline > time.monotonic():
+            await self.refresh(actor, scope, revision.id, deadline, context)
         return result
 
     def admit(self, actor: Principal, revision: ConnectionRevision) -> None:
@@ -135,7 +144,7 @@ class AIConnectionService:
         if revision.adapter == AGENTIC_ADAPTER:
             self.limiter.take(actor.id)
 
-    async def _credential(self, scope: Scope, revision: ConnectionRevision) -> str | None:
+    async def credential(self, scope: Scope, revision: ConnectionRevision) -> str | None:
         if keyless_connection(revision.adapter, revision.config, revision.secret_refs):
             # The reserved no-credential handle is never resolved, leased, logged or sent.
             return None

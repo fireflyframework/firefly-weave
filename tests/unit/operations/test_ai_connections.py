@@ -434,3 +434,198 @@ async def test_a_secret_handle_that_does_not_answer_in_time_is_refused(monkeypat
         release.set()
     assert (refused.value.status, refused.value.code) == (503, "WV-AI-SECRET")
     assert gateway.calls == [] and audits == []
+
+
+@pytest.fixture
+def generic_http_case(tmp_path, monkeypatch):
+    import asyncio
+    import time
+
+    import httpx
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from firefly_weave.api.connections import PREFIX, ConnectionController
+    from firefly_weave.operations.lumi_gateway import LumiGatewayClient, LumiGatewaySettings
+
+    def build(phase):
+        entered, cancelled, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        credentials, owned_tasks, sent = [], [], []
+
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                owned_tasks.append(asyncio.current_task())
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+                yield b""
+
+            async def aclose(self):
+                closed.set()
+
+        async def upstream(request):
+            blocked = "/v1/test" if phase == "generation" else "/v1/models"
+            if request.url.path == blocked:
+                return httpx.Response(200, stream=Stream())
+            return httpx.Response(200, json=ANSWER)
+
+        token = tmp_path / "gateway-token"
+        token.write_text("gateway-test-token")
+        gateway = LumiGatewayClient(
+            LumiGatewaySettings(endpoint="https://gateway.example/v1/lumi", token_file=str(token)),
+            transport=httpx.MockTransport(upstream),
+        )
+        saved = revision(
+            config={"provider": "openai-chat", "endpoint": "https://model.test/v1", "secretSlot": "apiKey"},
+            secretRef={"apiKey": "model-key"},
+            allowed_destinations=("https://model.test",),
+        )
+        service, _ = generic_connections(saved, gateway)
+        service.secrets = SimpleNamespace(
+            check=lambda *args, **kwargs: None, resolve=lambda *args: ResolvedSecret(value="credential-canary")
+        )
+        adapter = service.registry.get(saved.adapter)
+        original = adapter.test_connection
+
+        async def capture(bound):
+            credentials.append(bound.credentials)
+            return await original(bound)
+
+        monkeypatch.setattr(adapter, "test_connection", capture)
+
+        async def refresh(actor, scope, identifier, deadline, context):
+            await gateway.models(
+                dict(saved.config),
+                "credential-canary",
+                provider="openai-chat",
+                timeout_seconds=max(0.001, deadline - time.monotonic()),
+            )
+
+        service.refresh = refresh
+        controller = ConnectionController(service, SimpleNamespace())
+        app = Starlette(routes=[Route("/api/v1" + PREFIX + "/{identifier}/test", controller.test, methods=["POST"])])
+        http_scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "path": (
+                f"/api/v1/tenants/{SCOPE.tenant_id}/projects/{SCOPE.project_id}"
+                f"/environments/{SCOPE.environment_id}/connections/{saved.id}/test"
+            ),
+            "query_string": b"",
+            "headers": [],
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "client": ("testclient", 123),
+            "state": {"principal": ACTOR, "audit_context": CONTEXT},
+        }
+        body_sent = False
+
+        async def receive():
+            nonlocal body_sent
+            if not body_sent:
+                body_sent = True
+                return {"type": "http.request", "body": b"{}", "more_body": False}
+            await entered.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            sent.append(message)
+
+        return SimpleNamespace(
+            app=app,
+            http_scope=http_scope,
+            receive=receive,
+            send=send,
+            entered=entered,
+            cancelled=cancelled,
+            closed=closed,
+            gateway=gateway,
+            credentials=credentials,
+            owned_tasks=owned_tasks,
+        )
+
+    return build
+
+
+@pytest.mark.parametrize("phase", ["generation", "refresh"])
+async def test_generic_http_disconnect_owns_generation_and_refresh(generic_http_case, phase):
+    import asyncio
+
+    from firefly_weave.connections.secrets import SecretUnavailable
+
+    case = generic_http_case(phase)
+    before = asyncio.all_tasks()
+    async with asyncio.timeout(2) as detector:
+        with pytest.raises(asyncio.CancelledError):
+            await case.app(case.http_scope, case.receive, case.send)
+        assert case.entered.is_set() and case.cancelled.is_set() and case.closed.is_set()
+    assert not detector.expired(), "The HTTP disconnect must cancel before the deadlock detector"
+    assert case.gateway.active == 0
+    assert case.owned_tasks and all(task.done() for task in case.owned_tasks)
+    with pytest.raises(SecretUnavailable):
+        case.credentials[0]("apiKey")
+    assert not (asyncio.all_tasks() - before)
+
+
+@pytest.mark.parametrize("route,budget", [("dedicated", 130.0), ("generic", 30.0)])
+@pytest.mark.parametrize("elapsed", [0.25, 0.0, -1.0])
+async def test_test_refresh_receives_only_the_original_remaining_budget(monkeypatch, audits, route, budget, elapsed):
+    import time
+
+    from firefly_weave.connections import service as connection_module
+    from firefly_weave.connections.secrets import SecretUnavailable
+
+    now, hook_calls = [1000.0], []
+    gateway = Gateway()
+    saved = revision(
+        config={"provider": "openai-chat", "endpoint": "https://model.test/v1", "secretSlot": "apiKey"},
+        secretRef={"apiKey": "model-key"},
+        allowed_destinations=("https://model.test",),
+    )
+    connections, _ = generic_connections(saved, gateway)
+    connections.secrets = SimpleNamespace(
+        check=lambda *a, **kw: None, resolve=lambda *a: ResolvedSecret(value="credential-canary")
+    )
+    tests = AIConnectionService(connections, gateway)
+    credentials = []
+    adapter = connections.registry.get(saved.adapter)
+    original = adapter.test_connection
+
+    async def capture(bound):
+        credentials.append(bound.credentials)
+        return await original(bound)
+
+    monkeypatch.setattr(adapter, "test_connection", capture)
+    original_test = gateway.test
+
+    async def finish(*args, **kwargs):
+        answer = await original_test(*args, **kwargs)
+        now[0] = 1000.0 + budget - elapsed
+        return answer
+
+    gateway.test = finish
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr(ai_connections, "time", clock)
+    monkeypatch.setattr(connection_module, "time", clock)
+
+    async def refresh(actor, scope, identifier, deadline, context):
+        hook_calls.append(deadline - now[0])
+        if credentials:
+            with pytest.raises(SecretUnavailable):
+                credentials[0]("apiKey")
+        assert deadline == 1000.0 + budget
+        assert time.monotonic() > 0
+
+    tests.refresh = connections.refresh = refresh
+    result = (
+        await tests.test(ACTOR, SCOPE, saved.id, REQUEST, context=CONTEXT)
+        if route == "dedicated"
+        else (await connections.test_connection(ACTOR, SCOPE, saved.id, context=CONTEXT))
+    )
+    assert result.ok is True
+    assert hook_calls == ([elapsed] if elapsed > 0 else [])

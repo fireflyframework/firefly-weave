@@ -23,9 +23,11 @@ from the step or connection, never from a provider response.
 
 from collections.abc import Mapping
 from typing import Literal, NamedTuple
+from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import AwareDatetime, Field, model_validator
 
+from firefly_weave.ai_policy import Provider
 from firefly_weave.contracts.definitions import ContractModel
 
 AIErrorCode = Literal[
@@ -135,3 +137,32 @@ class GatewayModelList(ContractModel):
         if len({row.name for row in self.models}) != len(self.models):
             raise ValueError("Each model appears once")
         return self
+
+
+class AIEndpoint(ContractModel):
+    id: str
+    label: str
+    url: str
+    providers: list[Provider] = Field(min_length=1, max_length=5)
+    compat: Literal["ollama"] | None
+    credential: Literal["none", "required"]
+    models: Literal["served", "listed"]
+    context_tokens: int | None
+    development_only: bool
+
+
+class AIEndpointsResult(ContractModel):
+    policy: Literal["loaded", "absent"]
+    endpoints: list[AIEndpoint] = Field(default_factory=list, max_length=100)
+
+
+class AIModelsQuery(ContractModel):
+    connection: UUID
+    refresh: bool = False
+
+
+class AIModelsResult(ContractModel):
+    approval: Literal["served", "listed", "unknown"]
+    discovery: Literal["ok", "unknown"] | AIErrorCode
+    discovered_at: AwareDatetime | None = None
+    models: list[AIModel] = Field(default_factory=list, max_length=150)

@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+import time
 from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -34,6 +35,7 @@ from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.connections.diagnostics import (
     connector_unavailable,
+    is_agentic_revision,
     keyless_connection,
     readiness_issues,
     rejected,
@@ -61,6 +63,7 @@ from firefly_weave.persistence.idempotency import Idempotency, lock
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
 
 if TYPE_CHECKING:
+    from firefly_weave.operations.ai_connections import AIRefreshHook
     from firefly_weave.workers.models import VerifiedTask
 
 
@@ -84,6 +87,7 @@ class ConnectionService(ConnectionBindingPort):
         # Set at startup for connections whose test calls a model, such as AI connections: a per-person
         # limit taken after authorization and before the test job, any secret or the provider call.
         self.test_admission: Callable[[Principal, ConnectionRevision], None] | None = None
+        self.refresh: AIRefreshHook | None = None
 
     def require(self, actor: Principal, scope: Scope, capability: str, context: AuditContext) -> None:
         self.definitions.require(actor, scope, capability, context)
@@ -292,6 +296,7 @@ class ConnectionService(ConnectionBindingPort):
         self, actor: Principal, scope: Scope, revision_id: UUID, *, context: AuditContext
     ) -> ConnectionTestResult:
         self.require(actor, scope, "connection.manage", context)
+        deadline = time.monotonic() + 30.0
         job_id = uuid4()
         async with self.uow.open(scope) as tx:
             repository = ConnectionRepository(tx)
@@ -323,7 +328,7 @@ class ConnectionService(ConnectionBindingPort):
             return resolved[name]
 
         try:
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(max(0.0, deadline - time.monotonic())):
                 keyless = keyless_connection(revision.adapter, revision.config, revision.secret_refs)
                 async with asyncio.timeout(5):
                     for name, handle in revision.secret_refs.items():
@@ -341,6 +346,8 @@ class ConnectionService(ConnectionBindingPort):
         finally:
             active = False
             resolved.clear()
+        if self.refresh is not None and is_agentic_revision(revision) and deadline > time.monotonic():
+            await self.refresh(actor, scope, revision.id, deadline, context)
         # Plain HTTP is allowed but never silent: the answer says whether requests to the base URL are encrypted.
         result = ConnectionTestResult(
             ok=ok, code="ok" if ok else "failed", job_id=job_id, encrypted=transport_encrypted(revision.config)

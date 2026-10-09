@@ -76,6 +76,8 @@ STUDIO_FAMILIES = frozenset(
         "bindable_connections",
         # AI connection tests run in the AI gateway; connection.manage is checked server-side.
         "ai_connections",
+        "ai_endpoints",
+        "ai_models",
         "files",
         "lumi",
         "connector_descriptors",
