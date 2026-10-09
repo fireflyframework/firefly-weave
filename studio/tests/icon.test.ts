@@ -86,8 +86,8 @@ function requestedIcons(): Map<string, string> {
 }
 
 describe("icons", () => {
-  it("draws the 94 mapped names from Lucide", () => {
-    expect(iconNames).toHaveLength(94);
+  it("draws the 110 mapped names from Lucide", () => {
+    expect(iconNames).toHaveLength(110);
     expect(lucideNames).toEqual(iconMap);
     for (const name of iconNames)
       expect(iconNodes[name].length, name).toBeGreaterThan(0);
