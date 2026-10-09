@@ -19,7 +19,7 @@ import "@angular/compiler";
 import { afterAll, describe, expect, it, vi } from "vitest";
 vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
 import { App } from "../src/app/app";
-import { StudioApi } from "../src/app/api";
+import { ApiError, StudioApi } from "../src/app/api";
 import { StructuredCanvasAdapter } from "../src/app/model";
 import { StepDetailsController } from "../src/app/editor/ndv/step-details-controller";
 afterAll(() => vi.unstubAllGlobals());
@@ -60,6 +60,8 @@ function fixture() {
     refreshConnectionStatus: async () => {},
     catalogAfterIdentity() {},
     renewedStatus() {},
+    refreshRunTaskAfterIdentity() {},
+    loadIdentity: async () => {},
     detachPlatformDraft() {},
     loginWatcher: { stop() {} },
   });
@@ -117,3 +119,122 @@ describe("sample ownership at the real App account boundary", () => {
     expect(controller.testEvent()).toBeUndefined();
   });
 });
+
+describe("sample ownership during background platform checks", () => {
+  async function check(app: App) {
+    await (
+      app as unknown as { checkPlatform(): Promise<void> }
+    ).checkPlatform();
+  }
+  it.each([
+    { status: 401, detail: {} },
+    { status: 403, detail: { code: "WV-AUTH-NOT-LINKED" } },
+  ])("clears on authoritative rejection %j", async ({ status, detail }) => {
+    const { app, controller } = fixture();
+    const owner = controller.testEventOwner();
+    Object.assign(app, {
+      connection: {
+        test: async () => {
+          throw new ApiError(status, detail);
+        },
+      },
+    });
+    await check(app);
+    expect(app.signInEnded).toBe(true);
+    expect(controller.testEvent()).toBeUndefined();
+    expect(owner()).toBe(false);
+  });
+  it.each([0, 503])(
+    "retains the sample during transient offline status %i",
+    async (status) => {
+      const { app, controller } = fixture();
+      const owner = controller.testEventOwner();
+      Object.assign(app, {
+        connection: {
+          test: async () => {
+            throw new ApiError(status, {});
+          },
+        },
+      });
+      await check(app);
+      expect(controller.testEvent()).toEqual({ name: "private sample" });
+      expect(owner()).toBe(true);
+    },
+  );
+  it("retains the sample on same-account background renewal", async () => {
+    const { app, controller } = fixture();
+    const owner = controller.testEventOwner();
+    Object.assign(app, {
+      connection: {
+        test: async () => ({
+          session: structuredClone(app.api.session),
+          identity: structuredClone(app.identity),
+        }),
+      },
+    });
+    await check(app);
+    expect(controller.testEvent()).toEqual({ name: "private sample" });
+    expect(owner()).toBe(true);
+  });
+});
+
+describe("sample ownership through the real identity fallback", () => {
+  it.each([0, 503, 401, 403])(
+    "handles identity lookup failure %i without conflating offline and sign-out",
+    async (status) => {
+      const { app, controller } = fixture();
+      const owner = controller.testEventOwner();
+      Reflect.deleteProperty(app, "loadIdentity");
+      app.api.request = vi
+        .fn()
+        .mockRejectedValue(
+          new ApiError(
+            status,
+            status === 403 ? { code: "WV-AUTH-NOT-LINKED" } : {},
+          ),
+        );
+      Object.assign(app, { connection: { test: async () => null } });
+      await (
+        app as unknown as { checkPlatform(): Promise<void> }
+      ).checkPlatform();
+      expect(app.identity).toBeNull();
+      expect(controller.testEvent()).toEqual(
+        status === 0 || status === 503 ? { name: "private sample" } : undefined,
+      );
+      expect(owner()).toBe(status === 0 || status === 503);
+    },
+  );
+});
+
+it.each([false, true])(
+  "does not let an old identity rejection invalidate a newer sample scope (reset=%s)",
+  async (reset) => {
+    const { app, controller } = fixture();
+    Reflect.deleteProperty(app, "loadIdentity");
+    let reject!: (reason: unknown) => void;
+    app.api.request = vi.fn().mockImplementation(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    const pending = app.loadIdentity();
+    if (reset) app.wizardAccountProblem("expired");
+    app.wizardVerified({
+      session: structuredClone(app.api.session),
+      identity: {
+        principal_id: "other",
+        kind: "human",
+        grants: [],
+        workspaces: [],
+        truncated: false,
+      },
+    } as never);
+    controller.setTestEvent({ name: "new sample" });
+    const owner = controller.testEventOwner();
+    reject(new ApiError(401, {}));
+    await pending;
+    expect(controller.testEvent()).toEqual({ name: "new sample" });
+    expect(owner()).toBe(true);
+  },
+);

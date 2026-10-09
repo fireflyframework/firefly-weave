@@ -37,6 +37,7 @@ interface SampleForm {
   session: FormSession;
   signature: string;
   schema: Schema;
+  root: unknown;
   initial: Record<string, unknown>;
   wrapped: boolean;
   current: () => boolean;
@@ -61,6 +62,7 @@ interface SampleForm {
       @for (form of forms(); track form) {
         <weave-task-form
           [schema]="form.schema"
+          [schemaRoot]="form.root"
           [initialData]="form.initial"
           (dataChange)="changed($event, form)"
         />
@@ -102,6 +104,7 @@ export class TestEventPane {
         schema: (wrapped
           ? { type: "object", properties: { value: raw } }
           : raw) as Schema,
+        root: raw,
         initial,
         wrapped,
         current: session.controller.testEventOwner(),

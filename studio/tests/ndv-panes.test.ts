@@ -370,3 +370,168 @@ it("reads an explicit preference independently from the other pane", () => {
     readViews({ getItem: () => JSON.stringify({ output: "json" }) }),
   ).toEqual({ input: "schema", output: "json" });
 });
+
+describe("sample safety boundaries", () => {
+  const unusual = JSON.parse(
+    '{"constructor":"private","toString":"private","__proto__":"private"}',
+  );
+  it("uses additional-property secrecy for inherited names", () => {
+    const schema = {
+      type: "object",
+      additionalProperties: { type: "string", writeOnly: true },
+    };
+    expect(safeSample(schema, unusual)).toEqual({});
+    expect(sampleFromSchema({ ...schema, default: unusual })).toEqual({});
+  });
+  it("retains explicitly declared unusual own names", () => {
+    const properties = Object.fromEntries(
+      Object.keys(unusual).map((key) => [key, { type: "string" }]),
+    );
+    const schema = {
+      type: "object",
+      properties,
+      additionalProperties: false,
+      default: unusual,
+    };
+    expect(safeSample(schema, unusual)).toEqual(unusual);
+    expect(sampleFromSchema(schema)).toEqual(unusual);
+    expect(Object.hasOwn(sampleFromSchema(schema) as object, "__proto__")).toBe(
+      true,
+    );
+  });
+  it("refuses forbidden additional properties even with inherited names", () => {
+    for (const key of Object.keys(unusual))
+      expect(() =>
+        sampleFromSchema({
+          type: "object",
+          additionalProperties: false,
+          default: { [key]: "private" },
+        }),
+      ).toThrow();
+  });
+  it("withholds a tuple with a secret prefix without shifting later positions", () => {
+    expect(
+      safeSample(
+        {
+          type: "array",
+          prefixItems: [{ type: "string", writeOnly: true }],
+          items: { type: "string" },
+        },
+        ["private", "public"],
+      ),
+    ).toBeUndefined();
+    expect(
+      safeSample(
+        {
+          type: "array",
+          prefixItems: [{ type: "string" }],
+          items: { type: "string" },
+        },
+        ["first", "second"],
+      ),
+    ).toEqual(["first", "second"]);
+    expect(
+      safeSample({ type: "array", items: { writeOnly: true } }, ["private"]),
+    ).toBeUndefined();
+  });
+  it.each(["contains", "unevaluatedItems", "additionalItems"])(
+    "withholds unsupported %s item rules",
+    (keyword) => {
+      expect(
+        safeSample({ type: "array", [keyword]: { writeOnly: true } }, [
+          "private",
+        ]),
+      ).toBeUndefined();
+    },
+  );
+  it("withholds legacy positional items and unsafe nested array subtrees", () => {
+    expect(
+      safeSample({ type: "array", items: [{ writeOnly: true }] }, ["private"]),
+    ).toBeUndefined();
+    expect(
+      safeSample(
+        {
+          type: "object",
+          properties: {
+            rows: { type: "array", prefixItems: [{ writeOnly: true }] },
+            name: { type: "string" },
+          },
+        },
+        { rows: ["private", "second"], name: "public" },
+      ),
+    ).toEqual({ name: "public" });
+  });
+  it.each(["allOf", "oneOf", "anyOf"])(
+    "refuses %s through references, including below defaults",
+    (keyword) => {
+      const defs = {
+        Composed: { [keyword]: [{ type: "string" }, { type: "string" }] },
+      };
+      expect(() =>
+        sampleFromSchema({ $defs: defs, $ref: "#/$defs/Composed" }),
+      ).toThrow();
+      expect(() =>
+        sampleFromSchema({
+          $defs: defs,
+          type: "object",
+          properties: { value: { $ref: "#/$defs/Composed" } },
+          default: { value: "text" },
+        }),
+      ).toThrow();
+    },
+  );
+  it("keeps nullable metadata for direct and referenced null defaults", () => {
+    const Value = { type: ["string", "null"], default: null };
+    expect(sampleFromSchema(Value)).toBeNull();
+    expect(
+      sampleFromSchema({
+        $defs: { Value },
+        type: "object",
+        properties: { value: { $ref: "#/$defs/Value" } },
+      }),
+    ).toEqual({ value: null });
+    expect(
+      sampleFromSchema({
+        $defs: { Value },
+        type: "object",
+        properties: { value: { $ref: "#/$defs/Value" } },
+        default: { value: null },
+      }),
+    ).toEqual({ value: null });
+    expect(() =>
+      sampleFromSchema({
+        type: ["string", "null"],
+        enum: ["text"],
+        default: null,
+      }),
+    ).not.toThrow();
+  });
+});
+
+it("does not treat an enum containing null as permission to violate a string type", () => {
+  expect(() =>
+    sampleFromSchema({ type: "string", enum: [null, "text"] }),
+  ).toThrow();
+});
+it("refuses structural reference intersections while allowing definitions-only siblings", () => {
+  expect(() =>
+    sampleFromSchema({
+      $defs: {
+        Value: {
+          type: "object",
+          properties: { a: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      $ref: "#/$defs/Value",
+      properties: { b: { type: "string" } },
+    }),
+  ).toThrow();
+});
+it("withholds unsupported negated array schemas", () => {
+  expect(
+    safeSample({ type: "array", not: { items: { writeOnly: true } } }, [
+      "private",
+    ]),
+  ).toBeUndefined();
+});

@@ -90,22 +90,49 @@ export function safeSample(
     }
     // Dynamic/conditional property schemas cannot safely expose a sample here.
     if (
-      ["patternProperties", "if", "then", "else", "dependentSchemas"].some(
-        (key) => key in node,
-      )
+      [
+        "patternProperties",
+        "if",
+        "then",
+        "else",
+        "dependentSchemas",
+        "not",
+      ].some((key) => key in node)
     )
       return undefined;
-    if (Array.isArray(data))
-      return data.flatMap((item) => {
-        const safe = visit(node["items"], item, resolved.context, depth + 1);
-        return safe === undefined ? [] : [safe];
-      });
+    if (Array.isArray(data)) {
+      if (
+        Array.isArray(node["items"]) ||
+        ["contains", "unevaluatedItems", "additionalItems"].some((key) =>
+          Object.hasOwn(node, key),
+        )
+      )
+        return undefined;
+      const prefix = Array.isArray(node["prefixItems"])
+        ? node["prefixItems"]
+        : [];
+      const clean: Json[] = [];
+      for (const [index, item] of data.entries()) {
+        const safe = visit(
+          index < prefix.length ? prefix[index] : node["items"],
+          item,
+          resolved.context,
+          depth + 1,
+        );
+        // Removing an item would change positional meaning; withhold the array instead.
+        if (safe === undefined) return undefined;
+        clean.push(safe);
+      }
+      return clean;
+    }
     if (record(data)) {
       const properties = record(node["properties"]) ? node["properties"] : {};
       return Object.fromEntries(
         Object.entries(data).flatMap(([key, item]) => {
           const safe = visit(
-            properties[key] ?? node["additionalProperties"],
+            Object.hasOwn(properties, key)
+              ? properties[key]
+              : node["additionalProperties"],
             item as Json,
             resolved.context,
             depth + 1,
@@ -134,6 +161,7 @@ export function sampleFromSchema(schema: unknown): Json {
     const resolved = resolveSchema(raw, options);
     const node = resolved.schema;
     if (
+      resolved.composed ||
       resolved.never ||
       resolved.cyclic ||
       resolved.unresolved.length ||
@@ -207,7 +235,7 @@ export function sampleFromSchema(schema: unknown): Json {
     } else candidate = null;
     const clean = safeSample(raw, candidate, options);
     // Use this document's context when validating a local-reference candidate.
-    validate(node, clean, resolved.context, depth);
+    validate(node, clean, resolved.context, depth, resolved.removedNullType);
     return clean as Json;
   };
   const validate = (
@@ -215,6 +243,7 @@ export function sampleFromSchema(schema: unknown): Json {
     value: Json | undefined,
     options: ResolveOptions,
     depth: number,
+    removedNullType: boolean,
   ): void => {
     if (value === undefined || depth > 6) throw failure();
     const types = Array.isArray(node["type"])
@@ -227,6 +256,7 @@ export function sampleFromSchema(schema: unknown): Json {
     if (
       types.length &&
       !types.includes(type) &&
+      !(type === "null" && removedNullType) &&
       !(
         type === "number" &&
         types.includes("integer") &&
@@ -305,10 +335,13 @@ export function sampleFromSchema(schema: unknown): Json {
         throw failure();
       const props = record(node["properties"]) ? node["properties"] : {};
       for (const [key, item] of Object.entries(value)) {
-        if (!(key in props) && node["additionalProperties"] === false)
+        if (
+          !Object.hasOwn(props, key) &&
+          node["additionalProperties"] === false
+        )
           throw failure();
         validateResolved(
-          props[key] ?? node["additionalProperties"],
+          Object.hasOwn(props, key) ? props[key] : node["additionalProperties"],
           item as Json,
           options,
           depth + 1,
@@ -329,6 +362,7 @@ export function sampleFromSchema(schema: unknown): Json {
       throw failure();
     const resolved = resolveSchema(raw, options);
     if (
+      resolved.composed ||
       resolved.never ||
       resolved.cyclic ||
       resolved.unresolved.length ||
@@ -336,7 +370,13 @@ export function sampleFromSchema(schema: unknown): Json {
       Object.keys(resolved.schema).some((key) => !keywords.has(key))
     )
       throw failure();
-    validate(resolved.schema, value, resolved.context, depth);
+    validate(
+      resolved.schema,
+      value,
+      resolved.context,
+      depth,
+      resolved.removedNullType,
+    );
   };
   return build(schema, { root: schema }, 0);
 }

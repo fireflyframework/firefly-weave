@@ -1385,13 +1385,13 @@ describe("structural reset safety", () => {
 });
 
 describe("manual sample form lifetime", () => {
-  function fixture() {
+  function fixture(schema?: unknown) {
     const f = setup();
     f.model.updateWorkflow({
       ...f.model.definition,
       spec: {
         ...f.model.definition.spec,
-        inputSchema: {
+        inputSchema: schema ?? {
           type: "object",
           required: ["enabled"],
           properties: {
@@ -1412,10 +1412,36 @@ describe("manual sample form lifetime", () => {
     const owner = pane.forms()[0];
     const form = runInInjectionContext(injector, () => new TaskForm());
     form.schema = signal(owner.schema) as never;
+    form.schemaRoot = signal(owner.root) as never;
     form.initialData = signal(owner.initial) as never;
     form.dataChange.subscribe((data) => pane.changed(data, owner));
     return { ...f, injector, pane, owner, form };
   }
+  it.each([false, true])(
+    "preserves the original reference root when wrapped (array=%s)",
+    (array) => {
+      const Value = { type: "string", title: "Display name" };
+      const f = fixture(
+        array
+          ? {
+              $defs: { Value },
+              type: "array",
+              items: { $ref: "#/$defs/Value" },
+            }
+          : { $defs: { Value }, $ref: "#/$defs/Value" },
+      );
+      f.form.ngOnChanges({ schema: {} as never });
+      const field = f.form.rootFields()[0];
+      expect(field.kind).toBe(array ? "list" : "text");
+      if (array) expect(f.form.member(field)?.kind).toBe("text");
+      else expect(field.label).toBe("Display name");
+      f.form.write(["value"], array ? ["Alice"] : "Alice");
+      expect(f.controller.testEvent()).toEqual(array ? ["Alice"] : "Alice");
+      expect(f.pane.forms()[0]).toBe(f.owner);
+      expect(f.pane.forms()[0].root).toBe(f.owner.root);
+      f.injector.destroy();
+    },
+  );
   it("keeps schema and initial data identities through its own edits", () => {
     const f = fixture();
     f.pane.changed({ name: "A" }, f.owner);

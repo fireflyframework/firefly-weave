@@ -413,9 +413,12 @@ export class App implements CanvasHost {
   // Fences platform checks and status reads against later platform changes.
   private platformGeneration = 0;
   private stepDataGeneration = 0;
+  private stepDataPrincipal = "";
   /** Samples follow account invalidation, while routine same-account checks retain them. */
   get stepDataScope(): string {
-    return `${this.stepDataGeneration}:${this.identity?.principal_id ?? ""}`;
+    // A failed offline identity lookup clears the UI identity, not the account.
+    if (this.identity) this.stepDataPrincipal = this.identity.principal_id;
+    return `${this.stepDataGeneration}:${this.stepDataPrincipal ?? ""}`;
   }
   taskData: Record<string, unknown> = {};
   emailDetail: Record<string, unknown> | null = null;
@@ -6550,12 +6553,19 @@ export class App implements CanvasHost {
   }
   async loadIdentity() {
     if (!this.profile) return;
+    const sampleScope = this.stepDataScope;
     try {
       this.identity = await this.api.request<Identity>(
         "/studio/api/api/v1/identity",
       );
       this.catalogAfterIdentity();
-    } catch {
+    } catch (error) {
+      const plain = describeError(error);
+      if (
+        sampleScope === this.stepDataScope &&
+        (plain.status === 401 || plain.code === "WV-AUTH-NOT-LINKED")
+      )
+        this.stepDataGeneration++;
       this.identity = null;
     } finally {
       this.refreshRunTaskAfterIdentity();
@@ -6700,11 +6710,13 @@ export class App implements CanvasHost {
       if (generation !== this.platformGeneration) return;
       const plain = describeError(e);
       if (plain.code === "WV-STUDIO-SESSION") return;
-      if (plain.code === "WV-AUTH-NOT-LINKED")
+      if (plain.code === "WV-AUTH-NOT-LINKED") {
+        this.stepDataGeneration++;
         this.platformNotice = { kind: "not-linked", name };
-      else if (plain.status === 401)
+      } else if (plain.status === 401) {
+        this.stepDataGeneration++;
         this.platformNotice = { kind: "expired", name };
-      else {
+      } else {
         if (plain.code === "WV-AUTH-STORE")
           this.platformNotice = { kind: "store", name };
         else if (

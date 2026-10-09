@@ -47,6 +47,10 @@ export interface ResolvedSchema {
   schema: JsonObject;
   /** True when null is also accepted (`type: [T, "null"]`, a null alternative, or null in `enum`). */
   nullable: boolean;
+  /** A mixed type array lost null during normalization (unlike null in an enum). */
+  removedNullType: boolean;
+  /** Resolution encountered composition; normalization is not a validity proof. */
+  composed: boolean;
   /** True for the `false` schema, which accepts no value. */
   never: boolean;
   /** True when a reference cycle was cut here; the field is edited as JSON. */
@@ -240,6 +244,8 @@ const nullSchema = (schema: unknown): boolean =>
 interface Work {
   schema: JsonObject;
   nullable: boolean;
+  removedNullType: boolean;
+  composed: boolean;
   never: boolean;
   cyclic: boolean;
   unresolved: string[];
@@ -327,6 +333,8 @@ function resolveNode(
   const base = (schema: JsonObject): Work => ({
     schema,
     nullable: false,
+    removedNullType: false,
+    composed: ["allOf", "oneOf", "anyOf"].some((key) => hasOwn(schema, key)),
     never: false,
     cyclic: false,
     unresolved: [],
@@ -372,7 +380,19 @@ function resolveNode(
         unsupported: ["allOf"],
       };
     schema = merged;
-    work = { ...inner, schema };
+    work = {
+      ...inner,
+      schema,
+      // Structural reference siblings are also an intersection. Definitions and
+      // document identifiers alone do not constrain the referenced value.
+      composed:
+        inner.composed ||
+        Object.keys(siblings).some(
+          (key) =>
+            !ANNOTATIONS.has(key) &&
+            !["$defs", "definitions", "$schema", "$id"].includes(key),
+        ),
+    };
   }
 
   const allOf = own(schema, "allOf");
@@ -412,7 +432,7 @@ function resolveNode(
     const rest = type.filter((t) => t !== "null");
     schema = { ...schema };
     define(schema, "type", rest.length === 1 ? rest[0] : rest);
-    work = { ...work, schema, nullable: true };
+    work = { ...work, schema, nullable: true, removedNullType: true };
   }
   for (const key of ["anyOf", "oneOf"]) {
     const alternatives = own(schema, key);
@@ -433,6 +453,7 @@ function resolveNode(
       ...work,
       ...inner,
       schema,
+      composed: true,
       nullable: true,
       unresolved: [...work.unresolved, ...inner.unresolved],
       unsupported: [...work.unsupported, ...inner.unsupported],
@@ -467,6 +488,8 @@ export function resolveSchema(
   return {
     schema: work.schema,
     nullable: work.nullable,
+    removedNullType: work.removedNullType,
+    composed: work.composed,
     never: work.never,
     cyclic: work.cyclic,
     unresolved: [...new Set(work.unresolved)],
