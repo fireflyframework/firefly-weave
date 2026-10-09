@@ -383,9 +383,9 @@ def _compose(state: dict[str, Any]) -> list[str]:
         if read_file(override, 4096, private=True) != _network_override(state):
             raise PlatformError("The saved network configuration has changed; no services were modified.")
         command.extend(["-f", str(override)])
-    if state.get("private_origins"):
-        from firefly_weave.sdk import platform_origins
+    from firefly_weave.sdk import platform_origins
 
+    if platform_origins.has_egress(state):
         command.extend(["-f", str(platform_origins.compose_override(state))])
     if state.get("mode") == "docker":
         from firefly_weave.sdk import platform_docker

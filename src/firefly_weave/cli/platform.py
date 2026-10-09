@@ -148,7 +148,8 @@ def _show_private_origins(value: dict[str, Any] | None) -> None:
         return
     origins = sorted({entry["origin"] for entry in value["entries"]})
     click.echo(f"Private origins ({value['label']}): " + ", ".join(origins))
-    click.echo(f"Egress network: {value['network']} ({value['subnet']})")
+    if "network" in value:
+        click.echo(f"Egress network: {value['network']} ({value['subnet']})")
 
 
 def _show_status(value: dict[str, Any]) -> None:
