@@ -28,7 +28,7 @@ SPDX-License-Identifier: Apache-2.0
 // The platform and the local host are mocked; the local authoring endpoints
 // and the simulation artifact use the repository's real Python code.
 import { selectChoice } from "./support";
-import { test, expect, Page, Request, Route } from "@playwright/test";
+import { test, expect, Locator, Page, Request, Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -51,7 +51,7 @@ import {
   globexPlatform,
 } from "./platform-host";
 import { DesignerPage, StepKind, stepLabels } from "./designer-po";
-import { openWorkflow, type CanvasPage } from "./canvas-po";
+import { CanvasPage, openWorkflow, useNewEditor } from "./canvas-po";
 import {
   debugSession,
   later,
@@ -102,7 +102,7 @@ const versionId = "11111111-1111-4111-8111-111111111111";
 
 /** Floating surfaces that cover the page on purpose while they are open. */
 const overlays =
-  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast';
+  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar';
 
 test.describe.configure({ mode: "parallel" });
 test.afterAll(() => stopLocalAuthoring());
@@ -1304,6 +1304,78 @@ const builder = (page: Page) =>
   page.getByRole("dialog", { name: "New API action" });
 
 // --------------------------------------------------------------- scenes
+
+/** Every role, a setup gap, a long step ID and a two-part condition. */
+const everyRole = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: every-role, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    properties:
+      amount: {type: number, title: Amount}
+      email: {type: string, title: Email}
+  outputSchema: {type: object}
+  steps:
+    - {id: shape-request, kind: transform, value: {ref: /input}}
+    - id: summarize-request
+      kind: llm
+      uses: weave-agentic-generate@1.0.0
+      profile: default
+      connection: ai
+      prompt: {literal: Summarize the request}
+      context: {literal: {}}
+    - {id: cool-down, kind: wait, durationSeconds: 300}
+    - {id: look-up-customer, kind: action, uses: "", with: {literal: {}}}
+    - {id: score, kind: decisionTable, uses: payment-policy@1.0.0, with: {ref: /input}}
+    - id: route
+      kind: switch
+      cases:
+        - when: {op: {name: and, args: [{op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}, {op: {name: exists, args: [{ref: /input/email}]}}]}}
+          steps:
+            - {id: verify-customer-identity-against-sanctions-and-kyc-records, kind: humanTask, assignment: reviewers, title: {literal: Review}, context: {literal: {}}, formSchema: {type: object}, decisions: [approve, reject]}
+          output: {literal: {}}
+      default:
+        steps:
+          - id: notify-and-audit
+            kind: parallel
+            concurrency: 2
+            branches:
+              notify:
+                steps:
+                  - {id: wait-for-reply, kind: signal, name: reply, timeoutSeconds: 3600, payloadSchema: {type: object}}
+                output: {literal: {}}
+              audit: {steps: [], output: {literal: {}}}
+        output: {literal: {}}
+    - {id: stop-here, kind: fail, code: demo-ends, message: The demo ends here.}
+  output: {literal: {}}
+`;
+/** A decision whose first path a finished simulation didn't take. */
+const routedWorkflow = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: routed, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    properties:
+      amount: {type: number, title: Amount}
+  outputSchema: {type: object}
+  steps:
+    - {id: check, kind: transform, value: {ref: /input}}
+    - id: route
+      kind: switch
+      cases:
+        - when: {op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}
+          steps:
+            - {id: review, kind: wait, durationSeconds: 300}
+          output: {literal: {}}
+      default:
+        steps:
+          - {id: auto-approve, kind: transform, value: {literal: {approved: true}}}
+        output: {literal: {}}
+    - {id: record, kind: transform, value: {literal: {}}}
+  output: {literal: {}}
+`;
 
 type Scene = (tour: Tour) => Promise<void>;
 const scenes: Record<string, Scene> = {
@@ -2586,6 +2658,154 @@ spec:
     await shot("81-runs-detail", { end: ".record-detail, .page-content" });
   },
 
+  async "canvas-v2-empty"({ page, shot, size }) {
+    await useNewEditor(page);
+    await offline(page);
+    await newWorkflow(page);
+    const canvas = new CanvasPage(page);
+    await canvas.ready();
+    await hideStepDetails(page, size.width);
+    await expect(canvas.insertTarget("Add first step")).toBeVisible();
+    await shot("100-canvas-empty");
+  },
+
+  async "canvas-v2-roles"({ page, shot, size }) {
+    await useNewEditor(page);
+    await offline(page);
+    await localProblems(page);
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(everyRole);
+    const canvas = new CanvasPage(page);
+    await canvas.ready();
+    await hideStepDetails(page, size.width);
+    // The keys reach the canvas from the canvas: Fit view, then zoom out. Focus
+    // leaves it before each capture so no ring surrounds the whole canvas.
+    await canvas.root.focus();
+    await page.keyboard.press("1");
+    await expect(
+      canvas
+        .tile("look-up-customer")
+        .locator('.tile-badge[data-badge="setup"]'),
+    ).toBeAttached();
+    await expect(
+      canvas.tile("cool-down").locator('.tile-badge[data-badge="error"]'),
+    ).toBeAttached();
+    await leaveCanvas(page);
+    await shot("101-canvas-roles");
+    await showTopOfDiagnostics(page);
+    await canvas.root.focus();
+    for (let i = 0; i < 3; i++) await page.keyboard.press("-");
+    await leaveCanvas(page);
+    await shot("102-canvas-overview");
+    await showTopOfDiagnostics(page);
+    // The long step ID and the two-part condition, at the size they open at.
+    await canvas.root.focus();
+    await page.keyboard.press("1");
+    await expect.poll(() => canvas.zoomPercent()).toBeGreaterThanOrEqual(50);
+    await leaveCanvas(page);
+    await panIntoView(
+      page,
+      canvas,
+      canvas.branchLabel("route/case 1"),
+      canvas
+        .tile("verify-customer-identity-against-sanctions-and-kyc-records")
+        .locator(".tile-label"),
+    );
+    await shot("106-canvas-long-names");
+  },
+
+  // A larger workflow opens at no less than 50%, with its names readable.
+  async "canvas-v2-large"({ page, shot, size }) {
+    const canvas = await openWorkflow(page);
+    await hideStepDetails(page, size.width);
+    await expect.poll(() => canvas.zoomPercent()).toBeGreaterThanOrEqual(50);
+    await shot("105-canvas-large");
+  },
+
+  async "canvas-v2-selection"({ page, shot, size }) {
+    const canvas = await openWorkflow(page);
+    await canvas.tileBody("prepare-request").click();
+    await hideStepDetails(page, size.width, true);
+    await canvas.tileBody("approval").click({ modifiers: ["Shift"] });
+    await expect(
+      canvas.root.getByRole("toolbar", { name: "Selected steps" }),
+    ).toBeVisible();
+    // Below 768 px the minimap is hidden and the canvas tools are one menu.
+    if (size.width >= 768) {
+      const toggle = canvas.root.getByRole("button", {
+        name: "Show minimap",
+        exact: true,
+      });
+      await toggle.click();
+      await expect(toggle).toHaveAttribute("aria-pressed", "true");
+      await expect(canvas.root.locator("f-minimap")).toHaveCSS("opacity", "1");
+    }
+    await shot("103-canvas-selection");
+  },
+
+  async "canvas-v2-run"({ page, shot, size }) {
+    const artifact = simulationArtifact();
+    test.skip(!artifact, "Needs the repository's Python environment.");
+    await useNewEditor(page);
+    await connected(page, { capabilities: [...allCapabilities, "compile"] });
+    await page.route(`${project}/compiler/compile`, (r) =>
+      r.fulfill({
+        json: {
+          ok: true,
+          validationOk: true,
+          partial: false,
+          errorCount: 0,
+          diagnostics: [],
+          artifact,
+        },
+      }),
+    );
+    await page.route(`${project}/debug/sessions`, (r: Route) =>
+      r.fulfill({
+        status: 201,
+        json: debugSession(
+          1,
+          "succeeded",
+          [],
+          ["check", "route", "auto-approve", "record"],
+        ),
+      }),
+    );
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(routedWorkflow);
+    const canvas = new CanvasPage(page);
+    await canvas.ready();
+    await hideStepDetails(page, size.width);
+    await command(page, "Simulate");
+    const setup = page.getByRole("dialog", { name: "Simulate this workflow" });
+    await setup.getByLabel(/customer ?id/i).fill("c-104");
+    await setup.getByRole("button", { name: "Start simulation" }).click();
+    await expect(canvas.edgeLine("route:case 1>review")).toHaveClass(
+      /\bskipped\b/,
+    );
+    // Below 768 px the simulation covers the canvas as a sheet: fold it away
+    // to see what the run did to the steps.
+    if (size.width < 768) {
+      await page
+        .getByRole("button", { name: "Collapse simulation", exact: true })
+        .click();
+      await expect(
+        page.getByRole("button", { name: "Expand simulation", exact: true }),
+      ).toBeVisible();
+    }
+    await shot("104-canvas-run");
+  },
+
+  async "settings-preferences"({ page, shot }) {
+    await offline(page);
+    await open(page, "Settings");
+    await page.getByRole("tab", { name: "Preferences" }).click();
+    await expect(
+      page.getByRole("switch", { name: "Try the new editor" }),
+    ).toBeVisible();
+    await shot("34-settings-preferences", { end: ".page-content" });
+  },
+
   async tasks({ page, shot }) {
     await connected(page, {
       capabilities: [
@@ -2728,6 +2948,89 @@ spec:
     await shot("89-editor-nav-collapsed");
   },
 };
+
+/** Moves focus off the canvas, so a capture shows no focus ring around it. */
+async function leaveCanvas(page: Page) {
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+}
+
+/**
+ * The focus check in each capture tabs through the controls below the canvas,
+ * which scrolls the open diagnostics: the next capture starts from their top.
+ */
+async function showTopOfDiagnostics(page: Page) {
+  await page
+    .locator(".diagnostics.open")
+    .evaluate((strip) => (strip.scrollTop = 0));
+}
+
+/** The box of an element once it is on screen and has stopped moving. */
+async function settledBox(target: Locator) {
+  await expect(target).toBeVisible();
+  let previous = "";
+  await expect
+    .poll(
+      async () => {
+        const now = JSON.stringify(await target.boundingBox());
+        const still = now === previous;
+        previous = now;
+        return still;
+      },
+      { intervals: [100] },
+    )
+    .toBe(true);
+  return (await target.boundingBox())!;
+}
+
+/**
+ * Pans the canvas with the wheel, as a person does, until the targets are in
+ * view: centered together when they fit, else the last one alone.
+ */
+async function panIntoView(
+  page: Page,
+  canvas: CanvasPage,
+  ...targets: Locator[]
+) {
+  const area = (await canvas.root.boundingBox())!;
+  const boxes = [];
+  for (const target of targets) boxes.push(await settledBox(target));
+  const left = Math.min(...boxes.map((b) => b.x));
+  const right = Math.max(...boxes.map((b) => b.x + b.width));
+  const last = boxes.at(-1)!;
+  const middle =
+    right - left <= area.width - 32
+      ? (left + right) / 2
+      : last.x + last.width / 2;
+  const by = Math.round(middle - (area.x + area.width / 2));
+  await page.mouse.move(area.x + area.width / 2, area.y + area.height / 2);
+  // A wheel delta is in device pixels: at 200% zoom it pans half as far.
+  const density = await page.evaluate(() => window.devicePixelRatio);
+  await page.mouse.wheel(by * density, 0);
+  await expect
+    .poll(async () => {
+      const now = (await targets.at(-1)!.boundingBox())!;
+      return Math.abs(now.x - (last.x - by));
+    })
+    .toBeLessThan(3);
+}
+
+/**
+ * Hides the step details so the canvas has the room. Above 1280 px they are a
+ * column that is open on its own; narrower, a click on a step opens them
+ * (`opened`). It waits for them to show, then closes them with the panel's
+ * own button where it has one (1280 px and narrower), else the toolbar's.
+ */
+async function hideStepDetails(page: Page, width: number, opened = false) {
+  const details = new DesignerPage(page).inspector;
+  if (!opened && width <= 1280) return expect(details).toBeHidden();
+  await expect(details).toBeVisible();
+  await (
+    width <= 1280
+      ? details.getByRole("button", { name: "Close inspector", exact: true })
+      : page.getByRole("button", { name: "Hide inspector", exact: true })
+  ).click();
+  await expect(details).toBeHidden();
+}
 
 /** Selects a step on the new canvas and waits for its details on the right. */
 async function openStepDetails(page: Page, canvas: CanvasPage) {

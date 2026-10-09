@@ -841,10 +841,13 @@ const noNodes = (): SimulationNodes => ({
           border-radius: var(--radius-md);
         }
       }
+      /* The title, the status and the buttons wrap in the folded-away bar on
+         a phone instead of scrolling it sideways. */
       .sim-header {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        gap: 10px;
+        gap: 4px 10px;
       }
       .sim-header h2 {
         margin: 0;

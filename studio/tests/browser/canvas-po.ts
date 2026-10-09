@@ -66,7 +66,14 @@ export class CanvasPage {
       exact: true,
     });
     await expect(this.root.or(show).first()).toBeVisible();
-    if (await show.isVisible()) await show.click();
+    // The outline stays on screen for a moment after a click on "Show canvas"
+    // (this one, or the one in `newWorkflow`): a click that finds the button
+    // gone has nothing left to do, so the loop checks again.
+    await expect(async () => {
+      if (await this.root.isVisible()) return;
+      await show.click({ timeout: 2000 });
+      await expect(this.root).toBeVisible({ timeout: 2000 });
+    }).toPass({ timeout: 15_000 });
     await expect(this.root).toHaveAttribute("data-ready", "");
   }
   /** Chooses an entry in today's step picker by its exact label ("Decision", not "Decision table"). */

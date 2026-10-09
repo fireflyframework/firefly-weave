@@ -4273,6 +4273,14 @@ kbd {
   margin: 0;
   padding: 8px 16px 8px 32px;
 }
+/* A long step ID and its gap wrap inside the strip instead of scrolling it
+   sideways. */
+.contract-gap-list .text-link {
+  max-width: 100%;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 @media (max-width: 480px) {
   .editor-bar {
