@@ -30,6 +30,7 @@ export const llmKind: StepKindDescriptor = {
   ],
   pinnable: true,
   form: llmForm,
+  settings: () => ({ fields: [] }),
 };
 
 export function register(): void {

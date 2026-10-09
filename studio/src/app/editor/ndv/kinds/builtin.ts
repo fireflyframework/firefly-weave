@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { conditionSummary } from "../../../designer/conditions";
 import { branchTitle, type Step } from "../../../model";
 import { registerKind, type StepKindDescriptor } from "../registry";
+import { actionForm, actionSettings } from "./forms/action-forms";
 import { decisionTableForm, transformForm } from "./forms/data-forms";
 import {
   failForm,
@@ -56,6 +57,8 @@ export const actionKind: StepKindDescriptor = {
     },
   ],
   pinnable: true,
+  form: actionForm,
+  settings: actionSettings,
 };
 
 export const decisionTableKind: StepKindDescriptor = {

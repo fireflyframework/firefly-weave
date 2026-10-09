@@ -15,7 +15,8 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { describe, expect, it } from "vitest";
+import "@angular/compiler";
+import { beforeAll, describe, expect, it } from "vitest";
 import { allParams, formProblems } from "../src/app/editor/ndv/form-contract";
 import {
   expressionRoot,
@@ -23,13 +24,41 @@ import {
   pathStartsWith,
   samePath,
 } from "../src/app/editor/ndv/params/paths";
-import type {
-  FormSpec,
-  KindContext,
-  ParamSpec,
-  StepKindDescriptor,
+import {
+  ndvRegistry,
+  type FormSpec,
+  type KindContext,
+  type ParamSpec,
+  type StepKindDescriptor,
+  type Json,
 } from "../src/app/editor/ndv/registry";
-import { createStep, freshWorkflow, type Step } from "../src/app/model";
+import {
+  createStep,
+  freshWorkflow,
+  kinds,
+  type Kind,
+  type Step,
+} from "../src/app/model";
+
+import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
+import {
+  endForm,
+  triggerForm,
+  workflowSettingsForm,
+} from "../src/app/editor/ndv/kinds/forms/workflow-forms";
+import {
+  formEnv,
+  stepSubject,
+  workflowSubject,
+  WORKFLOW_STAND_IN,
+} from "../src/app/editor/ndv/params/form-env";
+import { formState } from "../src/app/editor/ndv/params/form-model";
+import {
+  newConnectorRecipe,
+  newHttpRecipe,
+} from "../src/app/editor/ndv/owned/owned-actions";
+import { propertyFields } from "../src/app/property-grid";
+import { lookupAction } from "./browser/support";
 
 const ctx: KindContext = {
   workflow: freshWorkflow(),
@@ -273,5 +302,177 @@ describe("allParams", () => {
       ["row", true],
       ["note", false],
     ]);
+  });
+});
+
+beforeAll(() => loadKindRegistrations());
+
+const recipes: Record<string, Json> = {
+  "flow.get@1.0.0": newHttpRecipe() as unknown as Json,
+  "flow.post@1.0.0": { ...newHttpRecipe(), method: "POST" } as unknown as Json,
+  "flow.send@1.0.0": newConnectorRecipe(
+    "weave-email@1.0.0",
+    "send",
+  ) as unknown as Json,
+  "flow.reply@1.0.0": newConnectorRecipe(
+    "weave-email@1.0.0",
+    "reply",
+  ) as unknown as Json,
+  "flow.list@1.0.0": newConnectorRecipe(
+    "weave-sftp@1.0.0",
+    "list",
+  ) as unknown as Json,
+  "flow.read@1.0.0": newConnectorRecipe(
+    "weave-sftp@1.0.0",
+    "read",
+  ) as unknown as Json,
+  "flow.write@1.0.0": newConnectorRecipe(
+    "weave-sftp@1.0.0",
+    "write",
+  ) as unknown as Json,
+  "flow.drive-write@1.0.0": newConnectorRecipe(
+    "weave-google-drive@1.0.0",
+    "write",
+  ) as unknown as Json,
+  "flow.move@1.0.0": newConnectorRecipe(
+    "weave-sftp@1.0.0",
+    "move",
+  ) as unknown as Json,
+  "flow.delete@1.0.0": newConnectorRecipe(
+    "weave-sftp@1.0.0",
+    "delete",
+  ) as unknown as Json,
+};
+const policy = {
+  kind: "DecisionTable",
+  spec: {
+    inputSchema: {
+      type: "object",
+      required: ["amount"],
+      properties: { amount: { type: "number" } },
+    },
+  },
+};
+const realCtx = (workflow = freshWorkflow()): KindContext => ({
+  workflow,
+  features: [],
+  actionContract: (uses) =>
+    uses === "sql.lookup@1.0.0" ? (lookupAction as Json) : null,
+  tableContract: (uses) =>
+    uses === "payment-policy@1.0.0" ? (policy as Json) : null,
+  workflowContract: () => null,
+  ownedAction: (uses) => recipes[uses] ?? null,
+});
+const newStep = (kind: Kind, extra: Record<string, unknown> = {}) => ({
+  ...createStep(kind, `${kind}-1`),
+  ...extra,
+});
+const variants = (): Step[] => [
+  ...kinds.map((kind) => newStep(kind)),
+  ...Object.keys(recipes).map((uses) => newStep("action", { uses })),
+  newStep("action", { uses: "sql.lookup@1.0.0", with: { literal: {} } }),
+];
+
+describe("forms of every kind", () => {
+  it("renders every ready kind through form()", () => {
+    for (const step of variants()) {
+      const descriptor = ndvRegistry.kind(step.kind)!;
+      expect(
+        formProblems(descriptor, step, realCtx()),
+        `${step.kind} ${String(step["uses"] ?? "")}`,
+      ).toEqual([]);
+    }
+  });
+
+  it("shows the default field counts", () => {
+    const count = (step: Step) => {
+      const c = realCtx();
+      const descriptor = ndvRegistry.kind(step.kind)!;
+      const recipe = recipes[String(step["uses"] ?? "")] ?? null;
+      return formState(
+        descriptor.form!(step, c),
+        formEnv(stepSubject(descriptor, step, c, recipe), step, c),
+      ).fields.length;
+    };
+    const rows: [string, Step, number][] = [
+      ["Call an API", newStep("action", { uses: "flow.get@1.0.0" }), 3],
+      [
+        "Call an API with a body",
+        newStep("action", { uses: "flow.post@1.0.0" }),
+        4,
+      ],
+      ["Decision", newStep("switch"), 1],
+      ["Transform", newStep("transform"), 1],
+      ["Human task", newStep("humanTask"), 3],
+      ["Send email", newStep("action", { uses: "flow.send@1.0.0" }), 4],
+      [
+        "Published action, one required input",
+        newStep("action", { uses: "sql.lookup@1.0.0", with: { literal: {} } }),
+        3,
+      ],
+      ["Reply to an email", newStep("action", { uses: "flow.reply@1.0.0" }), 4],
+      ["List files", newStep("action", { uses: "flow.list@1.0.0" }), 2],
+      ["Read a file", newStep("action", { uses: "flow.read@1.0.0" }), 2],
+      ["Write a file", newStep("action", { uses: "flow.write@1.0.0" }), 3],
+      [
+        "Write a file on a drive",
+        newStep("action", { uses: "flow.drive-write@1.0.0" }),
+        4,
+      ],
+      ["Move a file", newStep("action", { uses: "flow.move@1.0.0" }), 3],
+      ["Delete a file", newStep("action", { uses: "flow.delete@1.0.0" }), 2],
+      ["AI task", newStep("llm"), 2],
+      ["Decision table", newStep("decisionTable"), 1],
+      ["Parallel", newStep("parallel"), 1],
+      ["Wait", newStep("wait"), 1],
+      ["Wait for signal", newStep("signal"), 1],
+      ["Stop with error", newStep("fail"), 2],
+    ];
+    for (const [name, step, expected] of rows)
+      expect(count(step), name).toBe(expected);
+    const wf = (spec: FormSpec) =>
+      formState(
+        spec,
+        formEnv(workflowSubject(freshWorkflow()), WORKFLOW_STAND_IN, realCtx()),
+      ).fields.length;
+    expect(wf(endForm()), "End").toBe(1);
+    expect(wf(triggerForm()), "Manual form trigger").toBe(1);
+    expect(wf(workflowSettingsForm()), "Workflow settings").toBe(2);
+  });
+
+  it("keeps every field the classic editor edits", () => {
+    const withContract: Partial<Record<Kind, Record<string, unknown>>> = {
+      action: { uses: "sql.lookup@1.0.0", with: { literal: {} } },
+      decisionTable: { uses: "payment-policy@1.0.0", with: { literal: {} } },
+    };
+    for (const kind of kinds) {
+      const step = newStep(kind, withContract[kind] ?? {});
+      const descriptor = ndvRegistry.kind(kind)!;
+      const c = realCtx();
+      const covered = new Set(
+        [
+          ...allParams(descriptor.form!(step, c), step, c),
+          ...allParams(descriptor.settings?.(step, c), step, c),
+        ]
+          .filter(
+            ({ spec, relative }) =>
+              !relative && (spec.scope ?? "step") === "step",
+          )
+          .map(({ spec }) => String(spec.path[0] ?? "")),
+      );
+      for (const field of propertyFields(step))
+        expect(covered, `${kind} ${field.label}`).toContain(
+          String(field.path[0]),
+        );
+    }
+    const workflowPaths = new Set(
+      [triggerForm(), endForm(), workflowSettingsForm()].flatMap((form) =>
+        [...form.fields, ...(form.options ?? [])].map((spec) =>
+          spec.path.join("/"),
+        ),
+      ),
+    );
+    for (const field of propertyFields(freshWorkflow()))
+      expect(workflowPaths, field.label).toContain(field.path.join("/"));
   });
 });

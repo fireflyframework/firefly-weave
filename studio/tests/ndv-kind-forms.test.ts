@@ -247,7 +247,6 @@ describe("settings forms", () => {
       "parallel",
       "wait",
       "fail",
-      "llm",
       "decisionTable",
     ] as const)
       expect(ndvRegistry.kind(kind)?.settings, kind).toBeUndefined();
