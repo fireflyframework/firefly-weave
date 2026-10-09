@@ -18,9 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1040" viewBox="0 0 1120 1040" role="img" aria-labelledby="title desc">
 <title id="title">A Call an action step chooses an Action. The Action chooses the implementation.</title>
 <desc id="desc">Read from top to bottom. 1: a Call an action step selects an exact published Action version, its business input, and a named connection slot. 2: the published Action defines accepted input and returned output and pins the implementation, side effect, timeout, and retry policy; changing it means publishing a new version. Beside them, activation binds the slot to an authorized connection revision in each environment and pins the release that runs the implementation; secrets stay outside the workflow definition. The Action uses exactly one implementation: 3a, a connector operation that a built-in or installed connector runs, such as a REST call on the built-in weave-http@2.0.0 connector or an email send; or 3b, a remote worker task that runs your admitted handler. 4: the external system receives the request, and the executor reports the result so Weave records progress and continues the run.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#4D655D}.arrow{fill:none;stroke:#367D68;stroke-width:3;marker-end:url(#arrow)}.line{fill:none;stroke:#367D68;stroke-width:3}.bind{fill:none;stroke:#367D68;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.icon{fill:none;stroke:#367D68;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
-<rect width="1120" height="1040" rx="24" fill="#EEF4F0"/>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}.title{font-size:30px;font-weight:700}.h{font-size:23px;font-weight:700}.p{font-size:20px}.small{font-size:18px;fill:#62645B}.arrow{fill:none;stroke:#62645B;stroke-width:3;marker-end:url(#arrow)}.line{fill:none;stroke:#62645B;stroke-width:3}.bind{fill:none;stroke:#62645B;stroke-width:2.5;stroke-dasharray:8 6;marker-end:url(#arrow)}.icon{fill:none;stroke:#62645B;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}</style>
+<rect width="1120" height="1040" rx="24" fill="#EAE7DF"/>
 <text class="title" x="40" y="55">What does “Call an action” actually call?</text>
 <text class="p" x="40" y="90">Follow one step from your process to the external system.</text>
 <rect x="50" y="125" width="650" height="180" rx="16" fill="white"/>
@@ -31,13 +31,13 @@ SPDX-License-Identifier: Apache-2.0
 <text class="p" x="74" y="284">Connection slot: notifications</text>
 <path class="bind" d="M700 277H741"/>
 <path class="arrow" d="M375 305V350"/>
-<rect x="50" y="360" width="650" height="200" rx="16" fill="#173D34"/>
+<rect x="50" y="360" width="650" height="200" rx="16" fill="#272820"/>
 <text class="h" x="74" y="401" style="fill:white">2. The published Action contract</text>
 <text class="p" x="74" y="442" style="fill:white">Defines accepted input and returned output.</text>
 <text class="p" x="74" y="476" style="fill:white">Pins the implementation, side effect, timeout,</text>
 <text class="p" x="74" y="504" style="fill:white">and retry policy.</text>
-<text class="small" x="74" y="540" style="fill:#CEE4D8">Changing this contract means publishing a new version.</text>
-<rect x="745" y="170" width="325" height="390" rx="16" fill="#FFF7E5"/>
+<text class="small" x="74" y="540" style="fill:#D8D4CA">Changing this contract means publishing a new version.</text>
+<rect x="745" y="170" width="325" height="390" rx="16" fill="#FFF0D8"/>
 <g class="icon" transform="translate(770 195)"><path d="M0 5l20-5 20 5v16c0 12-20 23-20 23S0 33 0 21Z"/><path d="M10 20l7 7 14-15"/></g>
 <text class="h" x="770" y="272">Environment binding</text>
 <text class="p" x="770" y="312">At activation, each</text>
@@ -64,7 +64,7 @@ SPDX-License-Identifier: Apache-2.0
 <text class="small" x="595" y="768">Example: your company's own</text>
 <text class="small" x="595" y="794">service client in a container.</text>
 <path class="line" d="M285 822V860H835V822"/><path class="arrow" d="M560 860V910"/>
-<rect x="50" y="920" width="1020" height="84" rx="16" fill="#DCEBE3"/>
+<rect x="50" y="920" width="1020" height="84" rx="16" fill="#EAE7DF"/>
 <text class="h" x="74" y="955">4. The external system receives the request</text>
 <text class="small" x="74" y="986">The executor reports the result; Weave records progress and continues the run.</text>
 </svg>

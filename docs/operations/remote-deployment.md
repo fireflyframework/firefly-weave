@@ -74,7 +74,7 @@ Add integrations only after the API, database, and identity checks pass.
 ![Images delivered to the cluster; services using database and identity](../diagrams/cloud-deployment.svg)
 
 Read the top row as the delivery of images (build, publish, select the
-environment) and the green panel as the processes Kubernetes runs; the bottom
+environment) and the shaded panel as the processes Kubernetes runs; the bottom
 rows list what you provision separately and how you prove the result.
 [Open diagram at full size](../diagrams/cloud-deployment.svg)
 

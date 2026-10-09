@@ -19,42 +19,42 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="715" viewBox="0 0 960 715" role="img" aria-labelledby="title desc">
 <title id="title">Three questions before calling it verified</title><desc id="desc">Three independent kinds of evidence. Implemented answers whether the behavior exists: public contracts and source describe supported behavior, and deferred features remain outside the release. Locally verified answers what was exercised: offline tests, owned services, and protocol fixtures support the stated scenario under its exact conditions. Live-provider verified answers whether a real account worked: real provider permissions, network access, and delivery need separate evidence, and “Not run” stays “Not run”. A local acknowledgment does not prove real delivery; read the capability matrix together with the connector guide.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#566c61}.edge{fill:none;stroke:#367D68;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
-<rect width="960" height="615" rx="16" fill="#f7faf8"/>
-<path d="M36 99H924" stroke="#c9dacf"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}.title{font-size:31px;font-weight:700}.head{font-size:23px;font-weight:700}.body{font-size:21px}.small{font-size:18px}.code{font-family:Menlo,Consolas,monospace;font-size:17px}.muted{fill:#62645B}.edge{fill:none;stroke:#62645B;stroke-width:2.5;marker-end:url(#arrow)}.white{fill:white}</style>
+<rect width="960" height="615" rx="16" fill="#F3F1EB"/>
+<path d="M36 99H924" stroke="#D8D4CA"/>
 <text x="36" y="46" class="title">Three questions before calling it verified</text>
 <text x="36" y="79" class="body muted">Source code, a local test, and a real delivery establish different things.</text>
-<g transform="translate(51,141) scale(1.7307692307692308)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
+<g transform="translate(51,141) scale(1.7307692307692308)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6L0 12L5 18 M19 6L24 12L19 18 M14 3L10 21"/></g>
 <text x="51" y="227" class="head">Implemented</text>
 <text x="51" y="269" class="small muted">Does the behavior exist?</text>
 <text x="51" y="313" class="small">Public contracts and source</text>
 <text x="51" y="343" class="small">describe supported behavior.</text>
 <text x="51" y="373" class="small">Deferred features remain</text>
 <text x="51" y="403" class="small">outside the release.</text>
-<g transform="translate(363,141) scale(1.7307692307692308)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
+<g transform="translate(363,141) scale(1.7307692307692308)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L9 18L21 5"/></g>
 <text x="363" y="227" class="head">Locally verified</text>
 <text x="363" y="269" class="small muted">What was exercised?</text>
 <text x="363" y="313" class="small">Offline tests, owned services,</text>
 <text x="363" y="343" class="small">and protocol fixtures support</text>
 <text x="363" y="373" class="small">the stated scenario.</text>
 <text x="363" y="403" class="small">Read its exact conditions.</text>
-<path d="M335 135V432" stroke="#a8bdb1"/>
-<g transform="translate(675,141) scale(1.7307692307692308)" fill="none" stroke="#367D68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
+<path d="M335 135V432" stroke="#BFB8AB"/>
+<g transform="translate(675,141) scale(1.7307692307692308)" fill="none" stroke="#62645B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20A5 5 0 0 1 3 10A8 8 0 0 1 19 8A6 6 0 0 1 20 20Z"/></g>
 <text x="675" y="227" class="head">Live-provider verified</text>
 <text x="675" y="269" class="small muted">Did this account work?</text>
 <text x="675" y="313" class="small">Real provider permissions,</text>
 <text x="675" y="343" class="small">network access, and delivery</text>
 <text x="675" y="373" class="small">need separate evidence.</text>
 <text x="675" y="403" class="small">“Not run” stays “Not run”.</text>
-<path d="M647 135V432" stroke="#a8bdb1"/>
-<rect x="36" y="476" width="888" height="81" rx="12" fill="#FFF7E5"/>
-<g transform="translate(54,496) scale(1.1538461538461537)" fill="none" stroke="#94601b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
+<path d="M647 135V432" stroke="#BFB8AB"/>
+<rect x="36" y="476" width="888" height="81" rx="12" fill="#FFF0D8"/>
+<g transform="translate(54,496) scale(1.1538461538461537)" fill="none" stroke="#855414" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M0 12Q12 -4 24 12Q12 28 0 12Z M16 12A4 4 0 1 1 8 12A4 4 0 1 1 16 12"/></g>
 <text x="98" y="510" class="head">A local acknowledgment does not prove real delivery.</text>
 <text x="98" y="541" class="small">Read the capability matrix together with the connector guide.</text>
 <g id="takeaway">
-<rect x="0" y="621" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="650" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="681" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Match the claim to its evidence: source, local tests, or real provider delivery.</text>
+<rect x="0" y="621" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="650" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="681" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Match the claim to its evidence: source, local tests, or real provider delivery.</text>
 </g>
 </svg>

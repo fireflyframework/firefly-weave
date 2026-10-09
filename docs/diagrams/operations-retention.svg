@@ -21,66 +21,66 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1679" viewBox="0 0 960 1679" role="img" aria-labelledby="title desc">
 <title id="title">Review a bounded deletion plan before applying it</title><desc id="desc">Five steps read top to bottom for deleting expired debug sessions in one project. 1, a creator with retention.plan granted on the project or tenant (an environment grant does not count) requests a project-scoped plan; the server records at most 100 candidates, the plan expires in 15 minutes, and sessions must have expired before the 24-hour cutoff; nothing is deleted yet. 2, review the actual proposal: scope, creator, expiry, omissions, candidate revisions and references; the same creator decides whether to apply this exact plan ID. 3, inside the deletion transaction Weave rechecks scope, creator, current retention.apply authority, expiry, revision, cutoff and references, and blocks changed, missing or referenced candidates. 4, it deletes only eligible candidates and commits the manifest, accounting and audit together; a failed transaction rolls back. 5, retrying the same plan ID recovers the original manifest after a lost response. Workflow history, provider receipts, source fences, catalogs and outbox history are never deleted by this plan; archived runs are purged one at a time from execution management.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1579" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Review a bounded deletion plan before applying it</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">The current deletion target is expired debug sessions in one project, not</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">general workflow history.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
-<rect x="40" y="232" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
-<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Request a project-scoped plan</text>
-<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">The creator needs retention.plan on the project or tenant.</text>
-<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">The server records at most 100 candidates; the plan expires in</text>
-<text x="168" y="372" font-size="22" font-weight="400" fill="#173D34">15 minutes. Sessions must be expired before the 24-hour</text>
-<text x="168" y="401" font-size="22" font-weight="400" fill="#173D34">cutoff.</text>
-<text x="168" y="430" font-size="18" font-weight="600" fill="#367D68">PLAN • Proposal and audit are retained; no sessions are deleted</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1579" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Review a bounded deletion plan before applying it</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">The current deletion target is expired debug sessions in one project, not</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">general workflow history.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">READ DOWN  •  Each arrow carries the result into the next step</text>
+<rect x="40" y="232" width="880" height="216" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="249" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 264) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="168" y="275" font-size="25" font-weight="700" fill="#272820">1. Request a project-scoped plan</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#272820">The creator needs retention.plan on the project or tenant.</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#272820">The server records at most 100 candidates; the plan expires in</text>
+<text x="168" y="372" font-size="22" font-weight="400" fill="#272820">15 minutes. Sessions must be expired before the 24-hour</text>
+<text x="168" y="401" font-size="22" font-weight="400" fill="#272820">cutoff.</text>
+<text x="168" y="430" font-size="18" font-weight="600" fill="#855414">PLAN • Proposal and audit are retained; no sessions are deleted</text>
 <path class="edge" d="M480 452v35"/>
-<rect x="40" y="500" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="517" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 532) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="168" y="543" font-size="25" font-weight="700" fill="#173D34">2. Review the actual proposal</text>
-<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">Inspect scope, creator, expiry, omissions, candidate</text>
-<text x="168" y="611" font-size="22" font-weight="400" fill="#173D34">revisions, and references.</text>
-<text x="168" y="640" font-size="22" font-weight="400" fill="#173D34">The same creator chooses whether to apply this exact plan ID.</text>
-<text x="168" y="669" font-size="18" font-weight="600" fill="#367D68">REVIEW • Applying is a separate deliberate command</text>
+<rect x="40" y="500" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="517" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 532) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="168" y="543" font-size="25" font-weight="700" fill="#272820">2. Review the actual proposal</text>
+<text x="168" y="582" font-size="22" font-weight="400" fill="#272820">Inspect scope, creator, expiry, omissions, candidate</text>
+<text x="168" y="611" font-size="22" font-weight="400" fill="#272820">revisions, and references.</text>
+<text x="168" y="640" font-size="22" font-weight="400" fill="#272820">The same creator chooses whether to apply this exact plan ID.</text>
+<text x="168" y="669" font-size="18" font-weight="600" fill="#855414">REVIEW • Applying is a separate deliberate command</text>
 <path class="edge" d="M480 691v35"/>
-<rect x="40" y="739" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="756" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 771) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
-<text x="168" y="782" font-size="25" font-weight="700" fill="#173D34">3. Recheck inside the deletion transaction</text>
-<text x="168" y="821" font-size="22" font-weight="400" fill="#173D34">Check scope, creator, current retention.apply authority,</text>
-<text x="168" y="850" font-size="22" font-weight="400" fill="#173D34">expiry, revision, cutoff, and references.</text>
-<text x="168" y="879" font-size="22" font-weight="400" fill="#173D34">Changed, missing, or referenced candidates are blocked.</text>
-<text x="168" y="908" font-size="18" font-weight="600" fill="#367D68">RECHECK • A plan is not permanent permission</text>
+<rect x="40" y="739" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="756" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 771) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="168" y="782" font-size="25" font-weight="700" fill="#272820">3. Recheck inside the deletion transaction</text>
+<text x="168" y="821" font-size="22" font-weight="400" fill="#272820">Check scope, creator, current retention.apply authority,</text>
+<text x="168" y="850" font-size="22" font-weight="400" fill="#272820">expiry, revision, cutoff, and references.</text>
+<text x="168" y="879" font-size="22" font-weight="400" fill="#272820">Changed, missing, or referenced candidates are blocked.</text>
+<text x="168" y="908" font-size="18" font-weight="600" fill="#855414">RECHECK • A plan is not permanent permission</text>
 <path class="edge" d="M480 930v35"/>
-<rect x="40" y="978" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="995" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1010) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
-<text x="168" y="1021" font-size="25" font-weight="700" fill="#173D34">4. Commit deletion and its accounting together</text>
-<text x="168" y="1060" font-size="22" font-weight="400" fill="#173D34">Delete only eligible candidates and commit manifest,</text>
-<text x="168" y="1089" font-size="22" font-weight="400" fill="#173D34">accounting, and audit.</text>
-<text x="168" y="1118" font-size="22" font-weight="400" fill="#173D34">A failed transaction rolls back its changes.</text>
-<text x="168" y="1147" font-size="18" font-weight="600" fill="#367D68">COMMIT • Retain the manifest as evidence</text>
+<rect x="40" y="978" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="995" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 1010) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="168" y="1021" font-size="25" font-weight="700" fill="#272820">4. Commit deletion and its accounting together</text>
+<text x="168" y="1060" font-size="22" font-weight="400" fill="#272820">Delete only eligible candidates and commit manifest,</text>
+<text x="168" y="1089" font-size="22" font-weight="400" fill="#272820">accounting, and audit.</text>
+<text x="168" y="1118" font-size="22" font-weight="400" fill="#272820">A failed transaction rolls back its changes.</text>
+<text x="168" y="1147" font-size="18" font-weight="600" fill="#855414">COMMIT • Retain the manifest as evidence</text>
 <path class="edge" d="M480 1169v35"/>
-<rect x="40" y="1217" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="1234" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1249) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19A22 22 0 1 1 7 37 M8 6v14h14"/></g>
-<text x="168" y="1260" font-size="25" font-weight="700" fill="#173D34">5. Recover a lost response with the same plan</text>
-<text x="168" y="1299" font-size="22" font-weight="400" fill="#173D34">Retry the same plan ID to recover the original manifest of an</text>
-<text x="168" y="1328" font-size="22" font-weight="400" fill="#173D34">already committed application.</text>
-<text x="168" y="1357" font-size="18" font-weight="600" fill="#367D68">RETRY • Do not invent a replacement deletion request</text>
-<rect x="40" y="1399" width="880" height="136" rx="16" fill="#FFF7E5"/>
-<g transform="translate(59 1419) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1443" font-size="23" font-weight="700" fill="#367D68">Omitted records keep their protection</text>
-<text x="60" y="1482" font-size="21" font-weight="400" fill="#173D34">Workflow history, provider receipts, source fences, catalogs, and outbox</text>
-<text x="60" y="1511" font-size="21" font-weight="400" fill="#173D34">history are never deleted here; archived runs are purged one at a time.</text><g id="takeaway">
-<rect x="0" y="1585" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1614" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1645" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Review the exact plan; applying it rechecks every candidate.</text>
+<rect x="40" y="1217" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="1234" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 1249) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19A22 22 0 1 1 7 37 M8 6v14h14"/></g>
+<text x="168" y="1260" font-size="25" font-weight="700" fill="#272820">5. Recover a lost response with the same plan</text>
+<text x="168" y="1299" font-size="22" font-weight="400" fill="#272820">Retry the same plan ID to recover the original manifest of an</text>
+<text x="168" y="1328" font-size="22" font-weight="400" fill="#272820">already committed application.</text>
+<text x="168" y="1357" font-size="18" font-weight="600" fill="#855414">RETRY • Do not invent a replacement deletion request</text>
+<rect x="40" y="1399" width="880" height="136" rx="16" fill="#FFF0D8"/>
+<g transform="translate(59 1419) scale(0.7)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1443" font-size="23" font-weight="700" fill="#855414">Omitted records keep their protection</text>
+<text x="60" y="1482" font-size="21" font-weight="400" fill="#272820">Workflow history, provider receipts, source fences, catalogs, and outbox</text>
+<text x="60" y="1511" font-size="21" font-weight="400" fill="#272820">history are never deleted here; archived runs are purged one at a time.</text><g id="takeaway">
+<rect x="0" y="1585" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1614" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1645" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Review the exact plan; applying it rechecks every candidate.</text>
 </g>
 </svg>

@@ -45,7 +45,7 @@ create a cloud account, a cluster, or a production platform for you.
 ![Build artifacts, registry, Kubernetes runtime, identity, and database](../diagrams/cloud-deployment.svg)
 
 Read the top row as artifact delivery (build, publish, select the environment)
-and the green panel as what Kubernetes runs. Pushing an image grants no Weave
+and the shaded panel as what Kubernetes runs. Pushing an image grants no Weave
 authority: the API and workers still need verified identities, scoped grants,
 and an admitted release.
 [Open diagram at full size](../diagrams/cloud-deployment.svg)

@@ -21,64 +21,64 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1280" viewBox="0 0 960 1280" role="img" aria-labelledby="title desc">
 <title id="title">Whose API are you describing?</title><desc id="desc">Two rows, each read left to right. EXPORT helps a client call Weave: the Weave operation inventory (methods, paths, DTOs, headers, and security) becomes the Weave OpenAPI document through export_openapi(), which uses PyFly’s generator from the openapi extra; clients still need a token and current grants for every call. IMPORT helps a workflow call an external API: weave connector import-openapi reads a reviewed OpenAPI 3.1 document (or 3.0.x with an explicit relaxation) and a policy: --list shows each operation with a verdict, --init-policy writes a policy to review, and --policy imports the operations it selects. With --target builtin it writes Actions on the built-in weave-http@2.0.0 connector, each compiled at import, plus a connection template, with nothing to build or install. With the default --target package it writes a new connector package (manifest, Actions, and HTTP profiles) that an operator reviews, builds, installs, and allowlists. Both directions run offline and never start services, resolve secrets, or call a provider; imported Actions still need publication, a connection, and an activation.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1180" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Whose API are you describing?</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">OpenAPI export describes Weave. OpenAPI import prepares an integration with</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">another service.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</text>
-<text x="48" y="242" font-size="24" font-weight="700" fill="#173D34">EXPORT • Help a client call Weave</text>
-<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="309" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
-<text x="58.0" y="366" font-size="24" font-weight="700" fill="#173D34">Weave operation inventory</text>
-<text x="58.0" y="410" font-size="22" font-weight="400" fill="#173D34">Methods, paths, DTOs, headers, and</text>
-<text x="58.0" y="438" font-size="22" font-weight="400" fill="#173D34">security. export_openapi() uses</text>
-<text x="58.0" y="466" font-size="22" font-weight="400" fill="#173D34">PyFly’s generator (openapi extra).</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1180" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Whose API are you describing?</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">OpenAPI export describes Weave. OpenAPI import prepares an integration with</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">another service.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</text>
+<text x="48" y="242" font-size="24" font-weight="700" fill="#272820">EXPORT • Help a client call Weave</text>
+<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="309" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 286) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
+<text x="58.0" y="366" font-size="24" font-weight="700" fill="#272820">Weave operation inventory</text>
+<text x="58.0" y="410" font-size="22" font-weight="400" fill="#272820">Methods, paths, DTOs, headers, and</text>
+<text x="58.0" y="438" font-size="22" font-weight="400" fill="#272820">security. export_openapi() uses</text>
+<text x="58.0" y="466" font-size="22" font-weight="400" fill="#272820">PyFly’s generator (openapi extra).</text>
 <path class="edge" d="M465.0 389.5h29"/>
-<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="309" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
-<text x="518.0" y="366" font-size="24" font-weight="700" fill="#173D34">Weave OpenAPI document</text>
-<text x="518.0" y="410" font-size="22" font-weight="400" fill="#173D34">Paths and component schemas</text>
-<text x="518.0" y="438" font-size="22" font-weight="400" fill="#173D34">describe the native API. Clients</text>
-<text x="518.0" y="466" font-size="22" font-weight="400" fill="#173D34">still need a token and current</text>
-<text x="518.0" y="494" font-size="22" font-weight="400" fill="#173D34">grants for every call.</text>
-<text x="48" y="574" font-size="24" font-weight="700" fill="#173D34">IMPORT • Help a workflow call an external API</text>
-<rect x="40.0" y="595" width="420.0" height="360" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="641" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
-<text x="58.0" y="698" font-size="24" font-weight="700" fill="#173D34">Reviewed OpenAPI + policy</text>
-<text x="58.0" y="774" font-size="22" font-weight="400" fill="#173D34">OpenAPI 3.1, or 3.0.x with an</text>
-<text x="58.0" y="802" font-size="22" font-weight="400" fill="#173D34">explicit relaxation. --list shows</text>
-<text x="58.0" y="830" font-size="22" font-weight="400" fill="#173D34">verdicts, --init-policy writes a</text>
-<text x="58.0" y="858" font-size="22" font-weight="400" fill="#173D34">policy to review, and --policy</text>
-<text x="58.0" y="886" font-size="22" font-weight="400" fill="#173D34">imports the operations it selects.</text>
-<text x="58.0" y="734" font-size="18" font-weight="600" fill="#326B88">weave connector import-openapi</text>
+<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="309" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 286) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="518.0" y="366" font-size="24" font-weight="700" fill="#272820">Weave OpenAPI document</text>
+<text x="518.0" y="410" font-size="22" font-weight="400" fill="#272820">Paths and component schemas</text>
+<text x="518.0" y="438" font-size="22" font-weight="400" fill="#272820">describe the native API. Clients</text>
+<text x="518.0" y="466" font-size="22" font-weight="400" fill="#272820">still need a token and current</text>
+<text x="518.0" y="494" font-size="22" font-weight="400" fill="#272820">grants for every call.</text>
+<text x="48" y="574" font-size="24" font-weight="700" fill="#272820">IMPORT • Help a workflow call an external API</text>
+<rect x="40.0" y="595" width="420.0" height="360" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="641" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 618) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5h20l11 11v35H12z M32 5v12h11 M20 27h15 M20 35h15 M20 43h10"/></g>
+<text x="58.0" y="698" font-size="24" font-weight="700" fill="#272820">Reviewed OpenAPI + policy</text>
+<text x="58.0" y="774" font-size="22" font-weight="400" fill="#272820">OpenAPI 3.1, or 3.0.x with an</text>
+<text x="58.0" y="802" font-size="22" font-weight="400" fill="#272820">explicit relaxation. --list shows</text>
+<text x="58.0" y="830" font-size="22" font-weight="400" fill="#272820">verdicts, --init-policy writes a</text>
+<text x="58.0" y="858" font-size="22" font-weight="400" fill="#272820">policy to review, and --policy</text>
+<text x="58.0" y="886" font-size="22" font-weight="400" fill="#272820">imports the operations it selects.</text>
+<text x="58.0" y="734" font-size="18" font-weight="600" fill="#4A5D65">weave connector import-openapi</text>
 <path class="edge" d="M465.0 680h29"/>
 <path class="edge" d="M465.0 870h29"/>
-<rect x="500.0" y="595" width="420.0" height="170" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<text x="518.0" y="634" font-size="24" font-weight="700" fill="#173D34">--target builtin</text>
-<text x="518.0" y="670" font-size="20" font-weight="400" fill="#173D34">Actions on weave-http@2.0.0, each</text>
-<text x="518.0" y="696" font-size="20" font-weight="400" fill="#173D34">compiled at import, plus a connection</text>
-<text x="518.0" y="722" font-size="20" font-weight="400" fill="#173D34">template. Nothing to build or install.</text>
-<text x="518.0" y="748" font-size="18" font-weight="600" fill="#326B88">NO CODE • Publish, connect, activate</text>
-<rect x="500.0" y="785" width="420.0" height="170" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<text x="518.0" y="824" font-size="24" font-weight="700" fill="#173D34">--target package (default)</text>
-<text x="518.0" y="860" font-size="20" font-weight="400" fill="#173D34">A new connector package: manifest,</text>
-<text x="518.0" y="886" font-size="20" font-weight="400" fill="#173D34">Actions, and HTTP profiles. Review,</text>
-<text x="518.0" y="912" font-size="20" font-weight="400" fill="#173D34">build, install, and allowlist it.</text>
-<text x="518.0" y="938" font-size="18" font-weight="600" fill="#326B88">OPERATOR • Admit the package first</text>
-<rect x="40" y="1000" width="880" height="136" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1020) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1044" font-size="23" font-weight="700" fill="#326B88">Both directions run offline</text>
-<text x="60" y="1083" font-size="21" font-weight="400" fill="#173D34">Neither one starts services, resolves secrets, or calls a provider.</text>
-<text x="60" y="1112" font-size="21" font-weight="400" fill="#173D34">Imported Actions still need publication, a connection, and an activation.</text><g id="takeaway">
-<rect x="0" y="1186" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1215" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1246" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Export describes Weave’s API; import turns another API into reviewed Actions.</text>
+<rect x="500.0" y="595" width="420.0" height="170" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<text x="518.0" y="634" font-size="24" font-weight="700" fill="#272820">--target builtin</text>
+<text x="518.0" y="670" font-size="20" font-weight="400" fill="#272820">Actions on weave-http@2.0.0, each</text>
+<text x="518.0" y="696" font-size="20" font-weight="400" fill="#272820">compiled at import, plus a connection</text>
+<text x="518.0" y="722" font-size="20" font-weight="400" fill="#272820">template. Nothing to build or install.</text>
+<text x="518.0" y="748" font-size="18" font-weight="600" fill="#4A5D65">NO CODE • Publish, connect, activate</text>
+<rect x="500.0" y="785" width="420.0" height="170" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<text x="518.0" y="824" font-size="24" font-weight="700" fill="#272820">--target package (default)</text>
+<text x="518.0" y="860" font-size="20" font-weight="400" fill="#272820">A new connector package: manifest,</text>
+<text x="518.0" y="886" font-size="20" font-weight="400" fill="#272820">Actions, and HTTP profiles. Review,</text>
+<text x="518.0" y="912" font-size="20" font-weight="400" fill="#272820">build, install, and allowlist it.</text>
+<text x="518.0" y="938" font-size="18" font-weight="600" fill="#4A5D65">OPERATOR • Admit the package first</text>
+<rect x="40" y="1000" width="880" height="136" rx="16" fill="#E6E8E6"/>
+<g transform="translate(59 1020) scale(0.7)" stroke="#4A5D65" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1044" font-size="23" font-weight="700" fill="#4A5D65">Both directions run offline</text>
+<text x="60" y="1083" font-size="21" font-weight="400" fill="#272820">Neither one starts services, resolves secrets, or calls a provider.</text>
+<text x="60" y="1112" font-size="21" font-weight="400" fill="#272820">Imported Actions still need publication, a connection, and an activation.</text><g id="takeaway">
+<rect x="0" y="1186" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1215" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1246" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Export describes Weave’s API; import turns another API into reviewed Actions.</text>
 </g>
 </svg>

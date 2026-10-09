@@ -87,6 +87,12 @@ SPDX-License-Identifier: Apache-2.0
   does not run: `unavailable: true`, `reason: ir_unsupported`, and
   `missing_features`. SDKs and CLIs older than this release reject such a page;
   upgrade them together with the server.
+- Restyle the documentation site in one dark scheme with the Firefly Weave logo,
+  the Firefly favicon and self-hosted Manrope, and recolor every diagram to the
+  Firefly light palette on paper panels.
+- Call the Studio assistant Weave AI throughout the documentation. Its guide is
+  now [Use Weave AI](docs/guides/weave-ai.md); [the previous guide](docs/guides/lumi.md)
+  points to it. API paths, permissions and role names keep `lumi`.
 - Studio no longer marks a workflow it just opened or created as Unsaved before
   any edit when it is not connected to a platform.
 

@@ -18,62 +18,62 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1174" role="img" aria-labelledby="title description">
 <title id="title">From a question to a reviewed draft</title>
-<desc id="description">Six stages: the person chooses a question and optional source or resource context; Weave checks permissions and the environment configuration; a private authenticated gateway calls an approved model; Lumi returns untrusted text and proposals; the person reviews, edits and validates; Apply changes only the unchanged original local workflow draft and offers Undo. No workflow execution is created by asking Lumi.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367D68"/></marker></defs>
-<rect width="800" height="1174" rx="24" fill="#EEF4F0"/>
-<g font-family="Inter,Arial,sans-serif">
-<text x="32" y="42" font-size="13" font-weight="700" letter-spacing="1.7" fill="#367D68">FIREFLY WEAVE · AI GUIDE</text>
-<text x="32" y="82" font-size="28" font-weight="700" fill="#173D34">From a question to a reviewed draft</text>
-<text x="32" y="116" font-size="18" fill="#4D655D">Lumi assists the person authoring or inspecting a workflow.</text>
-<text x="32" y="141" font-size="18" fill="#4D655D">Its request and conversation are separate from workflow execution.</text>
+<desc id="description">Six stages: the person chooses a question and optional source or resource context; Weave checks permissions and the environment configuration; a private authenticated gateway calls an approved model; Weave AI returns untrusted text and proposals; the person reviews, edits and validates; Apply changes only the unchanged original local workflow draft and offers Undo. No workflow execution is created by asking Weave AI.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
+<rect width="800" height="1174" rx="24" fill="#EAE7DF"/>
+<g font-family="Arial,Helvetica,sans-serif">
+<text x="32" y="42" font-size="13" font-weight="700" letter-spacing="1.7" fill="#855414">FIREFLY WEAVE · AI GUIDE</text>
+<text x="32" y="82" font-size="28" font-weight="700" fill="#272820">From a question to a reviewed draft</text>
+<text x="32" y="116" font-size="18" fill="#62645B">Weave AI assists the person authoring or inspecting a workflow.</text>
+<text x="32" y="141" font-size="18" fill="#62645B">Its request and conversation are separate from workflow execution.</text>
 <rect x="32" y="166" width="736" height="126" rx="16" fill="white"/>
-<circle cx="66" cy="200" r="18" fill="#173D34"/>
+<circle cx="66" cy="200" r="18" fill="#272820"/>
 <text x="66" y="206" text-anchor="middle" font-size="18" font-weight="700" fill="white">1</text>
-<text x="99" y="195" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">YOU · STUDIO</text>
-<text x="99" y="223" font-size="22" font-weight="700" fill="#173D34">Choose what to ask and share</text>
-<text x="99" y="250" font-size="18" fill="#4D655D">Write a question; optionally include current source.</text>
-<text x="99" y="275" font-size="18" fill="#4D655D">Explicitly attach a saved draft, run, or simulation.</text>
-<path d="M66 295v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="99" y="195" font-size="12" font-weight="700" letter-spacing="1.1" fill="#855414">YOU · STUDIO</text>
+<text x="99" y="223" font-size="22" font-weight="700" fill="#272820">Choose what to ask and share</text>
+<text x="99" y="250" font-size="18" fill="#62645B">Write a question; optionally include current source.</text>
+<text x="99" y="275" font-size="18" fill="#62645B">Explicitly attach a saved draft, run, or simulation.</text>
+<path d="M66 295v18" stroke="#62645B" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="32" y="316" width="736" height="126" rx="16" fill="white"/>
-<circle cx="66" cy="350" r="18" fill="#173D34"/>
+<circle cx="66" cy="350" r="18" fill="#272820"/>
 <text x="66" y="356" text-anchor="middle" font-size="18" font-weight="700" fill="white">2</text>
-<text x="99" y="345" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">WEAVE API · CURRENT ACCESS</text>
-<text x="99" y="373" font-size="22" font-weight="700" fill="#173D34">Check permissions and selected context</text>
-<text x="99" y="400" font-size="18" fill="#4D655D">Check Lumi access and access to each attached resource.</text>
-<text x="99" y="425" font-size="18" fill="#4D655D">Use the environment’s separate, pinned Lumi configuration.</text>
-<path d="M66 445v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="99" y="345" font-size="12" font-weight="700" letter-spacing="1.1" fill="#855414">WEAVE API · CURRENT ACCESS</text>
+<text x="99" y="373" font-size="22" font-weight="700" fill="#272820">Check permissions and selected context</text>
+<text x="99" y="400" font-size="18" fill="#62645B">Check Weave AI access and access to each attached resource.</text>
+<text x="99" y="425" font-size="18" fill="#62645B">Use the environment’s separate, pinned Weave AI configuration.</text>
+<path d="M66 445v18" stroke="#62645B" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="32" y="466" width="736" height="126" rx="16" fill="white"/>
-<circle cx="66" cy="500" r="18" fill="#173D34"/>
+<circle cx="66" cy="500" r="18" fill="#272820"/>
 <text x="66" y="506" text-anchor="middle" font-size="18" font-weight="700" fill="white">3</text>
-<text x="99" y="495" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">PRIVATE GATEWAY → MODEL PROVIDER</text>
-<text x="99" y="523" font-size="22" font-weight="700" fill="#173D34">Request a bounded response</text>
-<text x="99" y="550" font-size="18" fill="#4D655D">The API authenticates to the operator-deployed gateway.</text>
-<text x="99" y="575" font-size="18" fill="#4D655D">The gateway checks policy; the provider receives context.</text>
-<path d="M66 595v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="99" y="495" font-size="12" font-weight="700" letter-spacing="1.1" fill="#855414">PRIVATE GATEWAY → MODEL PROVIDER</text>
+<text x="99" y="523" font-size="22" font-weight="700" fill="#272820">Request a bounded response</text>
+<text x="99" y="550" font-size="18" fill="#62645B">The API authenticates to the operator-deployed gateway.</text>
+<text x="99" y="575" font-size="18" fill="#62645B">The gateway checks policy; the provider receives context.</text>
+<path d="M66 595v18" stroke="#62645B" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="32" y="616" width="736" height="126" rx="16" fill="white"/>
-<circle cx="66" cy="650" r="18" fill="#173D34"/>
+<circle cx="66" cy="650" r="18" fill="#272820"/>
 <text x="66" y="656" text-anchor="middle" font-size="18" font-weight="700" fill="white">4</text>
-<text x="99" y="645" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">LUMI · RESPONSE</text>
-<text x="99" y="673" font-size="22" font-weight="700" fill="#173D34">Return text and source proposals</text>
-<text x="99" y="700" font-size="18" fill="#4D655D">The answer is untrusted text, not an executed instruction.</text>
-<text x="99" y="725" font-size="18" fill="#4D655D">No workflow run or persistent conversation is created.</text>
-<path d="M66 745v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="99" y="645" font-size="12" font-weight="700" letter-spacing="1.1" fill="#855414">WEAVE AI · RESPONSE</text>
+<text x="99" y="673" font-size="22" font-weight="700" fill="#272820">Return text and source proposals</text>
+<text x="99" y="700" font-size="18" fill="#62645B">The answer is untrusted text, not an executed instruction.</text>
+<text x="99" y="725" font-size="18" fill="#62645B">No workflow run or persistent conversation is created.</text>
+<path d="M66 745v18" stroke="#62645B" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="32" y="766" width="736" height="126" rx="16" fill="white"/>
-<circle cx="66" cy="800" r="18" fill="#173D34"/>
+<circle cx="66" cy="800" r="18" fill="#272820"/>
 <text x="66" y="806" text-anchor="middle" font-size="18" font-weight="700" fill="white">5</text>
-<text x="99" y="795" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">YOU · REVIEW</text>
-<text x="99" y="823" font-size="22" font-weight="700" fill="#173D34">Read, edit, and validate</text>
-<text x="99" y="850" font-size="18" fill="#4D655D">Inspect the proposed source and run normal validation.</text>
-<text x="99" y="875" font-size="18" fill="#4D655D">If the original draft changed, request a fresh proposal.</text>
-<path d="M66 895v18" stroke="#367D68" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="99" y="795" font-size="12" font-weight="700" letter-spacing="1.1" fill="#855414">YOU · REVIEW</text>
+<text x="99" y="823" font-size="22" font-weight="700" fill="#272820">Read, edit, and validate</text>
+<text x="99" y="850" font-size="18" fill="#62645B">Inspect the proposed source and run normal validation.</text>
+<text x="99" y="875" font-size="18" fill="#62645B">If the original draft changed, request a fresh proposal.</text>
+<path d="M66 895v18" stroke="#62645B" stroke-width="2" marker-end="url(#arrow)"/>
 <rect x="32" y="916" width="736" height="126" rx="16" fill="white"/>
-<circle cx="66" cy="950" r="18" fill="#173D34"/>
+<circle cx="66" cy="950" r="18" fill="#272820"/>
 <text x="66" y="956" text-anchor="middle" font-size="18" font-weight="700" fill="white">6</text>
-<text x="99" y="945" font-size="12" font-weight="700" letter-spacing="1.1" fill="#367D68">YOU · LOCAL DRAFT</text>
-<text x="99" y="973" font-size="22" font-weight="700" fill="#173D34">Apply deliberately; Undo if needed</text>
-<text x="99" y="1000" font-size="18" fill="#4D655D">Apply a valid workflow proposal to the original local draft.</text>
-<text x="99" y="1025" font-size="18" fill="#4D655D">Publishing, activation, and running remain separate actions.</text>
-<rect x="32" y="1066" width="736" height="78" rx="16" fill="#173D34"/>
+<text x="99" y="945" font-size="12" font-weight="700" letter-spacing="1.1" fill="#855414">YOU · LOCAL DRAFT</text>
+<text x="99" y="973" font-size="22" font-weight="700" fill="#272820">Apply deliberately; Undo if needed</text>
+<text x="99" y="1000" font-size="18" fill="#62645B">Apply a valid workflow proposal to the original local draft.</text>
+<text x="99" y="1025" font-size="18" fill="#62645B">Publishing, activation, and running remain separate actions.</text>
+<rect x="32" y="1066" width="736" height="78" rx="16" fill="#272820"/>
 <text x="52" y="1096" font-size="18" fill="white">Privacy: the API and gateway do not persist conversation content.</text>
 <text x="52" y="1121" font-size="18" fill="white">The model provider’s own retention and billing policies still apply.</text>
 </g></svg>

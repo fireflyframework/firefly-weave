@@ -45,16 +45,23 @@ PROJECT_PAGES = {
     "tests/fixtures/e2-provider/README.md": "project/provider-fixture.md",
 }
 ASSETS = (
-    "assets/weave-logo.svg",
-    "assets/weave-logo-reversed.svg",
-    "assets/weave-logo-mono.svg",
     "assets/banner.svg",
     "assets/badges/license.svg",
     "assets/badges/python.svg",
     "assets/badges/alpha.svg",
+    "assets/brand/weave-lockup-reversed.svg",
+    "assets/brand/weave-lockup-color.svg",
+    "assets/brand/weave-lockup-small-reversed.svg",
+    "assets/brand/firefly-icon.svg",
+    "assets/fonts/manrope/manrope-latin-wght-normal.woff2",
+    "assets/fonts/manrope/manrope-latin-ext-wght-normal.woff2",
+    "assets/fonts/manrope/OFL.txt",
 )
 PRIVATE_PARTS = {"superpowers", ".superpowers", ".codex", ".agents", ".secrets", ".local", "localenv"}
 GENERATED_FILES = {"reference/openapi.json"}
+TAG_LABELS = {"lumi": "Weave AI"}
+# Pages outside the nav (mkdocs.yml not_in_nav) start with the license comment, so MkDocs cannot read their H1.
+HEADING_TITLED_PAGES = {"guides/lumi.md"}
 PRIVATE_NAMES = {"AGENTS.md", "CLAUDE.md", "implementation-status.md"}
 
 
@@ -157,6 +164,8 @@ def on_page_markdown(markdown, page, config, files):
     # this context via its configuration before that instance is created.
     extension = next(item for item in config.markdown_extensions if isinstance(item, SourceLinkExtension))
     extension.source = {"origin": origin, "site_uri": page.file.src_uri, "root": root, "ref": ref}
+    if page.file.src_uri in HEADING_TITLED_PAGES and (heading := re.search(r"^# (.+?)\s*$", markdown, re.MULTILINE)):
+        page.title = heading[1]
     if page.file.src_uri == "README.md":
         markdown = markdown.replace(
             "# Learn and use Firefly Weave",
@@ -196,7 +205,7 @@ def api_reference(spec):
         for method, operation in methods.items():
             groups.setdefault(operation.get("tags", ["API"])[0], []).append((path, method, operation))
     for tag, operations in sorted(groups.items()):
-        lines.extend([f"### {tag.replace('_', ' ').title()}", ""])
+        lines.extend([f"### {TAG_LABELS.get(tag, tag.replace('_', ' ').title())}", ""])
         for path, method, operation in operations:
             identifier = escape(operation["operationId"], quote=True)
             summary = escape(operation.get("summary", operation["operationId"]))
