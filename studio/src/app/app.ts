@@ -5591,7 +5591,21 @@ export class App implements CanvasHost {
   runTask: Record<string, unknown> | null = null;
   /** Tasks filtered to one run ("Open My tasks" from a run). */
   taskRunFilter = "";
+  private runTaskSequence = 0;
+  private refreshRunTaskAfterIdentity() {
+    if (this.view === "runs" && this.selectedRecord)
+      void this.findRunTask(this.selectedRecord);
+    else {
+      this.runTaskSequence++;
+      this.runTask = null;
+    }
+  }
   private async findRunTask(run: Record<string, unknown>) {
+    if (this.view !== "runs" || this.selectedRecord !== run) return;
+    const sequence = ++this.runTaskSequence,
+      profile = this.profile,
+      scope = JSON.stringify(profile),
+      identity = this.identity;
     this.runTask = null;
     const state = (run["state"] ?? {}) as { active?: string[] };
     const node = this.runNodes().find(
@@ -5604,7 +5618,16 @@ export class App implements CanvasHost {
           this.api.page("human-tasks", true, undefined, { status }),
         ),
       );
-      if (this.selectedRecord?.["id"] !== run["id"]) return;
+      if (
+        sequence !== this.runTaskSequence ||
+        this.view !== "runs" ||
+        this.selectedRecord !== run ||
+        profile !== this.profile ||
+        scope !== JSON.stringify(this.profile) ||
+        identity !== this.identity ||
+        !this.canReadTasks
+      )
+        return;
       this.runTask =
         pages
           .flatMap((page) => page.items)
@@ -6360,6 +6383,7 @@ export class App implements CanvasHost {
     } catch {
       this.identity = null;
     } finally {
+      this.refreshRunTaskAfterIdentity();
       this.cdr.markForCheck();
     }
   }
@@ -6489,6 +6513,7 @@ export class App implements CanvasHost {
       this.api.adopt(result.session);
       this.identity = result.identity;
       this.catalogAfterIdentity();
+      this.refreshRunTaskAfterIdentity();
       this.renewedStatus();
       this.platformNotice = result.workspace_revoked
         ? { kind: "revoked", name }
