@@ -345,3 +345,41 @@ def test_compose_services_share_no_lists_or_mappings(owned):
     assert again["ai-gateway"]["cap_drop"] == ["ALL"] and worker["cap_drop"] == ["ALL"]
     assert again["agentic-worker"]["depends_on"] == {"keycloak": {"condition": "service_started"}}
     assert worker["depends_on"] == {"keycloak": {"condition": "service_started"}}
+
+
+@pytest.mark.parametrize(
+    "generations",
+    [
+        {files.GATEWAY_TOKEN: "../outside", files.WORKER_SECRET: "a" * 32},
+        {files.GATEWAY_TOKEN: "a" * 32},
+        {files.GATEWAY_TOKEN: "a" * 32, files.WORKER_SECRET: "b" * 32, "extra": "c" * 32},
+    ],
+)
+def test_secret_generation_receipt_cannot_select_arbitrary_paths(owned, generations):
+    directory, _, _ = owned
+    value = receipt(secret_generations=generations)
+    with pytest.raises(platform.PlatformError, match="generations are invalid"):
+        files.write_settings(platform._load(directory), value)
+    assert not (directory / files.SECRETS_DIRECTORY).exists()
+
+
+@pytest.mark.parametrize("secret", [files.GATEWAY_TOKEN, files.WORKER_SECRET])
+@pytest.mark.parametrize("unsafe", ["symlink", "mode"])
+def test_unsafe_saved_generation_is_refused_without_overwriting_it(owned, secret, unsafe):
+    directory, _, _ = owned
+    value = receipt()
+    state = prepared(directory, value)
+    files.write_settings(state, value)
+    path = directory / files.SECRETS_DIRECTORY / (secret + "-" + value["secret_generations"][secret])
+    original = path.read_bytes()
+    if unsafe == "symlink":
+        target = path.with_name("outside-generation")
+        path.rename(target)
+        path.symlink_to(target)
+    else:
+        path.chmod(0o644)
+    saved = (directory / "ai.json").read_bytes()
+    with pytest.raises(platform.PlatformError, match="generation is unsafe"):
+        files.write_settings(state, value)
+    assert path.read_bytes() == original and (directory / "ai.json").read_bytes() == saved
+    assert path.is_symlink() if unsafe == "symlink" else stat.S_IMODE(path.stat().st_mode) == 0o644

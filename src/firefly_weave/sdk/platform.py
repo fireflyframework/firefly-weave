@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import json
@@ -30,10 +31,11 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import tomllib
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager, suppress
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
@@ -303,7 +305,7 @@ def _ports() -> dict[str, int]:
             sock.close()
 
 
-def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
+def _state(directory: Path) -> dict[str, Any]:
     directory = _private_directory(directory)
     state = strict_json(read_file(directory / "platform.json", 65536, private=True))
     if not isinstance(state, dict) or state.get("format") != _FORMAT:
@@ -327,9 +329,14 @@ def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
         or len(set(ports.values())) != 4
     ):
         raise PlatformError("Installation port metadata is invalid.")
-    if "private_origins" in state:
-        from firefly_weave.sdk import platform_origins
+    return state
 
+
+def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
+    from firefly_weave.sdk import platform_origins
+
+    state = platform_origins.recover(_state(directory))
+    if "private_origins" in state:
         platform_origins.validate_state(state)
         # Every command loads the installation first, so none runs on a changed private-origin file.
         platform_origins.verified(state)
@@ -354,12 +361,41 @@ def _exclusive(directory: Path, name: str, busy: str) -> Iterator[None]:
         os.close(descriptor)
 
 
-def _lock(directory: Path) -> AbstractContextManager[None]:
-    return _exclusive(
+_LOCK_OWNERS = threading.local()
+
+
+def _lock_owner() -> tuple[Any, ...]:
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return os.getpid(), threading.get_ident(), task
+
+
+@contextmanager
+def _lock(directory: Path) -> Iterator[None]:
+    with _exclusive(
         directory,
         ".operation.lock",
         "Another platform command is active. Stop the foreground API with Ctrl-C before stopping services.",
-    )
+    ):
+        owners = getattr(_LOCK_OWNERS, "owners", {})
+        _LOCK_OWNERS.owners = owners
+        owners[str(directory)] = _lock_owner()
+        try:
+            yield
+        finally:
+            del owners[str(directory)]
+
+
+@contextmanager
+def _recovery_lock(directory: Path) -> Iterator[None]:
+    # Only the same execution owner may recover inside its already-held operation lock.
+    if getattr(_LOCK_OWNERS, "owners", {}).get(str(directory)) == _lock_owner():
+        yield
+    else:
+        with _lock(directory):
+            yield
 
 
 def _check_engine(state: dict[str, Any]) -> None:

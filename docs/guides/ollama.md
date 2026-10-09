@@ -64,6 +64,13 @@ private-origin entries; a script without a terminal stops and names `--yes`.
 Add `--verify` to also run a one-step AI workflow and replay it. Repeating the
 command changes only what differs.
 
+If an AI private-origin update is interrupted, the next platform command finishes
+its recorded transition under the installation lock. Changed files or unrecognized
+pending records still stop the command. Secret repairs save opaque mount generations
+before publication so the API, gateway or worker that consumes a repaired secret is
+recreated. Superseded copies stay inside the private installation directory until
+that installation is removed; do not delete copies mounted by running containers.
+
 For worker sign-in, enable includes the managed Keycloak realm's existing `basic`
 scope in token responses. It preserves the scope's mappers and existing grants;
 this local identity setting remains after `ai disable`.
@@ -124,6 +131,11 @@ weave platform ai models approve --provider openai-chat --served
 
 The worker and the AI gateway read the policy again at their next call, so no
 restart is needed. A step whose model is not approved fails with `LLM_POLICY`.
+
+If an exact approval leaves no eligible served model and enable stops after writing
+the policy, use `models approve` to choose an available model (or `--served`), then
+rerun `enable`. Approval recovery validates the saved installation and policy; it
+does not itself finish setup or start services.
 
 The policy's context size is the smaller of 8,192 tokens and the context Ollama
 reports for each approved model, whether you approved an exact list or every served
@@ -187,6 +199,8 @@ weave platform ai disable
 
 `disable --remove-model-data` also deletes the Weave-managed Ollama volume. The
 connection, the worker release and the definitions stay, and `enable` reuses them.
+Before deletion, Weave checks the volume's current Compose project and volume labels;
+it refuses a same-named volume whose labels belong to another owner.
 
 ## When something goes wrong
 

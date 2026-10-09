@@ -237,6 +237,7 @@ def verify_policy(state: dict[str, Any], receipt: dict[str, Any]) -> None:
 def write_settings(state: dict[str, Any], receipt: dict[str, Any]) -> bool:
     """The gateway token, the worker's client secret copy and its sign-in settings; True when any changed."""
     directory = Path(state["directory"])
+    previous = generations(receipt)
     # Read the worker's secret before writing anything, so a refusal leaves the installation as it was.
     worker = local._env_file(directory / "identity.env").get("WEAVE_WORKER_SECRET")
     if not worker:
@@ -245,7 +246,6 @@ def write_settings(state: dict[str, Any], receipt: dict[str, Any]) -> bool:
     config = _shared(directory / CONFIG_DIRECTORY)
     token = stored / GATEWAY_TOKEN
     current = _current(token, 0o444, 4096)
-    previous = generations(receipt)
     updated = dict(previous)
     if current is None or _TOKEN.fullmatch(current) is None:
         current = (secrets.token_urlsafe(32) + "\n").encode()

@@ -593,10 +593,14 @@ def test_start_and_stop_reapply_and_stop_ai_services_only_when_ready(harness):
 def meanwhile(monkeypatch, change):
     """Run ``change`` as if another command finished just before this one took the installation lock."""
     original = platform._lock
+    pending = True
 
     @contextmanager
     def lock(directory):
-        change()
+        nonlocal pending
+        if pending:
+            pending = False
+            change()
         with original(directory):
             yield
 

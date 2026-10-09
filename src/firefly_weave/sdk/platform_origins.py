@@ -30,6 +30,7 @@ import hashlib
 import ipaddress
 import os
 import re
+import stat
 import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -41,6 +42,7 @@ from firefly_weave.sdk import platform as local
 from firefly_weave.sdk.deployment import DeploymentError, read_file, real_path, strict_json
 
 FILE = "private-origins.json"
+PENDING = ".private-origins.pending.json"
 COMPOSE = "compose.egress.yaml"
 CONTAINER_DIRECTORY = "container-config"
 CONTAINER_PATH = "/run/weave-config/private-origins.json"
@@ -315,17 +317,119 @@ def verified(state: dict[str, Any]) -> tuple[bytes, private_origins.PrivateOrigi
 def _replace(path: Path, data: bytes) -> None:
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".origins-", delete=False) as stream:
         stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
         temporary = Path(stream.name)
     temporary.chmod(0o600)
     temporary.replace(path)
+    local._sync(path)
+
+
+def _record(state: dict[str, Any], value: Any) -> bytes | None:
+    if value is None:
+        return None
+    validate_state({**state, "private_origins": value})
+    data = _render(value)
+    if hashlib.sha256(data).hexdigest() != value["file_sha256"]:
+        raise local.PlatformError("Pending private-origin digest is invalid; no files were changed.")
+    return data
+
+
+def _ai_transition(before: dict[str, Any] | None, after: dict[str, Any] | None) -> None:
+    def fixtures(value: dict[str, Any] | None) -> dict[str, Any]:
+        return {key: item for key, item in (value or {}).items() if key in _FIXTURE_KEYS}
+
+    if before == after or fixtures(before) != fixtures(after):
+        raise local.PlatformError("Pending transition is not an AI-only consent update; no files were changed.")
+
+
+def _finish(state: dict[str, Any], after: dict[str, Any] | None, data: bytes | None) -> None:
+    directory = Path(state["directory"])
+    if after is None:
+        state.pop("private_origins", None)
+    else:
+        state["private_origins"] = after
+    local._write(directory / "platform.json", state, replace=True)
+    local._sync(directory / "platform.json")
+    if data is None:
+        (directory / FILE).unlink(missing_ok=True)
+        local._sync(directory)
+    else:
+        _replace(directory / FILE, data)
+    (directory / PENDING).unlink()
+    local._sync(directory)
+
+
+def recover(state: dict[str, Any]) -> dict[str, Any]:
+    """Finish only an exact recorded before/after pair, revalidated under the installation lock."""
+    directory = Path(state["directory"])
+    if not os.path.lexists(directory / PENDING):
+        return state
+    with local._recovery_lock(directory):
+        state = local._state(directory)
+        path = directory / PENDING
+        if not os.path.lexists(path):
+            return state
+        try:
+            record = strict_json(read_file(path, 2 * private_origins.MAX_FILE_BYTES + 4096, private=True))
+            if (
+                stat.S_IMODE(path.lstat().st_mode) != 0o600
+                or state.get("mode") != "docker"
+                or not isinstance(record, dict)
+                or set(record) != {"format", "installation", "before", "after"}
+                or type(record["format"]) is not int
+                or record["format"] != 1
+                or record["installation"] != state["id"]
+            ):
+                raise ValueError("Unknown pending transition")
+            before, after = record["before"], record["after"]
+            old, new = _record(state, before), _record(state, after)
+            _ai_transition(before, after)
+            if state.get("private_origins") not in (before, after):
+                raise ValueError("Unrecognized metadata")
+            actual = (
+                read_file(directory / FILE, private_origins.MAX_FILE_BYTES, private=True)
+                if os.path.lexists(directory / FILE)
+                else None
+            )
+            if actual not in (old, new):
+                raise ValueError("Unrecognized policy")
+        except (OSError, DeploymentError, ValueError, TypeError, KeyError):
+            raise local.PlatformError(
+                "Pending private-origin transition is unsafe or unrecognized; no files were changed."
+            ) from None
+        _finish(state, after, new)
+        return state
+
+
+def _transition(state: dict[str, Any], after: dict[str, Any] | None) -> None:
+    directory = Path(state["directory"])
+    before = state.get("private_origins")
+    with local._recovery_lock(directory):
+        current = local._load(directory, complete=False)
+        if current.get("private_origins") != before:
+            raise local.PlatformError("Private-origin metadata changed before publication; no files were changed.")
+        old, new = _record(current, before), _record(current, after)
+        _ai_transition(before, after)
+        actual = (
+            read_file(directory / FILE, private_origins.MAX_FILE_BYTES, private=True)
+            if os.path.lexists(directory / FILE)
+            else None
+        )
+        if actual != old:
+            raise local.PlatformError(
+                "The private-origin file changed outside platform commands; no files were changed."
+            )
+        record = {"format": 1, "installation": current["id"], "before": before, "after": after}
+        local._write(directory / PENDING, record)
+        local._sync(directory / PENDING)
+        _finish(current, after, new)
+        state.clear()
+        state.update(current)
 
 
 def set_ai_entries(state: dict[str, Any], entries: Sequence[private_origins.PrivateOrigin]) -> bool:
-    """Record AI's entries with consent and the file's new digest, then replace the file; True on change.
-
-    platform.json changes first, as at creation: an interruption before the file is replaced
-    leaves every command refusing instead of trusting an entry nobody recorded.
-    """
+    """Durably record AI consent and publish the matching policy; True on change."""
     if state.get("mode") != "docker":
         raise local.PlatformError("Private origins need the Docker platform; use weave platform up.")
     # No entries would be metadata every later command refuses; remove_ai_entries drops them instead.
@@ -344,10 +448,7 @@ def set_ai_entries(state: dict[str, Any], entries: Sequence[private_origins.Priv
     }
     data = _render(value)
     value["file_sha256"] = hashlib.sha256(data).hexdigest()
-    state["private_origins"] = value
-    directory = Path(state["directory"])
-    local._write(directory / "platform.json", state, replace=True)
-    _replace(directory / FILE, data)
+    _transition(state, value)
     return True
 
 
@@ -358,17 +459,12 @@ def remove_ai_entries(state: dict[str, Any]) -> bool:
         return False
     verified(state)
     del value["ai"]
-    directory = Path(state["directory"])
     if not set(value) & _FIXTURE_KEYS:
-        state.pop("private_origins")
-        local._write(directory / "platform.json", state, replace=True)
-        (directory / FILE).unlink(missing_ok=True)
+        _transition(state, None)
         return True
     data = _render(value)
     value["file_sha256"] = hashlib.sha256(data).hexdigest()
-    state["private_origins"] = value
-    local._write(directory / "platform.json", state, replace=True)
-    _replace(directory / FILE, data)
+    _transition(state, value)
     return True
 
 

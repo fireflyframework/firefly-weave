@@ -138,3 +138,191 @@ def test_status_lists_ai_entries_without_an_egress_network(owned, capsys):
     output = capsys.readouterr().out
     assert "Private origins (Development only): http://127.0.0.1:8000" in output
     assert "Egress network" not in output
+
+
+PENDING = ".private-origins.pending.json"
+
+
+def connector_fixture(directory, runner):
+    runner.answers["egress-inspect"] = lambda command: json.dumps(
+        [
+            {
+                "Name": command[-1],
+                "Labels": {"io.getfirefly.weave.installation": OWNER},
+                "IPAM": {"Config": [{"Subnet": "10.246.22.0/24"}]},
+            }
+        ]
+    ).encode()
+    platform_origins.prepare(platform._load(directory), (ACME,))
+
+
+@pytest.mark.parametrize("operation", ["add", "add-keep", "update", "update-keep", "remove-only", "remove-keep"])
+@pytest.mark.parametrize("boundary", ["journal", "state", "policy", "cleanup"])
+def test_interrupted_origin_pair_recovers_every_durable_boundary(owned, monkeypatch, operation, boundary):
+    from pathlib import Path
+
+    directory, _, runner = owned
+    if operation.endswith("keep"):
+        connector_fixture(directory, runner)
+    if not operation.startswith("add"):
+        platform_origins.set_ai_entries(platform._load(directory), ENTRIES)
+    entries = [
+        e.model_copy(update={"networks": ("10.246.23.0/24",)}) if e.origin == "http://ollama:11434" else e
+        for e in ENTRIES
+    ]
+    expected = {(e.origin, e.purpose) for e in entries} if not operation.startswith("remove") else set()
+    if operation.endswith("keep"):
+        expected |= {(ACME, "event-delivery"), (ACME, "http-connector")}
+    sync, replace, unlink = platform._sync, platform_origins._replace, Path.unlink
+
+    def interrupted_sync(path):
+        sync(path)
+        if path.name == (PENDING if boundary == "journal" else "platform.json") and boundary in {"journal", "state"}:
+            raise OSError("interrupted durable publication")
+
+    def interrupted_replace(path, data):
+        replace(path, data)
+        if boundary == "policy" and path.name == platform_origins.FILE:
+            raise OSError("interrupted policy publication")
+
+    def interrupted_unlink(path, *args, **kwargs):
+        if boundary == "cleanup" and path.name == PENDING:
+            raise OSError("interrupted transition cleanup")
+        result = unlink(path, *args, **kwargs)
+        if boundary == "policy" and path.name == platform_origins.FILE:
+            raise OSError("interrupted policy removal")
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(platform, "_sync", interrupted_sync)
+        patch.setattr(platform_origins, "_replace", interrupted_replace)
+        patch.setattr(Path, "unlink", interrupted_unlink)
+        with pytest.raises(OSError, match="interrupted"):
+            state = platform._load(directory)
+            if operation.startswith("remove"):
+                platform_origins.remove_ai_entries(state)
+            else:
+                platform_origins.set_ai_entries(state, entries)
+    assert (directory / PENDING).is_file()
+    with platform._lock(directory):
+        state = platform._load(directory)
+    assert not (directory / PENDING).exists()
+    if expected:
+        assert pairs(directory) == expected
+        if operation.startswith("update"):
+            assert po.parse((directory / platform_origins.FILE).read_bytes()).match(
+                "model", "http://ollama:11434"
+            ).networks == ("10.246.23.0/24",)
+    else:
+        assert "private_origins" not in state and not (directory / platform_origins.FILE).exists()
+
+
+def pending_transition(directory):
+    before = platform._load(directory).get("private_origins")
+    state = platform._load(directory)
+    platform_origins.set_ai_entries(state, ENTRIES)
+    after = state["private_origins"]
+    platform._write(directory / PENDING, {"format": 1, "installation": OWNER, "before": before, "after": after})
+    return before, after
+
+
+@pytest.mark.parametrize("tamper", ["foreign", "extra", "digest", "mode", "symlink", "policy", "metadata"])
+def test_pending_transition_rejects_unrecognized_or_unsafe_state(owned, tamper):
+    directory, _, _ = owned
+    _, after = pending_transition(directory)
+    path = directory / PENDING
+    pending = json.loads(path.read_text())
+    if tamper == "foreign":
+        pending["installation"] = "e" * 24
+    elif tamper == "extra":
+        pending["extra"] = True
+    elif tamper == "digest":
+        pending["after"]["file_sha256"] = "0" * 64
+    elif tamper == "mode":
+        path.chmod(0o644)
+    elif tamper == "symlink":
+        target = directory / "foreign-pending"
+        path.rename(target)
+        path.symlink_to(target)
+    elif tamper == "policy":
+        (directory / platform_origins.FILE).write_bytes(platform_origins._render(after) + b"\n")
+    elif tamper == "metadata":
+        state = json.loads((directory / "platform.json").read_text())
+        state["private_origins"]["ai"]["consented_at"] = "different"
+        platform._write(directory / "platform.json", state, replace=True)
+    if tamper in {"foreign", "extra", "digest"}:
+        platform._write(path, pending, replace=True)
+    original = (directory / "platform.json").read_bytes(), (directory / platform_origins.FILE).read_bytes()
+    with pytest.raises(platform.PlatformError):
+        platform._load(directory)
+    assert original == ((directory / "platform.json").read_bytes(), (directory / platform_origins.FILE).read_bytes())
+    assert path.exists()
+
+
+@pytest.mark.asyncio
+async def test_pending_recovery_lock_ownership_does_not_leak_to_tasks_or_threads(owned):
+    import asyncio
+
+    directory, _, _ = owned
+    pending_transition(directory)
+
+    async def child():
+        with pytest.raises(platform.PlatformError, match="Another platform command"):
+            platform._load(directory)
+
+    with platform._lock(directory):
+        await asyncio.create_task(child())
+
+        def thread():
+            with pytest.raises(platform.PlatformError, match="Another platform command"):
+                platform._load(directory)
+
+        await asyncio.to_thread(thread)
+        platform._load(directory)
+    assert not (directory / PENDING).exists()
+
+
+def test_pending_transition_cannot_change_retained_connector_consent(owned):
+    directory, _, runner = owned
+    connector_fixture(directory, runner)
+    before = platform._load(directory)["private_origins"]
+    platform_origins.set_ai_entries(platform._load(directory), ENTRIES)
+    after = platform._load(directory)["private_origins"]
+    after["origins"] = ["http://foreign.acceptance.test:8080"]
+    data = platform_origins._render(after)
+    after["file_sha256"] = hashlib.sha256(data).hexdigest()
+    platform._write(directory / PENDING, {"format": 1, "installation": OWNER, "before": before, "after": after})
+    state = platform._state(directory)
+    state["private_origins"] = before
+    platform._write(directory / "platform.json", state, replace=True)
+    platform_origins._replace(directory / platform_origins.FILE, platform_origins._render(before))
+    original = (directory / "platform.json").read_bytes()
+    with pytest.raises(platform.PlatformError):
+        platform._load(directory)
+    assert (directory / "platform.json").read_bytes() == original
+    assert (directory / PENDING).exists()
+
+
+def test_recovery_revalidates_metadata_after_acquiring_actual_lock(owned, monkeypatch):
+    from contextlib import contextmanager
+
+    directory, _, _ = owned
+    pending_transition(directory)
+    original = platform._lock
+    changed = None
+
+    @contextmanager
+    def lock(path):
+        nonlocal changed
+        with original(path):
+            state = platform._state(path)
+            state["private_origins"]["ai"]["consented_at"] = "concurrent-unrecognized-state"
+            platform._write(path / "platform.json", state, replace=True)
+            changed = (path / "platform.json").read_bytes()
+            yield
+
+    monkeypatch.setattr(platform, "_lock", lock)
+    with pytest.raises(platform.PlatformError, match="unrecognized"):
+        platform._load(directory)
+    assert (directory / "platform.json").read_bytes() == changed
+    assert (directory / PENDING).exists()
