@@ -24,6 +24,7 @@ import {
 } from "@angular/core";
 import { FormulaField } from "../src/app/editor/ndv/params/formula-field";
 import { ParamField } from "../src/app/editor/ndv/params/param-field";
+import { ParameterForm } from "../src/app/editor/ndv/params/param-form";
 import type { Choice, ParamSpec } from "../src/app/editor/ndv/registry";
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
@@ -34,12 +35,12 @@ import type { StepDetailsHost } from "../src/app/editor/ndv/step-details-host";
 import { StructuredCanvasAdapter } from "../src/app/model";
 
 beforeAll(() => loadKindRegistrations());
-function setup() {
+function setup(prompt: unknown = { ref: "/input/name" }) {
   const model = new StructuredCanvasAdapter();
   model.insert("llm", "root", undefined, {
     id: "summarize",
     profile: "assistant",
-    prompt: { ref: "/input/name" },
+    prompt,
   });
   model.clearHistory();
   let resolve!: (ok: boolean) => void;
@@ -252,4 +253,142 @@ describe("deferred literal template edits", () => {
       injector.destroy();
     });
   }
+});
+
+describe("active mapped field ownership", () => {
+  const template = (prefix: string) => ({
+    op: { name: "concat", args: [{ literal: prefix }, { ref: "/input/name" }] },
+  });
+  async function fieldFixture() {
+    const f = setup(template("Hello "));
+    f.host.api = {
+      request: async () => ({ features: ["text.concat"] }),
+    } as never;
+    await f.controller.loadFeatures();
+    const injector = Injector.create({ providers: [] });
+    const field = runInInjectionContext(injector, () => new FormulaField());
+    const session = signal(f.session);
+    const spec = signal(f.spec);
+    field.session = session as never;
+    field.spec = spec as never;
+    return { ...f, field, sessionInput: session, specInput: spec, injector };
+  }
+  const type = (field: FormulaField, value: string) =>
+    field.typed({ target: { value } } as unknown as Event);
+  it("reconciles focused Undo and Redo and accepts continued typing", async () => {
+    const f = await fieldFixture();
+    f.field.beginEdit();
+    type(f.field, "First {{ input.email }}");
+    f.model.undo();
+    expect(f.field.templateText()).toBe("Hello {{ input.name }}");
+    f.model.redo();
+    expect(f.field.templateText()).toBe("First {{ input.email }}");
+    f.model.undo();
+    type(f.field, "Next {{ input.customerId }}");
+    expect(f.session.read(f.spec)).toMatchObject({
+      expression: {
+        op: { args: [{ literal: "Next " }, { ref: "/input/customerId" }] },
+      },
+    });
+    f.injector.destroy();
+  });
+  it("discards another session's invalid template and picker buffers", async () => {
+    const a = await fieldFixture();
+    const b = setup(template("Other "));
+    a.field.beginEdit();
+    type(a.field, "Invalid {{ input.name");
+    a.field.leave();
+    a.field.picking.set(true);
+    a.field.typedRef = "/input/previousDraft";
+    a.sessionInput.set(b.session);
+    a.specInput.set(b.spec);
+    const before = b.session.read(b.spec);
+    a.field.commitTyped();
+    expect(b.session.read(b.spec)).toEqual(before);
+    expect(a.field.templateText()).toBe("Other {{ input.name }}");
+    expect(a.field.templateError()).toBe("");
+    expect(a.field.picking()).toBe(false);
+    expect(a.field.typedRef).toBe("");
+    a.injector.destroy();
+  });
+  it("does not represent an extended ref expression as a pill", async () => {
+    const f = await fieldFixture();
+    const expression = { ref: "/input/name", literal: "hidden" };
+    f.session.write(f.spec, { mode: "mapped", expression });
+    expect(f.field.currentRef()).toBe("");
+    expect(f.field.view()).toBe("formula");
+    expect(f.field.formulaText()).toBe(JSON.stringify(expression));
+    f.injector.destroy();
+  });
+  it("resets invalid local state when the current descriptor changes", async () => {
+    const f = await fieldFixture();
+    f.field.beginEdit();
+    type(f.field, "Invalid {{ input.name");
+    f.field.leave();
+    f.field.beginPick();
+    f.field.typedRef = "/input/previousDraft";
+    f.specInput.set({ ...f.spec, label: "Updated prompt" });
+    const before = f.session.read(f.spec);
+    f.field.commitTyped();
+    expect(f.session.read(f.spec)).toEqual(before);
+    expect(f.field.templateText()).toBe("Hello {{ input.name }}");
+    expect(f.field.templateError()).toBe("");
+    expect(f.field.picking()).toBe(false);
+    expect(f.field.typedRef).toBe("");
+    f.injector.destroy();
+  });
+});
+
+it("keeps a published action's rendered identity while fresh providers still load current catalog choices", async () => {
+  const f = setup();
+  f.model.insert("action", "root", undefined, {
+    id: "lookup",
+    uses: "sql.lookup@1.0.0",
+  });
+  f.host.actionVersions = [{ name: "sql.lookup", version: "1.0.0" }] as never;
+  const session = new FormSession(f.host, f.controller, openRequest("lookup"), {
+    confirm: async () => true,
+    announce: () => undefined,
+  });
+  const first = session
+    .state("parameters")
+    .fields.find((entry) => entry.spec.id === "action")!;
+  const injector = Injector.create({
+    providers: [{ provide: ElementRef, useValue: new ElementRef({}) }],
+  });
+  const form = runInInjectionContext(injector, () => new ParameterForm());
+  const field = runInInjectionContext(injector, () => new ParamField());
+  form.session = signal(session) as never;
+  field.session = signal(session) as never;
+  const spec = signal(first.spec);
+  const entry = signal(first);
+  field.spec = spec as never;
+  field.entry = entry as never;
+  const key = form.fieldKey(first);
+  field.loadChoices();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(field.loadChoices()).toEqual([
+    { value: "sql.lookup@1.0.0", label: "sql.lookup@1.0.0" },
+  ]);
+  f.session.write(f.spec, {
+    mode: "mapped",
+    expression: { ref: "/input/email" },
+  });
+  const next = session
+    .state("parameters")
+    .fields.find((entry) => entry.spec.id === "action")!;
+  expect(next.spec.choices).not.toBe(first.spec.choices);
+  expect(form.fieldKey(next)).toBe(key);
+  spec.set(next.spec);
+  entry.set(next);
+  expect(field.loadChoices()).toEqual([]);
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(field.loadChoices()).toEqual([
+    { value: "sql.lookup@1.0.0", label: "sql.lookup@1.0.0" },
+  ]);
+  injector.destroy();
 });

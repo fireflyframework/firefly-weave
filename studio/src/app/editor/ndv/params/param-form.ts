@@ -24,6 +24,8 @@ import {
   input,
 } from "@angular/core";
 import type { FormName, FormSession } from "./form-session";
+import { canonicalJson } from "../../../forms/core/json";
+import type { FieldEntry } from "./form-model";
 import { ParamField } from "./param-field";
 
 @Component({
@@ -35,7 +37,7 @@ import { ParamField } from "./param-field";
   styleUrl: "./params.css",
   template: `@let state = session().state(name());
     <div class="param-form">
-      @for (entry of state.fields; track entry.spec.id) {
+      @for (entry of state.fields; track fieldKey(entry)) {
         <weave-param-field
           [session]="session()"
           [spec]="entry.spec"
@@ -47,4 +49,35 @@ import { ParamField } from "./param-field";
 export class ParameterForm {
   session = input.required<FormSession>();
   name = input<FormName>("parameters");
+  private owner: FormSession | null = null;
+  private formName: FormName | null = null;
+  private keys = new Map<
+    string,
+    {
+      descriptor: string;
+      key: object;
+    }
+  >();
+  fieldKey(entry: FieldEntry): object {
+    if (this.owner !== this.session() || this.formName !== this.name()) {
+      this.owner = this.session();
+      this.formName = this.name();
+      this.keys.clear();
+    }
+    const spec = entry.spec;
+    const descriptor = canonicalJson({
+      spec,
+      readOnly: entry.readOnly,
+      disabled: entry.disabled,
+    });
+    let cached = this.keys.get(spec.id);
+    if (!cached || cached.descriptor !== descriptor) {
+      cached = {
+        descriptor,
+        key: {},
+      };
+      this.keys.set(spec.id, cached);
+    }
+    return cached.key;
+  }
 }

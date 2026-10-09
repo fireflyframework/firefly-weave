@@ -210,7 +210,7 @@ export class ParamField {
       ) {
         if (pick) {
           if (this.readOnly()) return;
-          this.formula()?.picking.set(true);
+          this.formula()?.beginPick();
           this.focusControl(session, spec);
           return;
         }

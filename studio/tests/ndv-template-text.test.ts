@@ -60,6 +60,18 @@ describe("template text", () => {
     ]);
     expect(templateParts({ op: { name: "gt", args: [] } })).toBeNull();
   });
+  it("keeps extended outer expression trees opaque", () => {
+    expect(
+      templateParts({
+        op: {
+          name: "concat",
+          args: [{ literal: "Hi " }, { ref: "/input/name" }],
+        },
+        literal: "hidden",
+      }),
+    ).toBeNull();
+    expect(templateParts({ ref: "/input/name", literal: "hidden" })).toBeNull();
+  });
   it("writes references as dotted paths and back", () => {
     expect(refToPath("/input/customerId")).toBe("input.customerId");
     expect(refToPath("/steps/check.v2/output/amount")).toBe(

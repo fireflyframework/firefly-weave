@@ -22,9 +22,12 @@ SPDX-License-Identifier: Apache-2.0
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
+  inject,
   input,
   signal,
+  untracked,
 } from "@angular/core";
 import { canonicalJson } from "../../../forms/core/json";
 import { Icon } from "../../../icon";
@@ -124,8 +127,8 @@ export class RefPill {
         [disabled]="!!readOnly()"
         [attr.aria-label]="'reference ' + words(breadcrumbOf(currentRef()))"
         [attr.aria-describedby]="describedBy()"
-        (click)="picking.set(true)"
-        (dblclick)="picking.set(true)"
+        (click)="beginPick()"
+        (dblclick)="beginPick()"
         (keydown)="pillKey($event)"
       >
         <weave-ref-pill
@@ -167,19 +170,105 @@ export class FormulaField {
   readonly editingText = signal<string | null>(null);
   readonly templateError = signal("");
   readonly words = words;
-  typedRef = "";
-  private editingOwner: {
+  private readonly lifetime = inject(DestroyRef);
+  private pendingRef = "";
+  private localOwner: {
+    session: FormSession;
+    descriptor: string;
+    choices: ParamSpec["choices"];
+    readOnly: ParamSpec["readOnly"];
+    showWhen: ParamSpec["showWhen"];
+  } | null = null;
+  private pickerOwner: {
     session: FormSession;
     descriptor: string;
     owns: () => boolean;
   } | null = null;
-  beginEdit() {
+  get typedRef(): string {
+    return this.pendingRef;
+  }
+  set typedRef(value: string) {
+    this.syncIdentity();
+    this.pendingRef = value;
+    this.pickerOwner = this.captureOwner();
+  }
+  private editingOwner: {
+    session: FormSession;
+    descriptor: string;
+    owns: () => boolean;
+    stored: string;
+  } | null = null;
+  private captureOwner() {
     const session = this.session();
     const spec = this.spec();
-    this.editingOwner = {
+    return {
       session,
       descriptor: canonicalJson(spec),
       owns: session.owns(spec),
+    };
+  }
+  private syncIdentity() {
+    const session = this.session();
+    const spec = this.spec();
+    const descriptor = canonicalJson(spec);
+    const owner = this.localOwner;
+    if (
+      owner?.session === session &&
+      owner.descriptor === descriptor &&
+      (typeof spec.choices !== "function" || owner.choices === spec.choices) &&
+      owner.readOnly === spec.readOnly &&
+      owner.showWhen === spec.showWhen
+    )
+      return;
+    this.localOwner = {
+      session,
+      descriptor,
+      choices: spec.choices,
+      readOnly: spec.readOnly,
+      showWhen: spec.showWhen,
+    };
+    this.editingOwner = null;
+    this.pickerOwner = null;
+    this.pendingRef = "";
+    untracked(() => {
+      this.editingText.set(null);
+      this.templateError.set("");
+      this.picking.set(false);
+    });
+  }
+  private reconcile() {
+    this.syncIdentity();
+    if (
+      this.editingOwner &&
+      this.session().isCurrent() &&
+      this.editingOwner.stored !== canonicalJson(this.stored())
+    ) {
+      untracked(() => {
+        this.editingText.set(null);
+        this.templateError.set("");
+      });
+      this.beginEdit();
+    }
+  }
+  private canEdit(): boolean {
+    return (
+      !this.lifetime.destroyed &&
+      !this.readOnly() &&
+      !this.session().controller.readOnlyReason() &&
+      this.session().isCurrent()
+    );
+  }
+  beginPick() {
+    this.syncIdentity();
+    if (!this.canEdit()) return;
+    this.pickerOwner = this.captureOwner();
+    this.picking.set(true);
+  }
+  beginEdit() {
+    this.syncIdentity();
+    this.editingOwner = {
+      ...this.captureOwner(),
+      stored: canonicalJson(this.stored()),
     };
   }
   private ownsEdit(): boolean {
@@ -189,10 +278,11 @@ export class FormulaField {
       owner.session === this.session() &&
       owner.descriptor === canonicalJson(this.spec()) &&
       owner.owns() &&
-      !this.readOnly()
+      this.canEdit()
     );
   }
   leave() {
+    this.syncIdentity();
     const text = this.editingText();
     if (text !== null) {
       const parsed = textToExpression(text);
@@ -216,13 +306,20 @@ export class FormulaField {
       : null;
   }
   currentRef(): string {
+    this.reconcile();
     const value = this.stored();
     if (value.mode !== "mapped") return "";
-    const ref = (value.expression as { ref?: unknown }).ref;
-    return typeof ref === "string" ? ref : "";
+    const parts = templateParts(value.expression);
+    return parts?.length === 1 &&
+      "ref" in parts[0] &&
+      Object.keys(value.expression).length === 1 &&
+      "ref" in value.expression
+      ? parts[0].ref
+      : "";
   }
   /** template: text with placeholders; pill: one reference; picker: choosing data; formula: anything else, read-only. */
   view(): "template" | "pill" | "picker" | "formula" {
+    this.reconcile();
     const value = this.stored();
     if (this.picking()) return "picker";
     const parts = this.parts();
@@ -237,9 +334,11 @@ export class FormulaField {
       return "template";
     if (value.mode === "mapped" && !single) return "formula";
     if (single && !this.picking()) return "pill";
+    if (!this.pickerOwner) this.pickerOwner = this.captureOwner();
     return "picker";
   }
   templateText(): string {
+    this.reconcile();
     const parts = this.parts();
     return this.editingText() ?? (parts ? partsToText(parts) : "");
   }
@@ -263,18 +362,25 @@ export class FormulaField {
     return entry?.source === "step" ? (entry.stepKind ?? "action") : "source";
   }
   pick(ref: string) {
+    this.syncIdentity();
+    const owner = this.pickerOwner;
     if (
-      this.readOnly() ||
-      !this.session().isCurrent() ||
+      !this.canEdit() ||
+      !owner ||
+      owner.session !== this.session() ||
+      owner.descriptor !== canonicalJson(this.spec()) ||
+      !owner.owns() ||
       !/^\/(input|steps)(\/|$)/.test(ref)
     )
       return;
-    this.typedRef = "";
+    this.pendingRef = "";
+    this.pickerOwner = null;
     this.picking.set(false);
     this.session().write(this.spec(), { mode: "mapped", expression: { ref } });
   }
   /** A pointer typed by hand counts once Enter is pressed or focus leaves. */
   commitTyped() {
+    this.syncIdentity();
     const ref = this.typedRef.trim();
     if (ref && ref !== this.currentRef()) this.pick(ref);
   }
@@ -288,7 +394,9 @@ export class FormulaField {
     }
   }
   typed(event: Event) {
-    if (!this.editingOwner) this.beginEdit();
+    this.reconcile();
+    if (!this.canEdit()) return;
+    if (!this.ownsEdit()) this.beginEdit();
     if (!this.ownsEdit()) return;
     const text = (event.target as HTMLInputElement).value;
     this.editingText.set(text);

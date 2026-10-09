@@ -129,9 +129,189 @@ function mappedWorkflow(expression: unknown) {
   ).prompt = expression;
   return yamlFile("mapped-order.yaml", stringify(workflow));
 }
+function neighboringTemplates() {
+  const workflow = parse(readFileSync(stepFixture, "utf8"));
+  const index = workflow.spec.steps.findIndex(
+    (step: { id: string }) => step.id === "summarize",
+  );
+  const template = (prefix: string) => ({
+    op: {
+      name: "concat",
+      args: [{ literal: prefix }, { ref: "/input/email" }],
+    },
+  });
+  workflow.spec.steps[index].prompt = template("First ");
+  workflow.spec.steps.splice(index + 1, 0, {
+    ...structuredClone(workflow.spec.steps[index]),
+    id: "second-summary",
+    prompt: template("Second "),
+  });
+  return yamlFile("neighboring-templates.yaml", stringify(workflow));
+}
 for (const size of sizes) {
   test.describe(`mapped text at ${size.tag}`, () => {
     test.use({ viewport: { width: size.width, height: size.height } });
+    const errors = new WeakMap<object, string[]>();
+    test.beforeEach(({ page }) => {
+      const messages: string[] = [];
+      errors.set(page, messages);
+      page.on("pageerror", (error) => messages.push(error.message));
+      page.on("console", (message) => {
+        if (message.type() === "error") messages.push(message.text());
+      });
+    });
+    test.afterEach(({ page }) => {
+      expect(errors.get(page)).toEqual([]);
+    });
+    test("a published Action field keeps focus across an ordinary model Undo", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.openWithKeyboard("wait-for-payment");
+      const name = details
+        .field("name")
+        .getByRole("textbox", { name: "Signal name" });
+      await name.fill("settled");
+      await name.blur();
+      await details.close();
+      await details.openWithKeyboard("lookup");
+      const menu = details
+        .field("action")
+        .getByRole("button", { name: "Field menu for Action" });
+      await menu.focus();
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(menu).toBeFocused();
+      await expect(details.dialogFor("lookup")).toBeVisible();
+      await details.close();
+      const workflow = parse(await sourceText(page));
+      expect(
+        workflow.spec.steps.find(
+          (step: { id: string }) => step.id === "wait-for-payment",
+        ).name,
+      ).toBe("payment-received");
+    });
+    test("Undo and Redo reconcile a focused template and continued typing", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page, neighboringTemplates());
+      await details.openWithKeyboard("summarize");
+      const text = details
+        .field("prompt")
+        .getByRole("textbox", { name: "Prompt" });
+      await text.fill("Changed {{ input.customerId }}");
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(text).toBeFocused();
+      await expect(text).toHaveValue("First {{ input.email }}");
+      await page.keyboard.press("ControlOrMeta+Shift+z");
+      await expect(text).toHaveValue("Changed {{ input.customerId }}");
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(text).toHaveValue("First {{ input.email }}");
+      await text.fill("Next {{ input.customerId }}");
+      await expect(text).toBeFocused();
+      await text.blur();
+      await details.close();
+      const workflow = parse(await sourceText(page));
+      expect(
+        workflow.spec.steps.find(
+          (step: { id: string }) => step.id === "summarize",
+        ).prompt,
+      ).toEqual({
+        op: {
+          name: "concat",
+          args: [{ literal: "Next " }, { ref: "/input/customerId" }],
+        },
+      });
+    });
+    test("navigation between matching field ids isolates invalid text and pending pointers", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page, neighboringTemplates());
+      await details.openWithKeyboard("summarize");
+      const prompt = details.field("prompt");
+      await prompt
+        .getByRole("textbox", { name: "Prompt" })
+        .fill("Invalid {{ input.email");
+      await expect(prompt.getByRole("alert")).toBeVisible();
+      await details.dialog
+        .getByRole("button", { name: "Next step", exact: true })
+        .click();
+      await expect(details.dialogFor("second-summary")).toBeVisible();
+      await expect(prompt.getByRole("textbox", { name: "Prompt" })).toHaveValue(
+        "Second {{ input.email }}",
+      );
+      await expect(prompt.getByRole("alert")).toHaveCount(0);
+      await details.dialog
+        .getByRole("button", { name: "Previous step", exact: true })
+        .click();
+      await expect(details.dialogFor("summarize")).toBeVisible();
+      await prompt
+        .getByRole("button", { name: "Field menu for Prompt" })
+        .click();
+      await page.getByRole("menuitem", { name: /Use data…/ }).click();
+      const picker = prompt.getByRole("combobox", { name: "Prompt" });
+      await picker.fill("/input/previousDraft");
+      await expect(picker).toBeFocused();
+      await details.dialog
+        .getByRole("button", { name: "Next step", exact: true })
+        .click();
+      await expect(details.dialogFor("second-summary")).toBeVisible();
+      const second = prompt.getByRole("textbox", { name: "Prompt" });
+      await expect(second).toHaveValue("Second {{ input.email }}");
+      await second.focus();
+      await second.blur();
+      await details.dialog
+        .getByRole("button", { name: "More actions for second-summary" })
+        .click();
+      await page.getByRole("menuitem", { name: "Edit as YAML" }).click();
+      const editor = page.getByRole("dialog", {
+        name: "Edit second-summary as YAML",
+      });
+      const yaml = await editor
+        .getByRole("textbox", { name: "Step YAML" })
+        .inputValue();
+      expect(parse(yaml).prompt).toEqual({
+        op: {
+          name: "concat",
+          args: [{ literal: "Second " }, { ref: "/input/email" }],
+        },
+      });
+    });
+    for (const expression of [
+      {
+        op: {
+          name: "concat",
+          args: [{ literal: "Hello " }, { ref: "/input/email" }],
+        },
+        literal: "hidden",
+      },
+      { ref: "/input/email", literal: "hidden" },
+    ]) {
+      test(`an extended ${"op" in expression ? "concat" : "ref"} stays opaque and editable as YAML`, async ({
+        page,
+      }) => {
+        await withLanguageFeatures(page);
+        const details = await openStepFixture(page, mappedWorkflow(expression));
+        await details.openWithKeyboard("summarize");
+        await expect(
+          details.field("prompt").locator(".param-formula"),
+        ).toHaveText(JSON.stringify(expression));
+        await expect(details.field("prompt").getByRole("textbox")).toHaveCount(
+          0,
+        );
+        await details.dialog
+          .getByRole("button", { name: "More actions for summarize" })
+          .click();
+        await page.getByRole("menuitem", { name: "Edit as YAML" }).click();
+        const editor = page.getByRole("dialog", {
+          name: "Edit summarize as YAML",
+        });
+        const yaml = editor.getByRole("textbox", { name: "Step YAML" });
+        await expect(yaml).toBeEditable();
+        expect(parse(await yaml.inputValue()).prompt).toEqual(expression);
+      });
+    }
     test("a stored template stays as a formula when text templates are unavailable", async ({
       page,
     }) => {

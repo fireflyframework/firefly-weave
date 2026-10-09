@@ -43,7 +43,9 @@ export function templateParts(expression: unknown): TemplatePart[] | null {
   const single = part(expression);
   if (single) return [single];
   const op =
-    isRecord(expression) && isRecord(expression["op"])
+    isRecord(expression) &&
+    Object.keys(expression).length === 1 &&
+    isRecord(expression["op"])
       ? expression["op"]
       : null;
   if (
