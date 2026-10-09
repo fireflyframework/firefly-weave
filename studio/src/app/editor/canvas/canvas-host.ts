@@ -24,6 +24,7 @@ import type { AnchorRect } from "../../designer/popover-placement";
 import type { StructuredCanvasAdapter } from "../../model";
 import type { KindContext } from "../ndv/registry";
 import type { Insertion } from "./layout-ltr";
+import type { CanvasRun } from "./run-state";
 import type { StepFacts } from "./tile-facts";
 
 export type WorkflowSection = "spec/inputSchema" | "spec/output";
@@ -41,6 +42,8 @@ export interface CanvasHost {
   showTemplates: boolean;
   /** Errors, warnings and setup per step; the same map until they change. */
   canvasFacts(): ReadonlyMap<string, StepFacts>;
+  /** The run the canvas draws, or null; the same object until it changes. */
+  canvasRun(): CanvasRun | null;
   kindContext(): KindContext;
   label(kind: string): string;
   /** Selects a step; `open` also shows it in the inspector. */

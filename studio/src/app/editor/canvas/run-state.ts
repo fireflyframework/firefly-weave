@@ -41,12 +41,14 @@ export const runEnded = (run: CanvasRun): boolean =>
 
 export function tileRun(id: string, run: CanvasRun | null): TileRun {
   if (!run) return null;
+  const finished = run.done.includes(id);
   if (run.current.includes(id) || run.active.includes(id)) {
     if (run.status === "failed" || run.status === "timed_out") return "failed";
-    if (runEnded(run)) return null;
+    // An ended run is nowhere any more; what it finished keeps its check.
+    if (runEnded(run)) return finished ? "done" : null;
     return run.status === "waiting" ? "waiting" : "live";
   }
-  return run.done.includes(id) ? "done" : null;
+  return finished ? "done" : null;
 }
 
 /**

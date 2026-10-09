@@ -470,16 +470,18 @@ weave-canvas-view,
   stroke: var(--flow-line-dim);
   stroke-dasharray: 4 4;
 }
-.canvas-v2 .edge-arrow {
+/* The classic canvas styles .edges .edge-arrow.taken in the page stylesheet;
+   the extra selector keeps these arrowheads from depending on its order. */
+.canvas-v2 svg.edges .edge-arrow {
   fill: var(--flow-line);
 }
-.canvas-v2 .edge-arrow.live {
+.canvas-v2 svg.edges .edge-arrow.live {
   fill: var(--live);
 }
-.canvas-v2 .edge-arrow.taken {
+.canvas-v2 svg.edges .edge-arrow.taken {
   fill: var(--success);
 }
-.canvas-v2 .edge-arrow.skipped {
+.canvas-v2 svg.edges .edge-arrow.skipped {
   fill: var(--flow-line-dim);
 }
 .canvas-v2 .edge-hit {

@@ -57,6 +57,29 @@ describe("a step's run state", () => {
       tileRun("b", run({ status: "cancelled", current: ["b"] })),
     ).toBeNull();
   });
+
+  it("keeps a finished step's check once the run ended, even if the run still lists it", () => {
+    expect(
+      tileRun(
+        "b",
+        run({
+          status: "succeeded",
+          current: ["b"],
+          active: ["b"],
+          done: ["b"],
+        }),
+      ),
+    ).toBe("done");
+    expect(
+      tileRun("b", run({ status: "cancelled", active: ["b"], done: ["b"] })),
+    ).toBe("done");
+    // Still going, a step both listed and finished is where the run is.
+    expect(tileRun("b", run({ current: ["b"], done: ["b"] }))).toBe("live");
+    // A failed run marks the step it failed at, finished or not.
+    expect(
+      tileRun("b", run({ status: "failed", current: ["b"], done: ["b"] })),
+    ).toBe("failed");
+  });
 });
 
 describe("an edge's run state", () => {

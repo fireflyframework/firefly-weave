@@ -76,6 +76,7 @@ import {
 } from "./designer/step-picker";
 import type { CanvasHost, WorkflowSection } from "./editor/canvas/canvas-host";
 import { setupPhrase, type StepFacts } from "./editor/canvas/tile-facts";
+import type { CanvasRun } from "./editor/canvas/run-state";
 import type { Json, KindContext } from "./editor/ndv/registry";
 import { StartRunDialog, type StartRunRequest } from "./run/start-run-dialog";
 import type { SuggestedChange } from "./designer/diagnostics-list";
@@ -3073,6 +3074,33 @@ export class App implements CanvasHost {
     }
     this.factsCache = { tick, steps: this.diagnosticSteps, gaps, facts };
     return facts;
+  }
+  private runCache: {
+    nodes: SimulationNodes | null;
+    session: unknown;
+    run: CanvasRun | null;
+  } = { nodes: null, session: null, run: null };
+  /** Today's simulation as the canvas draws it; null when none is open. */
+  canvasRun(): CanvasRun | null {
+    const session = this.simulationSession;
+    if (
+      this.runCache.nodes !== this.simNodes ||
+      this.runCache.session !== session
+    )
+      this.runCache = {
+        nodes: this.simNodes,
+        session,
+        run: session
+          ? {
+              mode: "simulated",
+              status: this.simNodes.status,
+              current: this.simNodes.current,
+              active: this.simNodes.active,
+              done: this.simNodes.done,
+            }
+          : null,
+      };
+    return this.runCache.run;
   }
   kindContext(): KindContext {
     return {

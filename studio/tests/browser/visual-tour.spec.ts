@@ -53,6 +53,12 @@ import {
 import { DesignerPage, StepKind, stepLabels } from "./designer-po";
 import { openWorkflow, type CanvasPage } from "./canvas-po";
 import {
+  debugSession,
+  later,
+  simulatedSource,
+  simulationArtifact,
+} from "./simulation-artifact";
+import {
   chooseAction,
   openPaletteIntegrations,
   openYaml,
@@ -1297,118 +1303,6 @@ async function httpPlatform(
 const builder = (page: Page) =>
   page.getByRole("dialog", { name: "New API action" });
 
-// ---------------------------------------------------------- simulation
-
-const simulated = `apiVersion: weave/v1alpha1
-kind: Workflow
-metadata:
-  name: simulated
-  version: 1.0.0
-spec:
-  inputSchema:
-    type: object
-    additionalProperties: false
-    required: [customerId]
-    properties:
-      customerId: { type: string, minLength: 1 }
-  outputSchema: { type: object }
-  steps:
-    - id: action-1
-      kind: action
-      uses: onboarding.check-customer@1.0.0
-      with:
-        object:
-          customerId: { ref: /input/customerId }
-    - id: wait-1
-      kind: wait
-      durationSeconds: 60
-    - id: approval
-      kind: signal
-      name: customer-approved
-      timeoutSeconds: 3600
-      payloadSchema:
-        type: object
-        additionalProperties: false
-        required: [approved]
-        properties:
-          approved: { type: boolean }
-    - id: review
-      kind: humanTask
-      assignment: reviewers
-      title: { literal: Review the customer }
-      context: { literal: {} }
-      decisions: [approve, reject]
-      formSchema: { type: object, properties: { note: { type: string } } }
-  output: { literal: {} }
-`;
-let compiledArtifact: Record<string, unknown> | null | undefined;
-/** The real compiled artifact of `simulated`, once per worker. */
-function simulationArtifact() {
-  if (compiledArtifact !== undefined) return compiledArtifact;
-  compiledArtifact = hasPython
-    ? JSON.parse(
-        execFileSync(
-          python,
-          [
-            "-c",
-            `
-import json, pathlib, sys
-import yaml
-from firefly_weave.compiler.api import compile_source
-from firefly_weave.compiler.catalog import CatalogSnapshot
-from firefly_weave.contracts.definitions import load_definition
-action = yaml.safe_load(pathlib.Path("examples/definitions/check-customer.action.yaml").read_text())
-spec = action["spec"]
-catalog = CatalogSnapshot.from_definitions([load_definition(action)], tasks=[{
-    "taskType": "onboarding.check-customer", "taskVersion": "1.0.0",
-    "inputSchema": spec["inputSchema"], "outputSchema": spec["outputSchema"],
-    "sideEffect": "read_only", "timeoutSeconds": 60}])
-result = compile_source(sys.stdin.read(), format="yaml", catalog=catalog)
-assert result.ok, [d.code for d in result.diagnostics]
-print(result.artifact.to_bytes().decode())
-`,
-          ],
-          {
-            cwd: repository,
-            env: { ...process.env, PYTHONPATH: resolve(repository, "src") },
-            encoding: "utf8",
-            input: simulated,
-            timeout: 30000,
-          },
-        ),
-      )
-    : null;
-  return compiledArtifact;
-}
-const now = "2026-10-02T09:00:00.000Z";
-const later = (seconds: number) =>
-  new Date(Date.parse(now) + seconds * 1000).toISOString();
-const debugSession = (
-  revision: number,
-  status: string,
-  active: string[],
-  waits: Record<string, string> = {},
-  finished: string[] = [],
-) => ({
-  id: "44444444-4444-4444-8444-444444444444",
-  revision,
-  view: {
-    status,
-    current_nodes: active,
-    active_nodes: active,
-    // The steps the run finished, so the canvas draws the live thread.
-    variables: {
-      waits,
-      steps: Object.fromEntries(
-        finished.map((id) => [id, { output: { eligible: true } }]),
-      ),
-    },
-    diagnostics: [],
-    events: [],
-    now,
-  },
-});
-
 // --------------------------------------------------------------- scenes
 
 type Scene = (tour: Tour) => Promise<void>;
@@ -2150,15 +2044,15 @@ spec:
     test.skip(!artifact, "Needs the repository's Python environment.");
     await connected(page, { capabilities: [...allCapabilities, "compile"] });
     const replies = [
-      debugSession(2, "waiting", ["approval"], { approval: later(3600) }, [
-        "action-1",
-        "wait-1",
-      ]),
-      debugSession(3, "waiting", ["review"], {}, [
-        "action-1",
-        "wait-1",
-        "approval",
-      ]),
+      debugSession(2, "waiting", ["approval"], ["action-1", "wait-1"], {
+        approval: later(3600),
+      }),
+      debugSession(
+        3,
+        "waiting",
+        ["review"],
+        ["action-1", "wait-1", "approval"],
+      ),
     ];
     let commands = 0;
     await page.route(`${project}/compiler/compile`, (r) =>
@@ -2176,9 +2070,9 @@ spec:
     await page.route(`${project}/debug/sessions`, (r: Route) =>
       r.fulfill({
         status: 201,
-        json: debugSession(1, "waiting", ["wait-1"], { "wait-1": later(60) }, [
-          "action-1",
-        ]),
+        json: debugSession(1, "waiting", ["wait-1"], ["action-1"], {
+          "wait-1": later(60),
+        }),
       }),
     );
     await page.route(`${project}/debug/sessions/*/commands`, (r: Route) =>
@@ -2186,7 +2080,7 @@ spec:
     );
     await newWorkflow(page);
     const designer = new DesignerPage(page);
-    await designer.setSource(simulated);
+    await designer.setSource(simulatedSource);
     await closeInspector(page);
     await command(page, "Simulate");
     const setup = page.getByRole("dialog", { name: "Simulate this workflow" });

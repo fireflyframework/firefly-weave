@@ -103,9 +103,17 @@ import {
 } from "./layout-ltr";
 import { neighbor, placesOf, type Direction } from "./navigation";
 import { NodeTile, type TileView } from "./node-tile";
+import {
+  edgeRun,
+  pulses,
+  tileRun,
+  type CanvasRun,
+  type TileRun,
+} from "./run-state";
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
 import {
+  runText,
   tileBadge,
   tileBorders,
   tileName,
@@ -403,17 +411,21 @@ export class CanvasView implements OnInit, DoCheck {
       selection: Selection,
       dirty: string,
       active: string,
+      run: CanvasRun | null,
     ): TileView[] => {
       const ctx = this.host().kindContext();
       // A selected group shows every step inside it as selected.
       const chosen = covered(selection, this.places());
-      return layout.tiles.map((tile) =>
-        this.tileView(tile, ctx, facts.get(tile.id) ?? NO_FACTS, {
+      return layout.tiles.map((tile) => {
+        const state = tile.step ? tileRun(tile.id, run) : null;
+        return this.tileView(tile, ctx, facts.get(tile.id) ?? NO_FACTS, {
           selected: chosen.has(tile.id),
           unapplied: tile.id === dirty,
           active: tile.id === active,
-        }),
-      );
+          run: state,
+          pulse: pulses(state, run),
+        });
+      });
     },
   );
   tiles(): TileView[] {
@@ -424,6 +436,7 @@ export class CanvasView implements OnInit, DoCheck {
       this.selection,
       h.dirtyStep,
       this.active(),
+      h.canvasRun(),
     );
   }
   private position(tile: LtrTile): Point {
@@ -438,7 +451,13 @@ export class CanvasView implements OnInit, DoCheck {
     tile: LtrTile,
     ctx: KindContext,
     facts: StepFacts,
-    state: { selected: boolean; unapplied: boolean; active: boolean },
+    state: {
+      selected: boolean;
+      unapplied: boolean;
+      active: boolean;
+      run: TileRun;
+      pulse: boolean;
+    },
   ): TileView {
     const h = this.host();
     const common = {
@@ -450,7 +469,7 @@ export class CanvasView implements OnInit, DoCheck {
       height: tile.height,
       labelTop: tile.labelY - tile.y,
       tabIndex: state.active ? (0 as const) : (-1 as const),
-      pulse: false,
+      pulse: state.pulse,
     };
     if (!tile.step) {
       const trigger = tile.kind === "trigger";
@@ -475,8 +494,8 @@ export class CanvasView implements OnInit, DoCheck {
     const summary = descriptor?.summary(tile.step, ctx) ?? "";
     const shown = {
       ...facts,
-      run: null,
-      failure: null,
+      run: state.run,
+      failure: state.run === "failed" ? {} : null,
       stale: null,
       pinned: false,
       unapplied: state.unapplied,
@@ -493,7 +512,7 @@ export class CanvasView implements OnInit, DoCheck {
         id: tile.id,
         kindLabel,
         summary,
-        status: badge?.text ?? "",
+        status: runText(state.run, tile.kind) || badge?.text || "",
         index: tile.index,
         count: tile.count,
         place: tile.place,
@@ -592,11 +611,12 @@ export class CanvasView implements OnInit, DoCheck {
       onEdges: ReadonlyMap<string, InsertView | null>,
       hovered: string,
       locked: boolean,
+      run: CanvasRun | null,
     ): EdgeView[] =>
       layout.edges.map((edge) => ({
         edge,
         d: edgePath(edge),
-        state: "idle",
+        state: edgeRun(edge, run),
         shown: hovered === edge.key,
         plus: locked ? null : (onEdges.get(edge.key) ?? null),
       })),
@@ -607,6 +627,7 @@ export class CanvasView implements OnInit, DoCheck {
       this.targets().onEdges,
       this.hoveredEdge,
       this.locked(),
+      this.host().canvasRun(),
     );
   }
   private readonly chipsMemo = memo((layout: LtrLayout): SubNodeView[] => {
