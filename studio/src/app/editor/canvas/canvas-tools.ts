@@ -16,8 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The canvas tools at the bottom right: zoom out, the zoom level (which
-// resets to 100%), zoom in, Show minimap and Fit view; below 768 px, where
-// the minimap is hidden, one menu.
+// resets to 100%), zoom in, Show minimap, Fit view and the keyboard
+// shortcuts; below 768 px, where the minimap is hidden, one menu. Each hint
+// names the key that does the same on the canvas.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -42,7 +43,7 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
         type="button"
         class="icon-button"
         aria-label="Zoom out"
-        title="Zoom out (−)"
+        title="Zoom out (-)"
         (click)="zoomOut.emit()"
       >
         <weave-icon name="zoomOut" [size]="16" />
@@ -81,6 +82,16 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
           >Fit view</span
         >
       </button>
+      <button
+        type="button"
+        class="icon-button"
+        aria-label="Keyboard shortcuts"
+        title="Keyboard shortcuts (?)"
+        aria-haspopup="dialog"
+        (click)="shortcuts.emit()"
+      >
+        <weave-icon name="help" [size]="16" />
+      </button>
     </div>
     <weave-row-menu
       class="canvas-v2-tools-menu"
@@ -99,10 +110,13 @@ export class CanvasTools {
   /** "Show minimap" keeps the minimap open. */
   minimap = input(false);
   toggleMinimap = output<void>();
+  /** The "?" sheet. */
+  shortcuts = output<void>();
   readonly menu: RowMenuItem[] = [
     { label: "Zoom in", run: () => this.zoomIn.emit() },
     { label: "Zoom out", run: () => this.zoomOut.emit() },
     { label: "Reset zoom to 100%", run: () => this.reset.emit() },
     { label: "Fit view", run: () => this.fit.emit() },
+    { label: "Keyboard shortcuts", run: () => this.shortcuts.emit() },
   ];
 }

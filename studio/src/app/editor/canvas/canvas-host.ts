@@ -17,8 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // What the canvas needs from the editor that hosts it. The shell (App)
 // implements it with the commands it already has: selecting, the step
-// picker, "Move to…", deleting and duplicating, the workflow settings and
-// undo.
+// picker, "Move to…", deleting and duplicating, the workflow settings,
+// undo and saving.
 import type { Signal } from "@angular/core";
 import type { AnchorRect } from "../../designer/popover-placement";
 import type { StructuredCanvasAdapter } from "../../model";
@@ -79,4 +79,8 @@ export interface CanvasHost {
   dropStep(event: DragEvent, insert: Insertion): Promise<void>;
   /** Shows an outcome in a toast, which also announces it. */
   notify(text: string): void;
+  undo(): void;
+  redo(): void;
+  /** Ctrl/Cmd+S: save the draft when connected, or save to a file locally. */
+  saveShortcut(): void;
 }

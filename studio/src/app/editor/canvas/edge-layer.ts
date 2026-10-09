@@ -15,11 +15,11 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The edges: one SVG path each, with a wider invisible path to hover, an
-// arrowhead per run state, and the "+" that inserts on the edge (shown on
-// hover or focus, or whenever a step is being placed).
+// The edges: one SVG path each, with a wider invisible path to hover and
+// an arrowhead per run state. The "+" that inserts on an edge (shown on
+// hover or focus, or whenever a step is being placed) is drawn by the
+// canvas after the steps, so Tab reaches it after the step it follows.
 import { ChangeDetectionStrategy, Component, input } from "@angular/core";
-import { Icon } from "../../icon";
 import type { Insertion, LtrEdge } from "./layout-ltr";
 import type { EdgeRun } from "./run-state";
 
@@ -48,72 +48,48 @@ export interface EdgeView {
 @Component({
   selector: "weave-edge-layer",
   standalone: true,
-  imports: [Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `<svg
-      class="edges"
-      [attr.width]="width()"
-      [attr.height]="height()"
-      aria-hidden="true"
-    >
-      <defs>
-        @for (state of states; track state) {
-          <marker
-            [attr.id]="'canvas-arrow-' + state"
-            viewBox="0 0 10 10"
-            refX="9"
-            refY="5"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto"
-          >
-            <path [attr.class]="'edge-arrow ' + state" d="M0 0L10 5L0 10Z" />
-          </marker>
-        }
-      </defs>
-      @for (item of edges(); track item.edge.key) {
-        <path
-          class="edge-hit"
-          [attr.d]="item.d"
-          [attr.data-edge]="item.edge.key"
-        />
-        <path
-          [attr.class]="
-            'edge ' + item.state + (item.edge.shape === 'fan' ? ' fan' : '')
-          "
-          [attr.d]="item.d"
-          [attr.data-edge-line]="item.edge.key"
-          [attr.marker-end]="
-            item.edge.shape === 'fan'
-              ? null
-              : 'url(#canvas-arrow-' + item.state + ')'
-          "
-        />
-      }
-    </svg>
-    @for (item of edges(); track item.edge.key) {
-      @if (item.plus; as plus) {
-        <button
-          type="button"
-          class="insert-plus edge-plus f-drag-blocker"
-          [class.shown]="item.shown"
-          [class.move-target]="plus.moving"
-          data-action="insert"
-          data-insert=""
-          [attr.data-edge]="item.edge.key"
-          [attr.data-insert-owner]="plus.insert.owner"
-          [attr.data-insert-index]="plus.insert.index"
-          [style.left.px]="plus.x"
-          [style.top.px]="plus.y"
-          [attr.aria-label]="plus.name"
-          [attr.title]="plus.name"
-          [attr.tabindex]="plus.tabIndex"
-          aria-haspopup="dialog"
+    class="edges"
+    [attr.width]="width()"
+    [attr.height]="height()"
+    aria-hidden="true"
+  >
+    <defs>
+      @for (state of states; track state) {
+        <marker
+          [attr.id]="'canvas-arrow-' + state"
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto"
         >
-          <weave-icon name="plus" [size]="16" />
-        </button>
+          <path [attr.class]="'edge-arrow ' + state" d="M0 0L10 5L0 10Z" />
+        </marker>
       }
-    }`,
+    </defs>
+    @for (item of edges(); track item.edge.key) {
+      <path
+        class="edge-hit"
+        [attr.d]="item.d"
+        [attr.data-edge]="item.edge.key"
+      />
+      <path
+        [attr.class]="
+          'edge ' + item.state + (item.edge.shape === 'fan' ? ' fan' : '')
+        "
+        [attr.d]="item.d"
+        [attr.data-edge-line]="item.edge.key"
+        [attr.marker-end]="
+          item.edge.shape === 'fan'
+            ? null
+            : 'url(#canvas-arrow-' + item.state + ')'
+        "
+      />
+    }
+  </svg>`,
 })
 export class EdgeLayer {
   edges = input.required<readonly EdgeView[]>();

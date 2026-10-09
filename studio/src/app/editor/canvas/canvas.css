@@ -741,3 +741,10 @@ weave-canvas-view,
 .canvas-v2.lod-minimal .tile-shape::before {
   clip-path: none;
 }
+
+/* The canvas's shortcuts sheet (a dialog outside the canvas) */
+.shortcut-section {
+  margin: var(--space-4) 0 var(--space-2);
+  font: var(--type-label);
+  color: var(--text);
+}

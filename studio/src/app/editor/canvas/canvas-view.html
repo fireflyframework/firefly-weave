@@ -45,7 +45,7 @@ SPDX-License-Identifier: Apache-2.0
   (focusout)="focusOut($event)"
   (dragover)="dragOver($event)"
   (drop)="dropOn($event)"
-  (keydown)="trackSpace($event)"
+  (keydown)="key($event)"
   (keyup)="trackSpace($event)"
 >
   @if (!ready) {
@@ -196,6 +196,31 @@ SPDX-License-Identifier: Apache-2.0
               <weave-icon name="plus" [size]="16" />
             </button>
           }
+          <!-- After the steps and their stubs: Tab goes from a step to its "+" on the edge that follows it. -->
+          @for (item of edges(); track item.edge.key) {
+            @if (item.plus; as plus) {
+              <button
+                type="button"
+                class="insert-plus edge-plus f-drag-blocker"
+                [class.shown]="item.shown"
+                [class.move-target]="plus.moving"
+                data-action="insert"
+                data-insert=""
+                [attr.data-edge]="item.edge.key"
+                [attr.data-insert-owner]="plus.insert.owner"
+                [attr.data-insert-index]="plus.insert.index"
+                [style.left.px]="plus.x"
+                [style.top.px]="plus.y"
+                [attr.aria-label]="plus.name"
+                [attr.title]="plus.name"
+                [attr.tabindex]="plus.tabIndex"
+                aria-haspopup="dialog"
+                [attr.aria-expanded]="h.isPickerOpenAt(plus.insert)"
+              >
+                <weave-icon name="plus" [size]="16" />
+              </button>
+            }
+          }
           @for (slot of slots(); track slot.key) {
             <button
               type="button"
@@ -268,6 +293,7 @@ SPDX-License-Identifier: Apache-2.0
       (fit)="fit()"
       [minimap]="minimapOn"
       (toggleMinimap)="toggleMinimap()"
+      (shortcuts)="sheetOpen = true"
     />
     @if (selectedCount() > 1) {
       <weave-selection-toolbar
@@ -280,6 +306,44 @@ SPDX-License-Identifier: Apache-2.0
     }
   }
   <p class="sr-only" id="canvas-v2-help">
-    Scroll to pan; hold Ctrl or Command and scroll to zoom.
+    Arrow keys move between steps. Scroll to pan; hold Ctrl or Command and
+    scroll to zoom. Press ? for keyboard shortcuts.
   </p>
 </div>
+@if (sheetOpen) {
+  <weave-modal
+    heading="Keyboard shortcuts"
+    closeLabel="Close keyboard shortcuts"
+    describedBy="canvas-shortcuts-note"
+    (dismiss)="sheetOpen = false"
+  >
+    <p id="canvas-shortcuts-note" class="dialog-message">
+      On the canvas, with a step focused.
+    </p>
+    <!-- Focus starts at the top: the sheet is taller than most windows. -->
+    @for (section of sheet; track section.title) {
+      <h3
+        class="shortcut-section"
+        [attr.tabindex]="$first ? -1 : null"
+        [attr.data-initial-focus]="$first ? '' : null"
+      >
+        {{ section.title }}
+      </h3>
+      <dl class="shortcut-list">
+        @for (entry of section.entries; track $index) {
+          <dt>
+            @for (key of entry.keys; track $index) {
+              <kbd>{{ key }}</kbd>
+            }
+          </dt>
+          <dd>{{ entry.label }}</dd>
+        }
+      </dl>
+    }
+    <div class="dialog-actions">
+      <button type="button" class="primary" (click)="sheetOpen = false">
+        Done
+      </button>
+    </div>
+  </weave-modal>
+}

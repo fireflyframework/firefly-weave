@@ -3158,6 +3158,10 @@ export class App implements CanvasHost {
   dropStep(event: DragEvent, insert: { owner: string; index: number }) {
     return this.drop(event, { ...insert, point: { x: 0, y: 0 }, label: "" });
   }
+  /** Ctrl/Cmd+S on the canvas: save the draft when connected, or save to a file locally. */
+  saveShortcut() {
+    void this.runCommand(this.profile ? "save" : "export");
+  }
   readonly editorViews = ["Designer", "Source", "Outline"];
   selectTab(tab: string) {
     if (tab !== this.tab && !this.leaveInspector()) return;

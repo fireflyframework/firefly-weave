@@ -55,17 +55,25 @@ import {
   zoomAt,
   type View,
 } from "../../designer/viewport";
+import { Modal } from "../../dialog";
 import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import type { Workflow } from "../../model";
 import { loadKindRegistrations } from "../ndv/kinds";
 import { ndvRegistry, type KindContext } from "../ndv/registry";
+import {
+  canvasCommand,
+  canvasSheet,
+  keyPlatform,
+} from "../state/canvas-commands";
 import { minimapPinned, setMinimapPinned } from "../state/canvas-preferences";
 import { CHOICE_NOT_KEPT } from "../state/editor-flag";
+import type { KeymapCommand } from "../state/keymap";
 import {
   NO_SELECTION,
   blockedReason,
   covered,
+  extended,
   moveAllowed,
   only,
   selectionOf,
@@ -93,7 +101,7 @@ import {
   type LtrTile,
   type Point,
 } from "./layout-ltr";
-import { placesOf } from "./navigation";
+import { neighbor, placesOf, type Direction } from "./navigation";
 import { NodeTile, type TileView } from "./node-tile";
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
@@ -150,6 +158,7 @@ const moveName = (name: string, id: string) =>
   imports: [
     FFlowModule,
     Icon,
+    Modal,
     RowMenu,
     NodeTile,
     EdgeLayer,
@@ -162,7 +171,7 @@ const moveName = (name: string, id: string) =>
   providers: [provideFFlow(withControlScheme(F_SCROLL_PAN_CONTROL_SCHEME))],
   changeDetection: ChangeDetectionStrategy.Eager,
   encapsulation: ViewEncapsulation.None,
-  host: { "(document:keydown.escape)": "dismissToolbars($event)" },
+  host: { "(document:keydown.escape)": "escapeOutside($event)" },
   templateUrl: "./canvas-view.html",
   styleUrl: "./canvas.css",
 })
@@ -211,6 +220,12 @@ export class CanvasView implements OnInit, DoCheck {
   private downAt: Point | null = null;
   /** "Show minimap" is on. */
   minimapOn = minimapPinned();
+  readonly platform = keyPlatform();
+  /** The "?" sheet: what works everywhere and on the canvas. */
+  readonly sheet = canvasSheet(this.platform);
+  sheetOpen = false;
+  /** The pointer whose drag Escape ended: letting go of it does nothing. */
+  private cancelledPointer: number | null = null;
   /** Browser storage refused "Show minimap" once: said once. */
   private minimapNoticeShown = false;
   /** The view is moving: the minimap shows. */
@@ -788,37 +803,44 @@ export class CanvasView implements OnInit, DoCheck {
     );
   }
   /**
-   * Escape hides the toolbars on screen, which appear on hover and focus,
-   * until the pointer or focus reaches another step. A field, a dialog, an
-   * open menu or a move in progress takes Escape first; with no toolbar on
-   * screen it goes on to the editor. Focus inside a toolbar returns to its
-   * step.
+   * Hides the toolbars on screen, which appear on hover and focus, until
+   * the pointer or focus reaches another step; false when none shows.
+   * Focus inside a toolbar returns to its step.
    */
-  dismissToolbars(event: Event) {
+  private hideToolbars(target: Element): boolean {
+    const shown = this.toolbars().map((bar) => bar.id);
+    if (!shown.length) return false;
+    this.dismissed = shown;
+    this.cdr.markForCheck();
+    const inside = target.closest?.("[data-toolbar-for]");
+    if (inside)
+      this.root()
+        .nativeElement.querySelector<HTMLElement>(
+          `[data-tile="${CSS.escape(inside.getAttribute("data-toolbar-for")!)}"] .tile-body`,
+        )
+        ?.focus();
+    return true;
+  }
+  /**
+   * Escape with focus outside the canvas (keys inside it go through key()),
+   * for example on the page while the pointer drags: it ends the drag, or
+   * else hides the toolbars the pointer shows, and goes no further. A
+   * field, a dialog or an open menu takes Escape first; "Move to…" and
+   * everything else go on to the editor.
+   */
+  escapeOutside(event: Event) {
     const h = this.host();
     const target = event.target as Element;
     if (
       event.defaultPrevented ||
-      this.press ||
-      h.connectingNode ||
-      h.dragPreview ||
+      this.root().nativeElement.contains(target) ||
       target.closest?.("input, textarea, select, [role=dialog], .modal-panel")
     )
       return;
-    const shown = this.toolbars().map((bar) => bar.id);
-    if (!shown.length) return;
-    const root = this.root().nativeElement;
-    const inside = target.closest?.("[data-toolbar-for]");
-    this.dismissed = shown;
-    this.cdr.markForCheck();
-    if (inside)
-      root
-        .querySelector<HTMLElement>(
-          `[data-tile="${CSS.escape(inside.getAttribute("data-toolbar-for")!)}"] .tile-body`,
-        )
-        ?.focus();
-    // Focus on the canvas, or nowhere: this Escape did its job.
-    if (root.contains(target) || target === document.body) {
+    const done = this.dragging()
+      ? this.endGesture()
+      : !h.connectingNode && !h.dragPreview && this.hideToolbars(target);
+    if (done) {
       event.preventDefault();
       event.stopPropagation();
     }
@@ -882,6 +904,7 @@ export class CanvasView implements OnInit, DoCheck {
   /** A press on a handle or "+" may draw an edge; on a step, may move it. */
   pointerDown(event: PointerEvent) {
     this.downAt = { x: event.clientX, y: event.clientY };
+    this.cancelledPointer = null;
     this.boxAdditive = event.shiftKey;
     if (event.button !== 0 || this.locked()) return;
     const target = event.target as Element;
@@ -939,6 +962,13 @@ export class CanvasView implements OnInit, DoCheck {
     this.cdr.markForCheck();
   }
   pointerUp(event: PointerEvent) {
+    if (event.pointerId === this.cancelledPointer) {
+      // Escape ended this drag: letting go drops nothing and clicks nothing.
+      this.cancelledPointer = null;
+      this.suppressClick = true;
+      setTimeout(() => (this.suppressClick = false));
+      return;
+    }
     const press = this.press;
     if (!press || event.pointerId !== press.pointer) return;
     this.press = null;
@@ -983,6 +1013,10 @@ export class CanvasView implements OnInit, DoCheck {
       else h.notify("Drop on a highlighted + to move this step.");
     }
     this.cdr.markForCheck();
+  }
+  /** A handle or a step is being dragged. */
+  private dragging(): boolean {
+    return !!this.press?.dragging || !!this.band || !!this.draggingStep;
   }
   cancelPress() {
     this.press = null;
@@ -1207,6 +1241,258 @@ export class CanvasView implements OnInit, DoCheck {
       this.panning = false;
       this.cdr.markForCheck();
     }, 1200);
+  }
+
+  // ----------------------------------------------------------- keyboard
+
+  /**
+   * Keys on the canvas: the canvas rows of the shortcut table. Commands
+   * about steps act from a step or the canvas itself; on a "+", a tool, a
+   * toolbar or a menu, keys act on that control.
+   */
+  key(event: KeyboardEvent) {
+    this.trackSpace(event);
+    const target = event.target as HTMLElement;
+    // A control that handled the key, or an open menu, owns it.
+    if (event.defaultPrevented || target.closest("[role=menu]")) return;
+    const typing = target.matches(
+      "input, textarea, select, [contenteditable='true']",
+    );
+    const onStep =
+      target === this.root().nativeElement ||
+      target.classList.contains("tile-body");
+    const command = canvasCommand(event, {
+      platform: this.platform,
+      typing,
+      onStep,
+    });
+    if (!command || !this.run(command, target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  /** Runs a command; false when it had nothing to do, so the key goes on. */
+  run(command: KeymapCommand, target: HTMLElement): boolean {
+    const h = this.host();
+    const places = this.places();
+    // Focus on a tile acts on it; focus on the canvas, on the selection's focus.
+    const focus =
+      target.closest("[data-tile]")?.getAttribute("data-tile") ??
+      this.selection.focus ??
+      "";
+    const step = places.has(focus) ? focus : "";
+    switch (command) {
+      case "zoomIn":
+        this.zoomBy(1.2);
+        return true;
+      case "zoomOut":
+        this.zoomBy(1 / 1.2);
+        return true;
+      case "zoomReset":
+        this.zoomBy(1 / this.view.zoom);
+        return true;
+      case "fitView":
+        this.fit();
+        return true;
+      case "openStepDetails":
+        if (focus.startsWith("$trigger:"))
+          void h.openWorkflowSection("spec/inputSchema");
+        else if (focus === "$end") void h.openWorkflowSection("spec/output");
+        else if (step) void h.openStep(step, "details");
+        else return false;
+        return true;
+      case "renameStep":
+        if (!step) return false;
+        void h.openStep(step, "rename");
+        return true;
+      case "openAddStep":
+      case "searchAddStep":
+        this.addStep(target, focus);
+        return true;
+      case "selectAll":
+        return this.selectAll(step);
+      case "duplicate": {
+        const chosen = this.keyTargets(target, step);
+        const reason =
+          this.lockedReason() ?? blockedReason("duplicate", chosen, places);
+        if (reason) h.notify(reason);
+        else void h.duplicateSteps(topLevel(chosen, places));
+        return true;
+      }
+      case "deleteSelection": {
+        const ids = topLevel(this.keyTargets(target, step), places);
+        if (!ids.length) return false;
+        const reason = this.lockedReason();
+        if (reason) h.notify(reason);
+        else void h.removeSteps(ids);
+        return true;
+      }
+      case "undo":
+        h.undo();
+        return true;
+      case "redo":
+        h.redo();
+        return true;
+      case "previousStep":
+        return this.moveFocus(focus, "previous");
+      case "nextStep":
+        return this.moveFocus(focus, "next");
+      case "laneAbove":
+        return this.moveFocus(focus, "above");
+      case "laneBelow":
+        return this.moveFocus(focus, "below");
+      case "extendUpstream":
+      case "extendDownstream":
+        return this.extend(
+          step,
+          command === "extendUpstream" ? "upstream" : "downstream",
+        );
+      case "save":
+        h.saveShortcut();
+        return true;
+      case "escape":
+        return this.escape(target);
+      case "showShortcuts":
+        this.sheetOpen = true;
+        return true;
+      default:
+        return false;
+    }
+  }
+  /**
+   * The steps a key acts on: the selection when focus is on the canvas or
+   * on a step the selection covers, else the step with focus alone. The
+   * trigger and End are not steps.
+   */
+  private keyTargets(target: HTMLElement, step: string): Selection {
+    if (!target.closest("[data-tile]")) return this.selection;
+    if (!step) return NO_SELECTION;
+    return covered(this.selection, this.places()).has(step)
+      ? this.selection
+      : only(step);
+  }
+  /** Makes a selection the canvas's, and its focus the editor's selected step. */
+  private choose(next: Selection) {
+    this.selection = next;
+    this.seenSelected = next.focus ?? "";
+    const h = this.host();
+    if (next.focus) void h.selectStep(next.focus, false);
+    else void h.deselect();
+  }
+  /** Arrow keys: focus (and select) the neighbor in that direction. */
+  private moveFocus(from: string, direction: Direction): boolean {
+    const next = neighbor(this.layout(), from || this.active(), direction);
+    if (!next) return true;
+    if (this.places().has(next)) this.choose(only(next));
+    this.focusTileLater(next);
+    return true;
+  }
+  /** Shift+← and Shift+→: add the step before or after the focused one, and focus it. */
+  private extend(step: string, direction: "upstream" | "downstream"): boolean {
+    if (!step) return false;
+    const base = this.selection.ids.includes(step)
+      ? { ...this.selection, focus: step }
+      : only(step);
+    const next = extended(base, this.places(), direction);
+    this.choose(next);
+    this.focusTileLater(next.focus ?? step);
+    return true;
+  }
+  /**
+   * Ctrl/Cmd+A: every step of the main sequence, which covers the steps
+   * inside its groups. The focused step, or the group holding it, keeps focus.
+   */
+  private selectAll(step: string): boolean {
+    const places = this.places();
+    const ids = [...places.values()]
+      .filter((place) => place.owner === "root")
+      .map((place) => place.id);
+    if (!ids.length) return false;
+    let top = step;
+    while (places.get(top)?.parent) top = places.get(top)!.parent!;
+    this.choose(selectionOf(ids, top || ids[0]));
+    return true;
+  }
+  private focusTileLater(id: string) {
+    this.cdr.markForCheck();
+    afterNextRender(
+      () =>
+        this.root()
+          .nativeElement.querySelector<HTMLElement>(
+            `[data-tile="${CSS.escape(id)}"] .tile-body`,
+          )
+          ?.focus(),
+      { injector: this.injector },
+    );
+  }
+  /**
+   * N and /: today's step picker for the "+" with focus, after the step
+   * with focus, or for the first step.
+   */
+  private addStep(target: HTMLElement, focus: string) {
+    const h = this.host();
+    const reason = this.lockedReason();
+    if (reason) return h.notify(reason);
+    const control = target.closest<HTMLElement>("[data-insert]");
+    if (control) return this.insertAt(control);
+    const root = this.root().nativeElement;
+    if (!h.model.definition.spec.steps.length) {
+      h.openPicker(
+        { owner: "root", index: 0 },
+        "Add first step",
+        root.querySelector<HTMLElement>(".empty-trigger") ?? root,
+      );
+      return;
+    }
+    const tile = this.layout().tiles.find((item) => item.id === focus);
+    const insert = tile?.after ?? {
+      owner: "root",
+      index: h.model.definition.spec.steps.length,
+    };
+    const label = !tile?.after
+      ? "Add a step at the end"
+      : tile.kind === "trigger"
+        ? "Add a step at the start"
+        : `Add a step after ${tile.id}`;
+    const anchor =
+      (tile &&
+        root.querySelector<HTMLElement>(
+          `[data-tile="${CSS.escape(tile.id)}"] .tile-body`,
+        )) ||
+      root;
+    h.openPicker(insert, label, anchor);
+  }
+  /**
+   * Escape on the canvas, one meaning per press: end a drag or "Move to…",
+   * else hide the toolbars on screen, else clear the selection. A field, a
+   * dialog or an open menu takes Escape first.
+   */
+  private escape(target: HTMLElement): boolean {
+    if (this.endGesture() || this.hideToolbars(target)) return true;
+    if (!this.selection.ids.length) return false;
+    const focus = this.selection.focus;
+    this.clearSelection();
+    // The selection toolbar goes with the selection: focus stays on the canvas.
+    if (focus && target.closest(".selection-toolbar"))
+      this.focusTileLater(focus);
+    return true;
+  }
+  /** Ends a drag, or a step "Move to…" is placing; false when none is under way. */
+  private endGesture(): boolean {
+    const h = this.host();
+    if (this.dragging()) {
+      // Letting go of the pointer then drops nothing and clicks nothing.
+      if (this.press) this.cancelledPointer = this.press.pointer;
+      this.cancelPress();
+      return true;
+    }
+    if (!h.connectingNode && !h.dragPreview) return false;
+    const moving = h.connectingNode;
+    h.cancelGesture();
+    if (moving) {
+      h.notify(`Stopped moving ${moving}.`);
+      this.focusTileLater(moving);
+    }
+    return true;
   }
   private setView(view: View) {
     this.view = view;
