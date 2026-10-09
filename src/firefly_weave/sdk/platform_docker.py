@@ -93,6 +93,12 @@ def environment(state: dict[str, Any], execution: dict[str, str]) -> dict[str, s
     values.update(execution)
     if "WEAVE_SECRET_ROOT" in values:
         values["WEAVE_SECRET_ROOT"] = "/run/weave-secrets"
+    from firefly_weave.sdk import platform_ai
+
+    ai, _ = platform_ai.api_environment(state)
+    if set(ai) - {"WEAVE_AI_POLICY_FILE", "WEAVE_LUMI_GATEWAY"}:
+        raise local.PlatformError("Unexpected AI configuration for the API container.")
+    values.update(ai)
     if state.get("private_origins"):
         from firefly_weave.sdk import platform_origins
 
@@ -263,6 +269,11 @@ def _configuration(state: dict[str, Any], execution: dict[str, str]) -> Path:
                 "read_only": True,
             }
         )
+    from firefly_weave.sdk import platform_ai
+
+    _, mounts = platform_ai.api_environment(state)
+    if mounts:
+        service.setdefault("volumes", []).extend(mounts)
     path = directory / "compose.api.json"
     local._write(path, {"services": {"api": service}}, replace=path.exists())
     return path
@@ -380,6 +391,9 @@ def start(state: dict[str, Any], notice: Callable[[str], None]) -> None:
         raise local.PlatformError(
             "The Docker API is not ready. Inspect platform logs; retained services were not removed."
         )
+    from firefly_weave.sdk import platform_ai
+
+    platform_ai.start_services(state, notice)
 
 
 def stop(state: dict[str, Any]) -> None:

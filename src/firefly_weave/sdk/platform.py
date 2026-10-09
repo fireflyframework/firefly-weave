@@ -30,16 +30,17 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import tomllib
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager, suppress
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 from firefly_weave import __version__
-from firefly_weave.sdk.deployment import DeploymentError, read_file, real_path, run_command, strict_json
+from firefly_weave.sdk.deployment import DeploymentError, open_directory, read_file, real_path, run_command, strict_json
 
 if TYPE_CHECKING:
     import httpx
@@ -149,22 +150,50 @@ def _environment() -> dict[str, str]:
 
 def _private_directory(directory: Path) -> Path:
     directory = real_path(directory)
-    info = directory.stat()
+    descriptor = open_directory(directory)
+    try:
+        info = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise PlatformError("The installation directory must belong to you with permissions 0700.")
-    return directory
+    return Path(os.path.normpath(directory))
+
+
+def _atomic(path: Path, data: bytes, *, mode: int = 0o600, replace: bool = False) -> None:
+    """Publish complete, persisted bytes; a new publication never overwrites an existing name."""
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix="." + path.name + "-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(data)
+            stream.flush()
+            os.fchmod(stream.fileno(), mode)
+            os.fsync(stream.fileno())
+        if replace:
+            temporary.replace(path)
+        else:
+            os.link(temporary, path, follow_symlinks=False)
+        _sync(path)
+    finally:
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 def _write(path: Path, value: dict[str, Any], *, replace: bool = False) -> None:
     data = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
-    if replace:
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".state-", delete=False) as stream:
-            stream.write(data)
-            temporary = Path(stream.name)
-        temporary.replace(path)
-    else:
-        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as stream:
-            stream.write(data)
+    _atomic(path, data, replace=replace)
+
+
+def _sync(path: Path) -> None:
+    """Persist an owned publication and its directory before advancing a durable transition."""
+    for target in (path, path.parent):
+        descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def _env_file(path: Path) -> dict[str, str]:
@@ -293,7 +322,7 @@ def _ports() -> dict[str, int]:
             sock.close()
 
 
-def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
+def _state(directory: Path) -> dict[str, Any]:
     directory = _private_directory(directory)
     state = strict_json(read_file(directory / "platform.json", 65536, private=True))
     if not isinstance(state, dict) or state.get("format") != _FORMAT:
@@ -317,9 +346,14 @@ def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
         or len(set(ports.values())) != 4
     ):
         raise PlatformError("Installation port metadata is invalid.")
-    if "private_origins" in state:
-        from firefly_weave.sdk import platform_origins
+    return state
 
+
+def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
+    from firefly_weave.sdk import platform_origins
+
+    state = platform_origins.recover(_state(directory))
+    if "private_origins" in state:
         platform_origins.validate_state(state)
         # Every command loads the installation first, so none runs on a changed private-origin file.
         platform_origins.verified(state)
@@ -332,7 +366,7 @@ def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
 def _exclusive(directory: Path, name: str, busy: str) -> Iterator[None]:
     import fcntl
 
-    _private_directory(directory)
+    directory = _private_directory(directory)
     descriptor = os.open(directory / name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         try:
@@ -344,12 +378,45 @@ def _exclusive(directory: Path, name: str, busy: str) -> Iterator[None]:
         os.close(descriptor)
 
 
-def _lock(directory: Path) -> AbstractContextManager[None]:
-    return _exclusive(
+_LOCK_OWNERS = threading.local()
+
+
+def _lock_owner() -> tuple[Any, ...]:
+    import asyncio
+
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return os.getpid(), threading.get_ident(), task
+
+
+@contextmanager
+def _lock(directory: Path) -> Iterator[None]:
+    directory = _private_directory(directory)
+    with _exclusive(
         directory,
         ".operation.lock",
         "Another platform command is active. Stop the foreground API with Ctrl-C before stopping services.",
-    )
+    ):
+        owners = getattr(_LOCK_OWNERS, "owners", {})
+        _LOCK_OWNERS.owners = owners
+        owners[str(directory)] = _lock_owner()
+        try:
+            yield
+        finally:
+            del owners[str(directory)]
+
+
+@contextmanager
+def _recovery_lock(directory: Path) -> Iterator[None]:
+    directory = _private_directory(directory)
+    # Only the same execution owner may recover inside its already-held operation lock.
+    if getattr(_LOCK_OWNERS, "owners", {}).get(str(directory)) == _lock_owner():
+        yield
+    else:
+        with _lock(directory):
+            yield
 
 
 def _check_engine(state: dict[str, Any]) -> None:
@@ -383,14 +450,16 @@ def _compose(state: dict[str, Any]) -> list[str]:
         if read_file(override, 4096, private=True) != _network_override(state):
             raise PlatformError("The saved network configuration has changed; no services were modified.")
         command.extend(["-f", str(override)])
-    if state.get("private_origins"):
-        from firefly_weave.sdk import platform_origins
+    from firefly_weave.sdk import platform_origins
 
+    if platform_origins.has_egress(state):
         command.extend(["-f", str(platform_origins.compose_override(state))])
     if state.get("mode") == "docker":
-        from firefly_weave.sdk import platform_docker
+        from firefly_weave.sdk import platform_ai, platform_docker
 
         command.extend(["-f", str(platform_docker.dependencies(state))])
+        for path in platform_ai.compose_files(state):
+            command.extend(["-f", str(path)])
     return command
 
 
@@ -1222,6 +1291,10 @@ def integrations_grant(
 
 
 def _check_handle(handle: str) -> None:
+    if handle == "no-credential":
+        raise PlatformError(
+            "no-credential is reserved for local model endpoints that use no credential; choose another handle."
+        )
     if _SECRET_HANDLE.fullmatch(handle) is None:
         raise PlatformError(
             "Use a secret handle of 1 to 64 lowercase letters, digits, '.', '_', or '-', "
@@ -1374,9 +1447,10 @@ def stop(directory: Path) -> dict[str, Any]:
         if not (directory / "postgres.env").is_file() or not (directory / "identity.env").is_file():
             raise PlatformError("Setup did not reach dependency creation; no services need stopping.")
         if state.get("mode") == "docker":
-            from firefly_weave.sdk import platform_docker
+            from firefly_weave.sdk import platform_ai, platform_docker
 
             platform_docker.stop(state)
+            platform_ai.stop_services(state)
         _run(
             state,
             "dependencies-stop",

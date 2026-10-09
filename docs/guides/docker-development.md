@@ -176,6 +176,19 @@ that origin travel over plain HTTP only inside that egress network. When you
 remove the installation's containers, remove the network too with
 `docker network rm weave-local-ID-egress`.
 
+## 7. Run AI tasks on a local model (development only)
+
+```sh
+# Run Ollama in a Weave-managed container, pull a small model and test it.
+weave platform ai enable --ollama container --model qwen2.5:1.5b --yes
+```
+
+Expected: `AI is ready on this platform (development only).` followed by a `Test:`
+line with the model's answer time. The command also starts the AI gateway and the
+Agentic worker; `weave platform start` and `up` start them again. See
+[Run AI tasks with Ollama](ollama.md) for Ollama on this computer, other models
+and troubleshooting.
+
 ## If something goes wrong
 
 | What you see | What to do |
@@ -187,6 +200,7 @@ remove the installation's containers, remove the network too with
 | A username already exists | Sign in with the original password; starting again does not reset accounts |
 | You need API logs | Run `platform logs`; retain the private setup logs for earlier stages |
 | Every command reports that the private-origin file is missing, changed or not private | Never edit that file. In the installation directory, run `rm -f private-origins.json`, copy the byte-identical `container-config/private-origins-ID.json` (ID: the first 16 characters of `file_sha256` in `platform.json`) to `private-origins.json`, then run `chmod 600 private-origins.json`. Without that copy, or to change the approved origins, use a new directory |
+| `weave platform ai enable` stops and asks for `--yes` | Without a terminal the command never assumes consent; rerun with `--yes` |
 
 For the individual setup steps and the foreground API workflow, see
 [the detailed local-platform guide](local-platform.md).

@@ -18,6 +18,32 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## Unreleased
+
+- Run AI tasks on a local Ollama model: `weave platform ai enable --ollama auto|host|container`
+  (or `--ollama-url URL`) sets up the AI gateway, the Agentic worker, a version 2 AI
+  policy, development-only private-origin entries and a keyless `ollama-local`
+  connection, and tests a real model call; `ai status`, `ai disable` and `ai models`
+  complete it.
+- Model endpoints accept plain HTTP only through private-origin entries with
+  `purpose: model` that send no credential. The reserved secret handle
+  `no-credential` marks such connections and is never resolved; operator grants
+  under that name are ignored with a warning, and `weave platform secret set`
+  refuses it.
+- New operation `ai_connections.test`; `weave connections test` on an AI connection
+  now calls the model through the AI gateway instead of always reporting failure.
+  AI connection tests, dedicated or generic, share a limit of six per minute per
+  person and answer 429 `WV-AI-RATE-LIMITED` beyond it.
+- The AI gateway gains `POST /v1/test` and `POST /v1/models`, and the API accepts a
+  plain HTTP gateway endpoint on a loopback address that a private-origin `model`
+  entry with loopback credentials lists. An endpoint with a trailing slash is refused.
+- The Agentic worker reports `LLM_MODEL_NOT_FOUND`, `LLM_UNREACHABLE`, `LLM_AUTH`,
+  `LLM_RATE_LIMITED`, `LLM_CONTEXT_LIMIT` and `LLM_NO_TOOL_SUPPORT` instead of
+  `LLM_PROVIDER`, accepts `WEAVE_AGENTIC_CAPACITY`, and signs in and calls the API
+  over plain HTTP only through `worker-auth` and `platform-api` private-origin entries.
+- The worker and the AI gateway read version 2 AI policies; version 1 files keep
+  working with a warning to migrate.
+
 ## 0.1.0a15
 
 ### Workflow language

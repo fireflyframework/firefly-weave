@@ -34,6 +34,7 @@ import {
 import {
   EDITOR_NEXT_KEY,
   editorNextEnabled,
+  readUiChoice,
   setEditorNext,
 } from "../src/app/editor/state/editor-flag";
 
@@ -207,5 +208,24 @@ describe("the new editor flag", () => {
   it("stays off when storage refuses", () => {
     expect(editorNextEnabled("", refusing)).toBe(false);
     expect(setEditorNext(true, refusing)).toBe(false);
+  });
+});
+
+describe("a saved true or false choice", () => {
+  it("reads true, false, or null when nothing usable is stored", () => {
+    const storage = new MemoryStorage();
+    const key = uiKey("weave.test.choice");
+    expect(readUiChoice(key, () => storage)).toBeNull();
+    storage.setItem(key, "true");
+    expect(readUiChoice(key, () => storage)).toBe(true);
+    storage.setItem(key, "false");
+    expect(readUiChoice(key, () => storage)).toBe(false);
+    storage.setItem(key, "maybe");
+    expect(readUiChoice(key, () => storage)).toBeNull();
+  });
+
+  it("reads null when storage refuses or is missing", () => {
+    expect(readUiChoice("ui:weave.test.choice", refusing)).toBeNull();
+    expect(readUiChoice("ui:weave.test.choice", () => null)).toBeNull();
   });
 });

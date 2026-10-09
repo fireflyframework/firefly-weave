@@ -14,12 +14,14 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Development-only private origins for the local Docker platform (contract C8).
+"""Development-only private origins for the local Docker platform (one file per installation).
 
-``weave platform up --allow-private-origin ORIGIN`` records consent in platform.json,
-creates the installation's egress network, and writes one private-origin entry per
-purpose for each exact origin. The API receives a read-only copy of that file; no
-request, connection or server flag can add or widen an entry.
+``weave platform up --allow-private-origin ORIGIN`` records consent in platform.json, creates
+the installation's egress network, and writes one private-origin entry per purpose for each
+exact origin. ``weave platform ai enable`` adds the AI entries (the model endpoint, the AI
+gateway hop and loopback worker sign-in) after its own consent. Every process gets a
+read-only copy of the same file; no request, connection or server flag can add or widen an
+entry.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ import hashlib
 import ipaddress
 import os
 import re
+import stat
 import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -39,6 +42,7 @@ from firefly_weave.sdk import platform as local
 from firefly_weave.sdk.deployment import DeploymentError, read_file, real_path, strict_json
 
 FILE = "private-origins.json"
+PENDING = ".private-origins.pending.json"
 COMPOSE = "compose.egress.yaml"
 CONTAINER_DIRECTORY = "container-config"
 CONTAINER_PATH = "/run/weave-config/private-origins.json"
@@ -61,7 +65,9 @@ _RESERVED_HOSTS = frozenset(
     }
 )
 _HEX = re.compile(r"[0-9a-f]{64}")
-_STATE_KEYS = {"origins", "network", "subnet", "file_sha256", "consent", "consented_at"}
+_FIXTURE_KEYS = frozenset({"origins", "network", "subnet", "consent", "consented_at"})
+AI_CONSENT = "weave platform ai enable"
+AI_PURPOSES = frozenset({"model", "worker-auth", "platform-api"})
 
 
 def fixture_origin(value: str) -> str:
@@ -192,24 +198,97 @@ def prepare(state: dict[str, Any], origins: Sequence[str]) -> None:
     _create(directory / COMPOSE, _override(state))
 
 
+def has_egress(state: dict[str, Any]) -> bool:
+    """True when the installation was created with approved connector test origins and their egress network."""
+    return "origins" in (state.get("private_origins") or {})
+
+
+def entry_records(entries: Sequence[private_origins.PrivateOrigin]) -> list[dict[str, Any]]:
+    """Canonical records of AI entries, as platform.json keeps them."""
+    return [
+        {
+            "origin": entry.origin,
+            "purpose": entry.purpose,
+            "networks": list(entry.networks),
+            "credentials": entry.credentials,
+        }
+        for entry in sorted(entries, key=lambda entry: (entry.purpose, entry.origin or ""))
+    ]
+
+
+def _ai_entries(value: dict[str, Any]) -> list[private_origins.PrivateOrigin]:
+    found = []
+    for item in (value.get("ai") or {}).get("entries", []):
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"origin", "purpose", "networks", "credentials"}
+            or item["purpose"] not in AI_PURPOSES
+        ):
+            raise ValueError("Unknown AI entry")
+        found.append(
+            private_origins.PrivateOrigin(
+                origin=item["origin"],
+                purpose=item["purpose"],
+                networks=tuple(item["networks"]),
+                credentials=item["credentials"],
+            )
+        )
+    return found
+
+
+def _fixture_entries(value: dict[str, Any]) -> list[private_origins.PrivateOrigin]:
+    if "origins" not in value:
+        return []
+    return [
+        private_origins.PrivateOrigin(origin=origin, purpose=purpose, networks=(value["subnet"],), credentials="bridge")
+        for origin in value["origins"]
+        for purpose in SCHEME_PURPOSES[origin.split("://", 1)[0]]
+    ]
+
+
+def _render(value: dict[str, Any]) -> bytes:
+    entries = [*_fixture_entries(value), *_ai_entries(value)]
+    return private_origins.render(
+        private_origins.PrivateOrigins(platform=private_origins.PLATFORM).with_entries(entries)
+    )
+
+
 def validate_state(state: dict[str, Any]) -> None:
     """Refuse consent metadata that platform commands did not write."""
     value = state["private_origins"]
     try:
-        if (
-            not isinstance(value, dict)
-            or set(value) != _STATE_KEYS
-            or value["consent"] != CONSENT
-            or value["network"] != network_name(state)
-            or not isinstance(value["origins"], list)
-            or not value["origins"]
-            or value["origins"] != list(requested(value["origins"]))
-            or _HEX.fullmatch(value["file_sha256"]) is None
-            or not isinstance(value["consented_at"], str)
-        ):
+        if not isinstance(value, dict) or _HEX.fullmatch(str(value.get("file_sha256", ""))) is None:
             raise ValueError("Unknown consent metadata")
-        local._validate_subnet(value["subnet"])
-    except (local.PlatformError, ValueError, TypeError):
+        keys = set(value) - {"file_sha256"}
+        fixtures = keys & _FIXTURE_KEYS
+        if not keys or keys - _FIXTURE_KEYS - {"ai"} or (fixtures and fixtures != _FIXTURE_KEYS):
+            raise ValueError("Unknown consent metadata")
+        if fixtures:
+            if (
+                value["consent"] != CONSENT
+                or value["network"] != network_name(state)
+                or not isinstance(value["origins"], list)
+                or not value["origins"]
+                or value["origins"] != list(requested(value["origins"]))
+                or not isinstance(value["consented_at"], str)
+            ):
+                raise ValueError("Unknown consent metadata")
+            local._validate_subnet(value["subnet"])
+        if "ai" in value:
+            ai = value["ai"]
+            if (
+                not isinstance(ai, dict)
+                or set(ai) != {"entries", "consent", "consented_at"}
+                or ai["consent"] != AI_CONSENT
+                or not isinstance(ai["consented_at"], str)
+                or not isinstance(ai["entries"], list)
+                or not ai["entries"]
+                or ai["entries"] != entry_records(_ai_entries(value))
+            ):
+                raise ValueError("Unknown consent metadata")
+        # The recorded entries must form one valid policy: one entry per origin and purpose.
+        _render(value)
+    except (local.PlatformError, ValueError, TypeError, KeyError):
         raise local.PlatformError(
             "Installation private-origin metadata is invalid; no services were changed."
         ) from None
@@ -223,7 +302,9 @@ def verified(state: dict[str, Any]) -> tuple[bytes, private_origins.PrivateOrigi
         raise local.PlatformError(
             "The private-origin file is missing or not private; no services were changed."
         ) from None
-    if hashlib.sha256(data).hexdigest() != state["private_origins"]["file_sha256"]:
+    if hashlib.sha256(data).hexdigest() != state["private_origins"]["file_sha256"] or data != _render(
+        state["private_origins"]
+    ):
         raise local.PlatformError(
             "The private-origin file changed outside platform commands; no services were changed."
         )
@@ -231,6 +312,160 @@ def verified(state: dict[str, Any]) -> tuple[bytes, private_origins.PrivateOrigi
         return data, private_origins.parse(data)
     except private_origins.PrivateOriginsInvalid:
         raise local.PlatformError("The private-origin file is invalid; no services were changed.") from None
+
+
+def _replace(path: Path, data: bytes) -> None:
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".origins-", delete=False) as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+        temporary = Path(stream.name)
+    temporary.chmod(0o600)
+    temporary.replace(path)
+    local._sync(path)
+
+
+def _record(state: dict[str, Any], value: Any) -> bytes | None:
+    if value is None:
+        return None
+    validate_state({**state, "private_origins": value})
+    data = _render(value)
+    if hashlib.sha256(data).hexdigest() != value["file_sha256"]:
+        raise local.PlatformError("Pending private-origin digest is invalid; no files were changed.")
+    return data
+
+
+def _ai_transition(before: dict[str, Any] | None, after: dict[str, Any] | None) -> None:
+    def fixtures(value: dict[str, Any] | None) -> dict[str, Any]:
+        return {key: item for key, item in (value or {}).items() if key in _FIXTURE_KEYS}
+
+    if before == after or fixtures(before) != fixtures(after):
+        raise local.PlatformError("Pending transition is not an AI-only consent update; no files were changed.")
+
+
+def _finish(state: dict[str, Any], after: dict[str, Any] | None, data: bytes | None) -> None:
+    directory = Path(state["directory"])
+    if after is None:
+        state.pop("private_origins", None)
+    else:
+        state["private_origins"] = after
+    local._write(directory / "platform.json", state, replace=True)
+    local._sync(directory / "platform.json")
+    if data is None:
+        (directory / FILE).unlink(missing_ok=True)
+        local._sync(directory)
+    else:
+        _replace(directory / FILE, data)
+    (directory / PENDING).unlink()
+    local._sync(directory)
+
+
+def recover(state: dict[str, Any]) -> dict[str, Any]:
+    """Finish only an exact recorded before/after pair, revalidated under the installation lock."""
+    directory = Path(state["directory"])
+    if not os.path.lexists(directory / PENDING):
+        return state
+    with local._recovery_lock(directory):
+        state = local._state(directory)
+        path = directory / PENDING
+        if not os.path.lexists(path):
+            return state
+        try:
+            record = strict_json(read_file(path, 2 * private_origins.MAX_FILE_BYTES + 4096, private=True))
+            if (
+                stat.S_IMODE(path.lstat().st_mode) != 0o600
+                or state.get("mode") != "docker"
+                or not isinstance(record, dict)
+                or set(record) != {"format", "installation", "before", "after"}
+                or type(record["format"]) is not int
+                or record["format"] != 1
+                or record["installation"] != state["id"]
+            ):
+                raise ValueError("Unknown pending transition")
+            before, after = record["before"], record["after"]
+            old, new = _record(state, before), _record(state, after)
+            _ai_transition(before, after)
+            if state.get("private_origins") not in (before, after):
+                raise ValueError("Unrecognized metadata")
+            actual = (
+                read_file(directory / FILE, private_origins.MAX_FILE_BYTES, private=True)
+                if os.path.lexists(directory / FILE)
+                else None
+            )
+            if actual not in (old, new):
+                raise ValueError("Unrecognized policy")
+        except (OSError, DeploymentError, ValueError, TypeError, KeyError):
+            raise local.PlatformError(
+                "Pending private-origin transition is unsafe or unrecognized; no files were changed."
+            ) from None
+        _finish(state, after, new)
+        return state
+
+
+def _transition(state: dict[str, Any], after: dict[str, Any] | None) -> None:
+    directory = Path(state["directory"])
+    before = state.get("private_origins")
+    with local._recovery_lock(directory):
+        current = local._load(directory, complete=False)
+        if current.get("private_origins") != before:
+            raise local.PlatformError("Private-origin metadata changed before publication; no files were changed.")
+        old, new = _record(current, before), _record(current, after)
+        _ai_transition(before, after)
+        actual = (
+            read_file(directory / FILE, private_origins.MAX_FILE_BYTES, private=True)
+            if os.path.lexists(directory / FILE)
+            else None
+        )
+        if actual != old:
+            raise local.PlatformError(
+                "The private-origin file changed outside platform commands; no files were changed."
+            )
+        record = {"format": 1, "installation": current["id"], "before": before, "after": after}
+        local._write(directory / PENDING, record)
+        local._sync(directory / PENDING)
+        _finish(current, after, new)
+        state.clear()
+        state.update(current)
+
+
+def set_ai_entries(state: dict[str, Any], entries: Sequence[private_origins.PrivateOrigin]) -> bool:
+    """Durably record AI consent and publish the matching policy; True on change."""
+    if state.get("mode") != "docker":
+        raise local.PlatformError("Private origins need the Docker platform; use weave platform up.")
+    # No entries would be metadata every later command refuses; remove_ai_entries drops them instead.
+    if not entries or any(entry.purpose not in AI_PURPOSES or entry.source != "file" for entry in entries):
+        raise ValueError("AI entries are model, worker-auth or platform-api entries")
+    records = entry_records(entries)
+    value = dict(state.get("private_origins") or {})
+    if (value.get("ai") or {}).get("entries") == records:
+        return False
+    if value:
+        verified(state)
+    value["ai"] = {
+        "entries": records,
+        "consent": AI_CONSENT,
+        "consented_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    data = _render(value)
+    value["file_sha256"] = hashlib.sha256(data).hexdigest()
+    _transition(state, value)
+    return True
+
+
+def remove_ai_entries(state: dict[str, Any]) -> bool:
+    """Drop AI's entries; the file goes away when no connector test origin remains. True on change."""
+    value = dict(state.get("private_origins") or {})
+    if "ai" not in value:
+        return False
+    verified(state)
+    del value["ai"]
+    if not set(value) & _FIXTURE_KEYS:
+        _transition(state, None)
+        return True
+    data = _render(value)
+    value["file_sha256"] = hashlib.sha256(data).hexdigest()
+    _transition(state, value)
+    return True
 
 
 def compose_override(state: dict[str, Any]) -> Path:
@@ -264,12 +499,13 @@ def container_copy(state: dict[str, Any]) -> Path:
 def summary(state: dict[str, Any]) -> dict[str, Any]:
     _, policy = verified(state)
     value = state["private_origins"]
-    return {
-        "network": value["network"],
-        "subnet": value["subnet"],
+    result: dict[str, Any] = {
         "label": private_origins.DEVELOPMENT_ONLY,
         "entries": [
             {"origin": e.origin, "purpose": e.purpose, "credentials": e.credentials, "networks": list(e.networks)}
             for e in policy.entries
         ],
     }
+    if has_egress(state):
+        result["network"], result["subnet"] = value["network"], value["subnet"]
+    return result

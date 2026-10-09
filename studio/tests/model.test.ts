@@ -788,3 +788,167 @@ describe("the canvas sidecar in the model", () => {
     expect(Object.keys(stepNotesOf(model.canvas))).toEqual([loose.id]);
   });
 });
+
+describe("runs of steps", () => {
+  const source = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: runs, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  steps:
+    - {id: load, kind: transform, value: {ref: /input}}
+    - {id: shape, kind: transform, value: {ref: /steps/load/output}}
+    - {id: finish, kind: transform, value: {ref: /steps/shape/output}}
+  output: {ref: /steps/finish/output}
+`;
+  const open = (text = source) => {
+    const model = new StructuredCanvasAdapter();
+    model.setSource(text);
+    return model;
+  };
+  const ids = (model: StructuredCanvasAdapter) =>
+    model.definition.spec.steps.map((step) => step.id);
+
+  it("duplicates a run right after itself, rewriting references between the copies, as one undo step", () => {
+    const model = open();
+    const before = model.revision;
+    expect(model.duplicateRun(["shape", "load"])).toEqual([
+      "load-1",
+      "shape-1",
+    ]);
+    expect(ids(model)).toEqual([
+      "load",
+      "shape",
+      "load-1",
+      "shape-1",
+      "finish",
+    ]);
+    expect(model.definition.spec.steps[3]["value"]).toEqual({
+      ref: "/steps/load-1/output",
+    });
+    expect(model.definition.spec.steps[2]["value"]).toEqual({ ref: "/input" });
+    expect(model.selected).toBe("load-1");
+    expect(model.revision).toBe(before + 1);
+    model.undo();
+    expect(ids(model)).toEqual(["load", "shape", "finish"]);
+  });
+
+  it("refuses a run with a gap, and an empty one", () => {
+    const model = open();
+    expect(() => model.duplicateRun(["load", "finish"])).toThrow(
+      "Select steps next to each other in one path.",
+    );
+    expect(() => model.duplicateRun([])).toThrow("Select a placed step.");
+    expect(ids(model)).toEqual(["load", "shape", "finish"]);
+  });
+
+  it("still duplicates one step the way it always did", () => {
+    const model = open();
+    expect(model.duplicate("shape")).toBe("shape-1");
+    expect(ids(model)).toEqual(["load", "shape", "shape-1", "finish"]);
+  });
+
+  it("deletes several steps as one undo step", () => {
+    const model = open(
+      source.replace(
+        "output: {ref: /steps/finish/output}",
+        "output: {literal: {}}",
+      ),
+    );
+    const before = JSON.stringify(model.definition.spec.steps);
+    model.removeSteps(["finish", "shape"]);
+    expect(ids(model)).toEqual(["load"]);
+    model.undo();
+    expect(JSON.stringify(model.definition.spec.steps)).toBe(before);
+  });
+
+  it("refuses to delete steps something else still reads, and names what reads them", () => {
+    const model = open();
+    expect(() => model.removeSteps(["shape", "finish"])).toThrow(
+      "These steps are referenced by the workflow output. Update it before deleting them.",
+    );
+    expect(() => model.removeSteps(["load", "shape"])).toThrow(
+      "These steps are referenced by finish. Update it before deleting them.",
+    );
+    expect(ids(model)).toEqual(["load", "shape", "finish"]);
+  });
+
+  it("refuses to delete steps while the source does not parse, and changes nothing", () => {
+    const model = open(
+      source.replace(
+        "output: {ref: /steps/finish/output}",
+        "output: {literal: {}}",
+      ),
+    );
+    model.setSource("spec: [");
+    expect(model.readonly).toBe(true);
+    const revision = model.revision;
+    const steps = JSON.stringify(model.definition.spec.steps);
+    expect(() => model.removeSteps(["finish"])).toThrow(
+      "Fix source before editing the graph.",
+    );
+    expect(model.revision).toBe(revision);
+    expect(JSON.stringify(model.definition.spec.steps)).toBe(steps);
+  });
+
+  it("deletes a group with the steps inside it, even when both are listed", () => {
+    const model = new StructuredCanvasAdapter();
+    model.insert("switch");
+    model.insert("wait", "decision-1/default", 0);
+    model.removeSteps(["decision-1", "wait-1"]);
+    expect(model.definition.spec.steps).toEqual([]);
+  });
+});
+
+describe("deletion keeps canvas metadata and workflow history together", () => {
+  for (const mode of ["single", "group", "bulk", "unplaced"] as const)
+    it(`prunes ${mode} deletions, keeps unrelated metadata and undoes exactly`, () => {
+      const model = new StructuredCanvasAdapter();
+      const keep = model.insert("transform");
+      const group = model.insert("switch");
+      const child = model.insert("wait", `${group.id}/default`);
+      model.addUnplaced("wait");
+      const loose = model.unplaced[0];
+      let canvas = model.canvas;
+      for (const step of [keep, group, child, loose])
+        canvas = withStepNote(canvas, step.id, { text: step.id });
+      canvas = withOwnedRecipe(canvas, "order-intake.get-orders", {
+        kind: "http",
+        method: "GET",
+      });
+      model.updateCanvas(canvas);
+      const before = {
+        source: model.source,
+        canvas: model.canvas,
+        layout: structuredClone(model.layout),
+        unplaced: structuredClone(model.unplaced),
+      };
+      const removed =
+        mode === "single"
+          ? [child.id]
+          : mode === "unplaced"
+            ? [loose.id]
+            : [group.id, child.id];
+      if (mode === "single") model.remove(child.id);
+      else if (mode === "unplaced") model.remove(loose.id);
+      else if (mode === "group") model.remove(group.id, { contents: true });
+      else model.removeSteps([group.id, child.id]);
+      expect(Object.keys(stepNotesOf(model.canvas)).sort()).toEqual(
+        [keep, group, child, loose]
+          .map((step) => step.id)
+          .filter((id) => !removed.includes(id))
+          .sort(),
+      );
+      expect(ownedRecipes(model.canvas)).toEqual({
+        "order-intake.get-orders": { kind: "http", method: "GET" },
+      });
+      model.undo();
+      expect({
+        source: model.source,
+        canvas: model.canvas,
+        layout: model.layout,
+        unplaced: model.unplaced,
+      }).toEqual(before);
+    });
+});

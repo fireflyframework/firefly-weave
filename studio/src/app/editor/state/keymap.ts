@@ -163,7 +163,7 @@ export const KEYMAP: readonly KeymapRow[] = [
       outline: "searchAddStep",
       stepDetails: "searchPane",
     },
-    n8n: "Replaces A, which opens the step list in n8n.",
+    n8n: "The Add a step panel also opens with N.",
   },
   {
     id: "sticky-note",
@@ -611,14 +611,29 @@ function asSentence(text: string): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
+export interface SheetOptions {
+  /** Only these surfaces, in the sheet's order. */
+  surfaces?: readonly (KeymapSurface | "any")[];
+  /** Only these commands; rows without a command still explain themselves. */
+  available?: ReadonlySet<KeymapCommand>;
+}
+
 /** The "?" sheet, built from the same table the handler reads. */
-export function shortcutSheet(platform: KeyPlatform): SheetSection[] {
+export function shortcutSheet(
+  platform: KeyPlatform,
+  options: SheetOptions = {},
+): SheetSection[] {
+  const offered = (command: KeymapCommand) =>
+    !options.available || options.available.has(command);
   const rows = KEYMAP.filter((row) => appliesTo(row, platform));
-  const sections: SheetSection[] = SHEET_SURFACES.map(([surface, title]) => {
+  const surfaces = SHEET_SURFACES.filter(
+    ([surface]) => !options.surfaces || options.surfaces.includes(surface),
+  );
+  const sections: SheetSection[] = surfaces.map(([surface, title]) => {
     const byCommand = new Map<KeymapCommand, string[]>();
     for (const row of rows) {
       const command = row.commands[surface];
-      if (!command) continue;
+      if (!command || !offered(command)) continue;
       byCommand.set(command, [
         ...(byCommand.get(command) ?? []),
         ...row.keys.map((combo) => formatCombo(combo, platform)),
@@ -640,7 +655,11 @@ export function shortcutSheet(platform: KeyPlatform): SheetSection[] {
   sections.push({
     title: "Differences from n8n",
     entries: rows
-      .filter((row) => row.n8n)
+      .filter((row) => {
+        if (!row.n8n) return false;
+        const own = Object.values(row.commands).find(Boolean);
+        return own ? offered(own) : !options.available;
+      })
       .map((row) => {
         const own = Object.values(row.commands).find(Boolean);
         const meaning = row.note ?? (own ? COMMAND_LABELS[own] : "");

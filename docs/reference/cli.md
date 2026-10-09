@@ -101,6 +101,7 @@ platform; the others need the `client` extra and either a
 | Describe an HTTP API without code, import OpenAPI, or build a connector package | `connector http-action`, `import-openapi`, `descriptor`, `init`, `validate`, `test`, `package` | Base package; publishing needs a platform; [no-code REST integration](../connectors/http-without-code.md) |
 | Run durable workflows on your computer | `platform doctor`, `up`, `setup`, `start`, `status`, `logs`, `demo`, `user`, `token`, `stop` | Matching checkout, uv, and local Docker; [local platform](../guides/local-platform.md) |
 | Run built-in HTTP connector Actions locally | `platform integrations`, `platform secret` (new in 0.1.0a7) | A running local platform |
+| Run AI tasks on a local model | `platform ai` (development only) | A running Docker platform; [Ollama](../guides/ollama.md) |
 | Draw workflows and work with tasks in your browser | `studio`, `studio install`, `studio configure` | The `studio` extra and a matching browser bundle; [Studio](../guides/studio.md) |
 | Connect to a platform, sign in, choose a workspace | `auth setup`, `login`, `status`, `logout`, `profiles`, `use`, `remove`, `workspace` | `client` extra; [connect the CLI](../guides/connect-to-api.md) |
 | Publish and activate definitions | `definitions` (with `drafts` and `activations`), `remote compile`, `validate`, `catalog` | Grants in the project; [CLI tutorial](../guides/cli-tutorial.md) |
@@ -370,6 +371,11 @@ initial steps in one `up` command.
 | `integrations grant --connection REVISION_ID --access ACCESS` | New in 0.1.0a7: let the local release use one connection's secret handles; `ACCESS` is `read` or `write`, repeat `--access` for both |
 | `secret set --handle HANDLE [--value-stdin]` | New in 0.1.0a7: create or replace a development secret value behind a handle |
 | `secret list`, `secret remove --handle HANDLE` | New in 0.1.0a7: list handle names (never values), or delete one value |
+| `ai enable --ollama MODE [--model NAME ...] [--verify] [--yes]` | Development only: set up AI on the Docker platform with Ollama (AI gateway, Agentic worker, AI policy, private-origin entries and the keyless `ollama-local` connection), then test a real model call. `MODE` is `auto`, `host` or `container`; use `--ollama-url URL` instead of `--ollama` for an Ollama server you run on a private network. Repeating it changes only what differs |
+| `ai status` | Show the Ollama mode, models, AI services, worker presence and the last connection test |
+| `ai disable [--remove-model-data]` | Stop the AI services and remove their settings; the connection, release and definitions stay |
+| `ai models refresh`, `ai models pull NAME [--yes]` | Read the served models again and update the context size, or pull a model into the local Ollama |
+| `ai models approve --provider openai-chat --model NAME`, `ai models remove --provider openai-chat --model NAME` | Approve one more model, or withdraw one model's approval; give `--served` instead of `--model` to approve every served model again. The worker and the AI gateway apply the change without a restart |
 | `token` | Refresh the verified host token in its private file and print only the path |
 | `stop` | Stop the Docker API and dependencies; for host mode, stop the foreground API first. Data is kept |
 
@@ -426,6 +432,13 @@ Expected: `Handle: pets-api-key`, followed by mode-specific restart instructions
 When the handle already had a value, the message starts with `Replaced privately.`
 Foreground mode reads the replacement at its next use; Docker mode requires
 `platform start` to refresh the mounted copy.
+
+**`ai` is for development only.** It needs the Docker platform from `up` and its
+demo environment. `enable` and `models pull` ask before a download, and `enable`
+asks before it adds private-origin entries; without a terminal they stop unless
+you pass `--yes`. Progress goes to standard error, so `--output json` leaves
+standard output as the result alone. [Run AI tasks with Ollama](../guides/ollama.md)
+covers the modes, the models and the error codes.
 
 ## Studio commands
 

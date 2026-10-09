@@ -85,4 +85,15 @@ async def test_real_database_native_service_graph(settings):
         history = context.get_bean(HistoryService)
         assert context.get_bean(OperationsController).history is history
         assert history.runtime is tasks.runtime and history.access is access
+        from firefly_weave.api.ai import AIController
+        from firefly_weave.connections.registry import ConnectorRegistry
+        from firefly_weave.operations.ai_connections import AIConnectionService
+        from firefly_weave.operations.lumi_gateway import LumiGatewayClient
+
+        # Generic and dedicated AI connection tests reach one gateway and take slots from one limit.
+        ai = context.get_bean(AIConnectionService)
+        assert context.get_bean(AIController).service is ai and ai.connections is tasks.connections
+        assert tasks.connections.test_admission == ai.admit
+        tester = context.get_bean(ConnectorRegistry).get("weave-agentic-provider").tester
+        assert tester.gateway is ai.gateway is context.get_bean(LumiGatewayClient)
         assert await app.state.resources.is_ready()

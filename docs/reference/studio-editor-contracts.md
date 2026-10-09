@@ -361,4 +361,4 @@ as two sentences: what the keys do in Studio, then what they do in n8n.
 The new editor is a per-viewer preference, off by default. The key
 `ui:weave.editorNext` holds `true` or `false`, and `?editor=next` in the URL
 turns the new editor on for that page, which is how tests open it. Settings ›
-Preferences will offer the same choice as a toggle.
+Preferences offers the same choice with the **Try the new editor** toggle.

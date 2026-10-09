@@ -33,10 +33,12 @@ from firefly_weave.contracts.values import JsonValue
 from fireflyframework_agentic.agents.base import FireflyAgent
 from fireflyframework_agentic.config import FireflyAgenticConfig
 from fireflyframework_agentic.reasoning.registry import reasoning_registry
-from pydantic_ai import StructuredDict
+from pydantic_ai import NativeOutput, PromptedOutput, StructuredDict, ToolOutput
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage, UsageLimits
+
+from weave_agentic_worker.errors import classify
 
 
 def private_framework_logging() -> None:
@@ -89,9 +91,14 @@ class _BoundedAgent(FireflyAgent[Any, Any]):
         except UsageLimitExceeded:
             self.failure = ConnectorFailure("LLM_LIMIT", "failed")
             raise self.failure from None
-        except Exception:
-            self.failure = ConnectorFailure("LLM_PROVIDER", "unknown")
+        except Exception as error:
+            self.failure = classify(error)
             raise self.failure from None
+
+
+def estimate_tokens(*parts: str) -> int:
+    """An approximate token count: one token per four characters, rounded up."""
+    return -(-sum(len(part) for part in parts) // 4)
 
 
 async def run_model(
@@ -102,11 +109,21 @@ async def run_model(
     settings: dict[str, Any],
     *,
     instructions: str = "",
+    context_tokens: int | None = None,
+    output_mode: str = "tool",
 ) -> JsonValue:
     private_framework_logging()
+    if context_tokens is not None:
+        # Ollama silently truncates a prompt beyond its context, so refuse it before any request.
+        prompt = json.dumps({"prompt": user_prompt, "context": context}, ensure_ascii=False)
+        schema = json.dumps(provider_schema(profile.output_schema))
+        if estimate_tokens(instructions, prompt, schema) + profile.options.max_tokens > context_tokens:
+            raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
     try:
         async with asyncio.timeout(profile.timeout_seconds):
-            return await _run_model(profile, user_prompt, context, model, settings, instructions=instructions)
+            return await _run_model(
+                profile, user_prompt, context, model, settings, instructions=instructions, output_mode=output_mode
+            )
     except TimeoutError:
         raise ConnectorFailure("LLM_TIMEOUT", "unknown") from None
 
@@ -119,6 +136,7 @@ async def _run_model(
     settings: dict[str, Any],
     *,
     instructions: str = "",
+    output_mode: str = "tool",
 ) -> JsonValue:
     try:
         agent = _BoundedAgent(model, profile, settings, instructions)
@@ -150,7 +168,11 @@ async def _run_model(
                 },
                 ensure_ascii=False,
             )
-        output_type = StructuredDict(provider_schema(profile.output_schema), name="WeaveResult")
+        if output_mode == "native" and not model.profile.get("supports_json_schema_output", False):
+            output_mode = "prompted"
+        output_type = {"native": NativeOutput, "tool": ToolOutput, "prompted": PromptedOutput}[output_mode](
+            StructuredDict(provider_schema(profile.output_schema), name="WeaveResult")
+        )
         final = await agent.run(prompt, output_type=output_type)
         result = final.output["result"]
         if validate_payload(profile.output_schema, result, {}):
@@ -170,8 +192,8 @@ async def _run_model(
         return output
     except ConnectorFailure:
         raise
-    except Exception:
-        raise ConnectorFailure("LLM_PROVIDER", "unknown") from None
+    except Exception as error:
+        raise classify(error) from None
 
 
 def provider_schema(source: dict[str, Any]) -> dict[str, Any]:
