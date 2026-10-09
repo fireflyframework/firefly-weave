@@ -170,10 +170,12 @@ export class ParamField {
     const spec = this.spec();
     const session = this.session();
     const locked = !!this.readOnly();
+    const resetReason = session.resetReason(spec);
     const items: RowMenuItem[] = [
       {
         label: "Reset to default",
-        disabled: locked || session.atDefault(spec),
+        disabled: locked || !!resetReason || session.atDefault(spec),
+        detail: resetReason ?? undefined,
         run: () => session.clear(spec),
       },
     ];

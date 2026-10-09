@@ -312,6 +312,115 @@ for (const size of sizes)
       ]);
     });
 
+    test("structural Reset menus protect populated paths and branches while empty path removal remains undoable", async ({
+      page,
+    }) => {
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      const details = await openStepFixture(page);
+      const before = await sourceText(page);
+      await details.openWithKeyboard("route-by-value");
+      const cases = details.field("cases");
+      const rows = cases.locator(".param-row.is-card");
+      await rows
+        .first()
+        .getByRole("button", { name: "Field menu for Path", exact: true })
+        .click();
+      let reset = page
+        .getByRole("menu", { name: "Field menu for Path", exact: true })
+        .getByRole("menuitem", { name: /Reset to default/ });
+      await expect(reset).toHaveAttribute("aria-disabled", "true");
+      await expect(reset).toContainText("Move or delete its steps first.");
+      await page.screenshot({
+        path: resolve(
+          `../build/editor-m3/task-13-fix2/protected-path-${size.tag}.png`,
+        ),
+      });
+      await reset.focus();
+      await reset.press("Enter");
+      await page.keyboard.press("Escape");
+      await expect(rows).toHaveCount(2);
+      await cases
+        .getByRole("button", { name: "Field menu for Paths", exact: true })
+        .click();
+      reset = page
+        .getByRole("menu", { name: "Field menu for Paths", exact: true })
+        .getByRole("menuitem", { name: /Reset to default/ });
+      await expect(reset).toHaveAttribute("aria-disabled", "true");
+      await expect(reset).toContainText("Move or delete its steps first.");
+      await reset.focus();
+      await reset.press("Enter");
+      await page.keyboard.press("Escape");
+      await details.close();
+      expect(await sourceText(page)).toBe(before);
+      await details.openWithKeyboard("fan-out");
+      await details
+        .field("branches")
+        .getByRole("button", { name: "Field menu for Branches", exact: true })
+        .click();
+      reset = page
+        .getByRole("menu", { name: "Field menu for Branches", exact: true })
+        .getByRole("menuitem", { name: /Reset to default/ });
+      await expect(reset).toHaveAttribute("aria-disabled", "true");
+      await expect(reset).toContainText("Move or delete its steps first.");
+      await reset.focus();
+      await reset.press("Enter");
+      await page.keyboard.press("Escape");
+      await details.close();
+      expect(await sourceText(page)).toBe(before);
+      await details.openWithKeyboard("route-by-value");
+      await rows
+        .nth(1)
+        .getByRole("button", { name: "Field menu for Path", exact: true })
+        .click();
+      reset = page
+        .getByRole("menu", { name: "Field menu for Path", exact: true })
+        .getByRole("menuitem", { name: /Reset to default/ });
+      await expect(reset).not.toHaveAttribute("aria-disabled", "true");
+      await reset.click();
+      await expect(rows).toHaveCount(1);
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(rows).toHaveCount(2);
+      await details.close();
+      expect(await sourceText(page)).toBe(before);
+      expect(errors).toEqual([]);
+    });
+
+    test("a final empty required path's Reset menu explains the minimum and keeps it", async ({
+      page,
+    }) => {
+      const workflow = parse(readFileSync(stepFixture, "utf8"));
+      workflow.spec.steps[2].cases = [
+        { when: { literal: true }, steps: [], output: { literal: {} } },
+      ];
+      const details = await openStepFixture(
+        page,
+        yamlFile("one-path.yaml", stringify(workflow)),
+      );
+      const before = await sourceText(page);
+      await details.openWithKeyboard("route-by-value");
+      const row = details.field("cases").locator(".param-row.is-card");
+      await row
+        .getByRole("button", { name: "Field menu for Path", exact: true })
+        .click();
+      const reset = page
+        .getByRole("menu", { name: "Field menu for Path", exact: true })
+        .getByRole("menuitem", { name: /Reset to default/ });
+      await expect(reset).toHaveAttribute("aria-disabled", "true");
+      await expect(reset).toContainText("Keep at least 1.");
+      await page.screenshot({
+        path: resolve(
+          `../build/editor-m3/task-13-fix2/required-path-${size.tag}.png`,
+        ),
+      });
+      await reset.focus();
+      await reset.press("Enter");
+      await page.keyboard.press("Escape");
+      await expect(row).toHaveCount(1);
+      await details.close();
+      expect(await sourceText(page)).toBe(before);
+    });
+
     test("object-list cards expose each item's mapping and malformed import before its children", async ({
       page,
     }) => {

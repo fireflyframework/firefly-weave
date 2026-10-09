@@ -1082,3 +1082,300 @@ describe("grouped list item state and permissions", () => {
     f.injector.destroy();
   });
 });
+
+describe("structural reset safety", () => {
+  function fixture(target = "route-by-value") {
+    const f = session(target);
+    const fields = f.form.state("parameters").fields;
+    const collection =
+      target === "route-by-value"
+        ? f.form
+            .children(fields[0].spec)
+            .shown.find((entry) => entry.spec.id === "cases")!.spec
+        : fields.find((entry) => entry.spec.id === "branches")!.spec;
+    const row = f.form.itemSpec(
+      collection,
+      target === "route-by-value" ? 0 : "ledger",
+      collection.item!,
+    );
+    const injector = Injector.create({
+      providers: [{ provide: ElementRef, useValue: new ElementRef({}) }],
+    });
+    const field = runInInjectionContext(injector, () => new ParamField());
+    field.session = signal(f.form) as never;
+    field.spec = signal(row) as never;
+    field.entry = signal(f.form.childEntry(row)) as never;
+    field.row = signal(true) as never;
+    return { ...f, collection, row, field, injector };
+  }
+  function replace(
+    f: ReturnType<typeof fixture>,
+    changes: Record<string, unknown>,
+  ) {
+    f.model.update(
+      f.form.target,
+      JSON.stringify({ ...f.form.controller.step(f.form.target), ...changes }),
+    );
+  }
+  it("disables a populated path's Reset with the removal reason and refuses its callback invoked directly", () => {
+    const f = fixture();
+    const reset = f.field
+      .menuItems()
+      .find((item) => item.label === "Reset to default")!;
+    expect(reset.disabled).toBe(true);
+    expect(reset.detail).toBe("Move or delete its steps first.");
+    const before = JSON.stringify(f.model.definition);
+    reset.run();
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.notes).toEqual(["Move or delete its steps first."]);
+    f.injector.destroy();
+  });
+  for (const target of ["route-by-value", "fan-out"]) {
+    it(`refuses direct populated structural row reset in ${target}`, () => {
+      const f = fixture(target);
+      const before = JSON.stringify(f.model.definition);
+      f.form.clear(f.row);
+      expect(JSON.stringify(f.model.definition)).toBe(before);
+      expect(f.notes).toEqual(["Move or delete its steps first."]);
+      f.injector.destroy();
+    });
+    it(`refuses whole populated collection reset in ${target}`, () => {
+      const f = fixture(target);
+      const before = JSON.stringify(f.model.definition);
+      f.form.clear(f.collection);
+      expect(JSON.stringify(f.model.definition)).toBe(before);
+      expect(f.notes).toEqual(["Move or delete its steps first."]);
+      f.injector.destroy();
+    });
+  }
+  it("keeps the last required empty path and presents its minimum-count reason", () => {
+    const f = fixture();
+    replace(f, {
+      cases: [{ when: { literal: true }, steps: [], output: { literal: {} } }],
+    });
+    const reset = f.field
+      .menuItems()
+      .find((item) => item.label === "Reset to default")!;
+    expect(reset.disabled).toBe(true);
+    expect(reset.detail).toBe("Keep at least 1.");
+    const before = JSON.stringify(f.model.definition);
+    f.form.clear(f.row);
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.notes).toEqual(["Keep at least 1."]);
+    f.injector.destroy();
+  });
+  it("keeps the last required named branch", () => {
+    const f = fixture("fan-out");
+    replace(f, {
+      branches: { ledger: { steps: [], output: { literal: { note: true } } } },
+    });
+    const before = JSON.stringify(f.model.definition);
+    f.form.clear(f.row);
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.notes).toEqual(["Keep at least 1."]);
+    f.injector.destroy();
+  });
+  it("preserves nested steps when Otherwise is reset", () => {
+    const f = fixture();
+    const otherwise = f.form
+      .children(f.form.state("parameters").fields[0].spec)
+      .shown.find((entry) => entry.spec.id === "otherwise")!.spec;
+    const before = JSON.stringify(f.model.definition);
+    f.form.clear(otherwise);
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.notes).toEqual(["Move or delete its steps first."]);
+    f.injector.destroy();
+  });
+  it("allows an empty Otherwise group to reset its result and Undo restores it", () => {
+    const f = fixture();
+    replace(f, {
+      default: { steps: [], output: { literal: { changed: true } } },
+    });
+    const otherwise = f.form
+      .children(f.form.state("parameters").fields[0].spec)
+      .shown.find((entry) => entry.spec.id === "otherwise")!.spec;
+    const before = JSON.stringify(f.model.definition);
+    f.form.clear(otherwise);
+    expect(f.form.controller.step(f.form.target)!["default"]).toEqual({
+      steps: [],
+      output: { literal: {} },
+    });
+    expect(f.notes).toEqual([]);
+    f.model.undo();
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    f.injector.destroy();
+  });
+  for (const target of ["route-by-value", "fan-out"]) {
+    it(`uses guarded removal for an empty structural row in ${target} and Undo restores it`, () => {
+      const f = fixture(target);
+      const row = f.form.itemSpec(
+        f.collection,
+        target === "route-by-value" ? 1 : "audit",
+        f.collection.item!,
+      );
+      const before = JSON.stringify(f.model.definition);
+      f.form.clear(row);
+      const step = f.form.controller.step(target)!;
+      expect(
+        target === "route-by-value"
+          ? (step["cases"] as unknown[]).length
+          : Object.keys(step["branches"] as object).length,
+      ).toBe(1);
+      expect(f.model.nodes().map((node) => node.step.id)).toContain(
+        target === "route-by-value" ? "notify-sales" : "wait-a-minute",
+      );
+      expect(f.notes).toEqual([]);
+      f.model.undo();
+      expect(JSON.stringify(f.model.definition)).toBe(before);
+      f.injector.destroy();
+    });
+    it(`refuses wholesale empty collection replacement in ${target} and directs edits to its controls`, () => {
+      const f = fixture(target);
+      replace(
+        f,
+        target === "route-by-value"
+          ? {
+              cases: [
+                { when: { literal: true }, steps: [], output: { literal: {} } },
+                {
+                  when: { literal: false },
+                  steps: [],
+                  output: { literal: {} },
+                },
+              ],
+            }
+          : {
+              branches: {
+                custom: { steps: [], output: { literal: { note: true } } },
+              },
+            },
+      );
+      const before = JSON.stringify(f.model.definition);
+      f.form.clear(f.collection);
+      expect(JSON.stringify(f.model.definition)).toBe(before);
+      expect(f.notes).toEqual([
+        target === "route-by-value"
+          ? "Use Add path or a path's Remove button."
+          : "Use Add branch or a branch's Remove button.",
+      ]);
+      f.injector.destroy();
+    });
+  }
+  it("resets a populated path's condition and output without deleting its steps", () => {
+    const f = fixture();
+    const cases = structuredClone(
+      f.form.controller.step(f.form.target)!["cases"] as Record<
+        string,
+        unknown
+      >[],
+    );
+    cases[0]["output"] = { literal: { changed: true } };
+    replace(f, { cases });
+    const children = f.form.children(f.row).shown;
+    f.form.clear(children.find((entry) => entry.spec.id === "case.when")!.spec);
+    f.form.clear(
+      children.find((entry) => entry.spec.id === "case.output")!.spec,
+    );
+    const stored = (
+      f.form.controller.step(f.form.target)!["cases"] as Record<
+        string,
+        unknown
+      >[]
+    )[0];
+    expect(stored["steps"]).toEqual(cases[0]["steps"]);
+    expect(stored["when"]).toBeUndefined();
+    expect(stored["output"]).toEqual({ literal: {} });
+    expect(f.notes).toEqual([]);
+    f.injector.destroy();
+  });
+  it("keeps a whole collection already at its default as a no-op", () => {
+    const f = fixture("fan-out");
+    replace(f, { branches: f.collection.default });
+    const before = JSON.stringify(f.model.definition);
+    const revision = f.model.revision;
+    f.form.clear(f.collection);
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.model.revision).toBe(revision);
+    expect(f.notes).toEqual([]);
+    f.injector.destroy();
+  });
+  it("retains model reference protection when an empty branch row is reset", () => {
+    const f = fixture("fan-out");
+    f.model.update(
+      "summarize",
+      JSON.stringify({
+        ...f.form.controller.step("summarize"),
+        prompt: { ref: "/steps/fan-out/output/audit" },
+      }),
+    );
+    const row = f.form.itemSpec(f.collection, "audit", f.collection.item!);
+    const before = JSON.stringify(f.model.definition);
+    f.form.clear(row);
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.notes).toEqual([
+      "Update references to this branch in source first.",
+    ]);
+    f.injector.destroy();
+  });
+  it("does not replace or rename empty referenced branches through whole Reset", () => {
+    const f = fixture("fan-out");
+    replace(f, {
+      branches: {
+        ledger: { steps: [], output: { literal: {} } },
+        audit: { steps: [], output: { literal: {} } },
+      },
+    });
+    f.model.update(
+      "summarize",
+      JSON.stringify({
+        ...f.form.controller.step("summarize"),
+        prompt: { ref: "/steps/fan-out/output/audit" },
+      }),
+    );
+    const before = JSON.stringify(f.model.definition);
+    f.form.clear(f.collection);
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.notes).toEqual(["Use Add branch or a branch's Remove button."]);
+    f.injector.destroy();
+  });
+  it("does not reset through an obsolete structural item descriptor", () => {
+    const f = fixture();
+    const before = JSON.stringify(f.model.definition);
+    f.form.clear({ ...f.row, label: "Obsolete" });
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.notes).toEqual([]);
+    f.injector.destroy();
+  });
+  it("allows an ordinary object-list data row containing a steps property to reset", () => {
+    const f = setup();
+    const list: ParamSpec = {
+      id: "rows",
+      path: ["prompt"],
+      type: "list",
+      label: "Rows",
+      mapping: "both",
+      item: {
+        id: "item",
+        path: [],
+        type: "fields",
+        label: "Item",
+        children: () => [],
+      },
+    };
+    const descriptor = f.controller.descriptor("summarize")!;
+    f.controller.descriptor = () => ({
+      ...descriptor,
+      form: () => ({ fields: [list] }),
+    });
+    f.session.write(list, {
+      mode: "fixed",
+      value: [{ steps: ["API data"] }, { steps: ["Other data"] }],
+    });
+    f.session.clear(f.session.itemSpec(list, 0, list.item!));
+    expect(f.session.read(list)).toEqual({
+      mode: "fixed",
+      value: [{ steps: ["Other data"] }],
+    });
+    expect(f.errors).toEqual([]);
+  });
+});

@@ -196,7 +196,83 @@ export class FormSession {
   }
   clear(spec: ParamSpec): void {
     if (!this.editable(spec)) return;
+    const reason = this.resetReason(spec);
+    if (reason) return this.host.notify(reason);
+    const structural = this.resetCollection(spec);
+    if (structural) {
+      if (structural.at !== undefined)
+        return this.listRemove(structural.collection, structural.at);
+      return;
+    }
     this.commit(resetChanges(this.subject(), spec), spec.id);
+  }
+  resetReason(spec: ParamSpec): string | null {
+    const live = this.resolve(spec)?.spec;
+    if (!live || (live.scope ?? "step") !== "step") return null;
+    const structural = this.resetCollection(live);
+    if (structural) {
+      const { collection, at } = structural;
+      if (at !== undefined) return this.removeReason(collection, at);
+      if (this.atDefault(collection)) return null;
+      const rows =
+        this.structure(collection) === "branches"
+          ? this.keyed(collection).map(([key]) => key)
+          : this.list(collection).map((_, index) => index);
+      if (
+        rows.some((row) => {
+          const steps = getAt(this.controller.step(this.target), [
+            ...collection.path,
+            row,
+            "steps",
+          ]);
+          return Array.isArray(steps) && steps.length;
+        })
+      )
+        return "Move or delete its steps first.";
+      const control =
+        this.structure(collection) === "branches" ? "branch" : "path";
+      return `Use Add ${control} or a ${control}'s Remove button.`;
+    }
+    if (
+      this.controller.step(this.target)?.kind === "switch" &&
+      samePath(live.path, ["default"])
+    ) {
+      const steps = getAt(this.controller.step(this.target), [
+        "default",
+        "steps",
+      ]);
+      if (Array.isArray(steps) && steps.length)
+        return "Move or delete its steps first.";
+    }
+    return null;
+  }
+  private resetCollection(spec: ParamSpec): {
+    collection: ParamSpec;
+    at?: number | string;
+  } | null {
+    if ((spec.scope ?? "step") !== "step") return null;
+    const fields = this.state("parameters").fields;
+    const candidates = fields.flatMap(({ spec: field }) => {
+      if (field.type !== "fields" || field.path.length) return [field];
+      const children = this.children(field);
+      return [
+        field,
+        ...children.shown.map((entry) => entry.spec),
+        ...children.collapsed,
+      ];
+    });
+    const collection = candidates.find(
+      (field) =>
+        (field.scope ?? "step") === "step" &&
+        ["cases", "branches"].includes(this.structure(field) ?? "") &&
+        samePath(spec.path.slice(0, field.path.length), field.path) &&
+        spec.path.length <= field.path.length + 1,
+    );
+    if (!collection) return null;
+    return {
+      collection,
+      at: spec.path[collection.path.length],
+    };
   }
   /** True when the field holds nothing or exactly its default (Reset to default has nothing to do). */
   atDefault(spec: ParamSpec): boolean {
