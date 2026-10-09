@@ -154,6 +154,53 @@ describe("form contract", () => {
     expect(formProblems(kind("mapped", form), step, ctx)).toEqual([]);
   });
 
+  it("reports a mapped list item whose list is not inside an expression", () => {
+    const item = (id: string): ParamSpec => text(id, [], { mapping: "both" });
+    const form: FormSpec = {
+      fields: [
+        { ...text("cc", ["cc"]), type: "list", item: item("cc-row") },
+        {
+          ...text("actions", ["rows"], { scope: "action" }),
+          type: "list",
+          item: item("action-row"),
+        },
+        {
+          ...text("workflowRows", ["metadata", "rows"], { scope: "workflow" }),
+          type: "list",
+          item: item("workflow-row"),
+        },
+        {
+          ...text("notes", ["notes"]),
+          type: "list",
+          item: {
+            ...text("note-row", []),
+            type: "fields",
+            children: () => [text("inner", ["note"], { mapping: "both" })],
+          },
+        },
+      ],
+    };
+    expect(formProblems(kind("lists", form), step, ctx)).toEqual([
+      'lists offers Fixed and Mapped for "cc-row", which isn\'t an expression.',
+      'lists offers Fixed and Mapped for "action-row", which isn\'t an expression.',
+      'lists offers Fixed and Mapped for "workflow-row", which isn\'t an expression.',
+      'lists offers Fixed and Mapped for "inner", which isn\'t an expression.',
+    ]);
+  });
+
+  it("allows a mapped list item whose list is under the workflow result", () => {
+    const form: FormSpec = {
+      fields: [
+        {
+          ...text("lines", ["spec", "output", "lines"], { scope: "workflow" }),
+          type: "list",
+          item: text("line", [], { mapping: "both" }),
+        },
+      ],
+    };
+    expect(formProblems(kind("result", form), step, ctx)).toEqual([]);
+  });
+
   it("allows custom components only for the decision table grid and the AI agent slots", () => {
     const grid: FormSpec = {
       fields: [

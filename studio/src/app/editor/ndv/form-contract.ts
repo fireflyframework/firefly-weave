@@ -25,6 +25,7 @@ import type {
   FormSpec,
   KindContext,
   ParamSpec,
+  Path,
   StepKindDescriptor,
 } from "./registry";
 
@@ -34,22 +35,51 @@ export const CUSTOM_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
   agent: ["slots", "tools"],
 };
 
-/** Every field of a form with its options, children and list items, depth first; item paths are relative. */
+/** A field of a form, with whether its value is an expression (Fixed | Mapped needs one). */
+export interface ParamEntry {
+  spec: ParamSpec;
+  expression: boolean;
+}
+
+/** Whether a field's own path, in its scope, holds an expression. */
+function holdsExpression(spec: ParamSpec, stepRoots: readonly Path[]): boolean {
+  const scope = spec.scope ?? "step";
+  return (
+    (scope === "step" && !!expressionRoot(spec.path, stepRoots)) ||
+    (scope === "workflow" && !!expressionRoot(spec.path, WORKFLOW_ROOTS))
+  );
+}
+
+/**
+ * Every field of a form with its options, children and list items, depth
+ * first. A list item's paths are relative to the item, so the item and its
+ * children are inside an expression exactly when their list is; any other
+ * field is judged by its own path.
+ */
 export function allParams(
   form: FormSpec | undefined,
   step: Step,
   ctx: KindContext,
-): { spec: ParamSpec; relative: boolean }[] {
-  const out: { spec: ParamSpec; relative: boolean }[] = [];
-  const visit = (spec: ParamSpec, relative: boolean, depth: number) => {
+  stepRoots: readonly Path[],
+): ParamEntry[] {
+  const out: ParamEntry[] = [];
+  const visit = (
+    spec: ParamSpec,
+    relative: boolean,
+    listExpression: boolean,
+    depth: number,
+  ) => {
     if (depth > 8) return;
-    out.push({ spec, relative });
-    if (spec.item) visit(spec.item, true, depth + 1);
+    const expression = relative
+      ? listExpression
+      : holdsExpression(spec, stepRoots);
+    out.push({ spec, expression });
+    if (spec.item) visit(spec.item, true, expression, depth + 1);
     for (const child of spec.children?.(step, ctx) ?? [])
-      visit(child, relative, depth + 1);
+      visit(child, relative, expression, depth + 1);
   };
   for (const spec of [...(form?.fields ?? []), ...(form?.options ?? [])])
-    visit(spec, false, 0);
+    visit(spec, false, false, 0);
   return out;
 }
 
@@ -63,20 +93,15 @@ export function formProblems(
   if (!descriptor.form) return [`${kind} has no Parameters form.`];
   const roots = descriptor.fields(step).map((field) => field.path);
   const params = [
-    ...allParams(descriptor.form(step, ctx), step, ctx),
-    ...allParams(descriptor.settings?.(step, ctx), step, ctx),
+    ...allParams(descriptor.form(step, ctx), step, ctx, roots),
+    ...allParams(descriptor.settings?.(step, ctx), step, ctx, roots),
   ];
   const problems = new Set<string>();
   const seen = new Set<string>();
   const twice = new Set<string>();
-  for (const { spec, relative } of params) {
+  for (const { spec, expression } of params) {
     if (seen.has(spec.id)) twice.add(spec.id);
     seen.add(spec.id);
-    const scope = spec.scope ?? "step";
-    const expression =
-      relative ||
-      (scope === "step" && !!expressionRoot(spec.path, roots)) ||
-      (scope === "workflow" && !!expressionRoot(spec.path, WORKFLOW_ROOTS));
     if (spec.mapping === "both" && !expression)
       problems.add(
         `${kind} offers Fixed and Mapped for "${spec.id}", which isn't an expression.`,
