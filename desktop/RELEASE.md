@@ -17,16 +17,16 @@ SPDX-License-Identifier: Apache-2.0
 -->
 # Desktop release versions
 
-The alpha14 product version is `0.1.0-alpha.14` in npm, Cargo and Tauri. It corresponds
-to Python `0.1.0a14` and the repository prerelease tag `v0.1.0a14`.
+The alpha15 product version is `0.1.0-alpha.15` in npm, Cargo and Tauri. It corresponds
+to Python `0.1.0a15` and the repository prerelease tag `v0.1.0a15`.
 
-Windows MSI uses the explicit numeric version `0.1.14`. Tauri's pinned bundler rejects
+Windows MSI uses the explicit numeric version `0.1.15`. Tauri's pinned bundler rejects
 nonnumeric prerelease identifiers when deriving MSI versions; its `windows.wix.version`
 override supplies the valid numeric installer version while filenames retain the product
 version. MSI compares only the first three fields. Future desktop alpha and stable
 releases must advance this numeric installer counter: the stable product `0.1.0`
 must not reset the MSI counter to `0.1.0`. The macOS internal bundle version also uses
-numeric `0.1.14`; its displayed product version remains the alpha product version.
+numeric `0.1.15`; its displayed product version remains the alpha product version.
 
 The Desktop installers workflow builds on four native runners and is dispatchable by
 an exact branch/tag ref. Versioned, target-specific unsigned artifacts contain only

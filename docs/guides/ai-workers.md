@@ -27,7 +27,7 @@ Use [Weave AI](weave-ai.md) when *you*, the person using Studio, want an
 explanation or a proposed definition change. Weave AI has separate configuration
 and does not execute workflow AI tasks.
 
-The examples here use Weave **0.1.0a14** and the **0.1.6 Agentic worker package**,
+The examples here use Weave **0.1.0a15** and the **0.1.7 Agentic worker package**,
 whose core dependency is
 pinned to that Weave version. The catalog references below retain their own
 `1.0.0` definition and task versions.
