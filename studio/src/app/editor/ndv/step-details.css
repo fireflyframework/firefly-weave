@@ -273,9 +273,6 @@ weave-step-details {
   .sd-panes {
     grid-template-columns: minmax(0, 1fr);
   }
-  .sd-side {
-    display: none;
-  }
 }
 @media (max-width: 767px), (pointer: coarse) {
   .sd-top {
@@ -295,5 +292,197 @@ weave-step-details {
     width: var(--control-touch);
     height: var(--control-touch);
     min-height: var(--control-touch);
+  }
+}
+
+.step-details[data-layout="three"] .sd-panes[style] {
+  grid-template-columns: var(--sd-input) minmax(368px, 1fr) var(--sd-output);
+}
+.sd-separator {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  z-index: 3;
+  width: 24px;
+  touch-action: none;
+  cursor: col-resize;
+  border-radius: var(--radius-xs);
+}
+.sd-separator-input {
+  left: calc(var(--sd-input, 28%) - 12px);
+}
+.sd-separator-output {
+  right: calc(var(--sd-output, 28%) - 12px);
+}
+.sd-separator:hover,
+.sd-separator:focus-visible {
+  background: var(--border-hover);
+}
+.sd-separator:focus-visible {
+  outline: 2px solid var(--focus);
+}
+.sd-execute {
+  display: inline-flex;
+  flex: none;
+}
+.sd-execute > button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  gap: var(--space-2);
+}
+/* This focusable action explains its limitation instead of starting a run. */
+.step-details .sd-execute > button.primary[aria-disabled="true"],
+.step-details .sd-execute > button.primary[aria-disabled="true"]:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  cursor: help;
+}
+.sd-execute weave-row-menu .row-menu-toggle {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid var(--line);
+}
+.sd-data-tabs,
+.sd-segments {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  margin: var(--space-2) 0;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.step-details :is(.sd-data-tabs, .sd-segments) button[role="tab"] {
+  flex: 1;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font: var(--type-label);
+}
+.step-details
+  :is(.sd-data-tabs, .sd-segments)
+  button[role="tab"][aria-selected="true"] {
+  background: var(--hover);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+.step-details[data-layout="two"] .sd-panes {
+  grid-template-columns: minmax(368px, 1fr) minmax(280px, 40%);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.step-details[data-layout="two"] .sd-main {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+.step-details[data-layout="two"] .sd-data-tabs {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 14px var(--space-2) 0;
+}
+.step-details[data-layout="two"] :is(.sd-input, .sd-output) {
+  grid-column: 2;
+  grid-row: 2;
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  margin-top: 0;
+}
+.step-details[data-layout="sheet"] {
+  inset: 0;
+  background: var(--bg);
+}
+.step-details[data-layout="sheet"] .sd-top {
+  padding: 0 var(--space-2);
+}
+.step-details[data-layout="sheet"] .sd-panes {
+  display: block;
+  overflow: auto;
+}
+.step-details[data-layout="sheet"] .sd-segments {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin: 0;
+  border-radius: 0;
+  border-width: 0 0 1px;
+  background: var(--bg);
+}
+.step-details[data-layout="sheet"] .sd-pane {
+  margin: 0;
+  border-radius: 0;
+  border-width: 0;
+  box-shadow: none;
+}
+.step-details[data-layout="sheet"] .sd-head {
+  position: sticky;
+  top: 34px;
+  z-index: 3;
+  background: var(--raised);
+}
+.step-details[data-layout="sheet"] :is(.sd-tabpanel, .sd-pane-body) {
+  overflow: visible;
+}
+.sd-yaml {
+  width: 100%;
+  min-height: 240px;
+  font: var(--type-mono);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.sd-yaml-label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font: var(--type-label);
+}
+
+.step-details .sd-pane[hidden] {
+  display: none;
+}
+.sd-name-block {
+  flex: 1;
+}
+.sd-head {
+  flex-wrap: wrap;
+}
+.sd-head > .sd-name-block {
+  flex-basis: 120px;
+}
+.sd-head > .sd-spacer {
+  display: none;
+}
+.sd-head > weave-row-menu {
+  flex: none;
+}
+.sd-execute weave-row-menu .row-menu-toggle {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .step-details :is(.sd-data-tabs, .sd-segments) button[role="tab"],
+  .sd-execute > button,
+  .sd-execute .row-menu-toggle,
+  .sd-head > weave-row-menu .row-menu-toggle {
+    min-height: var(--control-touch);
+    min-width: var(--control-touch);
+  }
+  .step-details[data-layout="sheet"] .sd-head {
+    top: 50px;
+  }
+  .sd-separator {
+    width: var(--control-touch);
+  }
+  .sd-separator-input {
+    left: calc(var(--sd-input, 28%) - 22px);
+  }
+  .sd-separator-output {
+    right: calc(var(--sd-output, 28%) - 22px);
   }
 }

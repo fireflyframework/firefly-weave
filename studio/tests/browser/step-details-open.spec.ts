@@ -61,7 +61,18 @@ for (const size of sizes)
       await expect(details.dialog).toHaveCount(0);
       await expect(details.node("lookup")).toBeFocused();
       await details.open("lookup");
-      await page.locator(".sd-scrim").click({ position: { x: 4, y: 4 } });
+      if (size.width < 768) {
+        const box = await details.dialog.boundingBox();
+        expect([box!.x, box!.y, box!.width, box!.height]).toEqual([
+          0,
+          0,
+          size.width,
+          size.height,
+        ]);
+        await details.close();
+      } else {
+        await page.locator(".sd-scrim").click({ position: { x: 4, y: 4 } });
+      }
       await expect(details.dialog).toHaveCount(0);
     });
 

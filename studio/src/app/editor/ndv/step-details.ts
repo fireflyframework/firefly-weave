@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
   Injector,
   ViewEncapsulation,
@@ -36,6 +37,17 @@ import {
   untracked,
   viewChild,
 } from "@angular/core";
+import { parse as parseYaml, stringify as yamlText } from "yaml";
+import { Modal } from "../../dialog";
+import {
+  KEY_STEP,
+  readWidths,
+  resized,
+  toEdge,
+  writeWidths,
+  defaultWidths,
+  type PaneWidths,
+} from "./panes/layout";
 import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import {
@@ -65,6 +77,9 @@ export const KEY_PLATFORM: KeyPlatform =
   /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
     ? "mac"
     : "other";
+export const EXECUTE_REASON =
+  "Executing a single step isn't available yet. Simulate the workflow runs every step.";
+
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const CONTROL =
@@ -88,7 +103,7 @@ const visible = (element: HTMLElement): boolean =>
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   encapsulation: ViewEncapsulation.None,
-  imports: [Icon, RowMenu],
+  imports: [Icon, RowMenu, Modal],
   templateUrl: "./step-details.html",
   styleUrl: "./step-details.css",
   host: { "(document:focusin)": "focusIn($event)" },
@@ -113,6 +128,23 @@ export class StepDetails {
     next: `Next step (${formatCombo("Mod+Alt+Shift+ArrowRight", KEY_PLATFORM)})`,
   };
 
+  readonly pane = signal<"input" | "parameters" | "output">("parameters");
+  readonly dataPane = signal<"input" | "output">("input");
+  readonly widths = signal<PaneWidths>({ input: 0, output: 0 });
+  private readonly panes = viewChild<ElementRef<HTMLElement>>("panes");
+  private total = 0;
+  private dragging: {
+    side: keyof PaneWidths;
+    x: number;
+    start: PaneWidths;
+    pointer: number;
+    handle: HTMLElement;
+  } | null = null;
+  yamlOpen = false;
+  yamlText = "";
+  yamlError = "";
+  readonly executeReason = EXECUTE_REASON;
+
   constructor() {
     effect(() => {
       this.details.opening();
@@ -128,6 +160,23 @@ export class StepDetails {
     effect(() => {
       this.host().tick();
       untracked(() => this.keepTarget());
+    });
+
+    const observer = new ResizeObserver(([entry]) => {
+      this.dragEnd();
+      this.total = Math.round(entry.contentRect.width);
+      this.widths.set(readWidths(this.total));
+    });
+    afterNextRender(
+      () => {
+        const panes = this.panes()?.nativeElement;
+        if (panes) observer.observe(panes);
+      },
+      { injector: this.injector },
+    );
+    inject(DestroyRef).onDestroy(() => {
+      this.dragEnd();
+      observer.disconnect();
     });
   }
 
@@ -224,9 +273,12 @@ export class StepDetails {
 
   // ------------------------------------------------------------- moving
   currentRegion(): Region | null {
-    const region = (document.activeElement as HTMLElement | null)
+    const active = document.activeElement as HTMLElement | null;
+    const region = active
       ?.closest("[data-region]")
       ?.getAttribute("data-region");
+    if (!region && active?.closest(".sd-segments")) return this.pane();
+    if (!region && active?.closest(".sd-data-tabs")) return this.dataPane();
     return (region as Region | null) ?? null;
   }
   go(id: string) {
@@ -267,6 +319,196 @@ export class StepDetails {
       return;
     }
     this.details.close();
+  }
+
+  // ------------------------------------------------------------- panes
+  paneStyle(): Record<string, string> {
+    const w = this.widths();
+    return w.input
+      ? { "--sd-input": `${w.input}px`, "--sd-output": `${w.output}px` }
+      : {};
+  }
+  showPane(which: "input" | "parameters" | "output"): boolean {
+    const layout = this.layout();
+    if (layout === "three") return true;
+    if (layout === "two")
+      return which === "parameters" || which === this.dataPane();
+    return which === this.pane();
+  }
+  maxOf(side: keyof PaneWidths): number {
+    return toEdge(this.widths(), side, "max", this.total)[side];
+  }
+  private setWidths(next: PaneWidths) {
+    this.widths.set(next);
+    writeWidths(next, this.total);
+  }
+  dragStart(event: PointerEvent, side: keyof PaneWidths) {
+    if (event.button !== 0 || this.dragging || this.layout() !== "three")
+      return;
+    event.preventDefault();
+    const handle = event.currentTarget as HTMLElement;
+    handle.setPointerCapture(event.pointerId);
+    this.dragging = {
+      side,
+      x: event.clientX,
+      start: this.widths(),
+      pointer: event.pointerId,
+      handle,
+    };
+  }
+  dragMove(event: PointerEvent) {
+    const drag = this.dragging;
+    if (!drag || drag.pointer !== event.pointerId) return;
+    const delta = (event.clientX - drag.x) * (drag.side === "input" ? 1 : -1);
+    this.widths.set(resized(drag.start, drag.side, delta, this.total));
+  }
+  dragEnd(event?: PointerEvent) {
+    const drag = this.dragging;
+    if (!drag || (event && drag.pointer !== event.pointerId)) return;
+    this.dragging = null;
+    if (drag.handle.hasPointerCapture(drag.pointer))
+      drag.handle.releasePointerCapture(drag.pointer);
+    writeWidths(this.widths(), this.total);
+  }
+  separatorKey(event: KeyboardEvent, side: keyof PaneWidths) {
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey)
+      return;
+    const grow = side === "input" ? "ArrowRight" : "ArrowLeft";
+    const shrink = side === "input" ? "ArrowLeft" : "ArrowRight";
+    let next: PaneWidths | null = null;
+    if (event.key === grow)
+      next = resized(this.widths(), side, KEY_STEP, this.total);
+    else if (event.key === shrink)
+      next = resized(this.widths(), side, -KEY_STEP, this.total);
+    else if (event.key === "Home")
+      next = toEdge(this.widths(), side, "min", this.total);
+    else if (event.key === "End")
+      next = toEdge(this.widths(), side, "max", this.total);
+    if (!next) return;
+    event.preventDefault();
+    this.setWidths(next);
+  }
+  resetWidths() {
+    this.setWidths(defaultWidths(this.total));
+  }
+
+  // ------------------------------------------------------------ regions
+  private regions(): Region[] {
+    return ["header", "input", "parameters", "output"];
+  }
+  cycleRegion(delta: 1 | -1) {
+    const order = this.regions();
+    const at = order.indexOf(this.currentRegion() ?? "parameters");
+    const next = order[(at + delta + order.length) % order.length];
+    if (this.layout() === "sheet")
+      this.pane.set(next === "header" ? "parameters" : next);
+    if (this.layout() === "two" && (next === "input" || next === "output"))
+      this.dataPane.set(next);
+    afterNextRender(() => this.applyFocus({ kind: "region", region: next }), {
+      injector: this.injector,
+    });
+  }
+
+  // ------------------------------------------------------- execute step
+  executeLabel(): string {
+    return this.target() === "$trigger" ? "Execute workflow" : "Execute step";
+  }
+  canExecute(): boolean {
+    return this.target() !== "$end" && !this.controller().readOnlyReason();
+  }
+  explainExecute() {
+    this.host().notify(EXECUTE_REASON);
+  }
+  executeItems(): RowMenuItem[] {
+    const blocked = this.host().blocker("simulate");
+    return [
+      {
+        label: "Simulate the workflow",
+        detail:
+          blocked ||
+          "Runs every step with test data. No real systems are called.",
+        disabled: !!blocked,
+        run: () => {
+          const host = this.host();
+          this.close();
+          void host.runCommand("simulate");
+        },
+      },
+    ];
+  }
+
+  // ---------------------------------------------------------------- more
+  moreItems(): RowMenuItem[] {
+    const host = this.host();
+    const id = this.target();
+    const locked = !!this.controller().readOnlyReason();
+    if (this.pseudo()) return [];
+    return [
+      { label: "Rename", disabled: locked, run: () => this.startRename() },
+      {
+        label: "Duplicate",
+        disabled: locked,
+        run: () => void host.duplicate(id),
+      },
+      { label: "Copy as YAML", run: () => void this.copyYaml() },
+      { label: "Edit as YAML", disabled: locked, run: () => this.openYaml() },
+      {
+        label: "Delete",
+        danger: true,
+        disabled: locked,
+        run: () => void host.remove(id),
+      },
+    ];
+  }
+  private async copyYaml() {
+    const step = this.controller().step(this.target());
+    if (!step) return;
+    try {
+      await navigator.clipboard.writeText(yamlText(step));
+      this.host().notify(`Copied ${step.id} as YAML.`);
+    } catch {
+      this.host().notify(
+        "Studio couldn't reach the clipboard. Use Edit as YAML and copy from there.",
+      );
+    }
+  }
+  openYaml() {
+    const step = this.controller().step(this.target());
+    if (!step || this.controller().readOnlyReason()) return;
+    this.yamlText = yamlText(step);
+    this.yamlError = "";
+    this.yamlOpen = true;
+  }
+  applyYaml() {
+    const step = this.controller().step(this.target());
+    if (!step) return;
+    const locked = this.controller().readOnlyReason();
+    if (locked) {
+      this.yamlError = locked;
+      return;
+    }
+    let next: unknown;
+    try {
+      next = parseYaml(this.yamlText);
+    } catch (error) {
+      this.yamlError = `This isn't valid YAML: ${(error as Error).message}`;
+      return;
+    }
+    const value = next as { id?: unknown; kind?: unknown } | null;
+    if (!value || value.id !== step.id || value.kind !== step.kind) {
+      this.yamlError =
+        "Keep the step's ID and kind. Rename the step with Rename.";
+      return;
+    }
+    const host = this.host();
+    host.error = "";
+    host.perform(() => host.model.update(step.id, JSON.stringify(value)));
+    if (host.error) {
+      this.yamlError = host.error;
+      host.error = "";
+      return;
+    }
+    this.yamlOpen = false;
   }
 
   // -------------------------------------------------------------- rename
@@ -356,10 +598,10 @@ export class StepDetails {
   tabKey(event: KeyboardEvent) {
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey)
       return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     const tabs = [
-      ...this.dialog().nativeElement.querySelectorAll<HTMLElement>(
-        '.sd-tabs [role="tab"]',
+      ...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(
+        '[role="tab"]',
       ),
     ];
     const at = tabs.indexOf(document.activeElement as HTMLElement);
@@ -367,7 +609,12 @@ export class StepDetails {
     event.preventDefault();
     const next =
       tabs[
-        (at + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? tabs.length - 1
+            : (at + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) %
+              tabs.length
       ];
     next.click();
     next.focus();
@@ -375,6 +622,27 @@ export class StepDetails {
 
   // -------------------------------------------------------------- focus
   applyFocus(focus: FocusTarget) {
+    const region = focus.kind === "region" ? focus.region : "parameters";
+    if (this.layout() === "sheet") {
+      const pane = region === "header" ? "parameters" : region;
+      if (this.pane() !== pane) {
+        this.pane.set(pane);
+        afterNextRender(() => this.applyFocus(focus), {
+          injector: this.injector,
+        });
+        return;
+      }
+    } else if (
+      this.layout() === "two" &&
+      (region === "input" || region === "output") &&
+      this.dataPane() !== region
+    ) {
+      this.dataPane.set(region);
+      afterNextRender(() => this.applyFocus(focus), {
+        injector: this.injector,
+      });
+      return;
+    }
     const root = this.dialog().nativeElement;
     const control = (scope: Element | null | undefined): HTMLElement | null =>
       scope
@@ -398,8 +666,15 @@ export class StepDetails {
       found = control(
         panel?.querySelector("[data-param][data-required-empty]"),
       );
-    else if (focus.kind === "region")
-      found = control(root.querySelector(`[data-region="${focus.region}"]`));
+    else if (focus.kind === "region") {
+      const region = root.querySelector<HTMLElement>(
+        `[data-region="${focus.region}"]`,
+      );
+      found =
+        focus.region === "parameters"
+          ? (control(panel) ?? control(root.querySelector(".sd-tabs")))
+          : (control(region) ?? region);
+    }
     const name = root.querySelector<HTMLElement>(".sd-name:not([disabled])");
     found ??=
       control(panel?.querySelector("[data-param]")) ??
@@ -444,6 +719,7 @@ export class StepDetails {
   // ---------------------------------------------------------------- keys
   key(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
+    if ((event.target as HTMLElement).closest(".modal-panel")) return;
     if (event.key === "Tab") return this.trapTab(event);
     if (event.key === "Escape") return this.escape(event);
     const target = event.target as HTMLElement;
@@ -481,6 +757,16 @@ export class StepDetails {
       case "save":
         event.preventDefault();
         void host.runCommand(host.profile ? "save" : "export");
+        return;
+      case "nextRegion":
+        event.preventDefault();
+        return this.cycleRegion(1);
+      case "previousRegion":
+        event.preventDefault();
+        return this.cycleRegion(-1);
+      case "executeStep":
+        event.preventDefault();
+        if (this.canExecute()) this.explainExecute();
         return;
       default:
         return;

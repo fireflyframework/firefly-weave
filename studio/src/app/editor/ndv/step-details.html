@@ -61,11 +61,70 @@ SPDX-License-Identifier: Apache-2.0
       <weave-icon name="close" />
     </button>
   </div>
-  <div class="sd-panes">
+  <div #panes class="sd-panes" [style]="paneStyle()">
+    @if (layout() === "sheet") {
+      <div
+        class="sd-segments"
+        role="tablist"
+        aria-label="Step details panes"
+        (keydown)="tabKey($event)"
+      >
+        @for (choice of ["input", "parameters", "output"]; track choice) {
+          <button
+            type="button"
+            role="tab"
+            [attr.aria-controls]="'sd-region-' + choice"
+            [attr.aria-selected]="pane() === choice"
+            [attr.tabindex]="pane() === choice ? 0 : -1"
+            (click)="pane.set($any(choice))"
+          >
+            {{
+              choice === "input"
+                ? target() === "$trigger"
+                  ? "Test event"
+                  : "Input"
+                : choice === "parameters"
+                  ? "Parameters"
+                  : "Output"
+            }}
+          </button>
+        }
+      </div>
+    }
+    @if (layout() === "two") {
+      <div
+        class="sd-data-tabs"
+        role="tablist"
+        aria-label="Data"
+        (keydown)="tabKey($event)"
+      >
+        @for (choice of ["input", "output"]; track choice) {
+          <button
+            type="button"
+            role="tab"
+            [attr.aria-controls]="'sd-region-' + choice"
+            [attr.aria-selected]="dataPane() === choice"
+            [attr.tabindex]="dataPane() === choice ? 0 : -1"
+            (click)="dataPane.set($any(choice))"
+          >
+            {{
+              choice === "input"
+                ? target() === "$trigger"
+                  ? "Test event"
+                  : "Input"
+                : "Output"
+            }}
+          </button>
+        }
+      </div>
+    }
     <section
       class="sd-pane sd-side sd-input"
       aria-label="Input data"
       data-region="input"
+      id="sd-region-input"
+      tabindex="-1"
+      [hidden]="!showPane('input')"
     >
       <header class="sd-pane-head">
         <h3 class="sd-pane-title">
@@ -74,12 +133,34 @@ SPDX-License-Identifier: Apache-2.0
       </header>
       <div class="sd-pane-body"></div>
     </section>
+    @if (layout() === "three") {
+      <div
+        class="sd-separator sd-separator-input"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize Input"
+        tabindex="0"
+        [attr.aria-valuenow]="widths().input"
+        [attr.aria-valuemin]="240"
+        [attr.aria-valuemax]="maxOf('input')"
+        (pointerdown)="dragStart($event, 'input')"
+        (pointermove)="dragMove($event)"
+        (pointerup)="dragEnd($event)"
+        (pointercancel)="dragEnd($event)"
+        (lostpointercapture)="dragEnd($event)"
+        (keydown)="separatorKey($event, 'input')"
+        (dblclick)="resetWidths()"
+      ></div>
+    }
     <section
       class="sd-pane sd-main"
       aria-label="Parameters"
       data-region="parameters"
+      id="sd-region-parameters"
+      tabindex="-1"
+      [hidden]="!showPane('parameters')"
     >
-      <header class="sd-head" data-region="header">
+      <header class="sd-head" data-region="header" tabindex="-1">
         <span class="sd-kind" aria-hidden="true"
           ><weave-icon [name]="kindIcon()" [size]="20"
         /></span>
@@ -122,6 +203,33 @@ SPDX-License-Identifier: Apache-2.0
           }
         </div>
         <span class="sd-spacer"></span>
+        @if (canExecute()) {
+          <div class="sd-execute">
+            <button
+              type="button"
+              class="primary"
+              aria-disabled="true"
+              aria-describedby="sd-execute-reason"
+              (click)="explainExecute()"
+            >
+              <weave-icon name="execute" [size]="16" />{{ executeLabel() }}
+            </button>
+            <weave-row-menu
+              label="More ways to execute"
+              icon="chevronDown"
+              [items]="executeItems()"
+            />
+            <span id="sd-execute-reason" class="sr-only">{{
+              executeReason
+            }}</span>
+          </div>
+        }
+        @if (moreItems().length) {
+          <weave-row-menu
+            [label]="'More actions for ' + name()"
+            [items]="moreItems()"
+          />
+        }
       </header>
       <div
         class="sd-tabs"
@@ -177,10 +285,32 @@ SPDX-License-Identifier: Apache-2.0
         [hidden]="tab() !== 'settings'"
       ></div>
     </section>
+    @if (layout() === "three") {
+      <div
+        class="sd-separator sd-separator-output"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize Output"
+        tabindex="0"
+        [attr.aria-valuenow]="widths().output"
+        [attr.aria-valuemin]="240"
+        [attr.aria-valuemax]="maxOf('output')"
+        (pointerdown)="dragStart($event, 'output')"
+        (pointermove)="dragMove($event)"
+        (pointerup)="dragEnd($event)"
+        (pointercancel)="dragEnd($event)"
+        (lostpointercapture)="dragEnd($event)"
+        (keydown)="separatorKey($event, 'output')"
+        (dblclick)="resetWidths()"
+      ></div>
+    }
     <section
       class="sd-pane sd-side sd-output"
       aria-label="Output data"
       data-region="output"
+      id="sd-region-output"
+      tabindex="-1"
+      [hidden]="!showPane('output')"
     >
       <header class="sd-pane-head">
         <h3 class="sd-pane-title">Output</h3>
@@ -240,5 +370,35 @@ SPDX-License-Identifier: Apache-2.0
         />
       }
     </div>
+  }
+  @if (yamlOpen) {
+    <weave-modal
+      [heading]="'Edit ' + name() + ' as YAML'"
+      closeLabel="Cancel editing"
+      (dismiss)="yamlOpen = false"
+    >
+      <label class="sd-yaml-label" for="sd-yaml">Step YAML</label>
+      <textarea
+        id="sd-yaml"
+        class="sd-yaml"
+        spellcheck="false"
+        aria-label="Step YAML"
+        [attr.aria-invalid]="yamlError ? 'true' : null"
+        [attr.aria-describedby]="yamlError ? 'sd-yaml-error' : null"
+        [value]="yamlText"
+        (input)="yamlText = $any($event.target).value"
+      ></textarea>
+      @if (yamlError) {
+        <p id="sd-yaml-error" class="field-error" role="alert">
+          <weave-icon name="warning" [size]="16" />{{ yamlError }}
+        </p>
+      }
+      <div class="dialog-actions">
+        <button type="button" (click)="yamlOpen = false">Cancel</button>
+        <button type="button" class="primary" (click)="applyYaml()">
+          Apply
+        </button>
+      </div>
+    </weave-modal>
   }
 </section>
