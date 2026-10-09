@@ -162,6 +162,27 @@ describe("fields from a schema", () => {
     );
     expect(children.map((c) => c.id)).toEqual(["input.settings.region"]);
   });
+  it("leaves out a list or map whose items or values are secret", () => {
+    const form = paramsFromSchema(
+      {
+        type: "object",
+        required: ["keys"],
+        properties: {
+          keys: { type: "array", items: { type: "string", "x-secret": true } },
+          tokens: {
+            type: "object",
+            additionalProperties: { type: "string", "x-secret": true },
+          },
+          label: { type: "string" },
+        },
+      },
+      ["with"],
+      { idPrefix: "input." },
+    );
+    expect([...form.fields, ...(form.options ?? [])].map((f) => f.id)).toEqual([
+      "input.label",
+    ]);
+  });
   it("counts a required constant as set by its constant", () => {
     const form = paramsFromSchema(
       {

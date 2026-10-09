@@ -76,11 +76,25 @@ const exampleText = (value: unknown): string =>
   typeof value === "string" ? value : JSON.stringify(value);
 
 /**
+ * A secret anywhere in a value: the value itself, or the items or values of
+ * a list or map (recursively). A form never writes one into workflow source.
+ */
+const holdsSecret = (info: FieldInfo): boolean => {
+  if (info.secret) return true;
+  // Only containers have items or values; memberField gives any other kind a
+  // fresh placeholder member, which would recurse forever.
+  if (info.kind !== "list" && info.kind !== "table" && info.kind !== "map")
+    return false;
+  const member = memberField(info);
+  return member !== null && holdsSecret(member);
+};
+
+/**
  * The properties a form shows. A secret is never written from a form, and a
  * `false` schema holds no value, so neither gets a field, in a group or not.
  */
 const shownInfos = (infos: FieldInfo[]): FieldInfo[] =>
-  infos.filter((info) => !info.secret && info.kind !== "never");
+  infos.filter((info) => !holdsSecret(info) && info.kind !== "never");
 
 /**
  * The value a field starts with, as the classic form fills it: a constant is
