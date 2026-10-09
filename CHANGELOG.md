@@ -93,6 +93,8 @@ SPDX-License-Identifier: Apache-2.0
 - Call the Studio assistant Weave AI throughout the documentation. Its guide is
   now [Use Weave AI](docs/guides/weave-ai.md); [the previous guide](docs/guides/lumi.md)
   points to it. API paths, permissions and role names keep `lumi`.
+- Studio no longer marks a workflow it just opened or created as Unsaved before
+  any edit when it is not connected to a platform.
 
 ## 0.1.0a14
 
