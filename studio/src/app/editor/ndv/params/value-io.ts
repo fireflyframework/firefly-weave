@@ -237,15 +237,20 @@ export function isDefault(subject: FormSubject, spec: ParamSpec): boolean {
   );
 }
 
-/** Back to the default: delete the key, or write the default where the field can't be omitted. */
+/**
+ * Back to the default: delete the key, or write the default where the field
+ * can't be omitted (a required field, or one that asks for it with
+ * `whenRemoved: "default"` because the language needs its key).
+ */
 export function resetChanges(
   subject: FormSubject,
   spec: ParamSpec,
 ): FormChange[] {
+  const keep = spec.required || spec.whenRemoved === "default";
   return writeParam(
     subject,
     spec,
-    spec.required && spec.default !== undefined ? fixed(spec.default) : ABSENT,
+    keep && spec.default !== undefined ? fixed(spec.default) : ABSENT,
   );
 }
 

@@ -29,6 +29,7 @@ import {
   type Json,
   type KindContext,
   type NdvContext,
+  type ParamSpec,
   type ParameterComponent,
   type RealExecutionSupport,
   type SampleContext,
@@ -125,6 +126,33 @@ export function registerAgent(): void {
     load: async () => AgentParameters,
   });
 }
+
+// A field that is always written, even when removed: the language requires its
+// key, so removing it writes the default. Leaving the member out deletes the key.
+export const keepsItsKey: ParamSpec = {
+  id: "concurrency",
+  path: ["concurrency"],
+  type: "number",
+  label: "Run at most",
+  default: 2,
+  whenRemoved: "default",
+};
+export const deletesItsKey: ParamSpec = {
+  ...keepsItsKey,
+  whenRemoved: "delete",
+};
+export const omitsTheChoice: ParamSpec = {
+  id: "description",
+  path: ["description"],
+  type: "text",
+  label: "Description",
+};
+export const removedChoices: NonNullable<ParamSpec["whenRemoved"]>[] = [
+  "delete",
+  "default",
+  // @ts-expect-error a field either deletes its key or writes the default
+  "clear",
+];
 
 // What loop and call parameters read.
 export function loopItem(ctx: NdvContext, loop: string): Json | null {

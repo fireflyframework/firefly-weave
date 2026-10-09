@@ -34,6 +34,8 @@ export function llmForm(_step: Step, ctx: KindContext): FormSpec {
         type: "select",
         label: "Model",
         required: true,
+        default: "default",
+        whenRemoved: "default",
         choices: Object.entries(profiles).map(([name, profile]) => {
           const model = isRecord(profile) ? profile["model"] : undefined;
           return {
@@ -51,6 +53,8 @@ export function llmForm(_step: Step, ctx: KindContext): FormSpec {
         type: "multiline",
         label: "Prompt",
         required: true,
+        default: "",
+        whenRemoved: "default",
         mapping: "both",
         templateCapable: true,
       },
@@ -63,6 +67,7 @@ export function llmForm(_step: Step, ctx: KindContext): FormSpec {
         label: "Context",
         mapping: "both",
         default: {},
+        whenRemoved: "default",
         addLabel: "Add context field",
       },
       {
@@ -71,6 +76,7 @@ export function llmForm(_step: Step, ctx: KindContext): FormSpec {
         type: "text",
         label: "AI action version",
         default: "weave-agentic-generate@1.0.0",
+        whenRemoved: "default",
         hint: "The published action that runs the AI worker.",
       },
       {
@@ -79,6 +85,7 @@ export function llmForm(_step: Step, ctx: KindContext): FormSpec {
         type: "connection",
         label: "AI connection",
         default: "ai",
+        whenRemoved: "default",
       },
     ],
   };

@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
 import { beforeAll, describe, expect, it } from "vitest";
-import { formProblems } from "../src/app/editor/ndv/form-contract";
+import { allParams, formProblems } from "../src/app/editor/ndv/form-contract";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import {
   decisionTableForm,
@@ -34,6 +34,7 @@ import {
   humanForm,
   humanSettings,
 } from "../src/app/editor/ndv/kinds/forms/human-form";
+import { llmForm } from "../src/app/editor/ndv/kinds/forms/llm-form";
 import {
   ON_ERROR_KINDS,
   STOP_ONLY_KINDS,
@@ -52,8 +53,9 @@ import {
   WORKFLOW_STAND_IN,
 } from "../src/app/editor/ndv/params/form-env";
 import { fieldRules } from "../src/app/editor/ndv/params/field-rules";
-import { formState } from "../src/app/editor/ndv/params/form-model";
+import { formState, resetParam } from "../src/app/editor/ndv/params/form-model";
 import {
+  applyChange,
   fixed,
   isDefault,
   readEntries,
@@ -793,6 +795,126 @@ describe("reading and writing", () => {
     expect(
       rules(fresh("parallel", { branches: {} }), parallelForm().fields[0]),
     ).toEqual(["Add at least 1."]);
+  });
+});
+
+describe("removing and resetting", () => {
+  const keepers = (step: Step, features: string[] = []) => {
+    const ctx = context(freshWorkflow(), features);
+    const descriptor = ndvRegistry.kind(step.kind)!;
+    const roots = descriptor.fields(step).map((field) => field.path);
+    return [descriptor.form?.(step, ctx), descriptor.settings?.(step, ctx)]
+      .flatMap((form) => allParams(form, step, ctx, roots))
+      .filter(({ spec }) => spec.whenRemoved === "default")
+      .map(({ spec }) => spec.id);
+  };
+  const workflowKeepers = () =>
+    [triggerForm(), endForm(), workflowSettingsForm()]
+      .flatMap((form) =>
+        allParams(form, WORKFLOW_STAND_IN, context(freshWorkflow())),
+      )
+      .filter(({ spec }) => spec.whenRemoved === "default")
+      .map(({ spec }) => spec.id);
+  it("writes the default of every option the language requires, instead of deleting it", () => {
+    expect(keepers(fresh("parallel"))).toEqual([
+      "branches",
+      "concurrency",
+      "branches.first.output",
+      "branches.second.output",
+    ]);
+    expect(keepers(fresh("signal"))).toEqual(["payload"]);
+    expect(keepers(fresh("humanTask"))).toEqual(["title", "context", "form"]);
+    expect(keepers(fresh("llm"))).toEqual([
+      "model",
+      "prompt",
+      "context",
+      "action",
+      "connection",
+    ]);
+    expect(keepers(fresh("switch"))).toEqual([
+      "cases",
+      "case.output",
+      "otherwise",
+      "default.output",
+    ]);
+    expect(keepers(fresh("transform"))).toEqual(["value"]);
+    expect(keepers(fresh("transform", { value: { literal: "text" } }))).toEqual(
+      ["value-any"],
+    );
+    expect(
+      keepers(fresh("decisionTable", { uses: "payment-policy@1.0.0" })),
+    ).toEqual(["input"]);
+    expect(workflowKeepers()).toEqual([
+      "inputSchema",
+      "result",
+      "resultSchema",
+      "name",
+      "version",
+    ]);
+  });
+  it("gives each of them a default to write", () => {
+    const withDefault = (form: FormSpec | undefined, step: Step) =>
+      allParams(form, step, context(freshWorkflow()))
+        .filter(({ spec }) => spec.whenRemoved === "default")
+        .every(({ spec }) => spec.default !== undefined);
+    for (const kind of kinds.filter((k) => k !== "action")) {
+      const step = fresh(
+        kind,
+        kind === "decisionTable" ? { uses: "payment-policy@1.0.0" } : {},
+      );
+      const descriptor = ndvRegistry.kind(kind)!;
+      expect(
+        withDefault(descriptor.form?.(step, context(freshWorkflow())), step),
+        kind,
+      ).toBe(true);
+    }
+    for (const form of [triggerForm(), endForm(), workflowSettingsForm()])
+      expect(withDefault(form, WORKFLOW_STAND_IN)).toBe(true);
+  });
+  it("starts a removed option from the same values as a new step", () => {
+    const step = fresh("parallel");
+    const [branches, concurrency] = [
+      parallelForm().fields[0],
+      parallelForm().options![0],
+    ];
+    expect(concurrency.default).toBe(step["concurrency"]);
+    expect(branches.default).toEqual(step["branches"]);
+    const task = fresh("humanTask");
+    const [, title] = humanForm().fields;
+    expect(title.default).toEqual(
+      (task["title"] as { literal: unknown }).literal,
+    );
+    expect(humanForm().options![1].default).toEqual(task["formSchema"]);
+    const ai = fresh("llm");
+    const { options } = llmForm(ai, context(freshWorkflow()));
+    expect(options!.map((o) => [o.id, o.default])).toEqual([
+      ["context", {}],
+      ["action", ai["uses"]],
+      ["connection", ai["connection"]],
+    ]);
+    const cases = shown(fresh("switch")).spec.fields[0].children!(
+      step,
+      context(freshWorkflow()),
+    );
+    expect(cases[0].default).toEqual(fresh("switch")["cases"]);
+    expect(cases[1].default).toEqual(fresh("switch")["default"]);
+  });
+  it("shows an option as removed once its default is written back", () => {
+    const step = fresh("humanTask", { context: { literal: { team: "ops" } } });
+    const ctx = context(freshWorkflow());
+    const descriptor = ndvRegistry.kind("humanTask")!;
+    const spec = humanForm();
+    const env = formEnv(stepSubject(descriptor, step, ctx, null), step, ctx);
+    expect(labelsOf(formState(spec, env))).toContain("Details to show");
+    const details = spec.options![0];
+    const changes = resetParam(details, env);
+    expect(changes).toEqual([
+      { scope: "step", path: ["context"], value: { literal: {} } },
+    ]);
+    const subject = changes.reduce(applyChange, env.subject);
+    const after = formState(spec, { ...env, subject, step: subject.step! });
+    expect(labelsOf(after)).not.toContain("Details to show");
+    expect(addableOf(after)).toContain("Details to show");
   });
 });
 

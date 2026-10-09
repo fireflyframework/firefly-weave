@@ -18,7 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // What a registered form must keep, checked for every ready kind by a
 // contract test: a ready kind has a Parameters form, field IDs are unique
 // within the kind, Fixed | Mapped appears only where the step holds an
-// expression, and custom components appear only where Studio allows them.
+// expression, a field that writes its default when removed has one, and custom
+// components appear only where Studio allows them.
 import type { Step } from "../../model";
 import { WORKFLOW_ROOTS, expressionRoot } from "./params/paths";
 import type {
@@ -120,6 +121,10 @@ export function formProblems(
     if (spec.mapping === "both" && !expression)
       problems.add(
         `${kind} offers Fixed and Mapped for "${spec.id}", which isn't an expression.`,
+      );
+    if (spec.whenRemoved === "default" && spec.default === undefined)
+      problems.add(
+        `${kind} writes the default of "${spec.id}" when it is removed, but has none.`,
       );
     if (
       spec.type === "custom" &&

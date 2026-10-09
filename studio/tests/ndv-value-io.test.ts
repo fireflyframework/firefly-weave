@@ -255,6 +255,30 @@ describe("defaults", () => {
       [{ scope: "step", path: ["durationSeconds"], value: undefined }],
     );
   });
+  it("writes the default on reset when the form asks to keep the key", () => {
+    const wait: Step = { id: "wait-1", kind: "wait", durationSeconds: 300 };
+    const s = { ...subject(wait), roots: [] };
+    const keep = { default: 60, whenRemoved: "default" as const };
+    expect(resetChanges(s, spec(["durationSeconds"], keep))).toEqual([
+      { scope: "step", path: ["durationSeconds"], value: 60 },
+    ]);
+    expect(
+      resetChanges(
+        s,
+        spec(["durationSeconds"], { default: 60, whenRemoved: "delete" }),
+      ),
+    ).toEqual([{ scope: "step", path: ["durationSeconds"], value: undefined }]);
+    // Without a default there is nothing to write.
+    expect(
+      resetChanges(s, spec(["durationSeconds"], { whenRemoved: "default" })),
+    ).toEqual([{ scope: "step", path: ["durationSeconds"], value: undefined }]);
+  });
+  it("writes the default of an expression field as a fixed value", () => {
+    const keep = spec(["with"], { default: {}, whenRemoved: "default" });
+    expect(resetChanges(subject(), keep)).toEqual([
+      { scope: "step", path: ["with"], value: { literal: {} } },
+    ]);
+  });
 });
 
 describe("applying a change the way a saved edit does", () => {

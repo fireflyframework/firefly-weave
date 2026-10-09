@@ -172,6 +172,12 @@ export interface ParamSpec {
   hiddenReason?(step: Step, ctx: KindContext): string;
   /** When showWhen turns false: "clear" (default) removes the stored value in the same undo step; "keep" leaves it. */
   whenHidden?: "clear" | "keep";
+  /**
+   * What Remove option and Reset to default write: "delete" (default) removes
+   * the key; "default" writes the field's `default`, for a key the language
+   * requires. The field then reads as not added because it holds its default.
+   */
+  whenRemoved?: "delete" | "default";
   /** list items; their paths are relative to the item. */
   item?: ParamSpec;
   /** fields rows and nested groups; their paths are absolute. */

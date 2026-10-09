@@ -19,8 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 // decision's paths and its Otherwise sit in one Paths field; a parallel's
 // branches are one list; timeouts live on Settings.
 import type { Step } from "../../../../model";
-import type { FormSpec, ParamSpec } from "../../registry";
+import type { FormSpec, Json, ParamSpec } from "../../registry";
 import { durationParam } from "./shared";
+
+/** A path or branch of a new step: no steps yet, and an empty result. */
+const emptyBranch = (): Json => ({ steps: [], output: { literal: {} } });
 
 const pathResult = (id: string, path: (string | number)[]): ParamSpec => ({
   id,
@@ -29,6 +32,7 @@ const pathResult = (id: string, path: (string | number)[]): ParamSpec => ({
   label: "Path result",
   mapping: "both",
   default: {},
+  whenRemoved: "default",
   hint: "What later steps read as this step's output when this path runs.",
 });
 
@@ -47,6 +51,8 @@ export const switchForm = (): FormSpec => ({
           type: "list",
           label: "Paths",
           minItems: 1,
+          default: [emptyBranch()],
+          whenRemoved: "default",
           addLabel: "Add path",
           item: {
             id: "case",
@@ -70,6 +76,8 @@ export const switchForm = (): FormSpec => ({
           path: ["default"],
           type: "fields",
           label: "Otherwise",
+          default: emptyBranch(),
+          whenRemoved: "default",
           hint: "Runs when no path applies.",
           children: () => [pathResult("default.output", ["default", "output"])],
         },
@@ -91,6 +99,8 @@ export const parallelForm = (): FormSpec => ({
       type: "list",
       label: "Branches",
       minItems: 1,
+      default: { first: emptyBranch(), second: emptyBranch() },
+      whenRemoved: "default",
       addLabel: "Add branch",
       hint: "Branches run at the same time; the next step starts when all are done.",
       item: {
@@ -110,6 +120,7 @@ export const parallelForm = (): FormSpec => ({
       label: "Run at most",
       min: 1,
       default: 2,
+      whenRemoved: "default",
       hint: "How many branches run at the same time.",
     },
     {
@@ -126,6 +137,7 @@ export const parallelForm = (): FormSpec => ({
           label: `${name} result`,
           mapping: "both" as const,
           default: {},
+          whenRemoved: "default" as const,
         })),
     },
   ],
@@ -160,6 +172,7 @@ export const signalForm = (): FormSpec => ({
       type: "schema",
       label: "Payload fields",
       default: { type: "object" },
+      whenRemoved: "default",
       hint: "Describe the data the signal brings.",
     },
   ],

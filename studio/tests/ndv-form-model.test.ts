@@ -24,7 +24,10 @@ import {
   resetParam,
   type FormEnv,
 } from "../src/app/editor/ndv/params/form-model";
-import type { FormSubject } from "../src/app/editor/ndv/params/value-io";
+import {
+  applyChange,
+  type FormSubject,
+} from "../src/app/editor/ndv/params/value-io";
 import type {
   FormSpec,
   KindContext,
@@ -201,6 +204,38 @@ describe("form model", () => {
       path: ["with"],
       value: { literal: {} },
     });
+  });
+
+  it("lists an option again, with its default written, after it is removed", () => {
+    const limit = param("limit", {
+      path: ["limit"],
+      type: "number",
+      default: 2,
+      whenRemoved: "default",
+    });
+    const plain = param("plain", {
+      path: ["plain"],
+      type: "number",
+      default: 2,
+    });
+    const limited = { ...http("GET"), limit: 3, plain: 3 };
+    const options: FormSpec = { fields: [], options: [limit, plain] };
+    const e = env(limited);
+    expect(formState(options, e).fields.map((f) => f.spec.id)).toEqual([
+      "limit",
+      "plain",
+    ]);
+    const changes = [...resetParam(limit, e), ...resetParam(plain, e)];
+    expect(changes).toEqual([
+      { scope: "step", path: ["limit"], value: 2 },
+      { scope: "step", path: ["plain"], value: undefined },
+    ]);
+    const subject = changes.reduce(applyChange, e.subject);
+    const after = formState(options, { ...e, subject, step: subject.step! });
+    expect(after.fields).toEqual([]);
+    expect(after.addable.map((o) => o.spec.id)).toEqual(["limit", "plain"]);
+    expect(subject.step?.["limit"]).toBe(2);
+    expect(subject.step).not.toHaveProperty("plain");
   });
 
   it("leaves alone a field the person removed on purpose", () => {

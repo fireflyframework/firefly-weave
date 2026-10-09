@@ -227,6 +227,19 @@ describe("form contract", () => {
     ]);
   });
 
+  it("reports a default to write on removal when the field has none", () => {
+    const form: FormSpec = {
+      fields: [
+        text("kept", ["kept"], { default: "a", whenRemoved: "default" }),
+        text("lost", ["lost"], { whenRemoved: "default" }),
+        text("deleted", ["deleted"], { whenRemoved: "delete" }),
+      ],
+    };
+    expect(formProblems(kind("keep", form), step, ctx)).toEqual([
+      'keep writes the default of "lost" when it is removed, but has none.',
+    ]);
+  });
+
   it("allows custom components only for the decision table grid and the AI agent slots", () => {
     const grid: FormSpec = {
       fields: [
