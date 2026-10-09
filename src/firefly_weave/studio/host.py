@@ -399,6 +399,12 @@ class StudioController:
 
         return JSONResponse(file_reference_schema(), headers={"Cache-Control": "no-store"})
 
+    @get_mapping("/studio/contracts/connector-actions")
+    async def connector_actions_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.connector_actions import builtin_connector_actions
+
+        return JSONResponse({"actions": builtin_connector_actions()}, headers={"Cache-Control": "no-store"})
+
     @get_mapping("/studio/contracts/lumi-configuration")
     async def lumi_configuration_contract(self, request: Request) -> Response:
         from firefly_weave.contracts.lumi import LumiConfigurationRequest
