@@ -41,6 +41,7 @@ from firefly_weave.access.oidc import OIDCVerifier
 from firefly_weave.access.service import AccessService
 from firefly_weave.api.access import AccessController
 from firefly_weave.api.ai import AIController
+from firefly_weave.api.bindable_connections import BindableConnectionController
 from firefly_weave.api.client_configuration import ClientConfigurationController
 from firefly_weave.api.compiler import CompilerController
 from firefly_weave.api.connections import ConnectionController
@@ -58,6 +59,7 @@ from firefly_weave.api.runs import RunController
 from firefly_weave.api.schedules import ScheduleController
 from firefly_weave.api.triggers import TriggerController
 from firefly_weave.api.workers import WorkerController
+from firefly_weave.connections.bindable import BindableConnectionService
 from firefly_weave.connections.descriptors import ConnectorDescriptorService
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import (
@@ -133,6 +135,7 @@ SERVICE_PACKAGES = (
     "firefly_weave.access.identity_links",
     "firefly_weave.definitions.service",
     "firefly_weave.connections.service",
+    "firefly_weave.connections.bindable",
     "firefly_weave.connections.descriptors",
     "firefly_weave.connections.source_bindings",
     "firefly_weave.runtime",
@@ -293,6 +296,7 @@ def make_app(
                 IdentityResolver,
                 DefinitionService,
                 ConnectionService,
+                BindableConnectionService,
                 ConnectorDescriptorService,
                 RuntimeService,
                 IncidentService,
@@ -324,6 +328,7 @@ def make_app(
                 CompilerController,
                 DefinitionController,
                 ConnectionController,
+                BindableConnectionController,
                 ConnectorDescriptorController,
                 FileService,
                 HumanFileService,

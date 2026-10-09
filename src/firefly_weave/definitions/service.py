@@ -155,10 +155,11 @@ class DefinitionService:
         capability: str,
         context: AuditContext,
         tx: Transaction,
+        resource: str | None = None,
     ) -> dict[str, Any]:
         if capability not in {"connection.manage", "connection.bind"}:
             raise AccessDenied()
-        self.require(actor, scope, capability, context)
+        self.authorization.require(actor, scope, capability, resource=resource, context=context)
         async with self.transaction(scope, tx, mutation=False) as enlisted:
             row = await DefinitionRepository(enlisted).version(identifier)
             if row["kind"] != "Connector" or row["retired"]:

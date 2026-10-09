@@ -39,13 +39,12 @@ from pyfly.container import service
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.access.service import audit
-from firefly_weave.connections.diagnostics import AGENTIC_ADAPTER, keyless_connection
+from firefly_weave.connections.diagnostics import AGENTIC_ADAPTER, is_agentic_revision, keyless_connection
 from firefly_weave.connections.repository import ConnectionRepository
 from firefly_weave.connections.secret_execution import resolve_secret
 from firefly_weave.connections.secrets import SecretUnavailable
 from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
-from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, CONNECTOR_REFERENCE
 from firefly_weave.contracts.ai import MODEL_NAME_PATTERN, AIConnectionTestRequest, AIConnectionTestResult
 from firefly_weave.contracts.connectors import BoundConnection, ConnectionRevision, ConnectionTestResult
 from firefly_weave.definitions.models import CatalogError
@@ -75,10 +74,6 @@ class AIRateLimit:
         if len(calls) >= self.limit:
             raise CatalogError(429, "WV-AI-RATE-LIMITED", "Too many AI connection tests; wait a minute, then retry")
         calls.append(now)
-
-
-def _agentic(revision: ConnectionRevision) -> bool:
-    return revision.connector == CONNECTOR_REFERENCE and revision.connector_digest == AGENTIC_DESCRIPTOR.manifest.digest
 
 
 def _gateway_result(raw: dict[str, Any], model: str | None) -> AIConnectionTestResult:
@@ -114,7 +109,7 @@ class AIConnectionService:
         revision = await self.connections.ready_revision(
             actor, scope, revision_id, "connection.manage", context=context
         )
-        if not _agentic(revision):
+        if not is_agentic_revision(revision):
             raise CatalogError(422, "WV-AI-CONNECTION", "Choose an AI connection")
         if not self.gateway.configured:
             raise CatalogError(

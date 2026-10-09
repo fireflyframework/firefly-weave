@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from firefly_weave.compiler.catalog import CatalogLock
 from firefly_weave.contracts.ai import AIConnectionTestRequest, AIConnectionTestResult
+from firefly_weave.contracts.bindable_connections import BindableConnection, BindableConnectionQuery
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
 from firefly_weave.contracts.catalog import (
     Activation,
@@ -1343,6 +1344,14 @@ OPERATIONS = {
             ConnectionRequest,
             (201,),
             optional_idempotency=True,
+        ),
+        Operation(
+            "bindable_connections.list",
+            ENVIRONMENT + "/bindable-connections",
+            "GET",
+            Page[BindableConnection],
+            "connection.bind",
+            query=BindableConnectionQuery,
         ),
         Operation(
             "connections.list",

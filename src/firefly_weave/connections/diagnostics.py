@@ -36,6 +36,7 @@ from firefly_weave.contracts.connectors import (
     ConnectionIssue,
     ConnectionIssueCode,
     ConnectionRequest,
+    ConnectionRevision,
 )
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.values import JsonObject
@@ -229,3 +230,10 @@ def readiness_issues(
         found.append(ConnectionIssue("/connector_version_id", ADAPTER_UNAVAILABLE, "CONNECTOR"))
     found += secret_issues(scope, secrets, references, keyless=keyless_connection(adapter, config, references))
     return found
+
+
+def is_agentic_revision(revision: ConnectionRevision) -> bool:
+    return (
+        revision.connector == agentic.CONNECTOR_REFERENCE
+        and revision.connector_digest == agentic.AGENTIC_DESCRIPTOR.manifest.digest
+    )

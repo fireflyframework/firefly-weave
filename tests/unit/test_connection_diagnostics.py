@@ -19,6 +19,7 @@
 import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -26,7 +27,8 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authentication import AuthenticationFilter
-from firefly_weave.access.models import Principal
+from firefly_weave.access.authorization import AuthorizationService
+from firefly_weave.access.models import Grant, Principal
 from firefly_weave.api.errors import ErrorAdvice
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.connections.registry import ConnectorRegistry
@@ -117,7 +119,7 @@ class Definitions:
     async def transaction(self, scope, supplied, *, mutation=True):
         yield SimpleNamespace(session=self.session, scope=scope)
 
-    async def connector_contract(self, actor, scope, identifier, *, capability, context, tx):
+    async def connector_contract(self, actor, scope, identifier, *, capability, context, tx, resource=None):
         if self.selected is None:
             raise CatalogError(422, "WV-CONNECTION", "Connector contract unavailable")
         return self.selected
@@ -297,8 +299,11 @@ async def test_connection_test_explains_why_a_saved_revision_is_not_ready(monkey
     assert failure.value.code == "WV-CONNECTION"
     assert set(pointers(failure.value)) == {("WV-CONNECTION-SECRET", "/secretRef/api_key")}
     # Activation bindings keep the opaque problem without field details.
+    actor = ACTOR.model_copy(update={"grants": (Grant(role="deployer", scope=SCOPE, resources=(str(revision.id),)),)})
+    connections.definitions.authorization = AuthorizationService()
+    monkeypatch.setattr("firefly_weave.connections.service.load_principal", AsyncMock(return_value=actor))
     with pytest.raises(CatalogError) as binding:
-        await connections.resolve_binding(ACTOR, SCOPE, "pets", revision.id, revision.connector, context=CONTEXT)
+        await connections.resolve_binding(actor, SCOPE, "pets", revision.id, revision.connector, context=CONTEXT)
     assert binding.value.code == "WV-CONNECTION" and binding.value.result is None
 
 

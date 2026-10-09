@@ -158,7 +158,7 @@ class Definitions:
         if self.refused or not actor.active:
             raise AccessDenied()
 
-    async def connector_contract(self, actor, scope, identifier, *, capability, context, tx):
+    async def connector_contract(self, actor, scope, identifier, *, capability, context, tx, resource=None):
         if self.retired:
             raise CatalogError(409, "WV-CONNECTION", "The connection's connector was retired")
         manifest = AGENTIC_DESCRIPTOR.manifest.value

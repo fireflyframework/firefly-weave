@@ -26,7 +26,9 @@ from uuid import UUID, uuid4
 from pyfly.container import service
 
 from firefly_weave.access.audit import AuditContext
+from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
+from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.schemas import validate_payload
@@ -87,6 +89,22 @@ class ConnectionService(ConnectionBindingPort):
         self.definitions.require(actor, scope, capability, context)
         if scope.environment_id is None:
             raise unavailable()
+
+    def require_revision(
+        self,
+        actor: Principal,
+        current: Principal,
+        scope: Scope,
+        revision_id: UUID,
+        capability: str,
+        context: AuditContext,
+    ) -> None:
+        if scope.environment_id is None:
+            raise AccessDenied()
+        for principal in (actor, current):
+            self.definitions.authorization.require(
+                principal, scope, capability, resource=str(revision_id), context=context
+            )
 
     async def create_revision(
         self,
@@ -189,10 +207,11 @@ class ConnectionService(ConnectionBindingPort):
         context: AuditContext,
         tx: Transaction | None = None,
     ) -> BoundConnection:
-        self.require(actor, scope, "connection.bind", context)
         async with self.definitions.transaction(scope, tx, mutation=False) as tx:
+            current = await load_principal(tx.session, actor.id)
+            self.require_revision(actor, current, scope, revision_id, "connection.bind", context)
             revision = await ConnectionRepository(tx).revision(revision_id)
-            await self._ready(actor, scope, revision, "connection.bind", context, tx)
+            await self._ready(current, scope, revision, "connection.bind", context, tx, resource=str(revision_id))
             if revision.connector != connector:
                 raise unavailable()
             # Only worker lease admission may replace this fail-closed accessor, after checking a live lease.
@@ -208,10 +227,17 @@ class ConnectionService(ConnectionBindingPort):
         tx: Transaction,
         *,
         explain: bool = False,
+        resource: str | None = None,
     ) -> None:
         try:
             contract = await self.definitions.connector_contract(
-                actor, scope, revision.connector_version_id, capability=capability, context=context, tx=tx
+                actor,
+                scope,
+                revision.connector_version_id,
+                capability=capability,
+                context=context,
+                tx=tx,
+                resource=resource,
             )
         except CatalogError as error:
             if not explain or error.code != "WV-CONNECTION":
