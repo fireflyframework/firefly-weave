@@ -29,9 +29,12 @@ SPDX-License-Identifier: Apache-2.0
 >
   <div class="param-label-row">
     @if (isGroup()) {
-      <span class="param-label" [id]="ids.control + '-label'">{{
-        spec.label
-      }}</span>
+      <span
+        class="param-label"
+        [class.sr-only]="row()"
+        [id]="ids.control + '-label'"
+        >{{ spec.label }}</span
+      >
     } @else {
       <label
         class="param-label"
@@ -355,6 +358,7 @@ SPDX-License-Identifier: Apache-2.0
       row() &&
       line.kind !== 'error' &&
       line.kind !== 'warning' &&
+      line.kind !== 'reason' &&
       !numberProblem() &&
       !jsonProblem
     "

@@ -421,15 +421,13 @@ export class FormSession {
   ): void {
     if (!this.editable(spec)) return;
     try {
-      const next = update(this.list(spec));
-      if (!this.validCount(spec, next.length)) return;
-      if (
-        this.commit(
-          writeList(this.subject(), spec, () => next),
-          field,
-        )
-      )
-        this.invalidateRows(spec);
+      let allowed = true;
+      const changes = writeList(this.subject(), spec, (items) => {
+        const next = update(items);
+        allowed = this.validCount(spec, next.length);
+        return allowed ? next : items;
+      });
+      if (allowed && this.commit(changes, field)) this.invalidateRows(spec);
     } catch (error) {
       if (error instanceof FormWriteError) this.host.notify(error.message);
       else throw error;
@@ -442,15 +440,13 @@ export class FormSession {
   ): void {
     if (!this.editable(spec)) return;
     try {
-      const next = update(this.keyed(spec));
-      if (!this.validCount(spec, next.length)) return;
-      if (
-        this.commit(
-          writeKeyed(this.subject(), spec, () => next),
-          field,
-        )
-      )
-        this.invalidateRows(spec);
+      let allowed = true;
+      const changes = writeKeyed(this.subject(), spec, (entries) => {
+        const next = update(entries);
+        allowed = this.validCount(spec, next.length);
+        return allowed ? next : entries;
+      });
+      if (allowed && this.commit(changes, field)) this.invalidateRows(spec);
     } catch (error) {
       if (error instanceof FormWriteError) this.host.notify(error.message);
       else throw error;

@@ -33,7 +33,6 @@ import type { FieldEntry } from "./form-model";
 import type { FormSession } from "./form-session";
 import { normalizeIdentifier } from "./identifiers";
 import { ParamField } from "./param-field";
-import { FieldsField } from "./fields-field";
 
 interface Row {
   key: number | string;
@@ -46,7 +45,7 @@ interface Row {
   selector: "weave-list-field",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, forwardRef(() => ParamField), forwardRef(() => FieldsField)],
+  imports: [Icon, forwardRef(() => ParamField)],
   template: `@let rows = this.rows();
     @let locked = !!readOnly();
     @if (spec().display === "chips") {
@@ -148,10 +147,11 @@ interface Row {
                   <weave-icon name="trash" [size]="16" />
                 </button>
               </div>
-              <weave-fields-field
+              <weave-param-field
                 [session]="session()"
                 [spec]="row.spec"
-                [readOnly]="readOnly()"
+                [entry]="entry(row.spec)"
+                [row]="true"
               />
             } @else if (keyedNames()) {
               <input
@@ -272,10 +272,9 @@ export class ListField {
       this.element.nativeElement,
       this.spec(),
       () => {
-        const row =
-          this.element.nativeElement.querySelectorAll<HTMLElement>(
-            ".param-row",
-          )[index];
+        const row = this.element.nativeElement.querySelectorAll<HTMLElement>(
+          ":scope > .param-list > .param-row, :scope > .param-chips > .param-chip",
+        )[index];
         return row
           ? session.firstControl(
               row.querySelector<HTMLElement>(".param-control") ?? row,

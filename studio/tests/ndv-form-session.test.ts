@@ -28,6 +28,7 @@ import {
 import { FormulaField } from "../src/app/editor/ndv/params/formula-field";
 import { ParamField } from "../src/app/editor/ndv/params/param-field";
 import { ParameterForm } from "../src/app/editor/ndv/params/param-form";
+import { ListField } from "../src/app/editor/ndv/params/list-field";
 import type { Choice, ParamSpec } from "../src/app/editor/ndv/registry";
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
@@ -864,4 +865,220 @@ it("resolves generated nested object children inside a list without repeating th
   f.answer();
   await pending;
   expect(f.session.read(city).mode).not.toBe("mapped");
+});
+
+describe("session collection expression preservation", () => {
+  const original = { object: { nested: { literal: { a: [1, true, null] } } } };
+  const opaque = {
+    op: { name: "custom.opaque", args: [{ ref: "/input/name" }] },
+    extension: true,
+  };
+  function fixture(type: "list" | "keyValue") {
+    const f = setup();
+    const spec: ParamSpec = {
+      id: "values",
+      path: ["prompt"],
+      type,
+      label: "Values",
+      mapping: "both",
+      item: {
+        id: "item",
+        path: [],
+        type: "json",
+        label: "Item",
+        mapping: "both",
+      },
+    };
+    const descriptor = f.controller.descriptor("summarize")!;
+    f.controller.descriptor = () => ({
+      ...descriptor,
+      form: () => ({ fields: [spec] }),
+    });
+    const expression =
+      type === "list"
+        ? { array: [original, opaque, { ref: "/input/name" }] }
+        : { object: { original, opaque, reference: { ref: "/input/name" } } };
+    f.session.write(spec, { mode: "mapped", expression });
+    return { ...f, spec, expression };
+  }
+  for (const operation of ["move", "add", "remove"] as const) {
+    it(`retains exact untouched list expressions when rows ${operation}`, () => {
+      const f = fixture("list");
+      if (operation === "move") f.session.listMove(f.spec, 2, 0);
+      if (operation === "add") f.session.listAdd(f.spec);
+      if (operation === "remove") f.session.listRemove(f.spec, 2);
+      const stored = f.controller.step("summarize")!["prompt"] as {
+        array: unknown[];
+      };
+      expect(stored.array[operation === "move" ? 1 : 0]).toEqual(original);
+      expect(stored.array[operation === "move" ? 2 : 1]).toEqual(opaque);
+      expect(f.errors).toEqual([]);
+      f.model.undo();
+      expect(f.controller.step("summarize")!["prompt"]).toEqual(f.expression);
+    });
+  }
+  for (const operation of ["rename", "move", "add", "remove"] as const) {
+    it(`retains exact untouched keyed expressions when rows ${operation}`, () => {
+      const f = fixture("keyValue");
+      if (operation === "rename")
+        f.session.listRename(f.spec, "reference", "renamed");
+      if (operation === "move") f.session.listMove(f.spec, 2, 0);
+      if (operation === "add")
+        f.session.setKeyed(f.spec, (entries) => [
+          ...entries,
+          ["added", { mode: "fixed", value: "New" }],
+        ]);
+      if (operation === "remove") f.session.listRemove(f.spec, "reference");
+      const stored = f.controller.step("summarize")!["prompt"] as {
+        object: Record<string, unknown>;
+      };
+      expect(stored.object["original"]).toEqual(original);
+      expect(stored.object["opaque"]).toEqual(opaque);
+      expect(f.errors).toEqual([]);
+      f.model.undo();
+      expect(f.controller.step("summarize")!["prompt"]).toEqual(f.expression);
+    });
+  }
+  for (const type of ["list", "keyValue"] as const) {
+    it(`runs a ${type} update once and refuses excessive counts without writing`, () => {
+      const f = fixture(type);
+      f.spec.maxItems = 3;
+      let calls = 0;
+      const before = JSON.stringify(f.model.definition);
+      if (type === "list")
+        f.session.setList(f.spec, (items) => {
+          calls++;
+          return [...items, { mode: "fixed", value: "extra" }];
+        });
+      else
+        f.session.setKeyed(f.spec, (entries) => {
+          calls++;
+          return [...entries, ["extra", { mode: "fixed", value: "extra" }]];
+        });
+      expect(calls).toBe(1);
+      expect(JSON.stringify(f.model.definition)).toBe(before);
+      expect(f.errors).toEqual(["Keep at most 3."]);
+      f.spec.maxItems = 4;
+      calls = 0;
+      if (type === "list")
+        f.session.setList(f.spec, (items) => {
+          calls++;
+          return [...items, { mode: "fixed", value: "extra" }];
+        });
+      else
+        f.session.setKeyed(f.spec, (entries) => {
+          calls++;
+          return [...entries, ["extra", { mode: "fixed", value: "extra" }]];
+        });
+      expect(calls).toBe(1);
+      expect(
+        type === "list"
+          ? f.session.list(f.spec).length
+          : f.session.keyed(f.spec).length,
+      ).toBe(4);
+    });
+  }
+});
+
+describe("grouped list item state and permissions", () => {
+  function fixture(feature?: string) {
+    const f = setup();
+    let reason: string | null = null;
+    const spec: ParamSpec = {
+      id: "rows",
+      path: ["prompt"],
+      type: "list",
+      label: "Rows",
+      mapping: "both",
+      item: {
+        id: "item",
+        path: [],
+        type: "fields",
+        label: "Item",
+        mapping: "both",
+        readOnly: () => reason,
+        feature,
+        children: () => [
+          {
+            id: "name",
+            path: ["name"],
+            type: "text",
+            label: "Name",
+            required: true,
+            mapping: "both",
+          },
+        ],
+      },
+    };
+    const descriptor = f.controller.descriptor("summarize")!;
+    f.controller.descriptor = () => ({
+      ...descriptor,
+      form: () => ({ fields: [spec] }),
+    });
+    f.session.write(spec, {
+      mode: "mapped",
+      expression: { array: [{ object: { name: { literal: "Before" } } }] },
+    });
+    const injector = Injector.create({
+      providers: [{ provide: ElementRef, useValue: new ElementRef({}) }],
+    });
+    const list = runInInjectionContext(injector, () => new ListField());
+    list.session = signal(f.session) as never;
+    list.spec = signal(spec) as never;
+    const row = f.session.itemSpec(spec, 0, spec.item!);
+    const child = f.session.children(row).shown[0].spec;
+    return {
+      ...f,
+      spec,
+      row,
+      child,
+      list,
+      injector,
+      lock: (next: string | null) => {
+        reason = next;
+      },
+    };
+  }
+  it("uses the live item reason and refuses nested writes until the item unlocks", () => {
+    const f = fixture();
+    f.lock("This item is locked.");
+    expect(f.session.readOnly(f.list.entry(f.row))).toBe(
+      "This item is locked.",
+    );
+    expect(f.session.line(f.row, f.list.entry(f.row))).toEqual({
+      kind: "reason",
+      text: "This item is locked.",
+    });
+    const before = JSON.stringify(f.model.definition);
+    f.session.write(f.child, { mode: "fixed", value: "Refused" });
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    f.lock(null);
+    f.session.write(f.child, { mode: "fixed", value: "Allowed" });
+    expect(f.session.read(f.child)).toEqual({
+      mode: "fixed",
+      value: "Allowed",
+    });
+    f.injector.destroy();
+  });
+  it("reports an item feature reason and permits nested edits only when that feature exists", () => {
+    const f = fixture("text.concat");
+    expect(f.session.readOnly(f.list.entry(f.row))).toBe(
+      "Update the platform to use this (text.concat).",
+    );
+    const before = JSON.stringify(f.model.definition);
+    f.session.write(f.child, { mode: "fixed", value: "Refused" });
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    const context = f.controller.kindContext.bind(f.controller);
+    f.controller.kindContext = () => ({
+      ...context(),
+      features: ["text.concat"],
+    });
+    expect(f.session.readOnly(f.list.entry(f.row))).toBeNull();
+    f.session.write(f.child, { mode: "fixed", value: "Allowed" });
+    expect(f.session.read(f.child)).toEqual({
+      mode: "fixed",
+      value: "Allowed",
+    });
+    f.injector.destroy();
+  });
 });

@@ -18,14 +18,78 @@ SPDX-License-Identifier: Apache-2.0
 import { parse, stringify } from "yaml";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   openStepFixture,
   sizes,
   stepFixture,
+  StepDetailsPage,
+  withNewEditor,
   yamlFile,
 } from "./step-details-po";
-import { sourceText } from "./support";
+import { connected, lookupAction, sourceText } from "./support";
+
+async function openObjectItems(page: Page) {
+  await withNewEditor(page);
+  const action = structuredClone(lookupAction);
+  action.spec.inputSchema = {
+    type: "object",
+    required: ["items"],
+    properties: {
+      items: {
+        type: "array",
+        title: "Items",
+        items: {
+          type: "object",
+          title: "Address",
+          required: ["city"],
+          properties: { city: { type: "string", title: "City" } },
+        },
+      },
+    },
+  } as never;
+  const recorded = await connected(page, {
+    catalog: [{ id: "addresses", document: action }],
+  });
+  const opaque = {
+    op: { name: "custom.opaque", args: [{ ref: "/input/address" }] },
+    extension: true,
+  };
+  const workflow = parse(readFileSync(stepFixture, "utf8"));
+  workflow.spec.steps = [
+    {
+      id: "addresses",
+      kind: "action",
+      uses: "sql.lookup@1.0.0",
+      with: {
+        object: {
+          items: {
+            array: [
+              { ref: "/input/address" },
+              opaque,
+              { literal: "malformed" },
+              { object: { city: { literal: "Before" } } },
+            ],
+          },
+        },
+      },
+    },
+  ];
+  workflow.spec.inputSchema.properties.address = {
+    type: "object",
+    title: "Address",
+    properties: { city: { type: "string" } },
+  };
+  await page
+    .getByLabel("Choose a workflow file")
+    .setInputFiles(yamlFile("addresses.yaml", stringify(workflow)));
+  await expect.poll(() => recorded.exports).toContain("addresses");
+  const details = new StepDetailsPage(page);
+  const show = page.getByRole("button", { name: "Show canvas", exact: true });
+  if (await show.isVisible()) await show.click();
+  await details.openWithKeyboard("addresses");
+  return { details, opaque };
+}
 
 for (const size of sizes)
   test.describe(`step forms at ${size.tag}`, () => {
@@ -211,6 +275,118 @@ for (const size of sizes)
           .field("branch-results")
           .getByRole("button", { name: "ledger result", exact: true }),
       ).toBeFocused();
+    });
+
+    test("successive chip keyboard moves keep focus on the moved answer", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.openWithKeyboard("notify-sales");
+      const answers = details.field("answers");
+      await answers
+        .getByRole("textbox", { name: "Add answer" })
+        .fill("Escalate");
+      await answers.getByRole("textbox", { name: "Add answer" }).press("Enter");
+      const third = answers.getByRole("textbox", { name: "Answer 3 of 3" });
+      await third.focus();
+      await page.keyboard.press("Alt+ArrowUp");
+      const second = answers.getByRole("textbox", { name: "Answer 2 of 3" });
+      await expect(second).toHaveValue("escalate");
+      await expect(second).toBeFocused();
+      await page.keyboard.press("Alt+ArrowUp");
+      const first = answers.getByRole("textbox", { name: "Answer 1 of 3" });
+      await expect(first).toHaveValue("escalate");
+      await expect(first).toBeFocused();
+      await page.keyboard.press("Alt+ArrowDown");
+      await expect(second).toHaveValue("escalate");
+      await expect(second).toBeFocused();
+      await details.dialog.screenshot({
+        path: resolve(`../build/editor-m3/task-13-fix1/chips-${size.tag}.png`),
+      });
+      await details.close();
+      const saved = parse(await sourceText(page));
+      expect(saved.spec.steps[2].cases[0].steps[0].decisions).toEqual([
+        "approve",
+        "escalate",
+        "reject",
+      ]);
+    });
+
+    test("object-list cards expose each item's mapping and malformed import before its children", async ({
+      page,
+    }) => {
+      const { details, opaque } = await openObjectItems(page);
+      const rows = details.field("input.items").locator(".param-row.is-card");
+      await expect(rows).toHaveCount(4);
+      await expect(
+        rows.nth(0).getByRole("button", { name: /reference Input Address/ }),
+      ).toBeVisible();
+      await expect(
+        rows.nth(0).getByRole("textbox", { name: "City", exact: true }),
+      ).toHaveCount(0);
+      await expect(rows.nth(1).locator(".param-formula")).toHaveText(
+        JSON.stringify(opaque),
+      );
+      await expect(
+        rows.nth(1).getByRole("textbox", { name: "City", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        rows
+          .nth(2)
+          .getByText(
+            "This imported value is edited with Edit as YAML for now.",
+            { exact: true },
+          ),
+      ).toBeVisible();
+      await expect(
+        rows.nth(2).getByRole("textbox", { name: "City", exact: true }),
+      ).toHaveCount(0);
+      await details.dialog.screenshot({
+        path: resolve(
+          `../build/editor-m3/task-13-fix1/object-items-${size.tag}.png`,
+        ),
+      });
+      await rows
+        .nth(3)
+        .getByRole("textbox", { name: "City", exact: true })
+        .fill("Allowed");
+      await rows
+        .nth(0)
+        .getByRole("button", { name: /reference Input Address/ })
+        .click();
+      const picker = rows
+        .nth(0)
+        .getByRole("combobox", { name: "Address", exact: true });
+      await picker.fill("/input/customerId");
+      await picker.press("Enter");
+      await expect(
+        rows
+          .nth(0)
+          .getByRole("button", { name: /reference Input Customer ID/ }),
+      ).toBeVisible();
+      await rows
+        .nth(0)
+        .getByRole("radio", { name: "Fixed", exact: true })
+        .click();
+      await page
+        .getByRole("dialog", {
+          name: "Replace the mapping with a fixed value?",
+        })
+        .getByRole("button", { name: "Keep the mapping" })
+        .click();
+      await expect(
+        rows
+          .nth(0)
+          .getByRole("button", { name: /reference Input Customer ID/ }),
+      ).toBeVisible();
+      await details.close();
+      const saved = parse(await sourceText(page));
+      expect(saved.spec.steps[0].with.object.items.array).toEqual([
+        { ref: "/input/customerId" },
+        opaque,
+        { literal: "malformed" },
+        { literal: { city: "Allowed" } },
+      ]);
     });
 
     test("nested row modes retain names and whole mappings return safely to rows", async ({
@@ -449,6 +625,42 @@ for (const size of [
       ).toBeLessThanOrEqual(size.width);
       await page.screenshot({
         path: resolve(`../build/editor-m3/task-12/parameters-${size.tag}.png`),
+      });
+      await details.close();
+    });
+
+    test("object-list card controls preserve 44px targets and fit narrow forms", async ({
+      page,
+    }) => {
+      const { details } = await openObjectItems(page);
+      const items = details.field("input.items");
+      for (const control of await items.locator("input, button").all()) {
+        if (!(await control.isVisible())) continue;
+        await control.scrollIntoViewIfNeeded();
+        const box = await control.boundingBox();
+        expect(box!.height).toBeGreaterThanOrEqual(44);
+        expect(box!.width).toBeGreaterThanOrEqual(44);
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(size.width);
+        expect(
+          await control.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            const hit = document.elementFromPoint(
+              rect.left + rect.width / 2,
+              rect.top + rect.height / 2,
+            );
+            return !!hit && (hit === element || element.contains(hit));
+          }),
+        ).toBe(true);
+      }
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(size.width);
+      await items.locator(".param-row").first().scrollIntoViewIfNeeded();
+      await details.dialog.screenshot({
+        path: resolve(
+          `../build/editor-m3/task-13-fix1/object-geometry-${size.tag}.png`,
+        ),
       });
       await details.close();
     });
