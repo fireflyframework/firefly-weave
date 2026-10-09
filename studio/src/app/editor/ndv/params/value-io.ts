@@ -30,13 +30,9 @@ import {
   value as literalBound,
   type Bound,
 } from "../../../forms/core/binding";
-import {
-  getAt,
-  isJsonObject,
-  jsonEqual,
-  setAt,
-} from "../../../forms/core/json";
+import { getAt, isJsonObject, jsonEqual } from "../../../forms/core/json";
 import type { Step, Workflow } from "../../../model";
+import { deleteAt, writeAt } from "../edits";
 import type { Expression, Json, ParamSpec, Path } from "../registry";
 import { WORKFLOW_ROOTS, expressionRoot } from "./paths";
 
@@ -253,30 +249,21 @@ export function resetChanges(
   );
 }
 
-function without(base: unknown, path: Path): unknown {
-  if (!path.length || getAt(base, path) === undefined) return base;
-  const parentPath = path.slice(0, -1);
-  const last = path[path.length - 1];
-  const parent = getAt(base, parentPath);
-  const next = Array.isArray(parent)
-    ? parent.filter((_, index) => index !== Number(last))
-    : Object.fromEntries(
-        Object.entries(parent as Record<string, unknown>).filter(
-          ([key]) => key !== String(last),
-        ),
-      );
-  return parentPath.length ? setAt(base, parentPath, next) : next;
-}
-
-/** The subject after one change, so the next change is computed from it. */
+/**
+ * The subject after one change, so the next change is computed from it. The
+ * writes are the saved edit's own (edits.ts), so the preview can't drift from
+ * what is saved.
+ */
 export function applyChange(
   subject: FormSubject,
   change: FormChange,
 ): FormSubject {
-  const write = (base: unknown) =>
-    change.value === undefined
-      ? without(base, change.path)
-      : setAt(base ?? {}, change.path, change.value);
+  const write = (base: unknown): unknown => {
+    if (change.value !== undefined)
+      return writeAt(base ?? {}, change.path, change.value);
+    // An empty path names nothing to delete.
+    return change.path.length ? deleteAt(base, change.path) : base;
+  };
   if (change.scope === "action")
     return { ...subject, action: write(subject.action) as Json };
   if (change.scope === "workflow")

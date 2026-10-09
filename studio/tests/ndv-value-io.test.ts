@@ -27,8 +27,10 @@ import {
   readParam,
   resetChanges,
   writeParam,
+  type FormChange,
   type FormSubject,
 } from "../src/app/editor/ndv/params/value-io";
+import { EditError, applyEdits } from "../src/app/editor/ndv/edits";
 import type { ParamSpec } from "../src/app/editor/ndv/registry";
 import { freshWorkflow, type Step } from "../src/app/model";
 
@@ -252,5 +254,62 @@ describe("defaults", () => {
     expect(resetChanges(s, spec(["durationSeconds"], { default: 60 }))).toEqual(
       [{ scope: "step", path: ["durationSeconds"], value: undefined }],
     );
+  });
+});
+
+describe("applying a change the way a saved edit does", () => {
+  const stepOf: Step = {
+    id: "get-orders",
+    kind: "action",
+    uses: "order-intake.get-orders@1.0.0",
+    connection: "old",
+    durationSeconds: 60,
+    rows: ["a"],
+  };
+  const bare: Step = {
+    id: "get-orders",
+    kind: "action",
+    uses: "order-intake.get-orders@1.0.0",
+  };
+  const message = "That list has no item at that position.";
+
+  it("applies step changes exactly as applyEdits does", () => {
+    const changes: FormChange[] = [
+      { scope: "step", path: ["connection"], value: "http" },
+      { scope: "step", path: ["durationSeconds"], value: undefined },
+      { scope: "step", path: ["rows", 0], value: "z" },
+    ];
+    const applied = changes.reduce(applyChange, subject(stepOf));
+    const saved = applyEdits(
+      subject(stepOf).workflow,
+      "get-orders",
+      changes.map(({ path, value }) => ({ path, value })),
+    );
+    expect(applied.step).toEqual(saved.spec.steps[0]);
+  });
+  it("applies workflow changes exactly as applyEdits does", () => {
+    const applied = applyChange(subject(stepOf), {
+      scope: "workflow",
+      path: ["metadata", "name"],
+      value: "renamed",
+    });
+    const saved = applyEdits(subject(stepOf).workflow, "get-orders", [
+      { scope: "workflow", path: ["metadata", "name"], value: "renamed" },
+    ]);
+    expect(applied.workflow).toEqual(saved);
+  });
+  it("refuses a list position that a saved edit refuses", () => {
+    const beyond: FormChange = { scope: "step", path: ["rows", 2], value: "b" };
+    expect(() => applyChange(subject(stepOf), beyond)).toThrow(
+      new EditError(message),
+    );
+    expect(() => applyChange(subject(bare), beyond)).toThrow(
+      new EditError(message),
+    );
+    expect(() =>
+      applyEdits(subject(bare).workflow, "get-orders", [
+        { path: ["rows", 2], value: "b" },
+      ]),
+    ).toThrow(new EditError(message));
   });
 });

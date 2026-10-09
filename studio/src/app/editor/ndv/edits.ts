@@ -89,7 +89,7 @@ function withListParent(value: unknown, path: Path): unknown {
 }
 
 /** setAt, with list positions checked first and one past the end reported as a refusal. */
-function writeAt(value: unknown, path: Path, next: unknown): unknown {
+export function writeAt(value: unknown, path: Path, next: unknown): unknown {
   try {
     return setAt(withListParent(value, path), path, next);
   } catch (error) {
@@ -100,7 +100,7 @@ function writeAt(value: unknown, path: Path, next: unknown): unknown {
 }
 
 /** A copy without one key or list item; unlike removeAt, emptied parents stay. */
-function deleteAt(value: unknown, path: Path): unknown {
+export function deleteAt(value: unknown, path: Path): unknown {
   if (getAt(value, path) === undefined) return value;
   const parentPath = path.slice(0, -1);
   const last = path[path.length - 1];
