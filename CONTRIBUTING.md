@@ -66,6 +66,22 @@ npm run check && npm run format:check && npm test && npm run build
 npx playwright install chromium && npm run test:browser
 ```
 
+CI runs functional browser tests first, then measures canvas performance with
+one worker and no retries. This keeps another test's browser from consuming the
+measured frame budget. To reproduce that sequence locally:
+
+```sh
+# Run from studio/. Exclude only the two tagged timing measurements.
+npm run test:browser -- --grep-invert @performance
+# Keep the same timing limits, and preserve the functional test output.
+npm run test:browser -- --grep @performance --workers=1 --retries=0 --output=test-results/performance
+```
+
+Avoid other browser or build workloads while measuring. A shared machine can
+still introduce timing noise; inspect a failure before drawing a performance
+conclusion. For an individual functional suite, the existing command still
+accepts its path: `npm run test:browser -- tests/browser/designer-forms.spec.ts`.
+
 Expected: each command exits without errors. `make studio-check` runs `npm ci`,
 the type check, unit tests, and browser tests in one step; it skips the format
 check and the production build, and it does not install Chromium. For the
