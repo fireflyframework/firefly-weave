@@ -23,6 +23,11 @@ import {
   ownerLabel,
   type Kind,
 } from "../src/app/model";
+import {
+  emptyCanvas,
+  stepNotesOf,
+  withStepNote,
+} from "../src/app/editor/state/canvas-sidecar";
 describe("structured workflow authoring", () => {
   it("renames a human answer and matching nested decision conditions in one undo", () => {
     const model = new StructuredCanvasAdapter();
@@ -711,5 +716,40 @@ describe("fixture insertion target ownership", () => {
           target.owner === "pay-and-notify/ledger" && target.index === 1,
       )?.label,
     ).toBe("Add a step after post-ledger-entry, in ledger");
+  });
+});
+
+describe("the canvas sidecar in the model", () => {
+  it("undoes canvas edits with the workflow, and follows renames and deletes", () => {
+    const model = new StructuredCanvasAdapter();
+    const step = model.insert("transform");
+    model.updateCanvas(
+      withStepNote(model.canvas, step.id, { text: "Check the totals" }),
+    );
+    model.renameStep(step.id, "totals");
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual(["totals"]);
+    model.undo();
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([step.id]);
+    model.undo();
+    expect(model.canvas).toEqual(emptyCanvas());
+    model.redo();
+    model.remove(step.id);
+    expect(stepNotesOf(model.canvas)).toEqual({});
+    model.undo();
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([step.id]);
+  });
+  it("starts every other workflow with an empty canvas", () => {
+    const model = new StructuredCanvasAdapter();
+    const step = model.insert("transform");
+    model.updateCanvas(withStepNote(model.canvas, step.id, { text: "x" }));
+    model.replace(model.definition);
+    expect(model.canvas).toEqual(emptyCanvas());
+  });
+  it("refuses canvas edits while the source doesn't parse", () => {
+    const model = new StructuredCanvasAdapter();
+    model.setSource("kind: [");
+    expect(() => model.updateCanvas(emptyCanvas())).toThrow(
+      "Fix source before editing the graph.",
+    );
   });
 });

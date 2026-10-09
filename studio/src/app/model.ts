@@ -17,6 +17,12 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { parseDocument, stringify, isMap, isSeq, isNode, isScalar } from "yaml";
 import { computeLaneLayout } from "./designer/lane-layout";
+import {
+  emptyCanvas,
+  pruneCanvas,
+  renameInCanvas,
+  type CanvasSidecar,
+} from "./editor/state/canvas-sidecar";
 export type Kind =
   | "action"
   | "decisionTable"
@@ -318,6 +324,8 @@ export class StructuredCanvasAdapter {
   };
   selected = "";
   unplaced: Step[] = [];
+  /** Step notes, owned-action recipes, trigger choices and the rest of the canvas sidecar; undone with the workflow. */
+  canvas: CanvasSidecar = emptyCanvas();
   private past: string[] = [];
   private future: string[] = [];
   /** Inside batch(): edits share the batch's single undo step. */
@@ -347,6 +355,7 @@ export class StructuredCanvasAdapter {
       layout: this.layout,
       selected: this.selected,
       unplaced: this.unplaced,
+      canvas: this.canvas,
     });
   }
   private restore(s: string) {
@@ -452,6 +461,7 @@ export class StructuredCanvasAdapter {
       this.assertStructure(value);
       this.definition = value;
       this.readonly = false;
+      this.canvas = pruneCanvas(this.canvas, this.stepIdSet());
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Invalid source";
       this.readonly = true;
@@ -515,6 +525,16 @@ export class StructuredCanvasAdapter {
       );
     visit(this.definition.spec.steps);
     return map;
+  }
+  /** Every step ID in the workflow, nested ones included. */
+  stepIdSet(): Set<string> {
+    return new Set([...this.owners().values()].flat().map((step) => step.id));
+  }
+  /** Replaces the canvas sidecar as one undo step. Inside `batch`, assign `canvas` instead. */
+  updateCanvas(next: CanvasSidecar) {
+    if (this.readonly) throw Error("Fix source before editing the graph.");
+    this.checkpoint();
+    this.canvas = next;
   }
   private computeLayout() {
     return computeLaneLayout(this.definition, this.layout.positions);
@@ -790,6 +810,7 @@ export class StructuredCanvasAdapter {
     for (const removedId of removed) delete positions[removedId];
     this.layout.positions = positions;
     if (removed.has(this.selected)) this.selected = "";
+    this.canvas = pruneCanvas(this.canvas, this.stepIdSet());
     this.syncSteps();
   }
   /**
@@ -878,6 +899,7 @@ export class StructuredCanvasAdapter {
       this.layout.revision++;
     }
     if (this.selected === oldId) this.selected = next;
+    this.canvas = renameInCanvas(this.canvas, oldId, next);
     return sites.length;
   }
   renameDecision(taskId: string, oldAnswer: string, newAnswer: string) {
@@ -1145,5 +1167,6 @@ export class StructuredCanvasAdapter {
       viewport: { x: 0, y: 0, zoom: 1 },
     };
     this.unplaced = [];
+    this.canvas = emptyCanvas();
   }
 }

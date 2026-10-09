@@ -38,11 +38,13 @@ export interface LocalDraftEntry {
   /** ISO time of the last save. */
   savedAt: string;
 }
-/** What reopens a draft: its source, format and canvas layout. */
+/** What reopens a draft: its source, format, layout and canvas sidecar. */
 export interface LocalDraftDocument {
   source: string;
   format: "yaml" | "json";
   layout: unknown;
+  /** The canvas sidecar; drafts saved before it existed have none. */
+  canvas?: unknown;
   savedAt: string;
 }
 /** A deleted draft, kept so Undo can put it back. */
@@ -74,6 +76,7 @@ function documentOf(value: unknown): LocalDraftDocument | null {
     source: value["source"],
     format: value["format"] === "json" ? "json" : "yaml",
     layout: value["layout"] ?? null,
+    ...(value["canvas"] !== undefined ? { canvas: value["canvas"] } : {}),
     savedAt: text(value["savedAt"]),
   };
 }

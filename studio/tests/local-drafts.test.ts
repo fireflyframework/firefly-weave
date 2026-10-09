@@ -139,3 +139,40 @@ describe("where local work lives", () => {
     expect(localKeepLabel(false)).toBe("Kept on this computer");
   });
 });
+
+describe("drafts keep the canvas sidecar", () => {
+  it("saves and reads it back, and reads drafts saved before it existed", () => {
+    const storage = new MemoryStorage();
+    const drafts = new LocalDrafts(() => storage);
+    const entry = {
+      id: "c",
+      name: "order-intake",
+      version: "1.0.0",
+      savedAt: "2026-10-08T10:00:00Z",
+    };
+    const canvas = {
+      schemaVersion: 2,
+      kind: "weave.studio/canvas",
+      stepNotes: { a: { text: "Note" } },
+    };
+    expect(
+      drafts.save(entry, {
+        source: "kind: C",
+        format: "yaml",
+        layout: null,
+        canvas,
+        savedAt: entry.savedAt,
+      }),
+    ).toBe(true);
+    expect(drafts.read("c")!.canvas).toEqual(canvas);
+    expect(
+      drafts.save(entry, {
+        source: "kind: C",
+        format: "yaml",
+        layout: null,
+        savedAt: entry.savedAt,
+      }),
+    ).toBe(true);
+    expect("canvas" in drafts.read("c")!).toBe(false);
+  });
+});

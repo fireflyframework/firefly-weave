@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { canvasFromStored } from "./editor/state/canvas-sidecar";
 import { changeSlot, slotValidation } from "./integrations/connection-slots";
 import {
   Component,
@@ -1501,6 +1502,7 @@ export class App {
         source: this.model.source,
         format: this.model.format,
         layout: this.model.layout,
+        canvas: this.model.canvas,
         savedAt,
       },
     );
@@ -1603,6 +1605,12 @@ export class App {
         ...model.layout,
         ...(structuredClone(layout) as Partial<typeof model.layout>),
       };
+    // The canvas sidecar, or the layout drafts kept before it existed.
+    model.canvas = canvasFromStored(
+      document.canvas ?? document.layout,
+      model.definition,
+      model.stepIdSet(),
+    ).canvas;
     // The viewport comes back with the workflow, unless it is the default.
     const kept = usableViewport(model.layout.viewport);
     this.restoredView =
