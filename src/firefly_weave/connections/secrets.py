@@ -17,6 +17,7 @@
 """Operator-only scoped handle grants; providers never interpret tenant-selected locators."""
 
 import hashlib
+import logging
 import os
 import stat
 from dataclasses import dataclass
@@ -25,7 +26,9 @@ from typing import Protocol
 
 from firefly_weave.connections.models import unavailable
 from firefly_weave.contracts.access import Scope
-from firefly_weave.contracts.connectors import ResolvedSecret
+from firefly_weave.contracts.connectors import NO_CREDENTIAL, ResolvedSecret
+
+_LOG = logging.getLogger("weave.secrets")
 
 
 class SecretUnavailable(Exception):
@@ -98,16 +101,27 @@ class ScopedSecrets:
         self._providers = dict(providers or {})
         self._grants: dict[tuple[Scope, str], SecretGrant] = {}
         for grant in grants:
+            if grant.handle == NO_CREDENTIAL:
+                # The reserved handle is never resolved, so a grant under that name could only mislead.
+                _LOG.warning("Ignoring an operator secret grant for the reserved no-credential handle.")
+                continue
             key = (grant.scope, grant.handle)
             if grant.scope.environment_id is None or key in self._grants or grant.provider not in self._providers:
                 raise ValueError("Invalid operator secret grant")
             self._grants[key] = grant
 
-    def check(self, scope: Scope, handle: str) -> None:
+    def check(self, scope: Scope, handle: str, *, keyless: bool = False) -> None:
+        """Raise unless the handle is granted here; the reserved handle counts only for keyless connections."""
+        if handle == NO_CREDENTIAL:
+            if keyless:
+                return
+            raise unavailable()
         if (scope, handle) not in self._grants:
             raise unavailable()
 
     def resolve(self, scope: Scope, handle: str) -> ResolvedSecret:
+        if handle == NO_CREDENTIAL:
+            raise SecretUnavailable()
         self.check(scope, handle)
         grant = self._grants[(scope, handle)]
         try:

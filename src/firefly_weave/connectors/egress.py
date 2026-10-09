@@ -65,9 +65,9 @@ def origin(url: str) -> tuple[str, str, int]:
 class EgressPolicy:
     """Destinations one request may reach.
 
-    With a ``purpose`` the private-origin policy (C8) decides plain text, private
-    addresses and plain-text credentials; clients not yet on C8 keep the legacy
-    network list, unchanged.
+    With a ``purpose`` the private-origin policy decides plain text, private
+    addresses and plain-text credentials; clients that do not use it yet keep the
+    legacy network list, unchanged.
     """
 
     allowed_origins: tuple[str, ...]
@@ -216,6 +216,7 @@ class PinnedTransport(httpx.AsyncBaseTransport):
         *,
         tls: ssl.SSLContext | None = None,
         resolver: Callable[[str, int], Awaitable[tuple[str, ...]]] = resolve,
+        max_connections: int = 1,
     ) -> None:
         context = tls or ssl.create_default_context()
         if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
@@ -223,7 +224,7 @@ class PinnedTransport(httpx.AsyncBaseTransport):
         self.pool = httpcore.AsyncConnectionPool(
             ssl_context=context,
             network_backend=PinnedBackend(policy, url, resolver),
-            max_connections=1,
+            max_connections=max_connections,
             max_keepalive_connections=0,
             retries=0,
             http1=True,

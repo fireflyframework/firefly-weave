@@ -28,42 +28,35 @@ from pathlib import Path
 from uuid import UUID
 
 import httpx
+from firefly_weave import private_origins
+from firefly_weave.ai_policy import PolicyFile
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, action_definition, task_capability
 from firefly_weave.contracts.definitions import load_definition
+from firefly_weave.private_origins import PrivateOrigins
 from firefly_weave.sdk.transport import WorkerTransport
 from firefly_weave.sdk.worker import Worker
-from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, WorkerTokenAuth
-from pydantic import BaseModel, ConfigDict, Field
+from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, WorkerTokenAuth, private_transport
 
 from weave_agentic_worker.handler import AgenticTaskHandler, WorkerPolicy
 
 CAPABILITY = "weave-agentic.generate@1.0.0"
+POLICY_ENV = "WEAVE_AGENTIC_POLICY_FILE"
+MAX_CAPACITY = 16
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-    provider: str
-    model: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
+def read_policy(path: Path, origins: PrivateOrigins | None = None) -> WorkerPolicy:
+    """The worker's policy: its mounted AI policy file, re-read on change, and its private-origin policy."""
+    allowed = origins if origins is not None else private_origins.active()
+    return WorkerPolicy(source=PolicyFile(path, allowed), origins=allowed)
 
 
-class _Policy(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-    models: list[_Model] = Field(min_length=1, max_length=100)
-    endpoints: list[str] = Field(min_length=1, max_length=100)
-
-
-def read_policy(path: Path) -> WorkerPolicy:
-    if path.stat().st_size > 65536:
-        raise ValueError("Worker policy is too large")
-    parsed = _Policy.model_validate_json(path.read_bytes())
-    policy = WorkerPolicy(frozenset((item.provider, item.model) for item in parsed.models), frozenset(parsed.endpoints))
-    supported = {"openai-chat", "openai-responses", "azure-chat", "azure-responses", "anthropic"}
-    if any(provider not in supported for provider, _ in policy.models):
-        raise ValueError("Unsupported worker provider")
-    for endpoint in policy.endpoints:
-        policy.endpoint(endpoint)
-    return policy
+def capacity() -> int:
+    """Concurrent tasks this worker accepts; a local Ollama serves one request at a time."""
+    raw = os.environ.get("WEAVE_AGENTIC_CAPACITY", "1")
+    if not raw.isdigit() or not 1 <= int(raw) <= MAX_CAPACITY:
+        raise ValueError("WEAVE_AGENTIC_CAPACITY must be a whole number from 1 to 16")
+    return int(raw)
 
 
 class TokenFileAuth(httpx.Auth):
@@ -92,23 +85,29 @@ def worker_auth(api_origin: str) -> httpx.Auth:
 
 
 async def main() -> None:
-    policy = read_policy(Path(os.environ["WEAVE_AGENTIC_POLICY_FILE"]))
-    auth = worker_auth(os.environ["WEAVE_API_URL"])
+    origins = private_origins.load()
+    private_origins.install(origins)
+    policy = read_policy(Path(os.environ[POLICY_ENV]), origins)
+    api = os.environ["WEAVE_API_URL"]
+    auth = worker_auth(api)
+    slots = capacity()
     prefix = os.environ["WEAVE_ENVIRONMENT_URL"].rstrip("/")
     async with httpx.AsyncClient(
-        base_url=os.environ["WEAVE_API_URL"], auth=auth, timeout=10, trust_env=False, follow_redirects=False
+        base_url=api,
+        auth=auth,
+        timeout=10,
+        trust_env=False,
+        follow_redirects=False,
+        # Plain HTTP to the API only through this process's platform-api entry, pinned and peer checked.
+        transport=private_transport(api, "platform-api", max_connections=4),
     ) as client:
         response = await client.post(
             prefix + "/workers",
-            json={
-                "release_id": os.environ["WEAVE_WORKER_RELEASE_ID"],
-                "task_types": [CAPABILITY],
-                "capacity": 1,
-            },
+            json={"release_id": os.environ["WEAVE_WORKER_RELEASE_ID"], "task_types": [CAPABILITY], "capacity": slots},
         )
         response.raise_for_status()
         transport = WorkerTransport(client, prefix, UUID(response.json()["id"]))
-        worker = Worker(transport, {CAPABILITY: AgenticTaskHandler(transport, policy)}, 1)
+        worker = Worker(transport, {CAPABILITY: AgenticTaskHandler(transport, policy)}, slots)
         loop = asyncio.get_running_loop()
         for signum in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(signum, lambda: asyncio.create_task(worker.stop()))

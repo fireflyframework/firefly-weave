@@ -593,7 +593,8 @@ class _FileDocument(BaseModel):
     entries: tuple[_FileEntry, ...] = Field(max_length=MAX_ENTRIES)
 
 
-def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A ``json.loads`` object hook for strict policy files: a repeated key is a ValueError."""
     result: dict[str, Any] = {}
     for key, value in pairs:
         if key in result:
@@ -607,7 +608,7 @@ def parse(data: bytes) -> PrivateOrigins:
     if len(data) > MAX_FILE_BYTES:
         raise PrivateOriginsInvalid("The private-origin file is larger than 64 KiB.")
     try:
-        document = _FileDocument.model_validate(json.loads(data, object_pairs_hook=_unique))
+        document = _FileDocument.model_validate(json.loads(data, object_pairs_hook=unique_keys))
         entries = tuple(
             PrivateOrigin(
                 origin=item.origin, purpose=item.purpose, networks=item.networks, credentials=item.credentials
@@ -639,25 +640,34 @@ def render(policy: PrivateOrigins) -> bytes:
     return (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
 
 
-def read_file(path: Path) -> PrivateOrigins:
-    """Read the policy file: a regular file, never a symbolic link, never writable by other users."""
+def read_guarded_file(path: Path, limit: int, error: type[Exception], subject: str) -> bytes:
+    """Read a read-only policy file: a regular file, never a symbolic link, never writable by other users.
+
+    It returns at most ``limit + 1`` bytes, so the caller's parser can refuse a larger file. Each
+    refusal raises the caller's ``error`` with a message that names ``subject``, such as
+    "private-origin file".
+    """
     if path.is_symlink():
-        raise PrivateOriginsInvalid("The private-origin file must not be a symbolic link.")
+        raise error(f"The {subject} must not be a symbolic link.")
     try:
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
-        raise PrivateOriginsInvalid("The private-origin file is missing or unreadable.") from None
+        raise error(f"The {subject} is missing or unreadable.") from None
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode):
-            raise PrivateOriginsInvalid("The private-origin file must be a regular file.")
+            raise error(f"The {subject} must be a regular file.")
         if os.name == "posix" and info.st_mode & 0o022:
-            raise PrivateOriginsInvalid("The private-origin file must not be writable by other users.")
+            raise error(f"The {subject} must not be writable by other users.")
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            data = stream.read(MAX_FILE_BYTES + 1)
+            return stream.read(limit + 1)
     finally:
         os.close(descriptor)
-    return parse(data)
+
+
+def read_file(path: Path) -> PrivateOrigins:
+    """Read the policy file: a regular file, never a symbolic link, never writable by other users."""
+    return parse(read_guarded_file(path, MAX_FILE_BYTES, PrivateOriginsInvalid, "private-origin file"))
 
 
 def _setting_networks(environ: Mapping[str, str], name: str) -> tuple[str, ...]:

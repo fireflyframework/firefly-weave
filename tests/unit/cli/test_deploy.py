@@ -366,7 +366,66 @@ def test_failed_subprocess_retains_only_bounded_private_log(tmp_path):
     assert log.stat().st_mode & 0o077 == 0
 
 
-def test_timeout_stops_owned_descendant_after_leader_exits(tmp_path):
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_finished_subprocess_stops_pipe_holding_descendants_and_retains_buffered_output(tmp_path, exit_code):
+    import os
+    import signal
+    import sys
+
+    from firefly_weave.sdk.deployment import DeploymentError, run_command
+
+    marker, pid_file, log = tmp_path / "descendant-finished", tmp_path / "descendant.pid", tmp_path / "child.log"
+    child = "import time,pathlib; time.sleep(.5); pathlib.Path(" + repr(str(marker)) + ").touch()"
+    parent = (
+        "import subprocess,sys,os,pathlib; p=subprocess.Popen([sys.executable,'-c',"
+        + repr(child)
+        + "]); pathlib.Path("
+        + repr(str(pid_file))
+        + ").write_text(str(p.pid)); print('ready' * 20000,flush=True); os._exit("
+        + str(exit_code)
+        + ")"
+    )
+    expected = ("ready" * 20000 + "\n").encode()
+    try:
+        if exit_code:
+            with pytest.raises(DeploymentError):
+                run_command([sys.executable, "-c", parent], timeout=2, log_path=log)
+        else:
+            assert run_command([sys.executable, "-c", parent], timeout=2, log_path=log) == expected
+        assert log.read_bytes() == expected
+        assert not marker.exists(), "The completed command waited for an owned helper to finish instead of stopping it"
+    finally:
+        if pid_file.exists():
+            with suppress(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+
+
+def test_interrupted_subprocess_reaps_its_owned_leader(tmp_path, monkeypatch):
+    import os
+    import sys
+
+    from firefly_weave.sdk import deployment
+
+    marker = tmp_path / "leader.pid"
+    original = deployment.selectors.DefaultSelector.select
+
+    def interrupt(selector, timeout=None):
+        events = original(selector, min(timeout, 0.01))
+        if marker.exists():
+            raise KeyboardInterrupt
+        return events
+
+    monkeypatch.setattr(deployment.selectors.DefaultSelector, "select", interrupt)
+    code = (
+        "import os,time,pathlib; pathlib.Path(" + repr(str(marker)) + ").write_text(str(os.getpid())); time.sleep(30)"
+    )
+    with pytest.raises(KeyboardInterrupt):
+        deployment.run_command([sys.executable, "-c", code], timeout=2)
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(marker.read_text()), 0)
+
+
+def test_timeout_stops_owned_descendant(tmp_path):
     import os
     import signal
     import sys
@@ -377,9 +436,9 @@ def test_timeout_stops_owned_descendant_after_leader_exits(tmp_path):
     marker, log = tmp_path / "descendant-finished", tmp_path / "child.log"
     child = "import time,pathlib; time.sleep(.5); pathlib.Path(" + repr(str(marker)) + ").touch()"
     parent = (
-        "import subprocess,sys,os; p=subprocess.Popen([sys.executable,'-c',"
+        "import subprocess,sys,time; p=subprocess.Popen([sys.executable,'-c',"
         + repr(child)
-        + "]); print(p.pid,flush=True); os._exit(0)"
+        + "]); print(p.pid,flush=True); time.sleep(10)"
     )
     try:
         with pytest.raises(DeploymentError):

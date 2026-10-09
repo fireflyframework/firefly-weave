@@ -102,6 +102,7 @@ nav:
       - Connect FTP and cloud drives: guides/file-connectors.md
       - Evaluate decision tables: reference/decision-tables.md
       - Run AI steps: guides/ai-workers.md
+      - Run AI tasks with Ollama: guides/ollama.md
       - Share context between AI steps: guides/shared-ai-context.md
       - Use Weave AI: guides/weave-ai.md
       - Manage runs and business cases: guides/execution-management.md

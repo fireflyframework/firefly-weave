@@ -18,17 +18,24 @@
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx2
 import pytest
+from firefly_weave import private_origins as po
+from firefly_weave.ai_policy import PolicyFile, render
+from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.workers import CredentialLease, LeaseProof, TaskLease
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from weave_agentic_worker.handler import AgenticTaskHandler, WorkerPolicy
+from weave_agentic_worker.providers import build_model
 
 PATTERNS = [
     "none",
@@ -128,7 +135,7 @@ def fixture_model(calls, *, fail=False, runaway=False):
                 raise AssertionError(properties)
             parts = [ToolCallPart(tool.name, value)]
         else:
-            parts = [TextPart('{"approved":true}')]
+            parts = [TextPart('{"result":{"approved":true}}')]
         return ModelResponse(parts=parts, usage=RequestUsage(input_tokens=5, output_tokens=3))
 
     return FunctionModel(respond)
@@ -564,3 +571,285 @@ async def test_preprovider_nonbudget_timeout_remains_unknown():
     with pytest.raises(ConnectorFailure) as failure:
         await handler(transport, fixture_model([]))(lease())
     assert failure.value.code == "LLM_TIMEOUT" and failure.value.outcome == "unknown"
+
+
+OLLAMA_ORIGINS = po.PrivateOrigins(platform=po.PLATFORM).with_entries(
+    [po.PrivateOrigin(origin="http://ollama:11434", purpose="model", networks=("10.246.21.0/24",), credentials="none")]
+)
+
+
+def ollama_endpoint(**changes):
+    return {
+        "id": "ollama-local",
+        "label": "Ollama (Weave-managed)",
+        "url": "http://ollama:11434/v1",
+        "providers": ["openai-chat"],
+        "compat": "ollama",
+        "credential": "none",
+        "models": "served",
+        "contextTokens": 8192,
+        "structuredOutput": "native",
+        "maxOutputTokens": 4096,
+        **changes,
+    }
+
+
+def ollama_policy(tmp_path, **changes):
+    path = tmp_path / f"ai-policy-{uuid4().hex}.json"
+    path.write_bytes(render([ollama_endpoint(**changes)]))
+    path.chmod(0o444)
+    return WorkerPolicy(source=PolicyFile(path, OLLAMA_ORIGINS), origins=OLLAMA_ORIGINS)
+
+
+class OllamaTransport(Transport):
+    async def context(self, proof):
+        context = await super().context(proof)
+        context.connection.config = {
+            "provider": "openai-chat",
+            "endpoint": "http://ollama:11434/v1",
+            "secretSlot": "apiKey",
+        }
+        context.connection.allowed_destinations = ("http://ollama:11434",)
+        return context
+
+
+def ollama_lease(**profile):
+    return lease(model="qwen2.5:1.5b", **profile)
+
+
+@pytest.mark.parametrize("mode", ["native", "tool", "prompted", "cloud-default"])
+async def test_policy_selects_the_result_format_on_the_provider_request(tmp_path, mode):
+    requests = []
+
+    async def receive(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        message = {"role": "assistant", "content": '{"result":"Summary"}'}
+        if mode in {"tool", "cloud-default"}:
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": body["tools"][0]["function"]["name"], "arguments": '{"result":"Summary"}'},
+                    }
+                ],
+            }
+        return httpx2.Response(
+            200,
+            json={
+                "id": "chat-1",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "qwen2.5:1.5b",
+                "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            },
+        )
+
+    def builder(spec, secret, timeout, options):
+        return build_model(spec, secret, timeout, options, transport=httpx2.MockTransport(receive))
+
+    policy = (
+        ollama_policy(tmp_path, structuredOutput=mode)
+        if mode != "cloud-default"
+        else WorkerPolicy(frozenset({("openai-chat", "qwen2.5:1.5b")}), frozenset({"https://api.openai.com/v1"}))
+    )
+    transport = OllamaTransport() if mode != "cloud-default" else Transport()
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(transport, policy, model_builder=builder)(
+            ollama_lease(outputSchema={"type": "string", "minLength": 1})
+        )
+    assert output["result"] == "Summary"
+    assert output["usage"]["requests"] == 1 and len(requests) == 1
+    body = requests[0]
+    assert body.get("max_tokens", body.get("max_completion_tokens")) == 256
+    if mode == "native":
+        assert body["response_format"]["type"] == "json_schema"
+        assert body["response_format"]["json_schema"]["schema"]["properties"]["result"]["type"] == "string"
+        assert not body.get("tools") and "tool_choice" not in body
+    elif mode == "prompted":
+        assert body["response_format"]["type"] == "json_object"
+        assert not body.get("tools") and "tool_choice" not in body
+    else:
+        assert body["tools"][0]["function"]["parameters"]["properties"]["result"]["type"] == "string"
+        assert "response_format" not in body
+
+
+async def test_native_policy_uses_prompted_output_before_calling_an_unsupported_model(tmp_path):
+    from pydantic_ai.profiles import ModelProfile
+
+    calls = []
+
+    def respond(messages, info):
+        calls.append(info)
+        return ModelResponse(parts=[TextPart('{"result":{"approved":true}}')])
+
+    model = FunctionModel(respond, profile=ModelProfile(supports_json_schema_output=False))
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=lambda *_: model)(
+            ollama_lease()
+        )
+    assert output["result"] == {"approved": True}
+    assert len(calls) == 1 and not calls[0].output_tools
+
+
+@pytest.mark.parametrize("answer,code", [("rejected-format", "LLM_PROVIDER"), ("invalid-result", "LLM_OUTPUT")])
+async def test_a_native_result_failure_does_not_repeat_the_request(tmp_path, answer, code):
+    requests = []
+
+    async def receive(request):
+        requests.append(json.loads(request.content))
+        if answer == "rejected-format":
+            return httpx2.Response(400, json={"error": {"message": "response_format is unsupported"}})
+        return httpx2.Response(
+            200,
+            json={
+                "id": "chat-1",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "qwen2.5:1.5b",
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": '{"result":123}'}, "finish_reason": "stop"}
+                ],
+            },
+        )
+
+    def builder(spec, secret, timeout, options):
+        return build_model(spec, secret, timeout, options, transport=httpx2.MockTransport(receive))
+
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema={"type": "string", "minLength": 1})
+        )
+    assert failed.value.code == code and len(requests) == 1
+    assert requests[0]["response_format"]["type"] == "json_schema"
+
+
+async def test_keyless_ollama_calls_never_request_a_credential(tmp_path):
+    transport, built = OllamaTransport(), []
+
+    def builder(spec, secret, timeout, options):
+        built.append((spec, secret, options))
+        return fixture_model([])
+
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(transport, ollama_policy(tmp_path), model_builder=builder)(ollama_lease())
+    assert output["result"] == {"approved": True} and output["model"] == "qwen2.5:1.5b"
+    assert [kind for kind, _ in transport.requests] == ["context"]
+    spec, secret, options = built[0]
+    assert secret == "" and spec.base_url == "http://ollama:11434/v1"
+    assert options.endpoint.compat == "ollama" and options.origins is OLLAMA_ORIGINS
+
+
+async def test_an_exact_list_without_the_model_refuses_before_the_context(tmp_path):
+    transport = OllamaTransport()
+    policy = ollama_policy(tmp_path, models=["qwen3:4b"])
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure, match="LLM_POLICY"):
+        await AgenticTaskHandler(transport, policy, model_builder=lambda *_: fixture_model([]))(ollama_lease())
+    assert transport.requests == []
+
+
+async def test_a_missing_served_model_reports_model_not_found(tmp_path):
+    def missing(messages, info):
+        raise ModelHTTPError(404, "qwen2.5:1.5b", body={"message": "model 'qwen2.5:1.5b' not found"})
+
+    handler_ = AgenticTaskHandler(
+        OllamaTransport(), ollama_policy(tmp_path), model_builder=lambda *_: FunctionModel(missing)
+    )
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await handler_(ollama_lease())
+    assert (failed.value.code, failed.value.outcome) == ("LLM_MODEL_NOT_FOUND", "not_started")
+
+
+async def test_the_policy_context_and_output_limits_apply(tmp_path):
+    calls = []
+    with po.installed(OLLAMA_ORIGINS):
+        small = AgenticTaskHandler(
+            OllamaTransport(),
+            ollama_policy(tmp_path, contextTokens=512),
+            model_builder=lambda *_: fixture_model(calls),
+        )
+        with pytest.raises(ConnectorFailure, match="LLM_CONTEXT_LIMIT"):
+            await small(ollama_lease(options={"max_tokens": 1024}))
+        capped = AgenticTaskHandler(
+            OllamaTransport(),
+            ollama_policy(tmp_path, maxOutputTokens=128),
+            model_builder=lambda *_: fixture_model(calls),
+        )
+        with pytest.raises(ConnectorFailure, match="LLM_OPTIONS"):
+            await capped(ollama_lease())
+    assert calls == []
+
+
+async def test_plain_http_without_this_process_entry_is_refused(tmp_path):
+    policy = ollama_policy(tmp_path)
+    with po.installed(po.PrivateOrigins.empty()), pytest.raises(ConnectorFailure, match="LLM_POLICY"):
+        await AgenticTaskHandler(OllamaTransport(), policy, model_builder=lambda *_: fixture_model([]))(ollama_lease())
+
+
+async def test_an_invalid_policy_edit_fails_closed_until_fixed(tmp_path):
+    path = tmp_path / "ai-policy.json"
+    path.write_bytes(render([ollama_endpoint()]))
+    path.chmod(0o644)
+    policy = WorkerPolicy(source=PolicyFile(path, OLLAMA_ORIGINS), origins=OLLAMA_ORIGINS)
+    worker = AgenticTaskHandler(OllamaTransport(), policy, model_builder=lambda *_: fixture_model([]))
+    path.write_text("{")
+    os.utime(path, ns=(1, 1))
+    with po.installed(OLLAMA_ORIGINS):
+        with pytest.raises(ConnectorFailure, match="LLM_POLICY"):
+            await worker(ollama_lease())
+        path.write_bytes(render([ollama_endpoint()]))
+        os.utime(path, ns=(2, 2))
+        assert (await worker(ollama_lease()))["result"] == {"approved": True}
+
+
+async def test_a_credentialed_endpoint_requests_its_credential_and_passes_it_on():
+    transport, built = Transport(), []
+
+    def builder(spec, secret, timeout, options):
+        built.append((secret, options))
+        return fixture_model([])
+
+    policy = WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"}))
+    await AgenticTaskHandler(transport, policy, model_builder=builder)(lease())
+    assert [kind for kind, _ in transport.requests] == ["context", "credentials"]
+    secret, options = built[0]
+    assert secret == "secret-canary" and options.endpoint.credential == "required"
+
+
+async def test_a_refused_destination_is_a_policy_failure_before_any_credential():
+    endpoint = "https://10.0.0.5/v1"
+
+    class PrivateLiteralTransport(Transport):
+        async def context(self, proof):
+            context = await super().context(proof)
+            context.connection.config["endpoint"] = endpoint
+            context.connection.allowed_destinations = ("https://10.0.0.5",)
+            return context
+
+    transport, built = PrivateLiteralTransport(), []
+    policy = WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({endpoint}))
+    worker = AgenticTaskHandler(transport, policy, model_builder=lambda *args: built.append(args))
+    with po.installed(po.PrivateOrigins.empty()), pytest.raises(ConnectorFailure) as failed:
+        await worker(lease())
+    assert (failed.value.code, failed.value.outcome) == ("LLM_POLICY", "not_started")
+    assert [kind for kind, _ in transport.requests] == ["context"] and built == []
+
+
+async def test_a_refused_model_address_reports_policy_through_the_real_transport(tmp_path):
+    from dataclasses import replace
+
+    resolved = []
+
+    async def outside_the_entry(host, port):
+        resolved.append((host, port))
+        return ("10.99.0.5",)
+
+    policy = replace(ollama_policy(tmp_path), resolver=outside_the_entry)
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), policy)(ollama_lease())
+    assert (failed.value.code, failed.value.outcome) == ("LLM_POLICY", "not_started")
+    assert resolved == [("ollama", 11434)]

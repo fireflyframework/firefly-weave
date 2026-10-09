@@ -31,6 +31,10 @@ from firefly_weave.contracts.values import JsonObject, JsonObjectData, JsonValue
 if TYPE_CHECKING:
     from firefly_weave.contracts.workers import ConnectorExecutionPin
 
+# Reserved secret handle for model endpoints that take no credential (an approved local Ollama).
+# It is never resolved, leased, logged or sent; operator grants under this name are ignored.
+NO_CREDENTIAL = "no-credential"
+
 
 class ResolvedSecret(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
