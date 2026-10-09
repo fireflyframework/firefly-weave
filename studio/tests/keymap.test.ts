@@ -184,7 +184,7 @@ describe("the shortcuts sheet", () => {
       {
         keys: ["/"],
         label:
-          "Search in the Add a step panel. Replaces A, which opens the step list in n8n.",
+          "Search in the Add a step panel. The Add a step panel also opens with N.",
       },
       { keys: ["F9"], label: "Toggle a breakpoint. Not in n8n." },
       { keys: ["?"], label: "Show keyboard shortcuts. Not in n8n." },
@@ -200,5 +200,24 @@ describe("the shortcuts sheet", () => {
     ];
     expect(differences("mac")).toEqual(entries("Cmd"));
     expect(differences("other")).toEqual(entries("Ctrl"));
+  });
+
+  it("limits the sheet to the surfaces and commands a view offers", () => {
+    const sheet = shortcutSheet("other", {
+      surfaces: ["any", "canvas"],
+      available: new Set(["zoomIn", "undo", "searchAddStep"]),
+    });
+    expect(sheet.map((section) => section.title)).toEqual([
+      "Everywhere",
+      "Canvas",
+      "Differences from n8n",
+    ]);
+    expect(sheet[0].entries).toEqual([{ keys: ["Ctrl+Z"], label: "Undo" }]);
+    expect(sheet[1].entries[0]).toEqual({ keys: ["+", "="], label: "Zoom in" });
+    expect(sheet[1].entries.map((entry) => entry.label)).toContain(
+      "Search in the Add a step panel",
+    );
+    expect(sheet[1].entries.map((entry) => entry.label)).not.toContain("Copy");
+    expect(sheet[2].entries.map((entry) => entry.keys)).toEqual([["/"]]);
   });
 });

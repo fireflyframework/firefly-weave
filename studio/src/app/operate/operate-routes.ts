@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // pages call these, tests check them. The server authorizes every request; a
 // hidden entry is a convenience, never a control.
 import type { Routes } from "@angular/router";
+import { SETTINGS_TABS } from "../settings/settings-routes";
 
 /** The Operate pages, in navigation order. */
 export const operatePages = [
@@ -84,6 +85,12 @@ export function viewFromPath(pathname: string): ViewRoute | null {
     return { view: page, id: detail ? parts[2].toLowerCase() : "" };
   }
   if (parts[0] === "operations") return { view: "clusters", id: "" };
+  if (
+    parts[0] === "settings" &&
+    parts.length === 2 &&
+    SETTINGS_TABS.some((tab) => tab.id === parts[1])
+  )
+    return { view: "settings", id: "" };
   return parts.length === 1 ? { view: parts[0], id: "" } : null;
 }
 

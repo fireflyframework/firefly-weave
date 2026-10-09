@@ -616,17 +616,33 @@ export class StructuredCanvasAdapter {
    * Returns the copy's ID.
    */
   duplicate(id: string) {
+    return this.duplicateRun([id])[0];
+  }
+  /**
+   * Copies a run of steps that sit next to each other in one sequence and
+   * inserts the copies right after the run, as one undo step. The copies and
+   * the steps inside them get new IDs; references between copied steps
+   * follow them, references to other steps stay. Returns the copies' IDs.
+   */
+  duplicateRun(ids: readonly string[]): string[] {
     if (this.readonly) throw Error("Fix source before editing the graph.");
-    const node = this.nodes().find((n) => n.step.id === id);
-    if (!node) throw Error("Select a placed step.");
+    const all = this.nodes();
+    const found = ids.map((id) => all.find((n) => n.step.id === id));
+    if (!found.length || found.some((n) => !n))
+      throw Error("Select a placed step.");
+    const run = (found as Node[]).sort((a, b) => a.index - b.index);
+    const owner = run[0].owner;
+    if (run.some((n, i) => n.owner !== owner || n.index !== run[0].index + i))
+      throw Error("Select steps next to each other in one path.");
     const renamed = new Map<string, string>();
     const taken = new Set<string>();
-    for (const old of this.subtree(node.step)) {
-      const base = old.replace(/-\d+$/, "") || old;
-      const next = this.freeId(base, taken);
-      taken.add(next);
-      renamed.set(old, next);
-    }
+    for (const node of run)
+      for (const old of this.subtree(node.step)) {
+        const base = old.replace(/-\d+$/, "") || old;
+        const next = this.freeId(base, taken);
+        taken.add(next);
+        renamed.set(old, next);
+      }
     const rewrite = (value: unknown, key = ""): unknown => {
       if (Array.isArray(value)) return value.map((item) => rewrite(item));
       if (isRecord(value))
@@ -640,19 +656,22 @@ export class StructuredCanvasAdapter {
       }
       return value;
     };
-    const copy = rewrite(structuredClone(node.step)) as Step;
     const renameSteps = (step: Step) => {
       step.id = renamed.get(step.id) ?? step.id;
       branches(step).forEach(([, b]) => b.steps.forEach(renameSteps));
     };
-    renameSteps(copy);
+    const copies = run.map((node) => {
+      const copy = rewrite(structuredClone(node.step)) as Step;
+      renameSteps(copy);
+      return copy;
+    });
     this.checkpoint();
     this.owners()
-      .get(node.owner)!
-      .splice(node.index + 1, 0, copy);
-    this.selected = copy.id;
+      .get(owner)!
+      .splice(run[run.length - 1].index + 1, 0, ...copies);
+    this.selected = copies[0].id;
     this.syncSteps();
-    return copy.id;
+    return copies.map((copy) => copy.id);
   }
   addUnplaced(kind: Kind) {
     this.checkpoint();
@@ -767,6 +786,56 @@ export class StructuredCanvasAdapter {
         "Move or delete the contained branch steps before deleting this group.",
       );
     const removed = this.subtree(n.step);
+    const group = removed.size > 1;
+    this.refuseIfRead(
+      removed,
+      group ? "Steps in this group are" : "This step is",
+      group ? "the group" : "it",
+    );
+    this.checkpoint();
+    this.owners().get(n.owner)!.splice(n.index, 1);
+    this.forget(removed);
+    this.syncSteps();
+  }
+  /**
+   * Deletes several steps, each with everything inside it, as one undo step.
+   * Steps (or the workflow output) outside the deleted ones that still read
+   * them block the deletion, as for one step.
+   */
+  removeSteps(ids: readonly string[]) {
+    if (this.readonly) throw Error("Fix source before editing the graph.");
+    const all = this.nodes();
+    const nodes = ids
+      .map((id) => all.find((n) => n.step.id === id))
+      .filter((n): n is Node => !!n);
+    if (!nodes.length) return;
+    const removed = new Set<string>();
+    for (const node of nodes)
+      for (const id of this.subtree(node.step)) removed.add(id);
+    this.refuseIfRead(removed, "These steps are", "them");
+    this.checkpoint();
+    const top = nodes.filter(
+      (node) =>
+        !nodes.some(
+          (other) =>
+            other !== node && this.subtree(other.step).has(node.step.id),
+        ),
+    );
+    for (const node of top) {
+      const list = this.owners().get(node.owner);
+      const at = list?.indexOf(node.step) ?? -1;
+      if (list && at >= 0) list.splice(at, 1);
+    }
+    this.forget(removed);
+    this.syncSteps();
+  }
+  /**
+   * Throws when a step (or the workflow output) outside `removed` still reads
+   * one of the steps in it, naming what reads them. `subject` and `object`
+   * complete the sentence: "<subject> referenced by …. Update … before
+   * deleting <object>."
+   */
+  private refuseIfRead(removed: Set<string>, subject: string, object: string) {
     const holders = [
       ...new Set(
         this.referenceSites()
@@ -775,22 +844,20 @@ export class StructuredCanvasAdapter {
           .map((site) => site.holder),
       ),
     ];
-    if (holders.length) {
-      const names = holders
-        .filter(Boolean)
-        .concat(holders.includes("") ? ["the workflow output"] : []);
-      const group = removed.size > 1;
-      throw Error(
-        `${group ? "Steps in this group are" : "This step is"} referenced by ${listNames(names)}. Update ${names.length === 1 ? "it" : "them"} before deleting ${group ? "the group" : "it"}.`,
-      );
-    }
-    this.checkpoint();
-    this.owners().get(n.owner)!.splice(n.index, 1);
+    if (!holders.length) return;
+    const names = holders
+      .filter(Boolean)
+      .concat(holders.includes("") ? ["the workflow output"] : []);
+    throw Error(
+      `${subject} referenced by ${listNames(names)}. Update ${names.length === 1 ? "it" : "them"} before deleting ${object}.`,
+    );
+  }
+  /** Drops the layout positions of deleted steps and a selection inside them. */
+  private forget(removed: Set<string>) {
     const positions = { ...this.layout.positions };
     for (const removedId of removed) delete positions[removedId];
     this.layout.positions = positions;
     if (removed.has(this.selected)) this.selected = "";
-    this.syncSteps();
   }
   /**
    * Renames a step and rewrites every reference to it (`/steps/<old>` and

@@ -16,20 +16,16 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { Routes } from "@angular/router";
+import { settingsRoutes } from "./settings/settings-routes";
 import { legacyRedirects, operateRoutes } from "./operate/operate-routes";
 // Componentless routes preserve the single authoring session across views.
 export const routes: Routes = [
   { path: "", redirectTo: "home", pathMatch: "full" },
   ...legacyRedirects,
-  ...[
-    "home",
-    "workflows",
-    "tasks",
-    "email",
-    "connections",
-    "settings",
-    "connect",
-  ].map((path) => ({ path, children: [] })),
+  ...["home", "workflows", "tasks", "email", "connections", "connect"].map(
+    (path) => ({ path, children: [] }),
+  ),
+  ...settingsRoutes,
   { path: "workflows/:id/designer", children: [] },
   ...operateRoutes,
   { path: "**", redirectTo: "home" },

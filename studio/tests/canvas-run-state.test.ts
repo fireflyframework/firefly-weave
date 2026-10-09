@@ -1,0 +1,206 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+import { describe, expect, it } from "vitest";
+import {
+  edgeRun,
+  groupsEntered,
+  pulses,
+  tileRun,
+  type CanvasRun,
+} from "../src/app/editor/canvas/run-state";
+
+const run = (extra: Partial<CanvasRun> = {}): CanvasRun => ({
+  mode: "simulated",
+  status: "running",
+  current: [],
+  active: [],
+  done: [],
+  ...extra,
+});
+
+describe("a step's run state", () => {
+  it("is nothing without a run", () => {
+    expect(tileRun("a", null)).toBeNull();
+  });
+
+  it("is live where the run is, waiting where it waits, and done once finished", () => {
+    expect(tileRun("b", run({ current: ["b"] }))).toBe("live");
+    expect(
+      tileRun("b", run({ status: "waiting", current: ["b"], active: ["b"] })),
+    ).toBe("waiting");
+    expect(tileRun("a", run({ done: ["a"] }))).toBe("done");
+    expect(tileRun("c", run({ done: ["a"] }))).toBeNull();
+  });
+
+  it("is failed where a failed run stopped", () => {
+    expect(tileRun("b", run({ status: "failed", current: ["b"] }))).toBe(
+      "failed",
+    );
+    expect(tileRun("b", run({ status: "timed_out", active: ["b"] }))).toBe(
+      "failed",
+    );
+    expect(
+      tileRun("b", run({ status: "cancelled", current: ["b"] })),
+    ).toBeNull();
+  });
+
+  it("keeps a finished step's check once the run ended, even if the run still lists it", () => {
+    expect(
+      tileRun(
+        "b",
+        run({
+          status: "succeeded",
+          current: ["b"],
+          active: ["b"],
+          done: ["b"],
+        }),
+      ),
+    ).toBe("done");
+    expect(
+      tileRun("b", run({ status: "cancelled", active: ["b"], done: ["b"] })),
+    ).toBe("done");
+    // Still going, a step both listed and finished is where the run is.
+    expect(tileRun("b", run({ current: ["b"], done: ["b"] }))).toBe("live");
+    // A failed run marks the step it failed at, finished or not.
+    expect(
+      tileRun("b", run({ status: "failed", current: ["b"], done: ["b"] })),
+    ).toBe("failed");
+  });
+});
+
+describe("an edge's run state", () => {
+  const ab = { leaves: "a", enters: "b" };
+
+  it("is idle without a run, and for an edge that names no step", () => {
+    expect(edgeRun(ab, null)).toBe("idle");
+    expect(
+      edgeRun(
+        { leaves: null, enters: null },
+        run({ status: "succeeded", done: ["a"] }),
+      ),
+    ).toBe("idle");
+  });
+
+  it("is live while the run takes it, taken once the run ended, and skipped when the run went elsewhere", () => {
+    expect(edgeRun(ab, run({ done: ["a"], current: ["b"] }))).toBe("live");
+    expect(edgeRun(ab, run({ status: "succeeded", done: ["a", "b"] }))).toBe(
+      "taken",
+    );
+    expect(edgeRun(ab, run({ status: "succeeded", done: ["a", "c"] }))).toBe(
+      "skipped",
+    );
+    expect(edgeRun(ab, run({ done: ["a"] }))).toBe("idle");
+    expect(
+      edgeRun(
+        { leaves: null, enters: "b" },
+        run({ status: "succeeded", done: ["b"] }),
+      ),
+    ).toBe("taken");
+    expect(
+      edgeRun(
+        { leaves: "z", enters: "$end" },
+        run({ status: "succeeded", done: ["z"] }),
+      ),
+    ).toBe("taken");
+    expect(
+      edgeRun(
+        { leaves: "z", enters: "$end" },
+        run({ status: "failed", done: ["z"] }),
+      ),
+    ).toBe("skipped");
+  });
+
+  it("pulses only while a real run is followed, never during a simulated one", () => {
+    expect(pulses("live", run({ mode: "real" }))).toBe(true);
+    expect(pulses("waiting", run({ mode: "real" }))).toBe(true);
+    expect(pulses("live", run({ mode: "simulated" }))).toBe(false);
+    expect(pulses("done", run({ mode: "real" }))).toBe(false);
+    expect(pulses("live", null)).toBe(false);
+  });
+});
+
+describe("the groups a run is inside", () => {
+  // route holds review and the nested group inner (which holds deep).
+  const holder: Record<string, string> = {
+    review: "route",
+    inner: "route",
+    deep: "inner",
+  };
+  const parentOf = (id: string) => holder[id] ?? null;
+
+  it("is every group that holds a step the run is at or finished, however deep", () => {
+    expect(groupsEntered(null, parentOf).size).toBe(0);
+    expect(groupsEntered(run({ done: ["check"] }), parentOf).size).toBe(0);
+    expect([
+      ...groupsEntered(run({ active: ["review"], done: ["check"] }), parentOf),
+    ]).toEqual(["route"]);
+    expect(
+      [...groupsEntered(run({ current: ["deep"] }), parentOf)].sort(),
+    ).toEqual(["inner", "route"]);
+    expect([
+      ...groupsEntered(
+        run({ status: "failed", done: ["review", "check"] }),
+        parentOf,
+      ),
+    ]).toEqual(["route"]);
+  });
+
+  it("makes the edge into a group taken or live as soon as the run is inside it, though the run records the group only when its join completes", () => {
+    const into = { leaves: "check", enters: "route" };
+    const fromTrigger = { leaves: null, enters: "route" };
+    const waiting = run({
+      status: "waiting",
+      current: ["review"],
+      active: ["review"],
+      done: ["check"],
+    });
+    const inside = groupsEntered(waiting, parentOf);
+    expect(edgeRun(into, waiting)).toBe("idle");
+    expect(edgeRun(into, waiting, inside)).toBe("live");
+    expect(edgeRun(fromTrigger, waiting, inside)).toBe("live");
+    for (const status of ["failed", "cancelled", "timed_out"]) {
+      const ended = run({ ...waiting, status });
+      expect(edgeRun(into, ended)).toBe("skipped");
+      expect(edgeRun(into, ended, groupsEntered(ended, parentOf))).toBe(
+        "taken",
+      );
+    }
+  });
+
+  it("leaves the edges that leave a group to the group's own finish", () => {
+    const leavingNested = { leaves: "inner", enters: null };
+    const waiting = run({ status: "waiting", active: ["deep"] });
+    const inside = groupsEntered(waiting, parentOf);
+    // Inside the nested group is not out of it: this edge waits for its join.
+    expect(edgeRun(leavingNested, waiting, inside)).toBe("idle");
+    expect(
+      edgeRun(
+        leavingNested,
+        run({ status: "failed", active: ["deep"] }),
+        groupsEntered(run({ status: "failed", active: ["deep"] }), parentOf),
+      ),
+    ).toBe("skipped");
+    expect(
+      edgeRun(
+        leavingNested,
+        run({ status: "succeeded", done: ["deep", "inner"] }),
+        groupsEntered(run({ done: ["deep", "inner"] }), parentOf),
+      ),
+    ).toBe("taken");
+  });
+});

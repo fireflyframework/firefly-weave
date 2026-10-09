@@ -70,9 +70,14 @@ import {
 import { type ActivationBindings, ActivationDialog } from "./activation-dialog";
 import {
   StepPicker,
+  type AnchorRect,
   type PickerAction,
   type StepPickerChoice,
 } from "./designer/step-picker";
+import type { CanvasHost, WorkflowSection } from "./editor/canvas/canvas-host";
+import { setupPhrase, type StepFacts } from "./editor/canvas/tile-facts";
+import type { CanvasRun } from "./editor/canvas/run-state";
+import type { Json, KindContext } from "./editor/ndv/registry";
 import { StartRunDialog, type StartRunRequest } from "./run/start-run-dialog";
 import type { SuggestedChange } from "./designer/diagnostics-list";
 import type { DiagnosticLocation } from "./designer/diagnostic-location";
@@ -138,6 +143,15 @@ import { TemplateGallery } from "./templates/template-gallery";
 import { sheetWhen } from "./modal-sheet";
 import { ToastHost, ToastService, type ToastAction } from "./toast";
 import { LocalDrafts, type LocalDraftEntry } from "./local-drafts";
+import {
+  CHOICE_NOT_KEPT,
+  editorNextEnabled,
+  setEditorNext,
+} from "./editor/state/editor-flag";
+import {
+  editorNavExpanded,
+  setEditorNavExpanded,
+} from "./editor/state/canvas-preferences";
 import { runStatus } from "./status-labels";
 import {
   loadingWorkspace,
@@ -158,6 +172,7 @@ import {
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
+import { canvasSheet, keyPlatform } from "./editor/state/canvas-commands";
 import type {
   BuilderTab,
   HttpActionUse,
@@ -168,6 +183,8 @@ import {
   compatibleSlots as slotsFitting,
   planSlot,
 } from "./integrations/slot-binding";
+/** No contract gaps yet: the same empty list, so caches keyed on it hold. */
+const noContractGaps: (ContractGap & { stepId: string })[] = [];
 export type View =
   | "home"
   | "workflows"
@@ -225,6 +242,8 @@ const busyLabels: Record<string, string> = {
   validate: "Validating…",
   simulate: "Simulating…",
 };
+/** The narrowest window that shows the editor's navigation in full. */
+const EDITOR_NAV_FULL_MIN = 900;
 /** The inspector's width: 360–480 px by default, at most 640 px. */
 const INSPECTOR_MIN = 360;
 const INSPECTOR_MAX = 640;
@@ -337,7 +356,7 @@ const sideEffects: Record<string, string> = {
   ],
   templateUrl: "./app.html",
 })
-export class App {
+export class App implements CanvasHost {
   private cdr = inject(ChangeDetectorRef);
   private router = inject(Router);
   private historyPosition: number = history.state?.weavePosition ?? 0;
@@ -496,21 +515,50 @@ export class App {
   tab = "Designer";
   collapsed = false;
   /**
-   * The navigation shows as the 64 px rail in the designer, so the canvas
-   * gets the room, unless the person expanded it there.
+   * In the editor the navigation follows its own choice: the one this viewer
+   * saved, otherwise expanded from 1440 px and the 64 px rail below, so the
+   * canvas gets the room. Every other view uses `collapsed`.
    */
   get navCollapsed() {
+    return this.view === "designer"
+      ? !(this.editorNavChoice ?? editorNavExpanded(this.windowWidth))
+      : this.collapsed;
+  }
+  /**
+   * The editor shows its expanded navigation in full down to 900 px, even
+   * where other views narrow to the rail. Below that the editor's toolbar no
+   * longer fits beside it (Save to file is cut off), so it stays the rail.
+   * This is what the sidebar draws, in the editor and in the width sums.
+   */
+  get navFull() {
     return (
-      this.collapsed || (this.view === "designer" && !this.designerNavExpanded)
+      this.view === "designer" &&
+      !this.navCollapsed &&
+      this.windowWidth >= EDITOR_NAV_FULL_MIN
     );
   }
-  toggleNav() {
-    if (this.view === "designer") {
-      const expand = this.navCollapsed;
-      this.designerNavExpanded = expand;
-      if (expand) this.collapsed = false;
-    } else this.collapsed = !this.collapsed;
+  /**
+   * The navigation button. In the editor below 900 px the navigation cannot
+   * expand, so no button claims it can; the saved choice stays for wider windows.
+   */
+  get navToggleOffered() {
+    return this.view !== "designer" || this.windowWidth >= EDITOR_NAV_FULL_MIN;
   }
+  toggleNav() {
+    if (this.view !== "designer") {
+      this.collapsed = !this.collapsed;
+      return;
+    }
+    const expand = this.navCollapsed;
+    this.editorNavChoice = expand;
+    if (!setEditorNavExpanded(expand) && !this.navNoticeShown) {
+      this.navNoticeShown = true;
+      this.notify(CHOICE_NOT_KEPT);
+    }
+  }
+  /** The editor's navigation choice made in this session; it holds when browser storage refuses to keep it. */
+  private editorNavChoice: boolean | null = null;
+  private navNoticeShown = false;
   windowWidth = window.innerWidth;
   /** Where the side panels cover the page and act as modal sheets. */
   readonly sheetWhen = sheetWhen;
@@ -518,7 +566,7 @@ export class App {
   readonly selectedNodeElement = () =>
     this.model.selected
       ? document.querySelector<HTMLElement>(
-          `[data-step="${CSS.escape(this.model.selected)}"] .node-body`,
+          `[data-step="${CSS.escape(this.model.selected)}"] :is(.node-body, .tile-body)`,
         )
       : null;
   showPalette = false;
@@ -538,12 +586,20 @@ export class App {
   /** The "Keyboard shortcuts" sheet. */
   shortcutsOpen = false;
   /**
+   * "Try the new editor" (Settings › Preferences), or `?editor=next` in the
+   * address when Studio opened.
+   */
+  editorNext = editorNextEnabled();
+  setEditorNextPreference(enabled: boolean) {
+    this.editorNext = enabled;
+    if (!setEditorNext(enabled)) this.notify(CHOICE_NOT_KEPT);
+    this.cdr.markForCheck();
+  }
+  /**
    * The diagnostics strip shows its problems; the person can fold it to its
    * 36 px status line (it is that line when there is nothing to list).
    */
   diagnosticsOpen = true;
-  /** The navigation stays expanded in the designer once the person expands it there. */
-  designerNavExpanded = false;
   /** Narrow screens open on the outline, with a way to the canvas. */
   outlineNotice = false;
   resizing: {
@@ -818,7 +874,7 @@ export class App {
   dragTarget: Target | null = null;
   private suppressNodeClick = false;
   /** The open step picker and the "+" it inserts at. */
-  picker: { target: Target; anchor: HTMLElement } | null = null;
+  picker: { target: Target; anchor: HTMLElement | AnchorRect } | null = null;
   /** A press on empty canvas; a release close to it returns to workflow settings. */
   private canvasPress: Point | null = null;
   reply = "";
@@ -867,10 +923,15 @@ export class App {
     drag: unknown;
     paths: { key: string; from: string; d: string }[];
   } = { tick: -1, drag: null, paths: [] };
-  /** Error and warning counts per step from the last diagnostics. */
+  /** Errors and warnings per step from the last diagnostics, counted and in order. */
   private diagnosticSteps = new Map<
     string,
-    { errors: number; warnings: number }
+    {
+      errors: number;
+      warnings: number;
+      errorMessages: string[];
+      warningMessages: string[];
+    }
   >();
   private infoCache: {
     tick: number;
@@ -906,7 +967,7 @@ export class App {
   } = { tick: -1, revision: -1, rows: [] };
   get contractIssues() {
     const contractGaps = this.findContractGaps;
-    if (!contractGaps) return [];
+    if (!contractGaps) return noContractGaps;
     const tick = this.tick();
     if (
       this.gapCache.tick !== tick ||
@@ -2335,18 +2396,6 @@ export class App {
    */
   async remove(id = this.model.selected) {
     if (!id || this.editingLocked) return;
-    const contained = this.model.containedSteps(id);
-    if (
-      contained &&
-      !(await this.dialogs.confirm({
-        title: `Delete ${id} and the ${contained === 1 ? "1 step" : `${contained} steps`} inside it?`,
-        message:
-          "The group and every step in its branches are removed from the workflow. You can undo this.",
-        confirmLabel: "Delete group",
-        danger: true,
-      }))
-    )
-      return;
     // Where focus goes next: the step after it, else the one before it on
     // the same branch, else the "+" left where it was.
     const node = this.nodes.find((n) => n.step.id === id);
@@ -2355,35 +2404,12 @@ export class App {
     const next =
       siblings[position + 1]?.step.id ?? siblings[position - 1]?.step.id ?? "";
     const owner = node?.owner ?? "root";
-    // Its inspector edits go with it.
-    if (this.model.selected === id) this.loadInspector();
-    this.perform(() => this.model.remove(id, { contents: contained > 0 }));
-    if (this.error) {
-      this.cdr.markForCheck();
-      return;
-    }
-    this.message = "";
-    const revision = this.model.revision;
-    this.notify(`Deleted ${id}.`, {
-      label: "Undo",
-      run: () => {
-        if (this.model.revision !== revision || !this.model.canUndo) {
-          this.notify(
-            `${id} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
-          );
-          return;
-        }
-        this.undo();
-        this.notify(`Restored ${id}.`);
-        this.focusStep(id);
-      },
-    });
-    this.cdr.markForCheck();
+    if (!(await this.deleteSteps([id]))) return;
     this.focusLater(
       () =>
         (next
           ? document.querySelector<HTMLElement>(
-              `[data-step="${CSS.escape(next)}"] .node-body`,
+              `[data-step="${CSS.escape(next)}"] :is(.node-body, .tile-body)`,
             )
           : null) ??
         document.querySelector<HTMLElement>(
@@ -2391,6 +2417,68 @@ export class App {
         ) ??
         document.querySelector<HTMLElement>(".canvas"),
     );
+  }
+  /**
+   * Deletes one step or several as one undo step: groups with steps inside
+   * ask first, and a toast offers Undo while the workflow is still as the
+   * deletion left it. False when nothing was deleted.
+   */
+  private async deleteSteps(ids: readonly string[]): Promise<boolean> {
+    const one = ids.length === 1 ? ids[0] : "";
+    const contained = ids.reduce(
+      (sum, id) => sum + this.model.containedSteps(id),
+      0,
+    );
+    const inside = contained === 1 ? "1 step" : `${contained} steps`;
+    if (
+      contained &&
+      !(await this.dialogs.confirm(
+        one
+          ? {
+              title: `Delete ${one} and the ${inside} inside it?`,
+              message:
+                "The group and every step in its branches are removed from the workflow. You can undo this.",
+              confirmLabel: "Delete group",
+              danger: true,
+            }
+          : {
+              title: `Delete ${ids.length} steps and the ${inside} inside them?`,
+              message:
+                "The groups and every step in their branches are removed from the workflow. You can undo this.",
+              confirmLabel: "Delete steps",
+              danger: true,
+            },
+      ))
+    )
+      return false;
+    // Their inspector edits go with them.
+    if (ids.includes(this.model.selected)) this.loadInspector();
+    this.perform(() =>
+      one
+        ? this.model.remove(one, { contents: contained > 0 })
+        : this.model.removeSteps(ids),
+    );
+    if (this.error) {
+      this.cdr.markForCheck();
+      return false;
+    }
+    const what = one || `${ids.length} steps`;
+    const revision = this.model.revision;
+    this.notify(`Deleted ${what}.`, {
+      label: "Undo",
+      run: () => {
+        if (this.model.revision !== revision || !this.model.canUndo) {
+          this.notify(
+            `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
+          );
+          return;
+        }
+        this.undo();
+        this.notify(`Restored ${what}.`);
+        if (one) this.focusStep(one);
+      },
+    });
+    return true;
   }
   /** Makes a copy of a step right after it (the inspector's ⋯ menu). */
   async duplicate(id = this.model.selected) {
@@ -2415,7 +2503,9 @@ export class App {
       `Choose where ${id} goes: select a + on the canvas. Escape cancels.`,
     );
     this.focusLater(() =>
-      document.querySelector<HTMLElement>(".insertion-target"),
+      document.querySelector<HTMLElement>(
+        ".insertion-target, .canvas-v2 [data-insert]",
+      ),
     );
   }
   /** Steps nested in a group's branches, from this tick's layout. */
@@ -2550,7 +2640,7 @@ export class App {
     store(inspectorSectionsKey, JSON.stringify(this.closedSections));
   }
   /** The "Keyboard shortcuts" sheet. */
-  readonly shortcuts = [
+  readonly classicShortcuts = [
     { keys: "↑ ↓", does: "Select the previous or next step" },
     { keys: "Enter", does: "Edit the focused step in the inspector" },
     { keys: "A or /", does: "Add a step after the focused step" },
@@ -2564,6 +2654,16 @@ export class App {
     { keys: "Escape", does: "Stop moving a step, or close the inspector" },
     { keys: "?", does: "Show these shortcuts" },
   ];
+  get shortcuts() {
+    return this.editorNext
+      ? canvasSheet(keyPlatform()).flatMap((section) =>
+          section.entries.map((entry) => ({
+            keys: entry.keys.join(" "),
+            does: entry.label,
+          })),
+        )
+      : this.classicShortcuts;
+  }
   /** "Main sequence" or "Case 1 of route": where a step sits. */
   placeLabel(owner: string) {
     return ownerLabel(owner, this.stepsById());
@@ -2674,15 +2774,33 @@ export class App {
     void import("./designer/diagnostic-location").then(
       ({ locateDiagnostic }) => {
         if (this.diagnostics !== result) return;
-        const steps = new Map<string, { errors: number; warnings: number }>();
+        const steps = new Map<
+          string,
+          {
+            errors: number;
+            warnings: number;
+            errorMessages: string[];
+            warningMessages: string[];
+          }
+        >();
         for (const d of result.diagnostics) {
           const path = d["path"];
           if (typeof path !== "string") continue;
           const { stepId } = locateDiagnostic(path, definition);
           if (stepId === "$workflow") continue;
-          const entry = steps.get(stepId) ?? { errors: 0, warnings: 0 };
-          if (d.severity === "warning") entry.warnings++;
-          else if (d.severity !== "info") entry.errors++;
+          const entry = steps.get(stepId) ?? {
+            errors: 0,
+            warnings: 0,
+            errorMessages: [],
+            warningMessages: [],
+          };
+          if (d.severity === "warning") {
+            entry.warnings++;
+            entry.warningMessages.push(d.message);
+          } else if (d.severity !== "info") {
+            entry.errors++;
+            entry.errorMessages.push(d.message);
+          }
           steps.set(stepId, entry);
         }
         this.diagnosticSteps = steps;
@@ -2989,6 +3107,157 @@ export class App {
     this.dirty = true;
     this.changed();
   }
+  // ------------------------------------------- the left-to-right canvas
+  private factsCache: {
+    tick: number;
+    steps: unknown;
+    gaps: unknown;
+    facts: Map<string, StepFacts>;
+  } = { tick: -1, steps: null, gaps: null, facts: new Map() };
+  /** Errors, warnings and setup per step; the same map until they change. */
+  canvasFacts(): ReadonlyMap<string, StepFacts> {
+    const gaps = this.contractIssues;
+    const tick = this.tick();
+    const cache = this.factsCache;
+    if (
+      cache.tick === tick &&
+      cache.steps === this.diagnosticSteps &&
+      cache.gaps === gaps
+    )
+      return cache.facts;
+    const facts = new Map<string, StepFacts>();
+    for (const node of this.nodes) {
+      const found = this.diagnosticSteps.get(node.step.id);
+      const chip = incompleteChip(node.step);
+      const setup = [
+        ...gaps
+          .filter((gap) => gap.stepId === node.step.id)
+          .map((gap) => setupPhrase(gap.label)),
+        ...(chip ? [setupPhrase(chip)] : []),
+      ];
+      const errors = found?.errorMessages ?? [];
+      const warnings = found?.warningMessages ?? [];
+      if (errors.length || warnings.length || setup.length)
+        facts.set(node.step.id, { errors, warnings, setup });
+    }
+    this.factsCache = { tick, steps: this.diagnosticSteps, gaps, facts };
+    return facts;
+  }
+  private runCache: {
+    nodes: SimulationNodes | null;
+    session: unknown;
+    run: CanvasRun | null;
+  } = { nodes: null, session: null, run: null };
+  /** Today's simulation as the canvas draws it; null when none is open. */
+  canvasRun(): CanvasRun | null {
+    const session = this.simulationSession;
+    if (
+      this.runCache.nodes !== this.simNodes ||
+      this.runCache.session !== session
+    )
+      this.runCache = {
+        nodes: this.simNodes,
+        session,
+        run: session
+          ? {
+              mode: "simulated",
+              status: this.simNodes.status,
+              current: this.simNodes.current,
+              active: this.simNodes.active,
+              done: this.simNodes.done,
+            }
+          : null,
+      };
+    return this.runCache.run;
+  }
+  kindContext(): KindContext {
+    return {
+      workflow: this.model.definition,
+      features: [],
+      actionContract: (uses) =>
+        (this.catalogContracts.get(uses) as Json | undefined) ?? null,
+      tableContract: (uses) =>
+        (this.decisionContracts.get(uses) as Json | undefined) ?? null,
+      workflowContract: () => null,
+    };
+  }
+  async selectStep(id: string, open: boolean) {
+    const node = this.nodes.find((n) => n.step.id === id);
+    if (node) await this.select(node, open);
+  }
+  /** The workflow settings, focused on Inputs or Result. */
+  async openWorkflowSection(section: WorkflowSection) {
+    if (!(await this.deselect())) return;
+    this.showInspector = true;
+    this.cdr.markForCheck();
+    this.focusField(section);
+  }
+  openPicker(
+    insert: { owner: string; index: number },
+    label: string,
+    anchor: HTMLElement | AnchorRect,
+  ) {
+    if (this.editingLocked || this.model.readonly) return;
+    this.picker = {
+      target: { ...insert, point: { x: 0, y: 0 }, label },
+      anchor,
+    };
+    if (this.profile) void this.loadActionCatalog();
+    this.cdr.markForCheck();
+  }
+  isPickerOpenAt(insert: { owner: string; index: number }) {
+    return (
+      this.picker?.target.owner === insert.owner &&
+      this.picker.target.index === insert.index
+    );
+  }
+  closePicker() {
+    this.picker = null;
+    this.cdr.markForCheck();
+  }
+  moveStep(id: string, insert: { owner: string; index: number }) {
+    this.connectingNode = "";
+    this.moveTo(id, { ...insert, point: { x: 0, y: 0 }, label: "" });
+  }
+  /** Selects a step and moves focus into its details: their title, or the step name to rename it. */
+  async openStep(id: string, focus: "details" | "rename") {
+    const node = this.nodes.find((n) => n.step.id === id);
+    if (!node) return;
+    await this.select(node);
+    if (this.model.selected !== id) return;
+    this.focusLater(() =>
+      focus === "rename"
+        ? document.querySelector<HTMLElement>("#step-name-input")
+        : document.querySelector<HTMLElement>(".inspector-header h2"),
+    );
+  }
+  /** Deletes steps as one undo step; one step goes through `remove`, which moves focus to its neighbor. */
+  async removeSteps(ids: readonly string[]) {
+    if (!ids.length || this.editingLocked) return;
+    if (ids.length === 1) return this.remove(ids[0]);
+    if (!(await this.deleteSteps(ids))) return;
+    this.focusLater(() => document.querySelector<HTMLElement>(".canvas-v2"));
+  }
+  /** Copies a step, or a run of steps, right after itself, as one undo step. */
+  async duplicateSteps(ids: readonly string[]) {
+    if (!ids.length || this.editingLocked) return;
+    if (ids.length === 1) return this.duplicate(ids[0]);
+    if (!(await this.ensureApplied())) return;
+    let copies: string[] = [];
+    this.perform(() => (copies = this.model.duplicateRun(ids)));
+    if (this.error || !copies.length) return;
+    this.notify(`Duplicated ${ids.length} steps.`);
+    this.loadInspector();
+    this.focusStep(copies[0]);
+  }
+  /** A step kind dropped on a "+" of the left-to-right canvas. */
+  dropStep(event: DragEvent, insert: { owner: string; index: number }) {
+    return this.drop(event, { ...insert, point: { x: 0, y: 0 }, label: "" });
+  }
+  /** Ctrl/Cmd+S on the canvas: save the draft when connected, or save to a file locally. */
+  saveShortcut() {
+    void this.runCommand(this.profile ? "save" : "export");
+  }
   readonly editorViews = ["Designer", "Source", "Outline"];
   selectTab(tab: string) {
     if (tab !== this.tab && !this.leaveInspector()) return;
@@ -3043,7 +3312,7 @@ export class App {
   }
   setPane(pane: "palette" | "inspector", width: number) {
     const available =
-      this.windowWidth - (this.navCollapsed ? 64 : 224) - 48 - 32 - 400;
+      this.windowWidth - (this.navFull ? 224 : 64) - 48 - 32 - 400;
     const maximum =
       pane === "palette"
         ? Math.min(256, available - this.inspectorWidth)
@@ -4217,7 +4486,7 @@ export class App {
     this.focusLater(() =>
       this.model.selected === selection
         ? document.querySelector<HTMLElement>(
-            `[data-step="${CSS.escape(id)}"] .node-body`,
+            `[data-step="${CSS.escape(id)}"] :is(.node-body, .tile-body)`,
           )
         : null,
     );
@@ -4499,6 +4768,14 @@ export class App {
     this.dragPreview = null;
     this.connectingNode = "";
   }
+  cancelMove() {
+    const moving = this.connectingNode;
+    this.cancelGesture();
+    if (moving) {
+      this.notify(`Stopped moving ${moving}.`);
+      this.focusStep(moving);
+    }
+  }
   connect(id: string) {
     this.connectingNode = id;
     this.message =
@@ -4612,7 +4889,7 @@ export class App {
       () =>
         document
           .querySelector<HTMLElement>(
-            `[data-step="${CSS.escape(id)}"] .node-body`,
+            `[data-step="${CSS.escape(id)}"] :is(.node-body, .tile-body)`,
           )
           ?.focus(),
       { injector: this.injector },
@@ -4662,7 +4939,9 @@ export class App {
   }
   /** The canvas element and its size, or null while it isn't shown. */
   private canvasBox() {
-    const element = document.querySelector<HTMLElement>(".canvas");
+    const element = document.querySelector<HTMLElement>(
+      ".canvas:not(.canvas-v2)",
+    );
     return element && element.clientWidth
       ? {
           element,
@@ -5312,7 +5591,21 @@ export class App {
   runTask: Record<string, unknown> | null = null;
   /** Tasks filtered to one run ("Open My tasks" from a run). */
   taskRunFilter = "";
+  private runTaskSequence = 0;
+  private refreshRunTaskAfterIdentity() {
+    if (this.view === "runs" && this.selectedRecord)
+      void this.findRunTask(this.selectedRecord);
+    else {
+      this.runTaskSequence++;
+      this.runTask = null;
+    }
+  }
   private async findRunTask(run: Record<string, unknown>) {
+    if (this.view !== "runs" || this.selectedRecord !== run) return;
+    const sequence = ++this.runTaskSequence,
+      profile = this.profile,
+      scope = JSON.stringify(profile),
+      identity = this.identity;
     this.runTask = null;
     const state = (run["state"] ?? {}) as { active?: string[] };
     const node = this.runNodes().find(
@@ -5325,7 +5618,16 @@ export class App {
           this.api.page("human-tasks", true, undefined, { status }),
         ),
       );
-      if (this.selectedRecord?.["id"] !== run["id"]) return;
+      if (
+        sequence !== this.runTaskSequence ||
+        this.view !== "runs" ||
+        this.selectedRecord !== run ||
+        profile !== this.profile ||
+        scope !== JSON.stringify(this.profile) ||
+        identity !== this.identity ||
+        !this.canReadTasks
+      )
+        return;
       this.runTask =
         pages
           .flatMap((page) => page.items)
@@ -6081,6 +6383,7 @@ export class App {
     } catch {
       this.identity = null;
     } finally {
+      this.refreshRunTaskAfterIdentity();
       this.cdr.markForCheck();
     }
   }
@@ -6210,6 +6513,7 @@ export class App {
       this.api.adopt(result.session);
       this.identity = result.identity;
       this.catalogAfterIdentity();
+      this.refreshRunTaskAfterIdentity();
       this.renewedStatus();
       this.platformNotice = result.workspace_revoked
         ? { kind: "revoked", name }
@@ -7524,12 +7828,7 @@ export class App {
       // The first Escape ends a gesture or returns to the workflow settings;
       // the next one hides the inspector.
       if (this.connectingNode || this.dragNode || this.dragPreview) {
-        const moving = this.connectingNode;
-        this.cancelGesture();
-        if (moving) {
-          this.notify(`Stopped moving ${moving}.`);
-          this.focusStep(moving);
-        }
+        this.cancelMove();
       } else if (this.view === "designer" && this.model.selected)
         void this.deselect();
       else if (this.windowWidth <= 1280) this.closeInspector();
@@ -7548,11 +7847,14 @@ export class App {
       event.preventDefault();
       void this.runCommand(this.profile ? "save" : "export");
     }
-    if (command && event.key === "0") {
+    // The new canvas runs its own keys.
+    if (this.editorNext && target.closest?.(".canvas-v2")) return;
+    if (!this.editorNext && command && event.key === "0") {
       event.preventDefault();
       this.zoomReset();
     }
     if (
+      !this.editorNext &&
       !command &&
       event.shiftKey &&
       (event.key === "!" || event.code === "Digit1")

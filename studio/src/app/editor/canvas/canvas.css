@@ -1,0 +1,772 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The left-to-right canvas, in tokens only. A step's role shows in its
+   shape and icon, never a color; borders mark only selected, live,
+   unapplied and error, and every other state is a corner badge. */
+weave-canvas-view,
+.canvas-v2 weave-node-tile,
+.canvas-v2 weave-edge-layer,
+.canvas-v2 weave-sub-node-row {
+  display: contents;
+}
+.canvas-v2-loading {
+  margin: var(--space-4);
+  color: var(--muted);
+  font: var(--type-small);
+}
+
+/* Tiles. The flow library clears inline sizes on its nodes, so a tile
+   takes its size from custom properties the canvas sets. */
+.canvas-v2 .tile-node {
+  width: var(--tile-w);
+  height: var(--tile-h);
+  cursor: default;
+}
+.canvas-v2 .tile-paint,
+.canvas-v2 .tile-content {
+  display: contents;
+}
+/* A real expanded box preserves pointer targets beyond the transformed
+   flow's bounds; a clip margin alone does not. The inner card stays fixed. */
+@supports (content-visibility: auto) and (overflow-clip-margin: 1px) {
+  .canvas-v2 .tile-paint {
+    display: block;
+    position: absolute;
+    inset: calc(-1 * var(--tile-paint-margin));
+    pointer-events: none;
+    content-visibility: auto;
+  }
+  .canvas-v2 .tile-content {
+    display: block;
+    position: absolute;
+    inset: var(--tile-paint-margin);
+    pointer-events: none;
+  }
+}
+.canvas-v2 .tile-body {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  pointer-events: auto;
+}
+.canvas-v2 .tile-body:hover {
+  background: transparent;
+}
+.canvas-v2 .tile-body[data-shape="trigger"] {
+  border-radius: 48px var(--radius-sm) var(--radius-sm) 48px;
+}
+.canvas-v2 .tile-body:is([data-shape="circle"], [data-shape="end"]) {
+  border-radius: 50%;
+}
+.canvas-v2 .tile-shape {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--node-border);
+  border-radius: inherit;
+  background: var(--node-bg);
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+.canvas-v2 .tile-body:hover .tile-shape {
+  background: var(--hover);
+}
+.canvas-v2 .tile-body[data-shape="stacked"] .tile-shape {
+  box-shadow:
+    4px 4px 0 -1px var(--node-bg),
+    4px 4px 0 0 var(--node-border);
+}
+.canvas-v2 .tile-body[data-shape="octagon"] .tile-shape {
+  border: 0;
+  background: var(--node-border);
+  clip-path: polygon(
+    30% 0,
+    70% 0,
+    100% 30%,
+    100% 70%,
+    70% 100%,
+    30% 100%,
+    0 70%,
+    0 30%
+  );
+}
+.canvas-v2 .tile-body[data-shape="octagon"] .tile-shape::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  background: var(--node-bg);
+  clip-path: inherit;
+}
+.canvas-v2 .tile-body[data-shape="octagon"]:hover .tile-shape::before {
+  background: var(--hover);
+}
+.canvas-v2
+  .tile-body[data-shape="octagon"]
+  .tile-shape:is(.selected, .live, .error)::before {
+  inset: 2px;
+}
+.canvas-v2 .tile-body[data-shape="octagon"] .tile-shape.selected {
+  background: var(--accent);
+}
+.canvas-v2 .tile-body[data-shape="octagon"] .tile-shape.live {
+  background: var(--live);
+}
+.canvas-v2 .tile-body[data-shape="octagon"] .tile-shape.error {
+  background: var(--danger);
+}
+.canvas-v2 .tile-icon {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  color: var(--text);
+}
+.canvas-v2 .tile-body[data-shape="octagon"] .tile-icon {
+  color: var(--danger-ink);
+}
+/* A fork bar is 20 px wide: its icon sits near the top, clear of the
+   input handle (and its 24 px hit area) at the bar's middle. */
+.canvas-v2 .tile-body[data-shape="fork"] .tile-icon {
+  width: 16px;
+  height: 16px;
+  align-self: start;
+  margin-top: 12px;
+}
+.canvas-v2 .tile-body[data-shape="trigger"] .tile-icon {
+  margin-left: 8px;
+}
+
+/* The four border states; error comes last, so it wins over live */
+.canvas-v2 .tile-shape.selected {
+  border-color: var(--accent);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-glow);
+}
+.canvas-v2 .tile-shape.unapplied {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+.canvas-v2 .tile-shape.live {
+  border-color: var(--live);
+  box-shadow:
+    inset 0 0 0 1px var(--live),
+    0 0 0 6px var(--live-glow);
+}
+.canvas-v2 .tile-shape.live.pulse {
+  animation: canvas-live-pulse var(--dur-expressive) var(--ease) 1;
+}
+.canvas-v2 .tile-shape.error {
+  border-color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+@keyframes canvas-live-pulse {
+  0% {
+    box-shadow:
+      inset 0 0 0 1px var(--live),
+      0 0 0 0 var(--live-glow);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px var(--live),
+      0 0 0 12px var(--live-glow);
+  }
+  100% {
+    box-shadow:
+      inset 0 0 0 1px var(--live),
+      0 0 0 6px var(--live-glow);
+  }
+}
+
+/* Corner badge */
+.canvas-v2 .tile-badge {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  min-width: 20px;
+  box-sizing: border-box;
+  padding: 1px;
+  border: 1px solid var(--neutral-bd);
+  border-radius: var(--radius-pill);
+  background: var(--neutral-bg);
+  color: var(--neutral-ink);
+}
+.canvas-v2 .tile-badge weave-icon {
+  width: 16px;
+  height: 16px;
+}
+.canvas-v2 .tile-badge[data-tone="danger"] {
+  border-color: var(--danger-bd);
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+}
+.canvas-v2 .tile-badge[data-tone="warning"] {
+  border-color: var(--warning-bd);
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+}
+.canvas-v2 .tile-badge[data-tone="info"] {
+  border-color: var(--info-bd);
+  background: var(--info-bg);
+  color: var(--info-ink);
+}
+.canvas-v2 .tile-badge[data-tone="success"] {
+  border-color: var(--success-bd);
+  background: var(--success-bg);
+  color: var(--success-ink);
+}
+
+/* Label block. Each line sits on the canvas color, so an edge that
+   crosses it never runs through the text. The block lets the pointer
+   through; its lines take it, so a cut-off name or subtitle shows in full
+   in its tooltip. Below about 92% zoom the text draws larger by
+   --label-scale, so names never show below 12 px on screen. The block
+   keeps to its column, --label-width canvas units wide: 168 from 100% up,
+   the column less a gap below (layout-ltr's labelWidth). Zoom properties
+   stay on the label block so unrelated icons and edges are not restyled. */
+.canvas-v2 .tile-label {
+  position: absolute;
+  left: calc(50% - var(--label-width, 168px) / 2);
+  width: calc(var(--label-width, 168px) / var(--label-scale, 1));
+  display: grid;
+  text-align: center;
+  pointer-events: none;
+  transform: scale(var(--label-scale, 1));
+  transform-origin: top left;
+}
+.canvas-v2 .tile-body[data-shape="end"] ~ .tile-label {
+  --label-width: 80px;
+}
+.canvas-v2 .tile-label strong,
+.canvas-v2 .tile-label span {
+  justify-self: center;
+  pointer-events: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 0 4px;
+  overflow: hidden;
+  background: var(--canvas);
+}
+/* A name wraps after its hyphens (anywhere, as a last resort) onto two
+   lines before it ends in an ellipsis; its subtitle keeps to one line. */
+.canvas-v2 .tile-label strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  font: var(--type-label);
+  color: var(--text);
+}
+.canvas-v2 .tile-label span {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+
+/* Handles: drawn 12 px, hit area 24 × 24 */
+.canvas-v2 .handle {
+  position: absolute;
+  z-index: 5;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--flow-line);
+  border-radius: 50%;
+  background: var(--raised);
+  pointer-events: auto;
+  cursor: crosshair;
+}
+.canvas-v2 .handle::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+}
+.canvas-v2 .handle-in {
+  left: -6px;
+  top: calc(50% - 6px);
+  pointer-events: none;
+}
+.canvas-v2 .handle.connecting {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-glow);
+}
+
+/* "+" controls */
+.canvas-v2 .insert-plus {
+  position: absolute;
+  z-index: 5;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid var(--flow-line);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--muted);
+  pointer-events: auto;
+}
+.canvas-v2 .insert-plus:hover {
+  border-color: var(--flow-line);
+  background: var(--hover);
+  color: var(--text);
+}
+.canvas-v2 .edge-plus {
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.canvas-v2 .edge-plus:is(.shown, :focus-visible),
+.canvas-v2.revealing .edge-plus {
+  opacity: 1;
+}
+/* A place offered to the step being moved: neutral emphasis, since amber
+   marks only selection, focus and live. */
+.canvas-v2 :is(.insert-plus, .lane-slot).move-target {
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+.canvas-v2 .lane-slot {
+  position: absolute;
+  z-index: 3;
+  width: 64px;
+  height: 64px;
+  min-height: 0;
+  padding: 0;
+  border: 1px dashed var(--field-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  pointer-events: auto;
+}
+.canvas-v2 .lane-slot:hover {
+  border-color: var(--field-border-hover);
+  background: var(--hover);
+  color: var(--text);
+}
+/* Centered under the slot in an 80 px box (LTR.slotLabel), drawn larger
+   like a step's label: the room below an empty path's slot is free, so it
+   always shows whole. */
+.canvas-v2 .lane-slot-label {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: calc(50% - 40px);
+  width: 80px;
+  overflow: hidden;
+  transform: scale(var(--label-scale, 1));
+  transform-origin: top center;
+  font: var(--type-caption);
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Paths and joins. A path's label is plain text, not the classic
+   canvas's pill, so its box is reset here; it keeps the pointer, so a
+   cut-off condition shows in full in its tooltip. It sits above its path's
+   edge in a box --path-label-width canvas units wide, and below about 83%
+   zoom draws larger from its bottom left corner by --path-label-scale, so
+   it never shows below 10 px on screen. */
+.canvas-v2 .branch-label {
+  position: absolute;
+  bottom: auto;
+  z-index: 2;
+  width: calc(var(--path-label-width) / var(--path-label-scale, 1));
+  max-width: none;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--canvas);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-caption);
+  color: var(--muted);
+  transform: scale(var(--path-label-scale, 1));
+  transform-origin: bottom left;
+}
+.canvas-v2 .join-bar {
+  position: absolute;
+  z-index: 2;
+  width: 20px;
+  height: 96px;
+  box-sizing: border-box;
+  border: 1px solid var(--node-border);
+  border-radius: var(--radius-sm);
+  background: var(--node-bg);
+}
+/* Centered under its bar in a box LTR.joinLabel (120) units wide, so
+   paths that join from below turn clear of it. Like a path's label it
+   draws larger by --path-label-scale; then it wraps, up to three lines. */
+.canvas-v2 .join-label {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: calc(50% - 60px);
+  width: calc(120px / var(--path-label-scale, 1));
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-align: center;
+  transform: scale(var(--path-label-scale, 1));
+  transform-origin: top left;
+  background: var(--canvas);
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.canvas-v2 .lane-end {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--flow-line);
+  border-radius: 2px;
+  background: var(--canvas);
+}
+
+/* Edges */
+.canvas-v2 svg.edges,
+.canvas-v2 svg.rubber-band-layer,
+.canvas-v2 svg.sub-node-links {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.canvas-v2 svg.edges {
+  z-index: 1;
+}
+.canvas-v2 .edge {
+  fill: none;
+  stroke: var(--flow-line);
+  stroke-width: 2px;
+}
+.canvas-v2 .edge.live {
+  stroke: var(--live);
+  stroke-width: 2.5px;
+}
+.canvas-v2 .edge.taken {
+  stroke: var(--success);
+  stroke-width: 2.5px;
+}
+.canvas-v2 .edge.skipped {
+  stroke: var(--flow-line-dim);
+  stroke-dasharray: 4 4;
+}
+/* The classic canvas styles .edges .edge-arrow.taken in the page stylesheet;
+   the extra selector keeps these arrowheads from depending on its order. */
+.canvas-v2 svg.edges .edge-arrow {
+  fill: var(--flow-line);
+}
+.canvas-v2 svg.edges .edge-arrow.live {
+  fill: var(--live);
+}
+.canvas-v2 svg.edges .edge-arrow.taken {
+  fill: var(--success);
+}
+.canvas-v2 svg.edges .edge-arrow.skipped {
+  fill: var(--flow-line-dim);
+}
+.canvas-v2 .edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16px;
+  pointer-events: stroke;
+}
+.canvas-v2 .rubber-band {
+  stroke: var(--accent);
+  stroke-width: 2px;
+  stroke-dasharray: 6 4;
+}
+
+/* AI agent sub-node row */
+.canvas-v2 .sub-node-link {
+  stroke: var(--flow-line);
+  stroke-width: 1.5px;
+  stroke-dasharray: 3 3;
+}
+.canvas-v2 .sub-node-handle {
+  position: absolute;
+  z-index: 5;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--flow-line);
+  background: var(--raised);
+  transform: rotate(45deg);
+}
+.canvas-v2 .sub-node-chip {
+  position: absolute;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 76px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--muted);
+  font: var(--type-caption);
+  white-space: nowrap;
+}
+.canvas-v2 .sub-node-chip.needs-setup {
+  border-color: var(--warning-bd);
+}
+
+/* Empty state */
+.canvas-v2 .empty-start {
+  position: absolute;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  width: 240px;
+  pointer-events: auto;
+}
+.canvas-v2 .empty-trigger {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  width: 240px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: normal;
+  text-align: center;
+}
+.canvas-v2 .empty-trigger:hover {
+  background: transparent;
+}
+.canvas-v2 .empty-slot {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  box-sizing: border-box;
+  border: 1px dashed var(--field-border);
+  border-radius: 48px var(--radius-sm) var(--radius-sm) 48px;
+  color: var(--muted);
+}
+.canvas-v2 .empty-trigger:hover .empty-slot {
+  border-color: var(--field-border-hover);
+  background: var(--hover);
+  color: var(--text);
+}
+.canvas-v2 .empty-trigger[aria-expanded="true"] .empty-slot {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-glow);
+}
+.canvas-v2 .empty-trigger strong {
+  font: var(--type-label);
+  color: var(--text);
+}
+.canvas-v2 .empty-hint {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+
+/* Hover toolbar and selection toolbar. The hover toolbar sits on its
+   step's card (where: canvas-view.ts, TOOLBAR) and scales with the canvas
+   like the "+" and the handles, so it never covers a neighbor, a label or
+   the corner badge. Its commands are also in the step's right-click menu
+   and its step details, at full size. */
+.canvas-v2 .tile-toolbar {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  pointer-events: auto;
+}
+.canvas-v2 .tile-toolbar :is(.icon-button, .row-menu-toggle) {
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
+}
+.canvas-v2 .selection-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 4;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+}
+.canvas-v2 .selection-count {
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+  font: var(--type-label);
+  color: var(--text);
+}
+
+/* Minimap and selection box */
+.canvas-v2 f-minimap {
+  left: 12px;
+  bottom: 64px;
+  z-index: 3;
+  width: 200px;
+  height: 120px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.canvas-v2.minimap-shown f-minimap,
+.canvas-v2 f-minimap:hover {
+  opacity: 1;
+}
+.canvas-v2 .f-minimap-node {
+  fill: var(--border-hover);
+}
+/* The minimap draws the workflow scaled far down: the viewport's outline
+   keeps 1.5 px on screen. */
+.canvas-v2 .f-minimap-view {
+  fill: transparent;
+  stroke: var(--accent);
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+.canvas-v2 .f-selection-area {
+  z-index: 4;
+  border: 1px dashed var(--accent);
+  background: var(--marquee-bg);
+}
+
+/* Keyboard focus keeps a 2 px ring on screen at any zoom: the width grows
+   as the zoom shrinks, rounded up to whole pixels. */
+.canvas-v2 f-canvas :is(button, [tabindex]):focus-visible {
+  outline: calc(2px / var(--zoom, 1)) solid var(--focus);
+  outline-offset: calc(2px / var(--zoom, 1));
+  outline-width: round(up, calc(2px / var(--zoom, 1)), 1px);
+  outline-offset: round(up, calc(2px / var(--zoom, 1)), 1px);
+}
+
+/* Canvas tools: a toolbar, or one menu below 768 px */
+.canvas-v2 .canvas-v2-tools {
+  left: 12px;
+  right: auto;
+}
+.canvas-v2 :is(.selection-toolbar, .tile-toolbar) button {
+  color: var(--text);
+}
+.canvas-v2 .canvas-v2-tools-menu {
+  position: absolute;
+  left: 12px;
+  right: auto;
+  bottom: 12px;
+  z-index: 3;
+  display: none;
+}
+.canvas-v2 .minimap-toggle[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--selected);
+}
+@media (max-width: 767px) {
+  .canvas-v2 .canvas-v2-tools {
+    display: none;
+  }
+  .canvas-v2 .canvas-v2-tools-menu {
+    display: inline-flex;
+  }
+  .canvas-v2 f-minimap {
+    display: none;
+  }
+  .canvas-v2 .selection-toolbar {
+    top: auto;
+    bottom: 64px;
+  }
+}
+
+/* Level of detail: below 40% no labels; below 30% plain rectangles */
+.canvas-v2.lod-compact
+  :is(.tile-label, .branch-label, .join-label, .lane-slot-label) {
+  display: none;
+}
+.canvas-v2.lod-minimal
+  :is(
+    .tile-label,
+    .branch-label,
+    .join-label,
+    .lane-slot-label,
+    .tile-badge,
+    .handle,
+    .sub-node-chip,
+    .sub-node-handle,
+    .sub-node-links
+  ) {
+  display: none;
+}
+/* While a step is being placed, or a step kind is dragged in, every "+"
+   shows at any zoom, so the pointer and focus can reach them. */
+.canvas-v2.lod-minimal:not(.revealing) .insert-plus {
+  display: none;
+}
+.canvas-v2.lod-minimal .tile-body,
+.canvas-v2.lod-minimal .tile-body .tile-shape {
+  border-radius: 2px;
+  clip-path: none;
+}
+.canvas-v2.lod-minimal .tile-shape::before {
+  clip-path: none;
+}
+
+/* The canvas's shortcuts sheet (a dialog outside the canvas) */
+.shortcut-section {
+  margin: var(--space-4) 0 var(--space-2);
+  font: var(--type-label);
+  color: var(--text);
+}

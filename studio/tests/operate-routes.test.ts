@@ -82,6 +82,14 @@ describe("Operate routes", () => {
     ]);
   });
 
+  it("keeps the Settings view for each tab address", () => {
+    for (const tab of ["platforms", "people", "preferences"])
+      expect(viewFromPath(`/settings/${tab}`)).toEqual({
+        view: "settings",
+        id: "",
+      });
+  });
+
   it("declares a componentless route for every Operate address", () => {
     expect(operateRoutes.map((route) => route.path)).toEqual([
       "operate/runs",

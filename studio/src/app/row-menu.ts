@@ -61,6 +61,7 @@ let sequence = 0;
       [attr.aria-expanded]="open()"
       [attr.aria-controls]="open() ? id + '-menu' : null"
       [attr.aria-label]="label()"
+      [attr.tabindex]="tabIndex()"
       (click)="toggleMenu()"
       (keydown)="toggleKey($event)"
     >
@@ -147,6 +148,7 @@ export class RowMenu {
   icon = input("more");
   /** Visible text on the toggle beside the icon; none by default. */
   text = input("");
+  tabIndex = input(0);
   readonly id = `row-menu-${++sequence}`;
   open = signal(false);
   private toggle = viewChild<ElementRef<HTMLButtonElement>>("toggle");

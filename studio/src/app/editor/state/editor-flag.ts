@@ -26,17 +26,57 @@ const defaultStorage = (): FlagStorage | null =>
 const currentSearch = () =>
   typeof location === "undefined" ? "" : location.search;
 
+/**
+ * The true or false choice browser storage holds under `key`; null when
+ * nothing is stored, the value is anything else, or storage refuses.
+ */
+export function readUiChoice(
+  key: string,
+  storage: () => FlagStorage | null = defaultStorage,
+): boolean | null {
+  try {
+    const value = storage()?.getItem(key);
+    return value === "true" ? true : value === "false" ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when browser storage holds "true" under `key`; false for anything else, or when storage refuses. */
+export function readUiFlag(
+  key: string,
+  storage: () => FlagStorage | null = defaultStorage,
+): boolean {
+  return readUiChoice(key, storage) === true;
+}
+
+/** What Studio says when browser storage refuses a per-viewer choice. */
+export const CHOICE_NOT_KEPT =
+  "Studio couldn't keep this choice in this browser, so it lasts until Studio closes.";
+
+/** Saves a true/false preference under `key`; false when browser storage refuses it. */
+export function writeUiFlag(
+  key: string,
+  value: boolean,
+  storage: () => FlagStorage | null = defaultStorage,
+): boolean {
+  try {
+    const store = storage();
+    if (!store) return false;
+    store.setItem(key, value ? "true" : "false");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** True when this viewer uses the new editor. */
 export function editorNextEnabled(
   search: string = currentSearch(),
   storage: () => FlagStorage | null = defaultStorage,
 ): boolean {
   if (new URLSearchParams(search).get("editor") === "next") return true;
-  try {
-    return storage()?.getItem(EDITOR_NEXT_KEY) === "true";
-  } catch {
-    return false;
-  }
+  return readUiFlag(EDITOR_NEXT_KEY, storage);
 }
 
 /** Saves the preference; false when browser storage refuses it. */
@@ -44,12 +84,5 @@ export function setEditorNext(
   enabled: boolean,
   storage: () => FlagStorage | null = defaultStorage,
 ): boolean {
-  try {
-    const store = storage();
-    if (!store) return false;
-    store.setItem(EDITOR_NEXT_KEY, enabled ? "true" : "false");
-    return true;
-  } catch {
-    return false;
-  }
+  return writeUiFlag(EDITOR_NEXT_KEY, enabled, storage);
 }

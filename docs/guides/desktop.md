@@ -489,8 +489,11 @@ two files.
 
 The Studio window opens at 1440 × 900 logical pixels and can shrink to a
 minimum of 600 × 500. Both sizes count the inside of the window, without the
-title bar. In the designer, the navigation shows icons only to give the canvas
-room; when the window is 1280 pixels wide or narrower, it does so on every page.
+title bar. In the designer, navigation opens in full from 1440 pixels wide and
+as icons below that. Collapse navigation and Expand navigation change the
+choice, which Studio remembers in this browser; expanded navigation fits from
+900 pixels wide. On other pages, navigation shows icons at 1280 pixels or
+narrower.
 At 1024 pixels or narrower, **Insert step** opens the step palette, and at 767
 pixels or narrower, the step inspector opens over the canvas.
 

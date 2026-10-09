@@ -1,0 +1,371 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+@let h = host();
+@let lod = level();
+<div
+  #root
+  class="canvas canvas-v2"
+  [class.lod-compact]="lod === 'compact'"
+  [class.lod-minimal]="lod === 'minimal'"
+  [class.revealing]="revealing()"
+  [class.locked]="locked()"
+  [class.minimap-shown]="minimapOn || panning"
+  role="group"
+  aria-roledescription="workflow canvas"
+  aria-label="Workflow canvas"
+  aria-describedby="canvas-v2-help"
+  tabindex="-1"
+  [attr.data-ready]="isFitted() ? '' : null"
+  (wheel)="wheel($event)"
+  (scroll)="scrolled($event)"
+  (click)="click($event)"
+  (dblclick)="doubleClick($event)"
+  (pointerover)="hover($event)"
+  (pointerleave)="unhover()"
+  (pointerdown)="pointerDown($event)"
+  (pointermove)="pointerMove($event)"
+  (pointerup)="pointerUp($event)"
+  (pointercancel)="cancelPress()"
+  (contextmenu)="contextMenu($event)"
+  (focusin)="focusIn($event)"
+  (focusout)="focusOut($event)"
+  (dragover)="dragOver($event)"
+  (drop)="dropOn($event)"
+  (keydown)="key($event)"
+  (keyup)="trackSpace($event)"
+>
+  @if (!ready) {
+    <p class="canvas-v2-loading" role="status">Opening the canvas…</p>
+  } @else {
+    @let l = layout();
+    @let fixed = locked();
+    <f-flow
+      fDraggable
+      class="graph-flow"
+      (fFullRendered)="fitIfNew()"
+      (scroll)="scrolled($event)"
+      (fDragStarted)="dragStarted($event)"
+      (fDragEnded)="dragEnded()"
+      (fSelectionChange)="boxSelected($event)"
+    >
+      <f-canvas
+        [position]="view.pan"
+        [scale]="view.zoom"
+        (fCanvasChange)="canvasMoved($event)"
+      >
+        <div fNodes>
+          <weave-edge-layer
+            [edges]="edges()"
+            [width]="l.bounds.maxX + 96"
+            [height]="l.bounds.maxY + 96"
+          />
+          @if (band; as line) {
+            <svg class="rubber-band-layer" aria-hidden="true">
+              <line
+                class="rubber-band"
+                [attr.x1]="line.from.x"
+                [attr.y1]="line.from.y"
+                [attr.x2]="line.to.x"
+                [attr.y2]="line.to.y"
+              />
+            </svg>
+          }
+          @for (label of l.labels; track label.owner) {
+            <span
+              class="branch-label"
+              [attr.data-owner]="label.owner"
+              [style.left.px]="label.x"
+              [style.top.px]="label.y"
+              [style.--path-label-width.px]="label.width"
+              [style.--path-label-scale]="pathLabelScale()"
+              [attr.title]="label.text"
+              aria-hidden="true"
+              >{{ label.text }}</span
+            >
+          }
+          @for (join of l.joins; track join.id) {
+            <div
+              class="join-bar"
+              [style.left.px]="join.x"
+              [style.top.px]="join.y"
+              aria-hidden="true"
+            >
+              <span
+                class="join-label"
+                [style.--path-label-scale]="pathLabelScale()"
+                >{{ join.label }}</span
+              >
+            </div>
+          }
+          @for (end of l.terminals; track end.step) {
+            <span
+              class="lane-end"
+              [style.left.px]="end.x - 6"
+              [style.top.px]="end.y - 6"
+              role="img"
+              aria-label="This path ends here"
+            ></span>
+          }
+          @for (row of chips(); track row.step) {
+            <weave-sub-node-row [row]="row" />
+          }
+          @for (tile of tiles(); track tile.id) {
+            <div
+              fNode
+              [fNodeId]="tile.id"
+              [fNodePosition]="tile.position"
+              [fNodeSelectionDisabled]="!tile.step"
+              class="tile-node f-drag-blocker"
+              [style.--tile-w.px]="tile.width"
+              [style.--tile-h.px]="tile.height"
+              [style.--tile-paint-margin.px]="tile.paintMargin"
+              aria-roledescription="step"
+              [attr.data-tile]="tile.id"
+              [attr.data-step]="tile.step ? tile.id : null"
+            >
+              <div class="tile-paint">
+                <div class="tile-content">
+                  <weave-node-tile [view]="tile" [zoom]="view.zoom" />
+                </div>
+              </div>
+            </div>
+          }
+          @for (bar of toolbars(); track bar.id) {
+            <div
+              class="tile-toolbar f-drag-blocker"
+              role="group"
+              [attr.aria-label]="'Commands for ' + bar.id"
+              [attr.data-toolbar-for]="bar.id"
+              [style.left.px]="bar.x"
+              [style.top.px]="bar.y"
+            >
+              <button
+                type="button"
+                class="icon-button"
+                [style.outline-width.px]="focusWidth()"
+                [style.outline-offset.px]="focusWidth()"
+                data-action="delete"
+                [attr.data-target]="bar.id"
+                [attr.aria-label]="'Delete ' + bar.id"
+                [attr.title]="'Delete ' + bar.id"
+                [attr.aria-disabled]="bar.locked || null"
+                [attr.tabindex]="bar.tabIndex"
+              >
+                <weave-icon name="trash" [size]="16" />
+              </button>
+              <weave-row-menu
+                [style.--zoom]="view.zoom"
+                [label]="'More commands for ' + bar.id"
+                [items]="bar.menu"
+                [tabIndex]="bar.tabIndex"
+              />
+            </div>
+          }
+          @for (output of l.handles; track output.key) {
+            <span
+              class="handle f-drag-blocker"
+              [class.connecting]="band?.key === output.key"
+              [attr.data-handle]="output.key"
+              [style.left.px]="output.x - 6"
+              [style.top.px]="output.y - 6"
+              aria-hidden="true"
+            ></span>
+          }
+          @for (plus of pluses(); track plus.key) {
+            <button
+              type="button"
+              class="insert-plus plus-stub f-drag-blocker"
+              [style.outline-width.px]="focusWidth()"
+              [style.outline-offset.px]="focusWidth()"
+              [class.move-target]="plus.moving"
+              data-action="insert"
+              data-insert=""
+              [attr.data-handle]="plus.key"
+              [attr.data-insert-owner]="plus.insert.owner"
+              [attr.data-insert-index]="plus.insert.index"
+              [style.left.px]="plus.x"
+              [style.top.px]="plus.y"
+              [attr.aria-label]="plus.name"
+              [attr.title]="plus.name"
+              [attr.tabindex]="plus.tabIndex"
+              aria-haspopup="dialog"
+              [attr.aria-expanded]="h.isPickerOpenAt(plus.insert)"
+            >
+              <weave-icon name="plus" [size]="16" />
+            </button>
+          }
+          <!-- After the steps and their stubs: Tab goes from a step to its "+" on the edge that follows it. -->
+          @for (item of edges(); track item.edge.key) {
+            @if (item.plus; as plus) {
+              <button
+                type="button"
+                class="insert-plus edge-plus f-drag-blocker"
+                [style.outline-width.px]="focusWidth()"
+                [style.outline-offset.px]="focusWidth()"
+                [class.shown]="item.shown"
+                [class.move-target]="plus.moving"
+                data-action="insert"
+                data-insert=""
+                [attr.data-edge]="item.edge.key"
+                [attr.data-insert-owner]="plus.insert.owner"
+                [attr.data-insert-index]="plus.insert.index"
+                [style.left.px]="plus.x"
+                [style.top.px]="plus.y"
+                [attr.aria-label]="plus.name"
+                [attr.title]="plus.name"
+                [attr.tabindex]="plus.tabIndex"
+                aria-haspopup="dialog"
+                [attr.aria-expanded]="h.isPickerOpenAt(plus.insert)"
+              >
+                <weave-icon name="plus" [size]="16" />
+              </button>
+            }
+          }
+          @for (slot of slots(); track slot.key) {
+            <button
+              type="button"
+              class="lane-slot f-drag-blocker"
+              [style.outline-width.px]="focusWidth()"
+              [style.outline-offset.px]="focusWidth()"
+              [class.move-target]="slot.moving"
+              data-action="insert"
+              data-insert=""
+              [attr.data-insert-owner]="slot.insert.owner"
+              [attr.data-insert-index]="slot.insert.index"
+              [style.left.px]="slot.x"
+              [style.top.px]="slot.y"
+              [attr.aria-label]="slot.name"
+              [attr.title]="slot.name"
+              [attr.aria-disabled]="fixed || null"
+              [attr.tabindex]="slot.tabIndex"
+              aria-haspopup="dialog"
+              [attr.aria-expanded]="h.isPickerOpenAt(slot.insert)"
+            >
+              <weave-icon name="plus" [size]="16" /><span
+                class="lane-slot-label"
+                [style.--label-scale]="labelScale()"
+                aria-hidden="true"
+                >Add a step</span
+              >
+            </button>
+          }
+          @if (!h.model.definition.spec.steps.length) {
+            <div class="empty-start" style="left: 24px; top: 96px">
+              <button
+                type="button"
+                class="empty-trigger f-drag-blocker"
+                [style.outline-width.px]="focusWidth()"
+                [style.outline-offset.px]="focusWidth()"
+                data-action="insert"
+                data-insert=""
+                data-insert-owner="root"
+                data-insert-index="0"
+                aria-label="Add first step"
+                aria-describedby="canvas-v2-empty-hint"
+                aria-haspopup="dialog"
+                [attr.aria-disabled]="fixed || null"
+                [attr.aria-expanded]="
+                  h.isPickerOpenAt({ owner: 'root', index: 0 })
+                "
+              >
+                <span class="empty-slot" aria-hidden="true"
+                  ><weave-icon name="plus"
+                /></span>
+                <strong>Add first step</strong>
+                <span id="canvas-v2-empty-hint" class="empty-hint"
+                  >Start with what triggers this workflow</span
+                >
+              </button>
+              <button
+                type="button"
+                class="text-link f-drag-blocker"
+                [style.outline-width.px]="focusWidth()"
+                [style.outline-offset.px]="focusWidth()"
+                data-action="templates"
+              >
+                Start from a template
+              </button>
+            </div>
+          }
+        </div>
+      </f-canvas>
+      <f-selection-area [fTrigger]="boxTrigger" />
+      <f-minimap />
+    </f-flow>
+    <weave-canvas-tools
+      [zoom]="view.zoom"
+      (zoomIn)="zoomBy(1.2)"
+      (zoomOut)="zoomBy(1 / 1.2)"
+      (reset)="zoomBy(1 / view.zoom)"
+      (fit)="fit()"
+      [minimap]="minimapOn"
+      (toggleMinimap)="toggleMinimap()"
+      (shortcuts)="sheetOpen = true"
+    />
+    @if (selectedCount() > 1) {
+      <weave-selection-toolbar
+        [count]="selectedCount()"
+        [blocked]="duplicateBlocked()"
+        [locked]="lockedReason()"
+        (duplicate)="duplicateSelection()"
+        (remove)="removeSelection()"
+      />
+    }
+  }
+  <p class="sr-only" id="canvas-v2-help">
+    Arrow keys move between steps. Scroll to pan; hold Ctrl or Command and
+    scroll to zoom. Press ? for keyboard shortcuts.
+  </p>
+</div>
+@if (sheetOpen) {
+  <weave-modal
+    heading="Keyboard shortcuts"
+    closeLabel="Close keyboard shortcuts"
+    describedBy="canvas-shortcuts-note"
+    (dismiss)="sheetOpen = false"
+  >
+    <p id="canvas-shortcuts-note" class="dialog-message">
+      On the canvas, with a step focused.
+    </p>
+    <!-- Focus starts at the top: the sheet is taller than most windows. -->
+    @for (section of sheet; track section.title) {
+      <h3
+        class="shortcut-section"
+        [attr.tabindex]="$first ? -1 : null"
+        [attr.data-initial-focus]="$first ? '' : null"
+      >
+        {{ section.title }}
+      </h3>
+      <dl class="shortcut-list">
+        @for (entry of section.entries; track $index) {
+          <dt>
+            @for (key of entry.keys; track $index) {
+              <kbd>{{ key }}</kbd>
+            }
+          </dt>
+          <dd>{{ entry.label }}</dd>
+        }
+      </dl>
+    }
+    <div class="dialog-actions">
+      <button type="button" class="primary" (click)="sheetOpen = false">
+        Done
+      </button>
+    </div>
+  </weave-modal>
+}

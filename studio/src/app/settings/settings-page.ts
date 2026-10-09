@@ -15,16 +15,29 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Settings: Platforms (saved platforms, how Studio starts, keyboard controls)
-// and, for administrators, People and access as its own tab. The shell (App)
+// Settings: Platforms (saved platforms, how Studio starts, keyboard controls),
+// People and access for administrators, and Preferences, each tab at its own
+// address (/settings/<tab>). The shell (App)
 // owns the state and the commands; this page loads lazily (@defer).
-import { ChangeDetectionStrategy, Component, input } from "@angular/core";
+import {
+  ChangeDetectionStrategy,
+  Component,
+  inject,
+  input,
+} from "@angular/core";
+import { Router } from "@angular/router";
 import type { App } from "../app";
 import { Icon } from "../icon";
 import { ModalSheet, sheetWhen } from "../modal-sheet";
 import { PlatformList } from "../platform-list";
 import { RowMenu, type RowMenuItem } from "../row-menu";
 import { statusLabel } from "../status-labels";
+import {
+  settingsPath,
+  settingsTab,
+  settingsTabs,
+  type SettingsTab,
+} from "./settings-routes";
 
 type Json = Record<string, unknown>;
 
@@ -87,33 +100,32 @@ interface AccountRow {
         </p>
       </section>
     }
-    @if (showPeople()) {
+    @let current = tab();
+    <div
+      class="settings-tabs"
+      role="tablist"
+      aria-label="Settings sections"
+      (keydown)="tabKey($event)"
+    >
+      @for (item of tabs(); track item.id) {
+        <button
+          type="button"
+          role="tab"
+          [id]="'settings-tab-' + item.id"
+          [attr.aria-controls]="'settings-panel-' + item.id"
+          [attr.aria-selected]="current === item.id"
+          [attr.tabindex]="current === item.id ? 0 : -1"
+          (click)="open(item.id)"
+        >
+          {{ item.label }}
+        </button>
+      }
+    </div>
+    @if (current === "platforms") {
       <div
-        class="settings-tabs"
-        role="tablist"
-        aria-label="Settings sections"
-        (keydown)="tabKey($event)"
-      >
-        @for (item of tabs; track item[0]) {
-          <button
-            type="button"
-            role="tab"
-            [id]="'settings-tab-' + item[0]"
-            [attr.aria-controls]="'settings-panel-' + item[0]"
-            [attr.aria-selected]="tab === item[0]"
-            [attr.tabindex]="tab === item[0] ? 0 : -1"
-            (click)="tab = item[0]"
-          >
-            {{ item[1] }}
-          </button>
-        }
-      </div>
-    }
-    @if (tab === "platforms" || !showPeople()) {
-      <div
-        [attr.role]="showPeople() ? 'tabpanel' : null"
-        [attr.id]="showPeople() ? 'settings-panel-platforms' : null"
-        [attr.aria-labelledby]="showPeople() ? 'settings-tab-platforms' : null"
+        role="tabpanel"
+        id="settings-panel-platforms"
+        aria-labelledby="settings-tab-platforms"
       >
         <weave-platform-list
           [status]="h.connectionStatus"
@@ -195,7 +207,7 @@ interface AccountRow {
           </dl>
         </div>
       </div>
-    } @else {
+    } @else if (current === "people") {
       <div
         role="tabpanel"
         id="settings-panel-people"
@@ -527,22 +539,59 @@ interface AccountRow {
           </section>
         }
       </div>
+    } @else {
+      <div
+        role="tabpanel"
+        id="settings-panel-preferences"
+        aria-labelledby="settings-tab-preferences"
+      >
+        <section
+          class="settings-card preferences-card"
+          aria-labelledby="preferences-editor-title"
+        >
+          <h2 id="preferences-editor-title">Editor</h2>
+          <label class="checkbox-field preference-switch"
+            ><input
+              type="checkbox"
+              role="switch"
+              aria-describedby="editor-next-hint"
+              [checked]="h.editorNext"
+              (change)="h.setEditorNextPreference(checked($event))"
+            />Try the new editor</label
+          >
+          <p class="hint" id="editor-next-hint">
+            Opens workflows on the new left-to-right canvas. Turn it off to go
+            back to the current designer. Studio keeps this choice in this
+            browser.
+          </p>
+        </section>
+      </div>
     }`,
 })
 export class SettingsPage {
   host = input.required<App>();
   readonly sheetWhen = sheetWhen;
   readonly kinds = ["human", "application", "worker"];
-  readonly tabs: ["platforms" | "people", string][] = [
-    ["platforms", "Platforms"],
-    ["people", "People and access"],
-  ];
+  private readonly router = inject(Router);
   readonly scopes: [string, string][] = [
     ["environment", "This environment"],
     ["project", "This project"],
     ["tenant", "Whole tenant"],
   ];
-  tab: "platforms" | "people" = "platforms";
+  /** The tabs this person sees. */
+  tabs() {
+    return settingsTabs(this.showPeople());
+  }
+  /** The tab the address names. */
+  tab(): SettingsTab {
+    return settingsTab(location.pathname, this.showPeople());
+  }
+  open(tab: SettingsTab) {
+    return this.router.navigateByUrl(settingsPath(tab));
+  }
+  checked(event: Event) {
+    return (event.target as HTMLInputElement).checked;
+  }
 
   showPeople() {
     const h = this.host();
@@ -629,8 +678,8 @@ export class SettingsPage {
     const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
     if (!keys.includes(event.key)) return;
     event.preventDefault();
-    const order = this.tabs.map((t) => t[0]);
-    const index = order.indexOf(this.tab);
+    const order = this.tabs().map((tab) => tab.id);
+    const index = order.indexOf(this.tab());
     const next =
       event.key === "Home"
         ? 0
@@ -638,9 +687,11 @@ export class SettingsPage {
           ? order.length - 1
           : (index + (event.key === "ArrowRight" ? 1 : -1) + order.length) %
             order.length;
-    this.tab = order[next];
-    queueMicrotask(() =>
-      document.getElementById(`settings-tab-${this.tab}`)?.focus(),
+    const tab = order[next];
+    void this.open(tab).then(() =>
+      queueMicrotask(() =>
+        document.getElementById(`settings-tab-${tab}`)?.focus(),
+      ),
     );
   }
 }
