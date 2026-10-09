@@ -6687,6 +6687,7 @@ export class App implements CanvasHost {
     await this.checkPlatform(generation);
   }
   private async checkPlatform(generation = ++this.platformGeneration) {
+    const sampleScope = this.stepDataScope;
     const name = this.profile?.name ?? "";
     try {
       const result = await this.connection.test();
@@ -6711,10 +6712,10 @@ export class App implements CanvasHost {
       const plain = describeError(e);
       if (plain.code === "WV-STUDIO-SESSION") return;
       if (plain.code === "WV-AUTH-NOT-LINKED") {
-        this.stepDataGeneration++;
+        if (sampleScope === this.stepDataScope) this.stepDataGeneration++;
         this.platformNotice = { kind: "not-linked", name };
       } else if (plain.status === 401) {
-        this.stepDataGeneration++;
+        if (sampleScope === this.stepDataScope) this.stepDataGeneration++;
         this.platformNotice = { kind: "expired", name };
       } else {
         if (plain.code === "WV-AUTH-STORE")

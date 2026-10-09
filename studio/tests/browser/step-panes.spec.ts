@@ -518,3 +518,52 @@ test.describe("sample boundary regressions", () => {
     ).toHaveCount(0);
   });
 });
+
+test.describe("composed sample secrecy", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  for (const [name, branches] of [
+    ["unmergeable", [{ type: "string", writeOnly: true }, { type: "number" }]],
+    [
+      "annotation-order",
+      [
+        { type: "string", writeOnly: false },
+        { type: "string", writeOnly: true },
+      ],
+    ],
+  ] as const)
+    test(`allOf sample stays outside Output: ${name}`, async ({ page }) => {
+      const details = await openStepFixture(
+        page,
+        yamlFile(
+          "composed-input.yaml",
+          stringify(
+            workflow({
+              type: "object",
+              properties: { token: { title: "Token", allOf: branches } },
+            }),
+          ),
+        ),
+      );
+      await trigger(details);
+      const input = details.dialog
+        .locator(".sd-input")
+        .getByRole("textbox", { name: /Token/ });
+      await input.fill(
+        name === "unmergeable" ? '\"SAMPLE-PRIVATE\"' : "SAMPLE-PRIVATE",
+      );
+      const output = details.dialog.locator(".sd-output");
+      await output.getByRole("radio", { name: "JSON", exact: true }).click();
+      const folder = "../build/editor-m3/task-14-fix2/screenshots";
+      mkdirSync(folder, { recursive: true });
+      await details.dialog.screenshot({ path: `${folder}/${name}.png` });
+      await expect(output).not.toContainText("SAMPLE-PRIVATE");
+      await expect(output.locator("pre")).toHaveText("{}");
+      expect(
+        await page.evaluate(() => JSON.stringify(localStorage)),
+      ).not.toContain("SAMPLE-PRIVATE");
+      await details.close();
+      await trigger(details);
+      await expect(output.locator("pre")).toHaveText("{}");
+      await expect(input).not.toHaveValue(/SAMPLE-PRIVATE/);
+    });
+});

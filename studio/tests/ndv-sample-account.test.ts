@@ -238,3 +238,48 @@ it.each([false, true])(
     expect(owner()).toBe(true);
   },
 );
+
+for (const status of [401, 403]) {
+  it.each(["replacement", "renewal", "reset"])(
+    `scopes a pending platform rejection ${status} across %s`,
+    async (change) => {
+      const { app, controller } = fixture();
+      let reject!: (reason: unknown) => void;
+      Object.assign(app, {
+        connection: {
+          test: () =>
+            new Promise((_resolve, fail) => {
+              reject = fail;
+            }),
+        },
+      });
+      const pending = (
+        app as unknown as { checkPlatform(): Promise<void> }
+      ).checkPlatform();
+      if (change === "reset") app.wizardAccountProblem("expired");
+      app.wizardVerified({
+        session: structuredClone(app.api.session),
+        identity: {
+          principal_id: change === "replacement" ? "other" : "person",
+          kind: "human",
+          grants: [],
+          workspaces: [],
+          truncated: false,
+        },
+      } as never);
+      controller.setTestEvent({ name: "new sample" });
+      const owner = controller.testEventOwner();
+      reject(
+        new ApiError(
+          status,
+          status === 403 ? { code: "WV-AUTH-NOT-LINKED" } : {},
+        ),
+      );
+      await pending;
+      expect(controller.testEvent()).toEqual(
+        change === "renewal" ? undefined : { name: "new sample" },
+      );
+      expect(owner()).toBe(change !== "renewal");
+    },
+  );
+}

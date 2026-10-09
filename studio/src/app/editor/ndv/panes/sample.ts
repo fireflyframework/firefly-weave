@@ -77,13 +77,27 @@ export function safeSample(
   ): Json | undefined => {
     if (--left < 0 || depth > 12) return undefined;
     const resolved = resolveSchema(raw, options);
-    const node = resolved.schema;
+    let node: Record<string, unknown> = resolved.schema;
+    let context = resolved.context;
+    if (resolved.composed) {
+      // Only direct unions can be checked branch by branch without trusting
+      // normalization, which may discard secret annotations in intersections.
+      if (
+        !record(raw) ||
+        Object.hasOwn(raw, "$ref") ||
+        Object.hasOwn(raw, "allOf") ||
+        !["oneOf", "anyOf"].some((key) => Array.isArray(raw[key]))
+      )
+        return undefined;
+      node = raw;
+      context = { root: options.root ?? raw, bundle: options.bundle };
+    }
     if (secret(node) || resolved.unresolved.length || resolved.cyclic)
       return undefined;
     for (const key of ["oneOf", "anyOf"]) {
       if (!Array.isArray(node[key])) continue;
       for (const branch of node[key]) {
-        const clean = visit(branch, data, resolved.context, depth + 1);
+        const clean = visit(branch, data, context, depth + 1);
         if (clean === undefined) return undefined;
         data = clean;
       }
@@ -116,7 +130,7 @@ export function safeSample(
         const safe = visit(
           index < prefix.length ? prefix[index] : node["items"],
           item,
-          resolved.context,
+          context,
           depth + 1,
         );
         // Removing an item would change positional meaning; withhold the array instead.
@@ -134,7 +148,7 @@ export function safeSample(
               ? properties[key]
               : node["additionalProperties"],
             item as Json,
-            resolved.context,
+            context,
             depth + 1,
           );
           return safe === undefined ? [] : [[key, safe]];
@@ -233,6 +247,14 @@ export function sampleFromSchema(schema: unknown): Json {
         }),
       );
     } else candidate = null;
+    // Check before sanitation can omit an unsupported subtree from a default.
+    validate(
+      node,
+      candidate,
+      resolved.context,
+      depth,
+      resolved.removedNullType,
+    );
     const clean = safeSample(raw, candidate, options);
     // Use this document's context when validating a local-reference candidate.
     validate(node, clean, resolved.context, depth, resolved.removedNullType);

@@ -908,3 +908,29 @@ it("redacts a stored sample when an input field becomes secret", () => {
   });
   expect(controller.testEvent()).toEqual({ name: "public" });
 });
+
+it("keeps composed secrets out of the sample store and serialized workflow", () => {
+  const { model, controller } = setup();
+  model.updateWorkflow({
+    ...model.definition,
+    spec: {
+      ...model.definition.spec,
+      inputSchema: {
+        type: "object",
+        properties: {
+          token: {
+            allOf: [
+              { type: "string", writeOnly: false },
+              { type: "string", writeOnly: true },
+            ],
+          },
+          name: { type: "string" },
+        },
+      },
+    },
+  });
+  const before = JSON.stringify([model.definition, model.canvas]);
+  controller.setTestEvent({ token: "private", name: "public" });
+  expect(controller.testEvent()).toEqual({ name: "public" });
+  expect(JSON.stringify([model.definition, model.canvas])).toBe(before);
+});

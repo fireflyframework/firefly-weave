@@ -535,3 +535,133 @@ it("withholds unsupported negated array schemas", () => {
     ]),
   ).toBeUndefined();
 });
+
+describe("manual samples with composed secrecy", () => {
+  const cases = [
+    {
+      name: "unmergeable",
+      branches: [{ type: "string", writeOnly: true }, { type: "number" }],
+    },
+    {
+      name: "writeOnly false first",
+      branches: [
+        { type: "string", writeOnly: false },
+        { type: "string", writeOnly: true },
+      ],
+    },
+    {
+      name: "writeOnly true first",
+      branches: [
+        { type: "string", writeOnly: true },
+        { type: "string", writeOnly: false },
+      ],
+    },
+    {
+      name: "x-secret false first",
+      branches: [
+        { type: "string", "x-secret": false },
+        { type: "string", "x-secret": true },
+      ],
+    },
+    {
+      name: "x-secret true first",
+      branches: [
+        { type: "string", "x-secret": true },
+        { type: "string", "x-secret": false },
+      ],
+    },
+  ];
+  for (const referenced of [false, true]) {
+    it.each(cases)(
+      `withholds allOf regardless of annotation order (referenced=${referenced}): $name`,
+      ({ branches }) => {
+        const field = { allOf: branches };
+        const schema = {
+          type: "object",
+          $defs: { Field: field },
+          properties: {
+            token: referenced ? { $ref: "#/$defs/Field" } : field,
+            name: { type: "string" },
+          },
+        };
+        expect(
+          safeSample(schema, { token: "private", name: "public" }),
+        ).toEqual({ name: "public" });
+      },
+    );
+  }
+  it("withholds root intersections and array items without changing their positions", () => {
+    const field = {
+      allOf: [
+        { type: "string", writeOnly: false },
+        { type: "string", writeOnly: true },
+      ],
+    };
+    expect(safeSample(field, "private")).toBeUndefined();
+    expect(
+      safeSample({ type: "array", items: { type: "array", items: field } }, [
+        ["private"],
+      ]),
+    ).toBeUndefined();
+    expect(
+      safeSample(
+        {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { token: field, name: { type: "string" } },
+          },
+        },
+        [{ token: "private", name: "public" }],
+      ),
+    ).toEqual([{ name: "public" }]);
+  });
+  it.each(["oneOf", "anyOf"])(
+    "sanitizes every original inline %s branch including null alternatives",
+    (keyword) => {
+      const object = {
+        type: "object",
+        properties: { token: { writeOnly: true }, name: { type: "string" } },
+      };
+      expect(
+        safeSample(
+          { [keyword]: [object, { type: "null" }] },
+          { token: "private", name: "public" },
+        ),
+      ).toEqual({ name: "public" });
+      expect(
+        safeSample(
+          {
+            [keyword]: [{ type: "string" }, { type: "null", writeOnly: true }],
+          },
+          "private",
+        ),
+      ).toBeUndefined();
+      expect(
+        safeSample(
+          {
+            $defs: { Union: { [keyword]: [object, { type: "null" }] } },
+            $ref: "#/$defs/Union",
+          },
+          { token: "private", name: "public" },
+        ),
+      ).toBeUndefined();
+    },
+  );
+  it("withholds an intersection containing union branches rather than using their normalized annotations", () => {
+    expect(
+      safeSample(
+        {
+          allOf: [
+            {
+              writeOnly: false,
+              oneOf: [{ type: "string" }, { type: "number" }],
+            },
+            { writeOnly: true },
+          ],
+        },
+        "private",
+      ),
+    ).toBeUndefined();
+  });
+});
