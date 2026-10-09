@@ -364,7 +364,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                   (input)="message = text($event)"
                 ></textarea>
               </label>
-              @if (host.model.opened && host.view !== "operations") {
+              @if (host.model.opened && host.view !== "clusters") {
                 <label class="checkbox-field"
                   ><input
                     type="checkbox"
@@ -399,12 +399,11 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 context you include. This conversation stays in memory for this
                 identity and environment.
               </p>
-              @if (host.view === "operations") {
+              @if (host.view === "clusters") {
                 <p class="hint">
-                  Weave AI explains only the saved Operations records you
-                  select. Replica and resource limits do not show worker task
-                  capacity or current cloud state. No deployment changes are
-                  made.
+                  Weave AI explains only the saved Clusters records you select.
+                  Replica and resource limits do not show worker task capacity
+                  or current cloud state. No deployment changes are made.
                 </p>
               }
               <button
@@ -622,7 +621,7 @@ export class LumiPanel implements DoCheck {
       this.host.identity?.principal_id,
       this.host.can("lumi.use"),
       this.host.can("lumi.manage"),
-      this.host.view === "operations"
+      this.host.view === "clusters"
         ? this.host.lumiOperationAttachments.map(({ kind, id }) => [kind, id])
         : null,
     ]);
@@ -686,7 +685,7 @@ export class LumiPanel implements DoCheck {
     return unchangedDraft(proposal.base, this.capture());
   }
   get availableAttachments() {
-    if (this.host.view === "operations")
+    if (this.host.view === "clusters")
       return this.host.lumiOperationAttachments;
     const items: {
       kind: "draft" | "run" | "simulation";
@@ -745,7 +744,7 @@ export class LumiPanel implements DoCheck {
     )
       return;
     this.keepFocus();
-    if (this.host.view !== "operations") this.host.flushInspector();
+    if (this.host.view !== "clusters") this.host.flushInspector();
     const base = this.capture();
     const generation = this.conversation.generation;
     const message = this.message.trim();
@@ -756,7 +755,7 @@ export class LumiPanel implements DoCheck {
         .filter((item) => this.attachments.has(item.kind + item.id))
         .map(({ kind, id }) => ({ kind, id })),
     };
-    if (this.includeSource && this.host.view !== "operations")
+    if (this.includeSource && this.host.view !== "clusters")
       body["draft"] = {
         format: this.host.model.format,
         source: this.host.sourceBuffer || this.host.model.source,
@@ -775,7 +774,7 @@ export class LumiPanel implements DoCheck {
       this.conversation.turns.push({
         role: "assistant",
         content: reply.answer,
-        proposals: (this.host.view === "operations" ? [] : reply.proposals).map(
+        proposals: (this.host.view === "clusters" ? [] : reply.proposals).map(
           (proposal) => ({
             ...proposal,
             base,

@@ -69,6 +69,61 @@ describe("Operations scoped transport", () => {
     next.resolve(page("new"));
     await loading;
   });
+  it("says a collection has loaded only for the filter it loaded with", async () => {
+    const next = pending<unknown>();
+    let calls = 0;
+    const store = new OperationsStore({
+      request: async <T>() =>
+        (++calls === 1 ? page("all") : await next.promise) as T,
+    });
+    store.setScope("/same", true);
+    expect(store.loaded("runners")).toBe(false);
+    await store.load("runners");
+    expect(store.loaded("runners")).toBe(true);
+    expect(store.loaded("runners", { target_id: "first" })).toBe(false);
+    // A different filter empties the page: nothing is known until it loads.
+    const loading = store.load("runners", false, { target_id: "first" });
+    expect(store.loaded("runners")).toBe(false);
+    expect(store.loaded("runners", { target_id: "first" })).toBe(false);
+    next.resolve(page("one"));
+    await loading;
+    expect(store.loaded("runners", { target_id: "first" })).toBe(true);
+    expect(store.loaded("runners")).toBe(false);
+    store.setScope("/other", true);
+    expect(store.loaded("runners", { target_id: "first" })).toBe(false);
+  });
+  it("keeps what a failed read says, and no claim of having loaded", async () => {
+    let fail = true;
+    const store = new OperationsStore({
+      request: async <T>() => {
+        if (fail)
+          throw {
+            plain: {
+              message: "Denied here",
+              code: "WV-DENIED",
+              status: 403,
+            },
+          };
+        return page("ok") as T;
+      },
+    });
+    store.setScope("/same", true);
+    await store.load("runners");
+    expect(store.errors.runners).toBe("Denied here");
+    expect(store.errorInfo.runners).toEqual({ code: "WV-DENIED", status: 403 });
+    expect(store.loaded("runners")).toBe(false);
+    fail = false;
+    const loading = store.load("runners");
+    expect(store.errors.runners).toBeUndefined();
+    expect(store.errorInfo.runners).toBeUndefined();
+    await loading;
+    expect(store.loaded("runners")).toBe(true);
+    // A failed refresh empties the rows, so it stops claiming to have them.
+    fail = true;
+    await store.load("runners");
+    expect(store.runners).toEqual([]);
+    expect(store.loaded("runners")).toBe(false);
+  });
   it("does not request a collection without read authority", async () => {
     let calls = 0;
     const store = new OperationsStore({

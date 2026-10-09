@@ -178,10 +178,11 @@ explicitly which run should receive the event.
 
 Open a run in Studio's **Runs** view. Its detail shows, from top to bottom:
 the status, business key, and run ID (**Copy** copies the full ID); a **Now**
-line that says what the run is doing; the graph of the workflow version it runs,
-with **Now** on the current step; a **Timeline** of its recorded events;
-**Technical details**; and **Archive**. The detail does not update by itself:
-select **Refresh** at the bottom of the detail to read the run again.
+line that says what the run is doing; its commands; the graph of the workflow
+version it runs, with **Now** on the current step; a **Timeline** of its
+recorded events; **Technical details**; and **Archive**. The detail does not
+update by itself: select **Refresh** at the bottom of the detail to read the
+run again.
 
 The **Now** line, or the card that replaces it, tells you what the run waits
 for. STEP stands for the step's ID:
@@ -208,12 +209,24 @@ shows **Pause run** or, for a paused run, **Resume run**. Each asks for a
 "Run resumed." The [human-task walkthrough](human-tasks.md#6-pause-and-resume-when-operationally-necessary)
 shows the same controls from the CLI.
 
+**Cancel, retry, signal and export.** While the run hasn't finished,
+**Cancel run** asks "Cancel this run?" and a reason for the audit log; steps
+that already started may still finish outside Weave. A waiting run, even a
+paused one, offers **Send signal**, which opens a form filled in with the name
+of the signal its step waits for, a new event ID and an empty JSON payload;
+keep the event ID to send the same signal again safely. The platform keeps the
+signal of a paused run until it resumes. A finished run offers **Retry run**,
+which starts a new linked run from the same or the latest active version with
+the run's input. **Export history** downloads `run-RUN_ID-history.json` with
+the run's events and its replay report; it holds the first 1,000 events, and
+Studio says so when the run has more.
+
 ## 4. Archive finished runs
 
 **Why:** archiving hides finished runs from the normal list while keeping their
 data, tasks, and history. Only runs that `succeeded`, `failed`, were
 `cancelled`, or `timed_out` can be archived; finish or cancel an active run
-first. Studio has no cancel button; use `weave runs cancel`, as in
+first. Use **Cancel run** in the run's detail, or `weave runs cancel` as in
 [Cancel a run](../reference/incident-operations.md#cancel-a-run). The `operator` and `execution_manager` roles include `run.archive`.
 
 **In Studio:**

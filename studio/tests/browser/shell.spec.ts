@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // desktop shell, plain-language errors and navigation semantics.
 import { test, expect, Page } from "@playwright/test";
 import {
+  allCapabilities,
   command,
   connected,
   insertStep,
@@ -101,7 +102,9 @@ test(
 test("an ended session returns the browser to pairing with an explanation", async ({
   page,
 }) => {
-  await connected(page);
+  await connected(page, {
+    capabilities: [...allCapabilities, "status.read"],
+  });
   await page.route("**/environments/development/workers?*", (r) =>
     r.fulfill({
       status: 401,
@@ -121,7 +124,9 @@ test("an ended session reloads the desktop shell so it can pair again", async ({
   page,
 }) => {
   await desktopShell(page);
-  await connected(page);
+  await connected(page, {
+    capabilities: [...allCapabilities, "status.read"],
+  });
   let sessions = 0;
   await page.route("**/studio/session", (r) => {
     sessions++;
@@ -293,7 +298,9 @@ test("API failures read as plain language with a support code", async ({
 test("connection and worker details read their own resources", async ({
   page,
 }) => {
-  await connected(page);
+  await connected(page, {
+    capabilities: [...allCapabilities, "status.read"],
+  });
   const connection = {
     id: "0f8fad5b-d9cb-469f-a165-70867728950e",
     name: "orders-db",

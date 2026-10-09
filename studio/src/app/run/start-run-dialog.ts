@@ -50,22 +50,27 @@ const isRecord = (value: unknown): value is Json =>
 /**
  * Inputs: the API, the authorized activations, the activation to preselect,
  * whether a start is in flight, and the last failure (a new object each
- * time). Outputs: `start` with the request body, `cancel`.
+ * time). Outputs: `start` with the request body, `cancel`. Retry run reuses
+ * it with its own heading, wording, version labels and the run's input.
  */
 @Component({
   selector: "weave-start-run-dialog",
   standalone: true,
   imports: [Modal, TaskForm],
   template: `<weave-modal
-    heading="Start a run"
-    closeLabel="Close start a run"
+    [heading]="heading()"
+    [closeLabel]="closeLabel()"
     describedBy="run-start-description"
     [wide]="hasForm && !asJson"
     (dismiss)="cancel.emit()"
   >
     <p id="run-start-description" class="dialog-message">
-      Starts the active version in
-      {{ workspace() || "this environment" }} with the input below.
+      @if (description()) {
+        {{ description() }}
+      } @else {
+        Starts the active version in
+        {{ workspace() || "this environment" }} with the input below.
+      }
     </p>
     <!-- Problems are explained in words below, so the browser's bubbles are off. -->
     <form
@@ -193,7 +198,7 @@ const isRecord = (value: unknown): value is Json =>
           class="primary"
           [attr.aria-disabled]="busy() ? 'true' : null"
         >
-          {{ busy() ? "Starting…" : "Start run" }}
+          {{ busy() ? busyLabel() : submitLabel() }}
         </button>
       </div>
     </form>
@@ -254,6 +259,18 @@ export class StartRunDialog implements OnChanges {
   );
   /** The version to choose first, for example the designer's workflow. */
   preselect = input<{ workflow: string; version: string } | null>(null);
+  heading = input("Start a run");
+  closeLabel = input("Close start a run");
+  /** Replaces "Starts the active version in …" when set. */
+  description = input("");
+  submitLabel = input("Start run");
+  busyLabel = input("Starting…");
+  /** Option labels by activation ID, such as "Same version (1.0.0)". */
+  labels = input<ReadonlyMap<string, string>>(new Map());
+  /** The input to start from instead of the input remembered in this browser. */
+  initialInput = input<Record<string, unknown> | null>(null);
+  /** Business and correlation keys to start from. */
+  initialKeys = input<{ business_key?: string; correlation_key?: string }>({});
   start = output<StartRunRequest>();
   cancel = output<void>();
 
@@ -288,6 +305,10 @@ export class StartRunDialog implements OnChanges {
   private resolved = false;
 
   ngOnChanges(changes: SimpleChanges) {
+    if (changes["initialKeys"]?.firstChange) {
+      this.businessKey = this.initialKeys().business_key ?? "";
+      this.correlationKey = this.initialKeys().correlation_key ?? "";
+    }
     if (
       changes["initialActivationId"]?.firstChange &&
       this.initialActivationId()
@@ -319,6 +340,8 @@ export class StartRunDialog implements OnChanges {
   }
   /** "todo-reader 1.0.0 · active since 2 Oct, 09:12". */
   optionLabel(activation: Json) {
+    const label = this.labels().get(String(activation["id"] ?? ""));
+    if (label) return label;
     const { name, version } = this.versionOf(activation);
     const since = this.since(
       activation["activated_at"] ?? activation["created_at"],
@@ -363,7 +386,9 @@ export class StartRunDialog implements OnChanges {
       typeof request["version_id"] === "string" ? request["version_id"] : "";
     this.memoryKey = versionId || id;
     this.schemaKnown = false;
-    const last = id ? remembered(this.memoryKey) : null;
+    const last = id
+      ? (this.initialInput() ?? remembered(this.memoryKey))
+      : null;
     this.jsonText = JSON.stringify(last ?? {}, null, 2);
     this.formData = last ?? {};
     this.formSeed = this.formData;

@@ -73,7 +73,7 @@ for (const viewport of [
         await expect(page).toHaveTitle("Settings | Firefly Weave Studio");
       });
 
-      test("navigation groups Build and Operate, with Settings at the bottom", async ({
+      test("navigation groups Build, Work and Operate, with Settings at the bottom", async ({
         page,
       }) => {
         await offline(page);
@@ -91,12 +91,14 @@ for (const viewport of [
             "Build",
             "Workflows",
             "Connections",
-            "Operate",
-            "Runs",
+            "Work",
             "My tasks",
             "Email",
+            "Operate",
+            "Runs",
+            "Incidents",
             "Workers",
-            "Operations",
+            "Clusters",
             "Settings",
             "Collapse sidebar",
           ]);
