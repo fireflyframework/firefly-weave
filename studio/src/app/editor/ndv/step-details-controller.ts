@@ -21,8 +21,9 @@ SPDX-License-Identifier: Apache-2.0
 // undo step; a change that hides fields clears them in the same step and
 // says so with an Undo toast. Registered parameter components get the
 // registry's NdvContext from here.
-import { signal } from "@angular/core";
-import { getAt } from "../../forms/core/json";
+import { signal, untracked } from "@angular/core";
+import { safeSample } from "./panes/sample";
+import { canonicalJson, getAt } from "../../forms/core/json";
 import { referenceScope, type ScopeOptions } from "../../forms/core/scope";
 import { locateDiagnostic } from "../../designer/diagnostic-location";
 import type { StructuredCanvasAdapter, Step, Workflow } from "../../model";
@@ -80,6 +81,7 @@ export type ControllerHost = Pick<
   | "label"
   | "editingLocked"
   | "profile"
+  | "stepDataScope"
   | "api"
   | "diagnostics"
   | "diagnosticsDefinition"
@@ -102,6 +104,61 @@ const beneath = (path: string, root: string): boolean =>
 const BURST_MS = 600;
 
 export class StepDetailsController {
+  private eventSchema = "";
+  private readonly event = signal<Json | undefined>(undefined);
+  private eventScope: {
+    model: StructuredCanvasAdapter;
+    opened: number;
+    profile: string;
+    account: string | undefined;
+    api: ControllerHost["api"];
+  } | null = null;
+  private syncTestEvent(): void {
+    const { model, profile, api } = this.host;
+    if (
+      this.eventScope?.model === model &&
+      this.eventScope.opened === model.opened &&
+      this.eventScope.profile === canonicalJson(profile) &&
+      this.eventScope.account === this.host.stepDataScope &&
+      this.eventScope.api === api
+    )
+      return;
+    this.eventScope = {
+      model,
+      opened: model.opened,
+      profile: canonicalJson(profile),
+      account: this.host.stepDataScope,
+      api,
+    };
+    this.eventSchema = "";
+    untracked(() => this.event.set(undefined));
+  }
+  testEvent(): Json | undefined {
+    this.syncTestEvent();
+    const schema = this.host.model.definition.spec["inputSchema"];
+    const signature = canonicalJson(schema);
+    if (this.eventSchema !== signature) {
+      this.eventSchema = signature;
+      untracked(() => this.event.set(safeSample(schema, this.event())));
+    }
+    return this.event();
+  }
+  /** Deferred pane work belongs to the workflow and connection that created it. */
+  testEventOwner(): () => boolean {
+    this.syncTestEvent();
+    const scope = this.eventScope;
+    return () => {
+      this.syncTestEvent();
+      return this.eventScope === scope;
+    };
+  }
+  setTestEvent(value: Json | undefined): void {
+    this.syncTestEvent();
+    this.event.set(
+      safeSample(this.host.model.definition.spec["inputSchema"], value),
+    );
+  }
+
   readonly features = signal<readonly string[]>([]);
   private addedBy = new Map<string, Set<string>>();
   private touchedBy = new Map<string, Set<string>>();

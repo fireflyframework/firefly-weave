@@ -132,7 +132,13 @@ SPDX-License-Identifier: Apache-2.0
           {{ target() === "$trigger" ? "Test event" : "Input" }}
         </h3>
       </header>
-      <div class="sd-pane-body"></div>
+      <div class="sd-pane-body">
+        @if (target() === "$trigger") {
+          <weave-test-event-pane [session]="session()" />
+        } @else {
+          <weave-input-pane [session]="session()" />
+        }
+      </div>
     </section>
     @if (layout() === "three") {
       <div
@@ -318,7 +324,9 @@ SPDX-License-Identifier: Apache-2.0
       <header class="sd-pane-head">
         <h3 class="sd-pane-title">Output</h3>
       </header>
-      <div class="sd-pane-body"></div>
+      <div class="sd-pane-body">
+        <weave-output-pane [session]="session()" />
+      </div>
     </section>
   </div>
   @if (layout() !== "sheet") {

@@ -20,17 +20,21 @@ import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import type { Workflow } from "../src/app/model";
 import {
+  ChangeDetectorRef,
   ElementRef,
   Injector,
   runInInjectionContext,
   signal,
 } from "@angular/core";
+import { TestEventPane } from "../src/app/editor/ndv/panes/test-event-pane";
+import { InputPane } from "../src/app/editor/ndv/panes/input-pane";
+import { TaskForm } from "../src/app/task-form";
 import { FormulaField } from "../src/app/editor/ndv/params/formula-field";
 import { ParamField } from "../src/app/editor/ndv/params/param-field";
 import { ParameterForm } from "../src/app/editor/ndv/params/param-form";
 import { ListField } from "../src/app/editor/ndv/params/list-field";
 import type { Choice, ParamSpec } from "../src/app/editor/ndv/registry";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import { FormSession } from "../src/app/editor/ndv/params/form-session";
 import { StepDetailsController } from "../src/app/editor/ndv/step-details-controller";
@@ -1377,5 +1381,107 @@ describe("structural reset safety", () => {
       value: [{ steps: ["Other data"] }],
     });
     expect(f.errors).toEqual([]);
+  });
+});
+
+describe("manual sample form lifetime", () => {
+  function fixture() {
+    const f = setup();
+    f.model.updateWorkflow({
+      ...f.model.definition,
+      spec: {
+        ...f.model.definition.spec,
+        inputSchema: {
+          type: "object",
+          required: ["enabled"],
+          properties: {
+            enabled: { type: "boolean" },
+            name: { type: "string" },
+          },
+        },
+      },
+    });
+    const injector = Injector.create({
+      providers: [
+        { provide: ElementRef, useValue: new ElementRef({}) },
+        { provide: ChangeDetectorRef, useValue: { markForCheck() {} } },
+      ],
+    });
+    const pane = runInInjectionContext(injector, () => new TestEventPane());
+    pane.session = signal(f.session) as never;
+    const owner = pane.forms()[0];
+    const form = runInInjectionContext(injector, () => new TaskForm());
+    form.schema = signal(owner.schema) as never;
+    form.initialData = signal(owner.initial) as never;
+    form.dataChange.subscribe((data) => pane.changed(data, owner));
+    return { ...f, injector, pane, owner, form };
+  }
+  it("keeps schema and initial data identities through its own edits", () => {
+    const f = fixture();
+    f.pane.changed({ name: "A" }, f.owner);
+    expect(f.pane.forms()[0]).toBe(f.owner);
+    f.pane.changed({ name: "Alice" }, f.owner);
+    expect(f.pane.forms()[0].initial).toBe(f.owner.initial);
+    expect(f.controller.testEvent()).toEqual({ name: "Alice" });
+    f.injector.destroy();
+  });
+  it.each(["close", "workflow", "profile", "account", "generate", "destroy"])(
+    "refuses a real TaskForm default microtask after %s",
+    async (change) => {
+      const f = fixture();
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      f.form.ngOnChanges({ schema: {} as never });
+      if (change === "close") f.close();
+      if (change === "workflow") f.model.clearHistory();
+      if (change === "profile") f.host.profile = { name: "Other" } as never;
+      if (change === "account") f.host.api = {} as never;
+      if (change === "generate") f.pane.generate();
+      if (change === "destroy") f.injector.destroy();
+      await Promise.resolve();
+      expect(f.controller.testEvent()).toEqual(
+        change === "generate" ? { enabled: true, name: "text" } : undefined,
+      );
+      if (change !== "destroy") f.injector.destroy();
+      expect(warning.mock.calls).toEqual([]);
+      warning.mockRestore();
+    },
+  );
+  it("accepts current TaskForm default microtasks", async () => {
+    const f = fixture();
+    f.form.ngOnChanges({ schema: {} as never });
+    await Promise.resolve();
+    expect(f.controller.testEvent()).toEqual({ enabled: false });
+    expect(f.pane.forms()[0]).toBe(f.owner);
+    f.injector.destroy();
+  });
+});
+
+describe("pane input source reconciliation", () => {
+  it("drops a removed predecessor and reconciles when the target changes", () => {
+    const f = setup();
+    f.model.insert("transform", "root", undefined, {
+      id: "last",
+      value: { ref: "/input" },
+    });
+    const session = new FormSession(f.host, f.controller, openRequest("last"), {
+      confirm: async () => true,
+      announce() {},
+    });
+    const injector = Injector.create({
+      providers: [{ provide: ElementRef, useValue: new ElementRef({}) }],
+    });
+    const pane = runInInjectionContext(injector, () => new InputPane());
+    const input = signal(session);
+    pane.session = input as never;
+    expect(pane.selectedSource()).toBe("step:summarize");
+    pane.source.set("step:summarize");
+    expect(pane.selectedSource()).toBe("step:summarize");
+    f.model.remove("summarize");
+    expect(pane.selectedSource()).toBe("input");
+    f.model.undo();
+    expect(pane.selectedSource()).toBe("input");
+    input.set(f.session);
+    expect(pane.selectedSource()).toBe("input");
+    injector.destroy();
   });
 });

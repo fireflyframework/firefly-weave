@@ -1,0 +1,264 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Input, Output and Test event panes; tokens only. */
+.pane-tools,
+.pane-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.pane-sub {
+  min-height: 44px;
+  padding: var(--space-2) 0;
+}
+.pane-views {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.step-details .pane-views button[role="radio"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font: var(--type-caption);
+}
+.step-details .pane-views button[role="radio"][aria-checked="true"] {
+  background: var(--hover);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+.pane-source {
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 var(--space-2);
+  font: var(--type-label);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.pane-count {
+  margin-left: auto;
+  font: var(--type-caption);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.pane-search {
+  margin-top: var(--space-2);
+}
+.pane-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4) var(--space-4);
+  text-align: center;
+}
+.pane-empty h4 {
+  margin: 0;
+  font: var(--type-title-sm);
+}
+.pane-empty p,
+.pane-empty-text {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.pane-empty-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--hover);
+  color: var(--muted);
+}
+.pane-caption {
+  margin: var(--space-4) 0 var(--space-2);
+  font: var(--type-caption);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.data-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.data-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--depth, 0) * 22px);
+  border-radius: var(--radius-sm);
+}
+.data-row[draggable="true"] {
+  cursor: grab;
+}
+.data-row:hover,
+.data-row:focus-visible {
+  background: var(--hover);
+}
+.data-grip {
+  color: var(--subtle);
+}
+.data-type {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+}
+.data-key {
+  font: var(--type-label);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.data-kind {
+  font: var(--type-caption);
+  color: var(--subtle);
+  white-space: nowrap;
+}
+.data-mapped {
+  color: var(--success-ink);
+}
+.pane-also {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.step-details button.pane-also-source,
+.step-details button.pane-generate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-2);
+  font: var(--type-label);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.pane-also-source small {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.pane-json {
+  margin: 0;
+  font: var(--type-mono);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pane-tools {
+  flex-wrap: wrap;
+}
+.pane-views {
+  flex: 1;
+  flex-wrap: wrap;
+}
+.step-details .pane-views button[role="radio"] {
+  min-width: 44px;
+  padding-inline: var(--space-1);
+}
+.pane-sub {
+  flex-wrap: wrap;
+}
+.pane-count {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.pane-content {
+  min-width: 0;
+}
+.pane-content > button {
+  min-height: 44px;
+}
+.pane-source {
+  min-width: 0;
+  width: 100%;
+}
+.pane-also-source {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.data-row {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.data-kind {
+  white-space: normal;
+}
+.pane-generate {
+  margin-bottom: var(--space-4);
+}
+weave-input-pane,
+weave-output-pane,
+weave-test-event-pane {
+  display: block;
+  min-width: 0;
+}
+.step-details weave-test-event-pane input:not([type="checkbox"]),
+.step-details weave-test-event-pane select,
+.step-details weave-test-event-pane button {
+  min-height: 44px;
+}
+
+.step-details button.pane-search-toggle {
+  min-width: 44px;
+  min-height: 44px;
+  width: 44px;
+  height: 44px;
+}
+.step-details weave-test-event-pane .checkbox-field {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.step-details .sd-input weave-test-event-pane .choice-field button {
+  min-width: 44px;
+  width: 44px;
+}
+.step-details .sd-input weave-test-event-pane .choice-field input {
+  padding-right: calc(44px + var(--space-2));
+}

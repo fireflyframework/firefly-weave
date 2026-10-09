@@ -569,7 +569,11 @@ test.describe("focus across pane layouts", () => {
     const name = details.dialog.getByRole("button", { name: "Rename lookup" });
     await name.focus();
     await page.keyboard.press("Shift+F6");
-    await expect(details.dialog.locator(".sd-output")).toBeFocused();
+    await expect(
+      details.dialog
+        .locator(".sd-output")
+        .getByRole("radio", { name: "Schema", exact: true }),
+    ).toBeFocused();
     await page.setViewportSize({ width: 900, height: 700 });
     await expect(details.dialog).toHaveAttribute("data-layout", "two");
     await expect
@@ -583,7 +587,11 @@ test.describe("focus across pane layouts", () => {
     await page.keyboard.press("F6");
     await expect(name).toBeFocused();
     await page.keyboard.press("F6");
-    await expect(details.dialog.locator(".sd-input")).toBeFocused();
+    await expect(
+      details.dialog
+        .locator(".sd-input")
+        .getByRole("radio", { name: "Schema", exact: true }),
+    ).toBeFocused();
     await page.setViewportSize({ width: 600, height: 500 });
     await expect(details.dialog).toHaveAttribute("data-layout", "sheet");
     await expect
@@ -611,7 +619,11 @@ test.describe("focus across pane layouts", () => {
       .poll(() => activeRegion(page))
       .toEqual({ inside: true, visible: true, region: "parameters" });
     await page.keyboard.press("F6");
-    await expect(details.dialog.locator(".sd-output")).toBeFocused();
+    await expect(
+      details.dialog
+        .locator(".sd-output")
+        .getByRole("radio", { name: "Schema", exact: true }),
+    ).toBeFocused();
     await details.dialog
       .getByRole("tablist", { name: "Step details panes" })
       .getByRole("tab", { name: "Input", exact: true })
@@ -628,7 +640,11 @@ test.describe("focus across pane layouts", () => {
     await page.getByRole("button", { name: "Validate", exact: true }).focus();
     await expect(name).toBeFocused();
     await page.keyboard.press("F6");
-    await expect(details.dialog.locator(".sd-input")).toBeFocused();
+    await expect(
+      details.dialog
+        .locator(".sd-input")
+        .getByRole("radio", { name: "Schema", exact: true }),
+    ).toBeFocused();
   });
   test("a removed Data tab preserves its logical Output region", async ({
     page,
@@ -691,7 +707,11 @@ test.describe("focus across pane layouts", () => {
       await expect(modal).toHaveCount(0);
       await expect(more).toBeFocused();
       await page.keyboard.press("F6");
-      await expect(details.dialog.locator(".sd-input")).toBeFocused();
+      await expect(
+        details.dialog
+          .locator(".sd-input")
+          .getByRole("radio", { name: "Schema", exact: true }),
+      ).toBeFocused();
     });
 });
 

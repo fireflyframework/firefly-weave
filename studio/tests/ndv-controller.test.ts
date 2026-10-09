@@ -835,3 +835,76 @@ describe("connected step catalog", () => {
     expect(await context.catalog.tables()).toEqual([]);
   });
 });
+
+describe("manual test event ownership", () => {
+  it("retains a null sample across dialog openings without persisting it", () => {
+    const { model, controller } = setup();
+    const before = JSON.stringify([model.definition, model.canvas]);
+    expect(controller.testEvent()).toBeUndefined();
+    controller.setTestEvent(null);
+    const details = new StepDetailsService();
+    details.open(openRequest("$trigger"));
+    details.close();
+    details.open(openRequest("$trigger"));
+    expect(controller.testEvent()).toBeNull();
+    expect(JSON.stringify([model.definition, model.canvas])).toBe(before);
+  });
+  it.each(["workflow", "profile", "account"])(
+    "clears samples and rejects a stale writer after %s changes",
+    (scope) => {
+      const { model, host, controller } = setup();
+      controller.setTestEvent({ label: "old" });
+      const current = controller.testEventOwner();
+      if (scope === "workflow") model.clearHistory();
+      if (scope === "profile") host.profile = { id: "different" } as never;
+      if (scope === "account") host.api = {} as never;
+      expect(controller.testEvent()).toBeUndefined();
+      expect(current()).toBe(false);
+    },
+  );
+  it("strips nested secret values at the sample boundary", () => {
+    const { model, controller } = setup();
+    model.updateWorkflow({
+      ...model.definition,
+      spec: {
+        ...model.definition.spec,
+        inputSchema: {
+          type: "object",
+          properties: {
+            rows: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  token: { type: "string", writeOnly: true },
+                  name: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    controller.setTestEvent({ rows: [{ token: "private", name: "public" }] });
+    expect(controller.testEvent()).toEqual({ rows: [{ name: "public" }] });
+  });
+});
+
+it("redacts a stored sample when an input field becomes secret", () => {
+  const { model, controller } = setup();
+  controller.setTestEvent({ token: "private", name: "public" });
+  model.updateWorkflow({
+    ...model.definition,
+    spec: {
+      ...model.definition.spec,
+      inputSchema: {
+        type: "object",
+        properties: {
+          token: { type: "string", writeOnly: true },
+          name: { type: "string" },
+        },
+      },
+    },
+  });
+  expect(controller.testEvent()).toEqual({ name: "public" });
+});

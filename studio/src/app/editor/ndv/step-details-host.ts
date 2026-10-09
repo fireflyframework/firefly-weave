@@ -30,6 +30,8 @@ export interface StepDetailsHost {
   readonly tick: Signal<number>;
   readonly api: StudioApi;
   readonly profile: Profile | null;
+  /** Account/workspace invalidation generation and stable principal identity. */
+  readonly stepDataScope?: string;
   /** True while a simulation runs: the workflow can't change. */
   readonly editingLocked: boolean;
   /** "Try the new editor", once the shell keeps it itself. */

@@ -49,6 +49,9 @@ import {
   defaultWidths,
   type PaneWidths,
 } from "./panes/layout";
+import { InputPane } from "./panes/input-pane";
+import { OutputPane } from "./panes/output-pane";
+import { TestEventPane } from "./panes/test-event-pane";
 import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import {
@@ -86,9 +89,9 @@ export const EXECUTE_REASON =
   "Executing a single step isn't available yet. Simulate the workflow runs every step.";
 
 const FOCUSABLE =
-  'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'button:not([disabled]):not([tabindex="-1"]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const CONTROL =
-  'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [role="combobox"], [role="switch"], [role="radio"][tabindex="0"], button:not([disabled])';
+  'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [role="combobox"], [role="switch"], [role="radio"][tabindex="0"], button:not([disabled]):not([tabindex="-1"])';
 const NAMES: Record<string, string> = {
   $trigger: "Manual form trigger",
   $end: "End",
@@ -108,9 +111,17 @@ const visible = (element: HTMLElement): boolean =>
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   encapsulation: ViewEncapsulation.None,
-  imports: [Icon, RowMenu, Modal, ParameterForm],
+  imports: [
+    Icon,
+    RowMenu,
+    Modal,
+    ParameterForm,
+    InputPane,
+    OutputPane,
+    TestEventPane,
+  ],
   templateUrl: "./step-details.html",
-  styleUrl: "./step-details.css",
+  styleUrls: ["./step-details.css", "./panes/panes.css"],
   host: { "(document:focusin)": "focusIn($event)" },
 })
 export class StepDetails {
@@ -188,6 +199,8 @@ export class StepDetails {
   readonly pane = signal<"input" | "parameters" | "output">("parameters");
   readonly dataPane = signal<"input" | "output">("input");
   readonly widths = signal<PaneWidths>({ input: 0, output: 0 });
+  private readonly inputPane = viewChild(InputPane);
+  private readonly outputPane = viewChild(OutputPane);
   private readonly panes = viewChild<ElementRef<HTMLElement>>("panes");
   private total = 0;
   private dragging: {
@@ -875,6 +888,17 @@ export class StepDetails {
   run(command: KeymapCommand, event: KeyboardEvent) {
     const host = this.host();
     switch (command) {
+      case "searchPane": {
+        const region = this.regionOf(event.target as HTMLElement);
+        if (region === "input" && this.showPane("input") && this.inputPane()) {
+          event.preventDefault();
+          this.inputPane()!.focusSearch();
+        } else if (region === "output" && this.showPane("output")) {
+          event.preventDefault();
+          this.outputPane()?.focusSearch();
+        }
+        return;
+      }
       case "previousStepDetails":
         event.preventDefault();
         return this.move(-1);

@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import {
   ChangeDetectorRef,
+  DestroyRef,
   Component,
   ElementRef,
   OnChanges,
@@ -866,6 +867,7 @@ export class TaskForm implements OnChanges {
   private ids = new Map<string, string>();
   private generation = 0;
   private prefix = `schema-field-${++sequence}`;
+  private readonly lifetime = inject(DestroyRef);
   private host = inject(ElementRef<HTMLElement>);
   private cdr = inject(ChangeDetectorRef);
   private handlerCache = new Map<string, LazyOutputs>();
@@ -921,7 +923,7 @@ export class TaskForm implements OnChanges {
       this.bound =
         bound.kind === "object" ? bound : { kind: "object", entries: {} };
       queueMicrotask(() => {
-        if (generation === this.generation)
+        if (!this.lifetime.destroyed && generation === this.generation)
           this.missingChange.emit(this.missing());
       });
       return;
@@ -932,7 +934,8 @@ export class TaskForm implements OnChanges {
     // form submits, so the host hears about them before any edit.
     if (prepared.changed)
       queueMicrotask(() => {
-        if (generation === this.generation) this.publish();
+        if (!this.lifetime.destroyed && generation === this.generation)
+          this.publish();
       });
   }
 

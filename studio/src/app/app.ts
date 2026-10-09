@@ -412,6 +412,11 @@ export class App implements CanvasHost {
   platformBusy = "";
   // Fences platform checks and status reads against later platform changes.
   private platformGeneration = 0;
+  private stepDataGeneration = 0;
+  /** Samples follow account invalidation, while routine same-account checks retain them. */
+  get stepDataScope(): string {
+    return `${this.stepDataGeneration}:${this.identity?.principal_id ?? ""}`;
+  }
   taskData: Record<string, unknown> = {};
   emailDetail: Record<string, unknown> | null = null;
   emailSubmission: Record<string, unknown> | null = null;
@@ -6585,6 +6590,7 @@ export class App implements CanvasHost {
   }
   /** Forgets everything read from the platform; the open workflow is kept. */
   private clearPlatformState() {
+    this.stepDataGeneration++;
     this.importGeneration++;
     this.listSequence++;
     this.adminGeneration++;
