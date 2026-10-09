@@ -16,6 +16,15 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { canvasFromStored } from "./editor/state/canvas-sidecar";
+import {
+  stepDetailsEnabled,
+  type StepDetailsHost,
+} from "./editor/ndv/step-details-host";
+import {
+  StepDetailsService,
+  openRequest,
+  type StepDetailsRequest,
+} from "./editor/ndv/step-details-service";
 import { changeSlot, slotValidation } from "./integrations/connection-slots";
 import {
   Component,
@@ -895,6 +904,13 @@ export class App {
     );
   }
   openNodeIssue(node: Node) {
+    if (stepDetailsEnabled(this as StepDetailsHost)) {
+      void this.openStepDetails(node.step.id, {
+        revealAll: true,
+        focus: { kind: "firstIssue" },
+      });
+      return;
+    }
     const issue = this.contractIssues.find(
       (issue) => issue.stepId === node.step.id,
     );
@@ -1283,7 +1299,8 @@ export class App {
     if (
       this.model.selected &&
       window.innerWidth >= 768 &&
-      this.tab === "Designer"
+      this.tab === "Designer" &&
+      !this.stepDetails.isOpen()
     )
       this.showInspector = true;
     // A field commit keeps the mounted controls and their invalid local drafts.
@@ -1747,6 +1764,12 @@ export class App {
    * without opening the inspector (focus moving through the canvas).
    */
   async select(node: Node, reveal = true) {
+    const selected = this.model.selected;
+    const current = this.nodes.find(
+      (candidate) => candidate.step.id === node.step.id,
+    );
+    if (!current) return;
+    node = current;
     if (this.suppressNodeClick) {
       this.suppressNodeClick = false;
       return;
@@ -1763,6 +1786,13 @@ export class App {
       return;
     }
     if (!this.leaveInspector()) return;
+    const id =
+      node.step.id === selected
+        ? this.model.selected || node.step.id
+        : node.step.id;
+    const applied = this.nodes.find((candidate) => candidate.step.id === id);
+    if (!applied) return;
+    node = applied;
     if (reveal) this.showInspector = true;
     this.message = `Selected ${node.step.id}, ${this.label(node.step.kind)}, ${ownerLabel(node.owner, this.stepsById()).replace(/^Main sequence$/, "main sequence")}.`;
     this.model.selected = node.step.id;
@@ -1779,6 +1809,12 @@ export class App {
    * inspector holds edits for another step) and pans into view.
    */
   nodeFocused(node: Node) {
+    // A pending name edit can replace the card before its focus event arrives.
+    const current = this.nodes.find(
+      (candidate) => candidate.step.id === node.step.id,
+    );
+    if (!current) return;
+    node = current;
     // Keyboard navigation supersedes the import's still-pending initial fit.
     this.needsFit = false;
     this.afterFocusScroll(() => this.revealStep(node.step.id));
@@ -1787,6 +1823,16 @@ export class App {
   }
   /** Enter on a step opens it in the inspector and moves focus there. */
   nodeKey(event: KeyboardEvent, node: Node) {
+    if (
+      event.key === "Enter" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      stepDetailsEnabled(this as StepDetailsHost)
+    ) {
+      event.preventDefault();
+      void this.openStepDetails(node.step.id);
+      return;
+    }
     if (event.key !== "Enter" || event.metaKey || event.ctrlKey) return;
     event.preventDefault();
     void this.select(node).then(() => {
@@ -2771,6 +2817,16 @@ export class App {
   }
   /** Opens the step (or the workflow settings) a diagnostic names and focuses its field. */
   async openDiagnostic(location: DiagnosticLocation) {
+    if (
+      stepDetailsEnabled(this as StepDetailsHost) &&
+      location.stepId !== "$workflow"
+    ) {
+      await this.openStepDetails(location.stepId, {
+        revealAll: true,
+        focus: { kind: "path", path: location.field },
+      });
+      return;
+    }
     if (this.tab !== "Designer") this.selectTab("Designer");
     if (location.stepId === "$workflow") {
       if (!(await this.deselect())) return;
@@ -5785,6 +5841,54 @@ export class App {
       done: [],
     };
   }
+  // ------------------------------------------------------- step details
+  /** What step details show (with "Try the new editor" on). */
+  readonly stepDetails = inject(StepDetailsService);
+  /**
+   * Opens step details for a step, "$trigger" or "$end", after applying the
+   * inspector's pending edits. False when the new editor is off, the step is
+   * gone, or the inspector holds an edit it can't apply.
+   */
+  async openStepDetails(
+    target: string,
+    request: Partial<StepDetailsRequest> = {},
+  ): Promise<boolean> {
+    if (
+      !stepDetailsEnabled(this as StepDetailsHost) ||
+      this.view !== "designer"
+    )
+      return false;
+    const selected = this.model.selected;
+    if (!(await this.ensureApplied())) return false;
+    // Applying the inspector may have renamed the selected step.
+    if (
+      target === selected &&
+      this.model.selected &&
+      this.model.selected !== selected
+    )
+      target = this.model.selected;
+    if (!target.startsWith("$")) {
+      if (!this.nodes.some((n) => n.step.id === target)) return false;
+      if (this.model.selected !== target) {
+        this.model.selected = target;
+        this.loadInspector();
+      }
+    }
+    this.showInspector = false;
+    this.stepDetails.open(openRequest(target, request));
+    this.cdr.markForCheck();
+    return true;
+  }
+  /** A click on a step selects it; with step details on, it selects only. */
+  nodeClick(node: Node) {
+    void this.select(node, !stepDetailsEnabled(this as StepDetailsHost));
+  }
+  /** Enter on Start opens the trigger's details when step details are on. */
+  openTriggerDetails(event: Event) {
+    if (!stepDetailsEnabled(this as StepDetailsHost)) return;
+    event.preventDefault();
+    void this.openStepDetails("$trigger");
+  }
   /** Where the simulated run is, for a node's accessible name. */
   simulationNote(id: string) {
     const nodes = this.simNodes;
@@ -7379,6 +7483,13 @@ export class App {
     void this.refresh();
   }
   @HostListener("window:keydown", ["$event"]) key(event: KeyboardEvent) {
+    // Step details and workflow settings run their own keys.
+    if (
+      (event.target as HTMLElement).closest?.(
+        "weave-step-details, weave-workflow-settings-dialog",
+      )
+    )
+      return;
     const target = event.target as HTMLElement;
     const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
     if (
@@ -7483,6 +7594,15 @@ export class App {
    * move through the steps and select them.
    */
   outlineKey(event: KeyboardEvent, index: number) {
+    if (
+      event.key === "Enter" &&
+      stepDetailsEnabled(this as StepDetailsHost) &&
+      this.nodes[index]
+    ) {
+      event.preventDefault();
+      void this.openStepDetails(this.nodes[index].step.id);
+      return;
+    }
     const last = this.nodes.length - 1;
     const next =
       event.key === "ArrowDown"

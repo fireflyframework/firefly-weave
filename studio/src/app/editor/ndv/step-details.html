@@ -1,0 +1,244 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<div class="sd-scrim" aria-hidden="true" (click)="close()"></div>
+<section
+  #dialog
+  class="step-details"
+  role="dialog"
+  aria-modal="true"
+  tabindex="-1"
+  [attr.aria-label]="'Step details: ' + name()"
+  [attr.data-layout]="layout()"
+  (keydown)="key($event)"
+>
+  <div class="sd-top">
+    @if (crumb(); as where) {
+      <span class="sd-crumb" [attr.title]="where">{{ where }}</span>
+    }
+    <span class="sd-spacer"></span>
+    <button
+      type="button"
+      class="icon-button"
+      aria-label="Previous step"
+      [attr.title]="titles.previous"
+      [disabled]="!previous()"
+      (click)="move(-1)"
+    >
+      <weave-icon name="chevronLeft" />
+    </button>
+    <button
+      type="button"
+      class="icon-button"
+      aria-label="Next step"
+      [attr.title]="titles.next"
+      [disabled]="!next()"
+      (click)="move(1)"
+    >
+      <weave-icon name="chevron" />
+    </button>
+    <button
+      type="button"
+      class="icon-button"
+      aria-label="Close"
+      title="Close (Esc). Changes are already saved."
+      (click)="close()"
+    >
+      <weave-icon name="close" />
+    </button>
+  </div>
+  <div class="sd-panes">
+    <section
+      class="sd-pane sd-side sd-input"
+      aria-label="Input data"
+      data-region="input"
+    >
+      <header class="sd-pane-head">
+        <h3 class="sd-pane-title">
+          {{ target() === "$trigger" ? "Test event" : "Input" }}
+        </h3>
+      </header>
+      <div class="sd-pane-body"></div>
+    </section>
+    <section
+      class="sd-pane sd-main"
+      aria-label="Parameters"
+      data-region="parameters"
+    >
+      <header class="sd-head" data-region="header">
+        <span class="sd-kind" aria-hidden="true"
+          ><weave-icon [name]="kindIcon()" [size]="20"
+        /></span>
+        <div class="sd-name-block">
+          @if (renaming() !== null) {
+            <input
+              class="sd-rename"
+              aria-label="Step name"
+              autocomplete="off"
+              spellcheck="false"
+              aria-describedby="sd-rename-hint"
+              [value]="renameText"
+              (input)="renameText = $any($event.target).value"
+              (keydown)="renameKey($event)"
+              (blur)="commitRename()"
+            />
+            <span
+              id="sd-rename-hint"
+              class="sd-rename-hint"
+              aria-live="polite"
+              >{{ renameHintText() }}</span
+            >
+          } @else {
+            <button
+              type="button"
+              class="sd-name"
+              [disabled]="pseudo()"
+              [attr.title]="name()"
+              [attr.aria-label]="pseudo() ? name() : 'Rename ' + name()"
+              (click)="startRename()"
+            >
+              <span class="sd-name-text">{{ name() }}</span>
+              @if (!pseudo()) {
+                <weave-icon name="edit" [size]="16" />
+              }
+            </button>
+            <span class="sd-subtitle" [attr.title]="subtitle()">{{
+              subtitle()
+            }}</span>
+          }
+        </div>
+        <span class="sd-spacer"></span>
+      </header>
+      <div
+        class="sd-tabs"
+        role="tablist"
+        aria-label="Step details sections"
+        (keydown)="tabKey($event)"
+      >
+        <button
+          type="button"
+          role="tab"
+          id="sd-tab-parameters"
+          aria-controls="sd-panel-parameters"
+          [attr.aria-selected]="tab() === 'parameters'"
+          [attr.tabindex]="tab() === 'parameters' ? 0 : -1"
+          (click)="selectTab('parameters')"
+        >
+          Parameters
+        </button>
+        @if (target() !== "$end") {
+          <button
+            type="button"
+            role="tab"
+            id="sd-tab-settings"
+            aria-controls="sd-panel-settings"
+            [attr.aria-selected]="tab() === 'settings'"
+            [attr.tabindex]="tab() === 'settings' ? 0 : -1"
+            (click)="selectTab('settings')"
+          >
+            Settings
+          </button>
+        }
+        <span class="sd-spacer"></span>
+        <a
+          class="sd-docs"
+          [href]="docs()"
+          target="_blank"
+          rel="noopener noreferrer"
+          ><weave-icon name="docs" [size]="16" />Docs</a
+        >
+      </div>
+      <div
+        class="sd-tabpanel"
+        role="tabpanel"
+        id="sd-panel-parameters"
+        aria-labelledby="sd-tab-parameters"
+        [hidden]="tab() !== 'parameters'"
+      ></div>
+      <div
+        class="sd-tabpanel"
+        role="tabpanel"
+        id="sd-panel-settings"
+        aria-labelledby="sd-tab-settings"
+        [hidden]="tab() !== 'settings'"
+      ></div>
+    </section>
+    <section
+      class="sd-pane sd-side sd-output"
+      aria-label="Output data"
+      data-region="output"
+    >
+      <header class="sd-pane-head">
+        <h3 class="sd-pane-title">Output</h3>
+      </header>
+      <div class="sd-pane-body"></div>
+    </section>
+  </div>
+  @if (layout() !== "sheet") {
+    @let around = neighborList();
+    <div
+      class="sd-neighbors sd-before"
+      role="group"
+      aria-label="Steps that run right before"
+    >
+      @for (id of shown(around.before); track id) {
+        <button
+          type="button"
+          class="sd-neighbor"
+          [attr.aria-label]="'Open ' + neighborName(id)"
+          [attr.title]="'Open ' + neighborName(id)"
+          (click)="go(id)"
+        >
+          <weave-icon [name]="neighborIcon(id)" />
+        </button>
+      }
+      @if (around.before.length > 6) {
+        <weave-row-menu
+          label="More steps that run right before"
+          icon="more"
+          [text]="'+' + (around.before.length - 6)"
+          [items]="overflow(around.before)"
+        />
+      }
+    </div>
+    <div
+      class="sd-neighbors sd-after"
+      role="group"
+      aria-label="Steps that run right after"
+    >
+      @for (id of shown(around.after); track id) {
+        <button
+          type="button"
+          class="sd-neighbor"
+          [attr.aria-label]="'Open ' + neighborName(id)"
+          [attr.title]="'Open ' + neighborName(id)"
+          (click)="go(id)"
+        >
+          <weave-icon [name]="neighborIcon(id)" />
+        </button>
+      }
+      @if (around.after.length > 6) {
+        <weave-row-menu
+          label="More steps that run right after"
+          icon="more"
+          [text]="'+' + (around.after.length - 6)"
+          [items]="overflow(around.after)"
+        />
+      }
+    </div>
+  }
+</section>

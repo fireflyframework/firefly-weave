@@ -23,6 +23,7 @@ SPDX-License-Identifier: Apache-2.0
 import { ChangeDetectionStrategy, Component, input } from "@angular/core";
 import { FFlowModule } from "@foblex/flow";
 import { Icon } from "../icon";
+import { StepDetailsMount } from "../editor/ndv/step-details-mount";
 import { ModalSheet } from "../modal-sheet";
 import { RowMenu } from "../row-menu";
 import { StepPropertyGrid } from "../property-grid";
@@ -44,6 +45,7 @@ import type { App } from "../app";
   standalone: true,
   imports: [
     Icon,
+    StepDetailsMount,
     FFlowModule,
     ModalSheet,
     RowMenu,
@@ -606,6 +608,8 @@ import type { App } from "../app";
                     <button
                       type="button"
                       aria-label="Start — workflow settings"
+                      (dblclick)="h.openStepDetails('$trigger')"
+                      (keydown.enter)="h.openTriggerDetails($event)"
                       title="Workflow settings"
                       (click)="h.openWorkflowSettings()"
                     >
@@ -656,7 +660,10 @@ import type { App } from "../app";
                         (pointermove)="h.pointerMove($event)"
                         (pointerup)="h.pointerUp($event)"
                         (pointercancel)="h.cancelGesture()"
-                        (click)="h.select(node)"
+                        (click)="h.nodeClick(node)"
+                        (dblclick)="
+                          h.openStepDetails(h.model.selected || node.step.id)
+                        "
                         (focus)="h.nodeFocused(node)"
                         (keydown)="h.nodeKey($event, node)"
                         [attr.aria-label]="
@@ -1216,7 +1223,8 @@ import type { App } from "../app";
           }
         </div>
       }
-    </section>`,
+    </section>
+    <weave-step-details-mount [host]="h" />`,
 })
 export class DesignerView {
   /** The editor shell. */
