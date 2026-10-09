@@ -64,6 +64,10 @@ private-origin entries; a script without a terminal stops and names `--yes`.
 Add `--verify` to also run a one-step AI workflow and replay it. Repeating the
 command changes only what differs.
 
+For worker sign-in, enable includes the managed Keycloak realm's existing `basic`
+scope in token responses. It preserves the scope's mappers and existing grants;
+this local identity setting remains after `ai disable`.
+
 | Choice | Ollama runs | Endpoint |
 | --- | --- | --- |
 | `--ollama container` | In a Weave-managed `ollama` service with 8,192 tokens of context; models live in the `weave-local-ID-ollama` volume | `http://ollama:11434/v1` |

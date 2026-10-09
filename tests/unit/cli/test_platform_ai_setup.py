@@ -163,6 +163,68 @@ async def test_the_worker_subject_is_the_keycloak_service_account():
     assert await setup.worker_subject(KEYCLOAK, "admin-secret", httpx.MockTransport(keycloak)) == SUBJECT
 
 
+def basic_scope():
+    return {
+        "id": SUBJECT,
+        "name": "basic",
+        "protocol": "openid-connect",
+        "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"},
+        "protocolMappers": [
+            {"id": "sub-mapper", "name": "sub", "protocolMapper": "oidc-sub-mapper", "config": {}},
+            {"id": "time-mapper", "name": "auth_time", "protocolMapper": "oidc-usersessionmodel-note-mapper"},
+        ],
+    }
+
+
+async def test_managed_worker_scope_is_visible_without_replacing_mappers_or_other_attributes():
+    original = basic_scope()
+    stored = json.loads(json.dumps(original))
+
+    def keycloak(request):
+        nonlocal stored
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        if request.method == "GET":
+            assert request.url.path.endswith("/client-scopes")
+            return httpx.Response(200, json=[stored, {"id": "other", "name": "profile"}])
+        assert request.method == "PUT" and request.url.path.endswith("/client-scopes/" + SUBJECT)
+        stored = json.loads(request.content)
+        return httpx.Response(204)
+
+    transport = httpx.MockTransport(keycloak)
+    assert await setup.ensure_worker_scope(KEYCLOAK, "admin-secret", transport) is True
+    assert stored == {
+        **original,
+        "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "false"},
+    }
+    assert await setup.ensure_worker_scope(KEYCLOAK, "admin-secret", transport) is False
+
+
+@pytest.mark.parametrize("broken", [[], [basic_scope(), basic_scope()], [{**basic_scope(), "attributes": None}]])
+async def test_an_unrecognized_managed_scope_is_refused_before_any_update(broken):
+    def keycloak(request):
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        assert request.method == "GET"
+        return httpx.Response(200, json=broken)
+
+    with pytest.raises(platform.PlatformError, match="worker scope"):
+        await setup.ensure_worker_scope(KEYCLOAK, "admin-secret", httpx.MockTransport(keycloak))
+
+
+async def test_a_refused_managed_scope_update_reports_a_safe_failure():
+    def keycloak(request):
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        if request.method == "GET":
+            return httpx.Response(200, json=[basic_scope()])
+        return httpx.Response(403, json={"error": "private-provider-detail"})
+
+    with pytest.raises(platform.PlatformError, match="refused.*worker scope") as failure:
+        await setup.ensure_worker_scope(KEYCLOAK, "admin-secret", httpx.MockTransport(keycloak))
+    assert "private-provider-detail" not in str(failure.value) and "admin-secret" not in str(failure.value)
+
+
 def saved_connection(**changes):
     value = {
         "id": REVISION,

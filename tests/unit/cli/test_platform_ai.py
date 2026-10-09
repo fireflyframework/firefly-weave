@@ -55,6 +55,7 @@ class Server:
 
     def __init__(self):
         self.calls, self.connections = [], set()
+        self.scope_visible = False
         self.answer = {
             "ok": True,
             "code": "ok",
@@ -63,6 +64,11 @@ class Server:
             "tool_calling": "supported",
             "tested_at": "2026-10-08T10:00:00+00:00",
         }
+
+    async def ensure_worker_scope(self, keycloak, admin_secret, transport=None):
+        changed = not self.scope_visible
+        self.scope_visible = True
+        return changed
 
     async def publish(self, client, collection, document, digest):
         self.calls.append(("publish", collection))
@@ -183,6 +189,7 @@ def harness_fixture(owned, monkeypatch):
         platform_docker, "inspect", lambda state: {"state": "running", "id": "f" * 64, "network_mode": "x"}
     )
     for name in (
+        "ensure_worker_scope",
         "publish",
         "admit_release",
         "worker_principal",
@@ -200,6 +207,16 @@ def enable(h, **changes):
     arguments = {"ollama_mode": "container", "models": [MODEL], "confirm": lambda text: True}
     arguments.update(changes)
     return platform_ai.enable(h.directory, **arguments)
+
+
+def test_a_refused_managed_oauth_scope_update_never_starts_the_worker(harness, monkeypatch):
+    async def refused(*args):
+        raise platform.PlatformError("The local Keycloak refused the worker scope update.")
+
+    monkeypatch.setattr(platform_ai.setup, "ensure_worker_scope", refused, raising=False)
+    with pytest.raises(platform.PlatformError, match="refused.*worker scope"):
+        enable(harness)
+    assert "ai-services" not in harness.runner.names()
 
 
 def saved(h):
@@ -226,6 +243,7 @@ def test_enable_runs_every_stage_in_order_and_saves_a_ready_receipt(harness):
         "policy",
         "settings",
         "image",
+        "authentication",
         "catalog",
         "release",
         "principal",

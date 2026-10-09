@@ -604,6 +604,8 @@ async def _server_records(
     transport: httpx.AsyncBaseTransport | None,
 ) -> list[str]:
     changed: list[str] = []
+    if await setup.ensure_worker_scope(keycloak, admin_secret, transport):
+        changed.append("authentication")
     connector = await setup.publish(client, "connectors", catalog["connector"], setup.CONNECTOR_DIGEST)
     if value.get("connector_version_id") != connector:
         changed.append("catalog")

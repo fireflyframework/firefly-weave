@@ -130,6 +130,50 @@ async def admit_release(client: WeaveClient, image_id: str, manifest: dict[str, 
     return str(release.id)
 
 
+async def ensure_worker_scope(
+    keycloak: str, admin_secret: str, transport: httpx.AsyncBaseTransport | None = None
+) -> bool:
+    """Include the managed realm's existing basic scope in machine token responses, preserving its mappers."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False, transport=transport) as client:
+        token = await local._keycloak_admin(client, keycloak, admin_secret)
+        endpoint = keycloak + "/admin/realms/weave/client-scopes"
+        status, scopes = await local._keycloak(client, "GET", endpoint, token=token)
+        records = (
+            [item for item in scopes if isinstance(item, dict) and item.get("name") == "basic"]
+            if isinstance(scopes, list)
+            else []
+        )
+        if status != 200 or len(records) != 1:
+            raise local.PlatformError("The local Keycloak worker scope could not be read; nothing was changed.")
+        record = records[0]
+        identifier, attributes = record.get("id"), record.get("attributes")
+        try:
+            if (
+                not isinstance(identifier, str)
+                or str(UUID(identifier)) != identifier
+                or record.get("protocol") != "openid-connect"
+                or not isinstance(attributes, dict)
+                or not isinstance(record.get("protocolMappers"), list)
+            ):
+                raise ValueError
+        except ValueError:
+            raise local.PlatformError(
+                "The local Keycloak worker scope could not be read; nothing was changed."
+            ) from None
+        if attributes.get("include.in.token.scope") == "true":
+            return False
+        # Keycloak otherwise returns scope="", which the machine-token parser correctly rejects.
+        updated = {**record, "attributes": {**attributes, "include.in.token.scope": "true"}}
+        status, _ = await local._keycloak(client, "PUT", endpoint + "/" + identifier, token=token, json=updated)
+        if status not in {200, 204}:
+            raise local.PlatformError(
+                "The local Keycloak refused the worker scope update; AI services were not started."
+            )
+        return True
+
+
 async def worker_subject(keycloak: str, admin_secret: str, transport: httpx.AsyncBaseTransport | None = None) -> str:
     """The Keycloak subject of the weave-worker client's service account: the identity the worker signs in as."""
     import httpx
