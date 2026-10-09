@@ -868,6 +868,7 @@ export class TaskForm implements OnChanges {
   private memberCache = new WeakMap<object, FieldInfo | null>();
   private ids = new Map<string, string>();
   private generation = 0;
+  private focusRevision = 0;
   private prefix = `schema-field-${++sequence}`;
   private readonly lifetime = inject(DestroyRef);
   private host = inject(ElementRef<HTMLElement>);
@@ -1540,10 +1541,20 @@ export class TaskForm implements OnChanges {
   }
   /** Focuses an element of this form after the next render. */
   private focusSoon(id: string) {
+    const host = this.host.nativeElement as HTMLElement;
+    const active = host.ownerDocument.activeElement;
+    const generation = this.generation;
+    const revision = ++this.focusRevision;
     setTimeout(() => {
-      const element = (
-        this.host.nativeElement as HTMLElement
-      ).querySelector<HTMLElement>(`#${CSS.escape(id)}`);
+      // A delayed row action must not redirect typing after another choice.
+      if (
+        revision !== this.focusRevision ||
+        generation !== this.generation ||
+        !host.isConnected ||
+        host.ownerDocument.activeElement !== active
+      )
+        return;
+      const element = host.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
       const control = element?.matches("input, select, textarea, button")
         ? element
         : element?.querySelector<HTMLElement>("input, select, textarea");

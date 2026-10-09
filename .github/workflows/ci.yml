@@ -56,7 +56,13 @@ jobs:
         working-directory: studio
       - run: npx playwright install --with-deps chromium
         working-directory: studio
-      - run: npm run test:browser
+      - name: Functional browser tests
+        run: npm run test:browser -- --grep-invert @performance
+        working-directory: studio
+      # Frame timing needs an idle test worker: another browser can otherwise
+      # consume the frame budget while running unrelated functional checks.
+      - name: Canvas performance measurements
+        run: npm run test:browser -- --grep @performance --workers=1 --retries=0 --output=test-results/performance
         working-directory: studio
   xplat:
     name: cross-platform (${{ matrix.os }})
