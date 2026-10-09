@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import secrets
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -35,7 +38,7 @@ from typing import Any
 from firefly_weave import ai_policy, private_origins
 from firefly_weave.sdk import platform as local
 from firefly_weave.sdk import platform_origins
-from firefly_weave.sdk.deployment import DeploymentError, read_file, real_path
+from firefly_weave.sdk.deployment import DeploymentError, read_file
 
 CONFIG_DIRECTORY = "ai-config"
 SECRETS_DIRECTORY = "ai-secrets"
@@ -64,29 +67,45 @@ OLLAMA_ENVIRONMENT = {
 LABELS = {"container": "Ollama (Weave-managed)", "host": "Ollama on this computer", "url": "Ollama"}
 MAX_OUTPUT_TOKENS = 4096
 SERVICES = ("ai-gateway", "agentic-worker")
-_HARDENED: dict[str, Any] = {
-    "read_only": True,
-    "cap_drop": ["ALL"],
-    "security_opt": ["no-new-privileges:true"],
-    "user": "65532:65532",
-    "tmpfs": ["/tmp:size=16777216,mode=1777"],
-    "restart": "unless-stopped",
-}
+# Exactly what secrets.token_urlsafe(32) produces, one line.
+_TOKEN = re.compile(rb"[A-Za-z0-9_-]{43}\n")
 
 
 def _shared(path: Path) -> Path:
-    """A 0755 directory inside the private installation, mounted read-only into containers."""
-    if path.exists():
-        real_path(path)
-    else:
+    """A 0755 directory the CLI owns inside the private installation, mounted read-only into containers."""
+    try:
         path.mkdir(mode=0o755)
-        path.chmod(0o755)
+    except FileExistsError:
+        info = path.lstat()
+        # Never a link, another kind of file or someone else's directory: nothing is written through it.
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            raise local.PlatformError(
+                f"{path.name} in the installation directory is not a directory platform commands created; "
+                "move it aside and run weave platform ai enable again."
+            ) from None
+    path.chmod(0o755)
     return path
 
 
+def _current(path: Path, mode: int, limit: int = 65536) -> bytes | None:
+    """The content of a regular file the CLI owns with exactly ``mode``; None when missing, a link or changed."""
+    try:
+        data = read_file(path, limit)
+        info = path.lstat()
+    except (OSError, DeploymentError):
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != mode:
+        return None
+    return data
+
+
 def _publish(path: Path, data: bytes) -> bool:
-    """Atomically replace a 0444 container copy; True when its content changed."""
-    if path.exists() and read_file(path, 65536) == data:
+    """Atomically replace a 0444 container copy; True when it was replaced.
+
+    A link, another mode or other content is replaced: the rename swaps the link itself and
+    never writes through it.
+    """
+    if _current(path, 0o444) == data:
         return False
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".ai-", delete=False) as stream:
         stream.write(data)
@@ -97,8 +116,8 @@ def _publish(path: Path, data: bytes) -> bool:
 
 
 def _private(path: Path, data: bytes) -> bool:
-    """Atomically replace a 0600 file the CLI owns; True when its content changed."""
-    if path.exists() and read_file(path, 65536, private=True) == data:
+    """Atomically replace a 0600 file the CLI owns; True when it was replaced (a link, another mode or content)."""
+    if _current(path, 0o600) == data:
         return False
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".ai-", delete=False) as stream:
         stream.write(data)
@@ -114,6 +133,30 @@ def _json(value: Any) -> bytes:
 
 def _bind(source: Path | str, target: str) -> dict[str, Any]:
     return {"type": "bind", "source": str(source), "target": target, "read_only": True}
+
+
+def _hardened(image: str) -> dict[str, Any]:
+    """Settings both AI services share, built fresh so no two services share a list or mapping."""
+    return {
+        "image": image,
+        "read_only": True,
+        "cap_drop": ["ALL"],
+        "security_opt": ["no-new-privileges:true"],
+        "user": "65532:65532",
+        "tmpfs": ["/tmp:size=16777216,mode=1777"],
+        "restart": "unless-stopped",
+        "network_mode": "service:keycloak",
+        "depends_on": {"keycloak": {"condition": "service_started"}},
+    }
+
+
+def _volumes(directory: Path, origins: Path, secret: str) -> list[dict[str, Any]]:
+    """The AI settings, the private-origin copy and one secret copy, all read-only."""
+    return [
+        _bind(directory / CONFIG_DIRECTORY, CONTAINER_CONFIG),
+        _bind(origins, platform_origins.CONTAINER_PATH),
+        _bind(directory / SECRETS_DIRECTORY / secret, CONTAINER_SECRETS + "/" + secret),
+    ]
 
 
 def ai_entries(receipt: dict[str, Any]) -> list[private_origins.PrivateOrigin]:
@@ -159,7 +202,9 @@ def verify_policy(state: dict[str, Any], receipt: dict[str, Any]) -> None:
     try:
         data = read_file(Path(state["directory"]) / CONFIG_DIRECTORY / POLICY, ai_policy.MAX_FILE_BYTES)
     except (OSError, DeploymentError):
-        raise local.PlatformError("The AI policy file is missing; run weave platform ai enable again.") from None
+        raise local.PlatformError(
+            "The AI policy file is missing or replaced; run weave platform ai enable again."
+        ) from None
     if hashlib.sha256(data).hexdigest() != receipt.get("policy_sha256"):
         raise local.PlatformError(
             "The AI policy file changed outside platform commands. Run weave platform ai enable to restore it, "
@@ -178,7 +223,9 @@ def write_settings(state: dict[str, Any], receipt: dict[str, Any]) -> bool:
     config = _shared(directory / CONFIG_DIRECTORY)
     changed = False
     token = stored / GATEWAY_TOKEN
-    if not token.exists():
+    current = _current(token, 0o444, 4096)
+    if current is None or _TOKEN.fullmatch(current) is None:
+        # A link, another mode or another shape is never kept or followed: a new token is swapped in.
         changed = _publish(token, (secrets.token_urlsafe(32) + "\n").encode())
     changed = _publish(stored / WORKER_SECRET, worker.encode()) or changed
     oauth = {
@@ -233,18 +280,9 @@ def compose_document(state: dict[str, Any], receipt: dict[str, Any]) -> dict[str
             "healthcheck": {"test": ["CMD", "ollama", "list"], "interval": "5s", "timeout": "5s", "retries": 60},
         }
     if receipt.get("compose") == "all":
-        shared = [
-            _bind(directory / CONFIG_DIRECTORY, CONTAINER_CONFIG),
-            _bind(platform_origins.container_copy(state), platform_origins.CONTAINER_PATH),
-        ]
-        common = {
-            **_HARDENED,
-            "image": receipt["image_id"],
-            "network_mode": "service:keycloak",
-            "depends_on": {"keycloak": {"condition": "service_started"}},
-        }
+        origins = platform_origins.container_copy(state)
         services["ai-gateway"] = {
-            **common,
+            **_hardened(receipt["image_id"]),
             "entrypoint": ["weave-lumi-gateway"],
             "environment": {
                 "WEAVE_LUMI_POLICY_FILE": CONTAINER_CONFIG + "/" + POLICY,
@@ -253,10 +291,7 @@ def compose_document(state: dict[str, Any], receipt: dict[str, Any]) -> dict[str
                 "WEAVE_LUMI_GATEWAY_HOST": "127.0.0.1",
                 "WEAVE_LUMI_GATEWAY_PORT": "8090",
             },
-            "volumes": [
-                *shared,
-                _bind(directory / SECRETS_DIRECTORY / GATEWAY_TOKEN, CONTAINER_SECRETS + "/" + GATEWAY_TOKEN),
-            ],
+            "volumes": _volumes(directory, origins, GATEWAY_TOKEN),
             "healthcheck": {
                 "test": [
                     "CMD",
@@ -271,7 +306,7 @@ def compose_document(state: dict[str, Any], receipt: dict[str, Any]) -> dict[str
         }
         scope = receipt["scope"]
         services["agentic-worker"] = {
-            **common,
+            **_hardened(receipt["image_id"]),
             "entrypoint": ["weave-agentic-worker"],
             "environment": {
                 "WEAVE_API_URL": API_ORIGIN,
@@ -285,10 +320,7 @@ def compose_document(state: dict[str, Any], receipt: dict[str, Any]) -> dict[str
                 "WEAVE_PRIVATE_ORIGINS_FILE": platform_origins.CONTAINER_PATH,
                 "WEAVE_AGENTIC_CAPACITY": "1",
             },
-            "volumes": [
-                *shared,
-                _bind(directory / SECRETS_DIRECTORY / WORKER_SECRET, CONTAINER_SECRETS + "/" + WORKER_SECRET),
-            ],
+            "volumes": _volumes(directory, origins, WORKER_SECRET),
         }
     document: dict[str, Any] = {"services": services}
     if receipt["mode"] == "container":
