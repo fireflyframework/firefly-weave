@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+from starlette._utils import get_route_path
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from firefly_weave.contracts.surface import OPERATIONS
@@ -186,7 +187,7 @@ class BodyBoundary:
         await send({"type": "http.response.body", "body": body})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        path = scope.get("path", "")
+        path = get_route_path(scope) if scope["type"] == "http" else ""
         if (
             scope["type"] == "http"
             and len(path) <= 8192

@@ -823,3 +823,235 @@ async def test_served_policy_filters_gateway_refusals_and_keeps_unknown_cache_mi
     )
     answer = await listing(s, refresh=True)
     assert answer.approval == "served" and [item.name for item in answer.models] == ["served"]
+
+
+def database_refresh_failure(kind):
+    from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError, ProgrammingError, SQLAlchemyError
+    from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+    if kind == "pool-timeout":
+        return PoolTimeout("Connection pool unavailable")
+    if kind == "programmer":
+        return RuntimeError("Unrelated application fault")
+    if kind == "sqlalchemy":
+        return SQLAlchemyError("Unclassified database error")
+    if kind == "cancelled":
+        return asyncio.CancelledError()
+    error_type = {
+        "operational": OperationalError,
+        "invalidated": DBAPIError,
+        "dbapi": DBAPIError,
+        "programming": ProgrammingError,
+        "interface": InterfaceError,
+    }[kind]
+    return error_type(
+        None, None, ConnectionError("Connection unavailable"), connection_invalidated=kind == "invalidated"
+    )
+
+
+@pytest.fixture
+def refresh_http(model_service, tmp_path, monkeypatch):
+    import httpx
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from firefly_weave.api.ai import AIController
+    from firefly_weave.api.connections import ConnectionController
+    from firefly_weave.contracts.agentic import AgenticConnectionAdapter
+    from firefly_weave.contracts.connectors import ConnectionRequest, ResolvedSecret
+    from firefly_weave.contracts.surface import OPERATIONS
+    from firefly_weave.operations.ai_connections import GatewayConnectionTester
+    from firefly_weave.operations.lumi_gateway import LumiGatewayClient, LumiGatewaySettings
+
+    s = model_service
+    s.http_events, s.streams_closed, s.clients, s.bound_credentials = [], [], [], []
+
+    class Stream(httpx.AsyncByteStream):
+        def __init__(self, path, payload):
+            self.path, self.payload = path, payload
+
+        async def __aiter__(self):
+            yield json.dumps(self.payload).encode()
+
+        async def aclose(self):
+            s.streams_closed.append(self.path)
+
+    async def upstream(request):
+        s.http_events.append(request.url.path)
+        payload = (
+            s.raw.model_dump(mode="json")
+            if request.url.path == "/v1/models"
+            else {
+                "ok": True,
+                "code": "ok",
+                "model": "approved",
+                "tool_calling": "unknown",
+            }
+        )
+        return httpx.Response(200, stream=Stream(request.url.path, payload))
+
+    token = tmp_path / "refresh-gateway-token"
+    token.write_text("gateway-test-token")
+    gateway = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://gateway.example/v1/lumi", token_file=str(token)),
+        transport=httpx.MockTransport(upstream),
+    )
+    original_client = gateway._client
+
+    def client(timeout):
+        owned = original_client(timeout)
+        s.clients.append(owned)
+        return owned
+
+    monkeypatch.setattr(gateway, "_client", client)
+    s.service.gateway = s.tests.gateway = gateway
+    s.connections.secrets = SimpleNamespace(resolve=lambda *args: ResolvedSecret(value="credential-canary"))
+    adapter = AgenticConnectionAdapter(GatewayConnectionTester(gateway))
+    s.connections.registry.register_descriptor(AGENTIC_DESCRIPTOR, adapter)
+    original_test = adapter.test_connection
+
+    async def capture(bound):
+        s.bound_credentials.append(bound.credentials)
+        return await original_test(bound)
+
+    monkeypatch.setattr(adapter, "test_connection", capture)
+    s.connections.test_admission = s.tests.admit
+
+    async def refresh(actor, scope, identifier, deadline, context):
+        s.http_events.append("refresh")
+        await s.service.refresh_after(actor, scope, identifier, admitted=True, deadline=deadline, context=context)
+
+    s.connections.refresh = s.tests.refresh = refresh
+
+    async def save(*args, **kwargs):
+        s.http_events.append("committed")
+        return s.revision
+
+    monkeypatch.setattr(s.connections, "create_revision", save)
+    controller = ConnectionController(s.connections, s.service)
+    ai = AIController(s.tests, s.service)
+
+    async def request(route):
+        operation, handler, body = {
+            "save": (
+                "connections.create",
+                controller.create,
+                ConnectionRequest.model_validate_json(
+                    s.revision.model_dump_json(
+                        by_alias=True, exclude={"id", "revision", "connector", "connector_digest", "adapter"}
+                    )
+                ).model_dump(mode="json", by_alias=True),
+            ),
+            "dedicated": ("ai_connections.test", ai.test_connection, {"model": "approved"}),
+            "generic": ("connections.test", controller.test, {}),
+        }[route]
+        template = OPERATIONS[operation].canonical_path
+        app = Starlette(routes=[Route(template, handler, methods=["POST"])])
+
+        async def seeded(scope, receive, send):
+            scope["state"] = {"principal": s.actor, "audit_context": s.context}
+            await app(scope, receive, send)
+
+        path = template.format(
+            tenant=s.scope.tenant_id,
+            project=s.scope.project_id,
+            environment=s.scope.environment_id,
+            identifier=s.revision.id,
+        )
+        transport = httpx.ASGITransport(seeded, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="https://test") as client:
+            return await client.post(path, json=body)
+
+    s.http_request, s.real_gateway = request, gateway
+    return s
+
+
+@pytest.mark.parametrize("route", ["save", "dedicated", "generic"])
+@pytest.mark.parametrize("phase", ["read", "audit"])
+@pytest.mark.parametrize("kind", ["operational", "invalidated", "pool-timeout"])
+async def test_optional_refresh_database_failure_preserves_primary_http_result(
+    refresh_http, monkeypatch, route, phase, kind
+):
+    from firefly_weave.connections.secrets import SecretUnavailable
+
+    s = refresh_http
+    key = (*next(iter(s.records)), s.policy.current().sha256)
+    s.service.cache.put(key, result())
+    failure = database_refresh_failure(kind)
+
+    async def fail(*args, **kwargs):
+        s.http_events.append("database-failed")
+        raise failure
+
+    monkeypatch.setattr(s.service, "_revision" if phase == "read" else "_record_refresh", fail)
+    before = asyncio.all_tasks()
+    response = await s.http_request(route)
+    assert not (asyncio.all_tasks() - before)
+    assert s.http_events[-1] == "database-failed"
+    assert s.http_events[0] == ("committed" if route == "save" else "/v1/test")
+    assert s.real_gateway.active == 0 and all(client.is_closed for client in s.clients)
+    assert s.streams_closed == [path for path in s.http_events if path.startswith("/v1/")]
+    if route == "generic":
+        with pytest.raises(SecretUnavailable):
+            s.bound_credentials[0]("apiKey")
+    if route == "dedicated":
+        assert any(action == "ai.connection.test" for action, _, _ in s.audits)
+    assert response.status_code == (201 if route == "save" else 200)
+    assert not s.service.cache._records
+    if route == "save":
+        assert response.json()["id"] == str(s.revision.id)
+    else:
+        assert response.json()["ok"] is True
+        payloads = [
+            json.loads(call.args[1]["payload"])
+            for call in s.session.execute.await_args_list
+            if "connection_test_results" in str(call.args[0])
+        ]
+        assert len(payloads) == 1 and payloads[0]["ok"] is True
+
+
+@pytest.mark.parametrize("phase", ["read", "audit"])
+@pytest.mark.parametrize("kind", ["operational", "invalidated", "pool-timeout"])
+async def test_explicit_refresh_keeps_database_failures_visible(model_service, monkeypatch, phase, kind):
+    s = model_service
+    failure = database_refresh_failure(kind)
+    monkeypatch.setattr(
+        s.service, "_revision" if phase == "read" else "_record_refresh", AsyncMock(side_effect=failure)
+    )
+    with pytest.raises(type(failure)) as caught:
+        await listing(s, refresh=True)
+    assert caught.value is failure
+    assert not s.service.cache._records
+
+
+@pytest.mark.parametrize("phase", ["read", "audit"])
+@pytest.mark.parametrize("kind", ["dbapi", "programming", "interface", "programmer", "sqlalchemy", "cancelled"])
+async def test_optional_refresh_does_not_hide_programming_errors_or_cancellation(
+    model_service, monkeypatch, phase, kind
+):
+    s = model_service
+    failure = database_refresh_failure(kind)
+    monkeypatch.setattr(
+        s.service, "_revision" if phase == "read" else "_record_refresh", AsyncMock(side_effect=failure)
+    )
+    with pytest.raises(type(failure)) as caught:
+        await s.service.refresh_after(
+            s.actor, s.scope, s.revision.id, admitted=True, deadline=time.monotonic() + 20, context=s.context
+        )
+    assert caught.value is failure
+
+
+@pytest.mark.parametrize("revocation", ["inactive", "catalog", "manage"])
+async def test_optional_refresh_revocation_discards_cached_metadata_without_io(model_service, revocation):
+    s = model_service
+    await listing(s, refresh=True)
+    s.calls.clear()
+    if revocation == "inactive":
+        s.current = s.current.model_copy(update={"active": False})
+    else:
+        role = "tenant_admin" if revocation == "catalog" else "viewer"
+        s.current = s.current.model_copy(update={"grants": (Grant(role=role, scope=s.scope),)})
+    await s.service.refresh_after(
+        s.actor, s.scope, s.revision.id, admitted=True, deadline=time.monotonic() + 20, context=s.context
+    )
+    assert not s.service.cache._records and not s.calls

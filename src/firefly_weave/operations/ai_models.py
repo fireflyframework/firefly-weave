@@ -26,6 +26,8 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from pyfly.container import service
+from sqlalchemy.exc import DBAPIError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
@@ -262,5 +264,9 @@ class AIModelService:
             async with asyncio.timeout(left):
                 revision = await self._revision(actor, scope, revision_id, manage=True, context=context)
                 await self._refresh(actor, scope, revision, admitted=admitted, deadline=deadline, context=context)
-        except (CatalogError, AccessDenied, AuthenticationFailed, TimeoutError):
+        except (CatalogError, AccessDenied, AuthenticationFailed, TimeoutError, OperationalError, PoolTimeout):
+            self.cache.discard_revision(scope, revision_id)
+        except DBAPIError as error:
+            if not error.connection_invalidated:
+                raise
             self.cache.discard_revision(scope, revision_id)

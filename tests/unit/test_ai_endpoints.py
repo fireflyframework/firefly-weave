@@ -126,6 +126,7 @@ async def test_native_application_resolves_one_shared_model_service_and_both_rou
                 owner.close()
 
 
+@pytest.mark.parametrize("root_path", ["", "/weave", "/weave/nested"])
 @pytest.mark.parametrize("telemetry", [False, True])
 @pytest.mark.parametrize("canonical", [False, True])
 @pytest.mark.parametrize(
@@ -139,7 +140,7 @@ async def test_native_application_resolves_one_shared_model_service_and_both_rou
         ("head", 200),
     ],
 )
-async def test_metadata_http_replies_always_disable_storage(telemetry, canonical, outcome, status):
+async def test_metadata_http_replies_always_disable_storage(root_path, telemetry, canonical, outcome, status):
     from contextlib import nullcontext
 
     import httpx
@@ -198,9 +199,11 @@ async def test_metadata_http_replies_always_disable_storage(telemetry, canonical
 
         await boundary(scope, receive, capture)
 
-    url = template.format(tenant=uuid4(), project=uuid4(), environment=uuid4())
+    url = root_path + template.format(tenant=uuid4(), project=uuid4(), environment=uuid4())
     headers = {"content-length": "6356999"} if outcome == "body" else {}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=seeded), base_url="http://testserver") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=seeded, root_path=root_path), base_url="http://testserver"
+    ) as client:
         response = await client.request("HEAD" if outcome == "head" else "GET", url, headers=headers)
     assert response.status_code == status
     assert response.headers.get_list("Cache-Control") == ["no-store"]
@@ -276,3 +279,129 @@ async def test_metadata_header_boundary_leaves_non_http_protocols_unchanged():
 
     await BodyBoundary(inner)(scope, receive, send)
     assert output == [{"type": "lifespan.startup.complete"}]
+
+
+@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list"])
+@pytest.mark.parametrize("canonical", [False, True])
+@pytest.mark.parametrize("telemetry", [False, True])
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("status", [200, 503])
+async def test_mounted_metadata_replies_preserve_response_and_telemetry(
+    operation, canonical, telemetry, method, status
+):
+    from contextlib import nullcontext
+
+    import httpx
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    from firefly_weave.operations.transport import BodyBoundary
+
+    row = OPERATIONS[operation]
+    template = row.canonical_path if canonical else row.path
+    payload = {"code": "ok" if status == 200 else "WV-AI-POLICY"}
+
+    async def respond(request):
+        return JSONResponse(payload, status_code=status, headers={"Cache-Control": "public", "X-Control": "preserve"})
+
+    app = Starlette(routes=[Route(template, respond, methods=["GET"])])
+    records = []
+    if telemetry:
+        app.state.telemetry_service = SimpleNamespace(
+            span=lambda *a, **kw: nullcontext(), record=lambda *a, **kw: records.append((a, kw))
+        )
+    app.add_middleware(BodyBoundary)
+    path = "/weave" + template.format(tenant=uuid4(), project=uuid4(), environment=uuid4())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app, root_path="/weave"), base_url="https://testserver"
+    ) as client:
+        response = await client.request(method, path)
+    assert response.status_code == status
+    assert response.headers["x-control"] == "preserve"
+    assert response.headers.get_list("cache-control") == ["no-store"]
+    assert response.content == (b"" if method == "HEAD" else json.dumps(payload, separators=(",", ":")).encode())
+    if telemetry:
+        assert records and records[0][1]["operation"] == "other"
+
+
+@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list"])
+@pytest.mark.parametrize("canonical", [False, True])
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+async def test_native_mounted_authentication_errors_disable_metadata_storage(monkeypatch, operation, canonical, method):
+    import httpx
+
+    from firefly_weave import private_origins
+    from firefly_weave.access.authentication import VerifierSet
+    from firefly_weave.app import make_app
+    from firefly_weave.operations.compatibility import CompatibilityService
+    from firefly_weave.persistence.resources import DatabaseResources
+    from firefly_weave.settings import Settings
+
+    monkeypatch.setattr(DatabaseResources, "check_startup", AsyncMock())
+    for name in ("open", "scan", "close"):
+        monkeypatch.setattr(CompatibilityService, name, AsyncMock())
+    row = OPERATIONS[operation]
+    template = row.canonical_path if canonical else row.path
+    path = template.format(tenant=uuid4(), project=uuid4(), environment=uuid4())
+    with private_origins.installed(private_origins.PrivateOrigins.empty()):
+        app = make_app(
+            Settings(scheduler_enabled=False, database_url="postgresql+asyncpg://unused@127.0.0.1:1/unused"),
+            verifiers=VerifierSet(()),
+        )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app, root_path="/weave"), base_url="https://testserver"
+            ) as client:
+                unrelated = await client.request(method, "/weave" + path + "/extra")
+                prefixed = await client.request(method, "/weave" + path)
+            assert unrelated.status_code == 401 and "cache-control" not in unrelated.headers
+            assert prefixed.status_code == 401
+            assert prefixed.headers.get_list("cache-control") == ["no-store"]
+            if method == "GET":
+                assert prefixed.json()["code"] == "WV-UNAUTHENTICATED"
+            else:
+                assert prefixed.content == b""
+
+
+@pytest.mark.parametrize("canonical", [False, True])
+@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list"])
+@pytest.mark.parametrize(
+    "root_path,prefix,suffix,expected",
+    [
+        ("/weave", "/weave", "", True),
+        ("/weave/nested", "/weave/nested", "", True),
+        ("/weave", "", "", True),
+        ("/weave", "/weave/weave", "", False),
+        ("/weave", "/weaver", "", False),
+        ("/weave", "/other/weave", "", False),
+        ("/weave", "/weave", "/extra", False),
+        ("/weave/", "/weave", "", False),
+    ],
+)
+async def test_metadata_matching_uses_one_exact_router_mount(root_path, prefix, suffix, expected, canonical, operation):
+    from firefly_weave.operations.transport import BodyBoundary
+
+    row = OPERATIONS[operation]
+    template = row.canonical_path if canonical else row.path
+    path = prefix + template.format(tenant="t", project="p", environment="e") + suffix
+    messages = []
+
+    async def inner(scope, receive, send):
+        assert scope["path"] == path and scope["root_path"] == root_path
+        await send({"type": "http.response.start", "status": 403, "headers": [(b"Cache-Control", b"public")]})
+        await send({"type": "http.response.body", "body": b"safe refusal"})
+
+    async def receive():
+        return {"type": "http.request", "body": b""}
+
+    async def send(message):
+        messages.append(message)
+
+    await BodyBoundary(inner)(
+        {"type": "http", "method": "GET", "root_path": root_path, "path": path, "headers": []}, receive, send
+    )
+    assert messages[0]["status"] == 403 and messages[1]["body"] == b"safe refusal"
+    assert [(name.lower(), value) for name, value in messages[0]["headers"] if name.lower() == b"cache-control"] == [
+        (b"cache-control", b"no-store" if expected else b"public")
+    ]
