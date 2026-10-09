@@ -170,6 +170,18 @@ def harness_fixture(owned, monkeypatch):
             "ai-catalog": catalog_output(),
             "ai-release-manifest": manifest_output(),
             "ai-service-state": b"running\n",
+            "ai-volume-list": f"weave-local-{OWNER}-ollama\n".encode(),
+            "ai-volume-inspect": json.dumps(
+                [
+                    {
+                        "Name": f"weave-local-{OWNER}-ollama",
+                        "Labels": {
+                            "com.docker.compose.project": f"weave-local-{OWNER}",
+                            "com.docker.compose.volume": "ollama-models",
+                        },
+                    }
+                ]
+            ).encode(),
         }
     )
 
@@ -207,6 +219,119 @@ def enable(h, **changes):
     arguments = {"ollama_mode": "container", "models": [MODEL], "confirm": lambda text: True}
     arguments.update(changes)
     return platform_ai.enable(h.directory, **arguments)
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        None,
+        {},
+        {"com.docker.compose.project": "foreign"},
+        {"com.docker.compose.project": f"weave-local-{OWNER}", "com.docker.compose.volume": "foreign-data"},
+    ],
+)
+def test_model_data_removal_refuses_a_reused_volume_without_current_ownership(harness, labels):
+    h = harness
+    enable(h)
+    volume = f"weave-local-{OWNER}-ollama"
+    h.runner.answers["ai-volume-list"] = (volume + "\n").encode()
+    h.runner.answers["ai-volume-inspect"] = json.dumps([{"Name": volume, "Labels": labels}]).encode()
+    with pytest.raises(platform.PlatformError, match="volume.*ownership"):
+        platform_ai.disable(h.directory, remove_model_data=True)
+    assert not any("volume" in args and "rm" in args for _, args in h.runner.calls)
+
+
+def test_model_data_already_absent_needs_no_delete(harness):
+    h = harness
+    enable(h)
+    h.runner.answers["ai-volume-list"] = b""
+    result = platform_ai.disable(h.directory, remove_model_data=True)
+    assert result["model_data_removed"] is True
+    assert not any("volume" in args and "rm" in args for _, args in h.runner.calls)
+
+
+def secret_mounts(h):
+    state, value = platform._load(h.directory), saved(h)
+    _, api = platform_ai_files.api_settings(state, value)
+    services = platform_ai_files.compose_document(state, value)["services"]
+    target = platform_ai_files.CONTAINER_SECRETS + "/"
+    return {
+        "api": next(v["source"] for v in api if v["target"] == target + platform_ai_files.GATEWAY_TOKEN),
+        "gateway": next(
+            v["source"]
+            for v in services["ai-gateway"]["volumes"]
+            if v["target"] == target + platform_ai_files.GATEWAY_TOKEN
+        ),
+        "worker": next(
+            v["source"]
+            for v in services["agentic-worker"]["volumes"]
+            if v["target"] == target + platform_ai_files.WORKER_SECRET
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    "secret,consumers",
+    [(platform_ai_files.GATEWAY_TOKEN, {"api", "gateway"}), (platform_ai_files.WORKER_SECRET, {"worker"})],
+)
+def test_secret_repair_changes_every_consumer_mount_and_survives_interrupted_publication(
+    harness, monkeypatch, secret, consumers
+):
+    from pathlib import Path
+
+    h = harness
+    enable(h)
+    before = secret_mounts(h)
+    generations = saved(h).get("secret_generations")
+    path = h.directory / platform_ai_files.SECRETS_DIRECTORY / secret
+    path.chmod(0o600)
+    publish = platform_ai_files._publish
+
+    def interrupted(target, data):
+        changed = publish(target, data)
+        if target == path:
+            raise OSError("Interrupted after replacing the mounted legacy secret")
+        return changed
+
+    with monkeypatch.context() as patch:
+        patch.setattr(platform_ai_files, "_publish", interrupted)
+        with pytest.raises(platform.PlatformError, match="safely read or write"):
+            enable(h)
+    assert saved(h).get("secret_generations") != generations
+    enable(h)
+    after = secret_mounts(h)
+    assert {name for name in before if before[name] != after[name]} == consumers
+    assert after["api"] == after["gateway"]
+    assert all(Path(source).is_file() for source in after.values())
+    assert enable(h)["changed"] == [] and secret_mounts(h) == after
+
+
+@pytest.mark.parametrize("scenario", ["disappeared", "disabled", "mode-switch"])
+@pytest.mark.parametrize("served", [False, True])
+def test_an_explicit_approval_can_resume_a_valid_post_policy_enable(harness, scenario, served):
+    h = harness
+    enable(h)
+    platform_ai.models_approve(h.directory, provider="openai-chat", model=MODEL)
+    if scenario != "disappeared":
+        platform_ai.disable(h.directory)
+    other = "llama3.2:1b"
+    h.served = [other]
+    h.server.answer["model"] = other
+    choice = {}
+    if scenario == "mode-switch":
+        h.addresses = ["192.168.5.2"]
+        choice = {"ollama_mode": None, "ollama_url": "http://ollama.acceptance.test:11434"}
+    with pytest.raises(platform.PlatformError, match="No approved model"):
+        enable(h, models=[other], **choice)
+    stage = "ready" if scenario == "disappeared" else "online"
+    assert saved(h)["stage"] == stage and saved(h)["approval"] == [MODEL]
+    approved = platform_ai.models_approve(
+        h.directory, provider="openai-chat", **({"served": True} if served else {"model": other})
+    )
+    assert approved["approval"] == ("served" if served else "listed")
+    assert saved(h)["approval"] == ("served" if served else sorted([MODEL, other]))
+    assert saved(h)["stage"] == stage
+    assert enable(h, models=[other], **choice)["stage"] == "ready"
 
 
 def test_a_refused_managed_oauth_scope_update_never_starts_the_worker(harness, monkeypatch):

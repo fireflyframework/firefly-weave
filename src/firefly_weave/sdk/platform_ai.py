@@ -123,6 +123,7 @@ def receipt(directory: Path) -> dict[str, Any] | None:
         ):
             raise ValueError("Unknown receipt")
         local._scope_value(value["scope"])
+        files.generations(value)
         # The fields the services configuration and the policy are rendered from.
         if value.get("compose") == "all":
             if re.fullmatch(r"sha256:[a-f0-9]{64}", str(value["image_id"])) is None:
@@ -967,6 +968,29 @@ def status(directory: Path, *, transport: httpx.AsyncBaseTransport | None = None
     return result
 
 
+def _remove_model_data(state: dict[str, Any]) -> None:
+    project = f"weave-local-{state['id']}"
+    name = project + "-ollama"
+    volumes = local._run(state, "ai-volume-list", [*_docker(state), "volume", "ls", "--quiet"]).decode().split()
+    if name not in volumes:
+        return
+    records = strict_json(local._run(state, "ai-volume-inspect", [*_docker(state), "volume", "inspect", name]))
+    try:
+        (volume,) = records
+        labels = volume.get("Labels") or {}
+        if (
+            volume["Name"] != name
+            or labels.get("com.docker.compose.project") != project
+            or labels.get("com.docker.compose.volume") != "ollama-models"
+        ):
+            raise ValueError("Foreign volume")
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise local.PlatformError(
+            "The model volume's current ownership is not this installation's; no data was removed."
+        ) from None
+    local._run(state, "ai-volume-remove", [*_docker(state), "volume", "rm", name])
+
+
 def disable(directory: Path, *, remove_model_data: bool = False, notice: Notice = _quiet) -> dict[str, Any]:
     """Stop and remove the AI services, entries and API settings; server records stay for the next enable."""
     from firefly_weave.sdk import platform_docker
@@ -1000,9 +1024,7 @@ def disable(directory: Path, *, remove_model_data: bool = False, notice: Notice 
             platform_docker.start(state, notice)
         removed = remove_model_data and value["mode"] == "container"
         if removed:
-            local._run(
-                state, "ai-volume-remove", [*_docker(state), "volume", "rm", f"weave-local-{state['id']}-ollama"]
-            )
+            _remove_model_data(state)
     return {
         "ok": True,
         "disabled": True,
@@ -1013,10 +1035,11 @@ def disable(directory: Path, *, remove_model_data: bool = False, notice: Notice 
     }
 
 
-def _ready(directory: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def _ready(directory: Path, *, approval_recovery: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
     state = local._load(directory)
     value = receipt(directory)
-    if value is None or value["stage"] != "ready":
+    stages = STAGES[STAGES.index("policy") :] if approval_recovery else ("ready",)
+    if value is None or value["stage"] not in stages:
         raise local.PlatformError("Enable AI first: " + local._command(directory, "ai enable --ollama auto"))
     files.verify_policy(state, value)
     return state, value
@@ -1049,7 +1072,7 @@ def models_approve(directory: Path, *, provider: str, model: str | None = None, 
     if model is not None and _MODEL.fullmatch(model) is None:
         raise local.PlatformError("Use an exact Ollama model name, such as qwen3:4b.")
     with _plain_errors("models approve"), _locks(directory):
-        state, value = _ready(directory)
+        state, value = _ready(directory, approval_recovery=True)
         current = value.get("approval", "served")
         updated: str | list[str] = (
             "served" if served or model is None else [model] if current == "served" else sorted({*current, model})
@@ -1124,6 +1147,7 @@ def start_services(state: dict[str, Any], notice: Notice) -> None:
     value = receipt(Path(state["directory"]))
     if value is None or value["stage"] != "ready" or _ENABLING.get() == state["directory"]:
         return
+    files.verify_settings(state, value)
     image = str(value.get("image_id"))
     try:
         found = local._run(state, "ai-image-check", [*_docker(state), "image", "inspect", image, "--format", "{{.Id}}"])

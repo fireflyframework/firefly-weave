@@ -241,6 +241,17 @@ class ConnectionService(ConnectionBindingPort):
         if validate_payload(contract["document"]["spec"]["configSchema"], revision.config, bundle):
             raise unavailable()
 
+    async def revalidate(
+        self, actor: Principal, scope: Scope, revision: ConnectionRevision, capability: str, context: AuditContext
+    ) -> None:
+        """Recheck current authority and readiness after resolving a connection's secrets."""
+        from firefly_weave.access.repository import load_principal
+
+        async with self.uow.open(scope, mutation=False) as tx:
+            current = await load_principal(tx.session, actor.id)
+            self.require(current, scope, capability, context)
+            await self._ready(current, scope, revision, capability, context, tx)
+
     async def ready_revision(
         self, actor: Principal, scope: Scope, revision_id: UUID, capability: str, *, context: AuditContext
     ) -> ConnectionRevision:
@@ -294,12 +305,7 @@ class ConnectionService(ConnectionBindingPort):
                             # Never resolved, leased, logged or sent.
                             continue
                         resolved[name] = await resolve_secret(partial(self.secrets.resolve, scope, handle))
-                async with self.uow.open(scope, mutation=False) as tx:
-                    from firefly_weave.access.repository import load_principal
-
-                    current = await load_principal(tx.session, actor.id)
-                    self.require(current, scope, "connection.manage", context)
-                    await self._ready(current, scope, revision, "connection.manage", context, tx)
+                await self.revalidate(actor, scope, revision, "connection.manage", context)
                 tested = await self.registry.get(revision.adapter).test_connection(
                     BoundConnection("test", revision, credentials)
                 )

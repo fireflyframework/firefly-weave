@@ -27,7 +27,7 @@ import asyncio
 import hmac
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -189,7 +189,7 @@ def create_app(
         return PinnedModelTransport(entry, policy.origins, resolver=policy.resolver or resolve)
 
     async def admitted(
-        request: Request, body_type: type[BaseModel], route: Callable[[Any], Awaitable[JSONResponse]]
+        request: Request, body_type: type[BaseModel], route: Callable[[Any], Coroutine[Any, Any, JSONResponse]]
     ) -> JSONResponse:
         nonlocal active
         try:
@@ -212,7 +212,7 @@ def create_app(
                 body = body_type.model_validate_json(raw)
             except ValidationError:
                 return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
-            return await route(body)
+            return await until_disconnect(route(body), request.receive)
         finally:
             active -= 1
 
@@ -247,21 +247,18 @@ def create_app(
                     owned = model_builder(spec, _secret(body.credential), left, policy.options(entry))
                     model = owned.model if isinstance(owned, ProviderModel) else owned
                     try:
-                        output = await until_disconnect(
-                            run_model(
-                                profile,
-                                body.request.message,
-                                {
-                                    "history": [item.model_dump() for item in body.request.history],
-                                    "attachments": body.attachments,
-                                },
-                                model,
-                                settings,
-                                instructions=INSTRUCTIONS,
-                                context_tokens=entry.context_tokens,
-                                output_mode=entry.output_mode,
-                            ),
-                            request.receive,
+                        output = await run_model(
+                            profile,
+                            body.request.message,
+                            {
+                                "history": [item.model_dump() for item in body.request.history],
+                                "attachments": body.attachments,
+                            },
+                            model,
+                            settings,
+                            instructions=INSTRUCTIONS,
+                            context_tokens=entry.context_tokens,
+                            output_mode=entry.output_mode,
                         )
                     finally:
                         if isinstance(owned, ProviderModel):

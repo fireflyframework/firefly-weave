@@ -19,6 +19,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 import httpx2
@@ -33,7 +34,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from weave_agentic_worker.gateway import create_app
 from weave_agentic_worker.handler import WorkerPolicy
-from weave_agentic_worker.providers import build_model
+from weave_agentic_worker.providers import ProviderModel, build_model
 
 
 def payload():
@@ -181,6 +182,95 @@ async def test_gateway_cancels_owned_model_on_disconnect(tmp_path):
         with pytest.raises(asyncio.CancelledError):
             await task
         assert cancelled.is_set()
+
+
+@pytest.mark.parametrize("route", ["test", "models"])
+async def test_disconnect_joins_probe_or_discovery_closes_client_and_releases_capacity(tmp_path, route):
+    started, cancelled = asyncio.Event(), asyncio.Event()
+    clients = []
+
+    async def blocked():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    class Client:
+        def __init__(self, blocking):
+            self.blocking, self.closed = blocking, False
+            self.models = self
+
+        async def list(self):
+            if self.blocking:
+                await blocked()
+            yield SimpleNamespace(id="fixture-model")
+
+        async def close(self):
+            if self.blocking:
+                assert cancelled.is_set()
+            self.closed = True
+
+    def builder(*args):
+        client = Client(not clients)
+        clients.append(client)
+
+        async def respond(messages, info):
+            if client.blocking:
+                await blocked()
+            return ModelResponse(parts=[TextPart("ready")])
+
+        return ProviderModel(FunctionModel(respond), client)
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    app = create_app(
+        WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"})),
+        token,
+        model_builder=builder,
+        max_concurrency=1,
+    )
+    body = {
+        "provider": "openai-chat",
+        "endpoint": "https://api.openai.com/v1",
+        "credential": "private-key",
+        "expires_at": (datetime.now(UTC) + timedelta(seconds=5)).isoformat(),
+    }
+    if route == "test":
+        body["model"] = "fixture-model"
+    incoming = asyncio.Queue()
+    incoming.put_nowait({"type": "http.request", "body": json.dumps(body).encode(), "more_body": False})
+
+    async def send(message):
+        pass
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/" + route,
+        "raw_path": ("/v1/" + route).encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"authorization", b"Bearer service-token")],
+        "server": ("localhost", 8090),
+        "client": ("localhost", 1),
+    }
+    task = asyncio.create_task(app(scope, incoming.get, send))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        incoming.put_nowait({"type": "http.disconnect"})
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(task), 0.5)
+        assert cancelled.is_set() and clients[0].closed
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as client:
+            response = await client.post("/v1/" + route, json=body, headers={"Authorization": "Bearer service-token"})
+        assert response.status_code == 200 and clients[1].closed
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def test_provider_schema_hoists_arbitrary_local_refs_without_rewriting_literal_data():

@@ -123,6 +123,7 @@ class AIConnectionService:
                 "Tests need the AI gateway. Run weave platform ai enable, or ask an operator to deploy it.",
             )
         credential = await self._credential(scope, revision)
+        await self.connections.revalidate(actor, scope, revision, "connection.manage", context)
         raw = await self.gateway.test(
             dict(revision.config),
             credential,

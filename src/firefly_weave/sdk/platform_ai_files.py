@@ -69,6 +69,7 @@ MAX_OUTPUT_TOKENS = 4096
 SERVICES = ("ai-gateway", "agentic-worker")
 # Exactly what secrets.token_urlsafe(32) produces, one line.
 _TOKEN = re.compile(rb"[A-Za-z0-9_-]{43}\n")
+_GENERATION = re.compile(r"[a-f0-9]{32}")
 
 
 def _shared(path: Path) -> Path:
@@ -150,12 +151,33 @@ def _hardened(image: str) -> dict[str, Any]:
     }
 
 
-def _volumes(directory: Path, origins: Path, secret: str) -> list[dict[str, Any]]:
+def generations(receipt: dict[str, Any]) -> dict[str, str]:
+    value = receipt.get("secret_generations")
+    if value is None:
+        return {}
+    if (
+        not isinstance(value, dict)
+        or set(value) != {GATEWAY_TOKEN, WORKER_SECRET}
+        or any(not isinstance(v, str) or _GENERATION.fullmatch(v) is None for v in value.values())
+    ):
+        raise local.PlatformError("The saved secret generations are invalid; no secret files were changed.")
+    return dict(value)
+
+
+def _secret_path(directory: Path, receipt: dict[str, Any], secret: str, *, verify: bool = True) -> Path:
+    generation = generations(receipt).get(secret)
+    path = directory / SECRETS_DIRECTORY / (secret + "-" + generation if generation else secret)
+    if verify and _current(path, 0o444) is None:
+        raise local.PlatformError("A mounted secret generation is missing or unsafe; run weave platform ai enable.")
+    return path
+
+
+def _volumes(directory: Path, receipt: dict[str, Any], origins: Path, secret: str) -> list[dict[str, Any]]:
     """The AI settings, the private-origin copy and one secret copy, all read-only."""
     return [
         _bind(directory / CONFIG_DIRECTORY, CONTAINER_CONFIG),
         _bind(origins, platform_origins.CONTAINER_PATH),
-        _bind(directory / SECRETS_DIRECTORY / secret, CONTAINER_SECRETS + "/" + secret),
+        _bind(_secret_path(directory, receipt, secret, verify=False), CONTAINER_SECRETS + "/" + secret),
     ]
 
 
@@ -221,13 +243,41 @@ def write_settings(state: dict[str, Any], receipt: dict[str, Any]) -> bool:
         raise local.PlatformError("The local worker client secret is missing from identity.env; nothing was changed.")
     stored = _shared(directory / SECRETS_DIRECTORY)
     config = _shared(directory / CONFIG_DIRECTORY)
-    changed = False
     token = stored / GATEWAY_TOKEN
     current = _current(token, 0o444, 4096)
+    previous = generations(receipt)
+    updated = dict(previous)
     if current is None or _TOKEN.fullmatch(current) is None:
-        # A link, another mode or another shape is never kept or followed: a new token is swapped in.
-        changed = _publish(token, (secrets.token_urlsafe(32) + "\n").encode())
-    changed = _publish(stored / WORKER_SECRET, worker.encode()) or changed
+        current = (secrets.token_urlsafe(32) + "\n").encode()
+    values = {GATEWAY_TOKEN: current, WORKER_SECRET: worker.encode()}
+    for name, data in values.items():
+        generation = updated.get(name)
+        path = stored / (name + "-" + generation) if generation else None
+        existing = _current(path, 0o444) if path is not None else None
+        if path is not None and os.path.lexists(path) and existing is None:
+            raise local.PlatformError("A saved secret generation is unsafe; no secret files were changed.")
+        if generation is None or (
+            existing is not None and (existing != data or _current(stored / name, 0o444) != data)
+        ):
+            updated[name] = secrets.token_hex(16)
+    receipt["secret_generations"] = updated
+    # The opaque source paths are saved before replacing any mounted inode; resuming keeps their pending recreation.
+    local._write(directory / "ai.json", receipt, replace=(directory / "ai.json").exists())
+    local._sync(directory / "ai.json")
+    changed = updated != previous
+    for name, data in values.items():
+        changed = _publish(stored / name, data) or changed
+        path = stored / (name + "-" + updated[name])
+        if not os.path.lexists(path):
+            with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fchmod(stream.fileno(), 0o444)
+                os.fsync(stream.fileno())
+            local._sync(path)
+            changed = True
+        elif _current(path, 0o444) != data:
+            raise local.PlatformError("A saved secret generation changed; no secret files were overwritten.")
     oauth = {
         "token_endpoint": TOKEN_ENDPOINT,
         "client_id": "weave-worker",
@@ -255,9 +305,14 @@ def api_settings(state: dict[str, Any], receipt: dict[str, Any] | None) -> tuple
     }
     mounts = [
         _bind(directory / CONFIG_DIRECTORY, CONTAINER_CONFIG),
-        _bind(directory / SECRETS_DIRECTORY / GATEWAY_TOKEN, CONTAINER_SECRETS + "/" + GATEWAY_TOKEN),
+        _bind(_secret_path(directory, receipt, GATEWAY_TOKEN), CONTAINER_SECRETS + "/" + GATEWAY_TOKEN),
     ]
     return environment, mounts
+
+
+def verify_settings(state: dict[str, Any], receipt: dict[str, Any]) -> None:
+    for name in (GATEWAY_TOKEN, WORKER_SECRET):
+        _secret_path(Path(state["directory"]), receipt, name)
 
 
 def service_names(receipt: dict[str, Any]) -> list[str]:
@@ -291,7 +346,7 @@ def compose_document(state: dict[str, Any], receipt: dict[str, Any]) -> dict[str
                 "WEAVE_LUMI_GATEWAY_HOST": "127.0.0.1",
                 "WEAVE_LUMI_GATEWAY_PORT": "8090",
             },
-            "volumes": _volumes(directory, origins, GATEWAY_TOKEN),
+            "volumes": _volumes(directory, receipt, origins, GATEWAY_TOKEN),
             "healthcheck": {
                 "test": [
                     "CMD",
@@ -320,7 +375,7 @@ def compose_document(state: dict[str, Any], receipt: dict[str, Any]) -> dict[str
                 "WEAVE_PRIVATE_ORIGINS_FILE": platform_origins.CONTAINER_PATH,
                 "WEAVE_AGENTIC_CAPACITY": "1",
             },
-            "volumes": _volumes(directory, origins, WORKER_SECRET),
+            "volumes": _volumes(directory, receipt, origins, WORKER_SECRET),
         }
     document: dict[str, Any] = {"services": services}
     if receipt["mode"] == "container":

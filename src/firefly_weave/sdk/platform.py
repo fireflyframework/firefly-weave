@@ -167,6 +167,16 @@ def _write(path: Path, value: dict[str, Any], *, replace: bool = False) -> None:
             stream.write(data)
 
 
+def _sync(path: Path) -> None:
+    """Persist an owned publication and its directory before advancing a durable transition."""
+    for target in (path, path.parent):
+        descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def _env_file(path: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     for line in read_file(path, 65536, private=True).decode().splitlines():

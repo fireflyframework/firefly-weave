@@ -28,6 +28,7 @@ from firefly_weave import private_origins as po
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
+from firefly_weave.access.oidc import AuthenticationFailed
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import EnvironmentSecretProvider, ScopedSecrets, SecretGrant
@@ -98,6 +99,9 @@ class Connections:
         assert revision_id == self.saved.id and capability == "connection.manage"
         return self.saved
 
+    async def revalidate(self, actor, scope, revision, capability, context):
+        self.require(actor, scope, capability, context)
+
 
 class Gateway:
     configured = True
@@ -130,10 +134,11 @@ class Store:
 
     def __init__(self, saved):
         self.saved = saved
+        self.active = True
 
     async def execute(self, statement, values=None):
         if str(statement).startswith("SELECT id,kind,active FROM principals"):
-            return Rows([{"id": values["id"], "kind": "human", "active": True}])
+            return Rows([{"id": values["id"], "kind": "human", "active": self.active}])
         return Rows()
 
     async def scalar(self, statement, values=None):
@@ -147,18 +152,21 @@ class Store:
 class Definitions:
     def __init__(self):
         self.refused = False
+        self.retired = False
 
     def require(self, actor, scope, capability, context):
-        if self.refused:
+        if self.refused or not actor.active:
             raise AccessDenied()
 
     async def connector_contract(self, actor, scope, identifier, *, capability, context, tx):
+        if self.retired:
+            raise CatalogError(409, "WV-CONNECTION", "The connection's connector was retired")
         manifest = AGENTIC_DESCRIPTOR.manifest.value
         return {
             "kind": "Connector",
             "name": "weave-agentic-provider",
             "version": "1.0.0",
-            "retired": False,
+            "retired": self.retired,
             "definition_digest": FrozenDocument.from_value(manifest).digest,
             "document": manifest,
             "artifact": {"executable": {"dependencies": []}},
@@ -173,12 +181,44 @@ def generic_connections(saved, gateway):
     connections = ConnectionService(SimpleNamespace(), definitions, registry, ScopedSecrets())
 
     class Open:
+        session = store
+
         @asynccontextmanager
         async def open(self, scope, mutation=True):
             yield SimpleNamespace(session=store, scope=scope)
 
     connections.uow = Open()
     return connections, definitions
+
+
+@pytest.mark.parametrize("revocation", ["principal", "grant", "connection"])
+async def test_dedicated_test_rechecks_authority_and_readiness_after_secret_resolution(revocation, audits):
+    saved = revision(
+        config={"provider": "openai-chat", "endpoint": "https://model.test/v1", "secretSlot": "apiKey"},
+        secretRef={"apiKey": "model-key"},
+        allowed_destinations=("https://model.test",),
+    )
+    gateway = Gateway()
+    connections, definitions = generic_connections(saved, gateway)
+
+    class Secrets:
+        def check(self, *args, **kwargs):
+            pass
+
+        def resolve(self, *args):
+            if revocation == "principal":
+                connections.uow.session.active = False
+            elif revocation == "grant":
+                definitions.refused = True
+            else:
+                definitions.retired = True
+            return ResolvedSecret(value="must-not-escape")
+
+    connections.secrets = Secrets()
+    error = {"principal": AuthenticationFailed, "grant": AccessDenied, "connection": CatalogError}[revocation]
+    with pytest.raises(error):
+        await AIConnectionService(connections, gateway).test(ACTOR, SCOPE, saved.id, REQUEST, context=CONTEXT)
+    assert not gateway.calls and not audits
 
 
 @pytest.fixture
@@ -199,7 +239,7 @@ async def test_a_keyless_test_sends_no_credential_and_is_recorded_and_audited(au
     with po.installed(POLICY):
         result = await service.test(ACTOR, SCOPE, saved.id, AIConnectionTestRequest(model="qwen3:4b"), context=CONTEXT)
     assert result.model_dump(mode="json") == ANSWER
-    assert connections.required == ["connection.manage"]
+    assert connections.required == ["connection.manage", "connection.manage"]
     assert gateway.calls == [{"credential": None, "provider": "openai-chat", "model": "qwen3:4b", "probe_tools": True}]
     stored = [values for sql, values in connections.session.statements if "connection_test_results" in sql]
     payload = json.loads(stored[0]["payload"])
