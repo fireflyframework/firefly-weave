@@ -81,6 +81,11 @@ export const transformForm = (step: Step): FormSpec => ({
   ],
 });
 
+const tableChoices = (ndv: NdvContext) =>
+  ndv.catalog
+    .tables()
+    .then((rows) => rows.map((row) => ({ value: row.uses, label: row.title })));
+
 export function decisionTableForm(step: Step, ctx: KindContext): FormSpec {
   const uses = String(step["uses"] ?? "");
   const input = schemaOf(
@@ -94,12 +99,7 @@ export function decisionTableForm(step: Step, ctx: KindContext): FormSpec {
     required: true,
     placeholder: "payment-policy@1.0.0",
     hint: "The workflow uses this exact published version.",
-    choices: (ndv: NdvContext) =>
-      ndv.catalog
-        .tables()
-        .then((rows) =>
-          rows.map((row) => ({ value: row.uses, label: row.title })),
-        ),
+    choices: tableChoices,
   };
   if (!input) return { fields: [table] };
   const rows = paramsFromSchema(input, ["with"], { idPrefix: "input." });

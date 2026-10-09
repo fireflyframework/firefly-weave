@@ -151,6 +151,25 @@ SPDX-License-Identifier: Apache-2.0
             [labelId]="ids.control + '-label'"
           />
         }
+        @case ("resource") {
+          <weave-resource-field
+            [session]="session()"
+            [spec]="spec"
+            [controlId]="ids.control"
+            [describedBy]="describedBy()"
+            [readOnly]="reason"
+            [choices]="loadChoices()"
+          />
+        }
+        @case ("connection") {
+          <weave-connection-field
+            [session]="session()"
+            [spec]="spec"
+            [controlId]="ids.control"
+            [describedBy]="describedBy()"
+            [readOnly]="reason"
+          />
+        }
         @case ("multiline") {
           <textarea
             class="param-input param-multiline"

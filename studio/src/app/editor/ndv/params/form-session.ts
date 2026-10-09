@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // offers in its menu. Components read through it; every write goes through
 // the controller as an undo step.
 import { canonicalJson, formatPointer, getAt } from "../../../forms/core/json";
-import type { DialogOptions } from "../../../dialog";
+import type { DialogField, DialogOptions } from "../../../dialog";
 import {
   referenceScope,
   WORKFLOW,
@@ -70,6 +70,16 @@ import {
   type ParamSpec,
   type Path,
 } from "../registry";
+import { connectorOf } from "../kinds/forms/action-forms";
+import { normalizeIdentifier } from "./identifiers";
+import {
+  allSteps,
+  newSlotName,
+  renamedConnections,
+  SLOT_HINT,
+  slotsOf,
+} from "./slots";
+import { resourceProblem } from "./resource";
 import { stepsAfter } from "../navigation";
 import type { StepDetailsController } from "../step-details-controller";
 import type { StepDetailsHost } from "../step-details-host";
@@ -78,6 +88,9 @@ import type { StepDetailsRequest } from "../step-details-service";
 export type FormName = "parameters" | "settings";
 export interface SessionHooks {
   confirm(options: DialogOptions): Promise<boolean>;
+  prompt?(
+    options: DialogOptions & { field: DialogField },
+  ): Promise<string | null>;
   announce(text: string): void;
 }
 export interface FieldLine {
@@ -709,9 +722,155 @@ export class FormSession {
     }
     const reason = entry ? this.readOnly(entry) : null;
     if (reason) return { kind: "reason", text: reason };
+    if (spec.type === "connection")
+      return { kind: "hint", text: spec.hint ?? SLOT_HINT };
     return spec.hint
       ? { kind: "hint", text: spec.hint }
       : { kind: "none", text: "" };
+  }
+
+  /** The action owns its connector; an imported slot is the local fallback. */
+  connector(spec: ParamSpec): string | null {
+    const step = this.controller.step(this.target);
+    const known = step
+      ? connectorOf(step, this.controller.kindContext())
+      : null;
+    const value = this.read(spec);
+    return (
+      known ??
+      (value.mode === "fixed"
+        ? slotsOf(this.host.model.definition).find(
+            (slot) => slot.name === value.value,
+          )?.connector || null
+        : null)
+    );
+  }
+  newSlot(spec: ParamSpec, connector: string | null): void {
+    if (spec.type !== "connection" || !this.editable(spec)) return;
+    if (!connector)
+      return this.host.notify(
+        "Choose the action first. The slot follows its connector.",
+      );
+    if (
+      connector !== this.connector(spec) ||
+      resourceProblem("name", connector)
+    )
+      return;
+    const name = newSlotName(this.host.model.definition, connector);
+    const before = this.host.model.revision;
+    const accepted = this.commit(
+      [
+        {
+          scope: "workflow",
+          path: ["spec", "connections", name],
+          value: { connector, required: true },
+        },
+        ...writeParam(this.subject(), spec, { mode: "fixed", value: name }),
+      ],
+      `${spec.id}:slot:${name}`,
+    );
+    if (accepted && this.host.model.revision !== before)
+      this.announce(`Declared the slot ${name}.`);
+  }
+  createConnection(spec: ParamSpec): void {
+    if (
+      spec.type !== "connection" ||
+      !this.editable(spec) ||
+      !this.host.profile ||
+      !this.host.can("connection.manage")
+    )
+      return;
+    const value = this.read(spec);
+    const name =
+      value.mode === "fixed" && typeof value.value === "string"
+        ? value.value
+        : "";
+    this.host.openConnectionDialog(name || undefined);
+  }
+  async renameSlot(spec: ParamSpec): Promise<void> {
+    if (
+      spec.type !== "connection" ||
+      !this.editable(spec) ||
+      !this.hooks.prompt
+    )
+      return;
+    const value = this.read(spec);
+    const from =
+      value.mode === "fixed" && typeof value.value === "string"
+        ? value.value
+        : "";
+    if (
+      !from ||
+      !slotsOf(this.host.model.definition).some((slot) => slot.name === from)
+    )
+      return;
+    const original = canonicalJson(
+      (
+        this.host.model.definition.spec["connections"] as Record<
+          string,
+          unknown
+        >
+      )[from],
+    );
+    const connector = this.connector(spec);
+    const owns = this.owns(spec);
+    const conflict = (text: string) => {
+      const next = normalizeIdentifier(text);
+      if (!next) return "Enter a name.";
+      return next !== from &&
+        slotsOf(this.host.model.definition).some((slot) => slot.name === next)
+        ? `${next} is already a slot.`
+        : "";
+    };
+    const typed = await this.hooks.prompt({
+      title: `Rename slot ${from}`,
+      message: "Every step that uses this slot follows the new name.",
+      confirmLabel: "Rename",
+      field: {
+        name: "slot",
+        label: "Slot name",
+        value: from,
+        required: true,
+        monospace: true,
+        validate: conflict,
+      },
+    });
+    const to = typed === null ? "" : normalizeIdentifier(typed);
+    if (!to || to === from) return;
+    const current = () =>
+      owns() &&
+      this.editable(spec) &&
+      connector === this.connector(spec) &&
+      !conflict(to) &&
+      canonicalJson(
+        (
+          this.host.model.definition.spec["connections"] as
+            | Record<string, unknown>
+            | undefined
+        )?.[from],
+      ) === original;
+    if (!current()) return;
+    let accepted = false;
+    this.host.perform(() => {
+      if (!current()) return;
+      this.host.model.batch(() => {
+        const document = structuredClone(this.host.model.definition);
+        document.spec["connections"] = renamedConnections(
+          document.spec["connections"] as Record<string, unknown>,
+          from,
+          to,
+        );
+        this.host.model.updateWorkflow(document);
+        for (const step of allSteps(this.host.model.definition))
+          if (step["connection"] === from)
+            this.host.model.update(
+              step.id,
+              JSON.stringify({ ...step, connection: to }),
+            );
+      });
+      accepted = true;
+    });
+    if (accepted) this.announce(`Renamed the slot to ${to}.`);
   }
 
   // ---------------------------------------------------------- options

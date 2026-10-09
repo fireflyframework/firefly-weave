@@ -583,3 +583,111 @@ weave-param-field[data-drop-hover]:is(
   > .param {
   outline: 2px dashed var(--danger);
 }
+
+.param-resource {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.param-resource-modes {
+  align-self: flex-start;
+}
+.param-resource-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.param-resource-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.step-details button.param-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  min-width: 44px;
+  white-space: nowrap;
+}
+.step-details .param-resource-modes button[role="radio"] {
+  min-height: 44px;
+  min-width: 44px;
+}
+.param-resource .param-input,
+weave-connection-field .choice-field,
+.param-resource .choice-field {
+  min-height: 44px;
+}
+.param-resource .choice-field input,
+weave-connection-field .choice-field input {
+  min-height: 44px;
+}
+.param-resource-problem {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.param-resource-viewer .modal-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: hidden;
+}
+.param-resource-viewer .modal-header {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.param-resource-viewer .modal-header h2 {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.param-resource-viewer button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.param-resource-viewer .modal-actions {
+  flex: 0 0 auto;
+}
+.param-viewer {
+  min-height: 0;
+  max-height: 60vh;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-3);
+  font: var(--type-mono);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.param-resource-viewer[popover] {
+  inset: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: var(--text);
+}
+
+.step-details
+  .param-control
+  :is(weave-resource-field, weave-connection-field)
+  .choice-field
+  button {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+}
+.step-details
+  weave-param-field:has(weave-resource-field, weave-connection-field)
+  > .param
+  > .param-label-row
+  button {
+  min-width: 44px;
+  min-height: 44px;
+}

@@ -44,6 +44,9 @@ import type { FieldEntry } from "./form-model";
 import { ListField } from "./list-field";
 import { KeyValueField } from "./key-value-field";
 import { FieldsField } from "./fields-field";
+import { ResourceField } from "./resource-field";
+import { ConnectionField } from "./connection-field";
+import { slotsOf } from "./slots";
 import { FormulaField } from "./formula-field";
 import type { FormSession } from "./form-session";
 import { normalizeIdentifier } from "./identifiers";
@@ -81,6 +84,8 @@ const UNIT_CODE: Record<string, string> = {
     Select,
     Toggletip,
     FormulaField,
+    ResourceField,
+    ConnectionField,
     ListField,
     KeyValueField,
     FieldsField,
@@ -111,6 +116,7 @@ export class ParamField {
   }
   readonly String = String;
   private readonly formula = viewChild(FormulaField);
+  private readonly resource = viewChild(ResourceField);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly uid = `p${++sequence}`;
   choices: Choice[] = [];
@@ -121,6 +127,7 @@ export class ParamField {
     provider: ParamSpec["choices"];
     profile: FormSession["host"]["profile"];
     api: FormSession["host"]["api"];
+    catalog: FormSession["host"]["actionVersions"] | null;
   } | null = null;
   private choicesLoading = false;
   private choicesError = "";
@@ -147,6 +154,7 @@ export class ParamField {
   }
   checkMapping(event: Event) {
     if (
+      this.resource()?.hasDraft() ||
       this.numberProblem() ||
       this.jsonProblem ||
       this.formula()?.templateError() ||
@@ -231,22 +239,49 @@ export class ParamField {
     return this.session().readOnly(this.entry());
   }
   line() {
+    const choices =
+      this.spec().type === "resource" ? this.loadChoices() : this.choices;
     const line = this.session().line(this.spec(), this.entry());
     if (line.kind === "error" || line.kind === "warning") return line;
-    if (this.choicesError)
+    if (this.choicesError) {
+      const load = this.loadedChoices;
       return {
         kind: "error" as const,
         text: this.choicesError,
         fixLabel: "Retry",
         fix: () => {
+          if (
+            !load ||
+            this.loadedChoices !== load ||
+            this.lifetime.destroyed ||
+            this.session() !== load.session ||
+            !load.session.isCurrent() ||
+            canonicalJson(this.spec()) !== load.descriptor ||
+            this.spec().choices !== load.provider ||
+            load.session.host.profile !== load.profile ||
+            load.session.host.api !== load.api ||
+            (load.catalog !== null &&
+              load.session.host.actionVersions !== load.catalog)
+          )
+            return;
           this.loadedChoices = null;
           this.choicesError = "";
           this.loadChoices();
           this.session().host.refreshView();
         },
       };
+    }
     if (this.choicesLoading)
       return { kind: "hint" as const, text: "Loading choices…" };
+    if (
+      this.spec().type === "resource" &&
+      this.resource()?.mode() === "list" &&
+      !choices.length
+    )
+      return {
+        kind: "hint" as const,
+        text: "Nothing to choose from yet. Use By name.",
+      };
     return line;
   }
   problemShown(): boolean {
@@ -304,6 +339,23 @@ export class ParamField {
               run: () => this.setMode("mapped"),
             },
       );
+    if (spec.type === "connection")
+      items.push(
+        {
+          label: "Use another slot",
+          disabled: locked,
+          run: () => this.openChoices(session, spec),
+        },
+        {
+          label: "Rename slot",
+          disabled:
+            locked ||
+            !slotsOf(session.host.model.definition).some(
+              (slot) => slot.name === this.fixedValue(),
+            ),
+          run: () => void session.renameSlot(spec),
+        },
+      );
     items.push({ label: "Copy value", run: () => void this.copyValue() });
     if (this.entry().option && !spec.required)
       items.push({
@@ -313,6 +365,25 @@ export class ParamField {
         run: () => session.removeOption(spec),
       });
     return items;
+  }
+  private openChoices(session: FormSession, spec: ParamSpec) {
+    const owns = session.owns(spec);
+    setTimeout(() => {
+      if (
+        this.lifetime.destroyed ||
+        this.session() !== session ||
+        canonicalJson(this.spec()) !== canonicalJson(spec) ||
+        !owns() ||
+        this.readOnly()
+      )
+        return;
+      const control =
+        this.element.nativeElement.querySelector<HTMLInputElement>(
+          ".param-control input[role=combobox]",
+        );
+      control?.focus();
+      control?.click();
+    });
   }
   private async copyValue() {
     const value = this.value();
@@ -364,6 +435,12 @@ export class ParamField {
 
   // ------------------------------------------------------------ modes
   setMode(mode: "fixed" | "mapped") {
+    if (this.resource()?.hasDraft()) {
+      this.session().announce(
+        "Finish or clear the unapplied value before mapping data.",
+      );
+      return;
+    }
     const session = this.session();
     const spec = this.spec();
     void session.setMode(spec, mode).then(() => {
@@ -523,6 +600,10 @@ export class ParamField {
     const spec = this.spec();
     const choices = spec.choices;
     const descriptor = canonicalJson(spec);
+    const catalog =
+      spec.type === "resource" && spec.id === "action"
+        ? session.host.actionVersions
+        : null;
     if (this.lifetime.destroyed || !session.isCurrent()) {
       this.loadedChoices = null;
       this.choices = [];
@@ -544,7 +625,8 @@ export class ParamField {
       cached.provider !== choices ||
       cached.descriptor !== descriptor ||
       cached.profile !== session.host.profile ||
-      cached.api !== session.host.api
+      cached.api !== session.host.api ||
+      cached.catalog !== catalog
     ) {
       this.choices = [];
       this.choicesError = "";
@@ -555,6 +637,7 @@ export class ParamField {
         provider: choices,
         profile: session.host.profile,
         api: session.host.api,
+        catalog,
       };
       this.loadedChoices = load;
       const current = () =>
@@ -564,6 +647,7 @@ export class ParamField {
         this.loadedChoices === load &&
         session.host.profile === load.profile &&
         session.host.api === load.api &&
+        (catalog === null || session.host.actionVersions === catalog) &&
         this.spec().choices === choices &&
         canonicalJson(this.spec()) === descriptor;
       if (choices) {

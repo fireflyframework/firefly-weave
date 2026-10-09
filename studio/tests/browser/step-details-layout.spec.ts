@@ -603,7 +603,11 @@ test.describe("focus across pane layouts", () => {
         .getByRole("tab", { name: "Input", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
     await page.keyboard.press("F6");
-    await expect(details.tab("Parameters")).toBeFocused();
+    const resourceMode = details
+      .field("action")
+      .getByRole("radio", { name: "By name", exact: true });
+    await expect(resourceMode).toBeChecked();
+    await expect(resourceMode).toBeFocused();
   });
   test("removed dividers and a previously hidden header recover visible focus", async ({
     page,

@@ -30,17 +30,22 @@ import { TestEventPane } from "../src/app/editor/ndv/panes/test-event-pane";
 import { InputPane } from "../src/app/editor/ndv/panes/input-pane";
 import { TaskForm } from "../src/app/task-form";
 import { FormulaField } from "../src/app/editor/ndv/params/formula-field";
+import { withOwnedAction } from "../src/app/editor/ndv/owned/owned-store";
+import { ResourceField } from "../src/app/editor/ndv/params/resource-field";
 import { ParamField } from "../src/app/editor/ndv/params/param-field";
 import { ParameterForm } from "../src/app/editor/ndv/params/param-form";
 import { ListField } from "../src/app/editor/ndv/params/list-field";
 import type { Choice, ParamSpec } from "../src/app/editor/ndv/registry";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import { FormSession } from "../src/app/editor/ndv/params/form-session";
 import { StepDetailsController } from "../src/app/editor/ndv/step-details-controller";
 import { openRequest } from "../src/app/editor/ndv/step-details-service";
 import type { StepDetailsHost } from "../src/app/editor/ndv/step-details-host";
 import { StructuredCanvasAdapter } from "../src/app/model";
+
+vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
+afterAll(() => vi.unstubAllGlobals());
 
 beforeAll(() => loadKindRegistrations());
 function setup(prompt: unknown = { ref: "/input/name" }) {
@@ -218,6 +223,42 @@ describe("asynchronous parameter choices", () => {
       expect(f.field.loadChoices()).toEqual([]);
     });
   }
+  it("discards a pending resource list when its catalog is replaced", async () => {
+    const f = fieldFixture();
+    f.field.spec = signal({
+      ...f.spec,
+      id: "action",
+      type: "resource",
+    }) as never;
+    f.field.loadChoices();
+    f.host.actionVersions = [{ name: "replacement", version: "2.0.0" }];
+    expect(f.field.loadChoices()).toEqual([]);
+    expect(f.pending).toHaveLength(2);
+    f.pending[0].resolve([{ value: "old@1.0.0", label: "Old" }]);
+    await Promise.resolve();
+    expect(f.field.loadChoices()).toEqual([]);
+    f.pending[1].resolve([
+      { value: "replacement@2.0.0", label: "Replacement" },
+    ]);
+    await Promise.resolve();
+    expect(f.field.loadChoices()).toEqual([
+      { value: "replacement@2.0.0", label: "Replacement" },
+    ]);
+    f.destroy();
+  });
+  it("does not apply an old Retry action to a replacement choices owner", async () => {
+    const f = fieldFixture();
+    f.field.loadChoices();
+    f.pending[0].reject(new Error("offline"));
+    await Promise.resolve();
+    const retry = f.field.line().fix!;
+    f.field.spec = signal({ ...f.spec, path: ["replacement"] }) as never;
+    f.field.loadChoices();
+    expect(f.pending).toHaveLength(2);
+    retry();
+    expect(f.pending).toHaveLength(2);
+    f.destroy();
+  });
   it("shows a recoverable failure and accepts a successful retry", async () => {
     const f = fieldFixture();
     f.field.loadChoices();
@@ -347,7 +388,7 @@ describe("active mapped field ownership", () => {
   });
 });
 
-it("keeps a published action's rendered identity while fresh providers still load current catalog choices", async () => {
+it("keeps an action field and its loaded choices across renders, then refreshes a changed catalog", async () => {
   const f = setup();
   f.model.insert("action", "root", undefined, {
     id: "lookup",
@@ -387,16 +428,20 @@ it("keeps a published action's rendered identity while fresh providers still loa
   const next = session
     .state("parameters")
     .fields.find((entry) => entry.spec.id === "action")!;
-  expect(next.spec.choices).not.toBe(first.spec.choices);
+  expect(next.spec.choices).toBe(first.spec.choices);
   expect(form.fieldKey(next)).toBe(key);
   spec.set(next.spec);
   entry.set(next);
+  expect(field.loadChoices()).toEqual([
+    { value: "sql.lookup@1.0.0", label: "sql.lookup@1.0.0" },
+  ]);
+  f.host.actionVersions = [{ name: "sql.lookup", version: "2.0.0" }] as never;
   expect(field.loadChoices()).toEqual([]);
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
   expect(field.loadChoices()).toEqual([
-    { value: "sql.lookup@1.0.0", label: "sql.lookup@1.0.0" },
+    { value: "sql.lookup@2.0.0", label: "sql.lookup@2.0.0" },
   ]);
   injector.destroy();
 });
@@ -1509,5 +1554,171 @@ describe("pane input source reconciliation", () => {
     input.set(f.session);
     expect(pane.selectedSource()).toBe("input");
     injector.destroy();
+  });
+});
+
+describe("resource control ownership", () => {
+  function resource() {
+    const f = session("lookup"),
+      form = f.form;
+    const injector = Injector.create({
+      providers: [
+        {
+          provide: ElementRef,
+          useValue: new ElementRef({ querySelector: () => null }),
+        },
+      ],
+    });
+    const field = runInInjectionContext(injector, () => new ResourceField());
+    const spec = signal(form.controller.parameters("lookup").fields[0]);
+    field.session = signal(form) as never;
+    field.spec = spec as never;
+    field.controlId = signal("resource") as never;
+    const choices = signal<Choice[]>([
+      { value: "sql.lookup@1.0.0", label: "Lookup" },
+    ]);
+    field.choices = choices as never;
+    return { ...f, form, field, spec, choices, injector };
+  }
+  it("keeps invalid name text through mode changes and list refresh, then accepts one Undoable write", () => {
+    const f = resource();
+    const before = f.model.source;
+    f.field.choose("name");
+    f.field.edit({ target: { value: "incomplete" } } as unknown as Event);
+    f.field.typed();
+    f.field.choose("list");
+    f.choices.set([]);
+    f.field.choose("name");
+    expect(f.field.text()).toBe("incomplete");
+    expect(f.field.problem()).toContain("name@1.2.0");
+    expect(f.model.source).toBe(before);
+    f.field.edit({
+      target: { value: "orders.get@1.0.0-rc.2+build.1" },
+    } as unknown as Event);
+    f.field.typed();
+    expect(f.form.read(f.spec())).toEqual({
+      mode: "fixed",
+      value: "orders.get@1.0.0-rc.2+build.1",
+    });
+    expect(f.field.hasDraft()).toBe(false);
+    f.model.undo();
+    expect(f.field.text()).toBe("sql.lookup@1.0.0");
+    f.injector.destroy();
+  });
+  it("keeps the active text control when its list arrives during typing", () => {
+    const f = resource();
+    f.choices.set([]);
+    expect(f.field.mode()).toBe("name");
+    f.field.edit({ target: { value: "unfinished" } } as unknown as Event);
+    f.choices.set([{ value: "sql.lookup@1.0.0", label: "Lookup" }]);
+    expect(f.field.mode()).toBe("name");
+    expect(f.field.text()).toBe("unfinished");
+    f.injector.destroy();
+  });
+  it("keeps a drive ID literal and refuses incomplete URLs without replacing it", () => {
+    const f = resource();
+    f.model.canvas = withOwnedAction(f.model.canvas, "sql.lookup@1.0.0", {
+      kind: "connector",
+      connector: "weave-google-drive@1.0.0",
+      action: "read",
+    });
+    const spec = f.form.controller
+      .parameters("lookup")
+      .fields.find((field) => field.id === "itemId")!;
+    f.spec.set(spec);
+    f.field.edit({ target: { value: "01ABC" } } as unknown as Event);
+    f.field.typed();
+    expect(f.form.read(spec)).toEqual({ mode: "fixed", value: "01ABC" });
+    f.field.choose("url");
+    f.field.edit({ target: { value: "https://" } } as unknown as Event);
+    f.field.typed();
+    f.field.choose("id");
+    f.field.choose("url");
+    const parent = runInInjectionContext(f.injector, () => new ParamField());
+    parent.session = signal(f.form) as never;
+    parent.spec = f.spec as never;
+    parent.entry = signal(f.form.resolve(spec)!) as never;
+    Object.assign(parent, { resource: () => f.field });
+    parent.setMode("mapped");
+    expect(f.form.mode(spec)).toBe("fixed");
+    expect(f.field.text()).toBe("https://");
+    expect(f.form.read(spec)).toEqual({ mode: "fixed", value: "01ABC" });
+    f.field.edit({
+      target: { value: "https://drive.example/item/1" },
+    } as unknown as Event);
+    f.field.typed();
+    expect(f.form.read(spec)).toEqual({
+      mode: "fixed",
+      value: "https://drive.example/item/1",
+    });
+    f.injector.destroy();
+  });
+  for (const change of [
+    "read only",
+    "reopen",
+    "destroy",
+    "descriptor",
+  ] as const)
+    it(`does not commit a resource buffer after ${change}`, () => {
+      const f = resource();
+      f.field.choose("name");
+      f.field.edit({
+        target: { value: "orders.get@1.0.0" },
+      } as unknown as Event);
+      if (change === "read only")
+        (f.form.host as { editingLocked: boolean }).editingLocked = true;
+      if (change === "reopen") f.model.clearHistory();
+      if (change === "destroy") f.injector.destroy();
+      if (change === "descriptor")
+        f.spec.set({ ...f.spec(), label: "New action" });
+      const before = f.model.source;
+      f.field.typed();
+      expect(f.model.source).toBe(before);
+      if (change !== "destroy") f.injector.destroy();
+    });
+  it("does not announce a copied document after its viewer owner changes", async () => {
+    const f = resource();
+    (f.form.host.catalogContracts as Map<string, Record<string, unknown>>).set(
+      "sql.lookup@1.0.0",
+      {
+        spec: { sideEffect: "read_only" },
+      },
+    );
+    let finish!: () => void;
+    const copied: string[] = [];
+    vi.stubGlobal("navigator", {
+      clipboard: {
+        writeText: (text: string) => {
+          copied.push(text);
+          return new Promise<void>((resolve) => {
+            finish = resolve;
+          });
+        },
+      },
+    });
+    const announce = vi.spyOn(f.form, "announce");
+    f.field.open();
+    const pending = f.field.copy();
+    expect(copied).toEqual(["spec:\n  sideEffect: read_only\n"]);
+    (f.form.host as { profile: unknown }).profile = { id: "replacement" };
+    finish();
+    await pending;
+    expect(announce).not.toHaveBeenCalled();
+    f.injector.destroy();
+  });
+  it("does not retain a document viewer across an account replacement", () => {
+    const f = resource();
+    (f.form.host.catalogContracts as Map<string, Record<string, unknown>>).set(
+      "sql.lookup@1.0.0",
+      {
+        spec: { sideEffect: "read_only" },
+      },
+    );
+    f.field.open();
+    expect(f.field.viewer()?.yaml).toContain("read_only");
+    (f.form.host as { profile: unknown }).profile = { id: "replacement" };
+    expect(f.field.viewer()).toBeNull();
+    expect(f.field.document()).toBeNull();
+    f.injector.destroy();
   });
 });

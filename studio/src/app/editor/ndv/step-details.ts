@@ -174,6 +174,7 @@ export class StepDetails {
           request,
           {
             confirm: (options) => this.dialogs.confirm(options),
+            prompt: (options) => this.dialogs.prompt(options),
             announce: (text) => {
               this.announcement.set("");
               setTimeout(() => {

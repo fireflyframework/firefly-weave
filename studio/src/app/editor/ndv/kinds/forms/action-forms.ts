@@ -406,6 +406,11 @@ export function fileForm(recipe: ConnectorRecipe): FormSpec {
   }
 }
 
+const actionChoices = (ndv: NdvContext) =>
+  ndv.catalog
+    .actions()
+    .then((rows) => rows.map((row) => ({ value: row.uses, label: row.title })));
+
 export function publishedActionForm(step: Step, ctx: KindContext): FormSpec {
   const uses = String(step["uses"] ?? "");
   const spec = specOf(uses ? ctx.actionContract(uses) : null);
@@ -417,12 +422,7 @@ export function publishedActionForm(step: Step, ctx: KindContext): FormSpec {
     required: true,
     placeholder: "orders.get@1.0.0",
     hint: "The workflow uses this exact published version.",
-    choices: (ndv: NdvContext) =>
-      ndv.catalog
-        .actions()
-        .then((rows) =>
-          rows.map((row) => ({ value: row.uses, label: row.title })),
-        ),
+    choices: actionChoices,
   };
   const fields: ParamSpec[] = [action];
   const requirement = isRecord(spec["connection"]) ? spec["connection"] : null;
