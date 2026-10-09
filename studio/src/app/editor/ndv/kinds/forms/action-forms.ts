@@ -32,7 +32,11 @@ import {
   type ConnectorRecipe,
   type HttpMethod,
 } from "../../owned/owned-actions";
-import { paramFromField, paramsFromSchema } from "../../params/schema-params";
+import {
+  isShownField,
+  paramFromField,
+  paramsFromSchema,
+} from "../../params/schema-params";
 import type {
   FormSpec,
   KindContext,
@@ -426,18 +430,15 @@ export function publishedActionForm(step: Step, ctx: KindContext): FormSpec {
     fields.push(connectionParam(requirement?.["required"] !== false));
   const input = schemaOf(spec["inputSchema"]);
   if (!input) return { fields };
+  const inputInfo = describeField("input", input, { required: true });
+  if (!isShownField(inputInfo)) return { fields };
   const rows = paramsFromSchema(input, ["with"], { idPrefix: "input." });
   if (!fieldsOf(input).length)
     return {
       fields: [
         ...fields,
         {
-          ...paramFromField(
-            describeField("input", input, { required: true }),
-            ["with"],
-            "",
-            0,
-          ),
+          ...paramFromField(inputInfo, ["with"], "", 0),
           label: "Input",
         },
       ],

@@ -102,8 +102,11 @@ const holdsSecret = (
  * The properties a form shows. A secret is never written from a form, and a
  * `false` schema holds no value, so neither gets a field, in a group or not.
  */
+export const isShownField = (info: FieldInfo): boolean =>
+  !holdsSecret(info) && info.kind !== "never";
+
 const shownInfos = (infos: FieldInfo[]): FieldInfo[] =>
-  infos.filter((info) => !holdsSecret(info) && info.kind !== "never");
+  infos.filter(isShownField);
 
 /**
  * The value a field starts with, as the classic form fills it: a constant is

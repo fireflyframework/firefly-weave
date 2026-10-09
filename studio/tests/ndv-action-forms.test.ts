@@ -270,6 +270,97 @@ describe("published whole input", () => {
     },
   );
 
+  it.each([
+    {
+      name: "root secret",
+      schema: { type: "string", "x-secret": true },
+      value: "dummy",
+    },
+    {
+      name: "root write-only value",
+      schema: { type: "string", writeOnly: true },
+      value: "dummy",
+    },
+    {
+      name: "secret list items",
+      schema: { type: "array", items: { type: "string", "x-secret": true } },
+      value: ["dummy"],
+    },
+    {
+      name: "write-only list items",
+      schema: { type: "array", items: { type: "string", writeOnly: true } },
+      value: ["dummy"],
+    },
+    {
+      name: "secret map values",
+      schema: {
+        type: "object",
+        additionalProperties: { type: "string", "x-secret": true },
+      },
+      value: { key: "dummy" },
+    },
+    {
+      name: "write-only map values",
+      schema: {
+        type: "object",
+        additionalProperties: { type: "string", writeOnly: true },
+      },
+      value: { key: "dummy" },
+    },
+    { name: "false schema", schema: false, value: null },
+    {
+      name: "never-valued schema",
+      schema: { $ref: "#/$defs/Never", $defs: { Never: false } },
+      value: null,
+    },
+  ] as { name: string; schema: Json; value: Json }[])(
+    "omits $name without rewriting saved input",
+    ({ schema, value }) => {
+      const c: KindContext = {
+        ...ctx(),
+        actionContract: () => ({ spec: { inputSchema: schema } }),
+      };
+      for (const expression of [
+        { literal: value },
+        { ref: "/input" },
+        { op: { name: "future", args: [{ ref: "/input" }] } },
+      ]) {
+        const step = action("example@1.0.0", { with: expression });
+        const before = structuredClone(step);
+        const view = shown(step, "form", c);
+        expect(view.labels).toEqual(["Action"]);
+        expect(view.addable).toEqual([]);
+        expect(step).toEqual(before);
+      }
+    },
+  );
+
+  it("does not offer whole-input editing when every declared property is secret", () => {
+    const step = action("example@1.0.0", {
+      with: { literal: { token: "dummy", password: "dummy" } },
+    });
+    const before = structuredClone(step);
+    const c: KindContext = {
+      ...ctx(),
+      actionContract: () => ({
+        spec: {
+          inputSchema: {
+            type: "object",
+            required: ["token"],
+            properties: {
+              token: { type: "string", "x-secret": true },
+              password: { type: "string", writeOnly: true },
+            },
+          },
+        },
+      }),
+    };
+    const view = shown(step, "form", c);
+    expect(view.labels).toEqual(["Action"]);
+    expect(view.addable).toEqual([]);
+    expect(step).toEqual(before);
+  });
+
   it("keeps unknown input keys and sibling mappings when a map entry changes", () => {
     const step = action("example@1.0.0", {
       with: {
