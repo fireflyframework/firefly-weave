@@ -133,11 +133,16 @@ SPDX-License-Identifier: Apache-2.0
               class="tile-node f-drag-blocker"
               [style.--tile-w.px]="tile.width"
               [style.--tile-h.px]="tile.height"
+              [style.--tile-paint-margin.px]="tile.paintMargin"
               aria-roledescription="step"
               [attr.data-tile]="tile.id"
               [attr.data-step]="tile.step ? tile.id : null"
             >
-              <weave-node-tile [view]="tile" [zoom]="view.zoom" />
+              <div class="tile-paint">
+                <div class="tile-content">
+                  <weave-node-tile [view]="tile" [zoom]="view.zoom" />
+                </div>
+              </div>
             </div>
           }
           @for (bar of toolbars(); track bar.id) {

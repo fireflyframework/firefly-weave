@@ -42,6 +42,7 @@ export interface TileView {
   subtitle: string;
   /** From the card's top to its label block. */
   labelTop: number;
+  paintMargin: number;
   name: string;
   tooltip: string;
   badge: TileBadge | null;

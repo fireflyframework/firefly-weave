@@ -70,6 +70,71 @@ test.describe("the canvas keyboard map", () => {
     await expect(page.locator("#step-name-input")).toBeFocused();
   });
 
+  test("arrow keys reveal distant steps with their labels and pointer targets intact", async ({
+    page,
+  }) => {
+    const ids = Array.from(
+      { length: 40 },
+      (_, i) => `review-vendor-ledgers-${i}`,
+    );
+    const canvas = await openWorkflow(page, {
+      name: "long-workflow.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        JSON.stringify({
+          apiVersion: "weave/v1alpha1",
+          kind: "Workflow",
+          metadata: { name: "long-workflow", version: "1.0.0" },
+          spec: {
+            inputSchema: { type: "object" },
+            steps: ids.map((id) => ({
+              id,
+              kind: "transform",
+              value: { literal: {} },
+            })),
+            output: { literal: {} },
+          },
+        }),
+      ),
+    });
+    const last = ids.at(-1)!;
+    const viewport = await canvas.root.boundingBox();
+    const original = await canvas.tile(last).boundingBox();
+    expect(original!.x).toBeGreaterThan(viewport!.x + viewport!.width);
+    await canvas.tileBody("$trigger:manual").focus();
+    for (const id of ids) {
+      await page.keyboard.press("ArrowRight");
+      await expect(canvas.tileBody(id)).toBeFocused();
+    }
+    await expect
+      .poll(async () => {
+        const tile = await canvas.tile(last).boundingBox();
+        return tile!.x + tile!.width;
+      })
+      .toBeLessThan(viewport!.x + viewport!.width);
+    const name = canvas.tile(last).locator(".tile-label strong");
+    const box = await name.boundingBox();
+    expect(box!.x).toBeGreaterThan(viewport!.x);
+    expect(box!.y + box!.height).toBeLessThan(viewport!.y + viewport!.height);
+    await expect(name).toHaveText(last);
+    expect(
+      await name.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        return (
+          document.elementFromPoint(
+            box.x + box.width / 2,
+            box.y + box.height / 2,
+          ) === element
+        );
+      }),
+    ).toBe(true);
+    await name.hover();
+    await expect(name).toHaveAttribute("title", last);
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".inspector-header h2")).toBeFocused();
+    await expect(page.locator("#step-name-input")).toHaveValue(last);
+  });
+
   test("N and / open the step picker after the focused step; Ctrl or Command+D duplicates and Delete deletes with Undo", async ({
     page,
   }) => {

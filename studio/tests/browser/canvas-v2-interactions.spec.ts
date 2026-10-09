@@ -124,6 +124,28 @@ test("selection boxes hide hover toolbars while being drawn", async ({
   await page.mouse.up();
 });
 
+test("blank space beside a step lets the pointer draw a selection box", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page);
+  const card = (await canvas.tileBody("approval").boundingBox())!;
+  const spot = { x: card.x + card.width / 2, y: card.y - 20 };
+  expect(
+    await page.evaluate(({ x, y }) => {
+      const target = document.elementFromPoint(x, y);
+      return (
+        !!target?.closest(".graph-flow") &&
+        !target.closest(".tile-node, .tile-paint, .tile-content")
+      );
+    }, spot),
+  ).toBe(true);
+  await page.mouse.move(spot.x, spot.y);
+  await page.mouse.down();
+  await page.mouse.move(spot.x + 20, spot.y - 15, { steps: 4 });
+  await expect(canvas.root.locator(".f-selection-area")).toBeVisible();
+  await page.mouse.up();
+});
+
 test("hovering another step adds no toolbar Tab stops", async ({ page }) => {
   const canvas = await openWorkflow(page);
   await canvas.closeInspector();

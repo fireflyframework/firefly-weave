@@ -29,6 +29,7 @@ import {
   midpoint,
   openView,
   pathLabelScale,
+  tilePaintMargin,
   type LtrEdge,
   type LtrLayout,
   type LtrOptions,
@@ -964,6 +965,48 @@ describe("the left-to-right layout", () => {
     // A 24-character name takes two lines of 12 or more characters at 50%,
     // in a 13 px font drawn larger by labelScale, inside 4 px of padding.
     expect(LTR.labelWide / labelScale(0.5) - 8).toBeGreaterThan(108);
+  });
+
+  it("keeps labels, badges and focus within each tile's paint extent at every visible zoom", () => {
+    const agent = layoutLtr(
+      workflowOf([createStep("agent", "review-with-agent")]),
+      options({
+        slots: () => [{ id: "model", label: "Model", required: true }],
+      }),
+    );
+    const layouts = [
+      layoutLtr(fixture, options()),
+      agent,
+      ...workflowTemplates.map((template) =>
+        layoutLtr(parse(template.yaml) as Workflow, options()),
+      ),
+    ];
+    for (const tile of layouts.flatMap((layout) => layout.tiles)) {
+      const margin = tilePaintMargin(tile);
+      expect(Number.isInteger(margin), tile.id).toBe(true);
+      for (const zoom of [0.25, 0.3, 0.4, 0.5, 0.99, 1, 2]) {
+        expect(margin, `${tile.id}: focus`).toBeGreaterThanOrEqual(
+          2 * Math.ceil(2 / zoom),
+        );
+        expect(margin, `${tile.id}: badge and pulse`).toBeGreaterThanOrEqual(
+          12,
+        );
+        if (levelOfDetail(zoom) !== "full") continue;
+        const width = tile.shape === "end" ? 80 : labelWidth(zoom, tile.shape);
+        expect(margin, `${tile.id}: label sides`).toBeGreaterThanOrEqual(
+          (width - tile.width) / 2,
+        );
+        expect(margin, `${tile.id}: label bottom`).toBeGreaterThanOrEqual(
+          tile.labelY -
+            tile.y +
+            LTR.labelHeight * labelScale(zoom) -
+            tile.height,
+        );
+      }
+    }
+    expect(
+      tilePaintMargin(agent.tiles.find((tile) => tile.kind === "agent")!),
+    ).toBe(183);
   });
 
   it("draws path labels and All branches done larger as the zoom drops, never below 10 px", () => {

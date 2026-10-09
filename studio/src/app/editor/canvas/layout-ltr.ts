@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // left to right. Every size is a constant, never measured from text, so
 // font metrics can't move a step, and steps are never placed by hand.
 import { branchName } from "../../designer/conditions";
+import { MIN_ZOOM } from "../../designer/viewport";
 import type { Step, Workflow } from "../../model";
 import type { NodeRole } from "../ndv/registry";
 
@@ -868,6 +869,23 @@ export function labelWidth(zoom: number, shape: TileShape = "square"): number {
   return shape === "fork"
     ? LTR.labelWide - (LTR.tile - LTR.bar)
     : LTR.labelWide;
+}
+
+/** Paint outside the fixed card, including readable labels and keyboard focus. */
+export function tilePaintMargin(
+  tile: Pick<LtrTile, "width" | "height" | "shape" | "labelY" | "y">,
+): number {
+  const widestLabel =
+    tile.shape === "end"
+      ? 80
+      : Math.max(labelWidth(0.4, tile.shape), labelWidth(1, tile.shape));
+  return Math.ceil(
+    Math.max(
+      (widestLabel - tile.width) / 2,
+      tile.labelY - tile.y + LTR.labelHeight * labelScale(0.4) - tile.height,
+      2 * Math.ceil(2 / MIN_ZOOM),
+    ),
+  );
 }
 
 /**

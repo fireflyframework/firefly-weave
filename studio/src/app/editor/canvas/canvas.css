@@ -37,6 +37,27 @@ weave-canvas-view,
   height: var(--tile-h);
   cursor: default;
 }
+.canvas-v2 .tile-paint,
+.canvas-v2 .tile-content {
+  display: contents;
+}
+/* A real expanded box preserves pointer targets beyond the transformed
+   flow's bounds; a clip margin alone does not. The inner card stays fixed. */
+@supports (content-visibility: auto) and (overflow-clip-margin: 1px) {
+  .canvas-v2 .tile-paint {
+    display: block;
+    position: absolute;
+    inset: calc(-1 * var(--tile-paint-margin));
+    pointer-events: none;
+    content-visibility: auto;
+  }
+  .canvas-v2 .tile-content {
+    display: block;
+    position: absolute;
+    inset: var(--tile-paint-margin);
+    pointer-events: none;
+  }
+}
 .canvas-v2 .tile-body {
   position: absolute;
   inset: 0;

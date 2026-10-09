@@ -94,6 +94,7 @@ import {
   midpoint,
   openView,
   pathLabelScale,
+  tilePaintMargin,
   type Insertion,
   type LtrLayout,
   type LtrTile,
@@ -470,6 +471,7 @@ export class CanvasView implements OnInit, DoCheck {
       width: tile.width,
       height: tile.height,
       labelTop: tile.labelY - tile.y,
+      paintMargin: tilePaintMargin(tile),
       tabIndex: state.active ? (0 as const) : (-1 as const),
       pulse: state.pulse,
     };
