@@ -62,6 +62,96 @@ for (const size of [
   test.describe(`resources and connections at ${size.tag}`, () => {
     test.use({ viewport: { width: size.width, height: size.height } });
 
+    for (const focused of [false, true])
+      test(`delayed matching choices ${focused ? "preserve the focused text control before typing" : "select the initial mode of an untouched field"}`, async ({
+        page,
+      }) => {
+        const details = await openConnectedFixture(page);
+        await Promise.all([
+          page.waitForResponse((response) =>
+            response.url().includes("/decision-tables?"),
+          ),
+          details.node("score").click(),
+        ]);
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let requests = 0;
+        await page.route(
+          "**/projects/project/decision-tables?*",
+          async (route) => {
+            requests++;
+            await blocked;
+            await route.fulfill({
+              json: {
+                items: [{ id: "t1", name: "payment-policy", version: "1.0.0" }],
+                next_cursor: null,
+              },
+            });
+          },
+        );
+        await details.openWithKeyboard("score");
+        const table = details.field("table");
+        await expect(table).toContainText("Loading choices…");
+        const name = table.getByRole("textbox", {
+          name: "Table",
+          exact: true,
+        });
+        await expect(name).toHaveValue("payment-policy@1.0.0");
+        if (focused) {
+          await name.focus();
+          await expect(name).toBeFocused();
+        } else await expect(name).not.toBeFocused();
+        release();
+        await expect(table).not.toContainText("Loading choices…");
+        await page.screenshot({
+          path: test.info().outputPath(`delayed-choices-${size.tag}.png`),
+        });
+        if (focused) {
+          await expect(name).toBeFocused();
+          await expect(name).toHaveValue("payment-policy@1.0.0");
+          await expect(
+            table.getByRole("radio", { name: "By name" }),
+          ).toBeChecked();
+          await table.getByRole("radio", { name: "From list" }).click();
+        }
+        await expect(
+          table.getByRole("radio", { name: "From list" }),
+        ).toBeChecked();
+        await expect(
+          table.getByRole("combobox", { name: "Table" }),
+        ).toHaveAttribute("data-value", "payment-policy@1.0.0");
+        expect(requests).toBe(1);
+        await details.close();
+        expect(parse(await sourceText(page)).spec.steps[4].uses).toBe(
+          "payment-policy@1.0.0",
+        );
+      });
+
+    test("resource and connection options keep usable targets inside the viewport", async ({
+      page,
+    }) => {
+      const details = await openConnectedFixture(page);
+      await details.open("lookup");
+      for (const [id, label] of [
+        ["action", "Action"],
+        ["connection", "Connection"],
+      ]) {
+        await details.field(id).getByRole("combobox", { name: label }).click();
+        const options = page.getByRole("listbox", { name: `${label} options` });
+        await expect(options.getByRole("option").first()).toBeVisible();
+        await page.screenshot({
+          path: test.info().outputPath(`${id}-options-${size.tag}.png`),
+        });
+        for (const option of await options.getByRole("option").all())
+          await usable(option);
+        await page.keyboard.press("Escape");
+        await expect(options).toBeHidden();
+        await expect(details.dialog).toBeVisible();
+      }
+    });
+
     test("a resource field offers From list, By name and Open", async ({
       page,
     }) => {

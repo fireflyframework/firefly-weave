@@ -1615,6 +1615,38 @@ describe("resource control ownership", () => {
     expect(f.field.text()).toBe("unfinished");
     f.injector.destroy();
   });
+  it("retains a focused read-only resource mode without allowing an edit", () => {
+    const f = resource();
+    const before = f.model.source;
+    f.choices.set([]);
+    f.field.readOnly = signal("Read only") as never;
+    (f.form.host as { editingLocked: boolean }).editingLocked = true;
+    expect(f.field.mode()).toBe("name");
+    f.field.retainMode();
+    f.choices.set([{ value: "sql.lookup@1.0.0", label: "Lookup" }]);
+    expect(f.field.mode()).toBe("name");
+    f.field.choose("list");
+    f.field.edit({ target: { value: "orders.get@1.0.0" } } as unknown as Event);
+    f.field.typed();
+    expect(f.field.mode()).toBe("name");
+    expect(f.field.text()).toBe("sql.lookup@1.0.0");
+    expect(f.model.source).toBe(before);
+    f.injector.destroy();
+  });
+  for (const change of ["reopen", "destroy", "descriptor"] as const)
+    it(`does not retain a resource mode for a focus event after ${change}`, () => {
+      const f = resource();
+      f.choices.set([]);
+      expect(f.field.mode()).toBe("name");
+      if (change === "reopen") f.model.clearHistory();
+      if (change === "destroy") f.injector.destroy();
+      if (change === "descriptor")
+        f.spec.set({ ...f.spec(), label: "New action" });
+      f.field.retainMode();
+      f.choices.set([{ value: "sql.lookup@1.0.0", label: "Lookup" }]);
+      expect(f.field.mode()).toBe("list");
+      if (change !== "destroy") f.injector.destroy();
+    });
   it("keeps a drive ID literal and refuses incomplete URLs without replacing it", () => {
     const f = resource();
     f.model.canvas = withOwnedAction(f.model.canvas, "sql.lookup@1.0.0", {

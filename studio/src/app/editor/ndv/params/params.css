@@ -684,6 +684,13 @@ weave-connection-field .choice-field input {
   min-height: 44px;
 }
 .step-details
+  .param-control
+  :is(weave-resource-field, weave-connection-field)
+  .choice-option {
+  min-width: 44px;
+  min-height: 44px;
+}
+.step-details
   weave-param-field:has(weave-resource-field, weave-connection-field)
   > .param
   > .param-label-row

@@ -106,6 +106,7 @@ class ResourceViewerLayer implements AfterViewInit {
             [readOnly]="!!readOnly()"
             [placeholder]="placeholder()"
             [value]="text()"
+            (focus)="retainMode()"
             (input)="edit($event)"
             (change)="typed()"
             (keydown.enter)="typed()"
@@ -274,6 +275,9 @@ export class ResourceField {
       this.sync();
       this.picked = mode;
     }
+  }
+  retainMode(): void {
+    if (this.current()) this.picked = this.mode();
   }
   modeKey(event: KeyboardEvent): void {
     if (
