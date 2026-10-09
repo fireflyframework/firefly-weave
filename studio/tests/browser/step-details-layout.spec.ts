@@ -549,6 +549,152 @@ test.describe("divider ownership", () => {
   });
 });
 
+test.describe("focus across pane layouts", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const activeRegion = async (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const active = document.activeElement as HTMLElement;
+      return {
+        inside: !!active.closest(".step-details"),
+        visible: active.getClientRects().length > 0,
+        region:
+          active.closest("[data-region]")?.getAttribute("data-region") ?? null,
+      };
+    });
+  test("data region focus survives narrower layouts and immediately owns F6", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    const name = details.dialog.getByRole("button", { name: "Rename lookup" });
+    await name.focus();
+    await page.keyboard.press("Shift+F6");
+    await expect(details.dialog.locator(".sd-output")).toBeFocused();
+    await page.setViewportSize({ width: 900, height: 700 });
+    await expect(details.dialog).toHaveAttribute("data-layout", "two");
+    await expect
+      .poll(() => activeRegion(page))
+      .toEqual({ inside: true, visible: true, region: "output" });
+    await expect(
+      details.dialog
+        .getByRole("tablist", { name: "Data" })
+        .getByRole("tab", { name: "Output" }),
+    ).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("F6");
+    await expect(name).toBeFocused();
+    await page.keyboard.press("F6");
+    await expect(details.dialog.locator(".sd-input")).toBeFocused();
+    await page.setViewportSize({ width: 600, height: 500 });
+    await expect(details.dialog).toHaveAttribute("data-layout", "sheet");
+    await expect
+      .poll(() => activeRegion(page))
+      .toEqual({ inside: true, visible: true, region: "input" });
+    await expect(
+      details.dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Input", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("F6");
+    await expect(details.tab("Parameters")).toBeFocused();
+  });
+  test("removed dividers and a previously hidden header recover visible focus", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    await details.dialog
+      .getByRole("separator", { name: "Resize Output" })
+      .focus();
+    await page.setViewportSize({ width: 600, height: 500 });
+    await expect(details.dialog).toHaveAttribute("data-layout", "sheet");
+    await expect
+      .poll(() => activeRegion(page))
+      .toEqual({ inside: true, visible: true, region: "parameters" });
+    await page.keyboard.press("F6");
+    await expect(details.dialog.locator(".sd-output")).toBeFocused();
+    await details.dialog
+      .getByRole("tablist", { name: "Step details panes" })
+      .getByRole("tab", { name: "Input", exact: true })
+      .click();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(details.dialog).toHaveAttribute("data-layout", "three");
+    const name = details.dialog.getByRole("button", { name: "Rename lookup" });
+    await name.focus();
+    await page.setViewportSize({ width: 600, height: 500 });
+    await expect(details.dialog).toHaveAttribute("data-layout", "sheet");
+    await expect
+      .poll(() => activeRegion(page))
+      .toEqual({ inside: true, visible: true, region: "header" });
+    await page.getByRole("button", { name: "Validate", exact: true }).focus();
+    await expect(name).toBeFocused();
+    await page.keyboard.press("F6");
+    await expect(details.dialog.locator(".sd-input")).toBeFocused();
+  });
+  test("a removed Data tab preserves its logical Output region", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 900, height: 700 });
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    await details.dialog
+      .getByRole("tablist", { name: "Data" })
+      .getByRole("tab", { name: "Output" })
+      .click();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(details.dialog).toHaveAttribute("data-layout", "three");
+    await expect
+      .poll(() => activeRegion(page))
+      .toEqual({ inside: true, visible: true, region: "output" });
+    await page.keyboard.press("F6");
+    await expect(
+      details.dialog.getByRole("button", { name: "Rename lookup" }),
+    ).toBeFocused();
+  });
+  for (const nested of ["YAML", "confirmation"])
+    test(`${nested} retains focus while layouts change`, async ({ page }) => {
+      const details = await openStepFixture(page);
+      const id = nested === "YAML" ? "wait-for-payment" : "route-by-value";
+      await details.open(id);
+      const more = details.dialog.getByRole("button", {
+        name: `More actions for ${id}`,
+      });
+      await more.click();
+      await page
+        .getByRole("menuitem", {
+          name: nested === "YAML" ? "Edit as YAML" : "Delete",
+          exact: true,
+        })
+        .click();
+      const modal = page.getByRole("dialog", {
+        name:
+          nested === "YAML" ? `Edit ${id} as YAML` : /^Delete route-by-value/,
+      });
+      const focus =
+        nested === "YAML"
+          ? modal.getByRole("textbox", { name: "Step YAML" })
+          : modal.getByRole("button", { name: "Cancel", exact: true });
+      await expect(focus).toBeFocused();
+      for (const size of [
+        { width: 900, height: 700 },
+        { width: 600, height: 500 },
+      ]) {
+        await page.setViewportSize(size);
+        await expect(details.dialog).toHaveAttribute(
+          "data-layout",
+          size.width === 900 ? "two" : "sheet",
+        );
+        await expect(focus).toBeFocused();
+        await page.keyboard.press("F6");
+        await expect(focus).toBeFocused();
+      }
+      await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(modal).toHaveCount(0);
+      await expect(more).toBeFocused();
+      await page.keyboard.press("F6");
+      await expect(details.dialog.locator(".sd-input")).toBeFocused();
+    });
+});
+
 const screenSizes = [
   { tag: "360x740", width: 360, height: 740 },
   { tag: "600x500", width: 600, height: 500 },

@@ -28,6 +28,7 @@ import {
   ElementRef,
   Injector,
   ViewEncapsulation,
+  afterEveryRender,
   afterNextRender,
   effect,
   inject,
@@ -123,6 +124,8 @@ export class StepDetails {
   renameText = "";
   private readonly renames: { from: string; to: string }[] = [];
   private lastInside: HTMLElement | null = null;
+  private lastRegion: Region | null = null;
+  private renderedLayout: ReturnType<StepDetails["layout"]> | null = null;
   readonly titles = {
     previous: `Previous step (${formatCombo("Mod+Alt+Shift+ArrowLeft", KEY_PLATFORM)})`,
     next: `Next step (${formatCombo("Mod+Alt+Shift+ArrowRight", KEY_PLATFORM)})`,
@@ -161,6 +164,7 @@ export class StepDetails {
       this.host().tick();
       untracked(() => this.keepTarget());
     });
+    afterEveryRender(() => this.recoverLayoutFocus());
 
     const observer = new ResizeObserver(([entry]) => {
       this.dragEnd();
@@ -273,12 +277,18 @@ export class StepDetails {
 
   // ------------------------------------------------------------- moving
   currentRegion(): Region | null {
-    const active = document.activeElement as HTMLElement | null;
+    return this.regionOf(document.activeElement as HTMLElement | null);
+  }
+  private regionOf(active: HTMLElement | null): Region | null {
     const region = active
       ?.closest("[data-region]")
       ?.getAttribute("data-region");
-    if (!region && active?.closest(".sd-segments")) return this.pane();
-    if (!region && active?.closest(".sd-data-tabs")) return this.dataPane();
+    if (!region && active?.closest(".sd-segments, .sd-data-tabs"))
+      return (
+        (active.getAttribute("aria-controls")?.replace("sd-region-", "") as
+          | Region
+          | undefined) ?? null
+      );
     return (region as Region | null) ?? null;
   }
   go(id: string) {
@@ -621,6 +631,32 @@ export class StepDetails {
   }
 
   // -------------------------------------------------------------- focus
+  private recoverLayoutFocus() {
+    const layout = this.layout();
+    if (
+      layout === this.renderedLayout ||
+      document.querySelector(".modal-panel")
+    )
+      return;
+    this.renderedLayout = layout;
+    const root = this.dialog().nativeElement;
+    const active = document.activeElement as HTMLElement | null;
+    if (
+      !this.lastInside ||
+      (active &&
+        (active.closest(".toast-region") ||
+          (root.contains(active) && visible(active))))
+    )
+      return;
+    // Hiding/removing a focused pane can silently reset browser focus to BODY.
+    if (root.contains(this.lastInside) && visible(this.lastInside))
+      this.lastInside.focus();
+    else
+      this.applyFocus({
+        kind: "region",
+        region: this.lastRegion ?? "parameters",
+      });
+  }
   applyFocus(focus: FocusTarget) {
     const region = focus.kind === "region" ? focus.region : "parameters";
     if (this.layout() === "sheet") {
@@ -705,12 +741,17 @@ export class StepDetails {
     const root = this.dialog().nativeElement;
     if (!target) return;
     if (root.contains(target)) {
-      this.lastInside = target;
+      if (!target.closest(".modal-panel")) {
+        this.lastInside = target;
+        this.lastRegion = this.regionOf(target);
+      }
       return;
     }
     // Confirmations and toasts sit above step details; everything else is behind it.
     if (target.closest(".modal-panel, .toast-region")) return;
-    (this.lastInside && root.contains(this.lastInside)
+    (this.lastInside &&
+    root.contains(this.lastInside) &&
+    visible(this.lastInside)
       ? this.lastInside
       : root
     ).focus();
