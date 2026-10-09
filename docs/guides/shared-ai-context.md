@@ -36,14 +36,14 @@ it cannot address another run. This is explicit, structured context sharing.
 There is no implicit conversation transcript, background memory service, or
 provider session shared between tasks. Each task starts a fresh bounded Agentic
 invocation. The worker receives the prompt, the chosen context, and its pinned
-model profile. Lumi conversations remain separate.
+model profile. Weave AI conversations remain separate.
 
 | Setting | What it shares |
 | --- | --- |
 | The same workflow AI profile | Provider, model, result schema, and generation limits. It does not share answers. |
 | A result selected in **Shared AI context** | An earlier AI step's accepted result, in this execution only. |
 | A context expression | Precisely the workflow input or earlier output fields you select. |
-| Lumi configuration | The Studio assistant's own provider and model. It does not add workflow memory. |
+| Weave AI configuration | The Studio assistant's own provider and model. It does not add workflow memory. |
 
 ## Configure it in Studio
 

@@ -21,64 +21,64 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1592" viewBox="0 0 960 1592" role="img" aria-labelledby="title desc">
 <title id="title">Find the failing boundary before retrying</title><desc id="desc">Five questions read top to bottom; move on only with enough evidence for the previous one. 1, can the dependencies answer: check PostgreSQL health and identity-provider discovery from the failing process's context, project, port and network namespace. 2, can this replica accept work: inspect readiness and the complete scoped compatibility report, including schema, catalog authority, requirements and policy. 3, is this operation authorized: follow token checks, the active identity link and the scoped grant, using protected decision logs, the safe error code and the request ID; a successful sign-in does not prove a grant. 4, what did Weave record: read the authorized run state, history, leases and incidents, and check the pinned release or connection and the accepted completion. 5, what happened outside Weave: inspect independent receiver or provider receipts, because a timeout does not prove no effect occurred. Telemetry, enabled explicitly with WEAVE_TELEMETRY and off by default, is a parallel observation path that never replaces durable facts.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1492" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Find the failing boundary before retrying</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Move to the next question only after you have enough evidence for the</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">preceding one.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
-<rect x="40" y="232" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
-<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Can the dependencies answer?</text>
-<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Check PostgreSQL health and identity-provider discovery.</text>
-<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">Use the same context, project, port, and network namespace as</text>
-<text x="168" y="372" font-size="22" font-weight="400" fill="#173D34">the failing process.</text>
-<text x="168" y="401" font-size="18" font-weight="600" fill="#367D68">DEPENDENCIES • Reachability is only the first check</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1492" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Find the failing boundary before retrying</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">Move to the next question only after you have enough evidence for the</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">preceding one.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">READ DOWN  •  Each arrow carries the result into the next step</text>
+<rect x="40" y="232" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="249" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 264) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
+<text x="168" y="275" font-size="25" font-weight="700" fill="#272820">1. Can the dependencies answer?</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#272820">Check PostgreSQL health and identity-provider discovery.</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#272820">Use the same context, project, port, and network namespace as</text>
+<text x="168" y="372" font-size="22" font-weight="400" fill="#272820">the failing process.</text>
+<text x="168" y="401" font-size="18" font-weight="600" fill="#855414">DEPENDENCIES • Reachability is only the first check</text>
 <path class="edge" d="M480 423v35"/>
-<rect x="40" y="471" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="488" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 503) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
-<text x="168" y="514" font-size="25" font-weight="700" fill="#173D34">2. Can this replica accept work?</text>
-<text x="168" y="553" font-size="22" font-weight="400" fill="#173D34">Inspect readiness and the complete scoped compatibility report.</text>
-<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">Check schema, catalog authority, requirements, and policy.</text>
-<text x="168" y="611" font-size="18" font-weight="600" fill="#367D68">READINESS • A running process may not be ready</text>
+<rect x="40" y="471" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="488" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 503) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m14 28 10 10 19-22"/></g>
+<text x="168" y="514" font-size="25" font-weight="700" fill="#272820">2. Can this replica accept work?</text>
+<text x="168" y="553" font-size="22" font-weight="400" fill="#272820">Inspect readiness and the complete scoped compatibility report.</text>
+<text x="168" y="582" font-size="22" font-weight="400" fill="#272820">Check schema, catalog authority, requirements, and policy.</text>
+<text x="168" y="611" font-size="18" font-weight="600" fill="#855414">READINESS • A running process may not be ready</text>
 <path class="edge" d="M480 633v35"/>
-<rect x="40" y="681" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="698" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 713) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
-<text x="168" y="724" font-size="25" font-weight="700" fill="#173D34">3. Is this operation authorized?</text>
-<text x="168" y="763" font-size="22" font-weight="400" fill="#173D34">Follow token checks → active identity link → scoped grant.</text>
-<text x="168" y="792" font-size="22" font-weight="400" fill="#173D34">Use protected decision logs, safe error code, and request ID.</text>
-<text x="168" y="821" font-size="18" font-weight="600" fill="#367D68">AUTHORIZATION • A successful sign-in does not prove a grant</text>
+<rect x="40" y="681" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="698" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 713) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="168" y="724" font-size="25" font-weight="700" fill="#272820">3. Is this operation authorized?</text>
+<text x="168" y="763" font-size="22" font-weight="400" fill="#272820">Follow token checks → active identity link → scoped grant.</text>
+<text x="168" y="792" font-size="22" font-weight="400" fill="#272820">Use protected decision logs, safe error code, and request ID.</text>
+<text x="168" y="821" font-size="18" font-weight="600" fill="#855414">AUTHORIZATION • A successful sign-in does not prove a grant</text>
 <path class="edge" d="M480 843v35"/>
-<rect x="40" y="891" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="908" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 923) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
-<text x="168" y="934" font-size="25" font-weight="700" fill="#173D34">4. What did Weave record?</text>
-<text x="168" y="973" font-size="22" font-weight="400" fill="#173D34">Read authorized run state, history, leases, and incidents.</text>
-<text x="168" y="1002" font-size="22" font-weight="400" fill="#173D34">Check pinned release/connection and accepted completion.</text>
-<text x="168" y="1031" font-size="18" font-weight="600" fill="#367D68">DURABLE FACTS • Match the exact run and task attempt</text>
+<rect x="40" y="891" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="908" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 923) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="28" cy="12" rx="21" ry="8"/><path d="M7 12v32c0 11 42 11 42 0V12 M7 28c0 11 42 11 42 0"/></g>
+<text x="168" y="934" font-size="25" font-weight="700" fill="#272820">4. What did Weave record?</text>
+<text x="168" y="973" font-size="22" font-weight="400" fill="#272820">Read authorized run state, history, leases, and incidents.</text>
+<text x="168" y="1002" font-size="22" font-weight="400" fill="#272820">Check pinned release/connection and accepted completion.</text>
+<text x="168" y="1031" font-size="18" font-weight="600" fill="#855414">DURABLE FACTS • Match the exact run and task attempt</text>
 <path class="edge" d="M480 1053v35"/>
-<rect x="40" y="1101" width="880" height="158" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="1118" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1133) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="168" y="1144" font-size="25" font-weight="700" fill="#173D34">5. What happened outside Weave?</text>
-<text x="168" y="1183" font-size="22" font-weight="400" fill="#173D34">Inspect independent receiver or provider receipts.</text>
-<text x="168" y="1212" font-size="22" font-weight="400" fill="#173D34">Unknown effects may need reconciliation before another attempt.</text>
-<text x="168" y="1241" font-size="18" font-weight="600" fill="#367D68">EXTERNAL FACTS • A timeout does not prove no effect occurred</text>
-<rect x="40" y="1283" width="880" height="165" rx="16" fill="#FFF7E5"/>
-<g transform="translate(59 1303) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1327" font-size="23" font-weight="700" fill="#367D68">Telemetry is a parallel observation path</text>
-<text x="60" y="1366" font-size="21" font-weight="400" fill="#173D34">Explicit WEAVE_TELEMETRY enables owned providers and bounded export to a</text>
-<text x="60" y="1395" font-size="21" font-weight="400" fill="#173D34">collector. It is off by default; dropped spans do not erase durable facts or</text>
-<text x="60" y="1424" font-size="21" font-weight="400" fill="#173D34">prove an effect never occurred.</text>
+<rect x="40" y="1101" width="880" height="158" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="1118" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 1133) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="168" y="1144" font-size="25" font-weight="700" fill="#272820">5. What happened outside Weave?</text>
+<text x="168" y="1183" font-size="22" font-weight="400" fill="#272820">Inspect independent receiver or provider receipts.</text>
+<text x="168" y="1212" font-size="22" font-weight="400" fill="#272820">Unknown effects may need reconciliation before another attempt.</text>
+<text x="168" y="1241" font-size="18" font-weight="600" fill="#855414">EXTERNAL FACTS • A timeout does not prove no effect occurred</text>
+<rect x="40" y="1283" width="880" height="165" rx="16" fill="#FFF0D8"/>
+<g transform="translate(59 1303) scale(0.7)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1327" font-size="23" font-weight="700" fill="#855414">Telemetry is a parallel observation path</text>
+<text x="60" y="1366" font-size="21" font-weight="400" fill="#272820">Explicit WEAVE_TELEMETRY enables owned providers and bounded export to a</text>
+<text x="60" y="1395" font-size="21" font-weight="400" fill="#272820">collector. It is off by default; dropped spans do not erase durable facts or</text>
+<text x="60" y="1424" font-size="21" font-weight="400" fill="#272820">prove an effect never occurred.</text>
 <g id="takeaway">
-<rect x="0" y="1498" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1527" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1558" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Find the failed boundary before retrying a request or external effect.</text>
+<rect x="0" y="1498" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1527" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1558" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Find the failed boundary before retrying a request or external effect.</text>
 </g>
 </svg>

@@ -18,6 +18,7 @@
 
 import ast
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -81,5 +82,78 @@ def test_python_messages_say_weave_ai():
         f"{path.relative_to(ROOT).as_posix()}:{line}: {value!r}"
         for path in python_sources("src", "workers")
         for line, value in lumi_strings(path.read_bytes().decode("utf-8"))
+    ]
+    assert offenders == []
+
+
+# Diagram labels are sometimes set in capitals ("WORKFLOW AUTHOR / LUMI USER"), so this scan ignores case.
+DIAGRAM_LUMI = re.compile(r"\blumi\b", re.IGNORECASE)
+
+
+def test_diagram_text_says_weave_ai():
+    offenders = []
+    for path in sorted((ROOT / "docs/diagrams").glob("*.svg")):
+        root = ET.fromstring(path.read_bytes().decode("utf-8"))
+        for element in root.iter():
+            text = "".join(element.itertext())
+            if element.tag.rsplit("}", 1)[-1] in {"text", "title", "desc"} and DIAGRAM_LUMI.search(text):
+                offenders.append(f"{path.name}: {text.strip()}")
+    assert offenders == []
+
+
+FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*\n.*?^[ \t]*\1[ \t]*$", re.MULTILINE | re.DOTALL)
+CODE_SPAN = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)", re.DOTALL)
+RETIRED_COLOR_WORDS = re.compile(r"\bgreen\s+(?:box|boxes|panel|panels)\b|\(green\)|\b(?:forest|jade)\b", re.IGNORECASE)
+
+
+def prose(markdown: str) -> str:
+    """Markdown without fenced blocks and code spans, where identifiers such as `lumi.use` belong."""
+    return CODE_SPAN.sub("", FENCE.sub("", markdown.replace("\r\n", "\n")))
+
+
+def markdown_pages() -> list[Path]:
+    """README.md and the public documentation; private planning folders are skipped."""
+    pages = [ROOT / "README.md"]
+    for path in sorted((ROOT / "docs").rglob("*.md")):
+        parts = path.relative_to(ROOT).parts
+        if (
+            not any(part in {"superpowers", ".superpowers"} for part in parts)
+            and path.name != "implementation-status.md"
+        ):
+            pages.append(path)
+    return pages
+
+
+@pytest.mark.parametrize(
+    ("markdown", "expected"),
+    [
+        ("Ask `LumiReply` or `ask_lumi`, never ``Lumi``.\n", []),
+        ("```sh\nexport WEAVE_LUMI_GATEWAY=x  # Lumi\n```\n", []),
+        ("```sh\r\nexport WEAVE_LUMI_GATEWAY=x  # Lumi\r\n```\r\n", []),
+        ('1. Run this:\n\n    ```json\n    {"Lumi": 1}\n    ```\n', []),
+        ("![Lumi diagram](x.svg)\n", ["Lumi"]),
+        ("[Lumi guide](guides/weave-ai.md)\n", ["Lumi"]),
+        ("Weave AI uses `lumi` names.\n", []),
+    ],
+)
+def test_prose_drops_code_but_keeps_link_and_alt_text(markdown, expected):
+    assert LUMI.findall(prose(markdown)) == expected
+
+
+def test_docs_and_readme_say_weave_ai():
+    offenders = [
+        f"{page.relative_to(ROOT).as_posix()}: {line.strip()}"
+        for page in markdown_pages()
+        for line in prose(page.read_bytes().decode("utf-8")).splitlines()
+        if LUMI.search(line)
+    ]
+    assert offenders == []
+
+
+def test_docs_do_not_name_retired_diagram_colors():
+    offenders = [
+        f"{page.relative_to(ROOT).as_posix()}: {match[0]}"
+        for page in markdown_pages()
+        for match in RETIRED_COLOR_WORDS.finditer(prose(page.read_bytes().decode("utf-8")))
     ]
     assert offenders == []

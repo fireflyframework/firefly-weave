@@ -19,66 +19,66 @@ SPDX-License-Identifier: Apache-2.0
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1440" viewBox="0 0 960 1440" role="img" aria-labelledby="title desc">
 <title id="title">Who decides, who coordinates, and who does the work?</title>
 <desc id="desc">Authors define the process, deployers authorize releases, and operators manage runs. The workflow engine records progress. A remote worker claims tasks through the API; a native executor runs a built-in connector, such as weave-http@2.0.0, or an installed one within the platform runtime, using its authorized database and connector configuration. Both return task outcomes so the engine can continue; a crash can repeat an attempt, so external effects use a stable operation key.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173D34}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}.small{font-size:19px}.body{font-size:21px}.heading{font-size:25px;font-weight:700}</style>
-<rect width="960" height="1440" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="66" rx="3" fill="#367D68"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#272820}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}.small{font-size:19px}.body{font-size:21px}.heading{font-size:25px;font-weight:700}</style>
+<rect width="960" height="1440" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="66" rx="3" fill="#855414"/>
 <text x="58" y="58" font-size="31" font-weight="700">Who coordinates, and who does the work?</text>
 <text x="58" y="99" class="body">One customer-onboarding process, with separate responsibilities.</text>
-<rect x="40" y="126" width="880" height="46" rx="12" fill="#EEF4F0"/>
+<rect x="40" y="126" width="880" height="46" rx="12" fill="#EAE7DF"/>
 <text x="58" y="156" class="small" font-weight="700">START WITH PEOPLE • Their grants decide which operations they may perform</text>
-<rect x="40" y="202" width="280" height="258" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(60 220) scale(.65)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 7h28l12 12v33H8z M36 7v14h12 M17 31h20 M17 41h14"/></g>
+<rect x="40" y="202" width="280" height="258" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(60 220) scale(.65)" stroke="#62645B" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 7h28l12 12v33H8z M36 7v14h12 M17 31h20 M17 41h14"/></g>
 <text x="108" y="248" class="heading">Author</text>
 <text x="60" y="300" class="small">Writes the workflow</text>
 <text x="60" y="331" class="small">and Action contracts.</text>
 <text x="60" y="362" class="small">Example: register,</text>
 <text x="60" y="393" class="small">then notify.</text>
 <path class="edge" d="M180 464v57"/>
-<rect x="340" y="202" width="280" height="258" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(360 220) scale(.65)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M7 17 28 6l21 11v25L28 53 7 42z M7 17l21 12 21-12 M28 29v24"/></g>
+<rect x="340" y="202" width="280" height="258" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(360 220) scale(.65)" stroke="#62645B" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M7 17 28 6l21 11v25L28 53 7 42z M7 17l21 12 21-12 M28 29v24"/></g>
 <text x="408" y="248" class="heading">Deployer</text>
 <text x="360" y="300" class="small">Approves the release</text>
 <text x="360" y="331" class="small">and activates a version.</text>
 <text x="360" y="362" class="small">Example: select the</text>
 <text x="360" y="393" class="small">billing worker build.</text>
 <path class="edge" d="M480 464v57"/>
-<rect x="640" y="202" width="280" height="258" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(660 220) scale(.65)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 15h40v30H8z M16 24l7 6-7 6 M29 36h11"/></g>
+<rect x="640" y="202" width="280" height="258" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(660 220) scale(.65)" stroke="#62645B" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 15h40v30H8z M16 24l7 6-7 6 M29 36h11"/></g>
 <text x="708" y="248" class="heading">Operator</text>
 <text x="660" y="300" class="small">Starts and supports</text>
 <text x="660" y="331" class="small">the business process.</text>
 <text x="660" y="362" class="small">Example: investigate</text>
 <text x="660" y="393" class="small">a failed customer run.</text>
 <path class="edge" d="M780 464v57"/>
-<rect x="40" y="540" width="880" height="174" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(61 563)" stroke="#367D68" stroke-width="3" fill="none"><rect x="0" y="0" width="57" height="50" rx="8"/><path d="M12 15h33M12 25h20M12 35h26"/></g>
+<rect x="40" y="540" width="880" height="174" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(61 563)" stroke="#62645B" stroke-width="3" fill="none"><rect x="0" y="0" width="57" height="50" rx="8"/><path d="M12 15h33M12 25h20M12 35h26"/></g>
 <text x="140" y="579" class="heading">1. The engine coordinates the workflow</text>
 <text x="140" y="619" class="body">The API accepts an authorized run request. The runtime</text>
 <text x="140" y="650" class="body">records progress in PostgreSQL and prepares a task when ready.</text>
 <text x="140" y="684" class="small">Example: create the customer before sending a welcome message.</text>
 <path class="edge" d="M260 718v72"/><path class="edge" d="M700 718v72"/>
 <text x="330" y="760" class="small">TASK EXECUTION CHOICES</text>
-<rect x="40" y="810" width="420" height="295" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(60 831) scale(.7)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M5 12h49v33H5z M20 53h19 M29 45v8 M14 21l7 7-7 7 M29 35h12"/></g>
+<rect x="40" y="810" width="420" height="295" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(60 831) scale(.7)" stroke="#62645B" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M5 12h49v33H5z M20 53h19 M29 45v8 M14 21l7 7-7 7 M29 35h12"/></g>
 <text x="110" y="861" class="heading">2a. Remote worker</text>
 <text x="60" y="916" class="small">Your container or process runs</text>
 <text x="60" y="950" class="small">your business handler.</text>
 <text x="60" y="984" class="small">Claims and reports over the API.</text>
 <text x="60" y="1018" class="small">No Weave database credentials.</text>
 <text x="60" y="1052" class="small">Example: call your billing service.</text>
-<rect x="500" y="810" width="420" height="295" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<g transform="translate(520 831) scale(.7)" stroke="#367D68" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 14h39v15H8z M8 36h39v15H8z M15 21h2 M15 43h2 M28 21h12 M28 43h12"/></g>
+<rect x="500" y="810" width="420" height="295" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<g transform="translate(520 831) scale(.7)" stroke="#62645B" stroke-width="3" fill="none" stroke-linejoin="round"><path d="M8 14h39v15H8z M8 36h39v15H8z M15 21h2 M15 43h2 M28 21h12 M28 43h12"/></g>
 <text x="570" y="861" class="heading">2b. Native executor</text>
 <text x="520" y="916" class="small">The platform runtime runs a</text>
 <text x="520" y="950" class="small">built-in or installed connector.</text>
 <text x="520" y="984" class="small">Uses its authorized database</text>
 <text x="520" y="1018" class="small">and connector configuration.</text>
 <text x="520" y="1052" class="small">Example: built-in weave-http@2.0.0.</text>
-<path d="M250 1109v51h460v-51" stroke="#367D68" stroke-width="3" fill="none"/><path class="edge" d="M480 1160v22"/>
-<rect x="40" y="1200" width="880" height="100" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
+<path d="M250 1109v51h460v-51" stroke="#62645B" stroke-width="3" fill="none"/><path class="edge" d="M480 1160v22"/>
+<rect x="40" y="1200" width="880" height="100" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
 <text x="60" y="1237" class="heading">3. An accepted result lets the engine continue</text>
 <text x="60" y="1273" class="small">A crash can repeat an attempt; use a stable operation key for external effects.</text>
-<g id="takeaway"><rect x="0" y="1346" width="960" height="90" rx="16" fill="#EAF4ED"/><text x="36" y="1375" style="font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
+<g id="takeaway"><rect x="0" y="1346" width="960" height="90" rx="16" fill="#EAE7DF"/><text x="36" y="1375" style="font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
 <text x="36" y="1406" class="body">The operator manages runs. The worker performs tasks.</text>
 </g></svg>

@@ -127,7 +127,7 @@ Open the `Docs URL` from status to inspect the API. The
 try them. You can now create workflows in Studio and use the same server from the
 [Python SDK](sdk-tutorial.md).
 
-HTTP integrations, external workers, AI providers, and Lumi need their own
+HTTP integrations, external workers, AI providers, and Weave AI need their own
 configuration and credentials. Starting the platform does not silently connect
 external accounts or make paid model calls. Follow
 [local HTTP integration setup](local-platform.md#8-run-built-in-http-connector-actions)

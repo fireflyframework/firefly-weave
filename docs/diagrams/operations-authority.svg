@@ -21,69 +21,69 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1766" viewBox="0 0 960 1766" role="img" aria-labelledby="title desc">
 <title id="title">Give each process only the authority it needs</title><desc id="desc">Five gates read top to bottom. 1, separate maintenance from runtime: operator maintenance uses runtime.env plus the migration URL for schema and bootstrap work, while the API uses nonowner application and catalog logins from api-container.env or runtime.env without the migration URL. 2, separate native execution from remote work: the native executor uses native-container.env with database access, release and secret grants, while a remote worker uses worker.env with an API token, release and effect settings and no database authority. 3, verify the token's issuer, keys, audience and client, and resolve an active linked principal. 4, check the current scoped grant for the operation, scope and exact resource or release; a platform administrator link alone does not grant business data. 5, resolve a connector credential separately, from the connection's secretRef through execution authority and a scoped handle grant to the secret provider, in the executing process only, with destination and egress policy still applying. A private env file never bypasses authorization.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1666" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Give each process only the authority it needs</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">Configuration selects credentials. Each operation still checks the caller and</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">its scope.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ DOWN  •  Each arrow carries the result into the next step</text>
-<rect x="40" y="232" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="249" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 264) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="15" r="10"/><path d="M9 51V41c0-20 38-20 38 0v10"/></g>
-<text x="168" y="275" font-size="25" font-weight="700" fill="#173D34">1. Separate maintenance from runtime</text>
-<text x="168" y="314" font-size="22" font-weight="400" fill="#173D34">Operator maintenance uses runtime.env plus the migration URL</text>
-<text x="168" y="343" font-size="22" font-weight="400" fill="#173D34">for explicit schema/bootstrap work.</text>
-<text x="168" y="372" font-size="22" font-weight="400" fill="#173D34">API uses nonowner application and catalog logins; runtime</text>
-<text x="168" y="401" font-size="22" font-weight="400" fill="#173D34">excludes the migration URL.</text>
-<text x="168" y="430" font-size="18" font-weight="600" fill="#367D68">CONFIGURATION • API uses api-container.env or runtime.env</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1666" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Give each process only the authority it needs</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">Configuration selects credentials. Each operation still checks the caller and</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">its scope.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">READ DOWN  •  Each arrow carries the result into the next step</text>
+<rect x="40" y="232" width="880" height="216" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="249" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 264) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="15" r="10"/><path d="M9 51V41c0-20 38-20 38 0v10"/></g>
+<text x="168" y="275" font-size="25" font-weight="700" fill="#272820">1. Separate maintenance from runtime</text>
+<text x="168" y="314" font-size="22" font-weight="400" fill="#272820">Operator maintenance uses runtime.env plus the migration URL</text>
+<text x="168" y="343" font-size="22" font-weight="400" fill="#272820">for explicit schema/bootstrap work.</text>
+<text x="168" y="372" font-size="22" font-weight="400" fill="#272820">API uses nonowner application and catalog logins; runtime</text>
+<text x="168" y="401" font-size="22" font-weight="400" fill="#272820">excludes the migration URL.</text>
+<text x="168" y="430" font-size="18" font-weight="600" fill="#855414">CONFIGURATION • API uses api-container.env or runtime.env</text>
 <path class="edge" d="M480 452v35"/>
-<rect x="40" y="500" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="517" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 532) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
-<text x="168" y="543" font-size="25" font-weight="700" fill="#173D34">2. Separate native execution from remote work</text>
-<text x="168" y="582" font-size="22" font-weight="400" fill="#173D34">Native executor uses native-container.env: app/catalog DB</text>
-<text x="168" y="611" font-size="22" font-weight="400" fill="#173D34">access, release and secret grants.</text>
-<text x="168" y="640" font-size="22" font-weight="400" fill="#173D34">Remote SDK worker uses worker.env: API token, release, and</text>
-<text x="168" y="669" font-size="22" font-weight="400" fill="#173D34">effect settings, with no orchestration DB authority.</text>
-<text x="168" y="698" font-size="18" font-weight="600" fill="#367D68">PROCESS • A remote worker claims through the API</text>
+<rect x="40" y="500" width="880" height="216" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="517" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 532) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
+<text x="168" y="543" font-size="25" font-weight="700" fill="#272820">2. Separate native execution from remote work</text>
+<text x="168" y="582" font-size="22" font-weight="400" fill="#272820">Native executor uses native-container.env: app/catalog DB</text>
+<text x="168" y="611" font-size="22" font-weight="400" fill="#272820">access, release and secret grants.</text>
+<text x="168" y="640" font-size="22" font-weight="400" fill="#272820">Remote SDK worker uses worker.env: API token, release, and</text>
+<text x="168" y="669" font-size="22" font-weight="400" fill="#272820">effect settings, with no orchestration DB authority.</text>
+<text x="168" y="698" font-size="18" font-weight="600" fill="#855414">PROCESS • A remote worker claims through the API</text>
 <path class="edge" d="M480 720v35"/>
-<rect x="40" y="768" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="785" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 800) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
-<text x="168" y="811" font-size="25" font-weight="700" fill="#173D34">3. Verify the token and resolve the identity</text>
-<text x="168" y="850" font-size="22" font-weight="400" fill="#173D34">Check the trusted issuer and signing keys, the audience,</text>
-<text x="168" y="879" font-size="22" font-weight="400" fill="#173D34">and the client. Then resolve the linked local principal</text>
-<text x="168" y="908" font-size="22" font-weight="400" fill="#173D34">and require it to be active.</text>
-<text x="168" y="937" font-size="18" font-weight="600" fill="#367D68">IDENTITY • A token is the start of the check</text>
+<rect x="40" y="768" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="785" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 800) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="168" y="811" font-size="25" font-weight="700" fill="#272820">3. Verify the token and resolve the identity</text>
+<text x="168" y="850" font-size="22" font-weight="400" fill="#272820">Check the trusted issuer and signing keys, the audience,</text>
+<text x="168" y="879" font-size="22" font-weight="400" fill="#272820">and the client. Then resolve the linked local principal</text>
+<text x="168" y="908" font-size="22" font-weight="400" fill="#272820">and require it to be active.</text>
+<text x="168" y="937" font-size="18" font-weight="600" fill="#855414">IDENTITY • A token is the start of the check</text>
 <path class="edge" d="M480 959v35"/>
-<rect x="40" y="1007" width="880" height="187" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="1024" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1039) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="19" r="12"/><path d="m27 28 22 22 M36 37l7-7 M43 44l7-7"/></g>
-<text x="168" y="1050" font-size="25" font-weight="700" fill="#173D34">4. Check the current scoped grant</text>
-<text x="168" y="1089" font-size="22" font-weight="400" fill="#173D34">Authorize the operation, scope, and exact resource or release.</text>
-<text x="168" y="1118" font-size="22" font-weight="400" fill="#173D34">A platform administrator link alone does not grant</text>
-<text x="168" y="1147" font-size="22" font-weight="400" fill="#173D34">business-data access.</text>
-<text x="168" y="1176" font-size="18" font-weight="600" fill="#367D68">AUTHORITY • The grant must still be current</text>
+<rect x="40" y="1007" width="880" height="187" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="1024" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 1039) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="19" r="12"/><path d="m27 28 22 22 M36 37l7-7 M43 44l7-7"/></g>
+<text x="168" y="1050" font-size="25" font-weight="700" fill="#272820">4. Check the current scoped grant</text>
+<text x="168" y="1089" font-size="22" font-weight="400" fill="#272820">Authorize the operation, scope, and exact resource or release.</text>
+<text x="168" y="1118" font-size="22" font-weight="400" fill="#272820">A platform administrator link alone does not grant</text>
+<text x="168" y="1147" font-size="22" font-weight="400" fill="#272820">business-data access.</text>
+<text x="168" y="1176" font-size="18" font-weight="600" fill="#855414">AUTHORITY • The grant must still be current</text>
 <path class="edge" d="M480 1198v35"/>
-<rect x="40" y="1246" width="880" height="216" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<rect x="56" y="1263" width="90" height="90" rx="20" fill="#EEF4F0"/>
-<g transform="translate(73 1278) scale(1)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="19" r="12"/><path d="m27 28 22 22 M36 37l7-7 M43 44l7-7"/></g>
-<text x="168" y="1289" font-size="25" font-weight="700" fill="#173D34">5. Resolve a connector credential separately</text>
-<text x="168" y="1328" font-size="22" font-weight="400" fill="#173D34">Connection secretRef → execution authority → scoped handle</text>
-<text x="168" y="1357" font-size="22" font-weight="400" fill="#173D34">grant → secret provider.</text>
-<text x="168" y="1386" font-size="22" font-weight="400" fill="#173D34">Only the executing process resolves the value; destination and</text>
-<text x="168" y="1415" font-size="22" font-weight="400" fill="#173D34">egress policy still apply.</text>
-<text x="168" y="1444" font-size="18" font-weight="600" fill="#367D68">SECRET • Do not pass resolved values through workflow input</text>
-<rect x="40" y="1486" width="880" height="136" rx="16" fill="#FFF7E5"/>
-<g transform="translate(59 1506) scale(0.7)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1530" font-size="23" font-weight="700" fill="#367D68">Keep configuration ownership explicit</text>
-<text x="60" y="1569" font-size="21" font-weight="400" fill="#173D34">A private env file does not bypass authorization. Use the right identity for</text>
-<text x="60" y="1598" font-size="21" font-weight="400" fill="#173D34">the process and the exact scope for each operation.</text><g id="takeaway">
-<rect x="0" y="1672" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1701" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1732" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Give each process the identity and credentials its own job requires.</text>
+<rect x="40" y="1246" width="880" height="216" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<rect x="56" y="1263" width="90" height="90" rx="20" fill="#EAE7DF"/>
+<g transform="translate(73 1278) scale(1)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="19" r="12"/><path d="m27 28 22 22 M36 37l7-7 M43 44l7-7"/></g>
+<text x="168" y="1289" font-size="25" font-weight="700" fill="#272820">5. Resolve a connector credential separately</text>
+<text x="168" y="1328" font-size="22" font-weight="400" fill="#272820">Connection secretRef → execution authority → scoped handle</text>
+<text x="168" y="1357" font-size="22" font-weight="400" fill="#272820">grant → secret provider.</text>
+<text x="168" y="1386" font-size="22" font-weight="400" fill="#272820">Only the executing process resolves the value; destination and</text>
+<text x="168" y="1415" font-size="22" font-weight="400" fill="#272820">egress policy still apply.</text>
+<text x="168" y="1444" font-size="18" font-weight="600" fill="#855414">SECRET • Do not pass resolved values through workflow input</text>
+<rect x="40" y="1486" width="880" height="136" rx="16" fill="#FFF0D8"/>
+<g transform="translate(59 1506) scale(0.7)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1530" font-size="23" font-weight="700" fill="#855414">Keep configuration ownership explicit</text>
+<text x="60" y="1569" font-size="21" font-weight="400" fill="#272820">A private env file does not bypass authorization. Use the right identity for</text>
+<text x="60" y="1598" font-size="21" font-weight="400" fill="#272820">the process and the exact scope for each operation.</text><g id="takeaway">
+<rect x="0" y="1672" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1701" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1732" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Give each process the identity and credentials its own job requires.</text>
 </g>
 </svg>
