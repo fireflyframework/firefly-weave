@@ -346,10 +346,15 @@ def run_command(
         with selectors.DefaultSelector() as selector:
             selector.register(child.stdout, selectors.EVENT_READ)
             while selector.get_map():
+                if child.returncode is None and child.poll() is not None:
+                    # A completed command's helper can retain the pipe: stop the owned group,
+                    # then drain the output already buffered before returning the leader's result.
+                    with suppress(ProcessLookupError):
+                        os.killpg(child.pid, signal.SIGKILL)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     fail()
-                for key, _ in selector.select(remaining):
+                for key, _ in selector.select(min(remaining, 0.1)):
                     chunk = os.read(key.fd, min(65536, limit - len(result) + 1))
                     if not chunk:
                         selector.unregister(key.fileobj)
