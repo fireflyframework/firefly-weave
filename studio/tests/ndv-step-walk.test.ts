@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
-import type { Step } from "../src/app/model";
+import type { Kind, Step } from "../src/app/model";
 import { allSteps, findStep } from "../src/app/editor/ndv/step-walk";
 
 const branch = (...steps: Step[]) => ({ steps, output: { literal: {} } });
@@ -116,16 +116,104 @@ describe("walking the steps of a workflow", () => {
     });
     expect(seen).toEqual(["first", "decide", "in-case-1"]);
   });
-  it("walks only lists of steps, not data that happens to be called steps", () => {
+  it("walks the body of a loop", () => {
+    const steps: Step[] = [
+      {
+        id: "each",
+        kind: "forEach" as Kind,
+        items: { ref: "/input/orders" },
+        body: branch(action("per-item"), {
+          id: "per-item-decision",
+          kind: "switch",
+          cases: [],
+          default: branch(action("per-item-otherwise")),
+        }),
+      },
+      action("after"),
+    ];
+    expect(allSteps(steps).map((step) => step.id)).toEqual([
+      "each",
+      "per-item",
+      "per-item-decision",
+      "per-item-otherwise",
+      "after",
+    ]);
+  });
+  it("never walks data that happens to hold a list called steps", () => {
+    const lookalike = { id: "x", kind: "action", uses: "x@1.0.0" };
     const steps: Step[] = [
       {
         id: "carry",
         kind: "transform",
-        value: { literal: { steps: ["not a step", 3, null, ["x"]] } },
-        note: null,
+        value: { literal: { steps: [lookalike, { n: 2 }] } },
       },
-      { id: "plain", kind: "wait", durationSeconds: 5, steps: "none" },
+      {
+        id: "call",
+        kind: "action",
+        uses: "real@1.0.0",
+        with: { object: { payload: { literal: { steps: [lookalike] } } } },
+      },
+      {
+        id: "decide",
+        kind: "switch",
+        cases: [
+          {
+            when: { literal: true },
+            steps: [],
+            output: { literal: { steps: [lookalike] } },
+          },
+        ],
+        default: {
+          steps: [],
+          output: { object: { rows: { literal: { steps: [lookalike] } } } },
+        },
+      },
+      {
+        id: "fan-out",
+        kind: "parallel",
+        branches: {
+          one: { steps: [], output: { literal: { steps: [lookalike] } } },
+        },
+        concurrency: 1,
+      },
+      { id: "plain", kind: "wait", durationSeconds: 5, steps: [lookalike] },
+      {
+        id: "stray",
+        kind: "transform",
+        cases: [{ steps: [lookalike] }],
+        default: { steps: [lookalike] },
+        branches: { one: { steps: [lookalike] } },
+        body: { steps: [lookalike] },
+        value: { literal: {} },
+      },
     ];
-    expect(allSteps(steps).map((step) => step.id)).toEqual(["carry", "plain"]);
+    expect(allSteps(steps).map((step) => step.id)).toEqual([
+      "carry",
+      "call",
+      "decide",
+      "fan-out",
+      "plain",
+      "stray",
+    ]);
+    expect(findStep(steps, (step) => step["uses"] === "x@1.0.0")).toBeNull();
+  });
+  it("skips malformed containers instead of failing", () => {
+    const steps = [
+      { id: "a", kind: "switch", cases: "none", default: null },
+      { id: "b", kind: "parallel", branches: [1, 2] },
+      {
+        id: "c",
+        kind: "switch",
+        cases: [null, 3, { steps: "no" }],
+        default: { steps: [null, 4] },
+      },
+      { id: "d", kind: "forEach", body: "text" },
+    ] as unknown as Step[];
+    expect(allSteps(steps).map((step) => step.id)).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+    ]);
   });
 });

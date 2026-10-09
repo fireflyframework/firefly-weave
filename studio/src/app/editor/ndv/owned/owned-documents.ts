@@ -75,6 +75,8 @@ export class OwnedDocuments {
   /** The request (or recipe) each `uses` was last built from. */
   private sent = new Map<string, string>();
   private pending = new Set<Promise<void>>();
+  /** The `uses` whose document this service put in the contract cache. */
+  private cached = new Set<string>();
 
   constructor(
     private readonly host: OwnedDocumentsHost,
@@ -84,14 +86,21 @@ export class OwnedDocuments {
     private readonly connectors: ConnectorActions,
   ) {}
 
-  /** Builds what changed since the last call; cheap when nothing did. */
+  /**
+   * Builds what changed since the last call; cheap when nothing did. An
+   * action that is gone, or whose recipe can't be built any more, also leaves
+   * the contract cache, so a new action of the same name doesn't inherit its
+   * parameters and response.
+   */
   sync(): void {
     const owned = ownedActionsOf(this.host.model.canvas);
+    let dropped = false;
     for (const uses of [...this.sent.keys()])
       if (!Object.hasOwn(owned, uses)) {
         // No longer owned: forget it, so an answer still on its way is dropped.
         this.sent.delete(uses);
         this.setProblems(uses, []);
+        dropped = this.dropDocument(uses) || dropped;
       }
     for (const [uses, recipe] of Object.entries(owned)) {
       if (recipe.kind === "http") {
@@ -109,6 +118,7 @@ export class OwnedDocuments {
         this.sent.set(uses, key);
         if (!request) {
           this.setProblems(uses, []);
+          dropped = this.dropDocument(uses) || dropped;
           continue;
         }
         this.track(this.buildHttp(uses, recipe, request, key));
@@ -119,6 +129,7 @@ export class OwnedDocuments {
         this.track(this.copyConnector(uses, recipe, key));
       }
     }
+    if (dropped) this.host.refreshView();
   }
   /** Resolves once every build started so far has answered. */
   async settled(): Promise<void> {
@@ -158,7 +169,7 @@ export class OwnedDocuments {
     // A refusal that names no error still has to be seen.
     this.setProblems(uses, usable || errors.length ? errors : [buildFailed()]);
     if (usable)
-      this.host.cacheContract(
+      this.store(
         uses,
         withRetry(result.action as Json, recipe.retry) as Record<
           string,
@@ -190,7 +201,7 @@ export class OwnedDocuments {
       return;
     }
     this.setProblems(uses, []);
-    this.host.cacheContract(
+    this.store(
       uses,
       connectorDocument(nameOfUses(uses), recipe, template.document) as Record<
         string,
@@ -198,6 +209,16 @@ export class OwnedDocuments {
       >,
     );
     this.host.refreshView();
+  }
+  private store(uses: string, document: Record<string, unknown>) {
+    this.cached.add(uses);
+    this.host.cacheContract(uses, document);
+  }
+  /** Takes back a document this service cached; false when it never did. */
+  private dropDocument(uses: string): boolean {
+    if (!this.cached.delete(uses)) return false;
+    this.host.cacheContract(uses, null);
+    return true;
   }
   private setProblems(uses: string, diagnostics: HostDiagnostic[]) {
     // `update` reads without tracking, so a caller inside an effect doesn't depend on `problems`.

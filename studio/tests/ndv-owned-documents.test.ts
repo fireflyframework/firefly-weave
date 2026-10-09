@@ -51,10 +51,15 @@ function fixture(
     fail: (error: unknown) => void;
   }[] = [];
   let refreshes = 0;
+  let cacheCalls = 0;
   const host = {
     model,
-    cacheContract: (uses: string, document: Record<string, unknown> | null) =>
-      cached.set(uses, document),
+    // Like the shell: a document is kept, null drops it.
+    cacheContract: (uses: string, document: Record<string, unknown> | null) => {
+      cacheCalls++;
+      if (document) cached.set(uses, document);
+      else cached.delete(uses);
+    },
     refreshView: () => {
       refreshes++;
     },
@@ -81,6 +86,7 @@ function fixture(
     reply,
     fail,
     refreshes: () => refreshes,
+    cacheCalls: () => cacheCalls,
   };
 }
 const built = (method = "GET"): HttpActionBuildResult => ({
@@ -209,6 +215,89 @@ describe("owned action documents", () => {
     reply(built());
     await documents.settled();
     expect(cached.has(USES)).toBe(true);
+  });
+});
+
+describe("the cached document of an owned action that goes away", () => {
+  /** Builds and caches the document of the fixture's action. */
+  async function cacheIt(f: ReturnType<typeof fixture>) {
+    f.documents.sync();
+    f.reply(built());
+    await f.documents.settled();
+    expect(f.cached.has(USES)).toBe(true);
+  }
+  const recipeAt = (pathTemplate: string) => ({
+    ...newHttpRecipe(),
+    pathTemplate,
+  });
+
+  it("drops the document when the workflow stops owning the action", async () => {
+    const f = fixture();
+    await cacheIt(f);
+    const refreshed = f.refreshes();
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, null);
+    f.documents.sync();
+    expect(f.cached.has(USES)).toBe(false);
+    expect(f.refreshes()).toBe(refreshed + 1);
+  });
+  it("drops the document when the path is emptied, without asking the host", async () => {
+    const f = fixture();
+    await cacheIt(f);
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, recipeAt(""));
+    f.documents.sync();
+    expect(f.cached.has(USES)).toBe(false);
+    expect(f.requests).toHaveLength(1);
+  });
+  it("doesn't hand a deleted action's document to a new action of the same name", async () => {
+    const f = fixture();
+    await cacheIt(f);
+    // Deleted, then added again with the same name and no path yet.
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, null);
+    f.documents.sync();
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, recipeAt(""));
+    f.documents.sync();
+    expect(f.cached.has(USES)).toBe(false);
+  });
+  it("drops it even when the same name comes back before anyone looked", async () => {
+    const f = fixture();
+    await cacheIt(f);
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, null);
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, recipeAt(""));
+    f.documents.sync();
+    expect(f.cached.has(USES)).toBe(false);
+  });
+  it("drops the document of a connector action too", async () => {
+    const SEND = "untitled-workflow.send-email@1.0.0";
+    const f = fixture(async () => ({
+      actions: [
+        {
+          connector: "weave-email@1.0.0",
+          action: "send",
+          document: { kind: "Action", metadata: {}, spec: {} },
+        },
+      ],
+    }));
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, null);
+    f.model.canvas = withOwnedAction(
+      f.model.canvas,
+      SEND,
+      newConnectorRecipe("weave-email@1.0.0", "send"),
+    );
+    f.documents.sync();
+    await f.documents.settled();
+    expect(f.cached.has(SEND)).toBe(true);
+    f.model.canvas = withOwnedAction(f.model.canvas, SEND, null);
+    f.documents.sync();
+    expect(f.cached.has(SEND)).toBe(false);
+  });
+  it("leaves the cache alone when nothing of the action was ever cached", () => {
+    const f = fixture();
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, recipeAt(""));
+    f.documents.sync();
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, null);
+    f.documents.sync();
+    expect(f.cacheCalls()).toBe(0);
+    expect(f.refreshes()).toBe(0);
   });
 });
 

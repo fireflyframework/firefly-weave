@@ -16,32 +16,39 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The one way step details walks a workflow's steps: every step at any depth,
-// in the order they read (a step, then what its decision cases, Otherwise and
-// parallel branches hold). It looks for lists of steps rather than for kinds,
-// so a new kind that holds steps is walked without changes here.
+// in the order they read (a step, then what its decision cases, Otherwise,
+// parallel branches and loop body hold). It follows only the step lists the
+// language declares, never a field that holds data or a formula, so a value
+// that happens to contain a list called `steps` is not read as steps.
 import type { Step } from "../../model";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The steps a step holds: the `steps` of a branch among its values (a list of branches, one branch, or branches by name). */
-function held(step: Step): Step[][] {
-  const lists: Step[][] = [];
-  for (const value of Object.values(step)) {
-    const branches: unknown[] = Array.isArray(value)
-      ? value
-      : isRecord(value)
-        ? Array.isArray(value["steps"])
-          ? [value]
-          : Object.values(value)
-        : [];
-    for (const branch of branches) {
-      const inner = isRecord(branch) ? branch["steps"] : undefined;
-      if (Array.isArray(inner)) lists.push(inner.filter(isRecord) as Step[]);
-    }
-  }
-  return lists;
-}
+/** The `steps` of a branch, when it is one; only objects can be steps. */
+const stepsOf = (branch: unknown): Step[] => {
+  const inner = isRecord(branch) ? branch["steps"] : undefined;
+  return Array.isArray(inner) ? (inner.filter(isRecord) as Step[]) : [];
+};
+
+/**
+ * The step lists each kind declares (the language's `Branch`, in
+ * src/firefly_weave/contracts/definitions.py): a decision's `cases[].steps`
+ * and `default.steps` (Otherwise), a parallel step's `branches.<name>.steps`
+ * and a loop's `body.steps`. A kind that holds steps in a new place is added
+ * here, and nowhere else.
+ */
+const CONTAINERS: Record<string, (step: Step) => Step[][]> = {
+  switch: (step) => {
+    const cases = Array.isArray(step["cases"]) ? step["cases"] : [];
+    return [...cases.map(stepsOf), stepsOf(step["default"])];
+  },
+  parallel: (step) =>
+    isRecord(step["branches"])
+      ? Object.values(step["branches"]).map(stepsOf)
+      : [],
+  forEach: (step) => [stepsOf(step["body"])],
+};
 
 function* walk(steps: readonly Step[], seen: Set<Step>): Generator<Step> {
   for (const step of steps) {
@@ -49,7 +56,10 @@ function* walk(steps: readonly Step[], seen: Set<Step>): Generator<Step> {
     if (seen.has(step)) continue;
     seen.add(step);
     yield step;
-    for (const inner of held(step)) yield* walk(inner, seen);
+    const containers = Object.hasOwn(CONTAINERS, step.kind)
+      ? CONTAINERS[step.kind](step)
+      : [];
+    for (const inner of containers) yield* walk(inner, seen);
   }
 }
 
