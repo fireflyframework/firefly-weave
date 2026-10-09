@@ -114,6 +114,7 @@ class _Harness:
             return SimpleNamespace(id=uuid4())
 
         async def start(actor, scope, request, key, **options):
+            assert options["start_facts"].origin == "email"
             return admit(key)
 
         async def deliver(tx, run_id, key, signal, payload, **options):

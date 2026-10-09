@@ -124,6 +124,7 @@ async def test_atomic_receipt_duplicate_and_conflict(webhook_setup, access_db):
     assert error.value.status == 409
     async with access_db[1]() as session:
         assert await session.scalar(text("SELECT count(*) FROM trigger_receipts")) == 1
+        assert await session.scalar(text("SELECT origin FROM run_facts")) == "webhook"
         assert await session.scalar(text("SELECT count(*) FROM runs")) == 1
 
 

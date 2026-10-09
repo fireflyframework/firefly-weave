@@ -28,6 +28,7 @@ from firefly_weave.contracts.runtime import CapacityRunAcknowledgment
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.execution import execute_pure
 from firefly_weave.operations.exports import lock_digest
+from firefly_weave.operations.facts import FactRepository, task_fact_update
 from firefly_weave.operations.redaction import Omission
 from firefly_weave.runtime.admission import terminal_signals
 from firefly_weave.runtime.models import RuntimeEvent
@@ -155,7 +156,10 @@ async def persist_terminal(
             break
         await revoke_attempts(repository.tx, row["id"], tasks, control_failure=event.type == "cancelled")
         await repository.execute(
-            f"UPDATE task_intents SET status='cancelled' WHERE {SCOPE} AND id=ANY(cast(:ids AS uuid[]))",
+            task_fact_update(
+                f"UPDATE task_intents SET status='cancelled' WHERE {SCOPE} AND id=ANY(cast(:ids AS uuid[]))"
+            ),
+            at=event.timestamp,
             ids=[task["id"] for task in tasks],
         )
     await repository.execute(
@@ -163,7 +167,10 @@ async def persist_terminal(
         run=row["id"],
     )
     await repository.execute(
-        f"UPDATE incidents SET status='closed',revision=revision+1 WHERE {SCOPE} AND run_id=:run AND status='active'",
+        f"WITH closed AS (UPDATE incidents SET status='closed',revision=revision+1 WHERE {SCOPE} AND run_id=:run "
+        "AND status='active' RETURNING id) UPDATE incident_facts SET updated_at=:at "
+        f"WHERE {SCOPE} AND incident_id IN (SELECT id FROM closed)",
+        at=event.timestamp,
         run=row["id"],
     )
     if row.get("artifact"):
@@ -203,6 +210,9 @@ async def persist_terminal(
                 sequence=event.sequence,
                 evidence=evidence.model_dump_json(),
             )
+    await FactRepository(repository.tx).project_terminal(
+        row["id"], cast(Literal["cancelled", "timed_out"], event.type), event.timestamp, event.sequence
+    )
     await repository.outbox.append(
         repository.tx,
         IntegrationEvent(

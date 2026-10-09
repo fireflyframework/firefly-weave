@@ -50,6 +50,7 @@ from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.operations.redaction import project
 from firefly_weave.persistence.idempotency import lock
 from firefly_weave.persistence.uow import Transaction
@@ -416,6 +417,7 @@ class KafkaTrigger:
                         f"kafka:{route.id}:{event}",
                         context=AuditContext(),
                         tx=tx,
+                        start_facts=RunStartFacts(origin="broker"),
                     )
                     run_id = run.id
                 else:

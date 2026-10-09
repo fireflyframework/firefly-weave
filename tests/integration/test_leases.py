@@ -556,7 +556,9 @@ async def test_internal_verified_port_rejects_mismatched_context(
             await runtime.finish_verified_task(tx, replace(verified, task=task), uuid4(), 4)
 
 
-async def test_compatible_task_not_starved_by_incompatible_page(worker_setup, worker_runtime_fixture, access_db):
+async def test_compatible_task_not_starved_by_incompatible_page(
+    worker_setup, worker_runtime_fixture, access_db, monkeypatch
+):
     import json
     from uuid import UUID
 
@@ -607,6 +609,10 @@ async def test_compatible_task_not_starved_by_incompatible_page(worker_setup, wo
         "mixed-other",
         context=AuditContext(),
     )
+    from firefly_weave.runtime import repository
+
+    identifiers = iter([UUID(int=index) for index in range(1, 102)] + [UUID(int=2**127)])
+    monkeypatch.setattr(repository, "uuid4", lambda: next(identifiers))
     for index in range(101):
         await runtime.start(
             actor,
@@ -615,15 +621,9 @@ async def test_compatible_task_not_starved_by_incompatible_page(worker_setup, wo
             f"other-{index}",
             context=AuditContext(),
         )
-    target = await runtime.start(
+    await runtime.start(
         actor, scope, StartRunRequest(activation_id=echo_activation.id, input=999), "eligible", context=AuditContext()
     )
-    # Arrange deterministic UUID ordering only; every intent was created by authorized runtime services.
-    async with access_db[1].begin() as tx:
-        rows = (await tx.execute(text("SELECT id,run_id FROM task_intents ORDER BY id"))).all()
-        for index, row in enumerate(rows, 1):
-            identifier = UUID(int=2**127) if row.run_id == target.id else UUID(int=index)
-            await tx.execute(text("UPDATE task_intents SET id=:new WHERE id=:old"), {"new": identifier, "old": row.id})
     instance = await workers.register_instance(
         actor,
         scope,

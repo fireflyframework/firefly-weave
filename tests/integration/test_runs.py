@@ -311,7 +311,16 @@ async def test_durable_task_intents_rollback_and_restart_scan(
         try:
             async with UnitOfWork(sessions).open(author[2]) as tx:
                 repository = RuntimeRepository(tx, services(sessions).resolve(DefinitionService).outbox)
-                await repository.insert(view, json.loads(flow.to_bytes()), request, actor.id)
+                from firefly_weave.operations.facts import RunStartFacts
+
+                await repository.insert(
+                    view,
+                    json.loads(flow.to_bytes()),
+                    request,
+                    actor.id,
+                    start_facts=RunStartFacts(),
+                    at=accepted.timestamp,
+                )
                 await repository.persist(view, accepted, transition_result, event_hash(accepted))
                 assert len(await repository.ready()) == 1
                 async with UnitOfWork(sessions).open(author[2], mutation=False) as observer:
@@ -359,6 +368,7 @@ async def test_rollback_between_event_and_task_insert(
 
     from firefly_weave.contracts.runtime import RunView, StartRunRequest
     from firefly_weave.definitions.service import DefinitionService
+    from firefly_weave.operations.facts import RunStartFacts
     from firefly_weave.persistence.uow import UnitOfWork
     from firefly_weave.runtime.kernel import transition
     from firefly_weave.runtime.models import RunState, RuntimeEvent
@@ -389,7 +399,7 @@ async def test_rollback_between_event_and_task_insert(
             original = repository.execute
 
             async def injected(sql, **values):
-                if sql.startswith("INSERT INTO task_intents"):
+                if "INSERT INTO task_intents" in sql:
                     assert await tx.session.scalar(text("SELECT count(*) FROM run_events")) == 1
                     raise RuntimeError("injected")
                 await original(sql, **values)
@@ -400,6 +410,8 @@ async def test_rollback_between_event_and_task_insert(
                 json.loads(artifact.to_bytes()),
                 StartRunRequest.model_validate_json(json.dumps(start_request)),
                 actor.id,
+                start_facts=RunStartFacts(),
+                at=event.timestamp,
             )
             await repository.persist(view, event, result, event_hash(event))
     async with owner() as session:

@@ -100,6 +100,24 @@ async def assert_equivalent(owner, before, kind):
     )
     assert await owner.scalar(text("SELECT sum(value) FROM operation_usage WHERE metric='control_bytes'")) > 0
 
+    fact = (
+        (await owner.execute(text("SELECT * FROM run_facts WHERE run_id=:id"), {"id": before["id"]})).mappings().one()
+    )
+    assert fact["status"] == kind and fact["ended_at"] == event["created_at"]
+    assert fact["updated_at"] == event["created_at"] and fact["last_event_sequence"] == event["sequence"]
+    assert fact["failed_node_id"] is None and fact["failed_error_code"] is None and fact["active_incidents"] == 0
+    assert not await owner.scalar(
+        text("SELECT count(*) FROM task_facts WHERE run_id=:id AND (status<>'cancelled' OR ready_since IS NOT NULL)"),
+        {"id": before["id"]},
+    )
+    assert not await owner.scalar(
+        text("SELECT count(*) FROM step_facts WHERE run_id=:id AND status IN ('scheduled','running','waiting')"),
+        {"id": before["id"]},
+    )
+    from operations_support import assert_usage
+
+    await assert_usage(owner, {"tenant": before["tenant_id"], "project": before["project_id"]})
+
 
 @pytest.mark.parametrize("kind", ["cancelled", "timed_out"])
 async def test_sql_terminal_matches_sequential_kernel_at_full_pools(
@@ -116,6 +134,11 @@ async def test_sql_terminal_matches_sequential_kernel_at_full_pools(
             await owner.execute(text("UPDATE run_deadlines SET deadline=clock_timestamp()-interval '1 second'"))
         await exhaust_pools(owner, author[2].project_id)
     monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+
+    async def reject_payload_fetch(*args, **kwargs):
+        raise AssertionError("Oversized terminal control fetched run payload")
+
+    monkeypatch.setattr(repository.RuntimeRepository, "run", reject_payload_fetch)
     if kind == "cancelled":
         response = await client.post(f"{env_url}/runs/{waiting_run}/cancel", headers=headers, json={"reason": "stop"})
         assert response.status_code == 200, response.text
@@ -147,6 +170,11 @@ async def test_sql_terminal_matches_parallel_kernel_and_fences_leases(
             await owner.execute(text("UPDATE run_deadlines SET deadline=clock_timestamp()-interval '1 second'"))
         await exhaust_pools(owner, worker_setup[4].project_id)
     monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+
+    async def reject_payload_fetch(*args, **kwargs):
+        raise AssertionError("Oversized terminal control fetched run payload")
+
+    monkeypatch.setattr(repository.RuntimeRepository, "run", reject_payload_fetch)
     async with transaction_factory() as tx:
         if kind == "cancelled":
             result = (
@@ -272,3 +300,109 @@ async def test_capacity_rejection_still_allows_issued_signal_timeout(
         if mode != "timeout":
             assert not await owner.scalar(text("SELECT count(*) FROM wait_wakeups"))
             assert not await owner.scalar(text("SELECT count(*) FROM signal_receipts WHERE consumed"))
+
+
+@pytest.mark.parametrize("point", ["before_projection", "after_projection"])
+async def test_oversized_terminal_fact_failure_rolls_back_control_reserve(
+    point, queued_task, task_service, transaction_factory, worker_ids, worker_setup, access_db, services, monkeypatch
+):
+    import firefly_weave.runtime.repository as repository
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.operations.facts import FactRepository
+    from firefly_weave.operations.outbox import OutboxService
+    from firefly_weave.runtime.service import RuntimeService
+
+    async with transaction_factory() as tx:
+        assert await task_service.claim(tx, worker_ids[0], 1)
+    async with access_db[1].begin() as owner:
+        await exhaust_pools(owner, worker_setup[4].project_id)
+    tables = (
+        "runs",
+        "run_events",
+        "task_intents",
+        "task_leases",
+        "run_facts",
+        "step_facts",
+        "task_facts",
+        "incident_facts",
+        "operation_usage",
+        "operation_reservations",
+        "operation_allocations",
+        "event_deliveries",
+        "integration_events",
+        "operation_control_deliveries",
+    )
+
+    async def snapshot():
+        async with access_db[1]() as owner:
+            return {
+                table: list(
+                    (
+                        await owner.execute(text(f"SELECT to_jsonb(t) FROM {table} t ORDER BY to_jsonb(t)::text"))
+                    ).scalars()
+                )
+                for table in tables
+            }
+
+    before = await snapshot()
+    monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("terminal projection rollback")
+
+    if point == "before_projection":
+        monkeypatch.setattr(FactRepository, "project_terminal", fail)
+    else:
+        monkeypatch.setattr(OutboxService, "append", fail)
+    with pytest.raises(RuntimeError, match="terminal projection rollback"):
+        async with transaction_factory() as tx:
+            await (
+                services(access_db[0])
+                .resolve(RuntimeService)
+                .cancel(
+                    tx, queued_task.id, "stop", actor=worker_setup[3], scope=worker_setup[4], context=AuditContext()
+                )
+            )
+    assert await snapshot() == before
+
+
+async def test_cancel_at_full_ordinary_quota_updates_facts_from_control_reserve(
+    queued_task, task_service, transaction_factory, worker_ids, worker_setup, access_db, services
+):
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.contracts.workers import TaskError
+    from firefly_weave.runtime.service import RuntimeService
+
+    async with transaction_factory() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    async with transaction_factory() as tx:
+        await task_service.fail(tx, lease.proof, TaskError(completion_id=UUID(int=59), code="CONNECTION_LOST"))
+    async with access_db[1].begin() as owner:
+        before = (await owner.execute(text("SELECT * FROM runs WHERE id=:id"), {"id": queued_task.id})).mappings().one()
+        opened = (await owner.execute(text("SELECT opened_at,updated_at FROM incident_facts"))).one()
+        await exhaust_pools(owner, worker_setup[4].project_id)
+    async with transaction_factory() as tx:
+        result = (
+            await services(access_db[0])
+            .resolve(RuntimeService)
+            .cancel(tx, queued_task.id, "stop", actor=worker_setup[3], scope=worker_setup[4], context=AuditContext())
+        )
+    assert result.state.status == "cancelled"
+    async with access_db[1]() as owner:
+        incident = (await owner.execute(text("SELECT opened_at,updated_at FROM incident_facts"))).one()
+        assert incident.opened_at == opened.opened_at and incident.updated_at > opened.updated_at
+        fact = (
+            (
+                await owner.execute(
+                    text("SELECT status,active_incidents,ended_at,last_event_sequence FROM run_facts WHERE run_id=:id"),
+                    {"id": queued_task.id},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert fact["status"] == "cancelled" and fact["active_incidents"] == 0 and fact["ended_at"] is not None
+        assert fact["last_event_sequence"] == result.state.accepted_sequence
+        from operations_support import assert_usage
+
+        await assert_usage(owner, {"tenant": before["tenant_id"], "project": before["project_id"]})

@@ -34,6 +34,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.operations import IncidentResolution, IncidentView
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.kernel import validate_action, workflow
@@ -209,16 +210,20 @@ class IncidentService:
             await repository.persist(view, event, result, event_hash(event))
             if task is not None and result.state.status not in TERMINAL:
                 await repository.execute(
-                    f"UPDATE task_intents SET status=:status,next_attempt_at=NULL WHERE {SCOPE} AND id=:id",
+                    task_fact_update(
+                        f"UPDATE task_intents SET status=:status,next_attempt_at=NULL WHERE {SCOPE} AND id=:id"
+                    ),
+                    at=event.timestamp,
                     id=task["id"],
                     status="ready" if request.kind == "retry_safe" else "completed",
                 )
             elif task is not None and request.kind == "accept_reconciled_result":
-                await repository.task_status(task["id"], "completed")
+                await repository.task_status(task["id"], "completed", at=event.timestamp)
             await repository.execute(
-                "UPDATE incidents SET status='resolved',actor_id=:actor,resolved_at=:now,"
+                "WITH changed AS (UPDATE incidents SET status='resolved',actor_id=:actor,resolved_at=:now,"
                 "resolution=cast(:resolution AS jsonb) "
-                f"WHERE {SCOPE} AND id=:id",
+                f"WHERE {SCOPE} AND id=:id RETURNING id) UPDATE incident_facts SET updated_at=:now "
+                f"WHERE {SCOPE} AND incident_id IN (SELECT id FROM changed)",
                 id=incident_id,
                 actor=actor.id,
                 now=event.timestamp,

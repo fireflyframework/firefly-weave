@@ -44,6 +44,7 @@ from firefly_weave.contracts.runtime import (
 )
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
+from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import KernelError, action_schemas, validate, validate_action, workflow
@@ -165,8 +166,12 @@ class RuntimeService:
         context: AuditContext,
         tx: Transaction | None = None,
         not_after: datetime | None = None,
+        start_facts: RunStartFacts | None = None,
     ) -> RunView:
         self.require(actor, scope, "run.start", context)
+        start_facts = start_facts if start_facts is not None else RunStartFacts()
+        if not isinstance(start_facts, RunStartFacts):
+            raise ValueError("Trusted start facts required")
         async with self.definitions.transaction(scope, tx) as enlisted:
             replay = Idempotency(
                 enlisted,
@@ -203,7 +208,11 @@ class RuntimeService:
             if not_after is not None and now >= not_after:
                 raise CatalogError(409, "WV-SCHEDULE-STALE", "Occurrence grace expired during admission")
             event = RuntimeEvent(
-                id=uuid4(), type="started", timestamp=now, sequence=1, data={"admission_policy": "classified-v1"}
+                id=uuid4(),
+                type="started",
+                timestamp=now,
+                sequence=1,
+                data={"admission_policy": "classified-v1", "origin": start_facts.origin},
             )
             result = await transition(RunState(input=request.input), event, artifact)
             self.require(await load_principal(enlisted.session, actor.id), scope, "run.start", context)
@@ -218,7 +227,7 @@ class RuntimeService:
                 correlation_key=request.correlation_key,
                 business_key=request.business_key,
             )
-            await repository.insert(view, envelope, request, actor.id)
+            await repository.insert(view, envelope, request, actor.id, start_facts=start_facts, at=now)
             from firefly_weave.files.authority import admit_files
 
             await admit_files(enlisted, view.id, request.input, actor, context=context)
@@ -305,8 +314,10 @@ class RuntimeService:
             await RuntimeRepository(tx, self.definitions.outbox).observe_policy_block(row)
         return decision != "available"
 
-    async def set_task_status(self, tx: Transaction, identifier: UUID, status: str) -> None:
-        await RuntimeRepository(tx, self.definitions.outbox).task_status(identifier, status)
+    async def set_task_status(
+        self, tx: Transaction, identifier: UUID, status: str, *, at: datetime | None = None
+    ) -> None:
+        await RuntimeRepository(tx, self.definitions.outbox).task_status(identifier, status, at=at)
 
     async def finish_verified_task(
         self,
@@ -387,9 +398,9 @@ class RuntimeService:
             ),
         )
         if rejection_code:
-            await repository.task_status(verified.task["id"], "incident")
+            await repository.task_status(verified.task["id"], "incident", at=event.timestamp)
         elif failed:
-            await repository.task_status(verified.task["id"], "failed")
+            await repository.task_status(verified.task["id"], "failed", at=event.timestamp)
         else:
             from firefly_weave.runtime.waits import settle
 
@@ -560,7 +571,15 @@ class RuntimeService:
                 raise CatalogError(409, "WV-RUNTIME-STATE", "Only a terminal run can create a linked retry")
             # Retry replay is owned by the outer receipt; the nested start gets a fresh identity.
             start_key = str(uuid4())
-            view = await self.start(current, scope, request, start_key, context=context, tx=tx)
+            view = await self.start(
+                current,
+                scope,
+                request,
+                start_key,
+                context=context,
+                tx=tx,
+                start_facts=RunStartFacts(origin="retry", retried_from_run_id=run_id),
+            )
             await repository.execute(
                 "INSERT INTO run_retry_links VALUES(:tenant,:project,:environment,:run,:parent)",
                 run=view.id,

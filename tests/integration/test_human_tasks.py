@@ -201,6 +201,17 @@ async def test_claim_complete_retry_and_conflicting_payload(client, headers, env
     assert [entry["action"] for entry in detail.json()["history"]] == ["created", "claim", "complete"]
     async with access_db[1]() as session:
         assert await session.scalar(text("SELECT count(*) FROM human_task_decisions")) == 1
+        fact = (
+            (
+                await session.execute(
+                    text("SELECT kind,status,scheduled_at,started_at,ended_at,attempts FROM step_facts")
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert fact["kind"] == "humanTask" and fact["status"] == "succeeded"
+        assert fact["scheduled_at"] == fact["started_at"] <= fact["ended_at"] and fact["attempts"] == 0
         assert await session.scalar(text("SELECT count(*) FROM task_intents")) == 0
         assert await session.scalar(text("SELECT count(*) FROM run_deadlines WHERE NOT consumed")) == 0
 

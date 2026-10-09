@@ -28,6 +28,7 @@ from firefly_weave.contracts.integration_events import EventMetadata, Integratio
 from firefly_weave.contracts.operations import TaskTiming
 from firefly_weave.contracts.runtime import RunView, StartRunRequest, UnavailableRunAcknowledgment
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.facts import FactRepository, RunStartFacts, author_instance, task_fact_update
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.models import (
@@ -111,7 +112,16 @@ class RuntimeRepository:
         self.tx.session.info["weave_runtime_candidate"] = identifier
         await execute_pure(partial(logical_size, state, STATE_BYTES))
 
-    async def insert(self, view: RunView, artifact: dict[str, Any], request: StartRunRequest, principal: UUID) -> None:
+    async def insert(
+        self,
+        view: RunView,
+        artifact: dict[str, Any],
+        request: StartRunRequest,
+        principal: UUID,
+        *,
+        start_facts: RunStartFacts,
+        at: datetime,
+    ) -> None:
         await self.execute(
             "INSERT INTO runs VALUES(:id,:tenant,:project,:environment,:activation_id,:principal,"
             "cast(:artifact AS jsonb),cast(:activation AS jsonb),cast(:request AS jsonb),cast(:state AS jsonb))",
@@ -123,6 +133,8 @@ class RuntimeRepository:
             request=request.model_dump_json(),
             state=view.state.model_dump_json(),
         )
+
+        await FactRepository(self.tx).insert_run(view, artifact, request, start_facts, at)
 
     async def event(self, run_id: UUID, event_id: UUID) -> dict[str, Any] | None:
         row = (
@@ -180,7 +192,7 @@ class RuntimeRepository:
             state=result.state.model_dump_json(),
             run=view.id,
         )
-        await self.project_incidents(view)
+        await self.project_incidents(view, at=event.timestamp)
         for change in result.steps:
             await self.execute(
                 "INSERT INTO step_instances "
@@ -205,13 +217,19 @@ class RuntimeRepository:
                         task_version=pin.task_version,
                         connector_target=pin.model_dump(mode="json"),
                     )
+                identifier = uuid4()
+                values = FactRepository(self.tx).task_values(
+                    identifier, view.id, command, f"{payload['task_type']}@{payload['task_version']}", event.timestamp
+                )
                 await self.execute(
-                    "INSERT INTO task_intents(id,tenant_id,project_id,environment_id,run_id,node_id,payloa"
-                    "d,worker_release_id,operation_key,status) "
+                    "WITH inserted AS (INSERT INTO task_intents(id,tenant_id,project_id,environment_id,run_id,node_id,"
+                    "payload,worker_release_id,operation_key,status) "
                     "VALUES(:id,:tenant,:project,:environment,:run,:node,"
-                    "cast(:payload AS jsonb),:release,:operation,'ready')",
-                    id=uuid4(),
-                    run=view.id,
+                    "cast(:payload AS jsonb),:release,:operation,'ready') RETURNING id) "
+                    "INSERT INTO task_facts(tenant_id,project_id,environment_id,task_id,run_id,node_id,instance_key,"
+                    "task_type,status,created_at,ready_since) SELECT :tenant,:project,:environment,id,:run,"
+                    ":fact_node,:instance,:task_type,'ready',:at,:at FROM inserted",
+                    **values,
                     node=command.node_id,
                     payload=json.dumps(payload),
                     release=release,
@@ -234,7 +252,10 @@ class RuntimeRepository:
             await self.record_evidence(view, event, result, task_timing)
         if event.type == "task_completed":
             await self.execute(
-                f"UPDATE task_intents SET status='completed' WHERE {SCOPE} AND run_id=:run AND node_id=:node",
+                task_fact_update(
+                    f"UPDATE task_intents SET status='completed' WHERE {SCOPE} AND run_id=:run AND node_id=:node"
+                ),
+                at=event.timestamp,
                 run=view.id,
                 node=event.data["node_id"],
             )
@@ -266,12 +287,16 @@ class RuntimeRepository:
                 ),
             )
             await self.execute(
-                f"UPDATE task_intents SET status='cancelled' WHERE {SCOPE} AND run_id=:run "
-                "AND status IN ('ready','leased','retry_pending','incident','failed')",
+                task_fact_update(
+                    f"UPDATE task_intents SET status='cancelled' WHERE {SCOPE} AND run_id=:run "
+                    "AND status IN ('ready','leased','retry_pending','incident','failed')"
+                ),
+                at=event.timestamp,
                 run=view.id,
             )
             await self.execute(f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run", run=view.id)
 
+        await FactRepository(self.tx).project_run(view, event, result)
         await self.outbox.append(
             self.tx,
             IntegrationEvent(
@@ -376,9 +401,12 @@ class RuntimeRepository:
         )
         return (dict(run), dict(task)) if task else None
 
-    async def task_status(self, identifier: UUID, status: str) -> None:
+    async def task_status(self, identifier: UUID, status: str, *, at: datetime | None = None) -> None:
         await self.execute(
-            f"UPDATE task_intents SET status=:status WHERE {SCOPE} AND id=:id", id=identifier, status=status
+            task_fact_update(f"UPDATE task_intents SET status=:status WHERE {SCOPE} AND id=:id"),
+            id=identifier,
+            status=status,
+            at=at if at is not None else await self.now(),
         )
 
     async def task_deadline(self, run_id: UUID, task_deadline: datetime) -> datetime:
@@ -443,19 +471,29 @@ class RuntimeRepository:
         )
         return [row["id"] for row in rows]
 
-    async def project_incidents(self, view: RunView | TerminalControl) -> None:
+    async def project_incidents(self, view: RunView | TerminalControl, *, at: datetime | None = None) -> None:
         """Projection only: never changes or repairs authoritative accepted state."""
+        at = at if at is not None else await self.now()
         active = {key: value.model_dump() for key, value in view.state.incidents.items()}
         if view.state.status == "suspended" and not active and view.state.incident:
             active["@legacy"] = {"node_id": None, "generation": None, "code": view.state.incident}
         for key, value in active.items():
+            identity = author_instance(value["node_id"]) if value["node_id"] is not None else None
             await self.execute(
-                "INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,"
+                "WITH changed AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,"
                 "node_id,generation,origin_code,code,status,revision) VALUES("
                 "md5(cast(cast(:run AS uuid) AS text) || ':' || :key)::uuid,:tenant,:project,:environment,:run,:key,"
                 ":node,:generation,:code,:code,'active',1) ON CONFLICT(run_id,incident_key) DO UPDATE "
                 "SET code=excluded.code,revision=incidents.revision+1 "
-                "WHERE incidents.status='active' AND incidents.code<>excluded.code",
+                "WHERE incidents.status='active' AND incidents.code<>excluded.code RETURNING id) "
+                "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,"
+                "opened_at,updated_at,workflow_name,workflow_version,test) SELECT :tenant,:project,:environment,"
+                "c.id,:fact_node,:instance,:at,:at,f.workflow_name,f.workflow_version,f.test FROM changed c "
+                f"JOIN run_facts f ON f.run_id=:run AND f.{SCOPE.replace(' AND ', ' AND f.')} "
+                "ON CONFLICT(incident_id) DO UPDATE SET updated_at=excluded.updated_at",
+                fact_node=identity.node_id if identity else None,
+                instance=identity.instance_key if identity else "",
+                at=at,
                 run=view.id,
                 key=key,
                 node=value["node_id"],
@@ -463,8 +501,10 @@ class RuntimeRepository:
                 code=value["code"],
             )
         await self.execute(
-            f"UPDATE incidents SET status='closed',revision=revision+1 WHERE {SCOPE} AND run_id=:run "
-            "AND status='active' AND NOT (incident_key=ANY(cast(:keys AS text[])))",
+            f"WITH closed AS (UPDATE incidents SET status='closed',revision=revision+1 WHERE {SCOPE} AND run_id=:run "
+            "AND status='active' AND NOT (incident_key=ANY(cast(:keys AS text[]))) RETURNING id) "
+            f"UPDATE incident_facts SET updated_at=:at WHERE {SCOPE} AND incident_id IN (SELECT id FROM closed)",
+            at=at,
             run=view.id,
             keys=list(active),
         )

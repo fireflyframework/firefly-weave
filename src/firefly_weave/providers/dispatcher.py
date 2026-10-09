@@ -33,6 +33,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.providers import ProviderReceipt
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError, capacity_rejected
+from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.providers.repository import ProviderRepository
 from firefly_weave.providers.service import ProviderIngressService
 from firefly_weave.runtime.repository import SCOPE
@@ -71,6 +72,7 @@ class ProviderDispatcher:
                             key,
                             context=AuditContext(),
                             tx=tx,
+                            start_facts=RunStartFacts(origin="provider"),
                         )
                         changes.update(state="dispatched", run_id=run.id, reason=None)
                     else:

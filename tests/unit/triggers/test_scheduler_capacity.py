@@ -121,6 +121,7 @@ class _Harness:
         monkeypatch.setattr("firefly_weave.triggers.scheduler.load_principal", load_principal)
 
         async def start(actor, scope, request, key, **options):
+            assert options["start_facts"].origin == "schedule"
             # Run admission reduces the first event through the pure kernel, like `transition_async`.
             harness.keys.append(key)
             if harness.errors:

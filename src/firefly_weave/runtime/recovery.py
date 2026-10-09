@@ -33,6 +33,7 @@ from firefly_weave.contracts.ai import TRANSIENT_MODEL_CODES
 from firefly_weave.contracts.operations import TaskTiming
 from firefly_weave.contracts.runtime import RecoveryReport
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.deadlines import DeadlineService
 from firefly_weave.runtime.kernel import transition_async as transition
@@ -139,13 +140,15 @@ class RecoveryService:
             tx.session.info["weave_runtime_candidate"] = row["id"]
             result = await transition(view.state, event, import_artifact(row["artifact"]))
             await repository.persist(view.model_copy(update={"state": result.state}), event, result, event_hash(event))
-            await repository.task_status(identifier, "incident")
+            await repository.task_status(identifier, "incident", at=event.timestamp)
             incidents += 1
         for identifier in await self.tasks.recovery_candidates(tx, limit) if kind == "retry" else []:
             locked = await self.runtime.lock_task(tx, identifier, skip_locked=True)
             if locked is None:
                 continue
             row, task = locked
+            if task["status"] == "handled":
+                continue
             if await self.runtime.observe_unavailable(tx, row):
                 continue
             attempt = await self.tasks.recovery_attempt(tx, identifier)
@@ -231,7 +234,10 @@ class RecoveryService:
             if result.state.status in TERMINAL:
                 continue
             await repository.execute(
-                f"UPDATE task_intents SET status=:status,next_attempt_at=:next WHERE {SCOPE} AND id=:id",
+                task_fact_update(
+                    f"UPDATE task_intents SET status=:status,next_attempt_at=:next WHERE {SCOPE} AND id=:id"
+                ),
+                at=now,
                 id=identifier,
                 status="ready" if allowed else "incident",
                 next=next_attempt if allowed else None,

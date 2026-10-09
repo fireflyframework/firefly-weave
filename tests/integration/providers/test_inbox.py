@@ -157,6 +157,7 @@ async def test_duplicate_dispatch_creates_one_run(inbox, access_db):
     assert results[0] == results[1]
     assert results[0].state == "dispatched"
     assert len(await rows(inbox, access_db, "runs")) == 1
+    assert [row["origin"] for row in await rows(inbox, access_db, "run_facts")] == ["provider"]
     assert len(await rows(inbox, access_db, "provider_fixture_effects")) == 1
 
 
