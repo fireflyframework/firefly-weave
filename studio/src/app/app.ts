@@ -1606,11 +1606,18 @@ export class App {
         ...(structuredClone(layout) as Partial<typeof model.layout>),
       };
     // The canvas sidecar, or the layout drafts kept before it existed.
-    model.canvas = canvasFromStored(
+    const stored = canvasFromStored(
       document.canvas ?? document.layout,
       model.definition,
       model.stepIdSet(),
-    ).canvas;
+    );
+    model.canvas = stored.canvas;
+    if (stored.problems.length)
+      this.notify(
+        "Studio couldn't read the notes and settings saved with this workflow, so it opened without them.",
+        undefined,
+        "danger",
+      );
     // The viewport comes back with the workflow, unless it is the default.
     const kept = usableViewport(model.layout.viewport);
     this.restoredView =

@@ -164,6 +164,38 @@ export function canvasBytes(canvas: CanvasSidecar): number {
   return new TextEncoder().encode(JSON.stringify(canvas)).length;
 }
 
+/** What a canvas file also holds once Save to file adds its digest. */
+const DIGEST_ROOM = 128;
+/** The most the setters let a canvas grow to, so its file is always readable. */
+const CANVAS_WRITE_LIMIT = CANVAS_MAX_BYTES - DIGEST_ROOM;
+
+/** The canvas a setter built, unless it grows the canvas past what a canvas file holds. */
+function fitted(before: CanvasSidecar, after: CanvasSidecar): CanvasSidecar {
+  const size = canvasBytes(after);
+  if (size > CANVAS_WRITE_LIMIT && size > canvasBytes(before))
+    throw Error(CANVAS_TOO_BIG);
+  return after;
+}
+
+/** Structural equality for the JSON the sidecar holds. */
+function same(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a))
+    return (
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, index) => same(item, b[index]))
+    );
+  if (isRecord(a) && isRecord(b)) {
+    const keys = Object.keys(a);
+    return (
+      keys.length === Object.keys(b).length &&
+      keys.every((key) => Object.hasOwn(b, key) && same(a[key], b[key]))
+    );
+  }
+  return false;
+}
+
 function readViewport(value: unknown): CanvasSidecar["viewport"] | null {
   if (!isRecord(value)) return null;
   const viewport: NonNullable<CanvasSidecar["viewport"]> = {};
@@ -519,20 +551,36 @@ export function canvasFile(
 export const stepNotesOf = (canvas: CanvasSidecar): Record<string, StepNote> =>
   canvas.stepNotes ?? {};
 
-/** The canvas with a step's (or trigger's) note set; null or blank text removes it. */
+/**
+ * The canvas with a step's (or trigger's) note set; null or blank text removes
+ * it. Text beyond the longest a note holds is cut. The canvas itself comes
+ * back when the note is already there as given.
+ */
 export function withStepNote(
   canvas: CanvasSidecar,
   id: string,
   note: StepNote | null,
 ): CanvasSidecar {
-  const notes = { ...stepNotesOf(canvas) };
-  if (note && note.text.trim()) notes[id] = { ...note };
-  else if (id in notes) delete notes[id];
-  else return canvas;
-  const next = { ...canvas };
-  if (Object.keys(notes).length) next.stepNotes = notes;
-  else delete next.stepNotes;
-  return next;
+  const notes = stepNotesOf(canvas);
+  const had = Object.hasOwn(notes, id);
+  if (!note || !note.text.trim()) {
+    if (!had) return canvas;
+    const kept = Object.entries(notes).filter(([key]) => key !== id);
+    const next = { ...canvas };
+    if (kept.length) next.stepNotes = Object.fromEntries(kept);
+    else delete next.stepNotes;
+    return next;
+  }
+  const clean: StepNote = {
+    ...note,
+    text:
+      characters(note.text) > MAX_STEP_NOTE_TEXT
+        ? [...note.text].slice(0, MAX_STEP_NOTE_TEXT).join("")
+        : note.text,
+  };
+  if (typeof clean.showOnCanvas !== "boolean") delete clean.showOnCanvas;
+  if (had && same(notes[id], clean)) return canvas;
+  return fitted(canvas, { ...canvas, stepNotes: { ...notes, [id]: clean } });
 }
 
 /** The note's first line when it shows on the canvas, else "". */
@@ -548,47 +596,78 @@ export const ownedRecipes = (
   canvas: CanvasSidecar,
 ): Record<string, ActionRecipe> => canvas.actionRecipes ?? {};
 
-/** The canvas with an owned action's recipe set (and its name listed), or both removed (null). */
+const ACTION_NAME_ERROR =
+  "Use letters, numbers, dots, underscores or hyphens for the action name, starting with a letter or number.";
+
+/**
+ * The canvas with an owned action's recipe set (and its name listed), or both
+ * removed (null). An action already listed keeps its place; the canvas itself
+ * comes back when nothing changes. Throws a plain error for a name or recipe a
+ * canvas file wouldn't read and for a 201st action.
+ */
 export function withOwnedRecipe(
   canvas: CanvasSidecar,
   name: string,
   recipe: ActionRecipe | null,
 ): CanvasSidecar {
-  const names = (canvas.ownedActions ?? []).filter((item) => item !== name);
-  const recipes = { ...ownedRecipes(canvas) };
-  delete recipes[name];
-  if (recipe) {
-    names.push(name);
-    recipes[name] = structuredClone(recipe);
+  const names = canvas.ownedActions ?? [];
+  const recipes = ownedRecipes(canvas);
+  const listed = names.includes(name);
+  if (!recipe) {
+    if (!listed && !Object.hasOwn(recipes, name)) return canvas;
+    const keptNames = names.filter((item) => item !== name);
+    const keptRecipes = Object.entries(recipes).filter(([key]) => key !== name);
+    const next = { ...canvas };
+    if (keptNames.length) next.ownedActions = keptNames;
+    else delete next.ownedActions;
+    if (keptRecipes.length)
+      next.actionRecipes = Object.fromEntries(keptRecipes);
+    else delete next.actionRecipes;
+    return next;
   }
-  const next = { ...canvas };
-  if (names.length) next.ownedActions = names;
-  else delete next.ownedActions;
-  if (Object.keys(recipes).length) next.actionRecipes = recipes;
-  else delete next.actionRecipes;
-  return next;
+  if (!NAME.test(name)) throw Error(ACTION_NAME_ERROR);
+  if (recipe.kind !== "http" && recipe.kind !== "connector")
+    throw Error("Use http or connector for the action's recipe.");
+  if (listed && Object.hasOwn(recipes, name) && same(recipes[name], recipe))
+    return canvas;
+  if (!listed && names.length >= MAX_OWNED_ACTIONS)
+    throw Error(`Keep at most ${MAX_OWNED_ACTIONS} actions.`);
+  return fitted(canvas, {
+    ...canvas,
+    ownedActions: listed ? names : [...names, name],
+    actionRecipes: { ...recipes, [name]: structuredClone(recipe) },
+  });
 }
 
-/** An owned action renamed: its name and recipe move together, in place. */
+/**
+ * An owned action renamed: its name and recipe move together, in place. Throws
+ * a plain error when the new name is one a canvas file wouldn't read or is
+ * already another action's.
+ */
 export function renameOwnedRecipe(
   canvas: CanvasSidecar,
   from: string,
   to: string,
 ): CanvasSidecar {
-  const recipe = ownedRecipes(canvas)[from];
-  if (!recipe || from === to) return canvas;
-  return {
-    ...canvas,
-    ownedActions: (canvas.ownedActions ?? []).map((name) =>
-      name === from ? to : name,
-    ),
-    actionRecipes: Object.fromEntries(
-      Object.entries(ownedRecipes(canvas)).map(([name, r]) => [
+  const names = canvas.ownedActions ?? [];
+  const recipes = ownedRecipes(canvas);
+  const listed = names.includes(from);
+  const hasRecipe = Object.hasOwn(recipes, from);
+  if (from === to || (!listed && !hasRecipe)) return canvas;
+  if (!NAME.test(to)) throw Error(ACTION_NAME_ERROR);
+  if (names.includes(to) || Object.hasOwn(recipes, to))
+    throw Error(`Another action is already named ${to}.`);
+  const next = { ...canvas };
+  if (listed)
+    next.ownedActions = names.map((name) => (name === from ? to : name));
+  if (hasRecipe)
+    next.actionRecipes = Object.fromEntries(
+      Object.entries(recipes).map(([name, r]) => [
         name === from ? to : name,
         r,
       ]),
-    ),
-  };
+    );
+  return fitted(canvas, next);
 }
 
 /** The canvas without the owned actions no step uses any more. */
@@ -606,16 +685,34 @@ export function pruneOwnedRecipes(
 export const triggerIntents = (canvas: CanvasSidecar): TriggerIntent[] =>
   canvas.triggers ?? [];
 
-/** The canvas with these trigger choices (at most six); an empty list leaves the field out. */
+/**
+ * The canvas with these trigger choices (at most six; more are left out); an
+ * empty list leaves the field out. The canvas itself comes back when the list
+ * is the one it has. Throws a plain error for an ID that isn't "trigger-" and
+ * 8 lowercase hexadecimal digits, one used twice, or an unknown kind.
+ */
 export function withTriggerIntents(
   canvas: CanvasSidecar,
   triggers: TriggerIntent[],
 ): CanvasSidecar {
+  const kept = triggers.slice(0, MAX_TRIGGERS);
+  const seen = new Set<string>();
+  for (const intent of kept) {
+    if (typeof intent.id !== "string" || !TRIGGER_ID.test(intent.id))
+      throw Error(
+        'Give each trigger an ID of "trigger-" and 8 lowercase hexadecimal digits.',
+      );
+    if (seen.has(intent.id)) throw Error("Give each trigger its own ID.");
+    seen.add(intent.id);
+    if (!TRIGGER_KINDS.includes(intent.kind))
+      throw Error(
+        "Use manual, webhook, schedule, broker, email, provider or called for a trigger.",
+      );
+  }
+  if (same(triggerIntents(canvas), kept)) return canvas;
   const next = { ...canvas };
-  if (triggers.length)
-    next.triggers = triggers
-      .slice(0, MAX_TRIGGERS)
-      .map((intent) => ({ ...intent }));
+  if (kept.length)
+    next.triggers = kept.map((intent) => structuredClone(intent));
   else delete next.triggers;
-  return next;
+  return fitted(canvas, next);
 }

@@ -282,3 +282,34 @@ test("connected, unsaved designer edits keep the reload guard on", async ({
     }),
   ).toBe(true);
 });
+
+test("a draft whose notes and settings can't be read opens without them and says so", async ({
+  page,
+}) => {
+  await offline(page);
+  await newWorkflow(page);
+  await insertStep(page, "Transform");
+  await expect(page.locator(".status-chip")).toContainText(
+    /Draft saved \d{2}:\d{2}/,
+    { timeout: 10_000 },
+  );
+  const toast = page.getByRole("alert").locator(".toast");
+  // A draft whose notes and settings read fine opens without a word.
+  await page.reload();
+  await expect(steps(page)).toHaveCount(1);
+  await expect(toast).toHaveCount(0);
+  // One saved by a newer Studio can't be read: the workflow still opens.
+  await page.evaluate(() => {
+    const [entry] = JSON.parse(localStorage.getItem("weave.localDrafts.v1")!);
+    const key = `weave.localDraft.${entry.id}`;
+    const draft = JSON.parse(localStorage.getItem(key)!);
+    draft.canvas = { schemaVersion: 3, kind: "weave.studio/canvas" };
+    localStorage.setItem(key, JSON.stringify(draft));
+  });
+  await page.reload();
+  await expect(steps(page)).toHaveCount(1);
+  await expect(toast).toHaveAttribute("data-tone", "danger");
+  await expect(toast).toContainText(
+    "Studio couldn't read the notes and settings saved with this workflow, so it opened without them.",
+  );
+});
