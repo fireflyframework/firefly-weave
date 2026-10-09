@@ -264,6 +264,90 @@ for (const viewport of [
       ).toHaveText("Review expense 104");
     });
 
+    test("a run opened before identity arrives gains its readable task", async ({
+      page,
+    }) => {
+      await page.addInitScript(() => {
+        const fetchOriginal = window.fetch.bind(window);
+        let release!: () => void;
+        const identity = new Promise<void>((resolve) => (release = resolve));
+        Object.assign(window, { releaseRunIdentity: release });
+        window.fetch = async (...args: Parameters<typeof fetch>) => {
+          const response = await fetchOriginal(...args);
+          if (String(args[0]).endsWith("/studio/api/api/v1/identity"))
+            await identity;
+          return response;
+        };
+      });
+      await runPlatform(page);
+      await page.getByRole("button", { name: "Runs", exact: true }).click();
+      await page.locator(".resource-row").first().click();
+      const detail = page.locator(".record-detail");
+      await expect(
+        detail.getByRole("group", { name: "Workflow version for this run" }),
+      ).toBeVisible();
+      const now = detail.getByRole("region", { name: "Now" });
+      await expect(now).toContainText("Waiting for a person at review");
+      await page.evaluate(() =>
+        (
+          window as unknown as { releaseRunIdentity: () => void }
+        ).releaseRunIdentity(),
+      );
+      await expect(
+        detail.getByRole("button", { name: "Pause run" }),
+      ).toBeVisible();
+      await expect(now).toContainText(
+        "Waiting for Review expense 104, assigned to reviewers",
+      );
+      await expect(
+        now.getByRole("button", { name: "Open task", exact: true }),
+      ).toBeVisible();
+    });
+
+    test("a task response for a previous run cannot enrich the selected run", async ({
+      page,
+    }) => {
+      await runPlatform(page);
+      await expect(
+        page.getByRole("button", { name: "My tasks", exact: true }),
+      ).toBeVisible();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let started!: () => void;
+      const requested = new Promise<void>((resolve) => (started = resolve));
+      let finished!: () => void;
+      const fulfilled = new Promise<void>((resolve) => (finished = resolve));
+      await page.route(`${environment}/human-tasks?*`, async (r) => {
+        if (new URL(r.request().url()).searchParams.get("status") !== "ready")
+          return r.fulfill({ json: { items: [], next_cursor: null } });
+        started();
+        await gate;
+        await r.fulfill({ json: { items: [task], next_cursor: null } });
+        finished();
+      });
+      await page.getByRole("button", { name: "Runs", exact: true }).click();
+      await page.locator(".resource-row").first().click();
+      await requested;
+      await page
+        .getByRole("button", { name: "Close detail", exact: true })
+        .click();
+      await page.locator(".resource-row").nth(1).click();
+      const detail = page.locator(".record-detail");
+      await expect(detail).toContainText("expense-105");
+      release();
+      await fulfilled;
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      await expect(detail).not.toContainText("Review expense 104");
+      await expect(
+        detail.getByRole("button", { name: "Open task", exact: true }),
+      ).toHaveCount(0);
+    });
+
     test("an incident says where the run stopped and why", async ({ page }) => {
       await runPlatform(page);
       await page.getByRole("button", { name: "Runs", exact: true }).click();

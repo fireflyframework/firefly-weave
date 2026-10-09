@@ -54,6 +54,16 @@ SPDX-License-Identifier: Apache-2.0
   border-radius: 2px 2px 0 0;
   background: var(--accent);
 }
+/* On a phone three tabs share one row: each shrinks to its longest word and
+   wraps the rest of its label, so the strip never widens the page. */
+@media (max-width: 767px) {
+  .settings-tabs button {
+    flex: 0 1 auto;
+    padding: var(--space-1) var(--space-2);
+    white-space: normal;
+    line-height: 1.25;
+  }
+}
 .people-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -248,4 +258,11 @@ SPDX-License-Identifier: Apache-2.0
     margin-top: var(--space-1);
     color: var(--muted);
   }
+}
+.preferences-card {
+  max-width: 720px;
+}
+.preference-switch {
+  font: var(--type-body);
+  font-weight: 600;
 }

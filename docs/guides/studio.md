@@ -741,6 +741,92 @@ hold Ctrl or Command while you scroll to zoom.
 Start and End are fixed visual boundaries, including an empty Start → End flow;
 they are never added as synthetic execution steps.
 
+### Try the new canvas
+
+Studio has a new canvas that lays workflows out from left to right. Turn it on
+in **Settings → Preferences** with **Try the new editor**; Studio keeps the
+choice in this browser, and you can turn it off at any time. **Outline** and
+**Source** work the same with either canvas.
+
+- **Trigger and End.** A workflow starts at its **Trigger** tile, which reads
+  **Manual form · 3 fields** underneath (just **Manual form** when the workflow
+  has no input fields). Select it to edit the inputs. It ends at **End**; select
+  End to edit the workflow result. A new workflow has neither yet: it shows
+  **Add first step**, with **Start from a template** under it, until you add a
+  step.
+- **Steps by role.** Each step's shape and icon say what it does: a circle
+  waits, an octagon fails, a tall bar starts a **Parallel** step and a bar
+  labeled **All branches done** ends it. A **Decision** has one labeled output
+  per path, then **Otherwise**, and each path runs in its own lane. A path that
+  ends with **Fail** ends in a small square marker, which a screen reader calls
+  "This path ends here".
+- **Add steps.** Select the **+** after the last step of any path, the **+** that
+  appears when you point at an edge or move focus to it (it inserts between two
+  steps), or the dashed box of an empty path, which has **Add a step** under
+  it. You can also drag from a step's output handle to an empty part of the
+  canvas: the step picker opens there, and the new step goes where that output
+  leads, which is right after the step, or first in the path for a Decision or
+  Parallel output. Dropping on a step or near one does nothing, because steps
+  run in the order of their path: Studio says "Steps run in order. Use + to
+  insert."
+- **Move, duplicate and delete.** Point at a step, or move focus to it, to show
+  its toolbar with **Delete** and **More**; right-click a step for the same
+  menu. **More** holds **Open**, **Rename**, **Duplicate**, **Move to…** and
+  **Delete**, and **Add paths for answers** on a Human task. Drag a step onto a
+  highlighted **+** to move it, or choose **Move to…** and then a **+**.
+- **Select several steps.** Shift-click or Ctrl-click (Command-click on a Mac)
+  adds or removes a step, and dragging on an empty part of the canvas draws a
+  selection box. Selecting a Decision or Parallel step selects every step inside
+  it, and the group counts as one step. With two or more steps selected, a
+  toolbar shows how many, **Duplicate** (for steps next to each other in one
+  path) and **Delete**.
+- **Find your way.** Scroll to pan (hold Shift to pan sideways), and hold Ctrl
+  or Command while you scroll to zoom, from 25 to 200 percent. Space, Ctrl or
+  Command with a drag, or the middle mouse button, also pans. The canvas tools
+  at the bottom left zoom out and in, return to 100 percent, show the minimap,
+  run **Fit view** and open **Keyboard shortcuts**; in a window narrower than
+  768 pixels they become one **View** menu, and the minimap is not shown. The
+  minimap in the bottom left appears while the view moves, and **Show minimap**
+  keeps it open. So that step names stay readable, Studio opens a workflow at 50
+  percent zoom or more, and **Fit view** (the tool or the 1 key) does too: a
+  workflow that fits at 50 percent or more is shown whole, and a larger one
+  opens at 50 percent from the trigger, with the rest a pan away. Step names
+  wrap to two lines. Below 40 percent zoom, steps drop their labels; below 30
+  percent they are plain boxes with their icons.
+- **Badges and simulations.** A step shows one badge in its corner, most
+  important first: a failed step, an error, **Setup needed**, a warning, then a
+  step that finished in the last run, with a check. While a simulation runs, the
+  step it is at has a steady amber border and the edges it took are amber; when
+  the simulation ends, those edges turn green and the edges it never took are
+  dashed.
+
+Tab stops at one step at a time, the selected step or else the Trigger tile, and then
+at that step's toolbar and its **+** controls; the arrow keys move between
+steps. Press ? on the canvas, or select **Keyboard shortcuts** in the canvas
+tools, to see every key. These keys are for the new canvas; the table under
+[Edit source, undo, and save to a file](#edit-source-undo-and-save-to-a-file)
+describes the current one.
+
+| Keys | What they do |
+| --- | --- |
+| → and ← | Go to the next or previous step; → on a Decision or Parallel step goes into its first path |
+| ↑ and ↓ | Go to the nearest step in the path above or below, inside the same Decision or Parallel step |
+| Shift+→ and Shift+← | Add the next or previous step to the selection |
+| Enter | Open the step details; on **Trigger** or **End**, open the workflow inputs or result |
+| F2 | Rename the step |
+| N or / | Open the step picker after the focused step |
+| Ctrl+A or Command-A | Select every step |
+| Ctrl+D or Command-D | Duplicate the selected steps |
+| Delete or Backspace | Delete the selected steps |
+| Ctrl+Z or Command-Z | Undo |
+| Ctrl+Shift+Z or Command-Shift-Z; Ctrl+Y on Windows and Linux | Redo |
+| Ctrl+S or Command-S | Save a draft on a connected platform, or save to a file while you work locally |
+| + or =, - or _ | Zoom in, zoom out |
+| 0, or Ctrl+0 or Command-0 | Zoom to 100 percent |
+| 1 | Fit view |
+| ? | Show the keyboard shortcuts |
+| Escape | One step per press: end a drag or **Move to…**, otherwise hide the toolbar shown over a step, otherwise clear the selection. An open picker, menu or dialog takes Escape first |
+
 ### Edit workflow settings and step properties
 
 **Workflow settings** hold the name, version, input and output schemas,
@@ -913,13 +999,18 @@ designer's main button; while you are connected, it is in the toolbar's **More**
 menu (⋯).
 
 **Studio is designed for a desktop-size screen.** In the designer, the
-navigation shows icons only to give the canvas room; the menu button at the
-bottom of the sidebar (**Expand navigation**) shows the names again. In a window 1280
-pixels wide or narrower, the navigation shows icons only everywhere. At 1024
-pixels or narrower, **Insert step** opens the step palette. At 767 pixels or
-narrower, the inspector opens over the canvas, and the toolbar moves its other
-commands into **More**. Below 600 pixels, a workflow opens on its **Outline**,
-and **Show canvas** switches to the designer.
+navigation opens in full, with the names, in a window 1440 pixels wide or wider,
+and as icons only below that, to give the canvas room. The menu button at the
+bottom of the sidebar (**Collapse navigation** or **Expand navigation**) changes
+it, and Studio remembers your choice in this browser. In a window from 900 to
+1280 pixels wide, the designer shows the navigation in full when you have expanded
+it; in a window narrower than 900 pixels it shows icons only, and the button is
+not offered. In the other views, the navigation shows icons only in a window
+1280 pixels wide or narrower. At 1024 pixels or narrower, **Insert step** opens
+the step palette. At 767 pixels or narrower, the inspector opens over the
+canvas, and the toolbar moves its other commands into **More**. Below 600
+pixels, a workflow opens on its **Outline**, and **Show canvas** switches to the
+designer.
 
 While you are connected, the workflow you are editing lives in the page's
 memory, so save a draft before you reload the page; the browser asks first.
