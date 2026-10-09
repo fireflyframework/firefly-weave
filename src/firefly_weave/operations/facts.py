@@ -132,8 +132,12 @@ class RunStartFacts:
 
     def __post_init__(self) -> None:
         TypeAdapter(RunOrigin).validate_python(self.origin, strict=True)
-        if type(self.test) is not bool or self.test != (self.origin == "test"):
-            raise ValueError("Test origin and test flag must agree")
+        if (
+            type(self.test) is not bool
+            or (self.origin == "test" and not self.test)
+            or (self.test and self.origin not in {"test", "call"})
+        ):
+            raise ValueError("Test flag requires a direct test or inherited call origin")
         if (self.origin == "call") != (self.caller is not None):
             raise ValueError("Call origin requires a caller")
         if self.caller is not None:
@@ -252,38 +256,54 @@ class FactRepository:
         kinds = rows[0]["node_kinds"]
         steps: dict[tuple[str, str], dict[str, Any]] = {}
 
-        def add(key: str, status: str, *, error: str | None = None) -> None:
+        def kind_of(node: str) -> StepKind | None:
+            # Retained runs can be admitted even when their listing cache is incomplete.
+            try:
+                return TypeAdapter(StepKind).validate_python(kinds.get(node), strict=True)
+            except ValueError:
+                return None
+
+        def add(key: str, status: str, *, scheduled: bool = False, error: str | None = None) -> None:
             identity = author_instance(key)
             if identity is None:
                 return
-            kind: StepKind = TypeAdapter(StepKind).validate_python(kinds[identity.node_id], strict=True)
+            kind = kind_of(identity.node_id)
+            observed = scheduled or kind in {"transform", "decisionTable", "fail"}
+            previous = steps.get((identity.node_id, identity.instance_key), {})
+            at = event.timestamp.isoformat()
             steps[identity.node_id, identity.instance_key] = dict(
                 node_id=identity.node_id,
                 instance_key=identity.instance_key,
                 kind=kind,
                 status=status,
-                started_at=None if kind in {"action", "llm", "agent"} else event.timestamp.isoformat(),
-                ended_at=event.timestamp.isoformat() if status in TERMINAL else None,
+                scheduled_at=previous.get("scheduled_at") or (at if observed else None),
+                started_at=previous.get("started_at")
+                or (at if observed and status != "scheduled" and kind not in {"action", "llm", "agent"} else None),
+                ended_at=at if status in TERMINAL else None,
                 error_code=error,
             )
 
         if not isinstance(view, TerminalControl):
+            tasks = {command.node_id for command in result.commands if isinstance(command, TaskIntent)}
             for command in result.commands:
                 if isinstance(command, (TaskIntent, Deadline, HumanTaskIntent)):
-                    add(command.node_id, "scheduled" if isinstance(command, TaskIntent) else "waiting")
+                    add(command.node_id, "scheduled" if isinstance(command, TaskIntent) else "waiting", scheduled=True)
                 elif command.kind == "spawn_branch":
-                    add(command.node_id, "running")
+                    join = result.state.joins.get(command.node_id)
+                    first = result.state.branches.get(join.branches[0]) if join and join.branches else None
+                    # Later branch dispatches do not witness the join's original activation.
+                    add(command.node_id, "running", scheduled=first is not None and command.branch == first.name)
             for change in result.steps:
                 identity = author_instance(change.node_id)
                 if identity is None:
                     continue
-                kind = kinds[identity.node_id]
+                kind = kind_of(identity.node_id)
                 status = (
                     "succeeded"
                     if change.status == "completed"
-                    else ("scheduled" if kind in {"action", "llm", "agent"} else "waiting")
+                    else ("scheduled" if kind in {"action", "llm", "agent"} or change.node_id in tasks else "waiting")
                 )
-                add(change.node_id, status)
+                add(change.node_id, status, scheduled=change.status == "waiting")
             for owner, join in result.state.joins.items():
                 if join.status == "waiting" and (owner, "") not in steps:
                     add(owner, "running")
@@ -317,11 +337,16 @@ class FactRepository:
         await self.execute(
             "WITH projected AS (INSERT INTO step_facts(tenant_id,project_id,environment_id,run_id,node_id,"
             "instance_key,kind,status,scheduled_at,started_at,ended_at,error_code) "
-            "SELECT :tenant,:project,:environment,:run,s.node_id,s.instance_key,s.kind,s.status,:at,"
+            "SELECT :tenant,:project,:environment,:run,s.node_id,s.instance_key,coalesce(s.kind,known.kind),"
+            "s.status,s.scheduled_at,"
             "s.started_at,s.ended_at,s.error_code FROM jsonb_to_recordset(cast(:steps AS jsonb)) "
-            "AS s(node_id text,instance_key text,kind text,status text,started_at timestamptz,"
-            "ended_at timestamptz,error_code text) ON CONFLICT(run_id,node_id,instance_key) DO UPDATE SET "
-            "status=excluded.status,started_at=coalesce(step_facts.started_at,excluded.started_at),"
+            "AS s(node_id text,instance_key text,kind text,status text,scheduled_at timestamptz,started_at timestamptz,"
+            "ended_at timestamptz,error_code text) LEFT JOIN step_facts known ON known.run_id=:run "
+            "AND known.tenant_id=:tenant AND known.project_id=:project AND known.environment_id=:environment "
+            "AND known.node_id=s.node_id AND known.instance_key=s.instance_key "
+            "WHERE coalesce(s.kind,known.kind) IS NOT NULL ON CONFLICT(run_id,node_id,instance_key) DO UPDATE SET "
+            "status=excluded.status,scheduled_at=coalesce(step_facts.scheduled_at,excluded.scheduled_at),"
+            "started_at=coalesce(step_facts.started_at,excluded.started_at),"
             "ended_at=CASE WHEN step_facts.status=excluded.status THEN coalesce(step_facts.ended_at,excluded.ended_at) "
             "ELSE excluded.ended_at END,error_code=excluded.error_code WHERE step_facts.handled IS NULL "
             "RETURNING node_id,instance_key) UPDATE step_facts SET status=:closed,ended_at=:at "

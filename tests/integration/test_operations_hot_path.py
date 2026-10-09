@@ -128,6 +128,9 @@ async def test_persist_projection_uses_bounded_sql(operations_case, captured, mo
     assert len(await case.rows("SELECT node_id FROM step_facts WHERE run_id=:id", id=run.id)) == (
         count + 1 if isinstance(mode, int) or mode == "inline" else 1
     )
+    for row in await case.rows("SELECT kind,scheduled_at,started_at FROM step_facts WHERE run_id=:id", id=run.id):
+        assert row["scheduled_at"] is not None
+        assert row["started_at"] == (None if row["kind"] == "action" else row["scheduled_at"])
     from operations_support import assert_usage
 
     async with case.owner() as owner:

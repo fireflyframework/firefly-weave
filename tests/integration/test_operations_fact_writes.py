@@ -368,8 +368,11 @@ async def start_inline(case, steps, output, *, worker_pins=None):
     )
 
 
-@pytest.mark.parametrize("mode", ["null", "fail", "wait", "signal", "switch"])
-async def test_inline_wait_and_terminal_steps_have_honest_times(operations_case, services, mode):
+@pytest.mark.parametrize(
+    "mode,historical",
+    [(mode, False) for mode in ("null", "fail", "wait", "signal", "switch")] + [("wait", True), ("signal", True)],
+)
+async def test_inline_wait_and_terminal_steps_have_honest_times(operations_case, services, mode, historical):
     case = operations_case
     step = {"id": "item", "kind": "transform", "value": {"literal": None}}
     if mode == "fail":
@@ -391,6 +394,9 @@ async def test_inline_wait_and_terminal_steps_have_honest_times(operations_case,
     assert row["attempts"] == 0
     if mode in {"wait", "signal"}:
         assert row["status"] == "waiting" and row["ended_at"] is None
+        if historical:
+            async with case.owner.begin() as owner:
+                await owner.execute(text("DELETE FROM step_facts WHERE run_id=:id"), {"id": run.id})
         if mode == "signal":
             from firefly_weave.runtime.signals import SignalService
 
@@ -419,7 +425,10 @@ async def test_inline_wait_and_terminal_steps_have_honest_times(operations_case,
                 assert await services(case.sessions).resolve(DeadlineService).tick(tx, 100) == 1
         ended = (await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id))[0]
         assert ended["status"] == "succeeded" and ended["ended_at"] >= row["started_at"]
-        assert ended["started_at"] == row["started_at"]
+        if historical:
+            assert ended["scheduled_at"] is None and ended["started_at"] is None
+        else:
+            assert ended["scheduled_at"] == row["scheduled_at"] and ended["started_at"] == row["started_at"]
     elif mode == "fail":
         assert row["status"] == "failed" and row["error_code"] == "DECLINED"
         assert row["ended_at"] == row["started_at"]
@@ -436,6 +445,10 @@ async def test_inline_wait_and_terminal_steps_have_honest_times(operations_case,
         "origin": "manual",
         "test": False,
     }
+    from operations_support import assert_usage
+
+    async with case.owner() as owner:
+        await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})
 
 
 async def test_completion_behind_pause_keeps_actual_end_time(operations_case, task_service, worker_ids):
@@ -666,3 +679,178 @@ async def test_inline_parallel_failure_closes_tasks_scheduled_in_the_same_transi
     assert await case.rows("SELECT status,ready_since FROM task_facts WHERE run_id=:id", id=run.id) == [
         {"status": "cancelled", "ready_since": None}
     ]
+
+
+@pytest.mark.parametrize("cache", ["backfilled", "incomplete", "invalid"])
+@pytest.mark.parametrize("missing_step", [False, True])
+async def test_listing_cache_cannot_veto_admitted_completion(
+    operations_case, task_service, worker_ids, cache, missing_step
+):
+    import json
+    import runpy
+    from pathlib import Path
+
+    from operations_support import assert_usage
+
+    from firefly_weave.runtime.admission import admission
+
+    case = operations_case
+    run = await case.start()
+    params = {
+        "tenant": case.scope.tenant_id,
+        "project": case.scope.project_id,
+        "environment": case.scope.environment_id,
+    }
+    async with case.owner.begin() as owner:
+        if cache == "backfilled":
+            for table in ("run_event_evidence", "run_events", "run_facts"):
+                await owner.execute(text(f"DELETE FROM {table} WHERE run_id=:id"), {"id": run.id})
+            frozen = runpy.run_path(
+                str(Path(__file__).resolve().parents[2] / "migrations/versions/0031_operations_facts.py")
+            )
+            await owner.run_sync(lambda session: frozen["backfill_scope"](session.connection(), params))
+        else:
+            await owner.execute(
+                text("UPDATE run_facts SET node_kinds=cast(:kinds AS jsonb) WHERE run_id=:id"),
+                {
+                    "id": run.id,
+                    "kinds": json.dumps({"other": "transform"} if cache == "incomplete" else {"work": "future"}),
+                },
+            )
+        if missing_step:
+            await owner.execute(text("DELETE FROM step_facts WHERE run_id=:id"), {"id": run.id})
+    before = (await case.rows("SELECT classification_state,node_kinds FROM run_facts WHERE run_id=:id", id=run.id))[0]
+    if cache == "backfilled":
+        assert before == {"classification_state": "unavailable", "node_kinds": {}}
+    source = (await case.rows("SELECT artifact,state,activation,request FROM runs WHERE id=:id", id=run.id))[0]
+    assert admission(source) == "available"
+    async with case.tx() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    async with case.tx() as tx:
+        await task_service.complete(tx, lease.proof, uuid4(), 42)
+    assert (await case.rows("SELECT state->>'status' AS status FROM runs WHERE id=:id", id=run.id)) == [
+        {"status": "succeeded"}
+    ]
+    assert (await case.rows("SELECT status FROM run_facts WHERE run_id=:id", id=run.id)) == [{"status": "succeeded"}]
+    assert (await case.rows("SELECT classification_state,node_kinds FROM run_facts WHERE run_id=:id", id=run.id))[
+        0
+    ] == before
+    assert await case.rows("SELECT status FROM step_facts WHERE run_id=:id", id=run.id) == (
+        [] if missing_step else [{"status": "succeeded"}]
+    )
+    async with case.owner() as owner:
+        await assert_usage(owner, params)
+
+
+async def test_historical_worker_completion_preserves_unknown_times_and_atomicity(
+    operations_case, task_service, worker_ids, monkeypatch
+):
+    from operations_support import assert_usage
+
+    from firefly_weave.operations.outbox import OutboxService
+
+    case = operations_case
+    run = await case.start()
+    async with case.tx() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    async with case.owner.begin() as owner:
+        await owner.execute(text("DELETE FROM step_facts WHERE run_id=:id"), {"id": run.id})
+    tables = (
+        "runs",
+        "run_events",
+        "run_facts",
+        "step_facts",
+        "task_facts",
+        "task_intents",
+        "task_leases",
+        "operation_usage",
+        "operation_reservations",
+        "operation_allocations",
+        "event_deliveries",
+        "integration_events",
+        "operation_control_deliveries",
+    )
+    before = {
+        table: await case.rows(f"SELECT to_jsonb(t) AS row FROM {table} t ORDER BY to_jsonb(t)::text")
+        for table in tables
+    }
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("completion rollback")
+
+    completion = uuid4()
+    with monkeypatch.context() as patch:
+        patch.setattr(OutboxService, "append", fail)
+        with pytest.raises(RuntimeError, match="completion rollback"):
+            async with case.tx() as tx:
+                await task_service.complete(tx, lease.proof, completion, 42)
+    assert {
+        table: await case.rows(f"SELECT to_jsonb(t) AS row FROM {table} t ORDER BY to_jsonb(t)::text")
+        for table in tables
+    } == before
+    async with case.tx() as tx:
+        await task_service.complete(tx, lease.proof, completion, 42)
+    fact = (await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id))[0]
+    assert fact["status"] == "succeeded" and fact["ended_at"] is not None
+    assert fact["scheduled_at"] is None and fact["started_at"] is None and fact["attempts"] == 0
+    async with case.tx() as tx:
+        await task_service.complete(tx, lease.proof, completion, 42)
+    assert (await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id))[0] == fact
+    async with case.owner() as owner:
+        await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})
+
+
+@pytest.mark.parametrize("historical", [False, True])
+@pytest.mark.parametrize("late_start", [False, True])
+async def test_join_progress_preserves_first_observed_times(
+    operations_case, task_service, worker_ids, historical, late_start
+):
+    from operations_support import assert_usage
+
+    case = operations_case
+    branches = {
+        name: {
+            "steps": [{"id": name, "kind": "action", "uses": "echo-action@2.0.0", "with": {"literal": 3}}],
+            "output": {"literal": None},
+        }
+        for name in ("first", "second")
+    }
+    steps = [{"id": "fork", "kind": "parallel", "concurrency": 1, "branches": branches}]
+    if late_start:
+        steps.insert(0, {"id": "lead", "kind": "action", "uses": "echo-action@2.0.0", "with": {"literal": 3}})
+    run = await start_inline(
+        case,
+        steps,
+        {"literal": None},
+        worker_pins=case.activation.request.worker_release_ids,
+    )
+    if late_start:
+        async with case.tx() as tx:
+            lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+        async with case.tx() as tx:
+            await task_service.complete(tx, lease.proof, uuid4(), 42)
+    original = (
+        await case.rows("SELECT scheduled_at,started_at FROM step_facts WHERE run_id=:id AND node_id='fork'", id=run.id)
+    )[0]
+    assert original["scheduled_at"] is not None and original["started_at"] == original["scheduled_at"]
+    if historical:
+        async with case.owner.begin() as owner:
+            await owner.execute(text("DELETE FROM step_facts WHERE run_id=:id AND node_id='fork'"), {"id": run.id})
+    for status in ("running", "succeeded"):
+        async with case.tx() as tx:
+            lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+        async with case.tx() as tx:
+            await task_service.complete(tx, lease.proof, uuid4(), 42)
+        fact = (
+            await case.rows(
+                "SELECT status,scheduled_at,started_at,ended_at FROM step_facts WHERE run_id=:id AND node_id='fork'",
+                id=run.id,
+            )
+        )[0]
+        assert fact["status"] == status
+        assert {key: fact[key] for key in ("scheduled_at", "started_at")} == (
+            {"scheduled_at": None, "started_at": None} if historical else original
+        )
+        assert (fact["ended_at"] is not None) is (status == "succeeded")
+    async with case.owner() as owner:
+        await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})

@@ -160,6 +160,32 @@ def test_call_origin_requires_a_typed_caller():
         facts.RunStartFacts(origin="call", caller={"run_id": uuid4(), "node_id": "caller", "instance_key": ""})
 
 
+@pytest.mark.parametrize("inherited", [False, True])
+def test_call_origin_preserves_inherited_test_flag(inherited):
+    from firefly_weave.contracts.run_views import RunSummaryCaller
+
+    caller = RunSummaryCaller(run_id=uuid4(), node_id="invoke", instance_key="invoke[3]")
+    value = facts.RunStartFacts(origin="call", test=inherited, caller=caller)
+    assert value.origin == "call" and value.test is inherited and value.caller == caller
+
+
+def test_inherited_test_flag_does_not_relax_caller_or_retry_validation():
+    from firefly_weave.contracts.run_views import RunSummaryCaller
+
+    caller = RunSummaryCaller(run_id=uuid4(), node_id="invoke", instance_key="")
+    for values in (
+        {"origin": "call", "test": True},
+        {"origin": "call", "test": True, "caller": caller.model_dump(mode="json")},
+        {"origin": "call", "test": True, "caller": caller, "retried_from_run_id": uuid4()},
+        {"origin": "call", "test": "true", "caller": caller},
+        {"origin": "test", "test": False},
+        {"origin": "test", "test": True, "caller": caller},
+    ):
+        with pytest.raises(ValueError):
+            facts.RunStartFacts(**values)
+    assert facts.RunStartFacts(origin="test", test=True).test is True
+
+
 def test_origin_is_not_a_request_body_field():
     from firefly_weave.contracts.runtime import StartRunRequest
 
