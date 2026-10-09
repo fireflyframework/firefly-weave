@@ -17,25 +17,16 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { Routes } from "@angular/router";
 import { settingsRoutes } from "./settings/settings-routes";
+import { legacyRedirects, operateRoutes } from "./operate/operate-routes";
 // Componentless routes preserve the single authoring session across views.
 export const routes: Routes = [
   { path: "", redirectTo: "home", pathMatch: "full" },
-  ...[
-    "home",
-    "workflows",
-    "runs",
-    "tasks",
-    "email",
-    "connections",
-    "workers",
-    "operations",
-    "connect",
-  ].map((path) => ({ path, children: [] })),
+  ...legacyRedirects,
+  ...["home", "workflows", "tasks", "email", "connections", "connect"].map(
+    (path) => ({ path, children: [] }),
+  ),
   ...settingsRoutes,
   { path: "workflows/:id/designer", children: [] },
-  ...["targets", "deployments", "plans", "jobs"].map((collection) => ({
-    path: `operations/${collection}/:id`,
-    children: [],
-  })),
+  ...operateRoutes,
   { path: "**", redirectTo: "home" },
 ];

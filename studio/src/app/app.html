@@ -423,10 +423,22 @@ SPDX-License-Identifier: Apache-2.0
               </p>
             }
           </section>
-        } @else if (view === "operations") {
+        } @else if (view === "incidents") {
           <section class="page-content">
             @defer (on immediate) {
-              <weave-operations-view [host]="this" />
+              <weave-incidents-page [host]="this" />
+            }
+          </section>
+        } @else if (view === "workers") {
+          <section class="page-content">
+            @defer (on immediate) {
+              <weave-workers-page [host]="this" />
+            }
+          </section>
+        } @else if (view === "clusters") {
+          <section class="page-content">
+            @defer (on immediate) {
+              <weave-clusters-page [host]="this" />
             }
           </section>
         } @else if (view === "settings") {

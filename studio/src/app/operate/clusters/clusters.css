@@ -1,0 +1,283 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+:host {
+  display: block;
+  max-width: 1200px;
+  margin: 0 auto;
+  min-width: 0;
+}
+.operations-heading,
+.panel-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+}
+.operations-heading {
+  margin-bottom: 24px;
+}
+h1,
+h2,
+h3 {
+  margin-top: 0;
+}
+.eyebrow {
+  font: var(--type-caption);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.operations-heading p {
+  max-width: 72ch;
+}
+.operations-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--selected);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+.operations-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+  margin: 18px 0;
+  background: var(--surface);
+}
+.resource-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  list-style: none;
+  padding: 0;
+  gap: 12px;
+}
+.resource-cards li {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+.resource-cards button {
+  text-align: left;
+}
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+code,
+dd,
+li,
+p {
+  overflow-wrap: anywhere;
+}
+code {
+  font-size: 12px;
+}
+dt {
+  font-weight: 600;
+}
+dd {
+  margin: 4px 0 14px;
+}
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.notice {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+}
+.notice[data-tone="danger"] {
+  background: var(--danger-bg);
+  border-color: var(--danger-bd);
+  border-left-color: var(--danger);
+  color: var(--danger-ink);
+}
+@media (max-width: 600px) {
+  .operations-heading,
+  .panel-heading {
+    display: grid;
+    gap: 12px;
+  }
+  .operations-panel {
+    padding: 16px;
+  }
+  .operations-scope {
+    display: grid;
+  }
+  .actions button {
+    width: 100%;
+  }
+}
+
+/* Clusters tabs: adapter icons, runner presence and the runners table. */
+.target-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.target-name weave-icon {
+  color: var(--muted);
+  flex: none;
+}
+.runner-line {
+  justify-self: start;
+  /* The line wraps inside a narrow card instead of widening it. */
+  max-width: 100%;
+  height: auto;
+  min-height: 22px;
+  padding-block: 2px;
+  white-space: normal;
+}
+.runner-table {
+  /* The last column is as wide as Revoke, so rows without it still align. */
+  --cols: minmax(180px, 1fr) 110px 130px minmax(140px, 1fr) 104px;
+}
+.runner-table .table-head,
+.runner-table .resource-row {
+  grid-template-columns: var(--cols);
+}
+.runner-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.runner-main weave-icon {
+  color: var(--muted);
+  flex: none;
+}
+.runner-main .row-text {
+  display: grid;
+  min-width: 0;
+}
+.runner-main small {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+/* Where the columns are hidden, last contact and operations sit in the row. */
+.runner-main .runner-contact {
+  display: none;
+}
+.runner-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+@media (max-width: 1024px) {
+  .runner-table {
+    --cols: minmax(0, 1fr) 110px 104px;
+  }
+  .runner-table [data-wide] {
+    display: none;
+  }
+  .runner-main .runner-contact {
+    display: block;
+  }
+}
+@media (max-width: 600px) {
+  .runner-table .table-head {
+    display: none;
+  }
+  .runner-table .resource-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .runner-table .runner-main {
+    grid-column: 1 / -1;
+  }
+}
+/* A long target name wraps inside its card instead of widening the page. */
+.target-name button {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+/* Approvals: the countdown keeps its width as it ticks, and the last column
+   fits Review beside Approve plan or Open deployment, so every row lines up
+   with the headings. */
+.approval-table {
+  --cols: minmax(180px, 1fr) 130px minmax(120px, 1fr) 130px 200px;
+}
+.approval-table .table-head,
+.approval-table .resource-row {
+  grid-template-columns: var(--cols);
+}
+.approval-table .row-text {
+  display: grid;
+  min-width: 0;
+}
+.approval-table .row-text strong {
+  overflow-wrap: anywhere;
+}
+.approval-table small {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.countdown {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+}
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+@media (max-width: 1024px) {
+  .approval-table {
+    --cols: minmax(0, 1fr) 130px;
+  }
+  /* The actions sit on their own line, under a heading only screen readers
+     need. */
+  .approval-table [data-wide],
+  .approval-table .table-head > :last-child {
+    display: none;
+  }
+  /* Narrow list tables drop their second heading; this one keeps it. */
+  .approval-table .table-head > :nth-child(2) {
+    display: block;
+  }
+  .approval-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+@media (max-width: 600px) {
+  .approval-table .table-head {
+    display: none;
+  }
+  .approval-table .resource-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}

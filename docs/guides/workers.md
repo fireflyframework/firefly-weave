@@ -233,9 +233,12 @@ refreshing token client.
 ## 4. Observe one task through completion
 
 Start a workflow that calls the published Action. Inspect its run history and
-worker status through the API. In Studio, **Workers** lists the workers in the
-selected environment with their **Status**, such as **Active**, and their
-**Capacity**. Use the [API playground](api-playground.md) to
+worker status through the API. In Studio, **Operate › Workers** lists the
+workers in the selected environment with their status (**Online**,
+**Offline** or **Not seen yet**, and **Draining**), their load against their
+task slots, and their last contact. **Show revoked workers** adds the
+**Revoked** ones. Open a worker to **Drain** or **Resume** it. Use the
+[API playground](api-playground.md) to
 authenticate and select your environment, then the [full API reference](../reference/api-explorer.md)
 for worker registration and run/history reads. A worker token is for execution;
 use a separately granted operator/viewer identity to inspect runs. You should see

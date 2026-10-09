@@ -78,9 +78,10 @@ az containerapp env show --subscription YOUR_SUBSCRIPTION_UUID \
   --resource-group team-weave --name team-environment --query id --output tsv
 ```
 
-Register the target in **Studio → Operations → Register target** using that exact
-identity. Keep the returned target ID for the local setup wizard. Target
-registration records intent; an observation from the runner verifies access.
+Register the target in **Studio → Operate › Clusters → Register target** using
+that exact identity. Keep the returned target ID for the local setup wizard.
+Target registration records intent; an observation from the runner verifies
+access.
 
 ## 3. Prepare a dedicated Weave machine identity
 
@@ -286,6 +287,7 @@ remaining external operation, request a fresh settled observation, and use the
 explicit reconciliation flow. It records the resolution; it does not roll back
 or automatically repeat the earlier change.
 
-Pausing a worker and removing container replicas are different actions. Use
-**Workers → Pause new tasks** to let existing leases finish. Reducing container
-capacity can terminate tasks if those instances have not drained.
+Draining a worker and removing container replicas are different actions. In
+**Operate › Workers**, open the worker and select **Drain** to let its running
+tasks finish while it takes no new ones. Reducing container capacity can
+terminate tasks if those instances have not drained.
