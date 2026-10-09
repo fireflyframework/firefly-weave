@@ -21,71 +21,71 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="1508" viewBox="0 0 960 1508" role="img" aria-labelledby="title desc">
 <title id="title">Choose where your application meets Weave</title><desc id="desc">Three rows, each read left to right. Row A, work locally without a server: WorkflowBuilder produces definition data that you compile against an explicit catalog, then simulate with mocks; no server resource starts and no durable run is created. Row B, call a running API: your application uses WeaveClient (client extra) or the HTTP API and supplies a token, the workspace scope, idempotency keys, and revisions; Weave authorizes every request with current grants, then publishes, activates, and starts runs and returns IDs to keep. Row C, embed trusted server services: native host composition uses injected services and passes actor, scope, audit, and transaction explicitly; it never retains request identity, enlists the unit of work you supply, and authorization and tenant row-level security still apply. A compiled contract describes behavior; separate service checks decide whether a caller can create or execute live resources.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#367D68"/></marker></defs>
-<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#367D68;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-<rect width="960" height="1408" rx="24" fill="#FAFCFB"/>
-<rect x="32" y="30" width="7" height="58" rx="3" fill="#367D68"/>
-<text x="58" y="58" font-size="32" font-weight="700" fill="#173D34">Choose where your application meets Weave</text>
-<text x="58" y="102" font-size="21" font-weight="400" fill="#173D34">The same workflow data can cross three boundaries. Pick the one your</text>
-<text x="58" y="131" font-size="21" font-weight="400" fill="#173D34">application actually needs.</text>
-<rect x="40" y="154" width="880" height="44" rx="12" fill="#EEF4F0"/>
-<text x="58" y="182" font-size="19" font-weight="600" fill="#173D34">READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</text>
-<text x="48" y="242" font-size="24" font-weight="700" fill="#173D34">A • Work locally without a server</text>
-<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="309" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
-<text x="58.0" y="366" font-size="24" font-weight="700" fill="#173D34">Build and compile</text>
-<text x="58.0" y="410" font-size="22" font-weight="400" fill="#173D34">WorkflowBuilder produces definition</text>
-<text x="58.0" y="438" font-size="22" font-weight="400" fill="#173D34">data. Compile it against an explicit</text>
-<text x="58.0" y="466" font-size="22" font-weight="400" fill="#173D34">catalog; no server is needed.</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge{stroke:#62645B;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+<rect width="960" height="1408" rx="24" fill="#F3F1EB"/>
+<rect x="32" y="30" width="7" height="58" rx="3" fill="#855414"/>
+<text x="58" y="58" font-size="32" font-weight="700" fill="#272820">Choose where your application meets Weave</text>
+<text x="58" y="102" font-size="21" font-weight="400" fill="#272820">The same workflow data can cross three boundaries. Pick the one your</text>
+<text x="58" y="131" font-size="21" font-weight="400" fill="#272820">application actually needs.</text>
+<rect x="40" y="154" width="880" height="44" rx="12" fill="#EAE7DF"/>
+<text x="58" y="182" font-size="19" font-weight="600" fill="#272820">READ EACH ROW LEFT TO RIGHT  •  Rows show separate responsibilities</text>
+<text x="48" y="242" font-size="24" font-weight="700" fill="#272820">A • Work locally without a server</text>
+<rect x="40.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="309" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 286) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m20 14-13 14 13 14 M36 14l13 14-13 14 M32 9l-8 38"/></g>
+<text x="58.0" y="366" font-size="24" font-weight="700" fill="#272820">Build and compile</text>
+<text x="58.0" y="410" font-size="22" font-weight="400" fill="#272820">WorkflowBuilder produces definition</text>
+<text x="58.0" y="438" font-size="22" font-weight="400" fill="#272820">data. Compile it against an explicit</text>
+<text x="58.0" y="466" font-size="22" font-weight="400" fill="#272820">catalog; no server is needed.</text>
 <path class="edge" d="M465.0 389.5h29"/>
-<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="309" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 286) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
-<text x="518.0" y="366" font-size="24" font-weight="700" fill="#173D34">Simulate with mocks</text>
-<text x="518.0" y="410" font-size="22" font-weight="400" fill="#173D34">No server resource starts.</text>
-<text x="518.0" y="438" font-size="22" font-weight="400" fill="#173D34">No durable run is created.</text>
-<text x="48" y="574" font-size="24" font-weight="700" fill="#173D34">B • Call a running API</text>
-<rect x="40.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="641" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="15" r="10"/><path d="M9 51V41c0-20 38-20 38 0v10"/></g>
-<text x="58.0" y="698" font-size="24" font-weight="700" fill="#173D34">Your application</text>
-<text x="58.0" y="742" font-size="22" font-weight="400" fill="#173D34">Use WeaveClient (client extra) or</text>
-<text x="58.0" y="770" font-size="22" font-weight="400" fill="#173D34">call the HTTP API directly. Supply a</text>
-<text x="58.0" y="798" font-size="22" font-weight="400" fill="#173D34">token, the workspace scope,</text>
-<text x="58.0" y="826" font-size="22" font-weight="400" fill="#173D34">idempotency keys, and revisions.</text>
+<rect x="500.0" y="263" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="309" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 286) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="23"/><path d="m23 17 16 11-16 11z"/></g>
+<text x="518.0" y="366" font-size="24" font-weight="700" fill="#272820">Simulate with mocks</text>
+<text x="518.0" y="410" font-size="22" font-weight="400" fill="#272820">No server resource starts.</text>
+<text x="518.0" y="438" font-size="22" font-weight="400" fill="#272820">No durable run is created.</text>
+<text x="48" y="574" font-size="24" font-weight="700" fill="#272820">B • Call a running API</text>
+<rect x="40.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="641" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 618) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="15" r="10"/><path d="M9 51V41c0-20 38-20 38 0v10"/></g>
+<text x="58.0" y="698" font-size="24" font-weight="700" fill="#272820">Your application</text>
+<text x="58.0" y="742" font-size="22" font-weight="400" fill="#272820">Use WeaveClient (client extra) or</text>
+<text x="58.0" y="770" font-size="22" font-weight="400" fill="#272820">call the HTTP API directly. Supply a</text>
+<text x="58.0" y="798" font-size="22" font-weight="400" fill="#272820">token, the workspace scope,</text>
+<text x="58.0" y="826" font-size="22" font-weight="400" fill="#272820">idempotency keys, and revisions.</text>
 <path class="edge" d="M465.0 721.5h29"/>
-<rect x="500.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="641" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 618) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
-<text x="518.0" y="698" font-size="24" font-weight="700" fill="#173D34">Weave checks and executes</text>
-<text x="518.0" y="742" font-size="22" font-weight="400" fill="#173D34">Current grants authorize every</text>
-<text x="518.0" y="770" font-size="22" font-weight="400" fill="#173D34">request. Publish, activate, and</text>
-<text x="518.0" y="798" font-size="22" font-weight="400" fill="#173D34">start runs; keep the returned IDs.</text>
-<text x="48" y="906" font-size="24" font-weight="700" fill="#173D34">C • Embed trusted server services</text>
-<rect x="40.0" y="927" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="86.0" cy="973" r="29" fill="#EEF4F0"/>
-<g transform="translate(63.0 950) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
-<text x="58.0" y="1030" font-size="24" font-weight="700" fill="#173D34">Native host composition</text>
-<text x="58.0" y="1074" font-size="22" font-weight="400" fill="#173D34">Use injected services. Pass actor,</text>
-<text x="58.0" y="1102" font-size="22" font-weight="400" fill="#173D34">scope, audit, and transaction</text>
-<text x="58.0" y="1130" font-size="22" font-weight="400" fill="#173D34">explicitly.</text>
+<rect x="500.0" y="595" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="641" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 618) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 43C-2 43-2 20 13 19 17 1 42 4 44 22 59 25 54 43 42 43z M28 20v30 M20 42l8 8 8-8"/></g>
+<text x="518.0" y="698" font-size="24" font-weight="700" fill="#272820">Weave checks and executes</text>
+<text x="518.0" y="742" font-size="22" font-weight="400" fill="#272820">Current grants authorize every</text>
+<text x="518.0" y="770" font-size="22" font-weight="400" fill="#272820">request. Publish, activate, and</text>
+<text x="518.0" y="798" font-size="22" font-weight="400" fill="#272820">start runs; keep the returned IDs.</text>
+<text x="48" y="906" font-size="24" font-weight="700" fill="#272820">C • Embed trusted server services</text>
+<rect x="40.0" y="927" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="86.0" cy="973" r="29" fill="#EAE7DF"/>
+<g transform="translate(63.0 950) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m6 16 22-11 22 11v25L28 52 6 41z M6 16l22 12 22-12 M28 28v24 M17 11l22 11"/></g>
+<text x="58.0" y="1030" font-size="24" font-weight="700" fill="#272820">Native host composition</text>
+<text x="58.0" y="1074" font-size="22" font-weight="400" fill="#272820">Use injected services. Pass actor,</text>
+<text x="58.0" y="1102" font-size="22" font-weight="400" fill="#272820">scope, audit, and transaction</text>
+<text x="58.0" y="1130" font-size="22" font-weight="400" fill="#272820">explicitly.</text>
 <path class="edge" d="M465.0 1053.5h29"/>
-<rect x="500.0" y="927" width="420.0" height="253" rx="18" fill="white" stroke="#BFD2C8" stroke-width="2"/>
-<circle cx="546.0" cy="973" r="29" fill="#EEF4F0"/>
-<g transform="translate(523.0 950) scale(0.82)" stroke="#367D68" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
-<text x="518.0" y="1030" font-size="24" font-weight="700" fill="#173D34">Keep request boundaries</text>
-<text x="518.0" y="1074" font-size="22" font-weight="400" fill="#173D34">Never retain request identity.</text>
-<text x="518.0" y="1102" font-size="22" font-weight="400" fill="#173D34">Enlist the unit of work you supply;</text>
-<text x="518.0" y="1130" font-size="22" font-weight="400" fill="#173D34">authorization and tenant row-level</text>
-<text x="518.0" y="1158" font-size="22" font-weight="400" fill="#173D34">security still apply.</text>
-<rect x="40" y="1228" width="880" height="136" rx="16" fill="#E8F0F6"/>
-<g transform="translate(59 1248) scale(0.7)" stroke="#326B88" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
-<text x="113" y="1272" font-size="23" font-weight="700" fill="#326B88">Compilation is one boundary</text>
-<text x="60" y="1311" font-size="21" font-weight="400" fill="#173D34">A compiled contract describes behavior. Separate service checks decide</text>
-<text x="60" y="1340" font-size="21" font-weight="400" fill="#173D34">whether a caller can create or execute live resources.</text><g id="takeaway">
-<rect x="0" y="1414" width="960" height="90" rx="16" fill="#EAF4ED"/>
-<text x="36" y="1443" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#367D68">Takeaway</text>
-<text x="36" y="1474" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#173D34">Choose your boundary: offline tools, authenticated API, or explicit embedding.</text>
+<rect x="500.0" y="927" width="420.0" height="253" rx="18" fill="white" stroke="#D8D4CA" stroke-width="2"/>
+<circle cx="546.0" cy="973" r="29" fill="#EAE7DF"/>
+<g transform="translate(523.0 950) scale(0.82)" stroke="#62645B" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="m28 4 20 8v16c0 14-20 25-20 25S8 42 8 28V12z M17 28l8 8 15-18"/></g>
+<text x="518.0" y="1030" font-size="24" font-weight="700" fill="#272820">Keep request boundaries</text>
+<text x="518.0" y="1074" font-size="22" font-weight="400" fill="#272820">Never retain request identity.</text>
+<text x="518.0" y="1102" font-size="22" font-weight="400" fill="#272820">Enlist the unit of work you supply;</text>
+<text x="518.0" y="1130" font-size="22" font-weight="400" fill="#272820">authorization and tenant row-level</text>
+<text x="518.0" y="1158" font-size="22" font-weight="400" fill="#272820">security still apply.</text>
+<rect x="40" y="1228" width="880" height="136" rx="16" fill="#E6E8E6"/>
+<g transform="translate(59 1248) scale(0.7)" stroke="#4A5D65" stroke-width="2.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 28s10-18 25-18 25 18 25 18-10 18-25 18S3 28 3 28z"/><circle cx="28" cy="28" r="8"/></g>
+<text x="113" y="1272" font-size="23" font-weight="700" fill="#4A5D65">Compilation is one boundary</text>
+<text x="60" y="1311" font-size="21" font-weight="400" fill="#272820">A compiled contract describes behavior. Separate service checks decide</text>
+<text x="60" y="1340" font-size="21" font-weight="400" fill="#272820">whether a caller can create or execute live resources.</text><g id="takeaway">
+<rect x="0" y="1414" width="960" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1443" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#855414">Takeaway</text>
+<text x="36" y="1474" style="font-family:Arial,Helvetica,sans-serif;font-size:21px;fill:#272820">Choose your boundary: offline tools, authenticated API, or explicit embedding.</text>
 </g>
 </svg>

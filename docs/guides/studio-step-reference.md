@@ -197,7 +197,7 @@ slot**, then map **AI prompt** and **AI context** using Value, Data or Formula.
 
 Open **Configure workflow AI profiles** to create or edit a named profile in a
 dialog with room for the form. It uses the same **Model → Connection → Review**
-structure as Lumi, but saves only to this workflow. To use another connection
+structure as Weave AI, but saves only to this workflow. To use another connection
 slot without changing the model, select that slot directly in the inspector.
 
 1. **Model:** choose the provider, model, and maximum response length, then
@@ -227,7 +227,7 @@ read. See [Share context between AI steps](shared-ai-context.md) for a complete
 example and the limits across branches, waits, and retries.
 
 Provider credentials belong to an authorized connection, not the prompt or
-profile. Workflow AI profiles are separate from Studio's Lumi assistant settings.
+profile. Workflow AI profiles are separate from Studio's Weave AI settings.
 The [AI worker guide](ai-workers.md) covers deployment, supported providers,
 credential binding and execution limits. A configured inspector alone does not
 install the action or start a worker.

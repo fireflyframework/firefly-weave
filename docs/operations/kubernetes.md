@@ -38,7 +38,7 @@ stop there if it fails.
 
 ![Cloud infrastructure, explicit migration and runtime deployment boundaries](../diagrams/cloud-deployment.svg)
 
-Read the green panel from left to right: the migration Job runs first with owner
+Read the shaded panel from left to right: the migration Job runs first with owner
 credentials, then the API starts with nonowner logins and owns scheduling, and
 the optional worker reaches only the API. The migration owner belongs to the Job
 and the bootstrap operator, never to a running process.

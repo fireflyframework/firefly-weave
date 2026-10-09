@@ -18,37 +18,37 @@ SPDX-License-Identifier: Apache-2.0
 
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1040" role="img" aria-labelledby="title description">
 <title id="title">Infrastructure stays under local control</title><desc id="description">People review scoped plans in Studio or the CLI. The Weave API stores their authority and results. A runner beside the destination polls for jobs and uses its own local credentials.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#367d68"/></marker></defs>
-<rect width="900" height="1040" rx="24" fill="#eef4f0"/>
-<g font-family="Inter,Arial,sans-serif" fill="#173d34">
-<text x="40" y="48" font-size="17" fill="#367d68">FIREFLY WEAVE · OPERATIONS</text>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#62645B"/></marker></defs>
+<rect width="900" height="1040" rx="24" fill="#EAE7DF"/>
+<g font-family="Arial,Helvetica,sans-serif" fill="#272820">
+<text x="40" y="48" font-size="17" fill="#855414">FIREFLY WEAVE · OPERATIONS</text>
 <text x="40" y="92" font-size="30" font-weight="700">Infrastructure stays under local control</text>
-<text x="40" y="127" font-size="18" fill="#4d655d" font-weight="400">One workspace owns the plan. One destination owns the credentials.</text>
-<rect x="40" y="160" width="820" height="140" rx="14" fill="white" stroke="#c6d8ce"/>
-<g transform="translate(62 184)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="10" r="8"/><path d="M3 44v-8c0-16 34-16 34 0v8"/></g>
-<text x="124" y="203" font-size="22" fill="#173d34" font-weight="700">People use Studio or the CLI</text>
-<text x="124" y="238" font-size="18" fill="#4d655d" font-weight="400">Choose the destination and desired capacity.</text>
-<text x="124" y="265" font-size="18" fill="#4d655d" font-weight="400">Review the affected resources, image digests, and risks.</text>
-<path d="M105 310v42" fill="none" stroke="#367d68" stroke-width="2.5" marker-end="url(#arrow)"/>
-<text x="127" y="337.0" font-size="16" fill="#4d655d" font-weight="400">Authenticated requests for the selected tenant, project, and environment</text>
-<rect x="40" y="362" width="820" height="160" rx="14" fill="white" stroke="#c6d8ce"/>
-<g transform="translate(62 386)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="20" cy="7" rx="19" ry="7"/><path d="M1 7v29c0 11 38 11 38 0V7M1 21c0 10 38 10 38 0"/></g>
-<text x="124" y="405" font-size="22" fill="#173d34" font-weight="700">Weave records and authorizes the work</text>
-<text x="124" y="440" font-size="18" fill="#4d655d" font-weight="400">The API checks roles, revisions, approvals, and job leases.</text>
-<text x="124" y="467" font-size="18" fill="#4d655d" font-weight="400">PostgreSQL keeps the plan, progress, and safe receipts.</text>
-<text x="124" y="494" font-size="18" fill="#4d655d" font-weight="400">A browser action cannot send an arbitrary shell command.</text>
-<path d="M105 532v52" fill="none" stroke="#367d68" stroke-width="2.5" marker-end="url(#arrow)"/>
-<text x="127" y="564.0" font-size="16" fill="#4d655d" font-weight="400">The runner polls over outgoing HTTPS and receives a leased job</text>
-<rect x="24" y="597" width="852" height="338" rx="18" fill="none" stroke="#9cb9aa" stroke-width="2" stroke-dasharray="8 5"/>
-<text x="46" y="626" font-size="15" fill="#367d68" font-weight="600">INSIDE THE DESTINATION’S OPERATIONAL BOUNDARY</text>
-<rect x="40" y="646" width="820" height="128" rx="14" fill="white" stroke="#c6d8ce"/>
-<g transform="translate(62 670)" fill="none" stroke="#367d68" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="19" width="30" height="24" rx="4"/><path d="M11 19V12a9 9 0 0 1 18 0v7"/><path d="M20 28v7"/></g>
-<text x="124" y="689" font-size="22" fill="#173d34" font-weight="700">The runner checks its own allowlist</text>
-<text x="124" y="724" font-size="18" fill="#4d655d" font-weight="400">Only configured resources, capabilities, and image repositories.</text>
-<text x="124" y="751" font-size="18" fill="#4d655d" font-weight="400">Provider credentials and private configuration remain here.</text>
-<path d="M105 782v35" fill="none" stroke="#367d68" stroke-width="2.5" marker-end="url(#arrow)"/>
-<text x="127" y="805.5" font-size="16" fill="#4d655d" font-weight="400">Fixed provider operations with drift and readiness checks</text>
-<text x="124" y="858" font-size="17" fill="#173d34" font-weight="600">Docker / Compose · Kubernetes / AKS / EKS / GKE · Azure Container Apps</text>
-<text x="124" y="890" font-size="17" fill="#4d655d" font-weight="400">An observation reports evidence; it does not provision a new cloud account.</text>
-<text x="40" y="982" font-size="19" fill="#173d34" font-weight="600">Unknown outcome? Inspect and reconcile before applying another change.</text>
+<text x="40" y="127" font-size="18" fill="#62645B" font-weight="400">One workspace owns the plan. One destination owns the credentials.</text>
+<rect x="40" y="160" width="820" height="140" rx="14" fill="white" stroke="#D8D4CA"/>
+<g transform="translate(62 184)" fill="none" stroke="#62645B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="10" r="8"/><path d="M3 44v-8c0-16 34-16 34 0v8"/></g>
+<text x="124" y="203" font-size="22" fill="#272820" font-weight="700">People use Studio or the CLI</text>
+<text x="124" y="238" font-size="18" fill="#62645B" font-weight="400">Choose the destination and desired capacity.</text>
+<text x="124" y="265" font-size="18" fill="#62645B" font-weight="400">Review the affected resources, image digests, and risks.</text>
+<path d="M105 310v42" fill="none" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="127" y="337.0" font-size="16" fill="#62645B" font-weight="400">Authenticated requests for the selected tenant, project, and environment</text>
+<rect x="40" y="362" width="820" height="160" rx="14" fill="white" stroke="#D8D4CA"/>
+<g transform="translate(62 386)" fill="none" stroke="#62645B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="20" cy="7" rx="19" ry="7"/><path d="M1 7v29c0 11 38 11 38 0V7M1 21c0 10 38 10 38 0"/></g>
+<text x="124" y="405" font-size="22" fill="#272820" font-weight="700">Weave records and authorizes the work</text>
+<text x="124" y="440" font-size="18" fill="#62645B" font-weight="400">The API checks roles, revisions, approvals, and job leases.</text>
+<text x="124" y="467" font-size="18" fill="#62645B" font-weight="400">PostgreSQL keeps the plan, progress, and safe receipts.</text>
+<text x="124" y="494" font-size="18" fill="#62645B" font-weight="400">A browser action cannot send an arbitrary shell command.</text>
+<path d="M105 532v52" fill="none" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="127" y="564.0" font-size="16" fill="#62645B" font-weight="400">The runner polls over outgoing HTTPS and receives a leased job</text>
+<rect x="24" y="597" width="852" height="338" rx="18" fill="none" stroke="#BFB8AB" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="46" y="626" font-size="15" fill="#855414" font-weight="600">INSIDE THE DESTINATION’S OPERATIONAL BOUNDARY</text>
+<rect x="40" y="646" width="820" height="128" rx="14" fill="white" stroke="#D8D4CA"/>
+<g transform="translate(62 670)" fill="none" stroke="#62645B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="19" width="30" height="24" rx="4"/><path d="M11 19V12a9 9 0 0 1 18 0v7"/><path d="M20 28v7"/></g>
+<text x="124" y="689" font-size="22" fill="#272820" font-weight="700">The runner checks its own allowlist</text>
+<text x="124" y="724" font-size="18" fill="#62645B" font-weight="400">Only configured resources, capabilities, and image repositories.</text>
+<text x="124" y="751" font-size="18" fill="#62645B" font-weight="400">Provider credentials and private configuration remain here.</text>
+<path d="M105 782v35" fill="none" stroke="#62645B" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="127" y="805.5" font-size="16" fill="#62645B" font-weight="400">Fixed provider operations with drift and readiness checks</text>
+<text x="124" y="858" font-size="17" fill="#272820" font-weight="600">Docker / Compose · Kubernetes / AKS / EKS / GKE · Azure Container Apps</text>
+<text x="124" y="890" font-size="17" fill="#62645B" font-weight="400">An observation reports evidence; it does not provision a new cloud account.</text>
+<text x="40" y="982" font-size="19" fill="#272820" font-weight="600">Unknown outcome? Inspect and reconcile before applying another change.</text>
 </g></svg>
