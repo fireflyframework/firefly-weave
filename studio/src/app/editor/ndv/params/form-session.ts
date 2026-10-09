@@ -371,6 +371,13 @@ export class FormSession {
     const entry = this.resolve(spec);
     if (!this.isCurrent() || !entry)
       return "This field is no longer available.";
+    return this.mappingEntryReason(entry);
+  }
+  private mappingEntryReason(
+    entry: FieldEntry,
+    appendList = true,
+  ): string | null {
+    const spec = entry.spec;
     const locked = this.controller.readOnlyReason() ?? this.readOnly(entry);
     if (locked) return locked;
     if (spec.mapping === "fixed") return "This field takes a fixed value.";
@@ -386,14 +393,27 @@ export class FormSession {
       this.structure(spec)
     )
       return "This field takes a fixed value.";
-    if (
-      spec.type === "list" &&
-      (!spec.item || !["both", "mapped"].includes(spec.item.mapping ?? ""))
-    )
-      return "This list takes fixed values.";
+    if (spec.type === "list" && appendList) {
+      const item = this.appendItem(spec);
+      return item
+        ? this.mappingEntryReason(item, false)
+        : "This list takes fixed values.";
+    }
     if (this.mode(spec) === null && spec.type !== "keyValue")
       return "This field takes a fixed value.";
     return null;
+  }
+  /** A missing row is authorized only through its live parent, never by resolve. */
+  private appendItem(list: ParamSpec): FieldEntry | null {
+    const item = list.item;
+    if (
+      !item ||
+      !["both", "mapped"].includes(item.mapping ?? "") ||
+      item.path.length ||
+      (item.scope ?? "step") !== (list.scope ?? "step")
+    )
+      return null;
+    return this.childEntry(this.itemSpec(list, this.list(list).length, item));
   }
   /** Resolve transport hints against the exact target's lexical scope. */
   dragReference(spec: ParamSpec, drag: DragRef): DragRef | null {
@@ -402,7 +422,10 @@ export class FormSession {
       !parseDrag(JSON.stringify({ ref: drag.ref }))
     )
       return null;
-    const entry = this.scope(spec).find((entry) => entry.ref === drag.ref);
+    const live = this.resolve(spec)?.spec;
+    const target = live?.type === "list" ? this.appendItem(live)?.spec : live;
+    if (!target) return null;
+    const entry = this.scope(target).find((entry) => entry.ref === drag.ref);
     if (!entry) return null;
     return {
       ref: entry.ref,

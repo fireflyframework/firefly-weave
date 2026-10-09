@@ -21,6 +21,8 @@ import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { StructuredCanvasAdapter, type Workflow } from "../src/app/model";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
+import { withOwnedAction } from "../src/app/editor/ndv/owned/owned-store";
+import { newConnectorRecipe } from "../src/app/editor/ndv/owned/owned-actions";
 import { FormSession } from "../src/app/editor/ndv/params/form-session";
 import { StepDetailsController } from "../src/app/editor/ndv/step-details-controller";
 import { openRequest } from "../src/app/editor/ndv/step-details-service";
@@ -355,4 +357,128 @@ it("refuses fixed-only collections even when their storage sits under an express
   expect(f.form.applyDrop(spec, email, options)).toBe(false);
   expect(f.form.addAllFields(spec)).toBe(false);
   expect(JSON.stringify(f.model.definition)).toBe(before);
+});
+
+describe("mapped list additions", () => {
+  for (const id of ["to", "cc", "bcc"]) {
+    it(`adds to the registered ${id} recipient list without whole-list mapping`, () => {
+      const f = session("lookup");
+      const step = f.controller.step("lookup")!;
+      f.model.update(
+        "lookup",
+        JSON.stringify({
+          ...step,
+          uses: "flow.send-email@1.0.0",
+          with: {
+            object: {
+              to: { array: [{ literal: "retain@example.invalid" }] },
+              cc: { array: [{ literal: "copy@example.invalid" }] },
+              bcc: { array: [{ literal: "private@example.invalid" }] },
+              subject: { literal: "Test" },
+              text: { literal: "Message" },
+            },
+          },
+        }),
+      );
+      f.model.canvas = withOwnedAction(
+        f.model.canvas,
+        "flow.send-email@1.0.0",
+        newConnectorRecipe("weave-email@1.0.0", "send"),
+      );
+      const spec = f.form
+        .state("parameters")
+        .fields.find((entry) => entry.spec.id === id)!.spec;
+      expect(spec.mapping).toBeUndefined();
+      expect(spec.item?.mapping).toBe("both");
+      const before = JSON.stringify(f.model.definition);
+      const rows = f.form.list(spec);
+      expect(f.form.mapTargets().some((target) => target.id === id)).toBe(true);
+      expect(f.form.mappingReason(spec)).toBeNull();
+      expect(f.form.applyDrop(spec, email, options)).toBe(true);
+      expect(f.form.list(spec)).toEqual([
+        ...rows,
+        { mode: "mapped", expression: { ref: "/input/email" } },
+      ]);
+      f.model.undo();
+      expect(JSON.stringify(f.model.definition)).toBe(before);
+      f.model.redo();
+      expect(f.form.list(spec)).toHaveLength(rows.length + 1);
+    });
+  }
+  function listSession(
+    item: Partial<ParamSpec> = {},
+    parent: Partial<ParamSpec> = {},
+  ) {
+    const f = session("check-customer");
+    const spec: ParamSpec = {
+      id: "value",
+      path: ["value"],
+      type: "list",
+      label: "Items",
+      mapping: "both",
+      ...parent,
+      item: {
+        id: "item",
+        path: [],
+        type: "text",
+        label: "Item",
+        mapping: "both",
+        ...item,
+      },
+    };
+    const descriptor = f.controller.descriptor("check-customer")!;
+    f.controller.descriptor = () => ({
+      ...descriptor,
+      form: () => ({ fields: [spec] }),
+    });
+    f.form.write(spec, { mode: "fixed", value: ["keep"] });
+    return { ...f, spec };
+  }
+  for (const [name, guard] of [
+    ["read-only", { readOnly: () => "Item is locked" }],
+    ["unavailable feature", { feature: "not.available" }],
+    ["fixed-only", { mapping: "fixed" }],
+    ["action-scoped", { scope: "action" }],
+    ["workflow-scoped", { scope: "workflow" }],
+  ] as const) {
+    it(`refuses an append to a ${name} item just as it refuses direct mapping`, () => {
+      const f = listSession(guard);
+      const before = JSON.stringify(f.model.definition);
+      const child = f.form.itemSpec(f.spec, 0, f.spec.item!);
+      expect(f.form.applyDrop(child, email, options)).toBe(false);
+      expect(f.form.mappingReason(f.spec)).toBeTruthy();
+      expect(f.form.applyDrop(f.spec, email, options)).toBe(false);
+      expect(JSON.stringify(f.model.definition)).toBe(before);
+      expect(f.announcements.join()).not.toContain("Mapped Input");
+    });
+  }
+  it("rechecks the live item guard after displaying an eligible list", () => {
+    let locked = false;
+    const f = listSession({
+      readOnly: () => (locked ? "Item is locked" : null),
+    });
+    expect(f.form.mappingReason(f.spec)).toBeNull();
+    const before = JSON.stringify(f.model.definition);
+    locked = true;
+    expect(f.form.applyDrop(f.spec, email, options)).toBe(false);
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.announcements.join()).not.toContain("Mapped Input");
+  });
+  it("keeps the append descriptor private and refuses out-of-scope data and full lists", () => {
+    const f = listSession({}, { maxItems: 1 });
+    const before = JSON.stringify(f.model.definition);
+    const missing = f.form.itemSpec(f.spec, 1, f.spec.item!);
+    expect(f.form.resolve(missing)).toBeNull();
+    expect(f.form.applyDrop(missing, email, options)).toBe(false);
+    expect(
+      f.form.applyDrop(
+        f.spec,
+        { ...email, ref: "/steps/lookup/output" },
+        options,
+      ),
+    ).toBe(false);
+    expect(f.form.applyDrop(f.spec, email, options)).toBe(false);
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.announcements.join()).not.toContain("Mapped Input");
+  });
 });

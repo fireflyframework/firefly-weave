@@ -429,7 +429,7 @@ export class ParamField {
   }
   number(event: Event) {
     const text = (event.target as HTMLInputElement).value.trim();
-    this.numberText = text;
+    this.numberText = text || null;
     if (!text) return this.session().clear(this.spec());
     const value = Number(text);
     if (Number.isFinite(value)) {

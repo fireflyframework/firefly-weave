@@ -28,7 +28,7 @@ import {
   withLanguageFeatures,
   yamlFile,
 } from "./step-details-po";
-import { sourceText } from "./support";
+import { connected, lookupAction, sourceText } from "./support";
 
 for (const size of sizes)
   test.describe(`mapping at ${size.tag}`, () => {
@@ -1526,3 +1526,100 @@ test("Add all fields keeps an unapplied child draft and all existing rows", asyn
     workflow.spec.steps[0].value,
   );
 });
+
+for (const size of sizes) {
+  test(`a cleared number follows Undo and Redo after blur at ${size.tag}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    const workflow = parse(readFileSync(stepFixture, "utf8"));
+    workflow.spec.steps.find(
+      (step: { id: string }) => step.id === "lookup",
+    ).with.object.limit = { literal: 25 };
+    const action = structuredClone(lookupAction);
+    action.spec.inputSchema.required.push("limit");
+    const details = await openStepFixture(
+      page,
+      yamlFile("number.yaml", stringify(workflow)),
+      (p) => connected(p, { catalog: [{ id: "a1", document: action }] }),
+    );
+    await details.openWithKeyboard("lookup");
+    const input = details
+      .field("input.limit")
+      .getByRole("textbox", { name: "Limit", exact: true });
+    await expect(input).toHaveValue("25");
+    await input.fill("");
+    await details.dialog
+      .locator("[role=tablist][aria-label='Step details sections']")
+      .getByRole("tab", { name: "Parameters", exact: true })
+      .click();
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(input).toHaveValue("25");
+    await input.focus();
+    await page.screenshot({ path: test.info().outputPath("number-undo.png") });
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    await expect(input).toHaveValue("");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(input).toHaveValue("25");
+    await details.close();
+    expect(
+      parse(await sourceText(page)).spec.steps.find(
+        (step: { id: string }) => step.id === "lookup",
+      ).with.object.limit,
+    ).toEqual({ literal: 25 });
+  });
+  test(`a mapped list addition preserves entries and one Undo at ${size.tag}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    const workflow = parse(readFileSync(stepFixture, "utf8"));
+    workflow.spec.steps.find(
+      (step: { id: string }) => step.id === "lookup",
+    ).with.object.tags = { array: [{ literal: "retain" }] };
+    const details = await openConnectedFixture(
+      page,
+      yamlFile("list.yaml", stringify(workflow)),
+    );
+    await details.openWithKeyboard("lookup");
+    if (size.width < 768)
+      await details.dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Input", exact: true })
+        .click();
+    const pane = details.dialog.locator(".sd-input");
+    await pane
+      .getByRole("combobox", { name: "Input source" })
+      .selectOption("input");
+    const source = pane.getByRole("listitem", {
+      name: "email, Text",
+      exact: true,
+    });
+    const list = details.field("input.tags");
+    if (size.width < 768) {
+      await source.focus();
+      await page.keyboard.press("Enter");
+      await page
+        .getByRole("menu", { name: "Map email to" })
+        .getByRole("menuitem", { name: "Tags", exact: true })
+        .click();
+    } else
+      await source.dragTo(list.locator(":scope > .param > .param-label-row"));
+    const reference = list.getByRole("button", {
+      name: "reference Input Email",
+      exact: true,
+    });
+    await expect(reference).toBeVisible();
+    await expect(
+      list.getByRole("textbox", { name: "Item", exact: true }),
+    ).toHaveValue("retain");
+    await page.screenshot({ path: test.info().outputPath("list-added.png") });
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(reference).toHaveCount(0);
+    await details.close();
+    expect(
+      parse(await sourceText(page)).spec.steps.find(
+        (step: { id: string }) => step.id === "lookup",
+      ).with.object.tags,
+    ).toEqual({ array: [{ literal: "retain" }] });
+  });
+}
