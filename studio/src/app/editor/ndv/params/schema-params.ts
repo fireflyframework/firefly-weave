@@ -75,6 +75,25 @@ const typeOf = (
 const exampleText = (value: unknown): string =>
   typeof value === "string" ? value : JSON.stringify(value);
 
+/**
+ * The properties a form shows. A secret is never written from a form, and a
+ * `false` schema holds no value, so neither gets a field, in a group or not.
+ */
+const shownInfos = (infos: FieldInfo[]): FieldInfo[] =>
+  infos.filter((info) => !info.secret && info.kind !== "never");
+
+/**
+ * The value a field starts with, as the classic form fills it: a constant is
+ * its own value, and a required boolean starts at its default or `false`.
+ * A starting value counts as set, so no "required" message shows for it.
+ */
+const defaultOf = (info: FieldInfo): ParamSpec["default"] => {
+  if (info.kind === "const") return info.constValue;
+  if (info.kind === "boolean" && info.required)
+    return typeof info.default === "boolean" ? info.default : false;
+  return info.default;
+};
+
 /** One field for one property of a schema, at `path`, with its ID after `idPrefix`. */
 export function paramFromField(
   info: FieldInfo,
@@ -85,6 +104,7 @@ export function paramFromField(
 ): ParamSpec {
   const type = typeOf(info, depth, maxDepth);
   const id = `${idPrefix}${info.key}`;
+  const starting = defaultOf(info);
   const spec: ParamSpec = {
     id,
     path,
@@ -93,8 +113,8 @@ export function paramFromField(
     required: info.required,
     mapping: type === "fileRef" ? "mapped" : "both",
     ...(info.description ? { description: info.description } : {}),
-    ...(info.default !== undefined ? { default: info.default } : {}),
-    ...(info.default === undefined && info.examples?.length
+    ...(starting !== undefined ? { default: starting } : {}),
+    ...(starting === undefined && info.examples?.length
       ? { placeholder: exampleText(info.examples[0]) }
       : {}),
   };
@@ -113,7 +133,7 @@ export function paramFromField(
       label: option.label,
     }));
   if (type === "fields") {
-    const children = fieldsOf(info.schema, info.context);
+    const children = shownInfos(fieldsOf(info.schema, info.context));
     spec.children = () =>
       children.map((child) =>
         paramFromField(
@@ -143,14 +163,17 @@ export function paramFromField(
   return spec;
 }
 
-/** Required properties as fields, optional ones as options, in schema order. */
+/**
+ * Required properties as fields, optional ones as options, in schema order;
+ * secrets and never-valued properties are left out (see shownInfos).
+ */
 export function paramsFromSchema(
   schema: unknown,
   base: Path,
   options: SchemaParamOptions,
 ): FormSpec {
   const maxDepth = options.maxDepth ?? 3;
-  const params = fieldsOf(schema).map((info) =>
+  const params = shownInfos(fieldsOf(schema)).map((info) =>
     paramFromField(info, [...base, info.key], options.idPrefix, 0, maxDepth),
   );
   return {

@@ -16,7 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
+import { fieldRules } from "../src/app/editor/ndv/params/field-rules";
 import { paramsFromSchema } from "../src/app/editor/ndv/params/schema-params";
+import { ABSENT } from "../src/app/editor/ndv/params/value-io";
 import { lookupAction } from "./browser/support";
 
 const input = lookupAction.spec.inputSchema;
@@ -130,5 +132,67 @@ describe("fields from a schema", () => {
     const [code, page] = form.fields;
     expect([code.placeholder, code.default]).toEqual(["acme", undefined]);
     expect([page.placeholder, page.default]).toEqual([undefined, 1]);
+  });
+  it("leaves secrets and never-valued properties out of the form, here and in groups", () => {
+    const form = paramsFromSchema(
+      {
+        type: "object",
+        required: ["token", "settings"],
+        properties: {
+          token: { type: "string", "x-secret": true },
+          locked: false,
+          settings: {
+            type: "object",
+            required: ["password", "region"],
+            properties: {
+              password: { type: "string", writeOnly: true },
+              region: { type: "string" },
+            },
+          },
+        },
+      },
+      ["with"],
+      { idPrefix: "input." },
+    );
+    expect(form.fields.map((f) => f.id)).toEqual(["input.settings"]);
+    expect(form.options).toEqual([]);
+    const children = form.fields[0].children!(
+      undefined as never,
+      undefined as never,
+    );
+    expect(children.map((c) => c.id)).toEqual(["input.settings.region"]);
+  });
+  it("counts a required constant as set by its constant", () => {
+    const form = paramsFromSchema(
+      {
+        type: "object",
+        required: ["version"],
+        properties: { version: { const: "v1" } },
+      },
+      ["with"],
+      { idPrefix: "" },
+    );
+    const [version] = form.fields;
+    expect([version.type, version.default]).toEqual(["text", "v1"]);
+    expect(fieldRules(version, ABSENT, { kind: "absent" })).toEqual([]);
+  });
+  it("defaults a required boolean to false, as the classic form does", () => {
+    const form = paramsFromSchema(
+      {
+        type: "object",
+        required: ["dryRun", "notify"],
+        properties: {
+          dryRun: { type: "boolean" },
+          notify: { type: "boolean", default: true },
+          archive: { type: "boolean" },
+        },
+      },
+      ["with"],
+      { idPrefix: "" },
+    );
+    const [dryRun, notify] = form.fields;
+    expect([dryRun.default, notify.default]).toEqual([false, true]);
+    expect(fieldRules(dryRun, ABSENT, { kind: "absent" })).toEqual([]);
+    expect(form.options?.[0].default).toBeUndefined();
   });
 });
