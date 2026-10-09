@@ -91,7 +91,9 @@ export interface TileView {
     @if (v.title) {
       <div class="tile-label" [style.top.px]="v.labelTop" aria-hidden="true">
         <strong [attr.title]="v.title">{{ v.title }}</strong>
-        <span [attr.title]="v.subtitle">{{ v.subtitle }}</span>
+        @if (v.subtitle) {
+          <span [attr.title]="v.subtitle">{{ v.subtitle }}</span>
+        }
       </div>
     }`,
 })

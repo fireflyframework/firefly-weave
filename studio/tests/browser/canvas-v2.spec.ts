@@ -130,7 +130,9 @@ async function labelBlocks(canvas: CanvasPage) {
           id: tile.dataset["tile"]!,
           shape: body.dataset["shape"]!,
           name: line(block.querySelector("strong")!),
-          subtitle: line(block.querySelector("span")!),
+          subtitle: block.querySelector("span")
+            ? line(block.querySelector("span")!)
+            : null,
           width: box.width,
           offset: box.x + box.width / 2 - (card.x + card.width / 2),
         };
@@ -144,16 +146,23 @@ async function labelBlocks(canvas: CanvasPage) {
  * Names draw at 12 px or more on screen and subtitles at 11 px or more, and
  * each label block keeps to its column, centered under its tile: 168 units
  * wide from 100% up; below 100%, 232 (the 248-unit column less a 16-unit
- * gap), or 156 under a parallel step's 20-unit bar.
+ * gap), or 156 under a parallel step's 20-unit bar. End uses 80 units.
  */
 async function expectReadableLabels(canvas: CanvasPage) {
   const { zoom, blocks } = await labelBlocks(canvas);
   expect(blocks.length).toBeGreaterThan(8);
   for (const block of blocks) {
     const column =
-      zoom >= 1 ? 168 : block.shape === "fork" ? 232 - (96 - 20) : 232;
+      block.shape === "end"
+        ? 80
+        : zoom >= 1
+          ? 168
+          : block.shape === "fork"
+            ? 232 - (96 - 20)
+            : 232;
     expect(block.name.px, `${block.id}: name`).toBeGreaterThanOrEqual(11.99);
-    expect(block.subtitle.px, `${block.id}: subtitle`).toBeGreaterThan(11);
+    if (block.subtitle)
+      expect(block.subtitle.px, `${block.id}: subtitle`).toBeGreaterThan(11);
     expect(block.width, `${block.id}: block`).toBeCloseTo(column * zoom, 0);
     expect(block.name.width, `${block.id}: name`).toBeLessThanOrEqual(
       column * zoom + 1,
@@ -474,7 +483,7 @@ test.describe("the left-to-right canvas", () => {
     await expect.poll(() => canvas.zoomPercent()).toBe(100);
     for (const block of (await labelBlocks(canvas)).blocks) {
       expect(block.name.px).toBeCloseTo(13, 1);
-      expect(block.subtitle.px).toBeCloseTo(12, 1);
+      if (block.subtitle) expect(block.subtitle.px).toBeCloseTo(12, 1);
     }
     // Zoomed out on purpose, names still show at 40% and drop below it.
     for (let i = 0; i < 5; i++) await zoomOut.click();

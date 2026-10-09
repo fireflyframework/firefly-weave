@@ -243,6 +243,9 @@ weave-canvas-view,
 .canvas-v2 .tile-body[data-shape="fork"] ~ .tile-label {
   --label-width: var(--fork-label-width, 168px);
 }
+.canvas-v2 .tile-body[data-shape="end"] ~ .tile-label {
+  --label-width: 80px;
+}
 .canvas-v2 .tile-label strong,
 .canvas-v2 .tile-label span {
   justify-self: center;
