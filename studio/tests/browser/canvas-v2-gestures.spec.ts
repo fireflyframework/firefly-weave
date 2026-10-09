@@ -420,8 +420,13 @@ test.describe("canvas gestures", () => {
     });
     const has = (level: string) =>
       canvas.root.evaluate((root, l) => root.classList.contains(l), level);
+    const zoomOutOnce = async () => {
+      const before = await canvas.zoomPercent();
+      await zoomOut.click();
+      await expect.poll(() => canvas.zoomPercent()).toBeLessThan(before);
+    };
     for (const level of ["lod-compact", "lod-minimal"]) {
-      for (let i = 0; i < 12 && !(await has(level)); i++) await zoomOut.click();
+      for (let i = 0; i < 12 && !(await has(level)); i++) await zoomOutOnce();
       await expect(canvas.root).toHaveClass(new RegExp(`\\b${level}\\b`));
       await canvas.tileBody("record-result").hover();
       await rightClickAfterEscape("record-result");
