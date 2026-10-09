@@ -1,0 +1,299 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The parameter form: 14 px between fields, 6 px inside one; tokens only. */
+.param-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.param {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.param-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+.param-label {
+  font: var(--type-label);
+  color: var(--text);
+}
+.param-required {
+  color: var(--danger-ink);
+  font-weight: 700;
+}
+.param-spacer {
+  flex: 1;
+}
+.param-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.param-mode {
+  display: inline-flex;
+  padding: 1px;
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--sunken);
+}
+.step-details .param-mode button[role="radio"] {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font: var(--type-caption);
+}
+.step-details .param-mode button[role="radio"][aria-checked="true"] {
+  background: var(--hover);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+[data-mode="fixed"] > .param:not(:hover, :focus-within) .param-mode,
+.param:not(:hover, :focus-within) .param-menu,
+.param:not(:hover, :focus-within) .param-remove {
+  opacity: 0;
+}
+.param-input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-md);
+  padding: 0 var(--space-3);
+  font: var(--type-body);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.param-input:hover {
+  border-color: var(--field-border-hover);
+}
+.param-input:focus-visible {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.param-input::placeholder {
+  color: var(--subtle);
+}
+.step-details .param-multiline,
+.step-details .param-json {
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+  field-sizing: content;
+  min-height: calc(3 * 20px + 2 * var(--space-2));
+  max-height: calc(12 * 20px + 2 * var(--space-2));
+}
+.param-json,
+.param-formula,
+.param-template {
+  font: var(--type-mono);
+}
+.param.has-error .param-input {
+  border-color: var(--danger);
+}
+.param.is-readonly .param-input {
+  border-color: transparent;
+  background: var(--sunken);
+}
+.param-duration,
+.param-date {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.param-unit {
+  width: auto;
+}
+.param-suffix {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.step-details button.param-switch {
+  width: 32px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.param-switch-track {
+  position: relative;
+  display: block;
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--hover);
+  border: 1px solid var(--field-border);
+}
+.param-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: left var(--dur-fast) var(--ease);
+}
+.param-switch[aria-checked="true"] .param-switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.param-switch[aria-checked="true"] .param-switch-track::after {
+  left: 16px;
+  background: var(--on-accent);
+}
+.param-segments {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+.step-details .param-segments button[role="radio"] {
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: var(--type-label);
+}
+.step-details .param-segments button[role="radio"][aria-checked="true"] {
+  background: var(--hover);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+.param-line {
+  margin: 0;
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: var(--type-small);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.param-line[data-kind="error"] {
+  color: var(--danger-ink);
+}
+.param-line[data-kind="warning"] {
+  color: var(--warning-ink);
+}
+.param-line[data-kind="none"] {
+  display: none;
+}
+.toggletip {
+  position: relative;
+  display: inline-flex;
+}
+.step-details button.toggletip-button {
+  width: 24px;
+  min-height: 24px;
+  color: var(--subtle);
+}
+.toggletip-text {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  width: max-content;
+  max-width: 320px;
+  padding: var(--space-2) var(--space-3);
+  font: var(--type-small);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-2);
+}
+.ref-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-caption);
+  color: var(--text);
+  background: var(--hover);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-xs);
+}
+.ref-pill weave-icon {
+  color: var(--muted);
+}
+.ref-sep {
+  color: var(--subtle);
+}
+.step-details button.ref-pill-button {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: var(--control-md);
+  padding: 0 var(--space-2);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.param-formula {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text);
+  background: var(--sunken);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+.param-template-error {
+  font: var(--type-small);
+  color: var(--danger-ink);
+}
+
+.param-deferred {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .step-details .param-input:not(textarea),
+  .step-details .param-control .choice-field input,
+  .step-details .param-mode button[role="radio"],
+  .step-details .param-segments button[role="radio"],
+  .step-details button.toggletip-button,
+  .step-details button.param-switch,
+  .step-details button.ref-pill-button {
+    min-height: var(--control-touch);
+  }
+  .step-details button.toggletip-button,
+  .step-details button.param-switch,
+  .step-details .param-mode button[role="radio"] {
+    min-width: var(--control-touch);
+  }
+}

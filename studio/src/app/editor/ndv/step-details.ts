@@ -39,7 +39,7 @@ import {
   viewChild,
 } from "@angular/core";
 import { parse as parseYaml, stringify as yamlText } from "yaml";
-import { Modal } from "../../dialog";
+import { DialogService, Modal } from "../../dialog";
 import {
   KEY_STEP,
   readWidths,
@@ -61,6 +61,8 @@ import {
 import { docsUrl, headerSubtitle } from "./header";
 import { adjacent, breadcrumb, neighbors } from "./navigation";
 import { recipeOf } from "./owned/owned-actions";
+import { FormSession } from "./params/form-session";
+import { ParameterForm } from "./params/param-form";
 import { ndvRegistry } from "./registry";
 import { renameHint, renameWithExtras, type RenameResult } from "./rename";
 import type { StepDetailsController } from "./step-details-controller";
@@ -104,7 +106,7 @@ const visible = (element: HTMLElement): boolean =>
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   encapsulation: ViewEncapsulation.None,
-  imports: [Icon, RowMenu, Modal],
+  imports: [Icon, RowMenu, Modal, ParameterForm],
   templateUrl: "./step-details.html",
   styleUrl: "./step-details.css",
   host: { "(document:focusin)": "focusIn($event)" },
@@ -116,6 +118,56 @@ export class StepDetails {
   closed = output<string>();
 
   private readonly details = inject(StepDetailsService);
+  private readonly dialogs = inject(DialogService);
+  private readonly lifetime = inject(DestroyRef);
+  readonly announcement = signal("");
+  private sessionCache: {
+    request: StepDetailsRequest;
+    controller: StepDetailsController;
+    session: FormSession;
+    opening: number;
+  } | null = null;
+  session(): FormSession {
+    const request = this.request();
+    const controller = this.controller();
+    const opening = this.details.opening();
+    if (
+      this.sessionCache?.request !== request ||
+      this.sessionCache.controller !== controller ||
+      this.sessionCache.opening !== opening ||
+      !this.sessionCache.session.isCurrent()
+    ) {
+      this.sessionCache = {
+        request,
+        controller,
+        opening,
+        session: new FormSession(
+          this.host(),
+          controller,
+          request,
+          {
+            confirm: (options) => this.dialogs.confirm(options),
+            announce: (text) => {
+              this.announcement.set("");
+              setTimeout(() => {
+                if (
+                  !this.lifetime.destroyed &&
+                  this.details.request() === request &&
+                  this.details.opening() === opening
+                )
+                  this.announcement.set(text);
+              });
+            },
+          },
+          () =>
+            !this.lifetime.destroyed &&
+            this.details.request() === request &&
+            this.details.opening() === opening,
+        ),
+      };
+    }
+    return this.sessionCache.session;
+  }
   private readonly injector = inject(Injector);
   private readonly dialog =
     viewChild.required<ElementRef<HTMLElement>>("dialog");
@@ -680,11 +732,16 @@ export class StepDetails {
       return;
     }
     const root = this.dialog().nativeElement;
-    const control = (scope: Element | null | undefined): HTMLElement | null =>
-      scope
-        ? ([...scope.querySelectorAll<HTMLElement>(CONTROL)].find(visible) ??
-          null)
-        : null;
+    const control = (scope: Element | null | undefined): HTMLElement | null => {
+      if (!scope) return null;
+      const fields = scope.matches("[data-param], .sd-tabpanel");
+      const candidates = fields
+        ? [...scope.querySelectorAll<HTMLElement>(".param-control")].flatMap(
+            (field) => [...field.querySelectorAll<HTMLElement>(CONTROL)],
+          )
+        : [...scope.querySelectorAll<HTMLElement>(CONTROL)];
+      return candidates.find(visible) ?? null;
+    };
     const panel = root.querySelector(".sd-tabpanel:not([hidden])");
     let found: HTMLElement | null = null;
     if (focus.kind === "field") {

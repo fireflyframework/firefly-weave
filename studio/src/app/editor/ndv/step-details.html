@@ -61,6 +61,7 @@ SPDX-License-Identifier: Apache-2.0
       <weave-icon name="close" />
     </button>
   </div>
+  <p class="sr-only" aria-live="polite">{{ announcement() }}</p>
   <div #panes class="sd-panes" [style]="paneStyle()">
     @if (layout() === "sheet") {
       <div
@@ -276,7 +277,9 @@ SPDX-License-Identifier: Apache-2.0
         id="sd-panel-parameters"
         aria-labelledby="sd-tab-parameters"
         [hidden]="tab() !== 'parameters'"
-      ></div>
+      >
+        <weave-parameter-form [session]="session()" name="parameters" />
+      </div>
       <div
         class="sd-tabpanel"
         role="tabpanel"

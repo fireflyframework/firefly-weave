@@ -381,31 +381,27 @@ for (const size of screenSizes) {
       await page.screenshot({
         path: resolve(`../build/editor-m3/task-10/shell-${size.tag}.png`),
       });
-      const audit = await details.dialog.evaluate((dialog, touch) => {
-        const controls = [
-          ...dialog.querySelectorAll<HTMLElement>(
-            "button:not([disabled]), a[href], input",
-          ),
-        ].filter(
-          (element) =>
-            element.getClientRects().length > 0 &&
-            getComputedStyle(element).visibility !== "hidden",
-        );
-        return {
-          width: document.documentElement.scrollWidth,
-          viewport: window.innerWidth,
-          failures: controls.flatMap((element) => {
-            const box = element.getBoundingClientRect();
-            const name =
-              element.getAttribute("aria-label") ||
-              element.textContent?.trim() ||
-              element.tagName;
-            const target = document.elementFromPoint(
-              box.x + box.width / 2,
-              box.y + box.height / 2,
-            );
-            const minimum = touch ? 44 : 24;
-            return box.width < minimum ||
+      const controls = details.dialog.locator(
+        "button:not([disabled]):visible, a[href]:visible, input:visible",
+      );
+      for (const control of await controls.all()) {
+        await control.scrollIntoViewIfNeeded();
+        const audit = await control.evaluate((element, touch) => {
+          const box = element.getBoundingClientRect();
+          const name =
+            element.getAttribute("aria-label") ||
+            element.textContent?.trim() ||
+            element.tagName;
+          const target = document.elementFromPoint(
+            box.x + box.width / 2,
+            box.y + box.height / 2,
+          );
+          const minimum = touch ? 44 : 24;
+          return {
+            width: document.documentElement.scrollWidth,
+            viewport: window.innerWidth,
+            failures:
+              box.width < minimum ||
               box.height < minimum ||
               box.x < 0 ||
               box.right > window.innerWidth ||
@@ -413,22 +409,22 @@ for (const size of screenSizes) {
               box.bottom > window.innerHeight ||
               !target ||
               !element.contains(target)
-              ? [
-                  {
-                    name,
-                    x: box.x,
-                    y: box.y,
-                    width: box.width,
-                    height: box.height,
-                    reached: !!target && element.contains(target),
-                  },
-                ]
-              : [];
-          }),
-        };
-      }, size.width <= 768);
-      expect(audit.width).toBeLessThanOrEqual(audit.viewport);
-      expect(audit.failures).toEqual([]);
+                ? [
+                    {
+                      name,
+                      x: box.x,
+                      y: box.y,
+                      width: box.width,
+                      height: box.height,
+                      reached: !!target && element.contains(target),
+                    },
+                  ]
+                : [],
+          };
+        }, size.width <= 768);
+        expect(audit.width).toBeLessThanOrEqual(audit.viewport);
+        expect(audit.failures).toEqual([]);
+      }
       await details.dialog
         .getByRole("button", { name: "Rename lookup" })
         .click();
