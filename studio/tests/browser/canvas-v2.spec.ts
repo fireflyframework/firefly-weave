@@ -108,8 +108,8 @@ async function expectReadablePathLabels(canvas: CanvasPage, px: number) {
 /** How each step's label block draws on screen at the canvas's zoom. */
 async function labelBlocks(canvas: CanvasPage) {
   return canvas.root.evaluate((root) => {
-    const flow = root.querySelector("f-flow")!;
-    const zoom = Number(getComputedStyle(flow).getPropertyValue("--zoom"));
+    const body = root.querySelector<HTMLElement>(".tile-body")!;
+    const zoom = body.getBoundingClientRect().width / body.offsetWidth;
     const line = (element: HTMLElement) => {
       const box = element.getBoundingClientRect();
       return {

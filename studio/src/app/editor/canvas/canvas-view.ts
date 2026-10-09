@@ -89,7 +89,6 @@ import {
   LTR,
   edgePath,
   labelScale,
-  labelWidth,
   layoutLtr,
   levelOfDetail,
   midpoint,
@@ -386,16 +385,12 @@ export class CanvasView implements OnInit, DoCheck {
   labelScale() {
     return labelScale(this.view.zoom);
   }
-  /** A step's label block width, and a parallel step's, in canvas units. */
-  labelWidth() {
-    return labelWidth(this.view.zoom);
-  }
-  forkLabelWidth() {
-    return labelWidth(this.view.zoom, "fork");
-  }
   /** Path labels and "All branches done" draw this much larger, never below 10 px. */
   pathLabelScale() {
     return pathLabelScale(this.view.zoom);
+  }
+  focusWidth() {
+    return Math.ceil(2 / this.view.zoom);
   }
   /** The tile that takes Tab: the selection's focus, else the first tile. */
   active(): string {

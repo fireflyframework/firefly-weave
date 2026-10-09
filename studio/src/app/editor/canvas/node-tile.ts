@@ -19,7 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 // block. The canvas places it and handles its clicks; the tile only draws.
 import { ChangeDetectionStrategy, Component, input } from "@angular/core";
 import { Icon } from "../../icon";
-import type { Point, TileShape } from "./layout-ltr";
+import {
+  labelScale,
+  labelWidth,
+  type Point,
+  type TileShape,
+} from "./layout-ltr";
 import type { TileBadge, TileBorders } from "./tile-facts";
 
 export interface TileView {
@@ -61,6 +66,8 @@ export interface TileView {
       [attr.title]="v.tooltip"
       [attr.aria-pressed]="v.step ? v.selected : null"
       [attr.tabindex]="v.tabIndex"
+      [style.outline-width.px]="focusWidth()"
+      [style.outline-offset.px]="focusWidth()"
     >
       <span
         class="tile-shape"
@@ -89,7 +96,13 @@ export interface TileView {
       <span class="handle handle-in" aria-hidden="true"></span>
     }
     @if (v.title) {
-      <div class="tile-label" [style.top.px]="v.labelTop" aria-hidden="true">
+      <div
+        class="tile-label"
+        [style.top.px]="v.labelTop"
+        [style.--label-scale]="labelScale()"
+        [style.--label-width.px]="v.shape === 'end' ? null : labelWidth()"
+        aria-hidden="true"
+      >
         <strong [attr.title]="v.title">{{ v.title }}</strong>
         @if (v.subtitle) {
           <span [attr.title]="v.subtitle">{{ v.subtitle }}</span>
@@ -99,4 +112,15 @@ export interface TileView {
 })
 export class NodeTile {
   view = input.required<TileView>();
+  zoom = input(1);
+
+  labelScale() {
+    return labelScale(this.zoom());
+  }
+  labelWidth() {
+    return labelWidth(this.zoom(), this.view().shape);
+  }
+  focusWidth() {
+    return Math.ceil(2 / this.zoom());
+  }
 }

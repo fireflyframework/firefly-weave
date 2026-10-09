@@ -228,7 +228,8 @@ weave-canvas-view,
    in its tooltip. Below about 92% zoom the text draws larger by
    --label-scale, so names never show below 12 px on screen. The block
    keeps to its column, --label-width canvas units wide: 168 from 100% up,
-   the column less a gap below (layout-ltr's labelWidth). */
+   the column less a gap below (layout-ltr's labelWidth). Zoom properties
+   stay on the label block so unrelated icons and edges are not restyled. */
 .canvas-v2 .tile-label {
   position: absolute;
   left: calc(50% - var(--label-width, 168px) / 2);
@@ -238,10 +239,6 @@ weave-canvas-view,
   pointer-events: none;
   transform: scale(var(--label-scale, 1));
   transform-origin: top left;
-}
-/* A parallel step's bar is narrower than a tile, and so is its column. */
-.canvas-v2 .tile-body[data-shape="fork"] ~ .tile-label {
-  --label-width: var(--fork-label-width, 168px);
 }
 .canvas-v2 .tile-body[data-shape="end"] ~ .tile-label {
   --label-width: 80px;

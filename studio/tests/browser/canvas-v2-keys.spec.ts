@@ -269,6 +269,44 @@ test.describe("the canvas keyboard map", () => {
     ).toBeFocused();
   });
 
+  test("keeps keyboard focus rings at least two screen pixels while zoom changes", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    const tile = canvas.tileBody("approval");
+    await tile.focus();
+    for (const key of ["-", "-", "0"]) {
+      const before = await canvas.zoomPercent();
+      await page.keyboard.press(key);
+      await expect.poll(() => canvas.zoomPercent()).not.toBe(before);
+      for (const control of [
+        tile,
+        canvas.insertTarget("Insert a step between approval and route"),
+        canvas.root.getByRole("button", {
+          name: "More commands for approval",
+          exact: true,
+        }),
+      ]) {
+        await tile.focus();
+        await control.focus();
+        const ring = await control.evaluate((element: HTMLElement) => {
+          const style = getComputedStyle(element);
+          return {
+            visible: element.matches(":focus-visible"),
+            style: style.outlineStyle,
+            width:
+              parseFloat(style.outlineWidth) *
+              (element.getBoundingClientRect().width / element.offsetWidth),
+          };
+        });
+        expect(ring.visible).toBe(true);
+        expect(ring.style).toBe("solid");
+        expect(ring.width).toBeGreaterThanOrEqual(2);
+      }
+      await tile.focus();
+    }
+  });
+
   test("the canvas is one Tab stop, with the focused step's + buttons inside it", async ({
     page,
   }) => {
