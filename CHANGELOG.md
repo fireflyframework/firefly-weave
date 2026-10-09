@@ -20,6 +20,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Keep typing in the selected form field when deferred row autofocus completes.
+  Rapid row additions focus the newest item without overriding a later choice.
 - Update Studio's YAML parser to 2.8.3 so deeply nested documents produce a
   parser diagnostic instead of an unexpected stack-overflow exception. Update
   Vitest to 4.1.11 to include fixes for its development-server security advisories.

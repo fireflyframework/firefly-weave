@@ -720,6 +720,85 @@ print(compile_source(p['source'],format='yaml',catalog=c).to_bytes().decode())`,
       expect(step.with).toEqual({ literal: { counts: { apples: 2 } } });
     });
 
+    test("queued row focus respects the field the person chooses", async ({
+      page,
+    }) => {
+      const scored = action("score.lookup", {
+        type: "object",
+        properties: {
+          scores: {
+            type: "array",
+            title: "Scores",
+            items: { type: "integer" },
+          },
+        },
+      });
+      await connected(page, {
+        catalog: [{ id: "n1", document: scored as never }],
+      });
+      await newWorkflow(page);
+      const designer = new DesignerPage(page);
+      await designer.append("action");
+      await designer.selectStep("call-action-1");
+      await chooseAction(page);
+      const form = page.locator(".action-input-form");
+      const add = form.getByRole("button", { name: "Add Scores item" });
+      await add.click();
+      await expect(
+        form.getByLabel("Scores item 1", { exact: true }),
+      ).toBeFocused();
+      // Hold deferred autofocus so a real user click can happen before it.
+      await page.clock.install();
+      await page.clock.pauseAt(new Date());
+      await add.click();
+      const first = form.getByLabel("Scores item 1", { exact: true });
+      await first.click();
+      await page.clock.runFor(1);
+      await expect(first).toBeFocused();
+      await page.clock.resume();
+      await page.keyboard.press("ControlOrMeta+A");
+      await page.keyboard.insertText("1.5");
+      await page.keyboard.press("Tab");
+      await form.getByRole("button", { name: "Remove Scores item 2" }).click();
+      await expect(first).toHaveValue("1.5");
+      await expect(
+        form.getByText("Scores item 1 must be a whole number."),
+      ).toBeVisible();
+      await expect(draftErrors(page).first()).toBeVisible();
+    });
+
+    test("rapid row additions focus the newest item", async ({ page }) => {
+      const scored = action("score.lookup", {
+        type: "object",
+        properties: {
+          scores: {
+            type: "array",
+            title: "Scores",
+            items: { type: "integer" },
+          },
+        },
+      });
+      await connected(page, {
+        catalog: [{ id: "n1", document: scored as never }],
+      });
+      await newWorkflow(page);
+      const designer = new DesignerPage(page);
+      await designer.append("action");
+      await designer.selectStep("call-action-1");
+      await chooseAction(page);
+      const form = page.locator(".action-input-form");
+      await page.clock.install();
+      await page.clock.pauseAt(new Date());
+      const add = form.getByRole("button", { name: "Add Scores item" });
+      await add.click();
+      await add.click();
+      await page.clock.runFor(1);
+      await expect(
+        form.getByLabel("Scores item 2", { exact: true }),
+      ).toBeFocused();
+      await page.clock.resume();
+    });
+
     test("a list item before a removed one keeps its error", async ({
       page,
     }) => {
