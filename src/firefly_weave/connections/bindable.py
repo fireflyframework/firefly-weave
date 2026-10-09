@@ -21,7 +21,7 @@ import json
 from uuid import UUID
 
 from pyfly.container import service
-from sqlalchemy import String, Uuid, bindparam, text
+from sqlalchemy import ARRAY, String, Uuid, bindparam, text
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied, contains
@@ -54,23 +54,63 @@ def endpoint_origin(endpoint: str) -> str | None:
         return None
 
 
-async def _candidate_ids(tx: Transaction, *, connector: str | None, after: UUID | None) -> list[tuple[UUID, int]]:
-    rows = await tx.session.execute(
-        text(
-            "SELECT id, octet_length(payload::text) AS logical_bytes FROM connection_revisions "
-            "WHERE tenant_id=:tenant AND project_id=:project AND environment_id=:environment "
-            "AND (:after IS NULL OR id>:after) "
-            "AND (:connector IS NULL OR payload->>'connector'=:connector) ORDER BY id LIMIT :limit"
-        ).bindparams(bindparam("after", type_=Uuid), bindparam("connector", type_=String)),
-        {
-            "tenant": tx.scope.tenant_id,
-            "project": tx.scope.project_id,
-            "environment": tx.scope.environment_id,
-            "after": after,
-            "connector": connector,
-            "limit": SCAN_LIMIT + 1,
-        },
-    )
+def _bind_resources(principal: Principal, scope: Scope) -> set[UUID] | None:
+    grants = [
+        grant
+        for grant in principal.grants
+        if "connection.bind" in ROLE_CAPABILITIES[grant.role] and contains(grant.scope, scope)
+    ]
+    if any(not grant.resources for grant in grants):
+        return None
+    identifiers = set()
+    for grant in grants:
+        for resource in grant.resources:
+            if len(resource) != 36:
+                continue
+            try:
+                identifier = UUID(resource)
+            except ValueError:
+                continue
+            # Authorization compares exact resource strings, not equivalent UUID spellings.
+            if str(identifier) == resource:
+                identifiers.add(identifier)
+    return identifiers
+
+
+def _allowed_revision_ids(actor: Principal, current: Principal, scope: Scope) -> list[UUID] | None:
+    token_ids, current_ids = _bind_resources(actor, scope), _bind_resources(current, scope)
+    identifiers = current_ids if token_ids is None else token_ids if current_ids is None else token_ids & current_ids
+    if identifiers is None:
+        return None
+    # Compact JSON: two brackets and, per canonical UUID, 36 ASCII bytes, quotes and a separator.
+    if identifiers and 39 * len(identifiers) + 1 > PAGE_BYTES:
+        raise CatalogError(429, "WV-PAGE-LIMIT", "Selected grant parameters exceed the logical byte limit")
+    return sorted(identifiers)
+
+
+async def _candidate_ids(
+    tx: Transaction, *, connector: str | None, after: UUID | None, allowed_ids: list[UUID] | None
+) -> list[tuple[UUID, int]]:
+    statement = text(
+        "SELECT id, octet_length(payload::text) AS logical_bytes FROM connection_revisions "
+        "WHERE tenant_id=:tenant AND project_id=:project AND environment_id=:environment "
+        "AND (:after IS NULL OR id>:after) "
+        "AND (:connector IS NULL OR payload->>'connector'=:connector) "
+        + ("AND id=ANY(:allowed_ids) " if allowed_ids is not None else "")
+        + "ORDER BY id LIMIT :limit"
+    ).bindparams(bindparam("after", type_=Uuid), bindparam("connector", type_=String))
+    parameters: dict[str, object] = {
+        "tenant": tx.scope.tenant_id,
+        "project": tx.scope.project_id,
+        "environment": tx.scope.environment_id,
+        "after": after,
+        "connector": connector,
+        "limit": SCAN_LIMIT + 1,
+    }
+    if allowed_ids is not None:
+        statement = statement.bindparams(bindparam("allowed_ids", type_=ARRAY(Uuid)))
+        parameters["allowed_ids"] = allowed_ids
+    rows = await tx.session.execute(statement, parameters)
     return [(row.id, row.logical_bytes) for row in rows.all()]
 
 
@@ -111,11 +151,15 @@ class BindableConnectionService:
                 raise ValueError("Invalid scope-bound cursor")
         items: list[BindableConnection] = []
         selected_bytes = 0
+        last_authorized = None
         async with self.connections.definitions.transaction(scope, None, mutation=False) as tx:
             current = await load_principal(tx.session, actor.id)
             self.require_bind_scope(actor, current, scope, context)
+            allowed_ids = _allowed_revision_ids(actor, current, scope)
+            if allowed_ids == []:
+                return Page(items=[])
             for page in range(SCAN_PAGES):
-                candidates = await _candidate_ids(tx, connector=query.connector, after=after)
+                candidates = await _candidate_ids(tx, connector=query.connector, after=after, allowed_ids=allowed_ids)
                 selected_bytes += sum(size for _, size in candidates[:SCAN_LIMIT])
                 if selected_bytes > PAGE_BYTES:
                     raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
@@ -125,6 +169,7 @@ class BindableConnectionService:
                         self.connections.require_revision(actor, current, scope, identifier, "connection.bind", context)
                     except AccessDenied:
                         continue
+                    last_authorized = identifier
                     revision = await ConnectionRepository(tx).revision(identifier)
                     enabled = True
                     try:
@@ -151,7 +196,7 @@ class BindableConnectionService:
                     )
                     if len(items) == query.limit:
                         cursor = (
-                            encode_cursor_v2(scope, collection, None, str(after))
+                            encode_cursor_v2(scope, collection, None, str(last_authorized))
                             if index + 1 < len(candidates)
                             else None
                         )
@@ -159,5 +204,11 @@ class BindableConnectionService:
                 if len(candidates) <= SCAN_LIMIT:
                     return Page(items=items)
                 if page == SCAN_PAGES - 1:
-                    return Page(items=items, next_cursor=encode_cursor_v2(scope, collection, None, str(after)))
+                    if last_authorized is None:
+                        raise CatalogError(
+                            429, "WV-PAGE-LIMIT", "Selected page cannot safely continue within the scan limit"
+                        )
+                    return Page(
+                        items=items, next_cursor=encode_cursor_v2(scope, collection, None, str(last_authorized))
+                    )
         return Page(items=items)

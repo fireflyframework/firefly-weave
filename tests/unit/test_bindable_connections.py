@@ -16,6 +16,7 @@
 
 """Resource-scoped discovery and binding share current authority without exposing configuration."""
 
+import base64
 import importlib
 import json
 from contextlib import asynccontextmanager
@@ -85,6 +86,7 @@ def catalog(monkeypatch):
             for r in state.records
             if (values["after"] is None or r.id > values["after"])
             and (values["connector"] is None or r.connector == values["connector"])
+            and ("id=ANY(:allowed_ids)" not in str(statement) or r.id in values["allowed_ids"])
         ]
         return SimpleNamespace(
             all=lambda: [SimpleNamespace(id=r.id, logical_bytes=state.sizes.get(r.id, 100)) for r in rows[:101]]
@@ -222,19 +224,27 @@ async def test_cursor_rejects_noncanonical_uuid_and_sort_value(catalog):
             await listing(catalog, cursor=encode_cursor_v2(catalog.scope, parts[2], sort, identifier))
 
 
-async def test_scan_budget_returns_continuation_without_dropping_the_next_candidate(catalog):
-    catalog.records = [revision(i) for i in range(1, 1002)]
-    catalog.actor = principal(catalog.scope, (str(UUID(int=1001)),))
+def decoded_cursor_identifier(page):
+    assert page.next_cursor
+    value = page.next_cursor
+    return UUID(json.loads(base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)))[4])
+
+
+async def test_sparse_authorized_revisions_do_not_expose_denied_ids_in_decoded_cursors(catalog):
+    catalog.records = [revision(i) for i in range(1, 1206)]
+    catalog.actor = principal(catalog.scope, (str(UUID(int=1001)), str(UUID(int=1205))))
     catalog.current = catalog.actor
-    page = await listing(catalog)
-    assert page.items == [] and page.next_cursor
-    assert len(catalog.queries) == 10 and catalog.fetch.await_count == 0
+    page = await listing(catalog, limit=1)
+    assert [item.revision_id for item in page.items] == [UUID(int=1001)]
+    assert decoded_cursor_identifier(page) == UUID(int=1001)
+    assert len(catalog.queries) == 1
     final = await listing(catalog, cursor=page.next_cursor)
-    assert [item.revision_id for item in final.items] == [UUID(int=1001)]
+    assert [item.revision_id for item in final.items] == [UUID(int=1205)]
     assert final.next_cursor is None
+    assert [call.args[0] for call in catalog.fetch.await_args_list] == [UUID(int=1001), UUID(int=1205)]
 
 
-@pytest.mark.parametrize("sizes", [{1: 8 * 1024 * 1024 + 1}, {1: 4 * 1024 * 1024, 101: 4 * 1024 * 1024 + 1}])
+@pytest.mark.parametrize("sizes", [{101: 8 * 1024 * 1024 + 1}, {101: 4 * 1024 * 1024, 205: 4 * 1024 * 1024 + 1}])
 async def test_selected_bytes_are_bounded_before_payload_fetch(catalog, sizes):
     catalog.sizes = {UUID(int=k): v for k, v in sizes.items()}
     with pytest.raises(CatalogError) as error:
@@ -456,3 +466,198 @@ async def test_native_application_resolves_the_connection_choice_route_and_servi
             await app.state.resources.close()
             for owner in app.state.telemetry:
                 owner.close()
+
+
+@pytest.mark.parametrize(
+    "token,current,expected",
+    [
+        ([(1, 2), (3,)], [(2, 3), (4,)], [2, 3]),
+        ([()], [(2, 3)], [2, 3]),
+        ([(2, 3)], [()], [2, 3]),
+        ([(), (1,)], [(2,), ()], [1, 2, 3, 4]),
+        ([(1,)], [(4,)], []),
+    ],
+)
+async def test_candidate_selection_intersects_matching_grant_unions(catalog, token, current, expected):
+    catalog.records = [revision(i) for i in range(1, 5)]
+
+    def grants(resources):
+        return tuple(
+            Grant(role="deployer", scope=catalog.scope, resources=tuple(str(UUID(int=i)) for i in group))
+            for group in resources
+        )
+
+    catalog.actor = catalog.actor.model_copy(update={"grants": grants(token)})
+    catalog.current = catalog.current.model_copy(update={"grants": grants(current)})
+    page = await listing(catalog)
+    assert [item.revision_id.int for item in page.items] == expected
+    if not expected:
+        assert not catalog.queries
+    elif any(not group for group in token) and any(not group for group in current):
+        assert "allowed_ids" not in catalog.queries[0][1]
+    else:
+        assert catalog.queries[0][1]["allowed_ids"] == [UUID(int=i) for i in expected]
+    assert [call.args[0].int for call in catalog.fetch.await_args_list] == expected
+
+
+@pytest.mark.parametrize("foreign", ["tenant", "project", "environment", "capability"])
+async def test_unrelated_unrestricted_grants_do_not_broaden_candidate_selection(catalog, foreign):
+    changes = {foreign + "_id": uuid4()} if foreign != "capability" else {}
+    scope = catalog.scope.model_copy(update=changes)
+    unrelated = Grant(role="viewer" if foreign == "capability" else "deployer", scope=scope)
+    catalog.actor = catalog.actor.model_copy(update={"grants": (*catalog.actor.grants, unrelated)})
+    catalog.current = catalog.actor
+    page = await listing(catalog)
+    assert [item.revision_id.int for item in page.items] == [101, 205]
+    assert catalog.queries[0][1]["allowed_ids"] == [UUID(int=101), UUID(int=205)]
+
+
+@pytest.mark.parametrize("spelling", ["hex", "upper", "braced", "urn", "invalid"])
+async def test_noncanonical_resource_strings_cannot_select_revision_ids(catalog, spelling):
+    selected = UUID("abcdef00-0000-0000-0000-000000000001")
+    values = {
+        "hex": selected.hex,
+        "upper": str(selected).upper(),
+        "braced": "{" + str(selected) + "}",
+        "urn": selected.urn,
+        "invalid": "not-a-revision",
+    }
+    catalog.records = [revision(1).model_copy(update={"id": selected})]
+    catalog.actor = principal(catalog.scope, (values[spelling],))
+    catalog.current = catalog.actor
+    page = await listing(catalog)
+    assert page.items == [] and page.next_cursor is None
+    assert not catalog.queries
+    catalog.fetch.assert_not_awaited()
+
+
+async def test_restricted_candidate_query_binds_a_uuid_array_before_payload_loading(catalog):
+    from sqlalchemy import ARRAY, Uuid
+    from sqlalchemy.dialects import postgresql
+
+    await listing(catalog, limit=1)
+    statement, values = catalog.tx.session.execute.await_args.args
+    compiled = statement.compile(dialect=postgresql.dialect())
+    assert "id=ANY(" in str(compiled)
+    bound = compiled.binds["allowed_ids"].type
+    assert isinstance(bound, ARRAY) and isinstance(bound.item_type, Uuid)
+    assert values["allowed_ids"] == [UUID(int=101), UUID(int=205)]
+    assert all(isinstance(value, UUID) for value in values["allowed_ids"])
+    assert values["limit"] == 101
+
+
+async def test_continuation_does_not_fetch_a_newly_revoked_revision(catalog):
+    first = await listing(catalog, limit=1)
+    assert decoded_cursor_identifier(first) == UUID(int=101)
+    catalog.current = catalog.current.model_copy(
+        update={"grants": (Grant(role="deployer", scope=catalog.scope, resources=(str(UUID(int=101)),)),)}
+    )
+    final = await listing(catalog, cursor=first.next_cursor)
+    assert final.items == [] and final.next_cursor is None
+    assert [call.args[0].int for call in catalog.fetch.await_args_list] == [101]
+
+
+@pytest.mark.parametrize("same_authorized_position", [False, True])
+async def test_defensive_denials_never_supply_a_cursor_without_safe_progress(
+    catalog, monkeypatch, same_authorized_position
+):
+    catalog.records = [revision(i) for i in range(1, 1202)]
+    catalog.actor = principal(catalog.scope)
+    catalog.current = catalog.actor
+    require = catalog.connection.require_revision
+
+    def reject(actor, current, scope, identifier, capability, context):
+        require(actor, current, scope, identifier, capability, context)
+        if not same_authorized_position or identifier.int != 1:
+            raise AccessDenied()
+
+    monkeypatch.setattr(catalog.connection, "require_revision", reject)
+    query = {}
+    if same_authorized_position:
+        first = await listing(catalog)
+        assert [item.revision_id.int for item in first.items] == [1]
+        assert decoded_cursor_identifier(first) == UUID(int=1)
+        query["cursor"] = first.next_cursor
+    with pytest.raises(CatalogError) as error:
+        await listing(catalog, **query)
+    assert (error.value.status, error.value.code) == (429, "WV-PAGE-LIMIT")
+    assert error.value.result is None
+
+
+async def test_short_pages_after_defensive_denials_continue_only_from_authorized_ids(catalog, monkeypatch):
+    catalog.records = [revision(i) for i in range(1, 1201)]
+    catalog.actor = principal(catalog.scope)
+    catalog.current = catalog.actor
+    require = catalog.connection.require_revision
+    allowed = {UUID(int=50), UUID(int=1002)}
+
+    def reject(actor, current, scope, identifier, capability, context):
+        require(actor, current, scope, identifier, capability, context)
+        if identifier not in allowed:
+            raise AccessDenied()
+
+    monkeypatch.setattr(catalog.connection, "require_revision", reject)
+    cursor, seen = None, []
+    for _ in range(3):
+        page = await listing(catalog, cursor=cursor)
+        seen.extend(item.revision_id for item in page.items)
+        if page.next_cursor:
+            identifier = decoded_cursor_identifier(page)
+            assert identifier in allowed and identifier in {item.revision_id for item in page.items}
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert cursor is None and seen == sorted(allowed)
+
+
+@pytest.mark.parametrize("budget,passes", [(78, False), (79, True)])
+async def test_selected_uuid_parameter_serialization_has_a_hard_byte_budget(catalog, monkeypatch, budget, passes):
+    service, _ = modules()
+    assert service.PAGE_BYTES == 8 * 1024 * 1024
+    monkeypatch.setattr(service, "PAGE_BYTES", budget)
+    catalog.sizes = {r.id: 0 for r in catalog.records}
+    if passes:
+        page = await listing(catalog)
+        assert [item.revision_id.int for item in page.items] == [101, 205]
+    else:
+        with pytest.raises(CatalogError) as error:
+            await listing(catalog)
+        assert (error.value.status, error.value.code) == (429, "WV-PAGE-LIMIT")
+        assert not catalog.queries
+        catalog.fetch.assert_not_awaited()
+
+
+@pytest.mark.parametrize("snapshot", ["actor", "current"])
+async def test_worker_snapshots_cannot_use_human_bind_grants_for_candidate_selection(catalog, snapshot):
+    value = getattr(catalog, snapshot)
+    setattr(catalog, snapshot, value.model_copy(update={"kind": "worker"}))
+    with pytest.raises(AccessDenied):
+        await listing(catalog)
+    assert not catalog.queries
+    catalog.fetch.assert_not_awaited()
+
+
+async def test_ancestor_scope_grants_and_duplicate_resources_select_the_exact_union(catalog):
+    tenant = Scope(tenant_id=catalog.scope.tenant_id)
+    project = Scope(tenant_id=catalog.scope.tenant_id, project_id=catalog.scope.project_id)
+    first, second = str(UUID(int=101)), str(UUID(int=205))
+    grants = (
+        Grant(role="deployer", scope=tenant, resources=(first, first, "invalid")),
+        Grant(role="deployer", scope=project, resources=(second,)),
+    )
+    catalog.actor = catalog.actor.model_copy(update={"grants": grants})
+    catalog.current = catalog.actor
+    page = await listing(catalog)
+    assert [item.revision_id.int for item in page.items] == [101, 205]
+    assert catalog.queries[0][1]["allowed_ids"] == [UUID(int=101), UUID(int=205)]
+
+
+async def test_revoking_the_incoming_cursor_revision_does_not_reemit_it(catalog):
+    first = await listing(catalog, limit=1)
+    assert decoded_cursor_identifier(first) == UUID(int=101)
+    catalog.current = catalog.current.model_copy(
+        update={"grants": (Grant(role="deployer", scope=catalog.scope, resources=(str(UUID(int=205)),)),)}
+    )
+    final = await listing(catalog, cursor=first.next_cursor)
+    assert [item.revision_id.int for item in final.items] == [205]
+    assert final.next_cursor is None
