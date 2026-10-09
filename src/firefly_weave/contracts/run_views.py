@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
@@ -42,6 +43,9 @@ from firefly_weave.operations.redaction import Omission
 type RunStatus = Literal["queued", "running", "waiting", "suspended", "succeeded", "failed", "cancelled", "timed_out"]
 type RunOrigin = Literal["manual", "webhook", "schedule", "broker", "email", "provider", "retry", "call", "test"]
 type RunSummaryOrder = Literal["started_desc", "started_asc", "updated_desc"]
+type RunListOrder = Literal["id", "started_desc", "started_asc", "updated_desc"]
+type HandledErrorCount = Annotated[int, Field(ge=0)]
+type StepHandledFailure = Literal["continue", "errorOutput"]
 type StepKind = Literal[
     "action",
     "llm",
@@ -76,6 +80,26 @@ type Milliseconds = Annotated[int, Field(ge=0)]
 type LogCode = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
 type LogFieldKey = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$")]
 type LogFieldValue = Annotated[str, Field(max_length=256)] | SafeInteger | FiniteFloat | bool | None
+
+
+_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})"
+)
+
+
+def utc_time(value: object) -> datetime | None:
+    """Parse a bounded RFC 3339 timestamp into a representable UTC instant."""
+    if value is None:
+        return None
+    if type(value) is not str or len(value) > 64 or _TIMESTAMP.fullmatch(value) is None:
+        raise ValueError("Expected a timestamp with an offset")
+    if value[-1] not in "Zz" and (int(value[-5:-3]) > 23 or int(value[-2:]) > 59):
+        raise ValueError("Expected a valid timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.upper().replace("Z", "+00:00"))
+        return parsed.astimezone(UTC)
+    except (ValueError, OverflowError):
+        raise ValueError("Expected a valid timestamp") from None
 
 
 def _same_step(node_id: str, instance_key: str) -> None:
@@ -147,6 +171,7 @@ class RunSummary(ContractModel):
     failed_step: FailedStep | None
     active_incidents: Count
     archived: bool
+    handled_errors: HandledErrorCount = Field(default=0, exclude_if=lambda value: value == 0)
 
     @model_validator(mode="after")
     def coherent(self) -> RunSummary:
@@ -191,6 +216,7 @@ class StepFact(ContractModel):
     child_run_id: UUID | None
     log_entries: Count
     omissions: list[Omission] = Field(default_factory=list, max_length=8, exclude_if=lambda value: not value)
+    handled: StepHandledFailure | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def coherent(self) -> StepFact:
@@ -202,6 +228,12 @@ class StepFact(ContractModel):
             raise ValueError("duration_ms is set exactly when the step started and ended")
         if (self.queue_wait_ms is not None) != (self.scheduled_at is not None and self.started_at is not None):
             raise ValueError("queue_wait_ms is set exactly when the step was scheduled and started")
+        if self.handled is not None and self.status != "failed":
+            raise ValueError("Only a failed step can have a handled failure")
+        if self.started_at and self.ended_at and self.ended_at < self.started_at:
+            raise ValueError("A step cannot end before it started")
+        if self.scheduled_at and self.started_at and self.started_at < self.scheduled_at:
+            raise ValueError("A step cannot start before it was scheduled")
         return self
 
 
@@ -279,6 +311,7 @@ class RunSummaryQuery(ContractModel):
     business_key: BusinessKey | None = None
     correlation_key: BusinessKey | None = None
     has_active_incident: bool | None = None
+    has_handled_errors: bool | None = None
     include_archived: bool = False
     activation_id: UUID | None = None
     order: RunSummaryOrder = "started_desc"
@@ -290,16 +323,10 @@ class RunSummaryQuery(ContractModel):
     def canonical_status(cls, value: list[RunStatus]) -> list[RunStatus]:
         return sorted(set(value))
 
-    @field_validator("started_after", "started_before")
+    @field_validator("started_after", "started_before", mode="before")
     @classmethod
-    def utc(cls, value: datetime | None) -> datetime | None:
-        if value is None:
-            return None
-        try:
-            return value.astimezone(UTC)
-        except OverflowError:
-            # An offset can push the instant past year 9999 or before year 1; that is a bad value, not a server error.
-            raise ValueError("The time is outside the supported range") from None
+    def utc(cls, value: object) -> datetime | None:
+        return utc_time(value)
 
     @model_validator(mode="after")
     def coherent(self) -> RunSummaryQuery:
@@ -319,6 +346,17 @@ class RunSummaryQuery(ContractModel):
     def cursor_collection(self) -> str:
         filters = self.model_dump(mode="json", exclude={"order", "limit", "cursor"})
         return f"run_summaries:{_digest(filters)}:{self.order}"
+
+
+class RunListQuery(RunSummaryQuery):
+    """`runs.list` filters, with ID order retained for existing callers."""
+
+    # The list schema also permits ID order; the summary schema keeps chronological orders only.
+    order: RunListOrder = "id"  # type: ignore[assignment]
+
+    def cursor_collection(self) -> str:
+        filters = self.model_dump(mode="json", exclude={"order", "limit", "cursor"})
+        return f"runs:{_digest(filters)}:{self.order}"
 
 
 class RunStepQuery(ContractModel):

@@ -117,7 +117,10 @@ def decode_sequence_cursor(value: str | None, scope: Scope, collection: str) -> 
 def encode_cursor_v2(scope: Scope, collection: str, sort_value: JsonValue, identifier: str) -> str:
     """Time-ordered cursor: base64url of [2, scope, collection, sort value, identifier]."""
     raw = json.dumps([2, scope.model_dump(mode="json"), collection, sort_value, identifier], separators=(",", ":"))
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+    cursor = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+    if len(cursor) > CURSOR_V2_LIMIT:
+        raise ValueError("Invalid scope-bound cursor")
+    return cursor
 
 
 def decode_cursor_v2(value: str | None, scope: Scope, collection: str) -> tuple[JsonValue, str] | None:
@@ -138,7 +141,7 @@ def decode_cursor_v2(value: str | None, scope: Scope, collection: str) -> tuple[
         if not isinstance(identifier, str) or encode_cursor_v2(scope, collection, sort_value, identifier) != value:
             raise ValueError()
         return sort_value, identifier
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError, RecursionError):
         raise ValueError("Invalid scope-bound cursor") from None
 
 

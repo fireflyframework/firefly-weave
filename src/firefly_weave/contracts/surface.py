@@ -157,6 +157,7 @@ from firefly_weave.contracts.public import (
 )
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
 from firefly_weave.contracts.run_views import (
+    RunListQuery,
     RunLogPage,
     RunLogQuery,
     RunStepQuery,
@@ -275,20 +276,6 @@ class Operation:
                     {} if field.default is None or field.default_factory is not None else {"default": field.default}
                 )
                 params.append(OpenAPIParameter(name, "query", _present(field.annotation), required=False, **documented))
-        if self.id == "runs.list":
-            params += [
-                OpenAPIParameter("business_key", "query", Annotated[str, Field(max_length=200)], required=False),
-                OpenAPIParameter("correlation_key", "query", Annotated[str, Field(max_length=200)], required=False),
-                OpenAPIParameter(
-                    "status",
-                    "query",
-                    Literal[
-                        "queued", "running", "waiting", "suspended", "succeeded", "failed", "cancelled", "timed_out"
-                    ],
-                    required=False,
-                ),
-                OpenAPIParameter("include_archived", "query", bool, required=False, default=False),
-            ]
         if self.id == "human_tasks.list":
             params.append(
                 OpenAPIParameter(
@@ -315,7 +302,7 @@ class Operation:
             params.append(OpenAPIParameter("target_id", "query", UUID, required=False))
             if self.id == "deployment_plans.list":
                 params.append(OpenAPIParameter("deployment_id", "query", UUID, required=False))
-        if self.page:
+        if self.page and self.query is None:
             params += [
                 OpenAPIParameter("limit", "query", PageLimit, required=False, default=50),
                 OpenAPIParameter("cursor", "query", str, required=False),
@@ -1380,7 +1367,13 @@ OPERATIONS = {
             "runs.start", ENVIRONMENT + "/runs", "POST", RunView, "run.start", StartRunRequest, (201,), idempotency=True
         ),
         Operation(
-            "runs.list", ENVIRONMENT + "/runs", "GET", Page[RunView | UnavailableResource], "run.read", page=True
+            "runs.list",
+            ENVIRONMENT + "/runs",
+            "GET",
+            Page[RunView | UnavailableResource],
+            "run.read",
+            page=True,
+            query=RunListQuery,
         ),
         Operation("runs.read", ENVIRONMENT + "/runs/{identifier}", "GET", RunView, "run.read"),
         Operation(

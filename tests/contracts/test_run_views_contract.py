@@ -27,6 +27,7 @@ from pydantic import ValidationError
 from firefly_weave.contracts import run_views
 from firefly_weave.contracts.run_views import (
     FailedStep,
+    RunListQuery,
     RunLogEntry,
     RunLogPage,
     RunLogQuery,
@@ -136,6 +137,7 @@ def test_field_names_and_order_are_frozen():
         "failed_step",
         "active_incidents",
         "archived",
+        "handled_errors",
     ]
     assert list(StepFact.model_fields) == [
         "node_id",
@@ -154,6 +156,7 @@ def test_field_names_and_order_are_frozen():
         "child_run_id",
         "log_entries",
         "omissions",
+        "handled",
     ]
     assert list(StepFactWithOutput.model_fields) == [*StepFact.model_fields, "output"]
     assert list(RunLogEntry.model_fields) == [
@@ -188,6 +191,7 @@ def test_field_names_and_order_are_frozen():
         "business_key",
         "correlation_key",
         "has_active_incident",
+        "has_handled_errors",
         "include_archived",
         "activation_id",
         "order",
@@ -507,3 +511,137 @@ def test_step_and_log_queries_bound_their_pages_and_take_static_step_ids():
     assert logs != parse(RunLogQuery, {"level": "error"}).cursor_collection(run_id)
     assert logs != parse(RunLogQuery, {"level": "warning", "node_id": "send"}).cursor_collection(run_id)
     assert logs != parse(RunLogQuery, {"level": "warning", "source": "ai"}).cursor_collection(run_id)
+
+
+@pytest.mark.parametrize("handled", ["continue", "errorOutput"])
+def test_handled_field_requires_failed_status(handled):
+    with pytest.raises(ValidationError):
+        parse(StepFact, {**STEP, "status": "succeeded", "handled": handled})
+    assert parse(StepFact, {**STEP, "handled": handled}).handled == handled
+    assert "handled" not in parse(StepFact, STEP).model_dump(mode="json")
+
+
+def test_handled_summary_default_is_omitted_and_nonzero_round_trips():
+    assert "handled_errors" not in parse(RunSummary, SUMMARY).model_dump(mode="json")
+    value = {**SUMMARY, "handled_errors": 2}
+    assert parse(RunSummary, value).model_dump(mode="json") == value
+    with pytest.raises(ValidationError):
+        parse(RunSummary, {**SUMMARY, "handled_errors": -1})
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"duration_ms": -1},
+        {"queue_wait_ms": -1},
+        {"ended_at": "2026-10-07T12:00:01Z"},
+        {"scheduled_at": "2026-10-07T12:00:03Z"},
+    ],
+)
+def test_step_timings_cannot_be_negative_or_reversed(change):
+    with pytest.raises(ValidationError):
+        parse(StepFact, {**STEP, **change})
+
+
+QUERY_CHANGES = {
+    "workflow": "other",
+    "version": "1.3.0",
+    "status": ["failed"],
+    "origin": "webhook",
+    "started_after": "2026-10-01T00:00:00Z",
+    "started_before": "2026-10-08T00:00:00Z",
+    "include_test": True,
+    "caller_run_id": RUN,
+    "top_level_only": True,
+    "retried_from_run_id": RUN,
+    "business_key": "INV-1042",
+    "correlation_key": "thread",
+    "has_active_incident": True,
+    "has_handled_errors": True,
+    "include_archived": True,
+    "activation_id": RUN,
+    "order": "updated_desc",
+}
+
+
+@pytest.mark.parametrize("model", [RunSummaryQuery, RunListQuery])
+@pytest.mark.parametrize("field,value", QUERY_CHANGES.items())
+def test_every_run_query_field_binds_the_cursor(model, field, value):
+    base = parse(model, {"workflow": "invoice-approval"})
+    changed = parse(model, {**base.model_dump(mode="json"), field: value})
+    assert changed.cursor_collection() != base.cursor_collection()
+
+
+def test_query_digest_coverage_includes_every_filter():
+    assert set(QUERY_CHANGES) == set(RunSummaryQuery.model_fields) - {"limit", "cursor"}
+    plain = RunSummaryQuery()
+    assert plain.cursor_collection() != plain.model_copy(update={"has_handled_errors": True}).cursor_collection()
+    assert plain.cursor_collection() != plain.model_copy(update={"has_handled_errors": False}).cursor_collection()
+    with pytest.raises(ValidationError):
+        parse(RunSummaryQuery, {"order": "id"})
+    assert RunListQuery().order == "id"
+    assert RunListQuery().cursor_collection().startswith("runs:")
+    assert RunListQuery().cursor_collection() != plain.cursor_collection()
+    assert (
+        parse(RunListQuery, {"status": ["running", "failed", "running"]}).cursor_collection()
+        == parse(RunListQuery, {"status": ["failed", "running"], "limit": 1, "cursor": "abc"}).cursor_collection()
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        1791374400,
+        True,
+        {},
+        [],
+        "1791374400",
+        "2026-10-07 12:00:00Z",
+        "2026-10-07T12:00:00",
+        "2026-10-07T12:00Z",
+        "2026-10-07T12:00:00+00:60",
+        "2027-02-29T00:00:00Z",
+        "2026-10-07T12:00:00." + "1" * 64 + "Z",
+    ],
+)
+def test_query_timestamps_require_bounded_rfc3339(value):
+    with pytest.raises(ValidationError):
+        parse(RunSummaryQuery, {"started_after": value})
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("2028-02-29T00:00:00Z", "2028-02-29T00:00:00+00:00"),
+        ("2026-10-07T12:00:00+23:59", "2026-10-06T12:01:00+00:00"),
+        ("2026-10-07t12:00:00z", "2026-10-07T12:00:00+00:00"),
+    ],
+)
+def test_query_timestamps_normalize_valid_leap_days_and_offsets(value, expected):
+    assert parse(RunSummaryQuery, {"started_after": value}).started_after.isoformat() == expected
+
+
+def test_time_range_accepts_exactly_four_hundred_days():
+    query = {"started_after": "2026-01-01T00:00:00Z", "started_before": "2027-02-05T00:00:00Z"}
+    assert parse(RunSummaryQuery, query).started_before is not None
+    for before in ["2027-02-05T00:00:00.000001Z", "2025-12-31T23:59:59Z"]:
+        with pytest.raises(ValidationError):
+            parse(RunSummaryQuery, {**query, "started_before": before})
+
+
+def test_run_list_surface_uses_one_typed_query():
+    from firefly_weave.contracts.openapi import export_openapi
+    from firefly_weave.contracts.schema_export import export_schemas
+    from firefly_weave.contracts.surface import OPERATIONS
+
+    operation = OPERATIONS["runs.list"]
+    assert operation.query is RunListQuery
+    parameters = export_openapi()["paths"][operation.canonical_path]["get"]["parameters"]
+    names = [item["name"] for item in parameters if item["in"] == "query"]
+    assert names == list(RunListQuery.model_fields)
+    assert export_schemas()["run-list-query"]["$defs"]["RunListOrder"]["enum"] == [
+        "id",
+        "started_desc",
+        "started_asc",
+        "updated_desc",
+    ]

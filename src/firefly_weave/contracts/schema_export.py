@@ -192,6 +192,7 @@ def contract_models() -> dict[str, SchemaModel]:
     )
     from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
     from firefly_weave.contracts.run_views import (
+        RunListQuery,
         RunLogPage,
         RunLogQuery,
         RunStepQuery,
@@ -296,6 +297,7 @@ def contract_models() -> dict[str, SchemaModel]:
         "run-purge-request": RunPurgeRequest,
         "run-summary-page": RunSummaryPage,
         "run-summary-query": RunSummaryQuery,
+        "run-list-query": RunListQuery,
         "step-fact-page": StepFactPage,
         "run-step-query": RunStepQuery,
         "run-log-page": RunLogPage,

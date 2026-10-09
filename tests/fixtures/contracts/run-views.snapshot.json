@@ -18,6 +18,7 @@
         "business_key",
         "correlation_key",
         "has_active_incident",
+        "has_handled_errors",
         "include_archived",
         "activation_id",
         "order",
@@ -92,6 +93,282 @@
     }
   },
   "schemas": {
+    "run-list-query": {
+      "$defs": {
+        "BusinessKey": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "Constraint_00404e686415370f": {
+          "type": "string"
+        },
+        "Cursor": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "type": "string"
+        },
+        "ResourceName": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Constraint_00404e686415370f"
+            },
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            }
+          ]
+        },
+        "RunListOrder": {
+          "enum": [
+            "id",
+            "started_desc",
+            "started_asc",
+            "updated_desc"
+          ],
+          "type": "string"
+        },
+        "RunOrigin": {
+          "enum": [
+            "manual",
+            "webhook",
+            "schedule",
+            "broker",
+            "email",
+            "provider",
+            "retry",
+            "call",
+            "test"
+          ],
+          "type": "string"
+        },
+        "RunStatus": {
+          "enum": [
+            "queued",
+            "running",
+            "waiting",
+            "suspended",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "timed_out"
+          ],
+          "type": "string"
+        },
+        "SemVer": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Constraint_00404e686415370f"
+            },
+            {
+              "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+              "type": "string"
+            }
+          ]
+        },
+        "StatusFilter": {
+          "items": {
+            "$ref": "#/$defs/RunStatus"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "SummaryLimit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "$id": "run-list-query.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "`runs.list` filters, with ID order retained for existing callers.",
+      "properties": {
+        "activation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Activation Id"
+        },
+        "business_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BusinessKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "caller_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Caller Run Id"
+        },
+        "correlation_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BusinessKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "has_active_incident": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Has Active Incident"
+        },
+        "has_handled_errors": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Has Handled Errors"
+        },
+        "include_archived": {
+          "default": false,
+          "title": "Include Archived",
+          "type": "boolean"
+        },
+        "include_test": {
+          "default": false,
+          "title": "Include Test",
+          "type": "boolean"
+        },
+        "limit": {
+          "$ref": "#/$defs/SummaryLimit",
+          "default": 50
+        },
+        "order": {
+          "$ref": "#/$defs/RunListOrder",
+          "default": "id"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retried_from_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retried From Run Id"
+        },
+        "started_after": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started After"
+        },
+        "started_before": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started Before"
+        },
+        "status": {
+          "$ref": "#/$defs/StatusFilter"
+        },
+        "top_level_only": {
+          "default": false,
+          "title": "Top Level Only",
+          "type": "boolean"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SemVer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workflow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "RunListQuery",
+      "type": "object"
+    },
     "run-log-page": {
       "$defs": {
         "Constraint_00404e686415370f": {
@@ -553,6 +830,10 @@
           "title": "FailedStep",
           "type": "object"
         },
+        "HandledErrorCount": {
+          "minimum": 0,
+          "type": "integer"
+        },
         "Milliseconds": {
           "minimum": 0,
           "type": "integer"
@@ -701,6 +982,10 @@
                   "type": "null"
                 }
               ]
+            },
+            "handled_errors": {
+              "$ref": "#/$defs/HandledErrorCount",
+              "default": 0
             },
             "id": {
               "format": "uuid",
@@ -1085,6 +1370,18 @@
           "default": null,
           "title": "Has Active Incident"
         },
+        "has_handled_errors": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Has Handled Errors"
+        },
         "include_archived": {
           "default": false,
           "title": "Include Archived",
@@ -1344,6 +1641,17 @@
                 }
               ]
             },
+            "handled": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StepHandledFailure"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "instance_key": {
               "maxLength": 512,
               "pattern": "^(?:@?[A-Za-z0-9][A-Za-z0-9_.:@-]*(?:\\[(?:0|[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]|9007199254740990|9007199254740991)\\])*(?:#[A-Za-z0-9]+(?:\\.[A-Za-z0-9]+)*)?(?:~(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]|9007199254740990|9007199254740991))?)?$",
@@ -1496,6 +1804,17 @@
                 }
               ]
             },
+            "handled": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StepHandledFailure"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "instance_key": {
               "maxLength": 512,
               "pattern": "^(?:@?[A-Za-z0-9][A-Za-z0-9_.:@-]*(?:\\[(?:0|[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]|9007199254740990|9007199254740991)\\])*(?:#[A-Za-z0-9]+(?:\\.[A-Za-z0-9]+)*)?(?:~(?:[1-9][0-9]{0,14}|[1-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]|9007199254740990|9007199254740991))?)?$",
@@ -1600,6 +1919,13 @@
           ],
           "title": "StepFactWithOutput",
           "type": "object"
+        },
+        "StepHandledFailure": {
+          "enum": [
+            "continue",
+            "errorOutput"
+          ],
+          "type": "string"
         },
         "StepKind": {
           "enum": [

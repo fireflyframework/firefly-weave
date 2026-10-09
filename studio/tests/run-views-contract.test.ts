@@ -36,7 +36,11 @@ import {
   fixtureIds,
   runViewsFixture,
 } from "../src/app/operate/run-views.fixture";
-import { pythonAvailable, validateWithPython } from "./run-views-oracle";
+import {
+  pythonAvailable,
+  roundTripWithPython,
+  validateWithPython,
+} from "./run-views-oracle";
 
 const summaries = runViewsFixture.runs.map((run) => run.summary);
 const placeholder = (id: string): RunSummaryItem => ({
@@ -158,5 +162,43 @@ describe("run view helpers", () => {
         isUnavailableRun(item) ? [] : [item.workflow.name],
       ),
     ).toEqual(["invoice-approval"]);
+  });
+});
+
+describe.skipIf(!pythonAvailable)("handled metadata compatibility", () => {
+  it("retains nonzero counts and handled failures through Python JSON serialization", () => {
+    const summary = summaries.find((item) => item.id === fixtureIds.retry)!;
+    const step = {
+      ...fact(fixtureIds.failed, "send[3]"),
+      handled: "errorOutput" as const,
+    };
+    const result = roundTripWithPython({
+      summaries: [{ items: [summary], next_cursor: null }],
+      steps: [{ items: [step], next_cursor: null, complete: true }],
+      logs: [],
+    });
+    const item = result.summaries[0].items[0];
+    if (isUnavailableRun(item)) throw new Error("Expected a run summary");
+    expect(item.handled_errors).toBe(1);
+    expect(result.steps[0].items[0].handled).toBe("errorOutput");
+    expect(item.status).toBe("succeeded");
+  });
+  it("keeps fields absent on older server records", () => {
+    const result = roundTripWithPython({
+      summaries: [{ items: [summaries[0]], next_cursor: null }],
+      steps: [
+        {
+          items: [fact(fixtureIds.failed, "send[3]")],
+          next_cursor: null,
+          complete: true,
+        },
+      ],
+      logs: [],
+    });
+    expect(result.summaries[0].items[0]).not.toHaveProperty("handled_errors");
+    expect(result.steps[0].items[0]).not.toHaveProperty("handled");
+    expect(runViewQuery({ has_handled_errors: false })).toBe(
+      "?has_handled_errors=false",
+    );
   });
 });

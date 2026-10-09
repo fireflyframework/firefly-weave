@@ -128,6 +128,7 @@ export interface RunSummary {
   failed_step: FailedStep | null;
   active_incidents: number;
   archived: boolean;
+  handled_errors?: number;
 }
 /** A run whose classification is unavailable: only its ID is shown. */
 export interface UnavailableRun {
@@ -157,6 +158,7 @@ export interface StepFact {
   error_code: string | null;
   child_run_id: string | null;
   log_entries: number;
+  handled?: "continue" | "errorOutput";
   /** Only with include=output: why the output was not returned. */
   omissions?: Omission[];
   /** Only with include=output, when the recorded output may be shown (it can be null). */
@@ -206,6 +208,7 @@ export interface RunSummaryQuery {
   business_key?: string;
   correlation_key?: string;
   has_active_incident?: boolean;
+  has_handled_errors?: boolean;
   include_archived?: boolean;
   activation_id?: string;
   order?: RunSummaryOrder;
