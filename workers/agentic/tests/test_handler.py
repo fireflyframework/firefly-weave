@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx2
 import pytest
 from firefly_weave import private_origins as po
 from firefly_weave.ai_policy import PolicyFile, render
@@ -34,6 +35,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from weave_agentic_worker.handler import AgenticTaskHandler, WorkerPolicy
+from weave_agentic_worker.providers import build_model
 
 PATTERNS = [
     "none",
@@ -133,7 +135,7 @@ def fixture_model(calls, *, fail=False, runaway=False):
                 raise AssertionError(properties)
             parts = [ToolCallPart(tool.name, value)]
         else:
-            parts = [TextPart('{"approved":true}')]
+            parts = [TextPart('{"result":{"approved":true}}')]
         return ModelResponse(parts=parts, usage=RequestUsage(input_tokens=5, output_tokens=3))
 
     return FunctionModel(respond)
@@ -613,6 +615,117 @@ class OllamaTransport(Transport):
 
 def ollama_lease(**profile):
     return lease(model="qwen2.5:1.5b", **profile)
+
+
+@pytest.mark.parametrize("mode", ["native", "tool", "prompted", "cloud-default"])
+async def test_policy_selects_the_result_format_on_the_provider_request(tmp_path, mode):
+    requests = []
+
+    async def receive(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        message = {"role": "assistant", "content": '{"result":"Summary"}'}
+        if mode in {"tool", "cloud-default"}:
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": body["tools"][0]["function"]["name"], "arguments": '{"result":"Summary"}'},
+                    }
+                ],
+            }
+        return httpx2.Response(
+            200,
+            json={
+                "id": "chat-1",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "qwen2.5:1.5b",
+                "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            },
+        )
+
+    def builder(spec, secret, timeout, options):
+        return build_model(spec, secret, timeout, options, transport=httpx2.MockTransport(receive))
+
+    policy = (
+        ollama_policy(tmp_path, structuredOutput=mode)
+        if mode != "cloud-default"
+        else WorkerPolicy(frozenset({("openai-chat", "qwen2.5:1.5b")}), frozenset({"https://api.openai.com/v1"}))
+    )
+    transport = OllamaTransport() if mode != "cloud-default" else Transport()
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(transport, policy, model_builder=builder)(
+            ollama_lease(outputSchema={"type": "string", "minLength": 1})
+        )
+    assert output["result"] == "Summary"
+    assert output["usage"]["requests"] == 1 and len(requests) == 1
+    body = requests[0]
+    assert body.get("max_tokens", body.get("max_completion_tokens")) == 256
+    if mode == "native":
+        assert body["response_format"]["type"] == "json_schema"
+        assert body["response_format"]["json_schema"]["schema"]["properties"]["result"]["type"] == "string"
+        assert not body.get("tools") and "tool_choice" not in body
+    elif mode == "prompted":
+        assert body["response_format"]["type"] == "json_object"
+        assert not body.get("tools") and "tool_choice" not in body
+    else:
+        assert body["tools"][0]["function"]["parameters"]["properties"]["result"]["type"] == "string"
+        assert "response_format" not in body
+
+
+async def test_native_policy_uses_prompted_output_before_calling_an_unsupported_model(tmp_path):
+    from pydantic_ai.profiles import ModelProfile
+
+    calls = []
+
+    def respond(messages, info):
+        calls.append(info)
+        return ModelResponse(parts=[TextPart('{"result":{"approved":true}}')])
+
+    model = FunctionModel(respond, profile=ModelProfile(supports_json_schema_output=False))
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=lambda *_: model)(
+            ollama_lease()
+        )
+    assert output["result"] == {"approved": True}
+    assert len(calls) == 1 and not calls[0].output_tools
+
+
+@pytest.mark.parametrize("answer,code", [("rejected-format", "LLM_PROVIDER"), ("invalid-result", "LLM_OUTPUT")])
+async def test_a_native_result_failure_does_not_repeat_the_request(tmp_path, answer, code):
+    requests = []
+
+    async def receive(request):
+        requests.append(json.loads(request.content))
+        if answer == "rejected-format":
+            return httpx2.Response(400, json={"error": {"message": "response_format is unsupported"}})
+        return httpx2.Response(
+            200,
+            json={
+                "id": "chat-1",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "qwen2.5:1.5b",
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": '{"result":123}'}, "finish_reason": "stop"}
+                ],
+            },
+        )
+
+    def builder(spec, secret, timeout, options):
+        return build_model(spec, secret, timeout, options, transport=httpx2.MockTransport(receive))
+
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema={"type": "string", "minLength": 1})
+        )
+    assert failed.value.code == code and len(requests) == 1
+    assert requests[0]["response_format"]["type"] == "json_schema"
 
 
 async def test_keyless_ollama_calls_never_request_a_credential(tmp_path):

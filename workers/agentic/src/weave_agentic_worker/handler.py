@@ -217,7 +217,13 @@ class AgenticTaskHandler:
         model = owned.model if isinstance(owned, ProviderModel) else owned
         try:
             return await run_model(
-                profile, invocation.prompt, invocation.context, model, settings, context_tokens=entry.context_tokens
+                profile,
+                invocation.prompt,
+                invocation.context,
+                model,
+                settings,
+                context_tokens=entry.context_tokens,
+                output_mode=entry.output_mode,
             )
         finally:
             if isinstance(owned, ProviderModel):

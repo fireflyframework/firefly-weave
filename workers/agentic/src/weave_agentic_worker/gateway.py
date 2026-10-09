@@ -259,6 +259,7 @@ def create_app(
                                 settings,
                                 instructions=INSTRUCTIONS,
                                 context_tokens=entry.context_tokens,
+                                output_mode=entry.output_mode,
                             ),
                             request.receive,
                         )

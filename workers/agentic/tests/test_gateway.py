@@ -53,6 +53,72 @@ def payload():
     }
 
 
+@pytest.mark.parametrize("mode", ["native", "prompted", "tool"])
+async def test_gateway_uses_the_policy_result_format(tmp_path, mode):
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    source = tmp_path / "policy.json"
+    source.write_bytes(
+        render(
+            [
+                {
+                    "id": "fixture",
+                    "label": "Fixture",
+                    "url": "https://api.openai.com/v1",
+                    "providers": ["openai-chat"],
+                    "models": ["fixture-model"],
+                    "structuredOutput": mode,
+                }
+            ]
+        )
+    )
+    source.chmod(0o444)
+    policy = WorkerPolicy(source=PolicyFile(source, po.PrivateOrigins.empty()))
+    requests = []
+    result = {"result": {"answer": "Review this", "proposals": [], "followUps": []}}
+
+    async def receive(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        message = {"role": "assistant", "content": json.dumps(result)}
+        if mode == "tool":
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": body["tools"][0]["function"]["name"], "arguments": json.dumps(result)},
+                    }
+                ],
+            }
+        return httpx2.Response(
+            200,
+            json={
+                "id": "chat-1",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "fixture-model",
+                "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+            },
+        )
+
+    def builder(spec, secret, timeout, options):
+        return build_model(spec, secret, timeout, options, transport=httpx2.MockTransport(receive))
+
+    app = create_app(policy, token, model_builder=builder)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://gateway") as client:
+        response = await client.post("/v1/lumi", json=payload(), headers={"Authorization": "Bearer service-token"})
+    assert response.status_code == 200 and response.json() == result["result"]
+    assert len(requests) == 1
+    if mode == "tool":
+        assert requests[0].get("tools") and "response_format" not in requests[0]
+    else:
+        assert not requests[0].get("tools")
+        assert requests[0]["response_format"]["type"] == ("json_schema" if mode == "native" else "json_object")
+
+
 async def test_gateway_requires_service_auth_and_returns_only_validated_reply(tmp_path):
     token = tmp_path / "token"
     token.write_text("service-token")
@@ -406,13 +472,9 @@ async def test_credentialed_endpoints_need_the_credential(tmp_path):
 def reply_model(calls):
     def respond(messages, info):
         calls.append(messages)
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    info.output_tools[0].name, {"result": {"answer": "Ready", "proposals": [], "followUps": []}}
-                )
-            ]
-        )
+        value = {"result": {"answer": "Ready", "proposals": [], "followUps": []}}
+        part = ToolCallPart(info.output_tools[0].name, value) if info.output_tools else TextPart(json.dumps(value))
+        return ModelResponse(parts=[part])
 
     return FunctionModel(respond)
 

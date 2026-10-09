@@ -33,7 +33,7 @@ from firefly_weave.contracts.values import JsonValue
 from fireflyframework_agentic.agents.base import FireflyAgent
 from fireflyframework_agentic.config import FireflyAgenticConfig
 from fireflyframework_agentic.reasoning.registry import reasoning_registry
-from pydantic_ai import StructuredDict
+from pydantic_ai import NativeOutput, PromptedOutput, StructuredDict, ToolOutput
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -110,6 +110,7 @@ async def run_model(
     *,
     instructions: str = "",
     context_tokens: int | None = None,
+    output_mode: str = "tool",
 ) -> JsonValue:
     private_framework_logging()
     if context_tokens is not None:
@@ -120,7 +121,9 @@ async def run_model(
             raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
     try:
         async with asyncio.timeout(profile.timeout_seconds):
-            return await _run_model(profile, user_prompt, context, model, settings, instructions=instructions)
+            return await _run_model(
+                profile, user_prompt, context, model, settings, instructions=instructions, output_mode=output_mode
+            )
     except TimeoutError:
         raise ConnectorFailure("LLM_TIMEOUT", "unknown") from None
 
@@ -133,6 +136,7 @@ async def _run_model(
     settings: dict[str, Any],
     *,
     instructions: str = "",
+    output_mode: str = "tool",
 ) -> JsonValue:
     try:
         agent = _BoundedAgent(model, profile, settings, instructions)
@@ -164,7 +168,11 @@ async def _run_model(
                 },
                 ensure_ascii=False,
             )
-        output_type = StructuredDict(provider_schema(profile.output_schema), name="WeaveResult")
+        if output_mode == "native" and not model.profile.get("supports_json_schema_output", False):
+            output_mode = "prompted"
+        output_type = {"native": NativeOutput, "tool": ToolOutput, "prompted": PromptedOutput}[output_mode](
+            StructuredDict(provider_schema(profile.output_schema), name="WeaveResult")
+        )
         final = await agent.run(prompt, output_type=output_type)
         result = final.output["result"]
         if validate_payload(profile.output_schema, result, {}):

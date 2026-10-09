@@ -68,6 +68,13 @@ For worker sign-in, enable includes the managed Keycloak realm's existing `basic
 scope in token responses. It preserves the scope's mappers and existing grants;
 this local identity setting remains after `ai disable`.
 
+The worker uses the endpoint policy's structured output mode: native JSON schema
+for Ollama, tool output by default for cloud providers, or prompted JSON when
+selected. If the model profile does not support native JSON schema, it chooses
+prompted output before making the request. A rejected `response_format` is a
+failed call; it does not retry with another mode. Output validation and request,
+token and time limits still apply.
+
 | Choice | Ollama runs | Endpoint |
 | --- | --- | --- |
 | `--ollama container` | In a Weave-managed `ollama` service with 8,192 tokens of context; models live in the `weave-local-ID-ollama` volume | `http://ollama:11434/v1` |
