@@ -608,7 +608,12 @@ weave-canvas-view,
   top: 12px;
   left: 50%;
   z-index: 4;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  box-sizing: border-box;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: var(--space-1);
   padding: 4px;
@@ -620,6 +625,7 @@ weave-canvas-view,
 }
 .canvas-v2 .selection-count {
   padding: 0 var(--space-2);
+  white-space: nowrap;
   font: var(--type-label);
   color: var(--text);
 }
@@ -642,13 +648,23 @@ weave-canvas-view,
 .canvas-v2 f-minimap:hover {
   opacity: 1;
 }
+/* Beside the canvas tools where the canvas has room for both, above them
+   where it doesn't (a narrow window with step details open). */
+@container canvas (max-width: 499px) {
+  .canvas-v2 f-minimap {
+    bottom: 64px;
+  }
+}
 .canvas-v2 .f-minimap-node {
   fill: var(--border-hover);
 }
+/* The minimap draws the workflow scaled far down: the viewport's outline
+   keeps 1.5 px on screen. */
 .canvas-v2 .f-minimap-view {
   fill: transparent;
   stroke: var(--accent);
   stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
 }
 .canvas-v2 .f-selection-area {
   z-index: 4;

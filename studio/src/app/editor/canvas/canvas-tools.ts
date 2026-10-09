@@ -16,7 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The canvas tools at the bottom right: zoom out, the zoom level (which
-// resets to 100%), zoom in and Fit view; below 768 px, one menu.
+// resets to 100%), zoom in, Show minimap and Fit view; below 768 px, where
+// the minimap is hidden, one menu.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -65,6 +66,16 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
         <weave-icon name="zoomIn" [size]="16" />
       </button>
       <span class="toolbar-divider"></span>
+      <button
+        type="button"
+        class="icon-button minimap-toggle"
+        aria-label="Show minimap"
+        title="Show minimap"
+        [attr.aria-pressed]="minimap()"
+        (click)="toggleMinimap.emit()"
+      >
+        <weave-icon name="minimap" [size]="16" />
+      </button>
       <button type="button" title="Fit view (1)" (click)="fit.emit()">
         <weave-icon name="fit" [size]="16" /><span class="tool-text"
           >Fit view</span
@@ -85,6 +96,9 @@ export class CanvasTools {
   zoomOut = output<void>();
   reset = output<void>();
   fit = output<void>();
+  /** "Show minimap" keeps the minimap open. */
+  minimap = input(false);
+  toggleMinimap = output<void>();
   readonly menu: RowMenuItem[] = [
     { label: "Zoom in", run: () => this.zoomIn.emit() },
     { label: "Zoom out", run: () => this.zoomOut.emit() },

@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
   [class.lod-minimal]="lod === 'minimal'"
   [class.revealing]="revealing()"
   [class.locked]="locked()"
+  [class.minimap-shown]="minimapOn || panning"
   role="group"
   aria-roledescription="workflow canvas"
   aria-label="Workflow canvas"
@@ -44,6 +45,8 @@ SPDX-License-Identifier: Apache-2.0
   (focusout)="focusOut($event)"
   (dragover)="dragOver($event)"
   (drop)="dropOn($event)"
+  (keydown)="trackSpace($event)"
+  (keyup)="trackSpace($event)"
 >
   @if (!ready) {
     <p class="canvas-v2-loading" role="status">Opening the canvas…</p>
@@ -51,6 +54,7 @@ SPDX-License-Identifier: Apache-2.0
     @let l = layout();
     @let fixed = locked();
     <f-flow
+      fDraggable
       class="graph-flow"
       [style.--zoom]="view.zoom"
       [style.--label-scale]="labelScale()"
@@ -59,8 +63,15 @@ SPDX-License-Identifier: Apache-2.0
       [style.--path-label-scale]="pathLabelScale()"
       (fFullRendered)="fitIfNew()"
       (scroll)="scrolled($event)"
+      (fDragStarted)="dragStarted($event)"
+      (fDragEnded)="dragEnded()"
+      (fSelectionChange)="boxSelected($event)"
     >
-      <f-canvas [position]="view.pan" [scale]="view.zoom">
+      <f-canvas
+        [position]="view.pan"
+        [scale]="view.zoom"
+        (fCanvasChange)="canvasMoved($event)"
+      >
         <div fNodes>
           <weave-edge-layer
             [edges]="edges()"
@@ -118,7 +129,7 @@ SPDX-License-Identifier: Apache-2.0
               [fNodeId]="tile.id"
               [fNodePosition]="tile.position"
               [fNodeSelectionDisabled]="!tile.step"
-              class="tile-node"
+              class="tile-node f-drag-blocker"
               [style.--tile-w.px]="tile.width"
               [style.--tile-h.px]="tile.height"
               aria-roledescription="step"
@@ -246,6 +257,8 @@ SPDX-License-Identifier: Apache-2.0
           }
         </div>
       </f-canvas>
+      <f-selection-area [fTrigger]="boxTrigger" />
+      <f-minimap />
     </f-flow>
     <weave-canvas-tools
       [zoom]="view.zoom"
@@ -253,7 +266,18 @@ SPDX-License-Identifier: Apache-2.0
       (zoomOut)="zoomBy(1 / 1.2)"
       (reset)="zoomBy(1 / view.zoom)"
       (fit)="fit()"
+      [minimap]="minimapOn"
+      (toggleMinimap)="toggleMinimap()"
     />
+    @if (selectedCount() > 1) {
+      <weave-selection-toolbar
+        [count]="selectedCount()"
+        [blocked]="duplicateBlocked()"
+        [locked]="lockedReason()"
+        (duplicate)="duplicateSelection()"
+        (remove)="removeSelection()"
+      />
+    }
   }
   <p class="sr-only" id="canvas-v2-help">
     Scroll to pan; hold Ctrl or Command and scroll to zoom.

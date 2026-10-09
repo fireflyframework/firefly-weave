@@ -50,6 +50,10 @@ export function readUiFlag(
   return readUiChoice(key, storage) === true;
 }
 
+/** What Studio says when browser storage refuses a per-viewer choice. */
+export const CHOICE_NOT_KEPT =
+  "Studio couldn't keep this choice in this browser, so it lasts until Studio closes.";
+
 /** Saves a true/false preference under `key`; false when browser storage refuses it. */
 export function writeUiFlag(
   key: string,

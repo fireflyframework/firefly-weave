@@ -45,6 +45,8 @@ export interface CanvasHost {
   label(kind: string): string;
   /** Selects a step; `open` also shows it in the inspector. */
   selectStep(id: string, open: boolean): Promise<void>;
+  /** Clears the editor's selection; false when unapplied edits keep it. */
+  deselect(): Promise<boolean>;
   /** Shows the workflow settings at their Inputs or Result section. */
   openWorkflowSection(section: WorkflowSection): Promise<void>;
   /** Opens today's step picker for an insertion point, next to an element or a point. */

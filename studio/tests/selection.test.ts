@@ -26,7 +26,9 @@ import {
   only,
   selectionOf,
   toggled,
+  toggledCovering,
   topLevel,
+  type Selection,
   type StepPlace,
 } from "../src/app/editor/state/selection";
 
@@ -59,6 +61,54 @@ describe("the canvas selection", () => {
       ids: ["load", "check"],
       focus: "check",
     });
+  });
+
+  it("toggles a step a selected group covers out of it, and never lists a group with a step inside it", () => {
+    // route's first path also holds fan, a parallel step with two paths.
+    const nested = new Map<string, StepPlace>([
+      ...places,
+      place("fan", "route/case 1", 2, "route", 5.5),
+      place("left", "fan/a", 0, "fan", 5.6),
+      place("right", "fan/b", 0, "fan", 5.7),
+    ]);
+    const coherent = (selection: Selection) =>
+      expect(topLevel(selection, nested)).toHaveLength(selection.ids.length);
+    // Taken out of a selected decision: the decision gives way to the
+    // steps still selected inside it, a group among them whole.
+    const out = toggledCovering(only("route"), "approve", nested);
+    expect(out).toEqual({ ids: ["notify", "fan", "reject"], focus: "reject" });
+    coherent(out);
+    // Two levels down: both groups above give way.
+    const deep = toggledCovering(
+      selectionOf(["load", "route"], "load"),
+      "left",
+      nested,
+    );
+    expect(deep).toEqual({
+      ids: ["load", "approve", "notify", "right", "reject"],
+      focus: "load",
+    });
+    coherent(deep);
+    // Clicked again, it comes back on its own.
+    expect(toggledCovering(out, "approve", nested)).toEqual({
+      ids: ["notify", "fan", "reject", "approve"],
+      focus: "approve",
+    });
+    // A group comes in place of the selected steps inside it.
+    const group = toggledCovering(
+      selectionOf(["load", "approve", "left"]),
+      "route",
+      nested,
+    );
+    expect(group).toEqual({ ids: ["load", "route"], focus: "route" });
+    coherent(group);
+    // Steps no group covers toggle as before.
+    expect(toggledCovering(only("check"), "finish", nested)).toEqual(
+      toggled(only("check"), "finish"),
+    );
+    expect(
+      toggledCovering(selectionOf(["check", "finish"]), "finish", nested),
+    ).toEqual({ ids: ["check"], focus: "check" });
   });
 
   it("counts a group's steps as selected and reports only the top-level ones, in document order", () => {

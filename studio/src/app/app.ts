@@ -142,7 +142,11 @@ import { TemplateGallery } from "./templates/template-gallery";
 import { sheetWhen } from "./modal-sheet";
 import { ToastHost, ToastService, type ToastAction } from "./toast";
 import { LocalDrafts, type LocalDraftEntry } from "./local-drafts";
-import { editorNextEnabled, setEditorNext } from "./editor/state/editor-flag";
+import {
+  CHOICE_NOT_KEPT,
+  editorNextEnabled,
+  setEditorNext,
+} from "./editor/state/editor-flag";
 import {
   editorNavExpanded,
   setEditorNavExpanded,
@@ -228,9 +232,6 @@ const busyLabels: Record<string, string> = {
   validate: "Validating…",
   simulate: "Simulating…",
 };
-/** The notice when browser storage refuses a per-viewer choice. */
-const choiceNotKept =
-  "Studio couldn't keep this choice in this browser, so it lasts until Studio closes.";
 /** The narrowest window that shows the editor's navigation in full. */
 const EDITOR_NAV_FULL_MIN = 900;
 /** The inspector's width: 360–480 px by default, at most 640 px. */
@@ -538,7 +539,7 @@ export class App implements CanvasHost {
     this.editorNavChoice = expand;
     if (!setEditorNavExpanded(expand) && !this.navNoticeShown) {
       this.navNoticeShown = true;
-      this.notify(choiceNotKept);
+      this.notify(CHOICE_NOT_KEPT);
     }
   }
   /** The editor's navigation choice made in this session; it holds when browser storage refuses to keep it. */
@@ -577,7 +578,7 @@ export class App implements CanvasHost {
   editorNext = editorNextEnabled();
   setEditorNextPreference(enabled: boolean) {
     this.editorNext = enabled;
-    if (!setEditorNext(enabled)) this.notify(choiceNotKept);
+    if (!setEditorNext(enabled)) this.notify(CHOICE_NOT_KEPT);
     this.cdr.markForCheck();
   }
   /**

@@ -88,6 +88,51 @@ export function topLevel(
     .sort((a, b) => places.get(a)!.order - places.get(b)!.order);
 }
 
+/**
+ * Shift or Ctrl/Cmd+click on the canvas, where a selected group brings
+ * every step inside it. A step the selection doesn't cover comes in (a
+ * group in place of the selected steps inside it); a covered step goes
+ * out, and the selected groups around it give way to the steps inside
+ * them that stay selected. The result never lists a group together with
+ * a step inside it.
+ */
+export function toggledCovering(
+  selection: Selection,
+  id: string,
+  places: ReadonlyMap<string, StepPlace>,
+): Selection {
+  const chosen = covered(selection, places);
+  const clicked = new Set([id]);
+  if (!chosen.has(id))
+    return {
+      ids: [
+        ...selection.ids.filter((item) => !inside(places, item, clicked)),
+        id,
+      ],
+      focus: id,
+    };
+  if (!inside(places, id, new Set(selection.ids)))
+    return toggled(selection, id);
+  const kept = new Set(
+    [...chosen].filter(
+      (item) =>
+        item !== id &&
+        !inside(places, item, clicked) &&
+        !inside(places, id, new Set([item])),
+    ),
+  );
+  const ids = [...kept]
+    .filter((item) => !kept.has(places.get(item)?.parent ?? ""))
+    .sort((a, b) => places.get(a)!.order - places.get(b)!.order);
+  return {
+    ids,
+    focus:
+      selection.focus !== null && ids.includes(selection.focus)
+        ? selection.focus
+        : (ids[ids.length - 1] ?? null),
+  };
+}
+
 /** Every step the selection covers: the selected ones and everything inside selected groups. */
 export function covered(
   selection: Selection,

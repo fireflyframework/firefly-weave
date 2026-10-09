@@ -23,6 +23,7 @@ import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
+  DestroyRef,
   ElementRef,
   Injector,
   ViewEncapsulation,
@@ -33,7 +34,21 @@ import {
   type DoCheck,
   type OnInit,
 } from "@angular/core";
-import { FFlowModule } from "@foblex/flow";
+import {
+  FControlSchemeController,
+  FFlowComponent,
+  FFlowModule,
+  F_SCROLL_PAN_CONTROL_SCHEME,
+  isOnFlowBackground,
+  middleButtonEventTrigger,
+  primaryButtonEventTrigger,
+  provideFFlow,
+  withControlScheme,
+  type FCanvasChangeEvent,
+  type FDragStartedEvent,
+  type FSelectionChangeEvent,
+  type FTriggerEvent,
+} from "@foblex/flow";
 import {
   reveal,
   wheelFactor,
@@ -45,7 +60,20 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
 import type { Workflow } from "../../model";
 import { loadKindRegistrations } from "../ndv/kinds";
 import { ndvRegistry, type KindContext } from "../ndv/registry";
-import { moveAllowed, type StepPlace } from "../state/selection";
+import { minimapPinned, setMinimapPinned } from "../state/canvas-preferences";
+import { CHOICE_NOT_KEPT } from "../state/editor-flag";
+import {
+  NO_SELECTION,
+  blockedReason,
+  covered,
+  moveAllowed,
+  only,
+  selectionOf,
+  toggledCovering,
+  topLevel,
+  type Selection,
+  type StepPlace,
+} from "../state/selection";
 import type { CanvasHost } from "./canvas-host";
 import { CanvasTools } from "./canvas-tools";
 import { EdgeLayer, type EdgeView, type InsertView } from "./edge-layer";
@@ -67,6 +95,7 @@ import {
 } from "./layout-ltr";
 import { placesOf } from "./navigation";
 import { NodeTile, type TileView } from "./node-tile";
+import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
 import {
   tileBadge,
@@ -126,7 +155,11 @@ const moveName = (name: string, id: string) =>
     EdgeLayer,
     SubNodeRow,
     CanvasTools,
+    SelectionToolbar,
   ],
+  // A drag on empty canvas draws a selection box; Space, Ctrl or Command
+  // with a drag, or the middle button, pans; the canvas handles the wheel.
+  providers: [provideFFlow(withControlScheme(F_SCROLL_PAN_CONTROL_SCHEME))],
   changeDetection: ChangeDetectionStrategy.Eager,
   encapsulation: ViewEncapsulation.None,
   host: { "(document:keydown.escape)": "dismissToolbars($event)" },
@@ -137,6 +170,8 @@ export class CanvasView implements OnInit, DoCheck {
   /** The editor: it owns the workflow and runs every command. */
   host = input.required<CanvasHost>();
   private readonly root = viewChild.required<ElementRef<HTMLElement>>("root");
+  /** The flow library keeps a selection of its own, filled only by the selection box. */
+  private readonly flow = viewChild(FFlowComponent);
   private readonly cdr = inject(ChangeDetectorRef);
   private readonly injector = inject(Injector);
   /** The step kinds are registered: tiles draw their roles and icons. */
@@ -163,6 +198,24 @@ export class CanvasView implements OnInit, DoCheck {
   draggingStep = "";
   /** The click that ends a drag does nothing else. */
   private suppressClick = false;
+  /** The selected steps and the one with focus. */
+  selection: Selection = NO_SELECTION;
+  /** The editor's selected step when the canvas last looked. */
+  private seenSelected = "";
+  /** Space is held: a drag pans. */
+  private space = false;
+  /** A selection box being drawn, and whether it adds to the selection. */
+  private box: { additive: boolean; ids: string[] } | null = null;
+  private boxAdditive = false;
+  /** Where the last press began, to tell a click from a drag. */
+  private downAt: Point | null = null;
+  /** "Show minimap" is on. */
+  minimapOn = minimapPinned();
+  /** Browser storage refused "Show minimap" once: said once. */
+  private minimapNoticeShown = false;
+  /** The view is moving: the minimap shows. */
+  panning = false;
+  private panningTimer: ReturnType<typeof setTimeout> | undefined;
   /** Steps whose toolbar Escape hid, until the pointer or focus reaches another step. */
   private dismissed: readonly string[] = [];
   /** The workflow the view was last fitted to (StructuredCanvasAdapter.opened). */
@@ -170,6 +223,34 @@ export class CanvasView implements OnInit, DoCheck {
   private fitPending = false;
   private revealed = "";
   private readonly positions = new WeakMap<LtrTile, Point>();
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => clearTimeout(this.panningTimer));
+    inject(FControlSchemeController).setScheme({
+      nodeMove: () => false,
+      createConnection: () => false,
+      reassignConnection: () => false,
+      nodeResize: () => false,
+      nodeRotate: () => false,
+      zoom: () => false,
+      scrollPan: false,
+      canvasMove: (event) =>
+        middleButtonEventTrigger(event) ||
+        (primaryButtonEventTrigger(event) &&
+          (this.space || event.ctrlKey || event.metaKey)),
+      selection: (event) => this.boxTrigger(event),
+    });
+  }
+  /** A press on empty canvas, without Space, Ctrl or Command, draws a selection box. */
+  readonly boxTrigger = (event: FTriggerEvent): boolean =>
+    primaryButtonEventTrigger(event) &&
+    !this.space &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    isOnFlowBackground(event) &&
+    !(event.target as Element | null)?.closest?.(
+      ".f-minimap, [data-handle], .tile-toolbar",
+    );
 
   ngOnInit() {
     // A lost chunk still draws: unknown kinds draw as app actions, with
@@ -197,6 +278,7 @@ export class CanvasView implements OnInit, DoCheck {
         { injector: this.injector },
       );
     }
+    this.syncSelection();
     const selected = h.model.selected;
     if (selected !== this.revealed) {
       this.revealed = selected;
@@ -205,6 +287,28 @@ export class CanvasView implements OnInit, DoCheck {
           injector: this.injector,
         });
     }
+  }
+  /**
+   * The editor's selected step (the one step details show) is the
+   * selection's focus: a step selected elsewhere (Outline, an insert, Undo)
+   * becomes the selection, and steps that no longer exist leave it.
+   */
+  private syncSelection() {
+    const selected = this.host().model.selected;
+    if (selected !== this.seenSelected) {
+      this.seenSelected = selected;
+      if (!selected) this.selection = NO_SELECTION;
+      else if (!this.selection.ids.includes(selected))
+        this.selection = only(selected);
+      else if (this.selection.focus !== selected)
+        this.selection = { ...this.selection, focus: selected };
+    }
+    const places = this.places();
+    if (this.selection.ids.some((id) => !places.has(id)))
+      this.selection = selectionOf(
+        this.selection.ids.filter((id) => places.has(id)),
+        this.selection.focus,
+      );
   }
 
   // ------------------------------------------------------------ layout
@@ -263,12 +367,12 @@ export class CanvasView implements OnInit, DoCheck {
   pathLabelScale() {
     return pathLabelScale(this.view.zoom);
   }
-  /** The tile that takes Tab: the selected step, else the first tile. */
+  /** The tile that takes Tab: the selection's focus, else the first tile. */
   active(): string {
     const layout = this.layout();
-    const selected = this.host().model.selected;
-    return layout.tiles.some((tile) => tile.id === selected)
-      ? selected
+    const focus = this.selection.focus;
+    return focus && layout.tiles.some((tile) => tile.id === focus)
+      ? focus
       : (layout.tiles[0]?.id ?? "");
   }
   isFitted(): boolean {
@@ -281,14 +385,16 @@ export class CanvasView implements OnInit, DoCheck {
     (
       layout: LtrLayout,
       facts: ReadonlyMap<string, StepFacts>,
-      selected: string,
+      selection: Selection,
       dirty: string,
       active: string,
     ): TileView[] => {
       const ctx = this.host().kindContext();
+      // A selected group shows every step inside it as selected.
+      const chosen = covered(selection, this.places());
       return layout.tiles.map((tile) =>
         this.tileView(tile, ctx, facts.get(tile.id) ?? NO_FACTS, {
-          selected: tile.id === selected,
+          selected: chosen.has(tile.id),
           unapplied: tile.id === dirty,
           active: tile.id === active,
         }),
@@ -300,7 +406,7 @@ export class CanvasView implements OnInit, DoCheck {
     return this.tilesMemo(
       this.layout(),
       h.canvasFacts(),
-      h.model.selected,
+      this.selection,
       h.dirtyStep,
       this.active(),
     );
@@ -526,7 +632,23 @@ export class CanvasView implements OnInit, DoCheck {
     const control = (event.target as Element).closest<HTMLElement>(
       "[data-action]",
     );
-    if (!control) return;
+    if (!control) {
+      // A click on empty canvas, not the end of a drag, clears the selection.
+      const still =
+        !!this.downAt &&
+        Math.hypot(
+          event.clientX - this.downAt.x,
+          event.clientY - this.downAt.y,
+        ) < 4;
+      if (
+        still &&
+        !(event.target as Element).closest(
+          "button, a, [role=menu], [data-handle], [data-tile], .canvas-v2-tools, .selection-toolbar, .tile-toolbar, f-minimap",
+        )
+      )
+        this.clearSelection();
+      return;
+    }
     const action = control.dataset["action"];
     if (action === "tile") {
       const id = control.closest<HTMLElement>("[data-tile]")?.dataset["tile"];
@@ -539,12 +661,25 @@ export class CanvasView implements OnInit, DoCheck {
         void this.host().removeSteps([id]);
     }
   }
+  /**
+   * A click selects the step and shows its details; with Shift, Ctrl or
+   * Command it adds the step to the selection, or takes it out.
+   */
   private async openTile(id: string, event: MouseEvent) {
     const h = this.host();
     if (id.startsWith("$trigger:"))
-      await h.openWorkflowSection("spec/inputSchema");
-    else if (id === "$end") await h.openWorkflowSection("spec/output");
-    else await h.selectStep(id, true);
+      return h.openWorkflowSection("spec/inputSchema");
+    if (id === "$end") return h.openWorkflowSection("spec/output");
+    if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      this.selection = toggledCovering(this.selection, id, this.places());
+      this.seenSelected = this.selection.focus ?? "";
+      if (this.selection.focus) await h.selectStep(this.selection.focus, false);
+      else await h.deselect();
+      return;
+    }
+    this.selection = only(id);
+    this.seenSelected = id;
+    await h.selectStep(id, true);
   }
   private insertAt(control: HTMLElement) {
     const h = this.host();
@@ -585,11 +720,13 @@ export class CanvasView implements OnInit, DoCheck {
     this.focusTile = this.toolbarStep(event.target as Element);
     this.reached(this.focusTile);
   }
-  /** Focus left the canvas: only the pointer shows a toolbar now. */
+  /** Focus left the canvas: only the pointer shows a toolbar now, and Space no longer pans. */
   focusOut(event: FocusEvent) {
     const next = event.relatedTarget;
-    if (!(next instanceof Node && this.root().nativeElement.contains(next)))
+    if (!(next instanceof Node && this.root().nativeElement.contains(next))) {
       this.focusTile = "";
+      this.space = false;
+    }
   }
   /** The pointer or focus reached a step: a toolbar Escape hid elsewhere may show again. */
   private reached(id: string) {
@@ -744,6 +881,8 @@ export class CanvasView implements OnInit, DoCheck {
 
   /** A press on a handle or "+" may draw an edge; on a step, may move it. */
   pointerDown(event: PointerEvent) {
+    this.downAt = { x: event.clientX, y: event.clientY };
+    this.boxAdditive = event.shiftKey;
     if (event.button !== 0 || this.locked()) return;
     const target = event.target as Element;
     const port = target.closest?.("[data-handle]");
@@ -883,6 +1022,7 @@ export class CanvasView implements OnInit, DoCheck {
 
   wheel(event: WheelEvent) {
     event.preventDefault();
+    this.showWhilePanning();
     const box = this.root().nativeElement.getBoundingClientRect();
     if (event.ctrlKey || event.metaKey)
       this.setView(
@@ -963,6 +1103,110 @@ export class CanvasView implements OnInit, DoCheck {
     );
     if (pan.x !== this.view.pan.x || pan.y !== this.view.pan.y)
       this.setView({ zoom: this.view.zoom, pan });
+  }
+
+  // ---------------------------------------- selection, box and minimap
+
+  clearSelection() {
+    if (!this.selection.ids.length) return;
+    this.selection = NO_SELECTION;
+    this.seenSelected = "";
+    void this.host().deselect();
+  }
+  /** How many steps the selection toolbar counts: the top-level ones. */
+  selectedCount(): number {
+    return topLevel(this.selection, this.places()).length;
+  }
+  duplicateBlocked(): string | null {
+    return blockedReason("duplicate", this.selection, this.places());
+  }
+  /** Why nothing can change now, or null. */
+  lockedReason(): string | null {
+    const h = this.host();
+    if (h.editingLocked) return "Editing is paused while the simulation runs.";
+    if (h.model.readonly) return "Fix the source before changing steps.";
+    return null;
+  }
+  async duplicateSelection() {
+    const reason = this.lockedReason() ?? this.duplicateBlocked();
+    if (reason) return this.host().notify(reason);
+    await this.host().duplicateSteps(topLevel(this.selection, this.places()));
+  }
+  async removeSelection() {
+    const reason = this.lockedReason();
+    if (reason) return this.host().notify(reason);
+    await this.host().removeSteps(topLevel(this.selection, this.places()));
+  }
+  /** Space held: a drag pans. */
+  trackSpace(event: KeyboardEvent) {
+    if (event.key === " ") this.space = event.type === "keydown";
+  }
+  dragStarted(event: FDragStartedEvent) {
+    if (event.kind === "selection-area")
+      this.box = { additive: this.boxAdditive, ids: [] };
+  }
+  boxSelected(event: FSelectionChangeEvent) {
+    if (this.box) this.box.ids = event.nodeIds;
+  }
+  /**
+   * The boxed steps arrive right after the drag ends: apply them then. A
+   * box drawn with Shift adds to the selection. Like a click, it never
+   * lists a group together with a step inside it.
+   */
+  dragEnded() {
+    const box = this.box;
+    if (!box) return;
+    queueMicrotask(() => {
+      if (this.box !== box) return;
+      this.box = null;
+      const places = this.places();
+      const ids = box.ids.filter((id) => places.has(id));
+      const boxed = box.additive
+        ? selectionOf(
+            [...this.selection.ids, ...ids],
+            ids[0] ?? this.selection.focus,
+          )
+        : selectionOf(ids);
+      const next = selectionOf(topLevel(boxed, places), boxed.focus);
+      // The next box starts from nothing: what it adds comes from this
+      // selection, not from steps the library still holds.
+      this.flow()?.clearSelection();
+      this.selection = next;
+      this.seenSelected = next.focus ?? "";
+      const h = this.host();
+      if (next.focus) void h.selectStep(next.focus, false);
+      else void h.deselect();
+      this.cdr.markForCheck();
+    });
+  }
+  /** The view moved by a drag or the minimap. */
+  canvasMoved(event: FCanvasChangeEvent) {
+    const { x, y } = event.position;
+    if (
+      event.scale === this.view.zoom &&
+      x === this.view.pan.x &&
+      y === this.view.pan.y
+    )
+      return;
+    this.setView({ zoom: event.scale, pan: { x, y } });
+    this.showWhilePanning();
+  }
+  /** "Show minimap": kept for this viewer, or for this session when browser storage refuses. */
+  toggleMinimap() {
+    this.minimapOn = !this.minimapOn;
+    if (!setMinimapPinned(this.minimapOn) && !this.minimapNoticeShown) {
+      this.minimapNoticeShown = true;
+      this.host().notify(CHOICE_NOT_KEPT);
+    }
+  }
+  /** The minimap shows while the view moves, then fades. */
+  private showWhilePanning() {
+    this.panning = true;
+    clearTimeout(this.panningTimer);
+    this.panningTimer = setTimeout(() => {
+      this.panning = false;
+      this.cdr.markForCheck();
+    }, 1200);
   }
   private setView(view: View) {
     this.view = view;
