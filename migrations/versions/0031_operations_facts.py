@@ -266,11 +266,13 @@ def classification(row: dict[str, Any]) -> dict[str, Any]:
 
 EVENTS = f"""WITH ordered AS (
     SELECT e.*,lag(created_at) OVER(PARTITION BY run_id ORDER BY sequence) AS previous_at,
+      max(sequence) OVER(PARTITION BY run_id) AS final_sequence,
       public.weave_run_events_bytes(e)<={FETCH_BYTES} AS bounded
     FROM run_events e WHERE {SCOPE} AND run_id=ANY(:ids)
 ) SELECT run_id,min(created_at) AS started_at,max(created_at) AS updated_at,
     max(created_at) FILTER(WHERE transition->'state'->>'status' IN ({TERMINAL})) AS ended_at,
     min(sequence) AS first_sequence,max(sequence) AS last_event_sequence,count(*) AS event_count,
+    max(transition->'state'->>'status') FILTER(WHERE sequence=final_sequence) AS last_status,
     bool_and(coalesce(bounded AND jsonb_typeof(data)='object' AND jsonb_typeof(transition->'state')='object'
       AND transition->'state'->>'status' IN ({STATUSES})
       AND transition->'state'->>'accepted_sequence'=sequence::text
@@ -440,6 +442,7 @@ def backfill_scope(connection, params) -> None:
                 and event["first_started"] == event["started_at"]
                 and isinstance(state, dict)
                 and state.get("accepted_sequence") == event["last_event_sequence"]
+                and item["status"] == event["last_status"]
                 and (
                     item["status"] not in ("succeeded", "failed", "cancelled", "timed_out")
                     or event["ended_at"] is not None

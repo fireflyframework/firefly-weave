@@ -920,3 +920,105 @@ async def test_malformed_legacy_status_has_no_invented_lifecycle(empty_settings,
             await assert_usage(connection, ids)
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "source_status,event_status,initial_status,expected,unsupported",
+    [
+        ("waiting", "succeeded", None, "unavailable", False),
+        ("failed", "succeeded", None, "unavailable", False),
+        ("succeeded", "waiting", None, "unavailable", False),
+        ("failed", "succeeded", "waiting", "unavailable", False),
+        ("succeeded", "succeeded", None, "available", False),
+        ("waiting", "waiting", "running", "available", False),
+        ("failed", "failed", "waiting", "available", False),
+        ("succeeded", "succeeded", "waiting", "unsupported", True),
+    ],
+)
+async def test_latest_event_lifecycle_must_match_retained_source(
+    empty_settings, source_status, event_status, initial_status, expected, unsupported
+):
+    import json
+    from datetime import timedelta
+
+    from operations_support import AT, identifier
+
+    from firefly_weave.runtime.models import RunState, Transition
+
+    engine = create_async_engine(empty_settings.database_url.get_secret_value(), hide_parameters=True)
+    try:
+        async with engine.begin() as connection:
+            await upgrade(connection, "0030_worker_presence")
+            ids = await seed_prior_head(connection, count=20)
+            run = ids["unsupported" if unsupported else "first_run"]
+            sequence = 2 if initial_status else 1
+            state = RunState(
+                status=source_status, accepted_sequence=sequence, admission_policy="classified-v1", input=3
+            )
+            await connection.execute(
+                text("UPDATE runs SET state=cast(:state AS jsonb) WHERE id=:run"),
+                {"run": run, "state": state.model_dump_json()},
+            )
+            first_state = RunState(
+                status=initial_status or event_status, accepted_sequence=1, admission_policy="classified-v1", input=3
+            )
+            await connection.execute(
+                text(
+                    "UPDATE run_events SET transition=cast(:transition AS jsonb),"
+                    "response=jsonb_set(response,'{state}',cast(:state AS jsonb)) WHERE run_id=:run"
+                ),
+                {
+                    "run": run,
+                    "transition": Transition(state=first_state).model_dump_json(),
+                    "state": first_state.model_dump_json(),
+                },
+            )
+            if initial_status:
+                latest = RunState(status=event_status, accepted_sequence=2, admission_policy="classified-v1", input=3)
+                await connection.execute(
+                    text(
+                        "INSERT INTO run_events SELECT tenant_id,project_id,environment_id,run_id,"
+                        ":event,2,'task_completed',data,:at,request_hash,cast(:transition AS jsonb),"
+                        "jsonb_set(response,'{state}',cast(:state AS jsonb)) FROM run_events WHERE run_id=:run"
+                    ),
+                    {
+                        "run": run,
+                        "event": identifier(300002),
+                        "at": AT + timedelta(seconds=1),
+                        "transition": Transition(state=latest).model_dump_json(),
+                        "state": latest.model_dump_json(),
+                    },
+                )
+            sources = {}
+            for table in ("runs", "run_events"):
+                sources[table] = (
+                    (await connection.execute(text(f"SELECT to_jsonb(r)::text FROM {table} r ORDER BY id")))
+                    .scalars()
+                    .all()
+                )
+            assert (
+                RunState.model_validate_json(
+                    json.dumps(await connection.scalar(text("SELECT state FROM runs WHERE id=:run"), {"run": run}))
+                ).status
+                == source_status
+            )
+            await upgrade(connection, "0031_operations_facts")
+            fact = (
+                (await connection.execute(text("SELECT * FROM run_facts WHERE run_id=:run"), {"run": run}))
+                .mappings()
+                .one()
+            )
+            assert fact["status"] == source_status
+            assert fact["classification_state"] == expected
+            assert fact["node_kinds"] == ({"work": "action"} if expected == "available" else {})
+            if expected != "unavailable":
+                assert fact["started_at"] == AT
+                assert fact["updated_at"] == AT + timedelta(seconds=sequence - 1)
+                assert fact["ended_at"] == (fact["updated_at"] if source_status in {"succeeded", "failed"} else None)
+            for table in sources:
+                assert (
+                    await connection.execute(text(f"SELECT to_jsonb(r)::text FROM {table} r ORDER BY id"))
+                ).scalars().all() == sources[table]
+            await assert_usage(connection, ids)
+    finally:
+        await engine.dispose()
