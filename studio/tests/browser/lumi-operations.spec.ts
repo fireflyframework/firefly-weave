@@ -81,7 +81,7 @@ for (const width of [1440, 390]) {
         },
       });
     });
-    await page.getByRole("button", { name: "Operations", exact: true }).click();
+    await page.getByRole("button", { name: "Clusters", exact: true }).click();
     await page
       .getByRole("button", { name: "First target", exact: true })
       .click();
@@ -128,7 +128,7 @@ for (const width of [1440, 390]) {
       .getByRole("button", { name: "Close Weave AI", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "Back to Operations", exact: true })
+      .getByRole("button", { name: "Back to Clusters", exact: true })
       .click();
     await page
       .getByRole("button", { name: "Second target", exact: true })

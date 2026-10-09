@@ -15,7 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The list pages (Workflows, Runs, My tasks, Email, Connections, Workers):
+// The list pages (Workflows, Runs, My tasks, Email, Connections):
 // heading, filters, a table with per-view columns and the detail panel. The
 // shell (App) owns the state and the commands; this view renders them and
 // loads lazily (@defer), outside the initial bundle.
@@ -32,6 +32,7 @@ import { ConnectionDetail } from "../integrations/connection-detail";
 import { NewMenu } from "../templates/new-menu";
 import { localKeepLabel, type LocalDraftEntry } from "../local-drafts";
 import { isDesktopShell } from "../export-file";
+import { OperateState } from "../operate/operate-state";
 import {
   dateWithRelative,
   isoTime,
@@ -45,7 +46,6 @@ import {
   toneAttribute,
   type Tone,
 } from "../status-labels";
-import { WorkerControls } from "./worker-controls";
 import { RunDetail } from "./run-detail";
 import {
   columns,
@@ -77,10 +77,6 @@ const pages: Record<ListView, [string, string]> = {
     "Email threads from your workflows. Reply when a run is waiting for an answer.",
   ],
   connections: ["Connections", ""],
-  workers: [
-    "Workers",
-    "Programs that run your worker actions in this environment.",
-  ],
 };
 /** Local mode: what each operations page needs a platform for. */
 const needPlatform: Partial<Record<ListView, [string, string]>> = {
@@ -100,10 +96,6 @@ const needPlatform: Partial<Record<ListView, [string, string]>> = {
     "Connections live on a platform",
     "Connect to add the APIs and systems your workflows use.",
   ],
-  workers: [
-    "Workers appear here once you connect",
-    "Workers run your worker actions on a platform.",
-  ],
 };
 const icons: Record<ListView, string> = {
   workflows: "workflows",
@@ -111,7 +103,6 @@ const icons: Record<ListView, string> = {
   tasks: "humanTask",
   email: "email",
   connections: "connections",
-  workers: "workers",
 };
 const runStatusFilters: [string, string][] = [
   ["", "All"],
@@ -133,8 +124,8 @@ const runStatusFilters: [string, string][] = [
     ConnectionDetail,
     NewMenu,
     RunDetail,
-    WorkerControls,
     NgTemplateOutlet,
+    OperateState,
   ],
   styleUrl: "./records-view.css",
   template: `@let h = host();
@@ -338,7 +329,9 @@ const runStatusFilters: [string, string][] = [
           </select>
         }
         <span class="count" role="status">{{
-          h.loading && !rowCount() ? "" : countLabel(v, rowCount())
+          (h.loading && !rowCount()) || refused()
+            ? ""
+            : countLabel(v, rowCount())
         }}</span>
         @if (h.profile && h.workspaceText) {
           <span class="scope-label">{{ h.environmentLabel }}</span>
@@ -356,12 +349,21 @@ const runStatusFilters: [string, string][] = [
           </button>
         </p>
       }
+      @if (v === "runs" && h.runRefused && !h.runsRefused) {
+        <weave-operate-state
+          kind="access"
+          heading="You don't have access to this run"
+          capability="run.read"
+        />
+      }
       <!-- A reload keeps the rows it has: the table (and focus in it) stays. -->
       @if (h.loading && !localTab() && !rowCount()) {
         <div class="empty-state" role="status">
           <span class="loading-spinner"></span>
           <h2>Loading {{ noun() }}…</h2>
         </div>
+      } @else if (refused()) {
+        <weave-operate-state kind="access" capability="run.read" />
       } @else if (!h.profile && v === "workflows" && !localTab()) {
         <div class="empty-state">
           <h2>
@@ -575,17 +577,6 @@ const runStatusFilters: [string, string][] = [
                             "
                         /></span>
                       }
-                      @case ("workers") {
-                        <span role="cell" class="cell-status">
-                          <ng-container
-                            *ngTemplateOutlet="
-                              pillTemplate;
-                              context: { $implicit: status }
-                            " /></span
-                        ><span role="cell">{{
-                          record["capacity"] ?? "—"
-                        }}</span>
-                      }
                     }
                   </div>
                 }
@@ -607,7 +598,7 @@ const runStatusFilters: [string, string][] = [
               [weaveModalSheet]="true"
               [sheetWhen]="sheetWhen.detail"
               sheetInitialFocus="#record-detail-title"
-              (sheetDismiss)="h.selectedRecord = null"
+              (sheetDismiss)="h.closeRecord()"
             >
               @if (v === "runs") {
                 <weave-run-detail [host]="h" />
@@ -619,7 +610,7 @@ const runStatusFilters: [string, string][] = [
                   <button
                     class="icon-button"
                     aria-label="Close detail"
-                    (click)="h.selectedRecord = null"
+                    (click)="h.closeRecord()"
                   >
                     <weave-icon name="close" />
                   </button>
@@ -655,34 +646,6 @@ const runStatusFilters: [string, string][] = [
                           h.can('connection.manage', text(record['id']))
                         "
                       />
-                    }
-                  }
-                  @case ("workers") {
-                    @if (record["unavailable"]) {
-                      <p class="notice">Studio can't show this worker.</p>
-                    } @else {
-                      <weave-worker-controls [host]="h" [record]="record" />
-                      <p>
-                        Task types:
-                        {{
-                          $any(record["task_types"])?.join(", ") || "Unknown"
-                        }}
-                      </p>
-                      <details class="disclosure">
-                        <summary>Technical details</summary>
-                        <dl class="task-metadata">
-                          <dt>Worker ID</dt>
-                          <dd>
-                            <code class="mono-id">{{ record["id"] }}</code>
-                          </dd>
-                          <dt>Release ID</dt>
-                          <dd>
-                            <code class="mono-id">{{
-                              record["release_id"] || "—"
-                            }}</code>
-                          </dd>
-                        </dl>
-                      </details>
                     }
                   }
                 }
@@ -1018,7 +981,7 @@ export class RecordsView {
   listView(): ListView {
     const view = this.host().view as View;
     return (
-      ["workflows", "runs", "tasks", "email", "connections", "workers"] as const
+      ["workflows", "runs", "tasks", "email", "connections"] as const
     ).includes(view as ListView)
       ? (view as ListView)
       : "workflows";
@@ -1070,6 +1033,10 @@ export class RecordsView {
       ? this.localRows().length
       : this.host().visibleRecords.length;
   }
+  /** Runs was refused (403): the page names run.read instead of its rows. */
+  refused() {
+    return this.listView() === "runs" && this.host().runsRefused;
+  }
   chooseLibrary(tab: "workflows" | "drafts" | "local") {
     const h = this.host();
     if (h.libraryCollection === tab) return;
@@ -1088,7 +1055,6 @@ export class RecordsView {
       tasks: "No tasks for you right now",
       email: "No email threads yet",
       connections: "No connections yet",
-      workers: "No workers yet",
     }[this.listView()];
   }
   emptyText() {
@@ -1108,8 +1074,6 @@ export class RecordsView {
       email: "Threads appear when a workflow sends or receives email.",
       connections:
         "Add a connection for each API or system your workflows call.",
-      workers:
-        "Workers appear when a worker release starts in this environment.",
     }[this.listView()];
   }
   /** The row context, rebuilt only when what it depends on changes. */

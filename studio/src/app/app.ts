@@ -157,7 +157,14 @@ import {
   workspaceShort,
 } from "./format";
 // The operations pages and Settings load lazily (@defer): only these classes.
-import { OperationsView } from "./operations/operations-view";
+import { ClustersPage } from "./operate/clusters/clusters-page";
+import { WorkersPage } from "./operate/workers/workers-page";
+import { IncidentsPage } from "./operate/incidents/incidents-page";
+import {
+  navEntryVisible,
+  viewFromPath,
+  viewPath,
+} from "./operate/operate-routes";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
@@ -176,11 +183,12 @@ export type View =
   | "workflows"
   | "designer"
   | "runs"
+  | "incidents"
   | "tasks"
   | "email"
   | "connections"
   | "workers"
-  | "operations"
+  | "clusters"
   | "settings"
   | "connect";
 type PlatformNoticeKind =
@@ -331,7 +339,9 @@ const sideEffects: Record<string, string> = {
     ToastHost,
     DesignerView,
     RecordsView,
-    OperationsView,
+    ClustersPage,
+    WorkersPage,
+    IncidentsPage,
     SettingsPage,
     LumiPanel,
   ],
@@ -343,6 +353,8 @@ export class App {
   private historyPosition: number = history.state?.weavePosition ?? 0;
   private historyUrl = location.href;
   private restoringHistory = false;
+  /** Set while Studio steps back to close a run: that popstate needs no reload. */
+  private closingRun = false;
   private injector = inject(Injector);
   dialogs = inject(DialogService);
   crypto = crypto;
@@ -370,9 +382,9 @@ export class App {
     detail?: string;
   } | null = null;
   lumiOpen = false;
-  private readonly operationsView = viewChild(OperationsView);
+  private readonly operationsView = viewChild(ClustersPage);
   get lumiOperationAttachments() {
-    return this.view === "operations"
+    return this.view === "clusters"
       ? (this.operationsView()?.lumiAttachments ?? [])
       : [];
   }
@@ -549,23 +561,58 @@ export class App {
     x: number;
     initial: number;
   } | null = null;
-  /** Home, then "Build" (1–2), then "Operate" (3–6); Settings sits at the bottom. */
+  /** Home, then "Build", "Work" and "Operate"; Settings sits at the bottom. */
   nav: { id: View; label: string }[] = [
     { id: "home", label: "Home" },
     { id: "workflows", label: "Workflows" },
     { id: "connections", label: "Connections" },
-    { id: "runs", label: "Runs" },
     { id: "tasks", label: "My tasks" },
     { id: "email", label: "Email" },
+    { id: "runs", label: "Runs" },
+    { id: "incidents", label: "Incidents" },
     { id: "workers", label: "Workers" },
-    { id: "operations", label: "Operations" },
+    { id: "clusters", label: "Clusters" },
     { id: "settings", label: "Settings" },
   ];
-  readonly navGroups = [
-    { label: "", items: this.nav.slice(0, 1) },
-    { label: "Build", items: this.nav.slice(1, 3) },
-    { label: "Operate", items: this.nav.slice(3, 8) },
+  private readonly navSections: [string, View[]][] = [
+    ["", ["home"]],
+    ["Build", ["workflows", "connections"]],
+    ["Work", ["tasks", "email"]],
+    ["Operate", ["runs", "incidents", "workers", "clusters"]],
   ];
+  private navCache: {
+    key: string;
+    groups: { label: string; items: { id: View; label: string }[] }[];
+  } = { key: "", groups: [] };
+  /**
+   * The navigation groups. An Operate entry shows only when the signed-in
+   * person holds its capability somewhere in the workspace; the server still
+   * authorizes every request, so this only keeps dead ends out of the menu.
+   */
+  get navGroups() {
+    const known = !!this.profile && !!this.identity && !this.signInEnded;
+    const key = known
+      ? JSON.stringify([this.profile, this.identity!.grants])
+      : "unknown";
+    if (key !== this.navCache.key || !this.navCache.groups.length) {
+      const holds = known
+        ? (capability: string) => this.canAnywhere(capability)
+        : null;
+      this.navCache = {
+        key,
+        groups: this.navSections
+          .map(([label, ids]) => ({
+            label,
+            items: this.nav.filter(
+              (item) =>
+                ids.includes(item.id) && navEntryVisible(item.id, holds),
+            ),
+          }))
+          .filter((group) => group.items.length),
+      };
+    }
+    return this.navCache.groups;
+  }
   kinds = kinds;
   paletteQuery = "";
   search = "";
@@ -643,6 +690,10 @@ export class App {
   records: Record<string, unknown>[] = [];
   nextCursor: string | null = null;
   selectedRecord: Record<string, unknown> | null = null;
+  /** The Runs list was refused (403): the page names the access it needs. */
+  runsRefused = false;
+  /** The run whose read was refused (403); it stays until another opens. */
+  runRefused = "";
   loading = false;
   draftId: string = crypto.randomUUID();
   draftRevision: number | undefined;
@@ -1051,9 +1102,9 @@ export class App {
       this.paired = s.paired;
       if (s.paired) {
         const designer = designerPath.exec(location.pathname);
-        const initial = location.pathname.split("/")[1] as View;
-        if (!designer && this.nav.some((n) => n.id === initial))
-          this.view = initial;
+        const route = viewFromPath(location.pathname);
+        if (!designer && route && this.nav.some((n) => n.id === route.view))
+          this.view = route.view as View;
         // Local authoring is usable at once; the platform check runs behind it.
         this.connecting = false;
         this.cdr.markForCheck();
@@ -1067,6 +1118,8 @@ export class App {
         if (designer) await this.restoreWorkflow(designer[1]);
         await this.verifyPlatform(true);
         if (this.view !== "designer") await this.refresh();
+        if (route?.id && this.view === "runs")
+          await this.viewRun({ id: route.id });
       }
     } catch (e) {
       this.fail(e);
@@ -1462,10 +1515,14 @@ export class App {
       this.records = [];
       this.nextCursor = null;
       this.taskRunFilter = "";
+      this.runsRefused = false;
+      this.runRefused = "";
     }
     this.view = view;
     await this.router.navigateByUrl(
-      view === "designer" ? `/workflows/${this.draftId}/designer` : `/${view}`,
+      view === "designer"
+        ? `/workflows/${this.draftId}/designer`
+        : viewPath(view),
     );
     this.selectedRecord = null;
     this.search = "";
@@ -5108,7 +5165,13 @@ export class App {
       await this.loadAdministration();
       return;
     }
-    if (this.view === "connect" || this.view === "operations") return;
+    if (
+      this.view === "connect" ||
+      this.view === "clusters" ||
+      this.view === "workers" ||
+      this.view === "incidents"
+    )
+      return;
     if (this.view === "home") {
       await this.refreshHome();
       return;
@@ -5133,7 +5196,6 @@ export class App {
       workflows: [this.libraryCollection, false],
       runs: ["runs", true],
       connections: ["connections", true],
-      workers: ["workers", true],
       tasks: ["human-tasks", true],
       email: ["email/conversations", true],
     };
@@ -5162,12 +5224,20 @@ export class App {
       if (sequence !== this.listSequence || requestedView !== this.view) return;
       this.records = append ? [...this.records, ...result.items] : result.items;
       this.nextCursor = result.next_cursor;
-      if (this.view === "runs") this.rememberRuns(result.items);
+      if (this.view === "runs") {
+        this.rememberRuns(result.items);
+        this.runsRefused = false;
+      }
       if (this.view === "workflows" && this.libraryCollection === "workflows")
         for (const item of result.items) this.rememberVersion(item);
       this.error = "";
     } catch (e) {
-      this.fail(e);
+      // A refused Runs list names the access it needs on the page, instead
+      // of a banner over an empty list that claims there are no runs.
+      if (requestedView === "runs" && describeError(e).status === 403) {
+        if (sequence === this.listSequence && requestedView === this.view)
+          this.runsRefused = true;
+      } else this.fail(e);
     } finally {
       this.cdr.markForCheck();
       if (sequence === this.listSequence) this.loading = false;
@@ -5196,6 +5266,7 @@ export class App {
     }
   }
   async open(record: Record<string, unknown>) {
+    this.runRefused = "";
     this.emailDetail = null;
     this.emailSubmission = null;
     this.runHistory = null;
@@ -5206,6 +5277,20 @@ export class App {
     this.taskFormValid = true;
     this.taskConfirm = "";
     this.selectedRecord = record;
+    if (this.view === "runs" && typeof record["id"] === "string") {
+      const path = viewPath("runs", record["id"]);
+      if (location.pathname !== path) {
+        // From the list a run's address is a new entry, marked as Studio's own;
+        // from another run's address it replaces that entry and keeps its mark.
+        const onRun = !!viewFromPath(location.pathname)?.id;
+        void this.router.navigateByUrl(path, {
+          replaceUrl: onRun,
+          state: {
+            weaveRunPushed: onRun ? !!history.state?.weaveRunPushed : true,
+          },
+        });
+      }
+    }
     if (this.view === "workflows") {
       this.busy = "load";
       this.flushLocalSave();
@@ -5263,12 +5348,36 @@ export class App {
   }
   /** The person may read human tasks somewhere in this workspace. */
   get canReadTasks() {
+    return this.canAnywhere("human_task.read");
+  }
+  /** The capability in this workspace, or on at least one resource in it. */
+  canAnywhere(capability: string) {
     return (
-      this.can("human_task.read") ||
+      this.can(capability) ||
       !!this.identity?.grants.some((g) =>
-        g.resources.some((id) => this.can("human_task.read", id)),
+        g.resources.some((id) => this.can(capability, id)),
       )
     );
+  }
+  /**
+   * Closes a list's detail and keeps the address in step. A run's own address
+   * goes back to the list: one step back when Studio pushed the entry from the
+   * list, in place when the run address is where the person arrived.
+   */
+  closeRecord() {
+    this.selectedRecord = null;
+    // A second close before the first step back lands must not step back
+    // again: that would leave Runs.
+    if (this.closingRun) return;
+    const route = viewFromPath(location.pathname);
+    if (!route?.id) return;
+    if (history.state?.weaveRunPushed) {
+      this.closingRun = true;
+      history.back();
+    } else
+      void this.router.navigateByUrl(viewPath(route.view), {
+        replaceUrl: true,
+      });
   }
   /** The human task a waiting run waits for, when the person may read it. */
   runTask: Record<string, unknown> | null = null;
@@ -5324,17 +5433,18 @@ export class App {
         email: "email/conversations",
         runs: "runs",
         connections: "connections",
-        workers: "workers",
       } as Partial<Record<View, string>>
     )[this.view];
     // Unavailable list entries have no readable detail; never guess another collection.
     if (!collection || this.selectedRecord["unavailable"]) return;
+    const id = this.selectedRecord["id"];
+    const view = this.view;
+    let read = false;
     try {
-      const id = this.selectedRecord["id"];
-      const view = this.view;
       const detail = await this.api.request<Record<string, unknown>>(
         `${this.api.environment}/${collection}/${encodeURIComponent(String(id))}`,
       );
+      read = true;
       if (view !== this.view || this.selectedRecord?.["id"] !== id) return;
       if (this.view === "email") {
         this.emailDetail = detail;
@@ -5372,10 +5482,22 @@ export class App {
         void this.findRunTask(detail);
       }
     } catch (e) {
-      this.fail(e);
+      if (!read && view === "runs" && describeError(e).status === 403)
+        this.refuseRun(String(id));
+      else this.fail(e);
     } finally {
       this.cdr.markForCheck();
     }
+  }
+  /**
+   * A run this person may not read opens nothing: its sheet closes, the
+   * address returns to the list as Close does, and the page names the access
+   * it needs. A refusal for a run the person has left changes nothing.
+   */
+  private refuseRun(id: string) {
+    if (this.view !== "runs" || this.selectedRecord?.["id"] !== id) return;
+    this.runRefused = id;
+    this.closeRecord();
   }
   async save() {
     if (!(await this.ensureApplied())) return;
@@ -5697,16 +5819,19 @@ export class App {
   async viewRun(run: Record<string, unknown>) {
     if (this.view !== "runs") await this.navigate("runs");
     if (this.view !== "runs" || !run["id"]) return;
-    if (!this.records.some((r) => r["id"] === run["id"]))
-      this.records = [run, ...this.records];
-    await this.open(this.records.find((r) => r["id"] === run["id"]) ?? run);
+    const listed = this.records.find((r) => r["id"] === run["id"]);
+    if (!listed) this.records = [run, ...this.records];
+    await this.open(listed ?? run);
+    // A run that could not be read leaves no placeholder row behind.
+    if (!listed && this.runRefused === run["id"])
+      this.records = this.records.filter((r) => r !== run);
   }
   applyRunFilters() {
     if (this.runFilterTimer) clearTimeout(this.runFilterTimer);
     this.runFilterTimer = null;
     this.nextCursor = null;
     this.records = [];
-    this.selectedRecord = null;
+    this.closeRecord();
     void this.refresh();
   }
   private runFilterTimer: ReturnType<typeof setTimeout> | null = null;
@@ -6145,7 +6270,9 @@ export class App {
     this.showActivation = false;
     this.exportFallback = null;
     this.records = [];
-    this.selectedRecord = null;
+    this.runsRefused = false;
+    this.runRefused = "";
+    this.closeRecord();
     this.emailDetail = null;
     this.emailSubmission = null;
     this.runHistory = null;
@@ -7315,6 +7442,9 @@ export class App {
         this.selectedRecord?.["id"] === r["id"]
       )
         this.selectedRecord = r;
+      // A cancel or a signal that Check now confirmed: read the open run again.
+      else if (/\/runs\/[^/]+\/(cancel|signals)$/.test(p.path))
+        void this.readDetail();
       this.notify(`Checked. ${p.label} finished.`);
       this.error = "";
       this.errorCode = "";
@@ -7437,6 +7567,8 @@ export class App {
     return this.runCanvas?.nodes() ?? [];
   }
   @HostListener("window:popstate", ["$event"]) popstate(event: PopStateEvent) {
+    const closing = this.closingRun;
+    this.closingRun = false;
     const position = event.state?.weavePosition;
     if (this.restoringHistory && position === this.historyPosition) {
       this.restoringHistory = false;
@@ -7477,10 +7609,19 @@ export class App {
       } else void this.restoreWorkflow(designer[1]);
       return;
     }
-    const segment = location.pathname.split("/")[1] as View;
-    this.view = this.nav.some((n) => n.id === segment) ? segment : "home";
+    const route = viewFromPath(location.pathname);
+    this.view =
+      route && this.nav.some((n) => n.id === route.view)
+        ? (route.view as View)
+        : "home";
     this.selectedRecord = null;
-    void this.refresh();
+    // Closing a run came from this page: the list on screen is already current,
+    // and why a run could not be opened stays with it.
+    if (!closing) {
+      this.runRefused = "";
+      void this.refresh();
+    }
+    if (route?.id && this.view === "runs") void this.viewRun({ id: route.id });
   }
   @HostListener("window:keydown", ["$event"]) key(event: KeyboardEvent) {
     // Step details and workflow settings run their own keys.

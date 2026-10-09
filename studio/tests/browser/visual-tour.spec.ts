@@ -2678,6 +2678,8 @@ spec:
         "run.purge",
         "run.pause",
         "run.resume",
+        "run.cancel",
+        "run.signal",
       ],
     });
     await runRoutes(page);
@@ -2688,7 +2690,15 @@ spec:
     await expect(page.locator(".record-detail")).toContainText(
       "Workflow expense-review 1.0.0",
     );
+    await expect(
+      page.getByRole("button", { name: "Cancel run", exact: true }),
+    ).toBeVisible();
     await shot("81-runs-detail", { end: ".record-detail, .page-content" });
+    await page.getByRole("button", { name: "Cancel run", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Cancel this run?" }),
+    ).toBeVisible();
+    await shot("94-runs-cancel");
   },
 
   async tasks({ page, shot }) {
@@ -2775,7 +2785,11 @@ spec:
   },
 
   async workers({ page, shot }) {
-    await connected(page);
+    await connected(page, {
+      capabilities: [...allCapabilities, "status.read", "worker.drain"],
+    });
+    const seen = (seconds: number) =>
+      new Date(Date.now() + seconds * 1000).toISOString();
     const workers = [
       {
         id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
@@ -2784,6 +2798,14 @@ spec:
         capacity: 4,
         principal_id: "22222222-2222-4222-8222-222222222222",
         revoked: false,
+        revision: 3,
+        draining: false,
+        presence: "recent",
+        last_seen_at: seen(-4),
+        presence_expires_at: seen(56),
+        observed_at: seen(0),
+        active_leases: 3,
+        available_capacity: 1,
       },
       {
         id: "7c9e6679-7425-40de-944b-e07fc1f90ae8",
@@ -2791,7 +2813,15 @@ spec:
         task_types: ["email-send"],
         capacity: 1,
         principal_id: "22222222-2222-4222-8222-222222222223",
-        revoked: true,
+        revoked: false,
+        revision: 7,
+        draining: true,
+        presence: "stale",
+        last_seen_at: seen(-3600),
+        presence_expires_at: seen(-3540),
+        observed_at: seen(0),
+        active_leases: 0,
+        available_capacity: null,
       },
     ];
     await page.route(`${environment}/workers?*`, (r) =>
@@ -2806,6 +2836,208 @@ spec:
     await page.locator(".resource-row").first().click();
     await expect(page.locator(".record-detail")).toContainText("crm-lookup");
     await shot("87-workers-detail");
+  },
+
+  async incidents({ page, shot }) {
+    await connected(page, {
+      capabilities: ["incident.read", "incident.resolve", "run.read"],
+    });
+    const run = "5e6f7a8b-0000-4000-8000-000000000001";
+    const incidents = [
+      ["91111111-1111-4111-8111-111111111111", "charge-customer-card", 3],
+      ["92222222-2222-4222-8222-222222222222", "notify-warehouse", 1],
+    ].map(([id, step, generation]) => ({
+      id,
+      run_id: run,
+      incident_key: `${step}:${generation}`,
+      node_id: step,
+      generation,
+      origin_code: "WV-TASK-AMBIGUOUS",
+      code:
+        step === "notify-warehouse"
+          ? "WV-TASK-RETRIES-EXHAUSTED"
+          : "WV-TASK-AMBIGUOUS",
+      status: "active",
+      revision: 2,
+      external_effects_may_continue: false,
+    }));
+    await page.route(`${environment}/incidents?*`, (r) =>
+      r.fulfill({ json: { items: incidents, next_cursor: null } }),
+    );
+    await page.route(`${environment}/runs/${run}/history?*`, (r) =>
+      r.fulfill({
+        json: {
+          run_id: run,
+          events: [
+            "run_started",
+            "task_scheduled",
+            "task_claimed",
+            "task_failed",
+            "incident_opened",
+          ].map((type, index) => ({
+            id: `e${index}`,
+            type,
+            sequence: index + 1,
+            timestamp: new Date().toISOString(),
+          })),
+          next_cursor: null,
+          high_water_sequence: 5,
+        },
+      }),
+    );
+    await open(page, "Incidents");
+    await expect(
+      page.getByRole("table", { name: "Incidents" }).locator(".resource-row"),
+    ).toHaveCount(2);
+    await shot("91-incidents-list");
+    await page
+      .getByRole("button", {
+        name: "Open incident WV-TASK-AMBIGUOUS at charge-customer-card",
+      })
+      .click();
+    await expect(
+      page.locator("weave-incident-drawer .event-lines li"),
+    ).toHaveCount(5);
+    await shot("92-incidents-drawer", { end: ".record-detail, .page-content" });
+    await page
+      .getByRole("button", { name: "Resolve incident", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Resolve incident" });
+    await dialog.getByLabel(/Accept a verified result/).check();
+    await expect(dialog.getByLabel("Verified result (JSON)")).toBeVisible();
+    await shot("93-incidents-resolve");
+  },
+
+  async clusters({ page, shot }) {
+    await connected(page, {
+      capabilities: ["deployment.read", "target.manage", "deployment.approve"],
+    });
+    const scope = {
+      tenant_id: "tenant",
+      project_id: "project",
+      environment_id: "development",
+    };
+    const later = (seconds: number) =>
+      new Date(Date.now() + seconds * 1000).toISOString();
+    const targets = [
+      [
+        "11111111-1111-4111-8111-111111111111",
+        "local-docker",
+        "docker-compose",
+      ],
+      [
+        "22222222-2222-4222-8222-222222222222",
+        "kind-weave-test.weave-workers-production-eu",
+        "kubernetes",
+      ],
+    ].map(([id, name, adapter]) => ({
+      id,
+      name,
+      adapter,
+      external_identity: `${name}-identity`,
+      boundary: `${name}-workers`,
+      runner_principal_id: "44444444-4444-4444-8444-444444444444",
+      capabilities: ["observe", "update", "scale_workers"],
+      scope,
+      revision: 1,
+      disabled: false,
+      created_at: "2026-10-03T10:00:00Z",
+    }));
+    const runners = targets.map((target, index) => ({
+      id: `7${index}111111-7777-4777-8777-777777777777`,
+      principal_id: "55555555-5555-4555-8555-555555555555",
+      target_id: target.id,
+      adapter: target.adapter,
+      adapter_version: "1",
+      capabilities: ["observe", "update", "scale_workers"],
+      last_seen: later(index ? -240 : -10),
+      expires_at: later(index ? -150 : 80),
+      revoked: false,
+    }));
+    await page.route(`${environment}/deployment-targets?*`, (r) =>
+      r.fulfill({ json: { items: targets, next_cursor: null } }),
+    );
+    await page.route(`${environment}/deployment-runners?*`, (r) =>
+      r.fulfill({ json: { items: runners, next_cursor: null } }),
+    );
+    await open(page, "Clusters");
+    await expect(page.locator(".resource-cards li").first()).toContainText(
+      "Runner online",
+    );
+    await shot("88-clusters-targets");
+    await page
+      .getByRole("button", { name: "local-docker", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "local-docker", exact: true }),
+    ).toBeVisible();
+    await shot("95-clusters-target", { end: ".page-content" });
+    await page.getByRole("button", { name: "Back to Clusters" }).click();
+    await page.getByRole("tab", { name: "Runners" }).click();
+    await expect(
+      page.getByRole("table", { name: "Runners" }).locator(".resource-row"),
+    ).toHaveCount(2);
+    await shot("89-clusters-runners");
+    await page.route(`${environment}/deployment-plans?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            ["66666666-6666-4666-8666-666666666661", 95, "scale_workers"],
+            ["66666666-6666-4666-8666-666666666662", 540, "update"],
+          ].map(([id, seconds, intent]) => ({
+            id,
+            scope,
+            target_id: targets[0].id,
+            target_revision: 1,
+            deployment_id: "33333333-3333-4333-8333-333333333333",
+            deployment_revision: 3,
+            adapter: "docker-compose",
+            adapter_version: "1",
+            intent,
+            observation_id: "55555555-5555-4555-8555-555555555555",
+            observation_digest: "b".repeat(64),
+            steps: [],
+            risks: ["worker_drain", "service_interruption"],
+            created_at: later(-60),
+            expires_at: later(seconds as number),
+            digest: "c".repeat(64),
+          })),
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route(`${environment}/deployment-plans/*/approval`, (r) =>
+      r.fulfill({ json: null }),
+    );
+    // A long deployment name: the change wraps inside its row.
+    const deployment = "weave-workers-production-eu-west-reporting";
+    await page.route(`${environment}/deployments?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: "33333333-3333-4333-8333-333333333333",
+              target_id: targets[0].id,
+              name: deployment,
+              ownership: "managed",
+              components: [],
+              scope,
+              revision: 3,
+              created_at: "2026-10-03T10:00:00Z",
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.getByRole("tab", { name: /^Approvals/ }).click();
+    await expect(
+      page
+        .getByRole("table", { name: "Plans waiting for an approval" })
+        .locator(".resource-row"),
+    ).toHaveCount(2);
+    await expect(page.getByText(`Scale workers · ${deployment}`)).toBeVisible();
+    await shot("90-clusters-approvals");
   },
 };
 

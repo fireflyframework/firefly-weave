@@ -160,12 +160,8 @@ SPDX-License-Identifier: Apache-2.0
 .resource-table[data-view="tasks"] {
   --cols: minmax(200px, 1fr) 150px 120px;
 }
-.resource-table[data-view="connections"],
-.resource-table[data-view="workers"] {
+.resource-table[data-view="connections"] {
   --cols: minmax(200px, 1fr) 170px 110px;
-}
-.resource-table[data-view="workers"] {
-  --cols: minmax(200px, 1fr) 120px 100px;
 }
 .table-head,
 .resource-row {

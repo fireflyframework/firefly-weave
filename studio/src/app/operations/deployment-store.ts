@@ -61,6 +61,10 @@ export class OperationsStore {
   cursors: Partial<Record<Collection, string | null>> = {};
   loading = new Set<Collection>();
   errors: Partial<Record<Collection, string>> = {};
+  /** The code and HTTP status behind each entry of `errors`. */
+  errorInfo: Partial<Record<Collection, { code: string; status: number }>> = {};
+  /** The filters each collection last loaded with, until it fails or changes. */
+  private loadedFilters: Partial<Record<Collection, string>> = {};
   mutating = false;
   mutationError = "";
   mutationErrorCode = "";
@@ -88,6 +92,17 @@ export class OperationsStore {
   get runners() {
     return this.pages.runners;
   }
+  /**
+   * True once the collection has loaded with exactly these filters. False
+   * before the first answer, after a failure and after the filters change
+   * (the rows are emptied then), so a view never reads "none" as "unknown".
+   */
+  loaded(
+    collection: Collection,
+    filters: { target_id?: string; deployment_id?: string } = {},
+  ): boolean {
+    return this.loadedFilters[collection] === JSON.stringify(filters);
+  }
   setScope(scope: string, readable: boolean, authority = "") {
     if (
       scope === this.scope &&
@@ -103,6 +118,8 @@ export class OperationsStore {
     this.pages = emptyPages();
     this.cursors = {};
     this.errors = {};
+    this.errorInfo = {};
+    this.loadedFilters = {};
     this.loading.clear();
     this.sequence = {};
     this.mutating = false;
@@ -121,6 +138,7 @@ export class OperationsStore {
       this.filters[collection] = filterKey;
       this.pages[collection] = [];
       this.cursors[collection] = null;
+      delete this.loadedFilters[collection];
       append = false;
     }
     const generation = this.generation;
@@ -133,6 +151,7 @@ export class OperationsStore {
       if (value) params.set(name, value);
     this.loading.add(collection);
     delete this.errors[collection];
+    delete this.errorInfo[collection];
     this.changed();
     try {
       const result = await this.transport.request<Page<Collections[K]>>(
@@ -148,15 +167,19 @@ export class OperationsStore {
         append ? [...this.pages[collection], ...result.items] : result.items
       ) as (typeof this.pages)[K];
       this.cursors[collection] = result.next_cursor;
+      this.loadedFilters[collection] = filterKey;
     } catch (error) {
       if (
         generation === this.generation &&
         sequence === this.sequence[collection]
       ) {
-        this.errors[collection] = describeError(error).message;
+        const plain = describeError(error);
+        this.errors[collection] = plain.message;
+        this.errorInfo[collection] = { code: plain.code, status: plain.status };
         if (!append) {
           this.pages[collection] = [];
           this.cursors[collection] = null;
+          delete this.loadedFilters[collection];
         }
       }
     } finally {
@@ -218,7 +241,7 @@ export class OperationsStore {
   ): Promise<T | null> {
     if (!this.scope || !this.readable || this.mutating) return null;
     if (
-      !/^(deployment-targets|deployments|deployment-observations|deployment-plans|deployment-jobs)(\/[A-Za-z0-9-]+){0,2}$/.test(
+      !/^(deployment-targets|deployments|deployment-observations|deployment-plans|deployment-jobs|deployment-runners)(\/[A-Za-z0-9-]+){0,2}$/.test(
         path,
       )
     )

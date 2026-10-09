@@ -50,6 +50,15 @@ an action or clear an incident.
 
 ## Resolve an incident
 
+**In Studio**, open **Operate › Incidents**. It lists active incidents; select
+one to see its code, its step and the run's last engine events. Then select
+**Resolve incident**, choose a decision and give the reason. To accept a
+verified result, also give its evidence reference and the result as JSON.
+Studio sends the incident's revision and a new receipt, and reuses that receipt
+if you send the same decision again after a lost answer. If someone changed the
+incident first, it asks you to refresh it and decide again. The steps below do
+the same from the CLI.
+
 Run the commands with a saved platform and workspace from `weave auth setup` (see
 [how remote commands choose a platform](../guides/connect-to-api.md#how-remote-commands-choose-a-platform)).
 Saved platforms are new in 0.1.0a7; with an alpha6 or earlier CLI, these
@@ -57,9 +66,8 @@ commands use [explicit mode](../guides/connect-to-api.md#scripts-and-ci-explicit
 
 1. **Spot the blocked run.** In Studio, **Runs** shows the status "On hold" for
    it, and its detail shows "This run stopped at STEP." with the incident's
-   code, where STEP is the step's ID. Studio shows this state but has no
-   controls to resolve an incident, cancel a run, or retry it; use the CLI
-   commands below or the API. From the CLI, list the run's incidents:
+   code, where STEP is the step's ID. The incident is also listed in
+   **Operate › Incidents**. From the CLI, list the run's incidents:
 
     ```sh
     # List the incidents of one run, active and closed.
@@ -143,6 +151,9 @@ commands use [explicit mode](../guides/connect-to-api.md#scripts-and-ci-explicit
 Cancellation stops scheduling and revokes leases at once. It cannot recall work
 already sent to an external system.
 
+**In Studio**, open the run in **Operate › Runs**, select **Cancel run** and
+give a reason for the audit log. **With the CLI**:
+
 ```sh
 # Write the audited reason, then cancel the run.
 printf '%s\n' '{"reason":"operator decision"}' > cancel.json
@@ -158,6 +169,11 @@ ended in another state cannot be rewritten.
 
 A **retry** of a whole run creates a new execution with new operation keys. The
 original run, its outputs, and its history are unchanged.
+
+**In Studio**, open the finished run in **Operate › Runs** and select
+**Retry run**. Choose **Same version** or, when a newer one is active,
+**Latest active version**; the run's input is filled in and you can change it.
+**With the CLI**:
 
 1. **Check that the original run has finished.** Retry needs a terminal parent.
 2. **Find the activation and the input.** Read the original run with
