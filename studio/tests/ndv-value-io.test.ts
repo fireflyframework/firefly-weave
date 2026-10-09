@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   ABSENT,
   FormWriteError,
+  applyChange,
   fixed,
   isDefault,
   mapped,
@@ -201,6 +202,29 @@ describe("writing field values", () => {
         "This input is mapped as a whole. Choose Map field by field first.",
       ),
     );
+  });
+  it("writes nothing when the key to remove is already absent", () => {
+    const bare: Step = {
+      id: "get-orders",
+      kind: "action",
+      uses: "order-intake.get-orders@1.0.0",
+    };
+    const s = subject(bare);
+    const changes = writeParam(s, spec(["with", "query", "limit"]), ABSENT);
+    expect(changes).toEqual([]);
+    expect(changes.reduce(applyChange, s).step).toBe(bare);
+    expect(writeParam(s, spec(["connection"]), ABSENT)).toEqual([]);
+  });
+  it("leaves the YAML untouched when a removed key is missing from a literal", () => {
+    const literal: Step = {
+      id: "get-orders",
+      kind: "action",
+      uses: "order-intake.get-orders@1.0.0",
+      with: { literal: { query: { limit: 25 } } },
+    };
+    expect(
+      writeParam(subject(literal), spec(["with", "query", "status"]), ABSENT),
+    ).toEqual([]);
   });
 });
 

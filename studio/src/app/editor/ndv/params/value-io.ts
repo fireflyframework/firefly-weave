@@ -191,6 +191,10 @@ export function writeParam(
   spec: Pick<ParamSpec, "path" | "scope">,
   next: ParamValue,
 ): FormChange[] {
+  // Removing what is already absent changes nothing: no key is created,
+  // and a literal keeps its YAML.
+  if (next.mode === "absent" && readParam(subject, spec).mode === "absent")
+    return [];
   const located = locate(subject, spec);
   if (located.kind === "plain")
     return [{ scope: located.scope, path: located.path, value: asJson(next) }];
