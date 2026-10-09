@@ -87,8 +87,10 @@ def test_policy_replacement_updates_approval_and_never_uses_the_last_valid_polic
         owner.current()
 
 
-@pytest.mark.parametrize("value", [None, "", "/mounted/ai-policy.json"])
-def test_policy_setting_reads_the_environment(monkeypatch, value):
+@pytest.mark.parametrize("value", [None, "", "ai-policy.json"])
+def test_policy_setting_reads_the_environment(monkeypatch, tmp_path, value):
+    if value:
+        value = str(tmp_path / value)
     monkeypatch.setenv("WEAVE_DATABASE_URL", DATABASE)
     monkeypatch.delenv("WEAVE_AI_POLICY_FILE", raising=False)
     if value is not None:
