@@ -66,6 +66,17 @@ def test_the_cross_platform_tier_runs_vitest_xplat_and_portable_python():
     assert len(paths) >= 10 and all((ROOT / path).exists() for path in paths)
 
 
+def test_canvas_measurements_run_after_functional_browsers_without_competing_workers_or_retries():
+    commands = runs(jobs("ci.yml")["studio"])
+    functional = "npm run test:browser -- --grep-invert @performance"
+    measurement = (
+        "npm run test:browser -- --grep @performance --workers=1 --retries=0 --output=test-results/performance"
+    )
+    assert functional in commands
+    assert measurement in commands
+    assert commands.index(functional) < commands.index(measurement)
+
+
 def test_each_cross_platform_area_has_tagged_tests():
     for name in XPLAT_SPECS:
         assert 'tag: "@xplat"' in (ROOT / "studio/tests/browser" / name).read_text(encoding="utf-8"), name
