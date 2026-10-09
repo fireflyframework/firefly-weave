@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // action to call, its connection and one row per input. Retry and timeout
 // are editable for owned actions and read-only for published ones.
 import type { Step } from "../../../../model";
+import { describeField, fieldsOf } from "../../../../forms/core/resolve";
 import {
   EMAIL_CONNECTOR,
   HTTP_CONNECTOR,
@@ -31,7 +32,7 @@ import {
   type ConnectorRecipe,
   type HttpMethod,
 } from "../../owned/owned-actions";
-import { paramsFromSchema } from "../../params/schema-params";
+import { paramFromField, paramsFromSchema } from "../../params/schema-params";
 import type {
   FormSpec,
   KindContext,
@@ -426,6 +427,21 @@ export function publishedActionForm(step: Step, ctx: KindContext): FormSpec {
   const input = schemaOf(spec["inputSchema"]);
   if (!input) return { fields };
   const rows = paramsFromSchema(input, ["with"], { idPrefix: "input." });
+  if (!fieldsOf(input).length)
+    return {
+      fields: [
+        ...fields,
+        {
+          ...paramFromField(
+            describeField("input", input, { required: true }),
+            ["with"],
+            "",
+            0,
+          ),
+          label: "Input",
+        },
+      ],
+    };
   if (wholeMapping(step["with"]))
     return {
       fields: [
@@ -470,7 +486,7 @@ export function actionSettings(step: Step, ctx: KindContext): FormSpec {
       ? "Changes data, so Weave never retries it automatically."
       : recipe &&
           recipe.kind !== "http" &&
-          !["read_only", "idempotent"].includes(sideEffect)
+          !["read_only", "idempotent", "idempotency_key"].includes(sideEffect)
         ? "Load the action to check whether it can retry."
         : setBy;
   const seconds = {

@@ -27,6 +27,7 @@ import {
 } from "../src/app/editor/ndv/owned/owned-actions";
 import {
   ndvRegistry,
+  type Expression,
   type Json,
   type KindContext,
 } from "../src/app/editor/ndv/registry";
@@ -201,6 +202,115 @@ describe("action forms", () => {
   });
 });
 
+describe("published whole input", () => {
+  const shapes: { schema: Json; value: Json; type: string; item?: string }[] = [
+    { schema: { type: "string", maxLength: 32 }, value: "hello", type: "text" },
+    { schema: { type: "number", minimum: 1 }, value: 7, type: "number" },
+    { schema: { type: "boolean" }, value: true, type: "boolean" },
+    {
+      schema: { type: "array", items: { type: "string" }, minItems: 1 },
+      value: ["a"],
+      type: "list",
+      item: "text",
+    },
+    {
+      schema: { type: "object", additionalProperties: true },
+      value: { custom: 7, unknown: { keep: ["a"] } },
+      type: "keyValue",
+    },
+  ];
+
+  it.each(shapes)(
+    "edits a whole $type input in Fixed and Mapped modes",
+    ({ schema, value, type, item }) => {
+      const step = action("example@1.0.0", { with: { literal: value } });
+      const c: KindContext = {
+        ...ctx(),
+        actionContract: () => ({ spec: { inputSchema: schema } }),
+      };
+      const before = structuredClone(step);
+      const view = shown(step, "form", c);
+      expect(view.labels).toEqual(["Action", "Input"]);
+      const input = view.state.fields[1].spec;
+      expect([input.id, input.path, input.type, input.mapping]).toEqual([
+        "input",
+        ["with"],
+        type,
+        "both",
+      ]);
+      if (item)
+        expect([input.item?.type, input.item?.path]).toEqual([item, []]);
+      const subject = stepSubject(ndvRegistry.kind("action")!, step, c, null);
+      expect(readParam(subject, input)).toEqual(fixed(value));
+      expect(
+        writeParam(subject, input, fixed(value)).reduce(applyChange, subject)
+          .step,
+      ).toEqual(before);
+      for (const expression of [
+        { ref: "/input" },
+        { op: { name: "future", args: [{ ref: "/input" }] } },
+      ]) {
+        const updated = writeParam(subject, input, mapped(expression)).reduce(
+          applyChange,
+          subject,
+        );
+        const mappedView = shown(updated.step!, "form", c);
+        expect(mappedView.state.fields[1].spec.type).toBe(type);
+        expect(readParam(updated, mappedView.state.fields[1].spec)).toEqual(
+          mapped(expression),
+        );
+        expect(
+          writeParam(updated, input, fixed(value)).reduce(applyChange, updated)
+            .step,
+        ).toEqual(before);
+      }
+      const absent = action("example@1.0.0", { with: undefined });
+      expect(shown(absent, "form", c).labels).toEqual(["Action", "Input"]);
+      expect(step).toEqual(before);
+    },
+  );
+
+  it("keeps unknown input keys and sibling mappings when a map entry changes", () => {
+    const step = action("example@1.0.0", {
+      with: {
+        object: {
+          custom: { literal: 7 },
+          name: { ref: "/input/name" },
+          unknown: { op: { name: "future", args: [] } },
+        },
+      },
+    });
+    const c: KindContext = {
+      ...ctx(),
+      actionContract: () => ({
+        spec: { inputSchema: { type: "object", additionalProperties: true } },
+      }),
+    };
+    const before = structuredClone(step);
+    const input = shown(step, "form", c).state.fields.find(
+      (field) => field.spec.id === "input",
+    )?.spec;
+    expect(input?.type).toBe("keyValue");
+    const subject = stepSubject(ndvRegistry.kind("action")!, step, c, null);
+    expect(readParam(subject, input!)).toEqual(
+      mapped(before["with"] as Expression),
+    );
+    const changed = writeParam(
+      subject,
+      { ...input!, path: ["with", "custom"] },
+      fixed(8),
+    ).reduce(applyChange, subject);
+    expect(changed.step!["with"]).toEqual({
+      object: {
+        custom: { literal: 8 },
+        name: { ref: "/input/name" },
+        unknown: { op: { name: "future", args: [] } },
+      },
+    });
+    expect(step).toEqual(before);
+  });
+});
+
 describe("action settings", () => {
   it("lets a workflow-owned GET request retry and caps its timeout", () => {
     const { state } = shown(action("flow.get@1.0.0"), "settings");
@@ -221,6 +331,76 @@ describe("action settings", () => {
       "Changes data, so Weave never retries it automatically.",
     );
   });
+  it.each(["read_only", "idempotent", "idempotency_key"])(
+    "lets an owned action with %s policy edit retry without losing its delays",
+    (sideEffect) => {
+      const step = action("flow.sftp-read@1.0.0");
+      const recipe = {
+        ...owned["flow.sftp-read@1.0.0"],
+        retry: { maxAttempts: 4, initialDelaySeconds: 2, maxDelaySeconds: 40 },
+      };
+      const before = structuredClone(recipe);
+      const c: KindContext = {
+        ...ctx(),
+        ownedAction: () => recipe as unknown as Json,
+        actionContract: () => ({ spec: { sideEffect } }),
+      };
+      const retry = shown(step, "settings", c).state.fields[0];
+      expect(retry.readOnly).toBeNull();
+      const subject = stepSubject(
+        ndvRegistry.kind("action")!,
+        step,
+        c,
+        recipe as unknown as Json,
+      );
+      expect(readParam(subject, retry.spec)).toEqual(
+        fixed({ maxAttempts: 4, initialDelaySeconds: 2, maxDelaySeconds: 40 }),
+      );
+      const attempts = retry.spec.children!(step, c)[0];
+      const updated = writeParam(subject, attempts, fixed(5)).reduce(
+        applyChange,
+        subject,
+      );
+      expect(updated.action).toEqual({
+        ...before,
+        retry: { maxAttempts: 5, initialDelaySeconds: 2, maxDelaySeconds: 40 },
+      });
+      expect(updated.step).toEqual(step);
+      expect(recipe).toEqual(before);
+    },
+  );
+
+  it.each(["", "future_policy"])(
+    "keeps saved retry read-only with unavailable %s policy",
+    (sideEffect) => {
+      const step = action("flow.sftp-read@1.0.0");
+      const recipe = {
+        ...owned["flow.sftp-read@1.0.0"],
+        retry: { maxAttempts: 4, initialDelaySeconds: 2, maxDelaySeconds: 40 },
+      };
+      const before = structuredClone(recipe);
+      const c: KindContext = {
+        ...ctx(),
+        ownedAction: () => recipe as unknown as Json,
+        actionContract: () => ({ spec: { sideEffect } }),
+      };
+      const retry = shown(step, "settings", c).state.fields[0];
+      expect(retry.readOnly).toBe(
+        "Load the action to check whether it can retry.",
+      );
+      const subject = stepSubject(
+        ndvRegistry.kind("action")!,
+        step,
+        c,
+        recipe as unknown as Json,
+      );
+      expect(readParam(subject, retry.spec)).toEqual(
+        fixed({ maxAttempts: 4, initialDelaySeconds: 2, maxDelaySeconds: 40 }),
+      );
+      expect(recipe).toEqual(before);
+    },
+  );
+
   it("shows a published action's retry and timeout as set by the action", () => {
     const { state } = shown(action("sql.lookup@1.0.0"), "settings");
     expect(state.fields.map((f) => f.readOnly)).toEqual([
