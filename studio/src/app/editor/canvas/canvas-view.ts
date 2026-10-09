@@ -99,8 +99,18 @@ function memo<A extends unknown[], T>(
     return value;
   };
 }
-/** The hover toolbar's size: two 28 px buttons, a 2 px gap, padding and border. */
-const TOOLBAR = { width: 64, height: 34 } as const;
+/**
+ * The hover toolbar: two 28-unit buttons, a 2-unit gap, padding and border.
+ * Paths are 224 units apart, so under a step's three-line label block the
+ * step below has as little as 9 units of room above it at 40%. The toolbar
+ * therefore sits on its step's card, at the top left corner, rising 6 units
+ * above it: clear of the corner badge (at most 38 units wide, so from 68
+ * units in), of the icon (from 32 units down) and of the label above. A
+ * parallel step's bar is 20 units wide with its paths' labels on both
+ * sides, so its toolbar sits left of the bar's lower half, under the edge
+ * coming in. Nothing assumes one output handle: they are on the right.
+ */
+const TOOLBAR = { width: 64, height: 34, rise: 6 } as const;
 /** "Insert a step between a and b" becomes "Move x between a and b". */
 const moveName = (name: string, id: string) =>
   name.replace(/^(Insert|Add) a step/, `Move ${id}`);
@@ -119,6 +129,7 @@ const moveName = (name: string, id: string) =>
   ],
   changeDetection: ChangeDetectionStrategy.Eager,
   encapsulation: ViewEncapsulation.None,
+  host: { "(document:keydown.escape)": "dismissToolbars($event)" },
   templateUrl: "./canvas-view.html",
   styleUrl: "./canvas.css",
 })
@@ -152,6 +163,8 @@ export class CanvasView implements OnInit, DoCheck {
   draggingStep = "";
   /** The click that ends a drag does nothing else. */
   private suppressClick = false;
+  /** Steps whose toolbar Escape hid, until the pointer or focus reaches another step. */
+  private dismissed: readonly string[] = [];
   /** The workflow the view was last fitted to (StructuredCanvasAdapter.opened). */
   private fitted = -1;
   private fitPending = false;
@@ -558,7 +571,10 @@ export class CanvasView implements OnInit, DoCheck {
       target.closest?.("[data-edge]")?.getAttribute("data-edge") ?? "";
     if (edge !== this.hoveredEdge) this.hoveredEdge = edge;
     const tile = this.toolbarStep(target);
-    if (tile !== this.hoveredTile) this.hoveredTile = tile;
+    if (tile !== this.hoveredTile) {
+      this.hoveredTile = tile;
+      this.reached(tile);
+    }
   }
   unhover() {
     this.hoveredEdge = "";
@@ -567,12 +583,18 @@ export class CanvasView implements OnInit, DoCheck {
   /** Focus on a step, or in its toolbar, shows that step's toolbar. */
   focusIn(event: FocusEvent) {
     this.focusTile = this.toolbarStep(event.target as Element);
+    this.reached(this.focusTile);
   }
   /** Focus left the canvas: only the pointer shows a toolbar now. */
   focusOut(event: FocusEvent) {
     const next = event.relatedTarget;
     if (!(next instanceof Node && this.root().nativeElement.contains(next)))
       this.focusTile = "";
+  }
+  /** The pointer or focus reached a step: a toolbar Escape hid elsewhere may show again. */
+  private reached(id: string) {
+    if (id && this.dismissed.length && !this.dismissed.includes(id))
+      this.dismissed = [];
   }
   /** The step an element belongs to, as a step or in its toolbar; else "". */
   private toolbarStep(element: Element): string {
@@ -587,23 +609,31 @@ export class CanvasView implements OnInit, DoCheck {
   // ------------------------------------------------------ hover toolbar
 
   private readonly toolbarsMemo = memo(
-    (layout: LtrLayout, focused: string, hovered: string, locked: boolean) =>
+    (
+      layout: LtrLayout,
+      focused: string,
+      hovered: string,
+      locked: boolean,
+      dismissed: readonly string[],
+    ) =>
       [...new Set([focused, hovered])].flatMap((id) => {
-        const tile = id
-          ? layout.tiles.find((item) => item.id === id && item.step)
-          : undefined;
-        return tile
-          ? [
-              {
-                id: tile.id,
-                // Its bottom right corner on the tile's top right corner.
-                x: tile.x + tile.width - TOOLBAR.width,
-                y: tile.y - TOOLBAR.height,
-                locked,
-                menu: this.menuFor(tile, locked),
-              },
-            ]
-          : [];
+        const tile =
+          id && !dismissed.includes(id)
+            ? layout.tiles.find((item) => item.id === id && item.step)
+            : undefined;
+        if (!tile) return [];
+        const bar = tile.shape === "fork";
+        return [
+          {
+            id: tile.id,
+            x: bar ? tile.x + tile.width - TOOLBAR.width : tile.x,
+            y: bar
+              ? tile.y + tile.height - TOOLBAR.height
+              : tile.y - TOOLBAR.rise,
+            locked,
+            menu: this.menuFor(tile, locked),
+          },
+        ];
       }),
   );
   /**
@@ -617,7 +647,44 @@ export class CanvasView implements OnInit, DoCheck {
       this.focusTile,
       this.hoveredTile,
       this.locked(),
+      this.dismissed,
     );
+  }
+  /**
+   * Escape hides the toolbars on screen, which appear on hover and focus,
+   * until the pointer or focus reaches another step. A field, a dialog, an
+   * open menu or a move in progress takes Escape first; with no toolbar on
+   * screen it goes on to the editor. Focus inside a toolbar returns to its
+   * step.
+   */
+  dismissToolbars(event: Event) {
+    const h = this.host();
+    const target = event.target as Element;
+    if (
+      event.defaultPrevented ||
+      this.press ||
+      h.connectingNode ||
+      h.dragPreview ||
+      target.closest?.("input, textarea, select, [role=dialog], .modal-panel")
+    )
+      return;
+    const shown = this.toolbars().map((bar) => bar.id);
+    if (!shown.length) return;
+    const root = this.root().nativeElement;
+    const inside = target.closest?.("[data-toolbar-for]");
+    this.dismissed = shown;
+    this.cdr.markForCheck();
+    if (inside)
+      root
+        .querySelector<HTMLElement>(
+          `[data-tile="${CSS.escape(inside.getAttribute("data-toolbar-for")!)}"] .tile-body`,
+        )
+        ?.focus();
+    // Focus on the canvas, or nowhere: this Escape did its job.
+    if (root.contains(target) || target === document.body) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   }
   private menuFor(tile: LtrTile, locked: boolean): RowMenuItem[] {
     const h = this.host();

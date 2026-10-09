@@ -581,8 +581,10 @@ weave-canvas-view,
 }
 
 /* Hover toolbar and selection toolbar. The hover toolbar sits on its
-   step's top right corner and grows from there like a label, so its
-   buttons never draw below 24 px on screen, at any level of detail. */
+   step's card (where: canvas-view.ts, TOOLBAR) and scales with the canvas
+   like the "+" and the handles, so it never covers a neighbor, a label or
+   the corner badge. Its commands are also in the step's right-click menu
+   and its step details, at full size. */
 .canvas-v2 .tile-toolbar {
   position: absolute;
   z-index: 6;
@@ -594,8 +596,6 @@ weave-canvas-view,
   background: var(--surface);
   box-shadow: var(--shadow-1);
   pointer-events: auto;
-  transform: scale(var(--label-scale, 1));
-  transform-origin: bottom right;
 }
 .canvas-v2 .tile-toolbar :is(.icon-button, .row-menu-toggle) {
   width: 28px;

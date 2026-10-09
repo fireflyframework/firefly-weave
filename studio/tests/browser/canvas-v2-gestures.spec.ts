@@ -18,8 +18,87 @@ SPDX-License-Identifier: Apache-2.0
 // Gestures on the left-to-right canvas: dragging from a handle, moving a
 // step by drag or "Move to…", the hover toolbar and palette drops.
 import { expect, test } from "@playwright/test";
-import { openNewWorkflow, openWorkflow } from "./canvas-po";
+import { readFileSync } from "node:fs";
+import {
+  openNewWorkflow,
+  openWorkflow,
+  vendorPayment,
+  type CanvasPage,
+} from "./canvas-po";
 import { sourceText } from "./support";
+
+/**
+ * The vendor payment workflow where the step below
+ * post-the-ledger-entry-for-the-payment (a name on two lines) needs setup,
+ * so it shows a corner badge.
+ */
+function badgeBelowLongName() {
+  return {
+    name: "toolbar-neighbors.yaml",
+    mimeType: "application/yaml",
+    buffer: Buffer.from(
+      readFileSync(vendorPayment, "utf8")
+        .replaceAll(
+          "post-ledger-entry",
+          "post-the-ledger-entry-for-the-payment",
+        )
+        .replace(/^\s+uses: crm\.lookup@2\.0\.0\n/m, ""),
+    ),
+  };
+}
+
+/**
+ * What the hover toolbars on screen cover: anything drawn on the canvas but
+ * their own step's card, which they sit on.
+ */
+async function toolbarCovers(canvas: CanvasPage): Promise<string[]> {
+  return canvas.root.evaluate((root) => {
+    const overlap = (a: DOMRect, b: DOMRect) =>
+      a.left < b.right - 0.5 &&
+      b.left < a.right - 0.5 &&
+      a.top < b.bottom - 0.5 &&
+      b.top < a.bottom - 0.5;
+    const name = (element: Element) =>
+      `${element.getAttribute("class") ?? element.tagName.toLowerCase()} ${
+        element.closest("[data-tile]")?.getAttribute("data-tile") ??
+        element.getAttribute("data-owner") ??
+        element.getAttribute("data-handle") ??
+        element.getAttribute("data-edge-line") ??
+        ""
+      }`;
+    const found: string[] = [];
+    for (const bar of root.querySelectorAll<HTMLElement>(".tile-toolbar")) {
+      const id = bar.dataset["toolbarFor"]!;
+      const box = bar.getBoundingClientRect();
+      const card = root.querySelector(
+        `[data-tile="${CSS.escape(id)}"] .tile-body`,
+      );
+      for (const other of root.querySelectorAll(
+        ".tile-label strong, .tile-label span, .tile-badge, .tile-icon, .tile-body, .branch-label, .join-bar, .join-label, .lane-slot, .lane-slot-label, .lane-end, .handle, .insert-plus",
+      ))
+        if (
+          other !== card &&
+          other.getBoundingClientRect().width &&
+          overlap(box, other.getBoundingClientRect())
+        )
+          found.push(`${id} covers ${name(other)}`);
+      for (const path of root.querySelectorAll<SVGPathElement>("path.edge")) {
+        const m = path.getScreenCTM()!;
+        const length = path.getTotalLength();
+        for (let at = 0; at <= length; at += 2) {
+          const p = path.getPointAtLength(at);
+          const x = p.x * m.a + p.y * m.c + m.e;
+          const y = p.x * m.b + p.y * m.d + m.f;
+          if (x > box.left && x < box.right && y > box.top && y < box.bottom) {
+            found.push(`${id} covers ${name(path)}`);
+            break;
+          }
+        }
+      }
+    }
+    return found;
+  });
+}
 
 for (const size of [
   { width: 1440, height: 900 },
@@ -182,11 +261,6 @@ test.describe("canvas gestures", () => {
       name: "Commands for prepare-request",
     });
     await expect(bar).toBeVisible();
-    // At the 50% the workflow opens with, its buttons still draw 24 px or more.
-    for (const button of await bar.getByRole("button").all()) {
-      const box = (await button.boundingBox())!;
-      expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(24);
-    }
     await bar
       .getByRole("button", { name: "More commands for prepare-request" })
       .click();
@@ -209,6 +283,108 @@ test.describe("canvas gestures", () => {
       .click();
     await expect(page.locator(".toast")).toContainText("Restored pay-vendor.");
     await expect(canvas.tile("pay-vendor")).toHaveCount(1);
+  });
+
+  test("keeps the hover toolbar clear of badges, labels, handles, + and edges at 50% and 40%", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, badgeBelowLongName());
+    await expect(
+      canvas.tile("send-confirmation").locator(".tile-badge"),
+    ).toBeVisible();
+    const steps = await canvas.root
+      .locator(".tile-node[data-step]")
+      .evaluateAll((tiles) => tiles.map((tile) => tile.dataset["step"]!));
+    expect(steps).toHaveLength(9);
+    const check = async () => {
+      for (const id of steps) {
+        // Scroll (a real wheel) until the step sits in the canvas's middle.
+        const area = (await canvas.root.boundingBox())!;
+        const box = (await canvas.tileBody(id).boundingBox())!;
+        const middle = {
+          x: area.x + area.width / 2,
+          y: area.y + area.height / 2,
+        };
+        await page.mouse.move(middle.x, middle.y);
+        await page.mouse.wheel(
+          box.x + box.width / 2 - middle.x,
+          box.y + box.height / 2 - middle.y,
+        );
+        await canvas.tileBody(id).hover();
+        await expect(
+          canvas.root.getByRole("group", { name: `Commands for ${id}` }),
+        ).toBeVisible();
+        expect(await toolbarCovers(canvas), id).toEqual([]);
+      }
+    };
+    expect(await canvas.zoomPercent()).toBe(50);
+    // The name above the step with a badge takes two lines.
+    expect(
+      await canvas
+        .tile("post-the-ledger-entry-for-the-payment")
+        .locator(".tile-label strong")
+        .evaluate(
+          (name: HTMLElement) =>
+            name.clientHeight / parseFloat(getComputedStyle(name).lineHeight),
+        ),
+    ).toBeCloseTo(2, 0);
+    await check();
+    await canvas.root
+      .getByRole("button", { name: /^Reset zoom to 100%/ })
+      .click();
+    const zoomOut = canvas.root.getByRole("button", {
+      name: "Zoom out",
+      exact: true,
+    });
+    for (let i = 0; i < 5; i++) await zoomOut.click();
+    await expect.poll(() => canvas.zoomPercent()).toBe(40);
+    await check();
+  });
+
+  test("Escape hides the toolbars until the pointer or focus reaches another step, and keeps the selection", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    const bar = (id: string) =>
+      canvas.root.getByRole("group", { name: `Commands for ${id}` });
+    await canvas.tileBody("approval").click();
+    await expect(canvas.tileBody("approval")).toBeFocused();
+    await expect(bar("approval")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(bar("approval")).toHaveCount(0);
+    await expect(canvas.tileBody("approval")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(canvas.tileBody("approval")).toBeFocused();
+    // The pointer reaches another step: toolbars show again.
+    await canvas.tileBody("prepare-request").hover();
+    await expect(bar("prepare-request")).toBeVisible();
+    await expect(bar("approval")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(canvas.root.locator(".tile-toolbar")).toHaveCount(0);
+    await expect(canvas.tileBody("approval")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // With no toolbar on screen, Escape goes on to the editor: back to the
+    // workflow settings.
+    await page.keyboard.press("Escape");
+    await expect(canvas.tileBody("approval")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    // Escape from inside a toolbar puts focus back on its step.
+    await canvas.tileBody("record-result").hover();
+    await canvas.root
+      .getByRole("button", {
+        name: "More commands for record-result",
+        exact: true,
+      })
+      .focus();
+    await page.keyboard.press("Escape");
+    await expect(bar("record-result")).toHaveCount(0);
+    await expect(canvas.tileBody("record-result")).toBeFocused();
   });
 
   test("below 30% Move to… still shows where a step can go and focuses one of them", async ({
