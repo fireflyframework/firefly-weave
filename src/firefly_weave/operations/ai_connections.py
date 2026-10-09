@@ -16,44 +16,50 @@
 
 """AI connection tests: one short model call through the AI gateway, never from the API itself.
 
-A test needs ``connection.manage``, shares a limit of six per minute per principal with model
-refreshes, is stored with the connection's test results and audited as ``ai.connection.test``.
-The answer carries a code, the latency and tool support, never the model's text.
+A test needs ``connection.manage``, is stored with the connection's test results and audited as
+``ai.connection.test``. Dedicated and generic tests of AI connections share a limit of six per
+minute per person. The answer carries a code, the latency and tool support, never the model's text.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import time
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
+from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import ValidationError
 from pyfly.container import service
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.access.service import audit
-from firefly_weave.connections.diagnostics import keyless_connection
+from firefly_weave.connections.diagnostics import AGENTIC_ADAPTER, keyless_connection
 from firefly_weave.connections.repository import ConnectionRepository
 from firefly_weave.connections.secret_execution import resolve_secret
 from firefly_weave.connections.secrets import SecretUnavailable
 from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, CONNECTOR_REFERENCE
-from firefly_weave.contracts.ai import AIConnectionTestRequest, AIConnectionTestResult
+from firefly_weave.contracts.ai import MODEL_NAME_PATTERN, AIConnectionTestRequest, AIConnectionTestResult
 from firefly_weave.contracts.connectors import BoundConnection, ConnectionRevision, ConnectionTestResult
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 
 TESTS_PER_MINUTE = 6
+# The same bound the generic connection test gives secret resolution.
+SECRET_SECONDS = 5
+# Below the generic connection test's 30-second budget, so the gateway stops before its caller does.
+GENERIC_TEST_SECONDS = 20
 
 
 class AIRateLimit:
-    """At most six AI connection tests and model refreshes per principal per minute in this API process."""
+    """At most six AI connection tests, dedicated or generic, per person per minute in this API process."""
 
     def __init__(
         self, limit: int = TESTS_PER_MINUTE, window: float = 60.0, clock: Callable[[], float] = time.monotonic
@@ -73,6 +79,19 @@ class AIRateLimit:
 
 def _agentic(revision: ConnectionRevision) -> bool:
     return revision.connector == CONNECTOR_REFERENCE and revision.connector_digest == AGENTIC_DESCRIPTOR.manifest.digest
+
+
+def _gateway_result(raw: dict[str, Any], model: str | None) -> AIConnectionTestResult:
+    """The gateway's answer for the requested model, or for a well-formed model name when none was requested."""
+    try:
+        result = AIConnectionTestResult.model_validate(raw)
+        named = result.model == model if model is not None else re.fullmatch(MODEL_NAME_PATTERN, result.model)
+        if not named:
+            raise ValueError("The answer names another model")
+    except ValueError:
+        # A validation error is a ValueError too: neither shape nor model name can be trusted.
+        raise CatalogError(503, "WV-AI-GATEWAY-UNAVAILABLE", "The AI gateway returned an unexpected answer") from None
+    return result
 
 
 @service
@@ -111,14 +130,14 @@ class AIConnectionService:
             model=request.model,
             probe_tools=request.probe_tools,
         )
-        try:
-            result = AIConnectionTestResult.model_validate(raw)
-        except ValidationError:
-            raise CatalogError(
-                503, "WV-AI-GATEWAY-UNAVAILABLE", "The AI gateway returned an unexpected answer"
-            ) from None
+        result = _gateway_result(raw, request.model)
         await self._record(actor, scope, revision, result, context)
         return result
+
+    def admit(self, actor: Principal, revision: ConnectionRevision) -> None:
+        """Generic tests of AI connections call the AI gateway too, so they take a slot from the same limit."""
+        if revision.adapter == AGENTIC_ADAPTER:
+            self.limiter.take(actor.id)
 
     async def _credential(self, scope: Scope, revision: ConnectionRevision) -> str | None:
         if keyless_connection(revision.adapter, revision.config, revision.secret_refs):
@@ -128,8 +147,9 @@ class AIConnectionService:
         if handle is None:
             raise CatalogError(422, "WV-AI-CONNECTION", "The AI connection has no apiKey secret handle")
         try:
-            return (await resolve_secret(partial(self.connections.secrets.resolve, scope, handle))).value
-        except SecretUnavailable:
+            async with asyncio.timeout(SECRET_SECONDS):
+                return (await resolve_secret(partial(self.connections.secrets.resolve, scope, handle))).value
+        except (SecretUnavailable, TimeoutError):
             raise CatalogError(503, "WV-AI-SECRET", "The AI connection's secret handle is not available") from None
 
     async def _record(
@@ -193,8 +213,9 @@ class GatewayConnectionTester:
                 provider=str(revision.config.get("provider")),
                 model=None,
                 probe_tools=False,
+                timeout_seconds=GENERIC_TEST_SECONDS,
             )
+            ok = _gateway_result(raw, None).ok
         except CatalogError:
             return ConnectionTestResult(ok=False, code="failed")
-        ok = raw.get("ok") is True
         return ConnectionTestResult(ok=ok, code="ok" if ok else "failed")

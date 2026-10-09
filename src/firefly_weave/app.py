@@ -260,6 +260,8 @@ def make_app(
                 AGENTIC_DESCRIPTOR,
                 AgenticConnectionAdapter(GatewayConnectionTester(pyfly.context.get_bean(LumiGatewayClient))),
             )
+            # Generic tests of AI connections call the AI gateway too, so they share its per-person limit.
+            pyfly.context.get_bean(ConnectionService).test_admission = pyfly.context.get_bean(AIConnectionService).admit
             for name, descriptor in FILE_DESCRIPTORS.items():
                 registry.register_descriptor(descriptor, FileConnectionAdapter(name))
             pyfly.context.get_bean(ConnectorRegistry).register_descriptor(

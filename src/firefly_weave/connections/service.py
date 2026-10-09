@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -78,6 +79,9 @@ class ConnectionService(ConnectionBindingPort):
         self.definitions = definitions
         self.registry = registry
         self.secrets = secrets
+        # Set at startup for connections whose test calls a model, such as AI connections: a per-person
+        # limit taken after authorization and before the test job, any secret or the provider call.
+        self.test_admission: Callable[[Principal, ConnectionRevision], None] | None = None
 
     def require(self, actor: Principal, scope: Scope, capability: str, context: AuditContext) -> None:
         self.definitions.require(actor, scope, capability, context)
@@ -256,6 +260,8 @@ class ConnectionService(ConnectionBindingPort):
             repository = ConnectionRepository(tx)
             revision = await repository.revision(revision_id)
             await self._ready(actor, scope, revision, "connection.manage", context, tx, explain=True)
+            if self.test_admission is not None:
+                self.test_admission(actor, revision)
             await repository.execute(
                 "INSERT INTO connection_test_jobs VALUES(:id,:tenant,:project,:environment,:revision,:principal)",
                 id=job_id,
