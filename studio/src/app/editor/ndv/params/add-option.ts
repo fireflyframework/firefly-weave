@@ -185,7 +185,8 @@ export class AddOption {
           );
           return field ? session.firstControl(field) : null;
         },
-        () => !this.lifetime.destroyed && this.session() === session,
+        // The final option removes this menu; focus still belongs to its live form.
+        () => this.session() === session,
       );
   }
 }

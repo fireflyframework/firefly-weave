@@ -181,6 +181,38 @@ for (const size of sizes)
         "escalate",
       ]);
     });
+    test("the final added option keeps focus when its Add option menu disappears", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("fan-out");
+      await details.dialog
+        .getByRole("button", { name: "Add option", exact: true })
+        .click();
+      await details.dialog
+        .getByRole("menuitem", { name: /Run at most/ })
+        .click();
+      await expect(
+        details
+          .field("concurrency")
+          .getByRole("textbox", { name: "Run at most" }),
+      ).toBeFocused();
+      await details.dialog
+        .getByRole("button", { name: "Add option", exact: true })
+        .click();
+      await details.dialog
+        .getByRole("menuitem", { name: /Branch results/ })
+        .click();
+      await expect(
+        details.dialog.getByRole("button", { name: "Add option", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        details
+          .field("branch-results")
+          .getByRole("button", { name: "ledger result", exact: true }),
+      ).toBeFocused();
+    });
+
     test("nested row modes retain names and whole mappings return safely to rows", async ({
       page,
     }) => {
