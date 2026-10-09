@@ -343,6 +343,79 @@ async def test_worker_uses_actual_presence_and_revocation(ready, seen, revoked, 
     assert by_id(await read(ready))["worker_online"].status == status
 
 
+@pytest.mark.parametrize(
+    "seen,other,status,detail",
+    [
+        (NOW, "unknown", "done", "worker_online"),
+        (NOW, "stale", "done", "worker_online"),
+        (NOW, "malformed", "done", "worker_online"),
+        (NOW - timedelta(minutes=5), "unknown", "unknown", "record_unavailable"),
+        (NOW - timedelta(minutes=5), "stale", "action", "worker_offline"),
+        (NOW - timedelta(minutes=5), "malformed", "unknown", "record_unavailable"),
+    ],
+)
+async def test_recent_worker_establishes_online_despite_other_unavailable_presence(
+    ready, monkeypatch, seen, other, status, detail
+):
+    second = uuid4()
+    ready.workers.append(second)
+
+    async def observed(repo, identifier, observed_at=None):
+        assert ready.active and observed_at == NOW
+        ready.statuses.append(identifier)
+        last_seen = (
+            seen if identifier == ready.worker.id else None if other == "unknown" else NOW - timedelta(minutes=5)
+        )
+        return observed_worker(
+            ready.worker.model_copy(update={"id": identifier}),
+            last_seen_at=last_seen,
+            draining=False,
+            revision=0 if identifier == second and other == "malformed" else 1,
+            active_leases=0,
+            observed_at=observed_at,
+        )
+
+    monkeypatch.setattr(modules()[0].WorkerRepository, "status", observed)
+    item = by_id(await read(ready))["worker_online"]
+    assert (item.status, item.detail) == (status, detail)
+    assert ready.statuses == [ready.worker.id, second]
+    assert str(second) not in item.model_dump_json() and str(ready.worker.id) not in item.model_dump_json()
+
+
+@pytest.mark.parametrize("snapshot", ["actor", "current"])
+@pytest.mark.parametrize(
+    "seen,revoked,status,detail",
+    [
+        (NOW, False, "done", "worker_online"),
+        (NOW - timedelta(minutes=5), False, "unknown", "requires_viewer"),
+        (NOW, True, "unknown", "requires_viewer"),
+    ],
+)
+async def test_recent_authorized_worker_establishes_online_without_reading_hidden_worker(
+    ready, snapshot, seen, revoked, status, detail
+):
+    second = uuid4()
+    ready.workers.append(second)
+    ready.seen, ready.revoked = seen, revoked
+    original = getattr(ready, snapshot)
+    setattr(
+        ready,
+        snapshot,
+        original.model_copy(
+            update={
+                "grants": (
+                    Grant(role="developer", scope=ready.project),
+                    Grant(role="viewer", scope=ready.scope, resources=(str(ready.worker.id),)),
+                )
+            }
+        ),
+    )
+    item = by_id(await read(ready))["worker_online"]
+    assert (item.status, item.detail) == (status, detail)
+    assert ready.statuses == [ready.worker.id]
+    assert str(second) not in item.model_dump_json() and str(ready.worker.id) not in item.model_dump_json()
+
+
 @pytest.mark.parametrize("snapshot", ["actor", "current"])
 async def test_worker_resource_denial_precedes_status_payload_read(ready, snapshot):
     original = getattr(ready, snapshot)
@@ -429,6 +502,8 @@ async def test_fact_limits_propagate_to_every_dependent_item(ready, field, ident
     items = by_id(await read(ready))
     for key in identifiers:
         assert (items[key].status, items[key].detail) == ("unknown", "limit_exceeded")
+    if field in {"releases", "workers"}:
+        assert ready.statuses == []
 
 
 class QuerySession:
@@ -671,7 +746,8 @@ async def test_use_only_lumi_reader_does_not_receive_a_configuration_fix(ready):
     assert item.status == "action" and item.fix is None
 
 
-async def test_worker_identity_query_bounds_full_status_rows_before_payload_access():
+@pytest.mark.parametrize("count,size", [(1001, 1), (1, 8 * 1024 * 1024)])
+async def test_worker_identity_query_bounds_full_status_rows_before_payload_access(count, size):
     rel = release()
     worker = uuid4()
 
@@ -686,7 +762,7 @@ async def test_worker_identity_query_bounds_full_status_rows_before_payload_acce
                 assert params["release_ids"] == [rel.id]
                 assert "UUID[]" in str(statement.compile(dialect=postgresql.asyncpg.dialect()))
                 assert "octet_length(to_jsonb(w)::text)" in str(statement)
-                self.rows, self.count, self.size = [{"id": worker}], 1001, 1
+                self.rows, self.count, self.size = [{"id": worker}], count, size
             return await super().execute(statement, params)
 
     session = Session()

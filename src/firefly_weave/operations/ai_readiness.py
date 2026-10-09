@@ -192,15 +192,19 @@ class AIReadinessService:
                             denied = True
                             continue
                         statuses.append(await _observe(WorkerRepository(tx).status(identifier, observed_at=now)))
-                    if denied or (not identifiers and not self._allowed(actor, current, scope, "status.read", context)):
+                    online = any(
+                        not isinstance(row, _Unavailable) and not row.revoked and row.presence == "recent"
+                        for row in statuses
+                    )
+                    if not online and (
+                        denied or (not identifiers and not self._allowed(actor, current, scope, "status.read", context))
+                    ):
                         items.append(_requires("worker_online", "viewer"))
-                    elif any(isinstance(row, _Unavailable) or row.presence == "unknown" for row in statuses):
+                    elif not online and any(
+                        isinstance(row, _Unavailable) or row.presence == "unknown" for row in statuses
+                    ):
                         items.append(_unknown("worker_online", "record_unavailable"))
                     else:
-                        online = any(
-                            not isinstance(row, _Unavailable) and not row.revoked and row.presence == "recent"
-                            for row in statuses
-                        )
                         items.append(
                             AIReadinessItem(
                                 id="worker_online",
