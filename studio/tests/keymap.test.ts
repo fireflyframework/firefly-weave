@@ -90,7 +90,7 @@ describe("what a key does where focus is", () => {
     expect(commandFor("Mod+Enter", "decisionGrid", options)).toBeNull();
   });
 
-  it("acts while typing only for save, execute, undo and redo", () => {
+  it("acts while typing only for save, execute, undo, redo and moving between regions", () => {
     const typing = { platform: "other" as const, typing: true };
     expect(commandFor("N", "canvas", typing)).toBeNull();
     expect(commandFor("Mod+S", "stepDetails", typing)).toBe("save");
@@ -101,6 +101,32 @@ describe("what a key does where focus is", () => {
     );
     expect(commandFor("=", "stepDetails", typing)).toBeNull();
     expect(commandFor("=", "canvas", { platform: "other" })).toBe("zoomIn");
+    expect(commandFor("F6", ["fixedField", "stepDetails"], typing)).toBe(
+      "nextRegion",
+    );
+    expect(commandFor("Shift+F6", "stepDetails", typing)).toBe(
+      "previousRegion",
+    );
+  });
+
+  it("binds the step details keys once", () => {
+    const at = { platform: "mac" as const };
+    expect(commandFor("F6", "stepDetails", at)).toBe("nextRegion");
+    expect(commandFor("Shift+F6", "stepDetails", at)).toBe("previousRegion");
+    expect(commandFor("/", "stepDetails", at)).toBe("searchPane");
+    expect(commandFor("F2", "stepDetails", at)).toBe("renameStep");
+    expect(commandFor("Alt+ArrowUp", "stepDetails", at)).toBe("moveRowUp");
+    expect(commandFor("Alt+ArrowDown", "stepDetails", at)).toBe("moveRowDown");
+    expect(commandFor("Enter", "stepDetails", at)).toBe("mapTo");
+    expect(commandFor("Mod+Alt+Shift+ArrowRight", "stepDetails", at)).toBe(
+      "nextStepDetails",
+    );
+    expect(commandFor("Alt+ArrowUp", "decisionGrid", at)).toBe("moveRuleUp");
+    const steps = shortcutSheet("mac").find((s) => s.title === "Step details");
+    expect(steps?.entries).toContainEqual({
+      keys: ["F6"],
+      label: "Next region",
+    });
   });
 
   it("redoes with Ctrl+Y on Windows and Linux only", () => {

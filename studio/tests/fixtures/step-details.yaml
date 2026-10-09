@@ -1,0 +1,95 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: order-intake, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    required: [customerId, email, amount]
+    properties:
+      customerId: {type: string, title: Customer ID}
+      email: {type: string, title: Email}
+      status: {type: string, enum: [open, closed]}
+      amount: {type: number, title: Amount}
+      tier: {type: string}
+  outputSchema: {type: object}
+  connections:
+    ledger-db: {connector: weave-postgresql@1.0.0, required: true}
+  llmProfiles:
+    default: {provider: ollama, model: "qwen3:4b"}
+  steps:
+    - id: check-customer
+      kind: transform
+      value: {object: {customer: {ref: /input/customerId}, amount: {ref: /input/amount}}}
+    - id: lookup
+      kind: action
+      uses: sql.lookup@1.0.0
+      connection: ledger-db
+      with: {object: {parameters: {object: {customerId: {ref: /input/customerId}}}}}
+    - id: route-by-value
+      kind: switch
+      cases:
+        - when: {op: {name: gt, args: [{ref: /steps/check-customer/output/amount}, {literal: 1000}]}}
+          steps:
+            - id: notify-sales
+              kind: humanTask
+              assignment: sales
+              title: {literal: Review a large order}
+              context: {ref: /steps/check-customer/output}
+              formSchema: {type: object, properties: {}}
+              decisions: [approve, reject]
+          output: {literal: {}}
+        - when: {op: {name: eq, args: [{ref: /input/tier}, {literal: gold}]}}
+          steps: []
+          output: {literal: {}}
+      default:
+        steps:
+          - id: fan-out
+            kind: parallel
+            concurrency: 2
+            branches:
+              ledger:
+                steps:
+                  - id: wait-a-minute
+                    kind: wait
+                    durationSeconds: 60
+                output: {literal: {}}
+              audit:
+                steps: []
+                output: {literal: {}}
+        output: {literal: {}}
+    - id: summarize
+      kind: llm
+      uses: weave-agentic-generate@1.0.0
+      profile: default
+      connection: ai
+      prompt: {literal: Summarize the order}
+      context: {literal: {}}
+    - id: score
+      kind: decisionTable
+      uses: payment-policy@1.0.0
+      with: {ref: /input}
+    - id: wait-for-payment
+      kind: signal
+      name: payment-received
+      timeoutSeconds: 3600
+      payloadSchema: {type: object}
+    - id: reject-order
+      kind: fail
+      code: order-rejected
+      message: The order was rejected.
+  output: {literal: {}}

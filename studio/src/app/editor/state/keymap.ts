@@ -91,7 +91,13 @@ export type KeymapCommand =
   | "addRule"
   | "moveRuleUp"
   | "moveRuleDown"
-  | "duplicateRule";
+  | "duplicateRule"
+  | "nextRegion"
+  | "previousRegion"
+  | "searchPane"
+  | "moveRowUp"
+  | "moveRowDown"
+  | "mapTo";
 
 export interface KeymapRow {
   readonly id: string;
@@ -131,6 +137,7 @@ export const KEYMAP: readonly KeymapRow[] = [
       outline: "openStepDetails",
       addStep: "panelInsert",
       decisionGrid: "editCell",
+      stepDetails: "mapTo",
     },
   },
   {
@@ -140,6 +147,7 @@ export const KEYMAP: readonly KeymapRow[] = [
       canvas: "renameStep",
       outline: "renameStep",
       decisionGrid: "editCell",
+      stepDetails: "renameStep",
     },
   },
   {
@@ -150,7 +158,11 @@ export const KEYMAP: readonly KeymapRow[] = [
   {
     id: "search-steps",
     keys: ["/"],
-    commands: { canvas: "searchAddStep", outline: "searchAddStep" },
+    commands: {
+      canvas: "searchAddStep",
+      outline: "searchAddStep",
+      stepDetails: "searchPane",
+    },
     n8n: "Replaces A, which opens the step list in n8n.",
   },
   {
@@ -323,6 +335,18 @@ export const KEYMAP: readonly KeymapRow[] = [
     keys: ["Mod+Alt+Shift+ArrowRight"],
     commands: { stepDetails: "nextStepDetails" },
   },
+  {
+    id: "next-region",
+    keys: ["F6"],
+    commands: { stepDetails: "nextRegion" },
+    ...typing,
+  },
+  {
+    id: "previous-region",
+    keys: ["Shift+F6"],
+    commands: { stepDetails: "previousRegion" },
+    ...typing,
+  },
   { id: "escape", keys: ["Escape"], commands: { any: "escape" } },
   {
     id: "shortcuts",
@@ -366,12 +390,12 @@ export const KEYMAP: readonly KeymapRow[] = [
   {
     id: "grid-rule-up",
     keys: ["Alt+ArrowUp"],
-    commands: { decisionGrid: "moveRuleUp" },
+    commands: { decisionGrid: "moveRuleUp", stepDetails: "moveRowUp" },
   },
   {
     id: "grid-rule-down",
     keys: ["Alt+ArrowDown"],
-    commands: { decisionGrid: "moveRuleDown" },
+    commands: { decisionGrid: "moveRuleDown", stepDetails: "moveRowDown" },
   },
 ];
 
@@ -434,6 +458,12 @@ export const COMMAND_LABELS: Readonly<Record<KeymapCommand, string>> = {
   moveRuleUp: "Move the rule up",
   moveRuleDown: "Move the rule down",
   duplicateRule: "Duplicate the rule",
+  nextRegion: "Next region",
+  previousRegion: "Previous region",
+  searchPane: "Search the focused pane",
+  moveRowUp: "Move the row up",
+  moveRowDown: "Move the row down",
+  mapTo: "Map the focused input field to a parameter",
 };
 
 /** Pointer gestures, shown on the sheet; the canvas handles them itself. */
