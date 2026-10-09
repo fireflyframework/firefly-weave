@@ -421,13 +421,18 @@ test.describe("the left-to-right canvas", () => {
     });
     const has = (level: string) =>
       canvas.root.evaluate((root, l) => root.classList.contains(l), level);
-    for (let i = 0; i < 12 && !(await has("lod-compact")); i++)
+    const zoomOutOnce = async () => {
+      const before = await canvas.zoomPercent();
       await zoomOut.click();
+      await expect.poll(() => canvas.zoomPercent()).toBeLessThan(before);
+    };
+    for (let i = 0; i < 12 && !(await has("lod-compact")); i++)
+      await zoomOutOnce();
     await expect(canvas.root).toHaveClass(/\blod-compact\b/);
     await expect(canvas.tile("approval").locator(".tile-label")).toBeHidden();
     await expect(canvas.tile("approval").locator(".tile-icon")).toBeVisible();
     for (let i = 0; i < 12 && !(await has("lod-minimal")); i++)
-      await zoomOut.click();
+      await zoomOutOnce();
     await expect(canvas.root).toHaveClass(/\blod-minimal\b/);
     await expect(canvas.root.locator(".insert-plus").first()).toBeHidden();
     await expect(canvas.tileBody("approval")).toHaveAttribute(
