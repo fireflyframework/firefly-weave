@@ -526,9 +526,12 @@ export class StructuredCanvasAdapter {
     visit(this.definition.spec.steps);
     return map;
   }
-  /** Every step ID in the workflow, nested ones included. */
+  /** Every step ID in the workflow, nested ones and steps not placed yet included. */
   stepIdSet(): Set<string> {
-    return new Set([...this.owners().values()].flat().map((step) => step.id));
+    return new Set([
+      ...[...this.owners().values()].flat().map((step) => step.id),
+      ...this.unplaced.map((step) => step.id),
+    ]);
   }
   /** Replaces the canvas sidecar as one undo step. Inside `batch`, assign `canvas` instead. */
   updateCanvas(next: CanvasSidecar) {
@@ -780,6 +783,7 @@ export class StructuredCanvasAdapter {
     if (!n) {
       this.checkpoint();
       this.unplaced = this.unplaced.filter((s) => s.id !== id);
+      this.canvas = pruneCanvas(this.canvas, this.stepIdSet());
       return;
     }
     if (!options.contents && branches(n.step).some(([, b]) => b.steps.length))

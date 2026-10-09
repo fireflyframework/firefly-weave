@@ -25,7 +25,9 @@ import {
 } from "../src/app/model";
 import {
   emptyCanvas,
+  ownedRecipes,
   stepNotesOf,
+  withOwnedRecipe,
   withStepNote,
 } from "../src/app/editor/state/canvas-sidecar";
 describe("structured workflow authoring", () => {
@@ -751,5 +753,38 @@ describe("the canvas sidecar in the model", () => {
     expect(() => model.updateCanvas(emptyCanvas())).toThrow(
       "Fix source before editing the graph.",
     );
+  });
+  it("keeps the note and owned action of a step that isn't placed yet", () => {
+    const model = new StructuredCanvasAdapter();
+    const placed = model.insert("transform");
+    model.addUnplaced("wait");
+    const loose = model.unplaced[0];
+    expect(model.stepIdSet().has(loose.id)).toBe(true);
+    model.updateCanvas(
+      withOwnedRecipe(
+        withStepNote(model.canvas, loose.id, { text: "Place me later" }),
+        "order-intake.get-orders",
+        { kind: "http", method: "GET" },
+      ),
+    );
+    model.remove(placed.id);
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([loose.id]);
+    expect(Object.keys(ownedRecipes(model.canvas))).toEqual([
+      "order-intake.get-orders",
+    ]);
+    model.setSource(model.source);
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([loose.id]);
+    model.renameStep(loose.id, "later");
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual(["later"]);
+  });
+  it("drops the note of a step that isn't placed when that step is removed", () => {
+    const model = new StructuredCanvasAdapter();
+    model.addUnplaced("wait");
+    const loose = model.unplaced[0];
+    model.updateCanvas(withStepNote(model.canvas, loose.id, { text: "Gone" }));
+    model.remove(loose.id);
+    expect(stepNotesOf(model.canvas)).toEqual({});
+    model.undo();
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([loose.id]);
   });
 });
