@@ -184,7 +184,7 @@ describe("the shortcuts sheet", () => {
       {
         keys: ["/"],
         label:
-          "Search in the Add a step panel. Replaces A, which opens the step list in n8n.",
+          "Search in the Add a step panel. The Add a step panel also opens with N.",
       },
       { keys: ["F9"], label: "Toggle a breakpoint. Not in n8n." },
       { keys: ["?"], label: "Show keyboard shortcuts. Not in n8n." },
@@ -218,10 +218,6 @@ describe("the shortcuts sheet", () => {
       "Search in the Add a step panel",
     );
     expect(sheet[1].entries.map((entry) => entry.label)).not.toContain("Copy");
-    expect(sheet[2].entries.map((entry) => entry.keys)).toEqual([
-      ["/"],
-      ["Ctrl+K"],
-      ["D"],
-    ]);
+    expect(sheet[2].entries.map((entry) => entry.keys)).toEqual([["/"]]);
   });
 });

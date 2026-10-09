@@ -149,7 +149,7 @@ export interface LtrTile {
   labelY: number;
 }
 export interface LtrHandle {
-  /** "<tile>:out", or "<group>:<lane>" for a decision case or a parallel branch. */
+  /** "<tile>>out", or "<group>:path:<name>" for a decision case or a parallel branch. */
   key: string;
   /** The tile whose output it is. */
   tile: string;
@@ -474,7 +474,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       const next = placed[index + 1];
       const insert = { owner, index: index + 1 };
       layout.handles.push({
-        key: `${item.id}:out`,
+        key: `${item.id}>out`,
         tile: item.id,
         x: item.out.x,
         y: item.out.y,
@@ -527,7 +527,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       const label = laneLabel(step, lane.name, workflow);
       const y = laneTop + MID;
       const output: LtrHandle = {
-        key: `${step.id}:${lane.name}`,
+        key: `${step.id}:path:${lane.name}`,
         tile: step.id,
         x: right + LTR.rail,
         y,
@@ -692,7 +692,7 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       y: LTR.originY + i * LTR.lane + MID,
     };
     layout.handles.push({
-      key: `${id}:out`,
+      key: `${id}>out`,
       tile: id,
       x: out.x,
       y: out.y,

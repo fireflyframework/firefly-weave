@@ -292,12 +292,12 @@ test("the new canvas opens 200 steps within a second and pans and zooms within a
     });
     // Only 200 steps are asserted; 1,000 steps are recorded for the PR.
     if (count === 200) {
-      expect(openMs, "open 200 steps to interactive").toBeLessThanOrEqual(
-        OPEN_BUDGET_MS,
-      );
-      expect(p95FrameMs, "pan and zoom p95 at 200 steps").toBeLessThanOrEqual(
-        FRAME_BUDGET_MS + VSYNC_ALLOWANCE_MS,
-      );
+      expect
+        .soft(openMs, "open 200 steps to interactive")
+        .toBeLessThanOrEqual(OPEN_BUDGET_MS);
+      expect
+        .soft(p95FrameMs, "pan and zoom p95 at 200 steps")
+        .toBeLessThanOrEqual(FRAME_BUDGET_MS + VSYNC_ALLOWANCE_MS);
     }
   }
   await info.attach("canvas-measurements", {

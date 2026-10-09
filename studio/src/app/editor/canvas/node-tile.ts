@@ -70,9 +70,7 @@ export interface TileView {
         [class.unapplied]="v.borders.unapplied"
         [class.error]="v.borders.error"
       ></span>
-      @if (v.kind === "end") {
-        <span class="tile-end-text">End</span>
-      } @else {
+      @if (v.kind !== "end") {
         <weave-icon class="tile-icon" [name]="v.icon" />
       }
       @if (v.badge; as badge) {

@@ -160,7 +160,7 @@ test.describe("the canvas keyboard map", () => {
 
     // An edge drawn from a handle: Escape drops it, and letting go adds nothing.
     const spot = await canvas.emptySpot();
-    const handle = center((await canvas.handle("approval:out").boundingBox())!);
+    const handle = center((await canvas.handle("approval>out").boundingBox())!);
     await page.mouse.move(handle.x, handle.y);
     await page.mouse.down();
     await page.mouse.move(spot.x, spot.y, { steps: 12 });
@@ -321,10 +321,14 @@ test.describe("the canvas keyboard map", () => {
     await expect(sheet).toBeVisible();
     await sheet.getByRole("button", { name: "Done", exact: true }).click();
     await expect(sheet).toHaveCount(0);
-    // Outside the canvas, ? opens the editor's own sheet, as before.
+    // Outside the canvas, the sheet still describes the canvas in use.
     await page.evaluate(() => (document.activeElement as HTMLElement).blur());
     await page.keyboard.press("?");
     await expect(sheet).toBeVisible();
-    await expect(sheet).not.toContainText("Extend the selection downstream");
+    await expect(sheet).toContainText("Extend the selection downstream");
+    await expect(sheet).not.toContainText("Reserved for a command bar");
+    await expect(sheet).not.toContainText(
+      "Not assigned: Weave has no deactivated steps",
+    );
   });
 });

@@ -115,7 +115,7 @@ for (const size of [
       const canvas = await openNewWorkflow(page);
       await canvas.addFirstStep("Transform");
       await canvas.closeInspector();
-      await canvas.dragFromHandle("transform-1:out");
+      await canvas.dragFromHandle("transform-1>out");
       await expect(
         page.getByRole("combobox", { name: "Search steps and actions" }),
       ).toBeFocused();
@@ -181,7 +181,7 @@ test.describe("canvas gestures", () => {
   test("a drop near a step is refused and says why", async ({ page }) => {
     const canvas = await openWorkflow(page);
     const near = (await canvas.tileBody("approval").boundingBox())!;
-    await canvas.dragFromHandle("prepare-request:out", {
+    await canvas.dragFromHandle("prepare-request>out", {
       x: near.x + near.width / 2,
       y: near.y + near.height + 20,
     });

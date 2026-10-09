@@ -151,7 +151,7 @@ export const KEYMAP: readonly KeymapRow[] = [
     id: "search-steps",
     keys: ["/"],
     commands: { canvas: "searchAddStep", outline: "searchAddStep" },
-    n8n: "Replaces A, which opens the step list in n8n.",
+    n8n: "The Add a step panel also opens with N.",
   },
   {
     id: "sticky-note",
@@ -628,7 +628,7 @@ export function shortcutSheet(
       .filter((row) => {
         if (!row.n8n) return false;
         const own = Object.values(row.commands).find(Boolean);
-        return !own || offered(own);
+        return own ? offered(own) : !options.available;
       })
       .map((row) => {
         const own = Object.values(row.commands).find(Boolean);

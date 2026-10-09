@@ -163,6 +163,7 @@ export class CanvasPage {
     await this.page.mouse.down();
     await this.page.mouse.move(target.x, target.y, { steps: 12 });
     await expect(this.root.locator(".rubber-band")).toBeVisible();
+    await expect(this.root.locator("[data-toolbar-for]")).toHaveCount(0);
     await this.page.mouse.up();
   }
   /** Moves the pointer onto an edge, 30% of the way along it. */

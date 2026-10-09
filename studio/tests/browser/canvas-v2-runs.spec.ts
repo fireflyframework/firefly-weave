@@ -182,7 +182,11 @@ test("a simulation that failed marks its step with the danger border and the fai
 test("while a simulation runs the canvas offers no + and moves nothing, but still pans", async ({
   page,
 }) => {
-  const canvas = await simulate(page, simulatedSource, [waitingAtWait()]);
+  const lockedSource = simulatedSource.replace(
+    "  output: { literal: {} }",
+    "    - id: fan\n      kind: parallel\n      branches:\n        empty: {steps: [], output: {literal: {}}}\n  output: { literal: {} }",
+  );
+  const canvas = await simulate(page, lockedSource, [waitingAtWait()]);
   await expect(canvas.root).toHaveClass(/\blocked\b/);
   await expect(canvas.root.locator(".plus-stub, .edge-plus")).toHaveCount(0);
   const tile = (await canvas.tileBody("approval").boundingBox())!;
@@ -195,6 +199,45 @@ test("while a simulation runs the canvas offers no + and moves nothing, but stil
   await expect(
     canvas.root.getByRole("button", { name: "Delete review", exact: true }),
   ).toHaveAttribute("aria-disabled", "true");
+  await canvas.tileBody("review").click({ button: "right" });
+  for (const name of ["Rename", "Duplicate", "Move to…", "Delete"]) {
+    await expect(
+      page.getByRole("menuitem", { name, exact: true }),
+    ).toHaveAttribute("aria-disabled", "true");
+  }
+  await page.keyboard.press("Escape");
+  const slot = canvas.root.locator(".lane-slot");
+  await expect(slot).toHaveAttribute("aria-disabled", "true");
+  await press(page, slot);
+  await expect(
+    page.getByRole("combobox", { name: "Search steps and actions" }),
+  ).toHaveCount(0);
+  const handle = (await canvas.handle("approval>out").boundingBox())!;
+  const spot = await canvas.emptySpot();
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(spot.x, spot.y, { steps: 6 });
+  await expect(canvas.root.locator(".rubber-band")).toHaveCount(0);
+  await page.mouse.up();
+  const zoom = await canvas.zoomPercent();
+  await canvas.root
+    .getByRole("button", { name: "Zoom in", exact: true })
+    .click();
+  await expect.poll(() => canvas.zoomPercent()).toBeGreaterThan(zoom);
+  await canvas.tileBody("approval").click();
+  await expect(canvas.tileBody("approval")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await canvas.tileBody("approval").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".inspector-header h2")).toHaveText(
+    "Wait for signal",
+  );
+  await canvas.closeInspector();
   const before = (await canvas.tileBody("action-1").boundingBox())!.y;
   await page.mouse.wheel(0, 120);
   await expect
@@ -249,7 +292,7 @@ test("a finished simulation draws the edges it took in success and the path it d
   for (const key of [
     "$trigger:manual>check",
     "check>route",
-    "route:default>auto-approve",
+    "route:path:default>auto-approve",
     "route>record",
     "record>$end",
   ]) {
@@ -267,7 +310,7 @@ test("a finished simulation draws the edges it took in success and the path it d
     success,
   );
   const dim = await tokenColor(page, "--flow-line-dim");
-  for (const key of ["route:case 1>review", "review>$join:route"]) {
+  for (const key of ["route:path:case 1>review", "review>$join:route"]) {
     await expect(canvas.edgeLine(key)).toHaveClass(/\bskipped\b/);
     await expect(canvas.edgeLine(key)).toHaveCSS("stroke", dim);
     await expect(canvas.edgeLine(key)).toHaveCSS("stroke-width", "2px");
@@ -290,16 +333,16 @@ test("a simulation that waits inside a path draws the way into the decision and 
   for (const key of [
     "$trigger:manual>check",
     "check>route",
-    "route>route:case 1",
-    "route:case 1>review",
+    "route>route:path:case 1",
+    "route:path:case 1>review",
   ]) {
     await expect(canvas.edgeLine(key)).toHaveClass(/\blive\b/);
     await expect(canvas.edgeLine(key)).toHaveCSS("stroke", live);
   }
   for (const key of [
     "review>$join:route",
-    "route>route:default",
-    "route:default>auto-approve",
+    "route>route:path:default",
+    "route:path:default>auto-approve",
     "auto-approve>$join:route",
     "route>record",
     "record>$end",
@@ -317,16 +360,16 @@ test("a simulation that failed inside a path keeps the way into the decision tak
   for (const key of [
     "$trigger:manual>check",
     "check>route",
-    "route>route:case 1",
-    "route:case 1>review",
+    "route>route:path:case 1",
+    "route:path:case 1>review",
   ]) {
     await expect(canvas.edgeLine(key)).toHaveClass(/\btaken\b/);
     await expect(canvas.edgeLine(key)).toHaveCSS("stroke", success);
   }
   for (const key of [
     "review>$join:route",
-    "route>route:default",
-    "route:default>auto-approve",
+    "route>route:path:default",
+    "route:path:default>auto-approve",
     "auto-approve>$join:route",
     "route>record",
     "record>$end",

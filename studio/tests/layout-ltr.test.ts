@@ -69,6 +69,25 @@ const workflowOf = (steps: Step[]): Workflow => {
   workflow.spec.steps = steps;
   return workflow;
 };
+
+it("keeps a parallel output distinct from a branch named out", () => {
+  const step = createStep("parallel", "p");
+  step["branches"] = { out: { steps: [], output: { literal: {} } } };
+  const layout = layoutLtr(workflowOf([step]), options());
+  expect(new Set(layout.handles.map((item) => item.key)).size).toBe(
+    layout.handles.length,
+  );
+  expect(layout.handles.find((item) => item.key === "p>out")?.insert).toEqual({
+    owner: "root",
+    index: 1,
+  });
+  expect(
+    layout.handles.find((item) => item.key === "p:path:out")?.insert,
+  ).toEqual({
+    owner: "p/out",
+    index: 0,
+  });
+});
 const tile = (layout: LtrLayout, id: string): LtrTile =>
   layout.tiles.find((item) => item.id === id)!;
 const card = (item: LtrTile) => ({
@@ -264,10 +283,12 @@ describe("the left-to-right layout", () => {
   it("lays a decision's cases out as lanes below it, with a labeled output each, joined after the longest lane", () => {
     const layout = layoutLtr(fixture, options());
     expect(
-      ["route:case 1", "route:case 2", "route:default"].map((key) => {
-        const output = handle(layout, key);
-        return [output.x, output.y, output.label, output.insert];
-      }),
+      ["route:path:case 1", "route:path:case 2", "route:path:default"].map(
+        (key) => {
+          const output = handle(layout, key);
+          return [output.x, output.y, output.label, output.insert];
+        },
+      ),
     ).toEqual([
       [956, 144, "Approve", { owner: "route/case 1", index: 0 }],
       [956, 592, "Reject", { owner: "route/case 2", index: 0 }],
@@ -287,7 +308,7 @@ describe("the left-to-right layout", () => {
       tile(layout, "pay-vendor").y,
       tile(layout, "rejected").y,
     ]).toEqual([1088, 96, 544]);
-    expect(handle(layout, "route:out")).toMatchObject({
+    expect(handle(layout, "route>out")).toMatchObject({
       x: 1928,
       y: 144,
       insert: { owner: "root", index: 3 },
@@ -301,7 +322,7 @@ describe("the left-to-right layout", () => {
       leaves: null,
       enters: "record-result",
     });
-    expect(edge(layout, "route>route:case 2")).toMatchObject({
+    expect(edge(layout, "route>route:path:case 2")).toMatchObject({
       shape: "fan",
       a: { x: 936, y: 144 },
       b: { x: 950, y: 592 },
@@ -323,7 +344,7 @@ describe("the left-to-right layout", () => {
       place: "Approve of route",
     });
     expect(
-      ["pay-and-notify:ledger", "pay-and-notify:email"].map((key) => [
+      ["pay-and-notify:path:ledger", "pay-and-notify:path:email"].map((key) => [
         handle(layout, key).x,
         handle(layout, key).y,
         handle(layout, key).label,
@@ -349,7 +370,7 @@ describe("the left-to-right layout", () => {
         label: "All branches done",
       },
     ]);
-    expect(handle(layout, "pay-and-notify:out")).toMatchObject({
+    expect(handle(layout, "pay-and-notify>out")).toMatchObject({
       x: 1776,
       y: 144,
       plus: { x: 1816, y: 144 },
@@ -400,7 +421,9 @@ describe("the left-to-right layout", () => {
         insert: { owner: "route/default", index: 0 },
       },
     ]);
-    expect(edge(layout, "route:default>$slot:route/default")).toMatchObject({
+    expect(
+      edge(layout, "route:path:default>$slot:route/default"),
+    ).toMatchObject({
       a: { x: 962, y: 816 },
       b: { x: 1088, y: 816 },
       insert: null,
@@ -422,25 +445,25 @@ describe("the left-to-right layout", () => {
         .map((item) => [item.key, item.plus, item.insert, item.name]),
     ).toEqual([
       [
-        "post-ledger-entry:out",
+        "post-ledger-entry>out",
         { x: 1644, y: 144 },
         { owner: "pay-and-notify/ledger", index: 1 },
         "Add a step after post-ledger-entry",
       ],
       [
-        "send-confirmation:out",
+        "send-confirmation>out",
         { x: 1644, y: 368 },
         { owner: "pay-and-notify/email", index: 1 },
         "Add a step after send-confirmation",
       ],
       [
-        "pay-and-notify:out",
+        "pay-and-notify>out",
         { x: 1816, y: 144 },
         { owner: "route/case 1", index: 2 },
         "Add a step after pay-and-notify",
       ],
       [
-        "record-result:out",
+        "record-result>out",
         { x: 2216, y: 144 },
         { owner: "root", index: 4 },
         "Add a step after record-result",
@@ -456,12 +479,12 @@ describe("the left-to-right layout", () => {
         .map((item) => [item.key, item.insert, item.name]),
     ).toEqual([
       [
-        "pay-and-notify:ledger>post-ledger-entry",
+        "pay-and-notify:path:ledger>post-ledger-entry",
         { owner: "pay-and-notify/ledger", index: 0 },
         "Insert a step between pay-and-notify and post-ledger-entry",
       ],
       [
-        "pay-and-notify:email>send-confirmation",
+        "pay-and-notify:path:email>send-confirmation",
         { owner: "pay-and-notify/email", index: 0 },
         "Insert a step between pay-and-notify and send-confirmation",
       ],
@@ -471,12 +494,12 @@ describe("the left-to-right layout", () => {
         "Insert a step between pay-vendor and pay-and-notify",
       ],
       [
-        "route:case 1>pay-vendor",
+        "route:path:case 1>pay-vendor",
         { owner: "route/case 1", index: 0 },
         "Insert a step between route and pay-vendor",
       ],
       [
-        "route:case 2>rejected",
+        "route:path:case 2>rejected",
         { owner: "route/case 2", index: 0 },
         "Insert a step between route and rejected",
       ],
@@ -661,7 +684,7 @@ describe("the left-to-right layout", () => {
       workflowOf([decision]),
       options({ slots: () => slots }),
     );
-    expect(handle(nested, "route:default").y).toBe(96 + 288 + 48);
+    expect(handle(nested, "route:path:default").y).toBe(96 + 288 + 48);
   });
 
   it("gives a new decision a Case 1 and an Otherwise output, each with an empty lane", () => {
@@ -696,7 +719,7 @@ describe("the left-to-right layout", () => {
     expect(lone.tiles.map((item) => item.id)).toEqual(["$trigger:manual"]);
     expect(lone.handles).toEqual([
       {
-        key: "$trigger:manual:out",
+        key: "$trigger:manual>out",
         tile: "$trigger:manual",
         x: 192,
         y: 144,
@@ -826,7 +849,7 @@ describe("the left-to-right layout", () => {
           for (const obstacle of [
             ...obstaclesOf(layout),
             ...drawnLabels(layout, zoom),
-          ].filter((other) => other.what !== `${item.tile}:out's +`))
+          ].filter((other) => other.what !== `${item.tile}>out's +`))
             expect(
               crosses(points, obstacle),
               `${name} at ${zoom}: ${item.key} crosses ${obstacle.what}`,
@@ -960,7 +983,7 @@ describe("the left-to-right layout", () => {
     // to just before the path's first step: at 40% it has room for about
     // 10 characters (about 62 px of 12 px text).
     const layout = layoutLtr(fixture, options());
-    const otherwise = handle(layout, "route:default");
+    const otherwise = handle(layout, "route:path:default");
     const label = layout.labels.find((item) => item.owner === "route/default")!;
     expect(label.x).toBe(otherwise.x - 6);
     expect(label.y + LTR.line).toBe(otherwise.y - LTR.pathLabelRise);

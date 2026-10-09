@@ -15,7 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The canvas tools at the bottom right: zoom out, the zoom level (which
+// The canvas tools at the bottom left: zoom out, the zoom level (which
 // resets to 100%), zoom in, Show minimap, Fit view and the keyboard
 // shortcuts; below 768 px, where the minimap is hidden, one menu. Each hint
 // names the key that does the same on the canvas.

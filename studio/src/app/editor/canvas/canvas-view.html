@@ -34,6 +34,7 @@ SPDX-License-Identifier: Apache-2.0
   (wheel)="wheel($event)"
   (scroll)="scrolled($event)"
   (click)="click($event)"
+  (dblclick)="doubleClick($event)"
   (pointerover)="hover($event)"
   (pointerleave)="unhover()"
   (pointerdown)="pointerDown($event)"
@@ -156,12 +157,14 @@ SPDX-License-Identifier: Apache-2.0
                 [attr.aria-label]="'Delete ' + bar.id"
                 [attr.title]="'Delete ' + bar.id"
                 [attr.aria-disabled]="bar.locked || null"
+                [attr.tabindex]="bar.tabIndex"
               >
                 <weave-icon name="trash" [size]="16" />
               </button>
               <weave-row-menu
                 [label]="'More commands for ' + bar.id"
                 [items]="bar.menu"
+                [tabIndex]="bar.tabIndex"
               />
             </div>
           }

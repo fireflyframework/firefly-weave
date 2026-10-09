@@ -137,12 +137,6 @@ weave-canvas-view,
 .canvas-v2 .tile-body[data-shape="trigger"] .tile-icon {
   margin-left: 8px;
 }
-.canvas-v2 .tile-end-text {
-  position: relative;
-  font: var(--type-caption);
-  font-weight: 600;
-  color: var(--text);
-}
 
 /* The four border states; error comes last, so it wins over live */
 .canvas-v2 .tile-shape.selected {
@@ -540,14 +534,14 @@ weave-canvas-view,
   display: grid;
   justify-items: center;
   gap: var(--space-2);
-  width: 168px;
+  width: 240px;
   pointer-events: auto;
 }
 .canvas-v2 .empty-trigger {
   display: grid;
   justify-items: center;
   gap: var(--space-1);
-  width: 168px;
+  width: 240px;
   min-height: 0;
   padding: 0;
   border: 0;
@@ -572,6 +566,10 @@ weave-canvas-view,
   border-color: var(--field-border-hover);
   background: var(--hover);
   color: var(--text);
+}
+.canvas-v2 .empty-trigger[aria-expanded="true"] .empty-slot {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-glow);
 }
 .canvas-v2 .empty-trigger strong {
   font: var(--type-label);
@@ -635,7 +633,7 @@ weave-canvas-view,
 /* Minimap and selection box */
 .canvas-v2 f-minimap {
   left: 12px;
-  bottom: 12px;
+  bottom: 64px;
   z-index: 3;
   width: 200px;
   height: 120px;
@@ -649,13 +647,6 @@ weave-canvas-view,
 .canvas-v2.minimap-shown f-minimap,
 .canvas-v2 f-minimap:hover {
   opacity: 1;
-}
-/* Beside the canvas tools where the canvas has room for both, above them
-   where it doesn't (a narrow window with step details open). */
-@container canvas (max-width: 499px) {
-  .canvas-v2 f-minimap {
-    bottom: 64px;
-  }
 }
 .canvas-v2 .f-minimap-node {
   fill: var(--border-hover);
@@ -684,9 +675,17 @@ weave-canvas-view,
 }
 
 /* Canvas tools: a toolbar, or one menu below 768 px */
+.canvas-v2 .canvas-v2-tools {
+  left: 12px;
+  right: auto;
+}
+.canvas-v2 :is(.selection-toolbar, .tile-toolbar) button {
+  color: var(--text);
+}
 .canvas-v2 .canvas-v2-tools-menu {
   position: absolute;
-  right: 12px;
+  left: 12px;
+  right: auto;
   bottom: 12px;
   z-index: 3;
   display: none;

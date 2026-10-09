@@ -2780,7 +2780,7 @@ spec:
     const setup = page.getByRole("dialog", { name: "Simulate this workflow" });
     await setup.getByLabel(/customer ?id/i).fill("c-104");
     await setup.getByRole("button", { name: "Start simulation" }).click();
-    await expect(canvas.edgeLine("route:case 1>review")).toHaveClass(
+    await expect(canvas.edgeLine("route:path:case 1>review")).toHaveClass(
       /\bskipped\b/,
     );
     // Below 768 px the simulation covers the canvas as a sheet: fold it away

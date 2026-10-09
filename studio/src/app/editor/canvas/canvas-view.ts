@@ -40,7 +40,6 @@ import {
   FFlowModule,
   F_SCROLL_PAN_CONTROL_SCHEME,
   isOnFlowBackground,
-  middleButtonEventTrigger,
   primaryButtonEventTrigger,
   provideFFlow,
   withControlScheme,
@@ -222,6 +221,15 @@ export class CanvasView implements OnInit, DoCheck {
   private seenSelected = "";
   /** Space is held: a drag pans. */
   private space = false;
+  private spacePanned = false;
+  private panPress: {
+    pointer: number;
+    start: Point;
+    pan: Point;
+    dragging: boolean;
+    space: boolean;
+  } | null = null;
+  private viewDragging = false;
   /** A selection box being drawn, and whether it adds to the selection. */
   private box: { additive: boolean; ids: string[] } | null = null;
   private boxAdditive = false;
@@ -258,10 +266,8 @@ export class CanvasView implements OnInit, DoCheck {
       nodeRotate: () => false,
       zoom: () => false,
       scrollPan: false,
-      canvasMove: (event) =>
-        middleButtonEventTrigger(event) ||
-        (primaryButtonEventTrigger(event) &&
-          (this.space || event.ctrlKey || event.metaKey)),
+      // Handle pan here too, so a tile's drag blocker never claims it.
+      canvasMove: () => false,
       selection: (event) => this.boxTrigger(event),
     });
   }
@@ -479,7 +485,7 @@ export class CanvasView implements OnInit, DoCheck {
         ...common,
         step: false,
         icon: trigger ? "manualTrigger" : "",
-        title: trigger ? "Trigger" : "",
+        title: trigger ? "Trigger" : "End",
         subtitle,
         name: trigger ? `Trigger, ${subtitle}` : "End, workflow result",
         tooltip: trigger
@@ -704,6 +710,17 @@ export class CanvasView implements OnInit, DoCheck {
         void this.host().removeSteps([id]);
     }
   }
+  doubleClick(event: MouseEvent) {
+    const tile = (event.target as Element)
+      .closest(".tile-body")
+      ?.closest("[data-tile]");
+    const id = tile?.getAttribute("data-tile");
+    if (!id) return;
+    if (id.startsWith("$trigger:"))
+      void this.host().openWorkflowSection("spec/inputSchema");
+    else if (id === "$end") void this.host().openWorkflowSection("spec/output");
+    else void this.host().openStep(id, "details");
+  }
   /**
    * A click selects the step and shows its details; with Shift, Ctrl or
    * Command it adds the step to the selection, or takes it out.
@@ -811,6 +828,7 @@ export class CanvasView implements OnInit, DoCheck {
               ? tile.y + tile.height - TOOLBAR.height
               : tile.y - TOOLBAR.rise,
             locked,
+            tabIndex: id === focused ? 0 : -1,
             menu: this.menuFor(tile, locked),
           },
         ];
@@ -822,6 +840,7 @@ export class CanvasView implements OnInit, DoCheck {
    * pointer moves over another one.
    */
   toolbars() {
+    if (this.dragging() || this.box || this.viewDragging) return [];
     return this.toolbarsMemo(
       this.layout(),
       this.focusTile,
@@ -934,12 +953,34 @@ export class CanvasView implements OnInit, DoCheck {
     this.downAt = { x: event.clientX, y: event.clientY };
     this.cancelledPointer = null;
     this.boxAdditive = event.shiftKey;
-    if (event.button !== 0 || this.locked()) return;
     const target = event.target as Element;
+    if (
+      (event.button === 1 ||
+        (event.button === 0 &&
+          (this.space || event.ctrlKey || event.metaKey))) &&
+      !target.closest(
+        "f-minimap, .canvas-v2-tools, .canvas-v2-tools-menu, .selection-toolbar, .tile-toolbar",
+      )
+    ) {
+      this.panPress = {
+        pointer: event.pointerId,
+        start: { x: event.clientX, y: event.clientY },
+        pan: { ...this.view.pan },
+        dragging: false,
+        space: this.space,
+      };
+      event.preventDefault();
+      return;
+    }
+    if (event.button !== 0 || this.locked()) return;
     const port = target.closest?.("[data-handle]");
     const key = port?.getAttribute("data-handle") ?? "";
     const start = { x: event.clientX, y: event.clientY };
-    if (port && this.layout().handles.some((item) => item.key === key)) {
+    if (
+      port &&
+      !this.moving() &&
+      this.layout().handles.some((item) => item.key === key)
+    ) {
       this.press = {
         kind: "handle",
         key,
@@ -963,6 +1004,24 @@ export class CanvasView implements OnInit, DoCheck {
       };
   }
   pointerMove(event: PointerEvent) {
+    const pan = this.panPress;
+    if (pan && event.pointerId === pan.pointer) {
+      const dx = event.clientX - pan.start.x;
+      const dy = event.clientY - pan.start.y;
+      if (!pan.dragging) {
+        if (Math.hypot(dx, dy) < 4) return;
+        pan.dragging = true;
+        this.root().nativeElement.setPointerCapture(event.pointerId);
+        this.panning = true;
+        clearTimeout(this.panningTimer);
+        if (pan.space) this.spacePanned = true;
+      }
+      this.setView({
+        zoom: this.view.zoom,
+        pan: { x: pan.pan.x + dx, y: pan.pan.y + dy },
+      });
+      return;
+    }
     const press = this.press;
     if (!press || event.pointerId !== press.pointer) return;
     if (!press.dragging) {
@@ -997,6 +1056,16 @@ export class CanvasView implements OnInit, DoCheck {
       setTimeout(() => (this.suppressClick = false));
       return;
     }
+    const pan = this.panPress;
+    if (pan && event.pointerId === pan.pointer) {
+      this.panPress = null;
+      if (pan.dragging) {
+        this.suppressClick = true;
+        setTimeout(() => (this.suppressClick = false));
+        this.showWhilePanning();
+      }
+      return;
+    }
     const press = this.press;
     if (!press || event.pointerId !== press.pointer) return;
     this.press = null;
@@ -1006,6 +1075,19 @@ export class CanvasView implements OnInit, DoCheck {
     const h = this.host();
     if (press.kind === "handle") {
       this.band = null;
+      const control = press.target as HTMLElement;
+      const hit = control.getBoundingClientRect();
+      if (
+        control.dataset["action"] === "insert" &&
+        event.clientX >= hit.left &&
+        event.clientX <= hit.right &&
+        event.clientY >= hit.top &&
+        event.clientY <= hit.bottom
+      ) {
+        this.insertAt(control);
+        this.cdr.markForCheck();
+        return;
+      }
       const port = this.layout().handles.find((item) => item.key === press.key);
       const box = this.root().nativeElement.getBoundingClientRect();
       const inside =
@@ -1044,12 +1126,20 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** A handle or a step is being dragged. */
   private dragging(): boolean {
-    return !!this.press?.dragging || !!this.band || !!this.draggingStep;
+    return (
+      !!this.panPress?.dragging ||
+      !!this.press?.dragging ||
+      !!this.band ||
+      !!this.draggingStep
+    );
   }
   cancelPress() {
+    const panned = this.panPress?.dragging;
+    this.panPress = null;
     this.press = null;
     this.band = null;
     this.draggingStep = "";
+    if (panned) this.showWhilePanning();
     this.cdr.markForCheck();
   }
   /** Screen pixels to canvas units. */
@@ -1201,11 +1291,30 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** Space held: a drag pans. */
   trackSpace(event: KeyboardEvent) {
-    if (event.key === " ") this.space = event.type === "keydown";
+    if (
+      event.key !== " " ||
+      (event.target as Element).matches(
+        "input, textarea, select, [contenteditable='true']",
+      )
+    )
+      return;
+    this.space = event.type === "keydown";
+    if (this.space) {
+      if (!event.repeat) this.spacePanned = false;
+    } else if (this.spacePanned) {
+      event.preventDefault();
+      this.spacePanned = false;
+    }
   }
   dragStarted(event: FDragStartedEvent) {
     if (event.kind === "selection-area")
       this.box = { additive: this.boxAdditive, ids: [] };
+    else {
+      this.viewDragging = true;
+      this.panning = true;
+      clearTimeout(this.panningTimer);
+    }
+    this.cdr.markForCheck();
   }
   boxSelected(event: FSelectionChangeEvent) {
     if (this.box) this.box.ids = event.nodeIds;
@@ -1216,6 +1325,10 @@ export class CanvasView implements OnInit, DoCheck {
    * lists a group together with a step inside it.
    */
   dragEnded() {
+    if (this.viewDragging) {
+      this.viewDragging = false;
+      this.showWhilePanning();
+    }
     const box = this.box;
     if (!box) return;
     queueMicrotask(() => {
@@ -1509,17 +1622,13 @@ export class CanvasView implements OnInit, DoCheck {
     const h = this.host();
     if (this.dragging()) {
       // Letting go of the pointer then drops nothing and clicks nothing.
-      if (this.press) this.cancelledPointer = this.press.pointer;
+      this.cancelledPointer =
+        this.panPress?.pointer ?? this.press?.pointer ?? null;
       this.cancelPress();
       return true;
     }
     if (!h.connectingNode && !h.dragPreview) return false;
-    const moving = h.connectingNode;
-    h.cancelGesture();
-    if (moving) {
-      h.notify(`Stopped moving ${moving}.`);
-      this.focusTileLater(moving);
-    }
+    h.cancelMove();
     return true;
   }
   private setView(view: View) {

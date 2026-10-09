@@ -165,6 +165,7 @@ import { OperationsView } from "./operations/operations-view";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
+import { canvasSheet, keyPlatform } from "./editor/state/canvas-commands";
 import type {
   BuilderTab,
   HttpActionUse,
@@ -2582,7 +2583,7 @@ export class App implements CanvasHost {
     store(inspectorSectionsKey, JSON.stringify(this.closedSections));
   }
   /** The "Keyboard shortcuts" sheet. */
-  readonly shortcuts = [
+  readonly classicShortcuts = [
     { keys: "↑ ↓", does: "Select the previous or next step" },
     { keys: "Enter", does: "Edit the focused step in the inspector" },
     { keys: "A or /", does: "Add a step after the focused step" },
@@ -2596,6 +2597,16 @@ export class App implements CanvasHost {
     { keys: "Escape", does: "Stop moving a step, or close the inspector" },
     { keys: "?", does: "Show these shortcuts" },
   ];
+  get shortcuts() {
+    return this.editorNext
+      ? canvasSheet(keyPlatform()).flatMap((section) =>
+          section.entries.map((entry) => ({
+            keys: entry.keys.join(" "),
+            does: entry.label,
+          })),
+        )
+      : this.classicShortcuts;
+  }
   /** "Main sequence" or "Case 1 of route": where a step sits. */
   placeLabel(owner: string) {
     return ownerLabel(owner, this.stepsById());
@@ -4700,6 +4711,14 @@ export class App implements CanvasHost {
     this.dragPreview = null;
     this.connectingNode = "";
   }
+  cancelMove() {
+    const moving = this.connectingNode;
+    this.cancelGesture();
+    if (moving) {
+      this.notify(`Stopped moving ${moving}.`);
+      this.focusStep(moving);
+    }
+  }
   connect(id: string) {
     this.connectingNode = id;
     this.message =
@@ -4863,7 +4882,9 @@ export class App implements CanvasHost {
   }
   /** The canvas element and its size, or null while it isn't shown. */
   private canvasBox() {
-    const element = document.querySelector<HTMLElement>(".canvas");
+    const element = document.querySelector<HTMLElement>(
+      ".canvas:not(.canvas-v2)",
+    );
     return element && element.clientWidth
       ? {
           element,
@@ -7641,12 +7662,7 @@ export class App implements CanvasHost {
       // The first Escape ends a gesture or returns to the workflow settings;
       // the next one hides the inspector.
       if (this.connectingNode || this.dragNode || this.dragPreview) {
-        const moving = this.connectingNode;
-        this.cancelGesture();
-        if (moving) {
-          this.notify(`Stopped moving ${moving}.`);
-          this.focusStep(moving);
-        }
+        this.cancelMove();
       } else if (this.view === "designer" && this.model.selected)
         void this.deselect();
       else if (this.windowWidth <= 1280) this.closeInspector();

@@ -342,7 +342,7 @@ test.describe("selecting steps", () => {
     await expect(minimap).toBeHidden();
   });
 
-  test("keeps the minimap clear of the canvas tools when step details narrow the canvas", async ({
+  test("keeps the minimap clear of the canvas tools at different window widths", async ({
     page,
   }) => {
     await page.addInitScript(
@@ -352,10 +352,6 @@ test.describe("selecting steps", () => {
     for (const width of [820, 1440]) {
       await page.setViewportSize({ width, height: 800 });
       const canvas = await openWorkflow(page);
-      await canvas.tileBody("prepare-request").click();
-      await expect(
-        page.getByRole("complementary", { name: "Inspector" }),
-      ).toBeVisible();
       const minimap = (await canvas.root.locator("f-minimap").boundingBox())!;
       const tools = (await canvas.root
         .getByRole("toolbar", { name: "Canvas view" })

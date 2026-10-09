@@ -68,6 +68,8 @@ export interface CanvasHost {
   startMove(id: string): void;
   /** Ends "Move to…" and any drag the editor tracks. */
   cancelGesture(): void;
+  /** Cancels a move and returns focus to its step. */
+  cancelMove(): void;
   /** Selects a step and moves focus into its details: the title, or its name to rename it. */
   openStep(id: string, focus: "details" | "rename"): Promise<void>;
   /** Deletes steps, each with everything inside it, as one undo step with an Undo toast. */
