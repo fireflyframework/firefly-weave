@@ -22,6 +22,9 @@ import shlex
 import pytest
 
 from firefly_weave import __version__
+from firefly_weave.compiler.catalog import FrozenDocument
+from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, action_definition, task_capability
+from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.sdk import platform
 
 OWNER = "c" * 24
@@ -115,3 +118,31 @@ def owned_fixture(tmp_path, monkeypatch):
     runner = Runner()
     monkeypatch.setattr(platform, "_run", runner)
     return directory, state, runner
+
+
+def catalog_output():
+    """What the Agentic worker image prints for --catalog."""
+    definitions = [
+        load_definition(value).model_dump(by_alias=True)
+        for value in (AGENTIC_DESCRIPTOR.manifest.value, action_definition())
+    ]
+    return json.dumps(
+        {
+            "definitions": [
+                {"document": value, "digest": FrozenDocument.from_value(value).digest} for value in definitions
+            ],
+            "tasks": [task_capability().model_dump(by_alias=True)],
+            "adapters": ["weave-agentic-provider"],
+            "schemas": {},
+        }
+    ).encode()
+
+
+def manifest_output():
+    """What the Agentic worker image prints for --release-manifest."""
+    return json.dumps(
+        {
+            "capabilities": [task_capability().model_dump(by_alias=True)],
+            "credential_capabilities": ["weave-agentic.generate@1.0.0"],
+        }
+    ).encode()
