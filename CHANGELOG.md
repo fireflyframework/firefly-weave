@@ -235,12 +235,13 @@ timed out under full parallel load passed ten times on rerun); 612 integration
 tests against a real PostgreSQL 17; and the release acceptance profile against
 a real Docker platform with PostgreSQL 17 and Keycloak 26.7.4, where every
 enabled bring-up step passed, the secret scan found nothing, and no container,
-network, or volume was left behind. The integration tests that need Kafka,
-Keycloak, or built release images, the process recovery, restore, and
-queue-load suites, the acceptance journeys beyond bring-up, an upgrade from an
-alpha14 installation, the desktop installers on Windows and Linux, Weave AI and
-AI workflows, Developer ID signing, and Apple notarization are **not verified**
-for this release. macOS installers remain ad-hoc signed and not notarized, and
+network, or volume was left behind. The release gate (22 stages) also passed on
+the release commit with real Kafka and Keycloak: 646 integration tests, built
+release images, 69 process tests including recovery and a restore from a
+0.1.0a14 installation, and the queue-load measurements. The acceptance journeys
+beyond bring-up, the desktop installers on Windows and Linux, Weave AI and AI
+workflows, Developer ID signing, and Apple notarization are **not verified** for
+this release. macOS installers remain ad-hoc signed and not notarized, and
 Windows installers remain unsigned.
 
 ## 0.1.0a14
