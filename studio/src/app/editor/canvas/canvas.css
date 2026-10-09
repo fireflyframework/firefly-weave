@@ -201,13 +201,21 @@ weave-canvas-view,
   }
 }
 
-/* An issue's artwork stays small; its independent button stays finger-sized. */
+/* Keep the hit circle outside both center lines when zoom shrinks a tile.
+   Round up like focus rings so transformed targets never dip below touch size. */
 .canvas-v2 .tile-issue {
   position: absolute;
-  top: calc(-0.5 * var(--control-touch) / var(--zoom, 1));
-  right: calc(-0.5 * var(--control-touch) / var(--zoom, 1));
-  width: calc(var(--control-touch) / var(--zoom, 1));
-  height: calc(var(--control-touch) / var(--zoom, 1));
+  --issue-target: round(up, calc(var(--control-touch) / var(--zoom, 1)), 1px);
+  top: min(
+    calc(-0.5 * var(--issue-target)),
+    calc(0.5 * var(--tile-h) - var(--issue-target))
+  );
+  right: min(
+    calc(-0.5 * var(--issue-target)),
+    calc(0.5 * var(--tile-w) - var(--issue-target))
+  );
+  width: var(--issue-target);
+  height: var(--issue-target);
   min-height: 0;
   padding: 0;
   border: 0;

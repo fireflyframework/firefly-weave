@@ -179,14 +179,34 @@ for (const viewport of [
     await page.keyboard.press("Enter");
     await expect(details.dialogFor("wait-a-minute")).toBeVisible();
     await details.close();
-    for (const zoom of [50, 100]) {
-      if (zoom === 100) {
-        await canvas.tileBody("wait-a-minute").focus();
-        await page.keyboard.press("0");
-        await page.keyboard.press("Enter");
-        await details.close();
+    for (const zoom of [
+      31, 30.01, 32, 40, 45.8, 45.9, 50, 100, 200, 29.99, 25,
+    ]) {
+      const body = canvas.tileBody("wait-a-minute");
+      await expect(body).toBeFocused();
+      await page.keyboard.press("0");
+      await page.keyboard.press("Enter");
+      await expect(details.dialogFor("wait-a-minute")).toBeVisible();
+      await details.close();
+      await expect(body).toBeFocused();
+      await body.hover();
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, -Math.log(zoom / 100) / 0.0015);
+      await page.keyboard.up("Control");
+      await expect.poll(() => canvas.zoomPercent()).toBe(Math.round(zoom));
+      const clickCenter = async () => {
+        const box = (await body.boundingBox())!;
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await expect(details.dialog).toHaveCount(0);
+        await expect(body).toHaveAttribute("aria-pressed", "true");
+      };
+      if (zoom < 30) {
+        await expect(
+          canvas.tile("wait-a-minute").locator(".tile-issue"),
+        ).toBeHidden();
+        await clickCenter();
+        continue;
       }
-      expect(await canvas.zoomPercent()).toBe(zoom);
       const target = canvas
         .tile("wait-a-minute")
         .locator(".tile-issue, .tile-badge:not(.tile-issue .tile-badge)");
@@ -210,6 +230,66 @@ for (const viewport of [
             );
           }),
         ).toBe(true);
+      }
+      const coveredNeighbors = await target.evaluate((button) => {
+        const root = button.closest(".canvas-v2")!;
+        return Array.from(
+          root.querySelectorAll<HTMLElement>(
+            ".tile-body, [data-handle], .branch-label, .join-label, .insert-plus, .tile-issue",
+          ),
+        )
+          .filter((element) => {
+            if (element === button || !element.getClientRects().length)
+              return false;
+            const bounds = element.getBoundingClientRect();
+            return button.contains(
+              document.elementFromPoint(
+                bounds.x + bounds.width / 2,
+                bounds.y + bounds.height / 2,
+              ),
+            );
+          })
+          .map(
+            (element) =>
+              element.getAttribute("aria-label") || element.textContent?.trim(),
+          );
+      });
+      expect(coveredNeighbors).toEqual([]);
+      await clickCenter();
+      if (zoom === 31) {
+        if (viewport.width === 1440) {
+          await canvas.tileBody("notify-sales").click({ modifiers: ["Shift"] });
+          await body.click({ modifiers: ["ControlOrMeta"] });
+          await expect(body).toHaveAttribute("aria-pressed", "false");
+          await body.click({ modifiers: ["Shift"] });
+          await expect(body).toHaveAttribute("aria-pressed", "true");
+          await expect(canvas.tileBody("notify-sales")).toHaveAttribute(
+            "aria-pressed",
+            "true",
+          );
+        }
+        const start = (await body.boundingBox())!;
+        await page.mouse.move(
+          start.x + start.width / 2,
+          start.y + start.height / 2,
+        );
+        await page.mouse.down();
+        await page.mouse.move(
+          start.x + start.width / 2 + 12,
+          start.y + start.height / 2 + 12,
+          { steps: 4 },
+        );
+        await expect(canvas.root).toHaveClass(/\brevealing\b/);
+        await page.keyboard.press("Escape");
+        await page.mouse.up();
+        await expect(canvas.root).not.toHaveClass(/\brevealing\b/);
+        await expect(details.dialog).toHaveCount(0);
+        await expect(body).toHaveAttribute("aria-pressed", "true");
+        if (viewport.width === 1440)
+          await expect(canvas.tileBody("notify-sales")).toHaveAttribute(
+            "aria-pressed",
+            "true",
+          );
       }
       await canvas.tileBody("wait-a-minute").focus();
       await page.keyboard.press("Tab");
