@@ -65,8 +65,8 @@ async def test_the_guide_summarize_workflow_runs_on_the_local_model(live):
 
 
 async def test_a_model_the_policy_no_longer_approves_fails_with_llm_policy(live):
-    removed = live.weave("ai", "models", "remove", *PROVIDER, "--model", live.model)
     try:
+        removed = live.weave("ai", "models", "remove", *PROVIDER, "--model", live.model)
         assert live.model not in removed["approved"]
         outcome = await live.run(live.model)
         assert outcome["code"] == "LLM_POLICY", outcome
@@ -76,8 +76,8 @@ async def test_a_model_the_policy_no_longer_approves_fails_with_llm_policy(live)
 
 
 async def test_an_approved_model_that_ollama_does_not_serve_fails_with_model_not_found(live):
-    live.weave("ai", "models", "approve", *PROVIDER, "--model", MISSING)
     try:
+        live.weave("ai", "models", "approve", *PROVIDER, "--model", MISSING)
         async with live.client() as (client, _):
             test = await setup.test_connection(client, live.receipt()["connection_revision_id"], MISSING)
         assert (test["ok"], test["code"]) == (False, "LLM_MODEL_NOT_FOUND")
@@ -106,8 +106,8 @@ async def test_plain_http_model_endpoints_without_a_model_entry_are_refused(live
 async def test_a_stopped_ollama_fails_with_llm_unreachable_and_runs_again_after_a_restart(live):
     containers = live.ollama_containers()
     assert containers, "The installation's own Ollama container is missing; these journeys use --ollama container."
-    live.docker("stop", *containers)
     try:
+        live.docker("stop", *containers)
         outcome = await live.run(live.model)
         assert outcome["code"] == "LLM_UNREACHABLE", outcome
     finally:
