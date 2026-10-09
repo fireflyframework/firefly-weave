@@ -924,3 +924,74 @@ async def test_worker_metadata_rejects_nonobject_payloads_before_status_expansio
     else:
         with pytest.raises(ValueError):
             await reader.worker_ids()
+
+
+@pytest.mark.parametrize("snapshot", ["actor", "current"])
+@pytest.mark.parametrize("scope_kind", ["missing", "environment", "foreign"])
+async def test_publish_fix_requires_project_authority_in_both_snapshots(ready, snapshot, scope_kind):
+    from firefly_weave.contracts.surface import OPERATIONS
+
+    ready.published = {}
+    item = by_id(await read(ready))["actions_published"]
+    assert item.fix is not None and item.fix.operation == "ai_setup.publish"
+    assert item.fix.operation in OPERATIONS
+    principal = getattr(ready, snapshot)
+    grants = tuple(grant for grant in principal.grants if grant.role != "developer")
+    if scope_kind != "missing":
+        selected = (
+            ready.scope if scope_kind == "environment" else ready.project.model_copy(update={"project_id": uuid4()})
+        )
+        grants += (Grant(role="developer", scope=selected),)
+    setattr(ready, snapshot, principal.model_copy(update={"grants": grants}))
+    item = by_id(await read(ready))["actions_published"]
+    assert item.status == "action" and item.fix is None
+
+
+@pytest.mark.parametrize("change", ["retired", "conflict", "unknown", "done"])
+async def test_publish_fix_never_claims_to_repair_incompatible_or_withheld_catalog(ready, change):
+    key = next(iter(ready.published))
+    if change == "retired":
+        ready.published[key] = (ready.published[key][0], True)
+    elif change == "conflict":
+        ready.published[key] = ("a" * 64, False)
+        ready.published.pop(next(key for key in ready.published if key != next(iter(ready.published))))
+    elif change == "unknown":
+        ready.failures["published"] = ValueError("Unavailable")
+    assert by_id(await read(ready))["actions_published"].fix is None
+
+
+@pytest.mark.parametrize("snapshot", ["actor", "current"])
+@pytest.mark.parametrize("scope_kind", ["missing", "foreign"])
+async def test_authorize_fix_requires_environment_management_in_both_snapshots(ready, snapshot, scope_kind):
+    from firefly_weave.contracts.surface import OPERATIONS
+
+    ready.grants = set()
+    item = by_id(await read(ready))["connection_authorized"]
+    assert item.fix is not None and item.fix.operation == "ai_setup.grant"
+    assert item.fix.operation in OPERATIONS
+    assert str(ready.connections[0].id) not in item.model_dump_json()
+    principal = getattr(ready, snapshot)
+    grants = tuple(grant for grant in principal.grants if grant.role != "tenant_admin")
+    if scope_kind == "foreign":
+        grants += (Grant(role="tenant_admin", scope=ready.scope.model_copy(update={"environment_id": uuid4()})),)
+    setattr(ready, snapshot, principal.model_copy(update={"grants": grants}))
+    item = by_id(await read(ready))["connection_authorized"]
+    assert item.status == "unknown" and item.fix.kind == "ask"
+
+
+@pytest.mark.parametrize("change", ["releases", "connections", "undeclared", "unknown", "done"])
+async def test_authorize_fix_requires_observed_missing_usable_pairs(ready, change):
+    if change in {"releases", "connections"}:
+        setattr(ready, change, [])
+    elif change == "undeclared":
+        ready.releases = [release(credential_capabilities=[])]
+    elif change == "unknown":
+        ready.failures["grants"] = ValueError("Unavailable")
+    assert by_id(await read(ready))["connection_authorized"].fix is None
+
+
+async def test_authorize_fix_does_not_offer_grants_for_an_incapable_aggregate(ready):
+    ready.releases.append(release(credential_capabilities=[]))
+    ready.grants = set()
+    item = by_id(await read(ready))["connection_authorized"]
+    assert item.status == "action" and item.fix is None

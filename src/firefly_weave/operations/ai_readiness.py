@@ -43,6 +43,7 @@ from firefly_weave.operations.ai_facts import (
     required_ai_capabilities,
     test_time,
 )
+from firefly_weave.operations.ai_setup import credential_pairs
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.workers.repository import WorkerRepository
 
@@ -173,7 +174,22 @@ class AIReadinessService:
             items = [self._installed(releases)]
             if self._allowed(actor, current, project, "catalog.read", context):
                 published = await _observe(facts.published())
-                items.append(self._published(published))
+                publication = self._published(published)
+                if (
+                    not isinstance(published, _Unavailable)
+                    and publication.status == "action"
+                    and all(
+                        not retired and digest == item.definition_digest
+                        for item in builtin_ai_definitions()
+                        if item.reference in published
+                        for digest, retired in (published[item.reference],)
+                    )
+                    and self._allowed(actor, current, project, "definition.publish", context)
+                ):
+                    publication = publication.model_copy(
+                        update={"fix": AIReadinessFix(kind="operation", label="Publish", operation="ai_setup.publish")}
+                    )
+                items.append(publication)
             else:
                 items.append(_requires("actions_published", "developer"))
             if not self._has_grants(actor, current, scope, {"status.read"}):
@@ -266,7 +282,14 @@ class AIReadinessService:
                     items.append(AIReadinessItem(id="connection_authorized", status="action", detail="worker_missing"))
                 else:
                     pairs = await _observe(facts.granted_pairs(tuple(row.id for row in credentialed)))
-                    items.append(self._authorized(releases, credentialed, pairs))
+                    authorization = self._authorized(releases, credentialed, pairs)
+                    if authorization.status == "action" and all(credential_pairs([release]) for release in releases):
+                        authorization = authorization.model_copy(
+                            update={
+                                "fix": AIReadinessFix(kind="operation", label="Authorize", operation="ai_setup.grant")
+                            }
+                        )
+                    items.append(authorization)
                 tests = await _observe(facts.latest_tests(tuple(row.id for row in connections))) if connections else {}
                 model = (
                     _unknown("model_responds", tests.detail)

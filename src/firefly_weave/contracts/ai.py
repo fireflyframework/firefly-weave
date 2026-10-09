@@ -28,6 +28,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, Field, model_validator
 
 from firefly_weave.ai_policy import Provider
+from firefly_weave.contracts.catalog import PublishedVersion
 from firefly_weave.contracts.definitions import ContractModel
 
 AIErrorCode = Literal[
@@ -215,3 +216,17 @@ class AIReadinessResult(ContractModel):
         if tuple(item.id for item in self.items) != READINESS_IDS:
             raise ValueError("Readiness items must appear once in checklist order")
         return self
+
+
+class AISetupPublishResult(ContractModel):
+    connector: PublishedVersion
+    actions: list[PublishedVersion] = Field(min_length=1, max_length=2)
+
+
+class AISetupGrantRequest(ContractModel):
+    connection_revision_id: UUID
+
+
+class AISetupGrantResult(ContractModel):
+    granted: bool
+    not_needed: bool = False

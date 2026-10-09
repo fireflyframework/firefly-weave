@@ -59,7 +59,7 @@ async def test_model_queries_are_strict_before_service_access(query):
     service = SimpleNamespace(models=AsyncMock())
     request = Request({"type": "http", "query_string": query.encode(), "headers": []})
     with pytest.raises(ValueError):
-        await controller()(SimpleNamespace(), service, SimpleNamespace()).models(request)
+        await controller()(SimpleNamespace(), service, SimpleNamespace(), SimpleNamespace()).models(request)
     service.models.assert_not_awaited()
 
 
@@ -83,7 +83,7 @@ async def test_metadata_routes_return_no_store(method):
     )
     request.state.principal = SimpleNamespace()
     request.state.audit_context = AuditContext()
-    answer = await getattr(handler(SimpleNamespace(), service, SimpleNamespace()), method)(request)
+    answer = await getattr(handler(SimpleNamespace(), service, SimpleNamespace(), SimpleNamespace()), method)(request)
     assert answer.headers["Cache-Control"] == "no-store"
     assert json.loads(answer.body) == response.model_dump(mode="json")
 
@@ -96,10 +96,13 @@ async def test_native_application_resolves_one_shared_model_service_and_both_rou
     from firefly_weave.api.connections import ConnectionController
     from firefly_weave.app import make_app
     from firefly_weave.connections.service import ConnectionService
+    from firefly_weave.definitions.service import DefinitionService
     from firefly_weave.operations.ai_connections import AIConnectionService
     from firefly_weave.operations.ai_models import AIModelService
+    from firefly_weave.operations.ai_setup import AISetupService
     from firefly_weave.persistence.uow import UnitOfWork
     from firefly_weave.settings import Settings
+    from firefly_weave.workers.service import WorkerService
 
     with private_origins.installed(private_origins.PrivateOrigins.empty()):
         app = make_app(Settings(database_url="postgresql+asyncpg://unused@127.0.0.1:1/unused"))
@@ -111,14 +114,21 @@ async def test_native_application_resolves_one_shared_model_service_and_both_rou
             assert model_service.tests is context.get_bean(AIConnectionService)
             assert context.get_bean(AIController).model_service is model_service
             assert context.get_bean(ConnectionController).ai_models is model_service
+            setup_service = context.get_bean(AISetupService)
+            assert context.get_bean(AIController).setup_service is setup_service
+            assert setup_service.definitions is context.get_bean(DefinitionService)
+            assert setup_service.connections is context.get_bean(ConnectionService)
+            assert setup_service.workers is context.get_bean(WorkerService)
             for suffix, identifier in [
                 ("endpoints", "ai_endpoints.list"),
                 ("models", "ai_models.list"),
                 ("readiness", "ai_readiness.read"),
+                ("setup/publish", "ai_setup.publish"),
+                ("setup/grant", "ai_setup.grant"),
             ]:
                 scope = {
                     "type": "http",
-                    "method": "GET",
+                    "method": OPERATIONS[identifier].method,
                     "root_path": "",
                     "path": f"/api/v1/tenants/{uuid4()}/projects/{uuid4()}/environments/{uuid4()}/ai/{suffix}",
                 }
@@ -165,7 +175,9 @@ async def test_metadata_http_replies_always_disable_storage(root_path, telemetry
             raise CatalogError(503, "WV-AI-POLICY", "The AI policy is unavailable")
         return AIEndpointsResult(policy="absent")
 
-    controller = AIController(SimpleNamespace(), SimpleNamespace(endpoints=endpoints), SimpleNamespace())
+    controller = AIController(
+        SimpleNamespace(), SimpleNamespace(endpoints=endpoints), SimpleNamespace(), SimpleNamespace()
+    )
     advice = ErrorAdvice()
 
     async def denied(request, error):
@@ -285,10 +297,12 @@ async def test_metadata_header_boundary_leaves_non_http_protocols_unchanged():
     assert output == [{"type": "lifespan.startup.complete"}]
 
 
-@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list", "ai_readiness.read"])
+@pytest.mark.parametrize(
+    "operation", ["ai_models.list", "ai_endpoints.list", "ai_readiness.read", "ai_setup.publish", "ai_setup.grant"]
+)
 @pytest.mark.parametrize("canonical", [False, True])
 @pytest.mark.parametrize("telemetry", [False, True])
-@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("method", ["GET", "HEAD", "POST"])
 @pytest.mark.parametrize("status", [200, 503])
 async def test_mounted_metadata_replies_preserve_response_and_telemetry(
     operation, canonical, telemetry, method, status
@@ -309,7 +323,7 @@ async def test_mounted_metadata_replies_preserve_response_and_telemetry(
     async def respond(request):
         return JSONResponse(payload, status_code=status, headers={"Cache-Control": "public", "X-Control": "preserve"})
 
-    app = Starlette(routes=[Route(template, respond, methods=["GET"])])
+    app = Starlette(routes=[Route(template, respond, methods=["GET", "POST"])])
     records = []
     if telemetry:
         app.state.telemetry_service = SimpleNamespace(
@@ -329,10 +343,15 @@ async def test_mounted_metadata_replies_preserve_response_and_telemetry(
         assert records and records[0][1]["operation"] == "other"
 
 
-@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list", "ai_readiness.read"])
+@pytest.mark.parametrize(
+    "operation", ["ai_models.list", "ai_endpoints.list", "ai_readiness.read", "ai_setup.publish", "ai_setup.grant"]
+)
 @pytest.mark.parametrize("canonical", [False, True])
-@pytest.mark.parametrize("method", ["GET", "HEAD"])
-async def test_native_mounted_authentication_errors_disable_metadata_storage(monkeypatch, operation, canonical, method):
+@pytest.mark.parametrize("method", ["GET", "HEAD", "POST"])
+@pytest.mark.parametrize("operational", [False, True])
+async def test_native_mounted_authentication_errors_disable_metadata_storage(
+    monkeypatch, operation, canonical, method, operational
+):
     import httpx
 
     from firefly_weave import private_origins
@@ -354,22 +373,26 @@ async def test_native_mounted_authentication_errors_disable_metadata_storage(mon
             verifiers=VerifierSet(()),
         )
         async with app.router.lifespan_context(app):
+            app.state.compatibility = SimpleNamespace(ready=operational, retry_after_seconds=lambda: 1)
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app, root_path="/weave"), base_url="https://testserver"
             ) as client:
                 unrelated = await client.request(method, "/weave" + path + "/extra")
                 prefixed = await client.request(method, "/weave" + path)
-            assert unrelated.status_code == 401 and "cache-control" not in unrelated.headers
-            assert prefixed.status_code == 401
+            expected = 503 if method == "POST" and not operational else 401
+            assert unrelated.status_code == expected and "cache-control" not in unrelated.headers
+            assert prefixed.status_code == expected
             assert prefixed.headers.get_list("cache-control") == ["no-store"]
-            if method == "GET":
-                assert prefixed.json()["code"] == "WV-UNAUTHENTICATED"
+            if method != "HEAD":
+                assert prefixed.json()["code"] == ("WV-COMPATIBILITY" if expected == 503 else "WV-UNAUTHENTICATED")
             else:
                 assert prefixed.content == b""
 
 
 @pytest.mark.parametrize("canonical", [False, True])
-@pytest.mark.parametrize("operation", ["ai_models.list", "ai_endpoints.list", "ai_readiness.read"])
+@pytest.mark.parametrize(
+    "operation", ["ai_models.list", "ai_endpoints.list", "ai_readiness.read", "ai_setup.publish", "ai_setup.grant"]
+)
 @pytest.mark.parametrize(
     "root_path,prefix,suffix,expected",
     [
@@ -427,5 +450,188 @@ async def test_readiness_controller_registers_catalog_authority_and_safe_respons
     )
     request.state.principal = SimpleNamespace()
     request.state.audit_context = AuditContext()
-    response = await module.AIController(SimpleNamespace(), SimpleNamespace(), readiness).readiness(request)
+    response = await module.AIController(SimpleNamespace(), SimpleNamespace(), readiness, SimpleNamespace()).readiness(
+        request
+    )
     assert response.headers["cache-control"] == "no-store" and json.loads(response.body) == {"items": []}
+
+
+@pytest.mark.parametrize("action", ["publish", "grant"])
+async def test_setup_operations_register_exact_strict_wire_contracts(action):
+    from firefly_weave.contracts.catalog import RetirementRequest
+
+    assert "ai_setup." + action in OPERATIONS, "AI setup operation is unavailable"
+    row = OPERATIONS["ai_setup." + action]
+    assert row.method == "POST" and row.path.endswith("/ai/setup/" + action)
+    assert row.capability == ("definition.publish" if action == "publish" else "connection.manage")
+    assert row.statuses == (200,)
+    assert row.request_required == (action == "grant")
+    if action == "publish":
+        assert row.request is RetirementRequest
+
+
+@pytest.mark.parametrize("action", ["publish", "grant"])
+@pytest.mark.parametrize(
+    "bad",
+    [b'{"source":"x"}', b'{"capability":"x"}', b"[]", b"null", b'"x"', b"{", b" " * 65537],
+    ids=["source", "capability", "array", "null", "string", "malformed", "oversized"],
+)
+async def test_setup_request_bodies_are_strict_and_bounded_before_mutation(action, bad):
+    from firefly_weave.definitions.models import CatalogError
+
+    cls = controller()
+    assert hasattr(cls, "setup_" + action), "AI setup controller is unavailable"
+    setup = SimpleNamespace(publish=AsyncMock(), grant=AsyncMock())
+    request = Request(
+        {"type": "http", "headers": []}, receive=AsyncMock(return_value={"type": "http.request", "body": bad})
+    )
+    with pytest.raises((ValueError, CatalogError)):
+        await getattr(cls(SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), setup), "setup_" + action)(request)
+    setup.publish.assert_not_awaited()
+    setup.grant.assert_not_awaited()
+
+
+@pytest.mark.parametrize("action,body", [("publish", b""), ("publish", b"{}"), ("grant", None)])
+async def test_setup_controller_forwards_request_identity_context_scope_and_owns_disconnect(action, body):
+    import asyncio
+
+    cls = controller()
+    assert hasattr(cls, "setup_" + action), "AI setup controller is unavailable"
+    identifier = uuid4()
+    payload = {"granted": True, "not_needed": False}
+    setup = SimpleNamespace(**{action: AsyncMock(return_value=SimpleNamespace(model_dump=lambda **kw: payload))})
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {
+                "type": "http.request",
+                "body": body if body is not None else json.dumps({"connection_revision_id": str(identifier)}).encode(),
+            }
+        await asyncio.Event().wait()
+
+    request = Request(
+        {
+            "type": "http",
+            "headers": [],
+            "path_params": {key: str(uuid4()) for key in ("tenant", "project", "environment")},
+        },
+        receive,
+    )
+    request.state.principal = SimpleNamespace()
+    request.state.audit_context = AuditContext()
+    response = await getattr(cls(SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), setup), "setup_" + action)(
+        request
+    )
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    assert json.loads(response.body) == payload
+    call = getattr(setup, action).await_args
+    assert call.args[0] is request.state.principal and call.kwargs["context"] is request.state.audit_context
+    assert str(call.args[1].environment_id) == request.path_params["environment"]
+    if action == "grant":
+        assert call.args[2].connection_revision_id == identifier
+
+
+@pytest.mark.parametrize("action", ["publish", "grant"])
+async def test_setup_disconnect_cancels_owned_mutation(action):
+    import asyncio
+
+    cls = controller()
+    assert hasattr(cls, "setup_" + action), "AI setup controller is unavailable"
+    entered, closed = asyncio.Event(), asyncio.Event()
+    sent = False
+
+    async def mutate(*args, **kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    async def receive():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {
+                "type": "http.request",
+                "body": b"{}" if action == "publish" else json.dumps({"connection_revision_id": str(uuid4())}).encode(),
+            }
+        await entered.wait()
+        return {"type": "http.disconnect"}
+
+    request = Request(
+        {
+            "type": "http",
+            "headers": [],
+            "path_params": {key: str(uuid4()) for key in ("tenant", "project", "environment")},
+        },
+        receive,
+    )
+    request.state.principal, request.state.audit_context = SimpleNamespace(), AuditContext()
+    setup = SimpleNamespace(**{action: mutate})
+    with pytest.raises(asyncio.CancelledError):
+        await getattr(cls(SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), setup), "setup_" + action)(request)
+    assert closed.is_set()
+
+
+@pytest.mark.parametrize("action", ["publish", "grant"])
+@pytest.mark.parametrize("canonical", [False, True])
+@pytest.mark.parametrize(
+    "outcome,status", [("ok", 200), ("denied", 403), ("invalid", 422), ("oversized", 413), ("method", 405)]
+)
+async def test_setup_http_errors_and_success_disable_storage(action, canonical, outcome, status):
+    import httpx
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from firefly_weave.access.authorization import AccessDenied
+    from firefly_weave.api.errors import ErrorAdvice
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.operations.transport import BodyBoundary
+
+    async def mutation(*args, **kwargs):
+        if outcome == "denied":
+            raise AccessDenied()
+        return SimpleNamespace(model_dump=lambda **kw: {"granted": True})
+
+    async def denied(request, error):
+        return await ErrorAdvice().access_denied(error)
+
+    async def invalid(request, error):
+        return await ErrorAdvice().invalid_value(error)
+
+    async def unavailable(request, error):
+        return await ErrorAdvice().catalog_error(error)
+
+    setup = SimpleNamespace(**{action: mutation})
+    owner = controller()(SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), setup)
+    operation = OPERATIONS["ai_setup." + action]
+    template = operation.canonical_path if canonical else operation.path
+    app = Starlette(
+        routes=[Route(template, getattr(owner, "setup_" + action), methods=["POST"])],
+        exception_handlers={AccessDenied: denied, ValueError: invalid, CatalogError: unavailable},
+    )
+    boundary = BodyBoundary(app)
+
+    async def seeded(scope, receive, send):
+        scope["app"] = app
+        scope["state"] = {"principal": SimpleNamespace(), "audit_context": AuditContext()}
+        await boundary(scope, receive, send)
+
+    content = b"{}" if action == "publish" else json.dumps({"connection_revision_id": str(uuid4())}).encode()
+    if outcome == "invalid":
+        content = b'{"source":"untrusted"}'
+    elif outcome == "oversized":
+        content = b" " * 65537
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(seeded, root_path="/weave/nested"), base_url="https://test"
+    ) as client:
+        response = await client.request(
+            "GET" if outcome == "method" else "POST",
+            "/weave/nested" + template.format(tenant=uuid4(), project=uuid4(), environment=uuid4()),
+            content=content,
+            headers={"content-type": "application/json"},
+        )
+    assert response.status_code == status and response.headers.get_list("cache-control") == ["no-store"]

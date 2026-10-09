@@ -87,6 +87,8 @@ def pair(browser):
         ("GET", f"{ENVIRONMENT}/ai/endpoints"),
         ("GET", f"{ENVIRONMENT}/ai/models"),
         ("GET", f"{ENVIRONMENT}/ai/readiness"),
+        ("POST", f"{ENVIRONMENT}/ai/setup/publish"),
+        ("POST", f"{ENVIRONMENT}/ai/setup/grant"),
     ],
 )
 def test_studio_journeys_are_bridged(tmp_path, method, path):
@@ -131,6 +133,13 @@ def test_studio_journeys_are_bridged(tmp_path, method, path):
         ("GET", f"{ENVIRONMENT}/ai/connections/{RESOURCE}/test", 404),
         ("POST", f"{ENVIRONMENT}/ai/models", 404),
         ("POST", f"{ENVIRONMENT}/ai/readiness", 404),
+        ("GET", f"{ENVIRONMENT}/ai/setup/publish", 404),
+        ("GET", f"{ENVIRONMENT}/ai/setup/grant", 404),
+        ("POST", f"{ENVIRONMENT}/ai/setup/publish/extra", 404),
+        ("POST", f"{ENVIRONMENT}/ai/setup/grant/extra", 404),
+        ("POST", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/setup/grant", 403),
+        ("POST", f"{OTHER_PROJECT}/environments/{ENVIRONMENT_ID}/ai/setup/publish", 403),
+        ("POST", f"{ENVIRONMENT}/workers/grants", 404),
         ("GET", f"{ENVIRONMENT}/ai/readiness/extra", 404),
         ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/readiness", 403),
         ("POST", f"{ENVIRONMENT}/ai/endpoints", 404),
@@ -236,3 +245,30 @@ def test_lumi_operations_keep_host_scope_csrf_and_upstream_authorization(tmp_pat
         assert browser.delete(f"/studio/api{path}", headers=headers).status_code == 404
         assert browser.post(f"/studio/api{ENVIRONMENT}/lumi/arbitrary-provider", headers=headers).status_code == 404
     assert seen == [(method, path, "Bearer t", '"3"')]
+
+
+@pytest.mark.parametrize("action", ["publish", "grant"])
+@pytest.mark.parametrize("upstream_status", [200, 403])
+def test_setup_bridge_preserves_csrf_scope_and_upstream_authority(tmp_path, action, upstream_status):
+    seen = []
+    body = {} if action == "publish" else {"connection_revision_id": RESOURCE}
+
+    async def upstream(request):
+        seen.append((request.method, request.url.path, request.headers["authorization"], request.content))
+        return httpx.Response(upstream_status, json={"ok": upstream_status == 200})
+
+    path = f"{ENVIRONMENT}/ai/setup/{action}"
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        assert browser.post(f"/studio/api{path}", json=body, headers={"Origin": ORIGIN}).status_code == 401
+        headers = pair(browser)
+        assert browser.post(f"/studio/api{path}", json=body, headers={"Origin": ORIGIN}).status_code == 403
+        response = browser.post(f"/studio/api{path}", json=body, headers=headers)
+        assert response.status_code == upstream_status
+        assert (
+            browser.post(f"/studio/api{path.replace(ENVIRONMENT_ID, RESOURCE)}", json=body, headers=headers).status_code
+            == 403
+        )
+    assert len(seen) == 1 and seen[0][:3] == ("POST", path, "Bearer t")
+    import json
+
+    assert json.loads(seen[0][3]) == body

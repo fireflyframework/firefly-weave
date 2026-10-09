@@ -362,6 +362,30 @@ with `Cache-Control: no-store`. Fixes contain server-owned guidance or currently
 available operations; execution still requires the operation's own authority.
 
 
+`ai_setup.publish` accepts an empty body or `{}` and publishes the server's
+built-in AI Connector and Action in one project transaction. It requires
+`definition.publish` at project scope on both the request and current principal;
+an environment-only grant is insufficient. Digest-derived keys make retries
+return the same version IDs. Conflicting immutable versions and retired built-ins
+return 409; setup never overwrites or reactivates them. Publication rejects more
+than 1,000 project-wide worker releases or 8 MiB of release payloads before compilation.
+
+`ai_setup.grant` accepts only `{connection_revision_id}` and requires
+`connection.manage` in the selected environment. It revalidates the stored AI
+revision, then authorizes every exact built-in credential capability actually
+present in each admitted release in that environment. Active pairs are skipped;
+revoked pairs are reenabled. An approved keyless connection returns
+`{granted: false, not_needed: true}` without reading worker grants. Credentialed
+connections with no relevant admitted release return 422 `WV-AI-WORKER-MISSING`.
+Release and existing-grant reads share an 8 MiB budget and each allow at most 1,000
+records; exceeding a bound returns 429 before any grant is written.
+
+Both setup operations return 200 on success, audit accepted requests, roll back
+on failure or cancellation, and return `Cache-Control: no-store`, including on
+errors. Neither operation resolves credential values or calls a provider. The
+readiness checklist offers **Publish** or **Authorize** only when both permission
+snapshots allow the operation and the observed missing state can be repaired.
+
 ### Health probes
 
 `GET /health/live` answers `{"status":"up"}` while the process runs, and
@@ -614,6 +638,8 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `ai_endpoints.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/endpoints` | catalog.read |
 | `ai_models.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/models` | catalog.read |
 | `ai_readiness.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/readiness` | catalog.read |
+| `ai_setup.publish` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/setup/publish` | definition.publish |
+| `ai_setup.grant` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/setup/grant` | connection.manage |
 | `ai_connections.test` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/ai/connections/{identifier}/test` | connection.manage |
 | `runs.start` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs` | run.start |
 | `runs.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs` | run.read |

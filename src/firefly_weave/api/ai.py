@@ -26,11 +26,13 @@ from starlette.responses import JSONResponse
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
 from firefly_weave.api.transport import parse_query
-from firefly_weave.contracts.ai import AIConnectionTestRequest, AIModelsQuery
+from firefly_weave.contracts.ai import AIConnectionTestRequest, AIModelsQuery, AISetupGrantRequest
+from firefly_weave.contracts.catalog import RetirementRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.ai_connections import AIConnectionService
 from firefly_weave.operations.ai_models import AIModelService
 from firefly_weave.operations.ai_readiness import AIReadinessService
+from firefly_weave.operations.ai_setup import AISetupService
 from firefly_weave.operations.ephemeral import until_disconnect
 
 MAX_REQUEST_BYTES = 65536
@@ -48,8 +50,11 @@ async def _body(request: Request) -> bytes:
 @rest_controller
 @request_mapping("")
 class AIController:
-    def __init__(self, service: AIConnectionService, models: AIModelService, readiness: AIReadinessService) -> None:
+    def __init__(
+        self, service: AIConnectionService, models: AIModelService, readiness: AIReadinessService, setup: AISetupService
+    ) -> None:
         self.service, self.model_service, self.readiness_service = service, models, readiness
+        self.setup_service = setup
 
     @operation("ai_connections.test")
     async def test_connection(self, request: Request) -> JSONResponse:
@@ -89,5 +94,30 @@ class AIController:
     async def readiness(self, request: Request) -> JSONResponse:
         result = await self.readiness_service.read(
             request.state.principal, request_scope(request, environment=True), context=request.state.audit_context
+        )
+        return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
+    @operation("ai_setup.publish")
+    async def setup_publish(self, request: Request) -> JSONResponse:
+        RetirementRequest.model_validate_json(await _body(request) or b"{}")
+        result = await until_disconnect(
+            self.setup_service.publish(
+                request.state.principal, request_scope(request, environment=True), context=request.state.audit_context
+            ),
+            request.receive,
+        )
+        return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
+    @operation("ai_setup.grant")
+    async def setup_grant(self, request: Request) -> JSONResponse:
+        body = AISetupGrantRequest.model_validate_json(await _body(request))
+        result = await until_disconnect(
+            self.setup_service.grant(
+                request.state.principal,
+                request_scope(request, environment=True),
+                body,
+                context=request.state.audit_context,
+            ),
+            request.receive,
         )
         return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
