@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { parseDocument } from "yaml";
 import {
   StructuredCanvasAdapter,
   freshWorkflow,
@@ -216,6 +217,29 @@ describe("structured workflow authoring", () => {
     expect(m.error).toBe("");
     m.setSource(JSON.stringify(m.definition), "json");
     expect(m.nodes()).toHaveLength(4);
+  });
+  it("reports deeply nested YAML through the parser error boundary and preserves the workflow", () => {
+    const source = `payload: ${"[".repeat(5000)}1${"]".repeat(5000)}`;
+    // Source editing reads Document.errors; exhausting the parser must use that boundary.
+    const document = parseDocument(source);
+    expect(
+      document.errors.some((error) => error.code === "RESOURCE_EXHAUSTION"),
+    ).toBe(true);
+
+    const model = new StructuredCanvasAdapter();
+    model.insert("wait");
+    const previousSource = model.source;
+    const previousDefinition = structuredClone(model.definition);
+    model.setSource(source);
+    expect(model.readonly).toBe(true);
+    expect(model.error).not.toBe("");
+    expect(model.source).toBe(source);
+    expect(model.definition).toEqual(previousDefinition);
+    model.undo();
+    expect(model.source).toBe(previousSource);
+    expect(model.definition).toEqual(previousDefinition);
+    expect(model.readonly).toBe(false);
+    expect(model.error).toBe("");
   });
   it("keeps the last valid graph and exact invalid or unsupported source", () => {
     const m = new StructuredCanvasAdapter();

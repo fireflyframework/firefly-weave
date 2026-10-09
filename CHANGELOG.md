@@ -20,6 +20,9 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Update Studio's YAML parser to 2.8.3 so deeply nested documents produce a
+  parser diagnostic instead of an unexpected stack-overflow exception. Update
+  Vitest to 4.1.11 to include fixes for its development-server security advisories.
 - Run AI tasks on a local Ollama model: `weave platform ai enable --ollama auto|host|container`
   (or `--ollama-url URL`) sets up the AI gateway, the Agentic worker, a version 2 AI
   policy, development-only private-origin entries and a keyless `ollama-local`
