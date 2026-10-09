@@ -419,6 +419,232 @@ def secret_remove(directory: Path, handle: str, output: str) -> None:
     _call(lambda: lifecycle.secret_remove(directory, handle), output, _show_secret)
 
 
+def _ask(text: str) -> bool:
+    try:
+        return click.confirm(text, default=False, err=True)
+    except click.Abort:
+        # End of input or Ctrl-C at the prompt declines; the command then names what it left unchanged.
+        return False
+
+
+def _confirmation(yes: bool) -> Callable[[str], bool]:
+    """--yes accepts; a terminal asks; any other standard input refuses before anything is downloaded or changed."""
+    if yes:
+        return lambda text: True
+    if not _interactive_stdin():
+        from firefly_weave.sdk import platform_ai
+
+        return platform_ai.refuse_confirmation
+    return _ask
+
+
+def _notice(output: str) -> Callable[[str], None]:
+    if output != "text":
+        return lambda message: None
+    return lambda message: click.echo(message, err=True)
+
+
+def _test_line(test: dict[str, Any]) -> str:
+    if not test.get("ok"):
+        return f"Test: failed with {test['code']}."
+    seconds = (test.get("latency_ms") or 0) / 1000
+    tools = {
+        "supported": "and can call tools",
+        "unsupported": "but cannot call tools; use it for AI tasks, not AI agents",
+        "unknown": "(tool calling not checked)",
+    }[test.get("tool_calling", "unknown")]
+    return f"Test: {test['model']} answered in {seconds:.1f} s {tools}."
+
+
+def _show_ai_enabled(value: dict[str, Any]) -> None:
+    click.echo("AI is ready on this platform (development only).")
+    click.echo(f"Ollama: {value['mode']} · {value['endpoint']}")
+    click.echo("Models: " + (", ".join(value["models"]) or "every served model"))
+    click.echo(f"Connection: {value['connection']} (revision ID {value['connection_revision_id']})")
+    if value.get("test"):
+        click.echo(_test_line(value["test"]))
+    smoke = value.get("smoke")
+    if smoke:
+        click.echo(f"AI workflow: {smoke['status']} in run {smoke['run_id']} ({smoke['requests']} model request(s))")
+    click.echo("Changed: " + ", ".join(value["changed"]) if value["changed"] else "No changes.")
+    for warning in value["warnings"]:
+        click.echo("Warning: " + warning)
+    click.echo("Status: " + value["next"][0])
+
+
+def _show_ai_status(value: dict[str, Any]) -> None:
+    if value["stage"] == "not_enabled":
+        click.echo("AI is not enabled. Run: " + value["next"][0])
+        return
+    state = "ready" if value["enabled"] else value["stage"]
+    click.echo(f"AI: {state} · Ollama {value['mode']} · {value['endpoint']}")
+    models = value["models"]
+    approved = "every served model" if models["approval"] == "served" else (", ".join(models["approved"]) or "none")
+    click.echo("Approved: " + approved)
+    for item in models["served"]:
+        click.echo(f"  {item['name']} · tools {item['tools']} · context {item.get('context_tokens') or 'unknown'}")
+    click.echo(f"AI gateway: {value['gateway']['state']}")
+    click.echo(f"Agentic worker: {value['worker']['state']} · presence {value['worker']['presence']}")
+    if "ollama" in value:
+        click.echo(f"Ollama service: {value['ollama']['state']}")
+    if value.get("last_test"):
+        click.echo(_test_line(value["last_test"]))
+    for warning in value["warnings"]:
+        click.echo("Warning: " + warning)
+
+
+def _show_ai_models(value: dict[str, Any]) -> None:
+    if "approval" in value:
+        approved = "every served model" if value["approval"] == "served" else (", ".join(value["approved"]) or "none")
+        click.echo("Approved: " + approved)
+        click.echo(value["message"])
+    if "served" in value:
+        click.echo("Served: " + (", ".join(item["name"] for item in value["served"]) or "none"))
+    for warning in value.get("warnings", []):
+        click.echo("Warning: " + warning)
+
+
+@platform.group()
+def ai() -> None:
+    """Run AI tasks with a local Ollama model on the Docker platform (development only).
+
+    enable sets up the AI gateway, the Agentic worker, the AI policy, the
+    private-origin entries for the model endpoint and the ollama-local
+    connection, then tests a real model call. Ollama receives no credential.
+    """
+
+
+@ai.command("enable")
+@click.option(
+    "--ollama",
+    "mode",
+    type=click.Choice(["auto", "host", "container"]),
+    help="Where Ollama runs: auto uses Ollama on this computer when it answers, otherwise a Weave-managed container.",
+)
+@click.option(
+    "--ollama-url", "url", metavar="URL", help="Use an existing Ollama server at this private http:// origin instead."
+)
+@click.option(
+    "--model",
+    "models",
+    multiple=True,
+    metavar="NAME",
+    help="Pull this model when it is missing; repeat for several. With none served, qwen3:4b is offered.",
+)
+@click.option("--verify", is_flag=True, help="Also run a one-step AI workflow and require it to succeed.")
+@click.option("--yes", is_flag=True, help="Accept model downloads and the development-only private-origin entries.")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def ai_enable(
+    directory: Path, mode: str | None, url: str | None, models: tuple[str, ...], verify: bool, yes: bool, output: str
+) -> None:
+    """Set up AI with Ollama; repeating it changes only what differs."""
+    from firefly_weave.sdk import platform_ai
+
+    _call(
+        lambda: platform_ai.enable(
+            directory,
+            ollama_mode=mode,
+            ollama_url=url,
+            models=models,
+            verify=verify,
+            confirm=_confirmation(yes),
+            progress=_notice(output),
+        ),
+        output,
+        _show_ai_enabled,
+    )
+
+
+@ai.command("status")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def ai_status(directory: Path, output: str) -> None:
+    """Show the Ollama mode, models, AI services, worker presence and the last connection test."""
+    from firefly_weave.sdk import platform_ai
+
+    _call(lambda: platform_ai.status(directory), output, _show_ai_status)
+
+
+@ai.command("disable")
+@click.option("--remove-model-data", is_flag=True, help="Also delete the Weave-managed Ollama volume and its models.")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def ai_disable(directory: Path, remove_model_data: bool, output: str) -> None:
+    """Stop the AI services and remove their settings; connections and definitions stay for enable."""
+    from firefly_weave.sdk import platform_ai
+
+    _call(
+        lambda: platform_ai.disable(directory, remove_model_data=remove_model_data, notice=_notice(output)),
+        output,
+        lambda value: click.echo(value["message"]),
+    )
+
+
+@ai.group("models")
+def ai_models() -> None:
+    """Refresh, pull and approve the models of the local Ollama endpoint.
+
+    The Agentic worker and the AI gateway read the AI policy again at their
+    next call, so approvals apply without a restart.
+    """
+
+
+@ai_models.command("refresh")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def ai_models_refresh(directory: Path, output: str) -> None:
+    """Read the served models again and update the context size."""
+    from firefly_weave.sdk import platform_ai
+
+    _call(lambda: platform_ai.models_refresh(directory), output, _show_ai_models)
+
+
+@ai_models.command("pull")
+@click.argument("name")
+@click.option("--yes", is_flag=True, help="Accept the download without prompting.")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def ai_models_pull(directory: Path, name: str, yes: bool, output: str) -> None:
+    """Pull a model into the local Ollama (not available for --ollama-url servers)."""
+    from firefly_weave.sdk import platform_ai
+
+    _call(
+        lambda: platform_ai.models_pull(directory, name, confirm=_confirmation(yes), progress=_notice(output)),
+        output,
+        _show_ai_models,
+    )
+
+
+@ai_models.command("approve")
+@click.option("--provider", required=True, type=click.Choice(["openai-chat"]))
+@click.option("--model", metavar="NAME", help="Approve this model; the endpoint then approves an exact list.")
+@click.option("--served", is_flag=True, help="Approve every model the endpoint serves again.")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def ai_models_approve(directory: Path, provider: str, model: str | None, served: bool, output: str) -> None:
+    """Approve a model, or every served model."""
+    from firefly_weave.sdk import platform_ai
+
+    _call(
+        lambda: platform_ai.models_approve(directory, provider=provider, model=model, served=served),
+        output,
+        _show_ai_models,
+    )
+
+
+@ai_models.command("remove")
+@click.option("--provider", required=True, type=click.Choice(["openai-chat"]))
+@click.option("--model", required=True, metavar="NAME")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def ai_models_remove(directory: Path, provider: str, model: str, output: str) -> None:
+    """Withdraw one model's approval."""
+    from firefly_weave.sdk import platform_ai
+
+    _call(lambda: platform_ai.models_remove(directory, provider=provider, model=model), output, _show_ai_models)
+
+
 @platform.command()
 @click.option("--source", type=click.Path(path_type=Path), default=Path("."), show_default=True)
 @click.option("--context", help="Named local Docker context; existing installations keep their saved context.")
