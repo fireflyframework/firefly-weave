@@ -256,9 +256,19 @@ def write_settings(state: dict[str, Any], receipt: dict[str, Any]) -> bool:
         existing = _current(path, 0o444) if path is not None else None
         if path is not None and os.path.lexists(path) and existing is None:
             raise local.PlatformError("A saved secret generation is unsafe; no secret files were changed.")
-        if generation is None or (
-            existing is not None and (existing != data or _current(stored / name, 0o444) != data)
+        legacy = _current(stored / name, 0o444)
+        if existing is not None and (
+            not existing
+            or (name == GATEWAY_TOKEN and _TOKEN.fullmatch(existing) is None)
+            or (name == WORKER_SECRET and existing != data and legacy is None)
+            or (
+                legacy is not None
+                and (name == WORKER_SECRET or _TOKEN.fullmatch(legacy) is not None)
+                and existing not in (data, legacy)
+            )
         ):
+            raise local.PlatformError("A saved secret generation changed; no secret files were overwritten.")
+        if generation is None or (existing is not None and (existing != data or legacy != data)):
             updated[name] = secrets.token_hex(16)
     receipt["secret_generations"] = updated
     # The opaque source paths are saved before replacing any mounted inode; resuming keeps their pending recreation.
@@ -269,12 +279,7 @@ def write_settings(state: dict[str, Any], receipt: dict[str, Any]) -> bool:
         changed = _publish(stored / name, data) or changed
         path = stored / (name + "-" + updated[name])
         if not os.path.lexists(path):
-            with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as stream:
-                stream.write(data)
-                stream.flush()
-                os.fchmod(stream.fileno(), 0o444)
-                os.fsync(stream.fileno())
-            local._sync(path)
+            local._atomic(path, data, mode=0o444)
             changed = True
         elif _current(path, 0o444) != data:
             raise local.PlatformError("A saved secret generation changed; no secret files were overwritten.")
