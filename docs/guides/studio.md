@@ -783,7 +783,7 @@ choice in this browser, and you can turn it off at any time. **Outline** and
 - **Find your way.** Scroll to pan (hold Shift to pan sideways), and hold Ctrl
   or Command while you scroll to zoom, from 25 to 200 percent. Space, Ctrl or
   Command with a drag, or the middle mouse button, also pans. The canvas tools
-  at the bottom right zoom out and in, return to 100 percent, show the minimap,
+  at the bottom left zoom out and in, return to 100 percent, show the minimap,
   run **Fit view** and open **Keyboard shortcuts**; in a window narrower than
   768 pixels they become one **View** menu, and the minimap is not shown. The
   minimap in the bottom left appears while the view moves, and **Show minimap**
@@ -800,7 +800,7 @@ choice in this browser, and you can turn it off at any time. **Outline** and
   the simulation ends, those edges turn green and the edges it never took are
   dashed.
 
-Tab stops at one step at a time, the selected step or else the first, and then
+Tab stops at one step at a time, the selected step or else the Trigger tile, and then
 at that step's toolbar and its **+** controls; the arrow keys move between
 steps. Press ? on the canvas, or select **Keyboard shortcuts** in the canvas
 tools, to see every key. These keys are for the new canvas; the table under
@@ -1003,7 +1003,7 @@ navigation opens in full, with the names, in a window 1440 pixels wide or wider,
 and as icons only below that, to give the canvas room. The menu button at the
 bottom of the sidebar (**Collapse navigation** or **Expand navigation**) changes
 it, and Studio remembers your choice in this browser. In a window from 900 to
-1280 pixels wide, the designer shows the navigation in full when you expanded
+1280 pixels wide, the designer shows the navigation in full when you have expanded
 it; in a window narrower than 900 pixels it shows icons only, and the button is
 not offered. In the other views, the navigation shows icons only in a window
 1280 pixels wide or narrower. At 1024 pixels or narrower, **Insert step** opens
