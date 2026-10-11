@@ -129,8 +129,16 @@ weave platform ai models remove --provider openai-chat --model qwen3:4b
 weave platform ai models approve --provider openai-chat --served
 ```
 
-The worker and the AI gateway read the policy again at their next call, so no
-restart is needed. A step whose model is not approved fails with `LLM_POLICY`.
+The API, the worker and the AI gateway read the policy again at their next use,
+so no restart is needed. After a model's approval is withdrawn:
+
+- A new activation of a workflow whose AI task uses that model answers 422
+  `WV-ACTIVATION-AI-MODEL`, and nothing is created. A step whose `provider`
+  differs from the connection's provider answers 422 `WV-ACTIVATION-AI-PROVIDER`.
+- Activations created earlier stay active, and their AI tasks fail at the
+  worker with `LLM_POLICY`.
+- Approval does not install a model: an approved model that Ollama does not
+  serve still fails at the worker with `LLM_MODEL_NOT_FOUND`.
 
 If an exact approval leaves no eligible served model and enable stops after writing
 the policy, use `models approve` to choose an available model (or `--served`), then
@@ -171,6 +179,34 @@ operation (API and SDK) tests the model you name, reports the answer time and
 whether the model can call tools, and never returns the model's text. Both need
 `connection.manage`, and AI connection tests, dedicated or generic, share a limit
 of six per minute per person; exceeding it answers 429 `WV-AI-RATE-LIMITED`.
+
+## See models and readiness through the API
+
+The platform API answers what `weave platform ai status` prints, for scripts and
+other clients. Every operation works in one environment and rechecks your
+current grants:
+
+- `ai_endpoints.list` lists the approved endpoints, such as `ollama-local`, marked
+  as development only. It needs `catalog.read`.
+- `ai_models.list` with `connection=REVISION_ID` returns the approved models from
+  the last refresh, with `catalog.read`. Add `refresh=true` (which needs
+  `connection.manage`) to ask Ollama again through the AI gateway. Each model
+  reports `tools: yes`, `no` or `unknown` from Ollama's own model details, and
+  the context size and download size Ollama reports. A refresh never pulls a
+  model: use `weave platform ai models pull`.
+- `ai_readiness.read` returns eight checks, from the installed worker to the last
+  connection test, each `done`, `action`, `not_needed` or `unknown`. A check you
+  may not read is `unknown` with the role it needs. The `ollama-local` connection
+  needs no key and no worker authorization, so those checks are `not_needed`.
+- `ai_setup.publish` and `ai_setup.grant` repeat the publication and worker
+  authorization that `enable` performs; repeating them changes nothing.
+
+The model list is kept in the API process for up to five minutes. After a
+restart it reads `discovery: "unknown"` until the next refresh, test or
+`enable`; a read without `refresh=true` never calls Ollama. Refreshes and
+connection tests share the limit of six per minute per person. See
+[AI discovery, readiness and setup](../reference/api.md#ai-discovery-readiness-and-setup)
+for every field.
 
 ## What enable sets up
 
@@ -252,3 +288,12 @@ limit; call `ai_connections.test` for the reason.
 | `WV-AI-GATEWAY-MISSING` | 503 | The API has no AI gateway | Run `weave platform ai enable`, or ask an operator to deploy the gateway |
 | `WV-AI-GATEWAY-UNAVAILABLE` | 503 | The AI gateway did not answer, or its answer was not valid | Run `weave platform ai status` and read the `ai-gateway` container logs |
 | `WV-AI-GATEWAY-TIMEOUT` | 504 | The AI gateway did not answer in time | Retry; a model is slow on its first load |
+
+Activating a workflow and the setup operations can answer with these codes:
+
+| Problem code | Status | What it means | What to do |
+| --- | --- | --- | --- |
+| `WV-ACTIVATION-AI-MODEL` | 422 | The policy does not approve the step's model for the connection's endpoint | Approve the model with `weave platform ai models approve`, or choose an approved one |
+| `WV-ACTIVATION-AI-PROVIDER` | 422 | The step's `provider` differs from the connection's provider | Use the connection's provider (`openai-chat` for `ollama-local`) or bind another connection |
+| `WV-AI-POLICY` | 503 | The API cannot read its AI policy file; only activations with AI tasks are refused | Restore the policy with `weave platform ai enable` |
+| `WV-AI-WORKER-MISSING` | 422 | No admitted Agentic worker release provides the AI task | Run `weave platform ai enable`, which admits the worker release |

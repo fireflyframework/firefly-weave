@@ -302,6 +302,9 @@ accepts it. The rules for using a key:
 - Sending the same key, from the same principal and scope, with the exact same
   body returns the result that was already committed. The same key with a
   different body fails with HTTP 409.
+- Replaying an activation key also needs your current `release.activate` grant.
+  A caller whose grant was revoked gets HTTP 403 (or 401 once the token stops
+  working) instead of the activation that was already created.
 - Clients never retry a change on their own after a timeout or another
   outcome they cannot know. If you retry, send the exact same body and key. The
   exceptions are rejections that mean the platform did not admit the request:
@@ -318,7 +321,36 @@ accepts it. The rules for using a key:
   creates a new revision. Debug commands
   have no idempotency guarantee.
 
-### AI discovery
+### AI discovery, readiness and setup
+
+Six operations, all in one environment, let a client choose and set up an AI
+connection. They are additive: no role, migration, definition schema or stored
+digest changes, and none of them sends a prompt or a model credential to a
+client.
+
+```text
+GET  .../ai/endpoints
+GET  .../ai/models?connection=<revision UUID>
+GET  .../ai/models?connection=<revision UUID>&refresh=true
+GET  .../ai/readiness
+POST .../ai/setup/publish  {}
+POST .../ai/setup/grant    {"connection_revision_id":"<revision UUID>"}
+GET  .../bindable-connections?connector=weave-agentic-provider%401.0.0&limit=50
+```
+
+Each `...` stands for `/api/v1/tenants/{tenant}/projects/{project}/environments/{environment}`.
+Query parameters are strict: an unknown or repeated parameter, a malformed UUID,
+or a `refresh` other than `true` or `false` answers 422 `WV-VALIDATION` before
+any record is read. Request bodies are limited to 64 KiB (413 `WV-AI-LIMIT`).
+
+| Who | Can do |
+| --- | --- |
+| `catalog.read` (viewer, developer) | Read endpoints, cached model metadata and readiness |
+| `connection.manage` (tenant administrator) | Refresh discovery, test AI connections, authorize workers with `ai_setup.grant` |
+| `definition.publish` at project scope (developer) | Publish the built-in AI Connector and Action with `ai_setup.publish` |
+| `connection.bind` (deployer) | List connection choices with `bindable_connections.list` |
+
+#### Endpoints and models
 
 `ai_endpoints.list` returns the operator-approved endpoint presets, without network
 rules or credential locations. `ai_models.list` requires a `connection` revision
@@ -342,6 +374,27 @@ policy returns unknown approval and no models. A failed refresh replaces prior
 health with its safe discovery code and an empty model list. Discovery traffic
 always runs through the configured AI gateway.
 
+Discovery reports what the endpoint serves; it never pulls a model, never grants
+network access and never changes the approval. For an Ollama endpoint, the gateway
+reads Ollama's own model list and each model's details, so `tools` is `yes` only
+when Ollama reports tool support for that model, never a guess from its name.
+Approval and availability are separate: an approved model that the endpoint does
+not serve appears with `available: false`, and the worker still answers
+`LLM_MODEL_NOT_FOUND` if a step uses it.
+
+Without a mounted policy (`WEAVE_AI_POLICY_FILE` on the API), `approval` is
+`unknown` and the list is empty. A client then lets people type the model name,
+with a warning that the platform does not publish its approved models and that
+the worker refuses models it has not approved. A configured policy that cannot be
+read answers 503 `WV-AI-POLICY`; a policy that changes during a refresh answers
+409 `WV-AI-POLICY-CHANGED`, and a new refresh reads the current one.
+
+Model credentials never travel over plain HTTP. A keyless connection uses the
+reserved secret handle `no-credential`, which is never resolved, leased, logged
+or sent; discovery and tests of such a connection send no credential.
+
+#### Readiness
+
 `ai_readiness.read` returns eight ordered checks for installed worker releases,
 published AI definitions, worker presence, current connections, secret grants,
 worker credential authorization, recent AI tests and Weave AI configuration.
@@ -361,6 +414,11 @@ never a healthy partial result. Responses, including errors, disable storage
 with `Cache-Control: no-store`. Fixes contain server-owned guidance or currently
 available operations; execution still requires the operation's own authority.
 
+The age of the last AI test is measured with the database clock, which also
+dates each test, so a test that just passed reads as `done` on every API
+process.
+
+#### Setup actions
 
 `ai_setup.publish` accepts an empty body or `{}` and publishes the server's
 built-in AI Connector and Action in one project transaction. It requires
@@ -391,6 +449,46 @@ readiness checklist offers **Publish** or **Authorize** only when both permissio
 snapshots allow the operation and the operation can repair the observed missing
 state: **Publish** appears only once `worker_installed` is `done`, and
 **Authorize** only once `key_available` is `done`.
+
+#### Connection choices
+
+`bindable_connections.list` is the one list every connection dropdown uses. It
+returns only the revisions the caller may bind now: `connection.bind` is checked
+for each revision, on both the token and the current grants, so a grant limited
+to some revisions lists exactly those. Each item carries `connection_id`,
+`revision_id`, `name`, `label`, `connector` and `enabled`; AI connections add
+`provider` and the endpoint's origin (`endpoint_origin`), never its path,
+configuration, destinations or secret handles. `connection_id` is the same
+UUID as `revision_id`: a connection is identified by its immutable revision.
+`enabled` is `false` when the revision fails the checks a binding runs now, for
+example because its Connector version was retired or its secret handle is no
+longer granted in the environment.
+
+Filter with `connector` (an exact `name@version`). `limit` defaults to 50 and
+accepts 1 to 100. `next_cursor` continues the same list: it is bound to the
+environment, the caller and the filter, and a cursor from another list answers
+422. Reading this list needs `connection.bind`; a caller without it gets 403.
+
+#### Activations with AI steps
+
+When the API has a policy mounted, a new activation of a workflow with an AI task
+checks each AI step against the connection bound to its slot, after every binding
+passed its own authorization and before anything is written:
+
+| Problem code | Status | Meaning |
+| --- | --- | --- |
+| `WV-ACTIVATION-AI-PROVIDER` | 422 | The step's `provider` differs from the connection's provider |
+| `WV-ACTIVATION-AI-MODEL` | 422 | The policy does not approve the step's model for the connection's exact endpoint |
+| `WV-AI-POLICY` | 503 | The configured policy cannot be read; only activations with AI steps are refused |
+
+The check reads the policy file again for each activation, so a policy edit
+applies without a restart. Approval is the policy's answer: a `served` endpoint
+admits any well-formed model name, whether or not it is installed yet. Without a
+policy, activation behaves as before and the worker remains the only judge.
+Replaying a committed activation key returns that activation without a new
+check (it still needs current `release.activate`). Runs of earlier activations
+are unchanged: the worker keeps refusing a model that is no longer approved with
+`LLM_POLICY`, and a missing model with `LLM_MODEL_NOT_FOUND`.
 
 ### Health probes
 

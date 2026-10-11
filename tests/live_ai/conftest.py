@@ -21,6 +21,10 @@ every test here is skipped with that reason; with it, any missing precondition f
 journeys run weave platform ai enable in container mode themselves, which pulls
 WEAVE_LIVE_AI_MODEL (qwen2.5:1.5b by default) into the installation's own Ollama volume.
 Command output is parsed in memory; platform commands print no secret.
+
+Before any command, the installation must live under this checkout's build/ or .local/
+directory, use the colima-weave-tests Docker context, and own the containers it names: the
+journeys never change another platform, the host's Ollama or another Docker context.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -55,6 +59,9 @@ GUIDE = ROOT / "docs/guides/ai-workers.md"
 DIRECTORY = "WEAVE_LIVE_AI_DIRECTORY"
 MODEL = "WEAVE_LIVE_AI_MODEL"
 DEFAULT_MODEL = "qwen2.5:1.5b"
+OWNED_CONTEXT = "colima-weave-tests"
+OWNED_ROOTS = (ROOT / "build", ROOT / ".local")
+PROJECT_LABEL = "com.docker.compose.project"
 INPUT = {"text": "Firefly Weave runs durable workflows and records every step, so a run can be replayed."}
 TERMINAL = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 RUN_SECONDS = 600.0
@@ -77,6 +84,24 @@ def summarize_workflow(model: str) -> dict[str, Any]:
         timeoutSeconds=300,
     )
     return dict(document)
+
+
+def require_owned(directory: Path, state: Mapping[str, Any], labels: Callable[[str], list[dict[str, str]]]) -> None:
+    """Refuse an installation these journeys do not own, before Docker is asked about anything.
+
+    ``labels`` returns the labels of every container of a Compose project; it runs only once the
+    context and the directory are known to be owned.
+    """
+    if state.get("context") != OWNED_CONTEXT:
+        raise AssertionError(f"The live AI journeys run only on the {OWNED_CONTEXT} Docker context.")
+    if not any(directory.is_relative_to(root) for root in OWNED_ROOTS):
+        raise AssertionError("The live AI installation must live under this checkout's build/ or .local/ directory.")
+    if Path(str(state.get("directory", ""))).resolve() != directory:
+        raise AssertionError("The installation's state names another directory.")
+    project = "weave-local-" + str(state["id"])
+    found = labels(project)
+    if not found or any(row.get(PROJECT_LABEL) != project for row in found):
+        raise AssertionError(f"The installation's containers must all carry its own Compose project {project}.")
 
 
 def _key(kind: str, value: str) -> str:
@@ -128,6 +153,18 @@ class Live:
                 f"{result.stdout[-2000:]} {result.stderr[-2000:]}"
             )
         return dict(json.loads(result.stdout))
+
+    def require_owned(self) -> None:
+        """Check, read-only, that this checkout owns the installation and every container it names."""
+
+        def labels(project: str) -> list[dict[str, str]]:
+            containers = self.docker("ps", "--all", "--quiet", "--filter", f"label={PROJECT_LABEL}={project}").split()
+            if not containers:
+                return []
+            output = self.docker("inspect", "--format", "{{json .Config.Labels}}", *containers)
+            return [dict(json.loads(line)) for line in output.splitlines() if line.strip()]
+
+        require_owned(self.directory, local._load(self.directory), labels)
 
     def docker(self, *args: str) -> str:
         """Run one docker command against this installation's own context."""
@@ -230,6 +267,13 @@ class Live:
         }
 
 
+def open_live(directory: Path, model: str) -> Live:
+    """The journeys' platform, once its ownership is checked and before any command changes it."""
+    live = Live(directory, model)
+    live.require_owned()
+    return live
+
+
 @pytest.fixture(scope="module")
 def live() -> Live:
     value = os.environ.get(DIRECTORY)
@@ -238,4 +282,4 @@ def live() -> Live:
     directory = Path(value).expanduser().resolve()
     if not (directory / "platform.json").is_file():
         pytest.fail(f"{DIRECTORY} must name a Docker platform installation created with weave platform up.")
-    return Live(directory, os.environ.get(MODEL) or DEFAULT_MODEL)
+    return open_live(directory, os.environ.get(MODEL) or DEFAULT_MODEL)

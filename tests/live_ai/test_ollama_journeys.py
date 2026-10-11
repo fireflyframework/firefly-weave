@@ -14,10 +14,10 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Enable AI, run the guide's AI task on a real local model, and check each refusal against real services.
+"""Enable AI, discover and run the guide's AI task on a real local model, and check each refusal.
 
-The tests run in file order and share one platform: setup first, then the typed call, then
-the refusals; the last one stops and restarts the installation's own Ollama container.
+The tests run in file order and share one platform: setup and discovery first, then the typed
+call, then the refusals; the last one stops and restarts the installation's own Ollama container.
 """
 
 import hashlib
@@ -55,6 +55,19 @@ def test_enable_sets_up_ai_and_a_repeated_enable_changes_nothing(live):
     assert status["worker"]["presence"] == "recent"
     assert status["gateway"]["state"] == status["ollama"]["state"] == "running"
     assert live.model in {item["name"] for item in status["models"]["served"]}
+
+
+async def test_discovery_lists_the_pulled_model_with_tool_support(live):
+    # Ollama's own tags and show metadata report tool support; the cached answer is the refreshed one.
+    async with live.client() as (client, _):
+        revision = live.receipt()["connection_revision_id"]
+        result = await client.invoke("ai_models.list", query={"connection": revision, "refresh": "true"})
+        assert result.approval == "served" and result.discovery == "ok", result
+        row = next((item for item in result.models if item.name == live.model), None)
+        assert row is not None, result
+        assert (row.approved, row.available, row.tools) == (True, True, "yes")
+        cached = await client.invoke("ai_models.list", query={"connection": revision})
+        assert cached == result
 
 
 async def test_the_guide_summarize_workflow_runs_on_the_local_model(live):

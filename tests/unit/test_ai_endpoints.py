@@ -635,3 +635,235 @@ async def test_setup_http_errors_and_success_disable_storage(action, canonical, 
             headers={"content-type": "application/json"},
         )
     assert response.status_code == status and response.headers.get_list("cache-control") == ["no-store"]
+
+
+class Calls:
+    """Records the parsed request each service receives and answers with a valid contract."""
+
+    def __init__(self):
+        from firefly_weave.contracts.ai import (
+            AIConnectionTestResult,
+            AIEndpointsResult,
+            AIModelsResult,
+            AISetupGrantResult,
+            AISetupPublishResult,
+        )
+        from firefly_weave.contracts.catalog import PublishedVersion
+        from firefly_weave.contracts.public import Page
+
+        version = PublishedVersion(
+            id=uuid4(),
+            kind="Connector",
+            name="weave-agentic-provider",
+            version="1.0.0",
+            digest="a" * 64,
+            definition_digest="b" * 64,
+        )
+        self.seen = []
+        answers = {
+            "test": AIConnectionTestResult(ok=True, code="ok", model="qwen3:4b"),
+            "endpoints": AIEndpointsResult(policy="absent"),
+            "models": AIModelsResult(approval="unknown", discovery="unknown"),
+            "publish": AISetupPublishResult(connector=version, actions=[version]),
+            "grant": AISetupGrantResult(granted=True),
+            "list": Page(items=[]),
+        }
+        for name, answer in answers.items():
+            setattr(self, name, self.recorder(name, answer))
+
+    def recorder(self, name, answer):
+        async def record(*args, **kwargs):
+            self.seen.append((name, args[2:] if len(args) > 2 else ()))
+            return answer
+
+        return record
+
+
+def real_operation_app(calls):
+    """The real AI and bindable controllers on their registered routes, behind the real error and body boundary."""
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    from firefly_weave.access.authorization import AccessDenied
+    from firefly_weave.api.ai import AIController
+    from firefly_weave.api.bindable_connections import BindableConnectionController
+    from firefly_weave.api.errors import ErrorAdvice
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.operations.transport import BodyBoundary
+
+    ai = AIController(calls, calls, SimpleNamespace(), calls)
+    handlers = {
+        "ai_connections.test": ai.test_connection,
+        "ai_endpoints.list": ai.endpoints,
+        "ai_models.list": ai.models,
+        "ai_setup.publish": ai.setup_publish,
+        "ai_setup.grant": ai.setup_grant,
+        "bindable_connections.list": BindableConnectionController(calls).list,
+    }
+    advice = ErrorAdvice()
+
+    async def denied(request, error):
+        return await advice.access_denied(error)
+
+    async def refused(request, error):
+        return await advice.catalog_error(error)
+
+    async def invalid(request, error):
+        return await advice.invalid_value(error)
+
+    app = Starlette(
+        routes=[
+            Route(OPERATIONS[name].canonical_path, handler, methods=[OPERATIONS[name].method])
+            for name, handler in handlers.items()
+        ],
+        exception_handlers={AccessDenied: denied, CatalogError: refused, ValueError: invalid},
+    )
+    boundary = BodyBoundary(app)
+
+    async def seeded(scope, receive, send):
+        scope["app"] = app
+        scope["state"] = {"principal": SimpleNamespace(), "audit_context": AuditContext()}
+        await boundary(scope, receive, send)
+
+    return seeded
+
+
+def operation_url(name, **query):
+    from urllib.parse import urlencode
+
+    path = OPERATIONS[name].canonical_path.format(
+        tenant=uuid4(), project=uuid4(), environment=uuid4(), identifier=uuid4()
+    )
+    return path + ("?" + urlencode(query, doseq=True) if query else "")
+
+
+async def send_operation(calls, name, *, query=None, content=None):
+    import httpx
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(real_operation_app(calls)), base_url="https://testserver"
+    ) as client:
+        return await client.request(
+            OPERATIONS[name].method,
+            operation_url(name, **(query or {})),
+            content=content,
+            headers={"content-type": "application/json"} if content is not None else {},
+        )
+
+
+@pytest.mark.parametrize("given,expected", [(None, False), ("false", False), ("true", True)])
+async def test_model_reads_accept_true_false_or_omitted_refresh(given, expected):
+    calls = Calls()
+    connection = uuid4()
+    query = {"connection": str(connection)} | ({"refresh": given} if given is not None else {})
+    response = await send_operation(calls, "ai_models.list", query=query)
+    assert response.status_code == 200 and response.headers.get_list("cache-control") == ["no-store"]
+    [(name, (parsed,))] = calls.seen
+    assert (name, parsed.connection, parsed.refresh) == ("models", connection, expected)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {},
+        {"connection": "not-a-uuid"},
+        {"connection": "00000000-0000-0000-0000-00000000000"},
+        {"connection": [str(uuid4()), str(uuid4())]},
+        {"connection": str(uuid4()), "refresh": ["true", "false"]},
+        {"connection": str(uuid4()), "refresh": "1"},
+        {"connection": str(uuid4()), "refresh": "True"},
+        {"connection": str(uuid4()), "unknown": "1"},
+        {"connection": str(uuid4()), "limit": "50"},
+    ],
+    ids=[
+        "missing",
+        "malformed",
+        "short-uuid",
+        "repeated-connection",
+        "repeated-refresh",
+        "numeric-refresh",
+        "capitalized-refresh",
+        "unknown",
+        "foreign-field",
+    ],
+)
+async def test_invalid_model_queries_answer_422_before_any_service_call(query):
+    calls = Calls()
+    response = await send_operation(calls, "ai_models.list", query=query)
+    assert (response.status_code, response.json()["code"]) == (422, "WV-VALIDATION")
+    assert response.headers.get_list("cache-control") == ["no-store"]
+    assert calls.seen == []
+
+
+@pytest.mark.parametrize(
+    "query,limit",
+    [({}, 50), ({"limit": "1"}, 1), ({"limit": "100"}, 100), ({"connector": "weave-agentic-provider@1.0.0"}, 50)],
+)
+async def test_bindable_pages_default_to_fifty_and_accept_up_to_one_hundred(query, limit):
+    calls = Calls()
+    response = await send_operation(calls, "bindable_connections.list", query=query)
+    assert response.status_code == 200 and response.headers.get_list("cache-control") == ["no-store"]
+    assert response.json() == {"items": [], "next_cursor": None}
+    [(name, (parsed,))] = calls.seen
+    assert (name, parsed.limit, parsed.connector, parsed.cursor) == ("list", limit, query.get("connector"), None)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"limit": "0"},
+        {"limit": "101"},
+        {"limit": "ten"},
+        {"limit": ["10", "20"]},
+        {"cursor": "c" * 2049},
+        {"connector": ""},
+        {"unknown": "1"},
+    ],
+    ids=["zero", "over-limit", "text", "repeated", "long-cursor", "empty-connector", "unknown"],
+)
+async def test_invalid_bindable_queries_answer_422_before_any_service_call(query):
+    calls = Calls()
+    response = await send_operation(calls, "bindable_connections.list", query=query)
+    assert (response.status_code, response.json()["code"]) == (422, "WV-VALIDATION")
+    assert calls.seen == []
+
+
+@pytest.mark.parametrize("name", ["ai_connections.test", "ai_setup.publish", "ai_setup.grant"])
+async def test_ai_bodies_over_64_kib_answer_413_before_any_service_call(name):
+    calls = Calls()
+    response = await send_operation(calls, name, content=b" " * 65537)
+    assert (response.status_code, response.json()["code"]) == (413, "WV-AI-LIMIT")
+    if name != "ai_connections.test":
+        assert response.headers.get_list("cache-control") == ["no-store"]
+    assert calls.seen == []
+
+
+async def test_old_clients_omitting_optional_fields_keep_the_existing_defaults():
+    calls = Calls()
+    test = await send_operation(calls, "ai_connections.test", content=b'{"model":"qwen3:4b"}')
+    publish = await send_operation(calls, "ai_setup.publish", content=b"")
+    endpoints = await send_operation(calls, "ai_endpoints.list")
+    for response in (test, publish, endpoints):
+        assert response.status_code == 200 and response.headers.get_list("cache-control") == ["no-store"]
+    (tested, (_, request)), (published, ()), (listed, ()) = calls.seen
+    assert (tested, request.model, request.probe_tools) == ("test", "qwen3:4b", True)
+    assert (published, listed) == ("publish", "endpoints")
+    assert test.json() == {"ok": True, "code": "ok", "latency_ms": None, "model": "qwen3:4b", "tool_calling": "unknown"}
+
+
+@pytest.mark.parametrize(
+    "name,content",
+    [
+        ("ai_connections.test", b'{"model":"qwen3:4b","probe_tools":true,"prompt":"x"}'),
+        ("ai_connections.test", b'{"model":"qwen3 4b"}'),
+        ("ai_setup.grant", b'{"connection_revision_id":"not-a-uuid"}'),
+        ("ai_setup.grant", b"{}"),
+        ("ai_setup.publish", b'{"connector":"x"}'),
+    ],
+    ids=["test-extra-field", "test-bad-model", "grant-malformed", "grant-missing", "publish-extra-field"],
+)
+async def test_unexpected_ai_bodies_answer_422_before_any_service_call(name, content):
+    calls = Calls()
+    response = await send_operation(calls, name, content=content)
+    assert (response.status_code, response.json()["code"]) == (422, "WV-VALIDATION")
+    assert calls.seen == []

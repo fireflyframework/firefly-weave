@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Keep the owned model service recoverable, and keep new activations apart from replayed ones."""
+"""Keep the owned model service recoverable, new activations apart from replayed ones, and other platforms untouched."""
 
 import json
 import runpy
@@ -94,6 +94,7 @@ async def test_ambiguous_mutation_result_still_restores_the_owned_service(journe
 MODEL_REFUSED = Problem(
     status=422, code="WV-ACTIVATION-AI-MODEL", message="The model is not approved for this AI connection"
 )
+CONFLICT = Problem(status=409, code="WV-IDEMPOTENCY-CONFLICT", message="Idempotency key was used for another request")
 
 
 class PlatformAPI:
@@ -110,6 +111,7 @@ class PlatformAPI:
         self.calls = []
         self.versions = {}
         self.activations = {}
+        self.requested = {}
         self.approved = True
 
     async def publish(self, collection, source, format, *, idempotency_key):
@@ -123,6 +125,9 @@ class PlatformAPI:
         self.calls.append(("activate", idempotency_key, revision))
         assert request.connection_revision_ids == {"ai-provider": self.revision_id}
         if idempotency_key in self.activations:
+            # The expected revision is part of the request a key stands for.
+            if self.requested[idempotency_key] != revision:
+                raise WeaveError(CONFLICT)
             return self.activations[idempotency_key]
         name = self.versions[request.version_id]
         current = max((item.revision for item in self.activations.values() if item.name == name), default=None)
@@ -132,6 +137,7 @@ class PlatformAPI:
             raise WeaveError(MODEL_REFUSED)
         activation = SimpleNamespace(id=uuid4(), name=name, revision=(current or 0) + 1)
         self.activations[idempotency_key] = activation
+        self.requested[idempotency_key] = revision
         return activation
 
     async def list_activations(self, *, limit):
@@ -231,6 +237,7 @@ async def test_policy_refusal_journeys_replay_or_name_the_current_revision_and_c
     name = HELPERS["summarize_workflow"](live.model)["metadata"]["name"]
     api.activations["redeployed"] = SimpleNamespace(id=uuid4(), name=name, revision=2)
     api.activations["unrelated"] = SimpleNamespace(id=uuid4(), name="another-workflow", revision=7)
+    api.requested.update(redeployed=1, unrelated=6)
     before = dict(api.activations)
     await JOURNEYS["test_a_model_the_policy_no_longer_approves_fails_with_llm_policy"](live)
     assert sent(api)[-1] == (default_key(api), None)
@@ -262,3 +269,217 @@ async def test_activation_snapshot_is_exhaustive_or_refuses_to_compare():
     assert complete.limits == [100]
     with pytest.raises(AssertionError, match="exceeds its activation snapshot bound"):
         await JOURNEYS["activation_ids"](ActivationPages(items, "more"))
+
+
+async def test_a_replayed_key_that_names_another_revision_is_a_conflict_not_a_replay():
+    api = PlatformAPI()
+    live = OfflineLive(api)
+    first = await live.run(live.model)
+    api.activations["redeployed"] = SimpleNamespace(id=uuid4(), name=live.workflow_name(live.model), revision=2)
+    api.requested["redeployed"] = 1
+    with pytest.raises(WeaveError) as conflict:
+        await live.run(live.model, activation_revision=2)
+    assert (conflict.value.status, conflict.value.code) == (409, "WV-IDEMPOTENCY-CONFLICT")
+    assert (await live.run(live.model))["activation_id"] == first["activation_id"]
+    assert len([call for call in api.calls if call[0] == "start_run"]) == 2
+
+
+# Discovery reads the pulled model through the public API: one refresh, then the cached answer.
+
+
+class DiscoveryAPI:
+    def __init__(self, model, *, tools="yes", discovery="ok", cached=None, approval="served"):
+        from firefly_weave.contracts.ai import AIModelsResult
+
+        self.revision_id = uuid4()
+        self.queries = []
+        self.result = AIModelsResult.model_validate_json(
+            json.dumps(
+                {
+                    "approval": approval,
+                    "discovery": discovery,
+                    "discovered_at": "2026-10-11T10:00:00Z",
+                    "models": [
+                        {"name": "weave-other:1b", "approved": True, "available": True, "tools": "no"},
+                        {"name": model, "approved": True, "available": True, "tools": tools, "context_tokens": 8192},
+                    ],
+                }
+            )
+        )
+        self.cached = cached
+
+    async def invoke(self, operation, *, query):
+        assert operation == "ai_models.list"
+        self.queries.append(dict(query))
+        if query.get("refresh") == "true":
+            return self.result
+        return self.cached if self.cached is not None else self.result
+
+
+class DiscoveryLive(HELPERS["Live"]):
+    def __init__(self, api, model="qwen3:4b"):
+        super().__init__(Path("unused-installation"), model)
+        self.api = api
+
+    def receipt(self):
+        return {"stage": "ready", "connection_revision_id": str(self.api.revision_id)}
+
+    @asynccontextmanager
+    async def client(self):
+        yield self.api, {}
+
+
+DISCOVERY = "test_discovery_lists_the_pulled_model_with_tool_support"
+
+
+def test_discovery_runs_right_after_the_enable_journey():
+    names = [name for name in JOURNEYS if name.startswith("test_")]
+    assert names.index(DISCOVERY) == names.index("test_enable_sets_up_ai_and_a_repeated_enable_changes_nothing") + 1
+
+
+async def test_discovery_refreshes_once_and_then_reads_the_same_cached_answer():
+    api = DiscoveryAPI("qwen3:4b")
+    await JOURNEYS[DISCOVERY](DiscoveryLive(api))
+    revision = str(api.revision_id)
+    assert api.queries == [{"connection": revision, "refresh": "true"}, {"connection": revision}]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"tools": "unknown"},
+        {"tools": "no"},
+        {"discovery": "LLM_UNREACHABLE"},
+        {"approval": "listed"},
+        {"model": "qwen2.5:1.5b"},
+        {"cached": "stale"},
+    ],
+    ids=["tools-unknown", "no-tools", "unreachable", "listed", "model-missing", "cache-differs"],
+)
+async def test_discovery_requires_the_pulled_model_tool_support_and_a_stable_cache(changes):
+    from firefly_weave.contracts.ai import AIModelsResult
+
+    changes = dict(changes)
+    model = changes.pop("model", "qwen3:4b")
+    stale = changes.pop("cached", None)
+    api = DiscoveryAPI(model, **changes)
+    if stale:
+        api.cached = AIModelsResult(approval="served", discovery="unknown")
+    with pytest.raises(AssertionError):
+        await JOURNEYS[DISCOVERY](DiscoveryLive(api, "qwen3:4b"))
+
+
+# The journeys change only an installation this checkout owns, on the owned test Docker context.
+
+OWNED = Path(__file__).resolve().parents[2]
+
+
+def owned_state(directory, **changes):
+    return {"context": "colima-weave-tests", "id": "a1b2c3d4e5f6", "directory": str(directory)} | changes
+
+
+def labels_for(project, count=3):
+    return lambda requested: [{"com.docker.compose.project": project} for _ in range(count)]
+
+
+@pytest.mark.parametrize("root", ["build/acceptance/run/private/.local/platform", ".local/platform"])
+def test_an_owned_installation_on_the_test_context_is_accepted(root):
+    directory = OWNED / root
+    requested = []
+
+    def labels(project):
+        requested.append(project)
+        return [{"com.docker.compose.project": project, "com.docker.compose.service": "api"}]
+
+    HELPERS["require_owned"](directory, owned_state(directory), labels)
+    assert requested == ["weave-local-a1b2c3d4e5f6"]
+
+
+@pytest.mark.parametrize("context", ["colima", "default", "desktop-linux", "colima-datacean", ""])
+def test_another_docker_context_is_refused_before_docker_is_asked(context):
+    directory = OWNED / "build/acceptance/run/private/.local/platform"
+
+    def labels(project):
+        raise AssertionError("Docker was asked about another context's containers")
+
+    with pytest.raises(AssertionError, match="colima-weave-tests"):
+        HELPERS["require_owned"](directory, owned_state(directory, context=context), labels)
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        Path("/tmp/weave/platform"),
+        Path.home() / ".local/platform",
+        OWNED / "build-other/platform",
+        OWNED / "tests/live_ai",
+        OWNED.parent / "firefly-weave/build/platform",
+    ],
+    ids=["temporary", "home", "lookalike", "source", "other-checkout"],
+)
+def test_an_installation_outside_this_checkout_is_refused(directory):
+    def labels(project):
+        raise AssertionError("Docker was asked about an installation this checkout does not own")
+
+    with pytest.raises(AssertionError, match="build/ or .local/"):
+        HELPERS["require_owned"](directory, owned_state(directory), labels)
+
+
+def test_a_state_file_that_names_another_directory_is_refused():
+    directory = OWNED / "build/acceptance/run/private/.local/platform"
+    with pytest.raises(AssertionError, match="another directory"):
+        HELPERS["require_owned"](directory, owned_state(OWNED / ".local/platform"), labels_for("unused"))
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        lambda project: [],
+        lambda project: [{"com.docker.compose.project": "weave-local-ffffffffffff"}],
+        lambda project: [{"com.docker.compose.project": project}, {"com.docker.compose.project": "other"}],
+        lambda project: [{"com.docker.compose.service": "api"}],
+    ],
+    ids=["no-containers", "other-installation", "mixed", "unlabelled"],
+)
+def test_containers_must_carry_this_installations_compose_project(labels):
+    directory = OWNED / "build/acceptance/run/private/.local/platform"
+    with pytest.raises(AssertionError, match="Compose project"):
+        HELPERS["require_owned"](directory, owned_state(directory), labels)
+
+
+class GuardedLive(HELPERS["Live"]):
+    """Records every command a journey would run; the guard must refuse before any of them."""
+
+    def __init__(self, directory, model):
+        super().__init__(directory, model)
+        self.commands = []
+
+    def weave(self, *args, timeout=3600):
+        self.commands.append(("weave", *args))
+        return {}
+
+    def docker(self, *args):
+        self.commands.append(("docker", *args))
+        if args[:2] == ("ps", "--all"):
+            return "c1\nc2\n"
+        if args[0] == "inspect":
+            return '{"com.docker.compose.project":"weave-local-a1b2c3d4e5f6"}\n' * 2
+        raise AssertionError(f"Unexpected docker command {args}")
+
+
+@pytest.mark.parametrize("context,accepted", [("colima-weave-tests", True), ("colima", False)])
+def test_the_live_fixture_checks_ownership_before_any_command(monkeypatch, tmp_path, context, accepted):
+    directory = OWNED / "build/acceptance/run/private/.local/platform"
+    namespace = HELPERS["open_live"].__globals__
+    monkeypatch.setitem(namespace, "local", SimpleNamespace(_load=lambda given: owned_state(given, context=context)))
+    monkeypatch.setitem(namespace, "Live", GuardedLive)
+    if accepted:
+        live = HELPERS["open_live"](directory, "qwen3:4b")
+        assert [command[:3] for command in live.commands] == [
+            ("docker", "ps", "--all"),
+            ("docker", "inspect", "--format"),
+        ]
+        assert "label=com.docker.compose.project=weave-local-a1b2c3d4e5f6" in live.commands[0]
+    else:
+        with pytest.raises(AssertionError, match="colima-weave-tests"):
+            HELPERS["open_live"](directory, "qwen3:4b")

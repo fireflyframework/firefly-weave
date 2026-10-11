@@ -357,6 +357,7 @@ capability.
 | `register_release`, `read_release`, `list_releases`, `register_worker`, `read_worker`, `list_workers`, `revoke_worker`, `grant_connection` | Trusted worker releases and instances |
 | `drain_worker`, `resume_worker` | Revision-checked worker controls; existing leases can settle while drained |
 | `invoke("deployment_targets.…")`, `invoke("deployments.…")`, `invoke("deployment_observations.…")`, `invoke("deployment_plans.…")`, `invoke("deployment_jobs.…")`, `invoke("deployment_runners.…")` | Typed, environment-scoped Operations contracts; operation names and required authority are in the [API inventory](api.md#operation-inventory) |
+| `invoke("ai_endpoints.list")`, `invoke("ai_models.list", …)`, `invoke("ai_readiness.read")`, `invoke("ai_setup.publish", …)`, `invoke("ai_setup.grant", …)`, `invoke("ai_connections.test", …)`, `invoke("bindable_connections.list")` | AI model discovery, readiness, setup and connection choices; see [AI operations through the SDK](#ai-operations-through-the-sdk) |
 | `claim_tasks`, `heartbeat`, `complete_task`, `fail_task`, `request_credentials` | The typed [worker protocol](worker-protocol.md); `WorkerTransport` remains supported |
 | `create_trigger`, `read_trigger`, `list_triggers`, `disable_trigger` | Immutable signed webhook triggers |
 | `save_schedule`, `read_schedule`, `list_schedules`, `schedule_history`, `change_schedule` | UTC schedules with revisions and occurrence pages |
@@ -408,6 +409,42 @@ separate application identity and local provider configuration. Do not put
 cloud credentials, command strings, or raw manifests in API bodies. See
 [Operations authority and reconciliation](api.md#deployment-operations-authority)
 for the checks that still apply after a plan was approved.
+
+## AI operations through the SDK
+
+The AI discovery, readiness and setup operations have no dedicated methods; call
+them with `invoke`, which validates the query, the body and the answer against
+the registered contracts. Inside an active client context:
+
+```python
+from uuid import UUID
+from firefly_weave.contracts.ai import AIConnectionTestRequest, AISetupGrantRequest
+from firefly_weave.contracts.catalog import RetirementRequest
+
+revision = "REVISION_ID"
+# Cached, approved model metadata: catalog.read is enough, and no provider is called.
+models = await client.invoke("ai_models.list", query={"connection": revision})
+# Ask the AI gateway again: needs connection.manage and counts toward six per minute.
+fresh = await client.invoke("ai_models.list", query={"connection": revision, "refresh": "true"})
+checklist = await client.invoke("ai_readiness.read")
+published = await client.invoke("ai_setup.publish", body=RetirementRequest())
+granted = await client.invoke(
+    "ai_setup.grant", body=AISetupGrantRequest(connection_revision_id=UUID(revision))
+)
+tested = await client.invoke(
+    "ai_connections.test", identifier=UUID(revision), body=AIConnectionTestRequest(model="qwen3:4b")
+)
+choices = await client.invoke(
+    "bindable_connections.list", query={"connector": "weave-agentic-provider@1.0.0"}
+)
+```
+
+Pass query values as strings or integers. Omitted optional fields keep their
+defaults: `refresh` is false, `limit` is 50 and `probe_tools` is true, so a
+caller that leaves them out never triggers a refresh or a larger page. `ai_setup.publish`
+takes the empty `RetirementRequest` body. A refusal raises `WeaveError` with its
+`code`, such as `WV-AI-RATE-LIMITED` or `WV-ACTIVATION-AI-MODEL`; see
+[AI discovery, readiness and setup](api.md#ai-discovery-readiness-and-setup).
 
 ## Device login, PKCE and stores
 

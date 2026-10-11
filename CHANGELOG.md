@@ -48,6 +48,28 @@ SPDX-License-Identifier: Apache-2.0
   over plain HTTP only through `worker-auth` and `platform-api` private-origin entries.
 - The worker and the AI gateway read version 2 AI policies; version 1 files keep
   working with a warning to migrate.
+- New AI operations, each in one environment and rechecking the caller's current
+  grants: `ai_endpoints.list` and `ai_models.list` (`catalog.read`) return the
+  approved endpoints and cached model metadata, with tool support as Ollama
+  reports it; `refresh=true` asks the AI gateway again and needs
+  `connection.manage`. `ai_readiness.read` returns eight ordered setup checks from
+  stored records, without calling a provider. `ai_setup.publish` publishes the
+  built-in AI Connector and Action (`definition.publish`), and `ai_setup.grant`
+  authorizes admitted Agentic releases for a connection (`connection.manage`);
+  repeating either changes nothing. `bindable_connections.list`
+  (`connection.bind`) lists only the connection revisions the caller may bind,
+  without configuration or secret handles. Discovery never pulls a model.
+- With an AI policy mounted on the API (`WEAVE_AI_POLICY_FILE`), new activations
+  of workflows with AI tasks answer 422 `WV-ACTIVATION-AI-PROVIDER` when a step's
+  provider differs from its connection's, and 422 `WV-ACTIVATION-AI-MODEL` when
+  the policy does not approve the model for the connection's endpoint. An
+  unreadable policy answers 503 `WV-AI-POLICY` for activations with AI tasks
+  only. Without a policy, activation is unchanged.
+- Replaying an activation `Idempotency-Key` now requires the caller's current
+  `release.activate` grant: a caller whose grant was revoked gets 403 (or 401)
+  instead of the stored 201 answer.
+- AI connection tests are dated with the database clock, which readiness also
+  uses, so a test that just passed reads as healthy on every API process.
 
 ## 0.1.0a15
 

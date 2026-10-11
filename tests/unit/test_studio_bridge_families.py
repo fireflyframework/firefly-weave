@@ -16,6 +16,8 @@
 
 """The Studio host bridge admits drafts, Simulate, release reads and connector discovery only."""
 
+import hashlib
+import json
 from pathlib import Path
 
 import httpx
@@ -213,6 +215,23 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         if identifier.split(".")[0] in STUDIO_FAMILIES or identifier in STUDIO_OPERATIONS
     }
     assert {"releases.create", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
+    # The AI setup operations add exactly these six; every earlier crossing stays as it was.
+    approved_additions = {
+        "ai_endpoints.list",
+        "ai_models.list",
+        "ai_readiness.read",
+        "ai_setup.publish",
+        "ai_setup.grant",
+        "bindable_connections.list",
+    }
+    assert approved_additions <= crossing
+    preserved = crossing - approved_additions
+    assert len(preserved) == 131
+    assert hashlib.sha256("\n".join(sorted(preserved)).encode()).hexdigest() == (
+        "3ba280e1522358905e2cdb2e4bf66976fdc988018cdc08742c4956b87d1ab159"
+    )
+    assert {"workers.grant", "ai_connections.test"} <= preserved
+    assert {"releases.create", "tasks.credentials", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
 
 
 @pytest.mark.parametrize(
@@ -269,6 +288,90 @@ def test_setup_bridge_preserves_csrf_scope_and_upstream_authority(tmp_path, acti
             == 403
         )
     assert len(seen) == 1 and seen[0][:3] == ("POST", path, "Bearer t")
-    import json
-
     assert json.loads(seen[0][3]) == body
+
+
+OTHER_ENVIRONMENT = ENVIRONMENT.replace(ENVIRONMENT_ID, RESOURCE)
+
+
+@pytest.mark.parametrize(
+    "suffix,query",
+    [
+        ("ai/endpoints", ""),
+        ("ai/models", f"connection={RESOURCE}&refresh=true"),
+        ("ai/readiness", ""),
+        ("bindable-connections", "connector=weave-agentic-provider%401.0.0&limit=50"),
+    ],
+)
+@pytest.mark.parametrize("upstream_status", [200, 403])
+def test_ai_reads_keep_pairing_scope_method_and_upstream_authority(tmp_path, suffix, query, upstream_status):
+    seen = []
+
+    async def upstream(request):
+        seen.append((request.method, request.url.path, request.url.query.decode(), request.headers["authorization"]))
+        return httpx.Response(upstream_status, json={"code": "WV-FORBIDDEN"} if upstream_status == 403 else {})
+
+    path = f"{ENVIRONMENT}/{suffix}"
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        target = f"/studio/api{path}" + (f"?{query}" if query else "")
+        assert browser.get(target, headers={"Origin": ORIGIN}).status_code == 401
+        headers = pair(browser)
+        response = browser.get(target, headers=headers)
+        assert response.status_code == upstream_status
+        assert browser.get(f"/studio/api{OTHER_ENVIRONMENT}/{suffix}", headers=headers).status_code == 403
+        assert (
+            browser.get(
+                f"/studio/api{OTHER_PROJECT}/environments/{ENVIRONMENT_ID}/{suffix}", headers=headers
+            ).status_code
+            == 403
+        )
+        assert browser.delete(f"/studio/api{path}", headers=headers).status_code == 404
+        assert browser.post(f"/studio/api{path}", json={}, headers=headers).status_code == 404
+    assert seen == [("GET", path, query, "Bearer t")]
+
+
+@pytest.mark.parametrize("upstream_status", [201, 403])
+def test_worker_grants_still_cross_and_the_server_keeps_its_management_check(tmp_path, upstream_status):
+    seen = []
+    body = {"release_id": RESOURCE, "connection_revision_id": RESOURCE, "capability": "weave-agentic.generate@1.0.0"}
+
+    async def upstream(request):
+        seen.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(upstream_status, json={"code": "WV-FORBIDDEN"} if upstream_status == 403 else {})
+
+    path = f"{ENVIRONMENT}/worker-connection-grants"
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        assert browser.post(f"/studio/api{path}", json=body, headers={"Origin": ORIGIN}).status_code == 401
+        headers = pair(browser)
+        assert browser.post(f"/studio/api{path}", json=body, headers={"Origin": ORIGIN}).status_code == 403
+        assert browser.post(f"/studio/api{path}", json=body, headers=headers).status_code == upstream_status
+        assert (
+            browser.post(
+                f"/studio/api{OTHER_ENVIRONMENT}/worker-connection-grants", json=body, headers=headers
+            ).status_code
+            == 403
+        )
+    assert seen == [("POST", path, body)]
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", f"{ENVIRONMENT}/worker-releases"),
+        ("POST", f"{ENVIRONMENT}/tasks/credentials"),
+        ("POST", "/api/v1/admin/grants"),
+        ("POST", "/api/v1/admin/tenants"),
+    ],
+    ids=["releases.create", "tasks.credentials", "admin.grant", "admin.tenant"],
+)
+def test_operator_and_credential_operations_never_reach_the_platform(tmp_path, method, path):
+    seen = []
+
+    async def upstream(request):
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        headers = pair(browser)
+        assert browser.request(method, f"/studio/api{path}", json={}, headers=headers).status_code == 404
+    assert seen == []

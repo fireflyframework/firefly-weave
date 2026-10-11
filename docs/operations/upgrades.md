@@ -356,6 +356,37 @@ changes before you reopen traffic:
   0.1.0a15. A local platform still has [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade):
   set up alpha15 from its own checkout in a new directory.
 
+## What changes after alpha15
+
+These changes are not yet in a release. They add no schema migration (the head
+stays `0030_worker_presence`), no role, and no change to definition schemas or
+the stored digests of the built-in AI Connector, Action and task. Check them
+before you reopen traffic on a server that includes them:
+
+- **New AI operations are additive.** `ai_endpoints.list`, `ai_models.list`,
+  `ai_readiness.read`, `ai_setup.publish`, `ai_setup.grant` and
+  `bindable_connections.list` are new; see
+  [AI discovery, readiness and setup](../reference/api.md#ai-discovery-readiness-and-setup).
+  Clients that do not call them are unaffected, and omitted optional fields keep
+  their defaults (`refresh=false`, `limit=50`, `probe_tools=true`). Studio reaches
+  them through its host bridge; the server still checks each caller's grants.
+- **Mount the AI policy on the API to check AI activations.** With
+  `WEAVE_AI_POLICY_FILE` set, a new activation of a workflow with an AI task
+  answers 422 `WV-ACTIVATION-AI-PROVIDER` or `WV-ACTIVATION-AI-MODEL` instead of
+  creating an activation whose runs would fail with `LLM_CONNECTION` or
+  `LLM_POLICY`. While the mounted file cannot be read, activations with AI tasks
+  answer 503 `WV-AI-POLICY`; other activations are not affected. Without the
+  setting, activation behaves as before. Activations that already exist are not
+  checked again.
+- **Activation replays need current authority.** Replaying an activation
+  `Idempotency-Key` now requires the caller's current `release.activate` grant.
+  A caller whose grant was revoked gets 403 (or 401) instead of the stored 201
+  answer. Scripts that retry activations with a token whose grant was removed
+  must get the grant back first.
+- **AI test times use the database clock.** A recorded AI connection test is
+  dated with the database's clock, the same clock readiness uses to measure its
+  age. Tests recorded by an earlier server keep their API-host timestamps.
+
 ## After the upgrade: clients and sign-in
 
 Saved platforms, `weave auth setup`, and published sign-in settings arrived in
