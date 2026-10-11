@@ -111,6 +111,18 @@ export class ParamField {
   spec = input.required<ParamSpec>();
   entry = input.required<FieldEntry>();
   row = input(false);
+  /**
+   * A row's value shows its tools after it, inside its box: they follow the
+   * value in the Tab order too. Other fields keep them in the label row.
+   */
+  toolsAfter(): boolean {
+    return this.row() && !this.isGroup();
+  }
+  /** A structural group with no value of its own (a decision's paths) has no field menu. */
+  hasMenu(): boolean {
+    const spec = this.spec();
+    return !(spec.labelHidden && this.isGroup() && spec.path.length === 0);
+  }
   /** A group of fields introduces its contents: its hint comes before them. */
   introFirst(): boolean {
     return this.spec().type === "fields";

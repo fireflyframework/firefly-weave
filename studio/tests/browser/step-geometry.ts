@@ -167,3 +167,51 @@ export async function showParameters(page: Page, dialog: Locator) {
   if ((page.viewportSize()?.width ?? 1440) < 768)
     await panes.getByRole("tab", { name: "Parameters", exact: true }).click();
 }
+
+/** The opacity an element is painted with: its own times its ancestors'. */
+export async function paintedOpacity(locator: Locator): Promise<number> {
+  return locator.first().evaluate((element) => {
+    let opacity = 1;
+    for (
+      let node: Element | null = element;
+      node && node !== document.documentElement;
+      node = node.parentElement
+    )
+      opacity *= parseFloat(getComputedStyle(node).opacity);
+    return opacity;
+  });
+}
+
+/**
+ * The part of a scroller the person can see: its box, below any sticky bars
+ * that cover its top (the pane tabs and header in the narrow layout).
+ */
+export async function visibleArea(scroller: Locator): Promise<Box> {
+  return scroller.first().evaluate((element) => {
+    const r = element.getBoundingClientRect();
+    let top = r.top;
+    for (const child of element.querySelectorAll<HTMLElement>(
+      ":scope > *, :scope > * > *",
+    ))
+      if (getComputedStyle(child).position === "sticky")
+        top = Math.max(top, child.getBoundingClientRect().bottom);
+    const bottom = r.top + element.clientHeight;
+    const right = r.left + element.clientWidth;
+    return {
+      x: r.left,
+      y: top,
+      width: right - r.left,
+      height: bottom - top,
+      right,
+      bottom,
+      middle: (top + bottom) / 2,
+    };
+  });
+}
+
+/** The element that scrolls the Parameters form: its tab panel, or the whole sheet. */
+export function formScroller(page: Page, dialog: Locator): Locator {
+  return (page.viewportSize()?.width ?? 1440) < 768
+    ? dialog.locator(".sd-panes")
+    : dialog.locator(".sd-tabpanel:not([hidden])");
+}

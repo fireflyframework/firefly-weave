@@ -393,6 +393,13 @@ test.describe("step details below 768 px", () => {
     ).toBeGreaterThan(0);
     await expect(panes).toBeInViewport();
     await expect(details.dialog.locator(".sd-head")).toBeInViewport();
+    // The sticky header meets the sticky pane tabs: no scrolled text between them.
+    const tabs = (await panes.boundingBox())!;
+    const head = (await details.dialog.locator(".sd-head").boundingBox())!;
+    expectAligned(
+      [head.y, tabs.y + tabs.height],
+      "sticky header under the pane tabs",
+    );
   });
 });
 
@@ -866,11 +873,70 @@ for (const size of [
       await details.open("lookup");
       const header = await box(page.locator("header.topbar"));
       const dialog = await box(details.dialog);
-      // The dialog starts at the shell's top bar; its strip sits the inset below it.
+      // The dialog's opaque layer covers everything under the shell's top bar;
+      // the insets are padding inside it.
       expectAligned([dialog.y, header.bottom], "dialog top");
-      expectAligned([dialog.x, size.inset], "dialog left");
-      expectAligned([dialog.right, size.width - size.inset], "dialog right");
-      expectAligned([dialog.bottom, size.height - size.inset], "dialog bottom");
+      expectAligned([dialog.x, 0], "dialog left");
+      expectAligned([dialog.right, size.width], "dialog right");
+      expectAligned([dialog.bottom, size.height], "dialog bottom");
+      const panes = await box(details.dialog.locator(".sd-panes"));
+      expectAligned([panes.x, size.inset], "panes left");
+      expectAligned([panes.right, size.width - size.inset], "panes right");
+      expectAligned([panes.bottom, size.height - size.inset], "panes bottom");
+      // Nothing of the shell paints in the inset strips around the panes.
+      const strips = await page.evaluate(
+        ({ top, inset, width, height }) => {
+          const points: [number, number][] = [];
+          for (let y = top + 2; y < height; y += 6)
+            for (const x of [
+              2,
+              inset / 2,
+              inset - 2,
+              width - inset + 2,
+              width - inset / 2,
+              width - 2,
+            ])
+              points.push([x, y]);
+          for (let x = 2; x < width; x += 8)
+            for (const y of [
+              top + 2,
+              top + inset / 2,
+              height - inset + 2,
+              height - inset / 2,
+              height - 2,
+            ])
+              points.push([x, y]);
+          const dialog = document.querySelector(".step-details")!;
+          const panes = dialog
+            .querySelector(".sd-panes")!
+            .getBoundingClientRect();
+          return points
+            .filter(
+              ([x, y]) =>
+                !(
+                  x >= panes.left &&
+                  x <= panes.right &&
+                  y >= panes.top &&
+                  y <= panes.bottom
+                ),
+            )
+            .map(([x, y]) => {
+              const hit = document.elementFromPoint(x, y);
+              return hit && dialog.contains(hit)
+                ? null
+                : `${x},${y}: ${hit?.tagName.toLowerCase()}.${hit?.className}`;
+            })
+            .filter(Boolean)
+            .slice(0, 10);
+        },
+        {
+          top: header.bottom,
+          inset: size.inset,
+          width: size.width,
+          height: size.height,
+        },
+      );
+      expect(strips).toEqual([]);
       // The scrim still covers the whole window.
       expect(await box(page.locator(".sd-scrim"))).toMatchObject({
         x: 0,
@@ -1022,5 +1088,76 @@ for (const size of [
         [edge.right, more.right, docsBox.right],
         "Parameters pane right edge",
       );
+    });
+  });
+
+test.describe("the shell while step details is open", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test("is inert for pointer, keyboard and assistive technology, and comes back on close", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page);
+    const exposed = async () => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Accessibility.enable");
+      const { nodes } = (await cdp.send("Accessibility.getFullAXTree")) as {
+        nodes: { ignored: boolean; name?: { value: string } }[];
+      };
+      await cdp.detach();
+      return ["Ask Weave AI", "Home", "Workflows"].filter((name) =>
+        nodes.some((node) => !node.ignored && node.name?.value === name),
+      );
+    };
+    expect(await exposed()).toEqual(["Ask Weave AI", "Home", "Workflows"]);
+    await details.open("lookup");
+    await expect(page.locator("header.topbar")).toHaveJSProperty("inert", true);
+    expect(await exposed()).toEqual([]);
+    // Toasts stay usable: an explanation still reaches the person.
+    await page.keyboard.press("ControlOrMeta+Enter");
+    await expect(page.locator(".toast-region")).toContainText(
+      "Executing a single step isn't available yet.",
+    );
+    await details.close();
+    await expect(details.node("lookup")).toBeFocused();
+    expect(await exposed()).toEqual(["Ask Weave AI", "Home", "Workflows"]);
+    expect(
+      await page.evaluate(() => document.querySelectorAll("[inert]").length),
+    ).toBe(0);
+  });
+});
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "1100x800", width: 1100, height: 800 },
+])
+  test.describe(`path card headers at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test("the condition chip outlasts the next step's name", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(
+        page,
+        yamlFile(
+          "long-next.yaml",
+          wide(2).replace(
+            /id: path-(\d)/g,
+            "id: path-$1-and-a-long-next-step-name",
+          ),
+        ),
+      );
+      await details.open(longId);
+      const cards = details.dialog.locator(".param-row.is-card");
+      await expect(cards).toHaveCount(2);
+      for (const card of await cards.all()) {
+        const cut = (selector: string) =>
+          card
+            .locator(selector)
+            .evaluate(
+              (element) => element.scrollWidth > element.clientWidth + 1,
+            );
+        if (await cut(".param-chip-label"))
+          expect(await cut(".param-next")).toBe(true);
+        expect(await cut(".param-chip-label")).toBe(false);
+      }
     });
   });

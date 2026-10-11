@@ -39,8 +39,11 @@ import {
   clippedText,
   contentEdges,
   expectAligned,
+  formScroller,
+  paintedOpacity,
   showParameters,
   textBox,
+  visibleArea,
   type Box,
 } from "./step-geometry";
 
@@ -863,9 +866,10 @@ async function formEdges(details: StepDetailsPage) {
       ".param-form > weave-param-field:not(.is-option) > .param > .param-control > weave-key-value-field .param-add-row > .param-add:first-child > weave-icon, .param-form > weave-add-option",
     ),
   );
+  // The last tool of each label row: the value mode, or the field menu.
   const menus = await boxes(
     panel.locator(
-      ".param-form > weave-param-field > .param > .param-label-row .param-menu .row-menu-toggle",
+      ".param-form > weave-param-field > .param > .param-label-row > .param-tools > :last-child",
     ),
   );
   return { edges, labels, controls, cards, adds, menus };
@@ -902,7 +906,7 @@ for (const size of formSizes)
         );
         expectAligned(
           [form.edges.right, ...form.menus.map((m) => m.right)],
-          `${id} field menus right edge`,
+          `${id} label-row tools right edge`,
         );
         // Labels and their required marks share a baseline.
         for (const row of await details.dialog
@@ -940,7 +944,13 @@ for (const size of formSizes)
       ).right;
       const trailing = [right];
       for (const row of await rows.all()) {
+        // Hovering shows the field menu without moving anything.
+        await row.scrollIntoViewIfNeeded();
+        const resting = await box(row.locator(".param-row-value .param-mode"));
         await row.hover();
+        expect(await box(row.locator(".param-row-value .param-mode"))).toEqual(
+          resting,
+        );
         const key = await box(row.locator(".param-kv-name"));
         const value = await box(row.locator(".param-row-value"));
         const remove = await box(row.locator(":scope > button"));
@@ -968,23 +978,22 @@ for (const size of formSizes)
           expectAligned([value.y, key.bottom + 8], "value under its key");
         }
         if (size.width >= 768) expect(sideBySide).toBe(true);
-        // Fixed | Mapped sits inside the value's box, at its right edge.
+        // Fixed | Mapped sits inside the value's box, on its right inset; the
+        // field menu that appears on hover sits inboard of it.
         expect(mode.x).toBeGreaterThanOrEqual(value.x);
-        expect(mode.right).toBeLessThanOrEqual(value.right);
         expect(mode.y).toBeGreaterThanOrEqual(value.y);
         expect(mode.bottom).toBeLessThanOrEqual(value.bottom);
-        expect(value.right - mode.right).toBeLessThanOrEqual(56);
+        expectAligned(
+          [mode.right, value.right - 12],
+          "toggle on the value's inset",
+          2,
+        );
+        const menu = await box(
+          row.locator(".param-row-value .param-menu .row-menu-toggle"),
+        );
+        expect(menu.right).toBeLessThanOrEqual(mode.x + 0.5);
       }
-      // Remove buttons and the field menu end on the pane's right edge.
-      trailing.push(
-        (
-          await box(
-            field.locator(
-              ":scope > .param > .param-label-row .param-menu .row-menu-toggle",
-            ),
-          )
-        ).right,
-      );
+      // Remove buttons end on the pane's right edge.
       expectAligned(trailing, "row trailing edge");
       // Add actions read as actions, not links: no underline at rest.
       for (const add of await field.locator(".param-add").all())
@@ -1019,6 +1028,39 @@ for (const size of formSizes)
       expect((await box(intro)).bottom).toBeLessThanOrEqual(
         (await box(cards.first())).y,
       );
+      // One field menu for the paths: the structural group around them has none.
+      await expect(
+        panel.getByRole("button", { name: "Field menu for Paths" }),
+      ).toHaveCount(1);
+      // Step details opens on a control, never on a label row's tools.
+      expect(
+        await page.evaluate(
+          () =>
+            !!document.activeElement?.closest(".param-label-row, .param-tools"),
+        ),
+      ).toBe(false);
+      // A card's header ends on its field menu, shown at rest on the card's inner edge.
+      for (const card of await cards.all()) {
+        const menu = card.locator(
+          ":scope > weave-param-field > .param > .param-label-row .param-menu .row-menu-toggle",
+        );
+        expect(await paintedOpacity(menu)).toBeGreaterThan(0);
+        const inner = await contentEdges(
+          card.locator(
+            ":scope > weave-param-field > .param > .param-label-row",
+          ),
+        );
+        expectAligned(
+          [(await box(menu)).right, inner.right],
+          "card menu edge",
+          2,
+        );
+        const actions = await box(card.locator(".param-card-actions"));
+        expect(actions.right).toBeLessThanOrEqual((await box(menu)).x + 0.5);
+        // The move and remove buttons stay on the header row, beside the title.
+        const title = await box(card.locator(".param-card-head strong"));
+        expect(Math.abs(actions.middle - title.middle)).toBeLessThanOrEqual(2);
+      }
       for (const card of await cards.all()) {
         // The card's header band: its title, chip, next step and buttons.
         const head = await box(
@@ -1067,6 +1109,80 @@ for (const size of formSizes)
       const menuEdge = (await contentEdges(menu)).left;
       expect(menuEdge).toBeGreaterThan(menuBox.x);
       expectAligned([menuEdge + 12, ...starts], "menu labels start");
+      // The whole menu is in view inside the pane, with focus on its first item.
+      const area = await visibleArea(formScroller(page, details.dialog));
+      expect(menuBox.y).toBeGreaterThanOrEqual(area.y - 0.5);
+      expect(menuBox.bottom).toBeLessThanOrEqual(area.bottom + 0.5);
+      expect(menuBox.x).toBeGreaterThanOrEqual(area.x - 0.5);
+      expect(menuBox.right).toBeLessThanOrEqual(area.right + 0.5);
+      await expect(menu.getByRole("menuitem").first()).toBeFocused();
+    });
+
+    test("visible trailing controls end on the pane's right edge at rest", async ({
+      page,
+    }) => {
+      const workflow = parse(readFileSync(stepFixture, "utf8"));
+      workflow.spec.steps[3].prompt = { ref: "/input/customerId" };
+      const details = await openStepFixture(
+        page,
+        yamlFile("mapped-prompt.yaml", stringify(workflow)),
+      );
+      await details.open("summarize");
+      await showParameters(page, details.dialog);
+      await page.mouse.move(1, 1);
+      const panel = details.dialog.locator(".sd-tabpanel:not([hidden])");
+      const right = (await contentEdges(panel)).right;
+      const prompt = details.field("prompt");
+      const mode = prompt.locator(".param-mode");
+      await prompt.scrollIntoViewIfNeeded();
+      expect(await paintedOpacity(mode)).toBe(1);
+      const resting = await box(mode);
+      expectAligned([resting.right, right], "Prompt toggle edge", 2);
+      // The field menu appears inboard of the toggle, and nothing moves.
+      await prompt.hover();
+      const menu = prompt.getByRole("button", {
+        name: "Field menu for Prompt",
+      });
+      expect(await paintedOpacity(menu)).toBe(1);
+      expect((await box(menu)).right).toBeLessThanOrEqual(resting.x + 0.5);
+      expect(await box(mode)).toEqual(resting);
+      // Label-row targets stay clear of the control below them.
+      for (const id of ["model", "prompt"]) {
+        const field = details.field(id);
+        const control = await box(
+          field.locator(":scope > .param > .param-control"),
+        );
+        for (const target of await boxes(
+          field.locator(":scope > .param > .param-label-row button"),
+        ))
+          expect(target.bottom).toBeLessThanOrEqual(control.y + 0.5);
+      }
+    });
+
+    test("in a key and value row, Tab reaches the value before its tools", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("check-customer");
+      await showParameters(page, details.dialog);
+      const row = details.field("value").locator(".param-kv-row").first();
+      await row.getByRole("textbox", { name: "Name of row 1" }).focus();
+      await page.keyboard.press("Tab");
+      await expect(
+        row.getByRole("button", { name: "reference Input Customer ID" }),
+      ).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(
+        row.getByRole("button", { name: "Field menu for Value" }),
+      ).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(
+        row.getByRole("radio", { name: "Mapped", exact: true }),
+      ).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(
+        row.getByRole("button", { name: "Remove customer" }),
+      ).toBeFocused();
     });
 
     test("in-place choices open downward and take their content's width", async ({
@@ -1207,23 +1323,33 @@ test.describe("a Call an API step", () => {
     const mode = await box(status.locator(".param-mode"));
     expectAligned([key.y, value.y], "key and value tops");
     expectAligned([key.middle, value.middle, mode.middle], "row centers");
-    expect(mode.right).toBeLessThanOrEqual(value.right);
+    expectAligned(
+      [mode.right, value.right - 12],
+      "toggle on the value's inset",
+      2,
+    );
     expect(mode.x).toBeGreaterThanOrEqual(value.x);
     const card = await box(query.locator(":scope > .param"));
     const label = await box(
       query.locator(":scope > .param > .param-label-row"),
     );
     expect((await box(rows.first())).y - label.bottom).toBeLessThanOrEqual(8.5);
+    // Row remove buttons and the option's last tool end on the card's inner edge;
+    // Remove option, shown on hover, sits inboard of the field menu.
     const trash = await boxes(
       query.locator(
-        ".param-kv-row > button, :scope > .param > .param-label-row .param-remove",
+        ".param-kv-row > button, :scope > .param > .param-label-row > .param-tools > :last-child",
       ),
     );
     expectAligned(
       trash.map((t: Box) => t.right),
       "remove buttons right edge",
     );
-    expect(card.right - trash[0].right).toBeGreaterThan(0);
+    expectAligned([card.right - 1 - 12, trash[0].right], "card inner edge");
+    const removeOption = await box(
+      query.getByRole("button", { name: "Remove option" }),
+    );
+    expect(removeOption.right).toBeLessThanOrEqual(trash.at(-1)!.x + 0.5);
     // The Add option menu: labels start-aligned, Body disabled with its reason.
     const add = details.dialog.getByRole("button", {
       name: "Add option",
@@ -1235,6 +1361,17 @@ test.describe("a Call an API step", () => {
     const body = menu.getByRole("menuitem", { name: /^Body/ });
     await expect(body).toHaveAttribute("aria-disabled", "true");
     await expect(body).toContainText("Only for POST, PUT and PATCH");
+    await expect(menu.getByRole("menuitem").first()).toBeFocused();
+    const menuBox = await box(menu);
+    const area = await visibleArea(formScroller(page, details.dialog));
+    expect(menuBox.y).toBeGreaterThanOrEqual(area.y - 0.5);
+    expect(menuBox.bottom).toBeLessThanOrEqual(area.bottom + 0.5);
+    // At this size every option shows without scrolling the menu.
+    expect(
+      await menu.evaluate(
+        (element) => element.scrollHeight <= element.clientHeight + 1,
+      ),
+    ).toBe(true);
     const starts: number[] = [];
     for (const item of await menu.getByRole("menuitem").all())
       starts.push((await textBox(item.locator("b"))).x);

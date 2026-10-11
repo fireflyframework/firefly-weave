@@ -16,9 +16,10 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 /* Step details: a modal dialog over the editor (above the inspector, below
-   confirmations and toasts). It starts at the shell's top bar and is opaque,
-   so its top strip sits on a clear band 24 px (16 px) below the bar and
-   nothing of the editor shows under it; the scrim still covers the window.
+   confirmations and toasts). An opaque layer covers the whole area under the
+   shell's top bar, with the 24 px (16 px below 1100 px) insets as padding
+   inside it, so the top strip sits on a clear band and no cut-off shell
+   content shows around the panes; the scrim still dims the top bar.
    Each pane keeps one content edge: --sd-edge in Parameters, 16 px in Input
    and Output. Tokens only. */
 weave-step-details {
@@ -32,10 +33,10 @@ weave-step-details {
 }
 .step-details {
   position: fixed;
-  inset: var(--shell-header) var(--space-6) var(--space-6);
-  padding-top: var(--space-6);
+  --sd-inset: var(--space-6);
+  inset: var(--shell-header) 0 0;
+  padding: var(--sd-inset);
   background: var(--bg);
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   z-index: 17;
   display: flex;
   flex-direction: column;
@@ -68,7 +69,7 @@ weave-step-details {
   min-height: var(--control-touch);
 }
 .step-details .sd-top > button.icon-button {
-  margin-block: calc((36px - var(--control-touch)) / 2);
+  margin-block: calc((var(--control-md) - var(--control-touch)) / 2);
 }
 .sd-crumb {
   min-width: 0;
@@ -252,11 +253,12 @@ weave-step-details {
   flex-direction: column;
   gap: var(--space-2);
 }
+/* The neighbor buttons straddle the panes' outer edges. */
 .sd-before {
-  left: -16px;
+  left: calc(var(--sd-inset) - var(--space-4));
 }
 .sd-after {
-  right: -16px;
+  right: calc(var(--sd-inset) - var(--space-4));
 }
 .step-details button.sd-neighbor {
   width: 32px;
@@ -278,8 +280,7 @@ weave-step-details {
 }
 @media (max-width: 1099px) {
   .step-details {
-    inset: var(--shell-header) var(--space-4) var(--space-4);
-    padding-top: var(--space-4);
+    --sd-inset: var(--space-4);
   }
   .sd-panes {
     grid-template-columns: minmax(0, 1fr);
@@ -426,9 +427,8 @@ weave-step-details {
   margin-top: 0;
 }
 .step-details[data-layout="sheet"] {
+  --sd-inset: 0px;
   inset: 0;
-  padding-top: 0;
-  border-radius: 0;
 }
 .step-details[data-layout="sheet"] .sd-main {
   --sd-edge: var(--space-4);
@@ -455,9 +455,11 @@ weave-step-details {
   border-width: 0;
   box-shadow: none;
 }
+/* The header sticks right under the pane tabs: 44 px tabs, their 2 px
+   padding above and below, and the 1 px rule. */
 .step-details[data-layout="sheet"] .sd-head {
   position: sticky;
-  top: 34px;
+  top: calc(var(--control-touch) + 2 * 2px + 1px);
   z-index: 3;
   background: var(--raised);
 }
@@ -506,9 +508,6 @@ weave-step-details {
   .sd-actions > weave-row-menu .row-menu-toggle {
     min-height: var(--control-touch);
     min-width: var(--control-touch);
-  }
-  .step-details[data-layout="sheet"] .sd-head {
-    top: 50px;
   }
   .sd-separator {
     width: var(--control-touch);

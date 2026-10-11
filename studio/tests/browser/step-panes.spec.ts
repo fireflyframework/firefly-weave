@@ -640,3 +640,53 @@ for (const size of [
       expectAligned(heights, "Input and Output view switches");
     });
   });
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "900x700", width: 900, height: 700 },
+])
+  test.describe(`pane rules at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test("the header and sub-row rules line up across Input, Output and Test event", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("lookup");
+      const rules: { pane: string; head: number; sub: number }[] = [];
+      const measure = async (name: "Input" | "Output" | "Test event") => {
+        await show(details, name);
+        const pane = details.dialog.locator(
+          name === "Output" ? ".sd-output" : ".sd-input",
+        );
+        await expect(pane.locator(".sd-pane-title")).toHaveText(name);
+        await expect(pane.locator(".sd-pane-title")).toBeVisible();
+        rules.push({
+          pane: name,
+          head: (await box(pane.locator(".sd-pane-head"))).bottom,
+          sub: (await box(pane.locator(".pane-sub"))).bottom,
+        });
+      };
+      await measure("Input");
+      await measure("Output");
+      await details.close();
+      await trigger(details);
+      await measure("Test event");
+      expectAligned(
+        rules.map((rule) => rule.head),
+        `header rules ${JSON.stringify(rules)}`,
+        0.5,
+      );
+      expectAligned(
+        rules.map((rule) => rule.sub),
+        `sub-row rules ${JSON.stringify(rules)}`,
+        0.5,
+      );
+      // The sample form's in-place choices open downward too.
+      await expect(
+        details.dialog
+          .locator(".sd-input")
+          .getByRole("button", { name: /^Show choices for Status/ })
+          .locator("weave-icon"),
+      ).toHaveAttribute("data-icon", "chevronDown");
+    });
+  });

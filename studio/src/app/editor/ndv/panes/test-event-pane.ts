@@ -65,6 +65,7 @@ interface SampleForm {
         }
         @for (form of forms(); track form) {
           <weave-task-form
+            choiceIcon="chevronDown"
             [schema]="form.schema"
             [schemaRoot]="form.root"
             [initialData]="form.initial"

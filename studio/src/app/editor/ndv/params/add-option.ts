@@ -30,6 +30,7 @@ import {
   input,
   signal,
 } from "@angular/core";
+import { revealPopoverOption } from "../../../forms/ui/anchored-popover";
 import { Icon } from "../../../icon";
 import type { OptionEntry } from "./form-model";
 import type { FormSession } from "./form-session";
@@ -130,13 +131,51 @@ export class AddOption {
         this.session() === session &&
         session.isCurrent() &&
         this.element.nativeElement.isConnected
-      )
+      ) {
+        this.place();
         (
           this.element.nativeElement.querySelector<HTMLElement>(
             ".add-option-filter",
           ) ?? this.items()[index]
-        )?.focus();
+        )?.focus({ preventScroll: true });
+      }
     });
+  }
+  /**
+   * Shows the whole menu inside the pane that scrolls the form: below the
+   * button, scrolling the pane when that reveals it; above it when there is
+   * room there; otherwise as tall as the room below allows, scrolling inside.
+   */
+  private place() {
+    const host = this.element.nativeElement;
+    const menu = host.querySelector<HTMLElement>(".add-option-menu");
+    const button = host.querySelector<HTMLElement>(".add-option-button");
+    const scroller = scrollingParent(host);
+    if (!menu || !button || !scroller) return;
+    delete menu.dataset["side"];
+    menu.style.maxHeight = "";
+    menu.style.width = "";
+    let view = visibleBox(scroller);
+    const below = () => button.getBoundingClientRect().bottom;
+    const gap = menu.getBoundingClientRect().top - below();
+    const room = view.right - menu.getBoundingClientRect().left;
+    if (menu.getBoundingClientRect().width > room)
+      menu.style.width = `${Math.max(0, room)}px`;
+    const height = menu.getBoundingClientRect().height;
+    if (below() + gap + height <= view.bottom) return;
+    const top = button.getBoundingClientRect().top;
+    const scroll = below() + gap + height - view.bottom;
+    if (scroll <= top - view.top) {
+      scroller.scrollTop += scroll;
+      return;
+    }
+    if (top - gap - height >= view.top) {
+      menu.dataset["side"] = "above";
+      return;
+    }
+    scroller.scrollTop += top - view.top;
+    view = visibleBox(scroller);
+    menu.style.maxHeight = `${Math.max(0, view.bottom - below() - gap)}px`;
   }
 
   close(focus = true) {
@@ -152,7 +191,10 @@ export class AddOption {
     const at = items.indexOf(document.activeElement as HTMLElement);
     const go = (to: number) => {
       event.preventDefault();
-      items[(to + items.length) % items.length]?.focus();
+      const item = items[(to + items.length) % items.length];
+      if (!item) return;
+      item.focus({ preventScroll: true });
+      revealPopoverOption(event.currentTarget as HTMLElement, item);
     };
     if (event.key === "ArrowDown") go(at + 1);
     else if (event.key === "ArrowUp") go(at - 1);
@@ -189,4 +231,32 @@ export class AddOption {
         () => this.session() === session,
       );
   }
+}
+
+/** The nearest ancestor that scrolls vertically. */
+function scrollingParent(element: HTMLElement): HTMLElement | null {
+  for (
+    let parent = element.parentElement;
+    parent;
+    parent = parent.parentElement
+  )
+    if (/^(auto|scroll)$/.test(getComputedStyle(parent).overflowY))
+      return parent;
+  return null;
+}
+
+/** What the person sees of a scroller: below the sticky bars that cover its top. */
+function visibleBox(scroller: HTMLElement) {
+  const bounds = scroller.getBoundingClientRect();
+  let top = bounds.top;
+  for (const child of scroller.querySelectorAll<HTMLElement>(
+    ":scope > *, :scope > * > *",
+  ))
+    if (getComputedStyle(child).position === "sticky")
+      top = Math.max(top, child.getBoundingClientRect().bottom);
+  return {
+    top,
+    bottom: bounds.top + scroller.clientHeight,
+    right: bounds.left + scroller.clientWidth,
+  };
 }

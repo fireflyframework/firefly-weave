@@ -34,7 +34,9 @@ weave-test-event-pane {
   flex-wrap: wrap;
   align-items: center;
   gap: 0 var(--space-2);
-  min-height: calc(var(--control-touch) + var(--space-2));
+  /* 44 px controls, 4 px above and below, and the 1 px rule: every pane's
+     header ends on the same line. */
+  min-height: calc(var(--control-touch) + var(--space-2) + 1px);
   padding: var(--space-1) var(--space-4);
   border-bottom: 1px solid var(--line);
 }
@@ -53,12 +55,12 @@ weave-test-event-pane {
   flex: none;
   gap: 2px;
   margin-left: auto;
-  padding: 0 3px;
+  padding: 0 var(--space-1);
 }
 .pane-views::before {
   content: "";
   position: absolute;
-  inset: 7px 0;
+  inset: var(--space-2) 0;
   z-index: -1;
   background: var(--sunken);
   border: 1px solid var(--border);
@@ -72,19 +74,16 @@ weave-test-event-pane {
   gap: var(--space-1);
   min-width: var(--control-touch);
   min-height: var(--control-touch);
-  padding: 0 6px;
+  padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--muted);
   font: var(--type-caption);
 }
-/* A narrow pane keeps its header on one row: the views drop their icons
-   and the header tightens. */
-@container (max-width: 349px) {
-  .pane-views weave-icon {
-    display: none;
-  }
+/* A narrow pane keeps its header on one row: it tightens, and then the
+   views drop their icons. */
+@container (max-width: 379px) {
   .sd-pane-head {
     column-gap: var(--space-1);
   }
@@ -92,10 +91,15 @@ weave-test-event-pane {
     padding: 0 var(--space-1);
   }
 }
+@container (max-width: 349px) {
+  .pane-views weave-icon {
+    display: none;
+  }
+}
 .step-details .pane-views button[role="radio"]::before {
   content: "";
   position: absolute;
-  inset: 10px 0;
+  inset: var(--space-3) 0;
   z-index: -1;
   border-radius: var(--radius-xs);
 }
@@ -136,7 +140,7 @@ weave-test-event-pane {
   align-items: center;
   gap: 0 var(--space-2);
   min-width: 0;
-  min-height: var(--control-touch);
+  min-height: calc(var(--control-touch) + 1px);
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--line);
 }

@@ -622,6 +622,7 @@ let sequence = 0;
             [label]="label || field.label"
             [hideLabel]="true"
             [options]="choiceOptions(field)"
+            [icon]="choiceIcon()"
             [value]="choiceValue(field, value)"
             [disabled]="isNull"
             [invalid]="invalid"
@@ -635,6 +636,7 @@ let sequence = 0;
             [label]="label || field.label"
             [hideLabel]="true"
             [options]="tristateOptions(member)"
+            [icon]="choiceIcon()"
             [value]="value === true ? 'true' : value === false ? 'false' : ''"
             [disabled]="isNull"
             [invalid]="invalid"
@@ -823,6 +825,8 @@ let sequence = 0;
 export class TaskForm implements OnChanges {
   fileAccess = input<FileAccess | null>(null);
   schema = input<Schema>({});
+  /** The icon on a choice list's toggle; "chevronDown" where step details opens it in place. */
+  choiceIcon = input("chevron");
   /** Original document when an object wrapper adapts a scalar or list root. */
   schemaRoot = input<unknown>(undefined);
   initialData = input<Record<string, unknown>>({});

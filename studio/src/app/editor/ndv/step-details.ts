@@ -53,6 +53,7 @@ import { InputPane } from "./panes/input-pane";
 import { OutputPane } from "./panes/output-pane";
 import { TestEventPane } from "./panes/test-event-pane";
 import { Icon } from "../../icon";
+import { coveredBy, keepUsable } from "../../modal-sheet";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import {
   commandFor,
@@ -247,6 +248,7 @@ export class StepDetails {
       untracked(() => this.keepTarget());
     });
     afterEveryRender(() => {
+      this.coverShell();
       this.recoverLayoutFocus();
       const menu = this.mapMenu();
       if (
@@ -271,10 +273,45 @@ export class StepDetails {
       { injector: this.injector },
     );
     inject(DestroyRef).onDestroy(() => {
+      this.releaseShell();
       this.dragEnd();
       observer.disconnect();
       this.clearMapping();
     });
+  }
+
+  // ---------------------------------------------------------- modality
+  /** Shell elements this dialog made inert (others may be inert for their own reasons). */
+  private readonly inerted = new Set<Element>();
+  /**
+   * While step details is open, the rest of the shell is inert: no pointer,
+   * keyboard or assistive technology reaches it. Live regions, toasts and
+   * the dialogs step details opens stay usable.
+   */
+  private coverShell() {
+    if (this.details.request() !== this.request()) return this.releaseShell();
+    const dialog = this.dialog().nativeElement;
+    const covered = new Set(
+      coveredBy<Element>(
+        dialog,
+        document.body,
+        (node) => node.matches(".sd-scrim") || node.matches(keepUsable),
+      ),
+    );
+    for (const element of this.inerted)
+      if (!covered.has(element)) {
+        element.removeAttribute("inert");
+        this.inerted.delete(element);
+      }
+    for (const element of covered)
+      if (!element.hasAttribute("inert")) {
+        element.setAttribute("inert", "");
+        this.inerted.add(element);
+      }
+  }
+  private releaseShell() {
+    for (const element of this.inerted) element.removeAttribute("inert");
+    this.inerted.clear();
   }
 
   // ---------------------------------------------------------------- what
@@ -401,6 +438,8 @@ export class StepDetails {
     if (id) this.go(id);
   }
   close() {
+    // The opener gets focus back: the shell is usable again first.
+    this.releaseShell();
     this.closed.emit(this.target());
   }
   /** The open step was renamed back by Undo, or deleted: follow it, or close. */
@@ -815,10 +854,15 @@ export class StepDetails {
     const control = (scope: Element | null | undefined): HTMLElement | null => {
       if (!scope) return null;
       const fields = scope.matches("[data-param], .sd-tabpanel");
+      // A field opens on its control, never on a label row's or a row's tools.
       const candidates = fields
-        ? [...scope.querySelectorAll<HTMLElement>(".param-control")].flatMap(
-            (field) => [...field.querySelectorAll<HTMLElement>(CONTROL)],
-          )
+        ? [...scope.querySelectorAll<HTMLElement>(".param-control")]
+            .flatMap((field) => [
+              ...field.querySelectorAll<HTMLElement>(CONTROL),
+            ])
+            .filter(
+              (element) => !element.closest(".param-label-row, .param-tools"),
+            )
         : [...scope.querySelectorAll<HTMLElement>(CONTROL)];
       return candidates.find(visible) ?? null;
     };

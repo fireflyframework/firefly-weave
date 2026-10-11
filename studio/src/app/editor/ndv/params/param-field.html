@@ -67,52 +67,9 @@ SPDX-License-Identifier: Apache-2.0
         >{{ fits.text }}</span
       >
     }
-    <div class="param-tools" (keydown)="toolsKey($event)">
-      @if (mode() !== null && spec.mapping === "both") {
-        <div
-          class="param-mode"
-          role="radiogroup"
-          [attr.aria-label]="'Value mode for ' + spec.label"
-        >
-          <button
-            type="button"
-            role="radio"
-            [attr.aria-checked]="mode() === 'fixed'"
-            [attr.tabindex]="mode() === 'fixed' ? 0 : -1"
-            [disabled]="!!reason"
-            (click)="setMode('fixed')"
-          >
-            Fixed
-          </button>
-          <button
-            type="button"
-            role="radio"
-            [attr.aria-checked]="mode() === 'mapped'"
-            [attr.tabindex]="mode() === 'mapped' ? 0 : -1"
-            [disabled]="!!reason"
-            (click)="setMode('mapped')"
-          >
-            Mapped
-          </button>
-        </div>
-      }
-      <weave-row-menu
-        class="param-menu"
-        [label]="'Field menu for ' + spec.label"
-        [items]="menuItems()"
-      />
-      @if (entry.option && !reason && !spec.required) {
-        <button
-          type="button"
-          class="icon-button param-remove"
-          aria-label="Remove option"
-          title="Remove option"
-          (click)="session().removeOption(spec)"
-        >
-          <weave-icon name="trash" [size]="16" />
-        </button>
-      }
-    </div>
+    @if (!toolsAfter()) {
+      <ng-container [ngTemplateOutlet]="toolsTemplate" />
+    }
   </div>
   @if (introFirst()) {
     <ng-container [ngTemplateOutlet]="lineTemplate" />
@@ -388,6 +345,9 @@ SPDX-License-Identifier: Apache-2.0
       }
     }
   </div>
+  @if (toolsAfter()) {
+    <ng-container [ngTemplateOutlet]="toolsTemplate" />
+  }
   @if (!introFirst()) {
     <ng-container [ngTemplateOutlet]="lineTemplate" />
   }
@@ -422,4 +382,56 @@ SPDX-License-Identifier: Apache-2.0
       {{ line.text }}
     }
   </p>
+</ng-template>
+<!-- A field's tools, in the order they sit: what appears on hover first,
+     the value mode last, on the field's right edge. -->
+<ng-template #toolsTemplate>
+  <div class="param-tools" (keydown)="toolsKey($event)">
+    @if (entry.option && !reason && !spec.required) {
+      <button
+        type="button"
+        class="icon-button param-remove"
+        aria-label="Remove option"
+        title="Remove option"
+        (click)="session().removeOption(spec)"
+      >
+        <weave-icon name="trash" [size]="16" />
+      </button>
+    }
+    @if (hasMenu()) {
+      <weave-row-menu
+        class="param-menu"
+        [label]="'Field menu for ' + spec.label"
+        [items]="menuItems()"
+      />
+    }
+    @if (mode() !== null && spec.mapping === "both") {
+      <div
+        class="param-mode"
+        role="radiogroup"
+        [attr.aria-label]="'Value mode for ' + spec.label"
+      >
+        <button
+          type="button"
+          role="radio"
+          [attr.aria-checked]="mode() === 'fixed'"
+          [attr.tabindex]="mode() === 'fixed' ? 0 : -1"
+          [disabled]="!!reason"
+          (click)="setMode('fixed')"
+        >
+          Fixed
+        </button>
+        <button
+          type="button"
+          role="radio"
+          [attr.aria-checked]="mode() === 'mapped'"
+          [attr.tabindex]="mode() === 'mapped' ? 0 : -1"
+          [disabled]="!!reason"
+          (click)="setMode('mapped')"
+        >
+          Mapped
+        </button>
+      </div>
+    }
+  </div>
 </ng-template>

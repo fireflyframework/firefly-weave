@@ -18,9 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 /* The parameter form, on the Parameters pane's content edge; tokens only.
    Fields sit 16 px apart and 8 px separates a label row, its control and the
    line under it. Every control is the touch height (44 px), so inputs,
-   selects, pickers and rows share one height. A label row stays 24 px tall:
+   selects, pickers and rows share one height. A label row stays 28 px tall:
    its tools keep 44 px targets and draw a compact face, overflowing the row
-   instead of growing it (below 768 px and for coarse pointers the row grows). */
+   into the gaps around it without reaching the control below (below 768 px
+   and for coarse pointers the row grows instead). What shows at rest ends on
+   the right edge; tools that appear on hover sit inboard of it. */
 .param-form {
   display: flex;
   flex-direction: column;
@@ -37,7 +39,7 @@ SPDX-License-Identifier: Apache-2.0
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
-  min-height: 24px;
+  min-height: calc(var(--control-touch) - 2 * var(--space-2));
 }
 .param-label {
   font: var(--type-label);
@@ -73,19 +75,23 @@ SPDX-License-Identifier: Apache-2.0
   min-width: var(--control-touch);
   height: var(--control-touch);
   min-height: var(--control-touch);
-  margin-block: calc((24px - var(--control-touch)) / 2);
+}
+.step-details .param-label-row > .param-tools > weave-row-menu .row-menu-toggle,
+.step-details .param-label-row > .param-tools > button.param-remove,
+.step-details .param-label-row > .param-tools .param-mode button[role="radio"] {
+  margin-block: calc(-1 * var(--space-2));
 }
 /* Fixed | Mapped: a 24 px face inside 44 px targets. */
 .param-mode {
   position: relative;
   isolation: isolate;
   display: inline-flex;
-  padding: 0 2px;
+  padding: 0 var(--space-1);
 }
 .param-mode::before {
   content: "";
   position: absolute;
-  inset: calc(50% - 12px) 0;
+  inset: calc(50% - var(--space-3)) 0;
   z-index: -1;
   background: var(--sunken);
   border: 1px solid var(--border);
@@ -96,7 +102,6 @@ SPDX-License-Identifier: Apache-2.0
   z-index: 0;
   min-width: var(--control-touch);
   min-height: var(--control-touch);
-  margin-block: calc((24px - var(--control-touch)) / 2);
   padding: 0 var(--space-2);
   border: 0;
   border-radius: 0;
@@ -107,9 +112,9 @@ SPDX-License-Identifier: Apache-2.0
 .step-details .param-mode button[role="radio"]::before {
   content: "";
   position: absolute;
-  inset: calc(50% - 10px) 0;
+  inset: calc(50% - var(--space-2)) 0;
   z-index: -1;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 .step-details
   .param-mode
@@ -356,7 +361,8 @@ SPDX-License-Identifier: Apache-2.0
   width: var(--control-touch);
   min-width: var(--control-touch);
   min-height: var(--control-touch);
-  margin: calc((24px - var(--control-touch)) / 2);
+  margin: calc(-1 * var(--space-2))
+    calc((var(--space-6) - var(--control-touch)) / 2);
   color: var(--subtle);
 }
 .toggletip-text {
@@ -423,9 +429,17 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--muted);
 }
 @media (max-width: 767px), (pointer: coarse) {
-  .step-details .param-tools > weave-row-menu .row-menu-toggle,
-  .step-details .param-tools > button.param-remove,
-  .step-details .param-mode button[role="radio"] {
+  .step-details
+    .param-label-row
+    > .param-tools
+    > weave-row-menu
+    .row-menu-toggle,
+  .step-details .param-label-row > .param-tools > button.param-remove,
+  .step-details
+    .param-label-row
+    > .param-tools
+    .param-mode
+    button[role="radio"] {
     margin-block: 0;
   }
   .step-details button.toggletip-button {
@@ -527,11 +541,18 @@ SPDX-License-Identifier: Apache-2.0
   grid-column: 1;
   min-width: 0;
 }
+/* The label is for assistive technology only; its row adds no box. */
 .param-row-value > .param > .param-label-row {
+  display: contents;
+}
+.param-row-value > .param > .param-label-row > .param-spacer {
+  display: none;
+}
+.param-row-value > .param > .param-tools {
   grid-row: 1;
   grid-column: 2;
-  min-height: var(--control-touch);
-  padding-right: 1px;
+  align-self: center;
+  padding-right: var(--space-3);
 }
 .param-row-value > .param > .param-line {
   grid-row: 2;
@@ -567,7 +588,7 @@ SPDX-License-Identifier: Apache-2.0
   .param-row-value > .param::before {
     grid-row: 1 / span 2;
   }
-  .param-row-value > .param > .param-label-row {
+  .param-row-value > .param > .param-tools {
     grid-row: 2;
     grid-column: 1;
     justify-self: end;
@@ -597,9 +618,31 @@ SPDX-License-Identifier: Apache-2.0
   gap: 0;
 }
 .param-row.is-card > weave-param-field > .param > .param-label-row {
+  container-type: inline-size;
+  align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--line);
+}
+/* A card's field menu ends its header at rest, muted, on the card's inner edge. */
+.param-row.is-card
+  > weave-param-field
+  > .param
+  > .param-label-row
+  > .param-tools
+  > .param-menu {
+  opacity: 1;
+}
+.step-details
+  .param-row.is-card
+  > weave-param-field
+  > .param
+  > .param-label-row
+  > .param-tools
+  > weave-row-menu
+  .row-menu-toggle {
+  margin-block: 0;
+  color: var(--muted);
 }
 .param-row.is-card > weave-param-field > .param > .param-control {
   padding: var(--space-3);
@@ -607,17 +650,15 @@ SPDX-License-Identifier: Apache-2.0
 .param-row.is-card > weave-param-field > .param > .param-line {
   padding: 0 var(--space-3) var(--space-3);
 }
-.param-row.is-card > weave-param-field > .param > .param-label-row {
-  container-type: inline-size;
-}
-/* One line: the chip and next step give way (they keep their full text as a
-   title); the move and remove buttons stay together at the end. */
+/* One line: the next step gives way first, then the chip (both keep their
+   full text as a title); the move and remove buttons stay together at the end. */
 .param-card-head {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: var(--space-2);
+  gap: 0 var(--space-2);
   min-width: 0;
+  min-height: var(--control-touch);
 }
 .param-card-head > :is(strong, .param-grip) {
   flex: none;
@@ -631,9 +672,22 @@ SPDX-License-Identifier: Apache-2.0
   flex: none;
   margin-left: auto;
 }
-@container (max-width: 359px) {
+/* A narrow card keeps its title and buttons on the header row and puts the
+   chip and next step on a line under the title. */
+@container (max-width: 419px) {
   .param-card-head {
     flex-wrap: wrap;
+  }
+  .param-card-head::after {
+    content: "";
+    order: 1;
+    flex-basis: 100%;
+  }
+  .param-card-head > :is(.param-chip-out, .param-next) {
+    order: 2;
+  }
+  .param-card-head > .param-chip-out {
+    margin-left: calc(16px + var(--space-2));
   }
 }
 .param-grip {
@@ -646,7 +700,7 @@ SPDX-License-Identifier: Apache-2.0
   display: inline-flex;
   flex: 0 1 auto;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1);
   min-width: 0;
   max-width: 220px;
   height: 24px;
@@ -669,7 +723,7 @@ SPDX-License-Identifier: Apache-2.0
   text-overflow: ellipsis;
 }
 .param-next {
-  flex: 0 4 auto;
+  flex: 0 1000 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -756,7 +810,12 @@ SPDX-License-Identifier: Apache-2.0
   gap: var(--space-2);
   min-height: var(--control-touch);
 }
+.add-option-menu[data-side="above"] {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
 .add-option-menu {
+  overflow-y: auto;
   position: absolute;
   top: calc(100% + var(--space-1));
   left: 0;
