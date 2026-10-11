@@ -190,6 +190,44 @@ the time budget can be reached first. Synthetic control instances do not count
 toward completeness or the key cap. Step outputs remain optional and classified.
 `runs.logs` still answers authorized requests with `501 WV-UNAVAILABLE`.
 
+## Incident list compatibility
+
+`incidents.list` and the paged `incidents.run_list` now read incident facts
+instead of loading each incident's run. Their default order changes to
+`opened_desc`, newest opened first, with `opened_asc` also available; incidents
+whose opening time is unknown come last. Clients that continue a cursor saved
+before the upgrade must send `order=id` without filters. The
+`weave runs incidents list` and `run-list` commands do not send `order=id` yet,
+so they cannot continue such a cursor; start the listing again.
+
+The incident lists also change how they read requests:
+
+- They accept `status` (repeatable), `code`, `workflow`, `node_id`, an opening
+  time range, and `include_test`. Without `status` they still list every
+  status.
+- Incidents of test runs are left out unless the request sends
+  `include_test=true`.
+- They reject unknown query parameters with `422 WV-VALIDATION`; the earlier
+  routes ignored them. A `limit` outside 1 to 100 answers `422 WV-VALIDATION`
+  instead of `422 WV-PAGE`.
+- An older server ignores the filters and the order and lists every incident in
+  ID order. Upgrade servers before relying on them.
+
+Incident views gain optional fields that are left out while unknown, false, or
+empty, so earlier responses and stored resolution receipts keep their bytes.
+For an incident of a repeated step instance, `node_id` becomes the static step
+ID and `instance_key` carries the full key; other incidents keep the same
+`node_id`. Whether an incident is withheld now comes from its run's metadata
+and policy blocks, so a list never loads runs. The new `incidents.read`
+operation serves direct links and sends the revision as `ETag`. The Python
+SDK adds `read_incident`, and `list_incidents` and `run_incidents` take either
+a `query` or the keyword arguments; passing both raises `ValueError`.
+
+Historical opening times come from each incident's opening event. When that
+event was not retained, the upgrade used the run's last recorded event and
+marks the time `opened_at_estimated`; without either, the opening time stays
+unknown.
+
 ## Operational fact storage
 
 The `0031_operations_facts` migration adds five scoped operational projections

@@ -30,7 +30,9 @@ from sqlalchemy import text
 
 from firefly_weave.compiler.ir import accepted_ir_versions
 from firefly_weave.contracts import language_features
+from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.instance_keys import split_instance
+from firefly_weave.contracts.operations import IncidentView
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.run_views import (
     RunListQuery,
@@ -74,6 +76,29 @@ _MISSING = (
     "AND f.run_id=s.run_id AND (f.instance_key=s.node_id OR (f.instance_key='' AND f.node_id=s.node_id)))"
 )
 _STEP_ORDER = 'scheduled_at ASC NULLS LAST,node_id COLLATE "C",instance_key COLLATE "C"'
+_INCIDENT_SCOPE = "i.tenant_id=:tenant AND i.project_id=:project AND i.environment_id=:environment"
+_INCIDENT_FACTS = (
+    " LEFT JOIN incident_facts f ON f.tenant_id=i.tenant_id AND f.project_id=i.project_id "
+    "AND f.environment_id=i.environment_id AND f.incident_id=i.id"
+)
+# Ordering keys only: filters and sorting never read the incident's resolution or its run.
+_INCIDENT_KEYS = "SELECT i.id,f.opened_at FROM incidents i" + _INCIDENT_FACTS + " WHERE " + _INCIDENT_SCOPE
+# One statement for the selected incidents: their columns, measured together against the page budget before the
+# resolutions are returned, their facts and their run's classification metadata.
+_INCIDENT_DETAILS = (
+    "WITH page AS (SELECT i.*,sum(octet_length(to_jsonb(i)::text)) OVER () AS page_bytes FROM incidents i "
+    "WHERE " + _INCIDENT_SCOPE + " AND i.id=ANY(:ids)) "
+    "SELECT i.id,i.run_id,i.incident_key,i.node_id,i.generation,i.origin_code,i.code,i.status,i.revision,"
+    "i.actor_id,i.resolved_at,CASE WHEN i.page_bytes<=:budget THEN i.resolution END AS resolution,"
+    "i.page_bytes>:budget AS oversized,f.incident_id IS NOT NULL AS projected,f.node_id AS static_node_id,"
+    "f.instance_key,f.opened_at,f.updated_at,f.opened_at_estimated,f.workflow_name,f.workflow_version,f.test,"
+    "r.status AS run_status,r.classification_state,r.classification_policy,r.pinned_ir_version,r.pinned_features,"
+    "EXISTS(SELECT 1 FROM run_policy_blocks b WHERE b.tenant_id=i.tenant_id AND b.project_id=i.project_id "
+    "AND b.environment_id=i.environment_id AND b.run_id=i.run_id) AS policy_blocked FROM page i"
+    + _INCIDENT_FACTS
+    + " LEFT JOIN run_facts r ON r.tenant_id=i.tenant_id AND r.project_id=i.project_id "
+    "AND r.environment_id=i.environment_id AND r.run_id=i.run_id"
+)
 LEGACY_KEYS = 100_000
 LEGACY_SECONDS = 2
 _KIND: TypeAdapter[StepKind] = TypeAdapter(StepKind)
@@ -224,6 +249,50 @@ def step_of(row: Mapping[str, Any], *, output: SafeProjection | None = None) -> 
         raise legacy_unavailable() from None
 
 
+def _json(value: object) -> str:
+    return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
+def incident_of(row: Mapping[str, Any]) -> IncidentView | UnavailableResource:
+    """An incident from its own columns and its facts; withheld unless its run's metadata is available.
+
+    The facts carry the static step ID and full instance key normalized when they were written. An incident whose
+    facts are missing, or whose step identity could not be normalized, is unavailable rather than guessed.
+    """
+    identifier = row["id"]
+    source = row["node_id"]
+    if not row["projected"] or not available(row) or (source is None) != (row["static_node_id"] is None):
+        return unavailable(identifier)
+    resolution = row["resolution"]
+    values = dict(
+        id=identifier,
+        run_id=row["run_id"],
+        incident_key=row["incident_key"],
+        node_id=row["static_node_id"],
+        generation=row["generation"],
+        origin_code=row["origin_code"],
+        code=row["code"],
+        status=row["status"],
+        revision=row["revision"],
+        actor_id=row["actor_id"],
+        resolved_at=row["resolved_at"],
+        resolution=resolution,
+        external_effects_may_continue=isinstance(resolution, dict) and resolution.get("kind") == "terminate",
+        instance_key=row["instance_key"],
+        opened_at=row["opened_at"],
+        # A time is only estimated when it is known; an unknown opening time stays unknown.
+        opened_at_estimated=row["opened_at_estimated"] is True and row["opened_at"] is not None,
+        updated_at=row["updated_at"],
+        workflow=dict(name=row["workflow_name"], version=row["workflow_version"]),
+        run_status=row["run_status"],
+        test=row["test"],
+    )
+    try:
+        return IncidentView.model_validate_json(json.dumps(values, default=_json))
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return unavailable(identifier)
+
+
 def legacy_unavailable() -> CatalogError:
     return CatalogError(409, "WV-LEGACY-UNAVAILABLE", "Step classification is unavailable")
 
@@ -337,6 +406,76 @@ class FactReadRepository(FactRepository):
         return found + await self.rows(
             _RUN_SELECT + " AND " + " AND ".join(unknown) + f" ORDER BY f.run_id {direction} LIMIT :limit",
             **{**params, **bounds},
+        )
+
+    async def incident_rows(
+        self, query: IncidentQuery, position: RunPosition | UUID | None, run_id: UUID | None
+    ) -> list[dict[str, Any]]:
+        """The ordering keys of one incident page and its lookahead: incident IDs and opening times."""
+        clauses: list[str] = []
+        params: dict[str, Any] = dict(limit=query.limit + 1)
+        for name, column, value in (
+            ("run", "i.run_id", run_id),
+            ("code", "i.code", query.code),
+            ("workflow", "f.workflow_name", query.workflow),
+            ("node", "f.node_id", query.node_id),
+        ):
+            if value is not None:
+                clauses.append(f"{column}=:{name}")
+                params[name] = value
+        if query.status:
+            clauses.append("i.status=ANY(:statuses)")
+            params["statuses"] = query.status
+        if not query.include_test:
+            clauses.append("NOT coalesce(f.test,false)")
+        for name, operator in (("opened_after", ">="), ("opened_before", "<")):
+            value = getattr(query, name)
+            if value is not None:
+                clauses.append(f"f.opened_at{operator}:{name}")
+                params[name] = value
+        if query.order == "id":
+            if isinstance(position, RunPosition):
+                raise ValueError("ID order requires an ID position")
+            if position is not None:
+                clauses.append("i.id>:position_id")
+                params["position_id"] = position
+            order = "i.id ASC"
+        else:
+            if isinstance(position, UUID):
+                raise ValueError("Chronological order requires a time position")
+            direction, operator = ("DESC", "<") if query.order == "opened_desc" else ("ASC", ">")
+            if position is not None:
+                params["position_id"] = position.id
+                if position.at is None:
+                    clauses.append(f"(f.opened_at IS NULL AND i.id{operator}:position_id)")
+                else:
+                    # Unknown opening times come after every known one, in both directions.
+                    clauses.append(f"((f.opened_at,i.id){operator}(:position_at,:position_id) OR f.opened_at IS NULL)")
+                    params["position_at"] = position.at
+            order = f"f.opened_at {direction} NULLS LAST,i.id {direction}"
+        return await self.rows(
+            _INCIDENT_KEYS + "".join(" AND " + clause for clause in clauses) + f" ORDER BY {order} LIMIT :limit",
+            **params,
+        )
+
+    async def incident_details(self, ids: list[UUID]) -> list[dict[str, Any]]:
+        """The selected incidents with their facts; a page above the logical byte limit is refused unread."""
+        if not ids:
+            return []
+        rows = await self.rows(_INCIDENT_DETAILS, ids=ids, budget=PAGE_BYTES)
+        if any(row["oversized"] for row in rows):
+            raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
+        return rows
+
+    async def run_exists(self, run_id: UUID) -> bool:
+        return bool(
+            await self.tx.session.scalar(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM runs r WHERE r.tenant_id=:tenant AND r.project_id=:project "
+                    "AND r.environment_id=:environment AND r.id=:run)"
+                ),
+                {**self.params, "run": run_id},
+            )
         )
 
     async def page_bytes(self, run_ids: list[UUID]) -> int:

@@ -56,6 +56,7 @@ from firefly_weave.contracts.human_tasks import (
     TaskGroup,
     TaskGroupRequest,
 )
+from firefly_weave.contracts.incident_queries import IncidentOrder, IncidentQuery
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
 from firefly_weave.contracts.language import LanguageManifest
 from firefly_weave.contracts.lumi import (
@@ -541,15 +542,21 @@ class WeaveClient:
         *,
         limit: int = 50,
         cursor: str | None = None,
+        order: IncidentOrder = "opened_desc",
+        query: IncidentQuery | None = None,
     ) -> Page[IncidentView | UnavailableResource]:
+        """One run's incidents with either a typed ``query`` or the keyword arguments; mixing them raises."""
         return cast(
             Page[IncidentView | UnavailableResource],
             await self.invoke(
                 "incidents.run_list",
                 identifier=identifier,
-                query=self._page(limit, cursor),
+                query=self._incident_query(limit, cursor, order, query),
             ),
         )
+
+    async def read_incident(self, identifier: UUID) -> IncidentView | UnavailableResource:
+        return cast(IncidentView | UnavailableResource, await self.invoke("incidents.read", identifier=identifier))
 
     async def resolve_incident(self, identifier: UUID, request: IncidentResolution, *, revision: int) -> IncidentView:
         return cast(
@@ -763,12 +770,33 @@ class WeaveClient:
         return cast(Page[Trigger], await self.invoke("triggers.list", query=self._page(limit, cursor)))
 
     async def list_incidents(
-        self, *, limit: int = 50, cursor: str | None = None
+        self,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        order: IncidentOrder = "opened_desc",
+        query: IncidentQuery | None = None,
     ) -> Page[IncidentView | UnavailableResource]:
+        """Incidents with either a typed ``query`` or the keyword arguments; mixing them raises ``ValueError``."""
         return cast(
             Page[IncidentView | UnavailableResource],
-            await self.invoke("incidents.list", query=self._page(limit, cursor)),
+            await self.invoke("incidents.list", query=self._incident_query(limit, cursor, order, query)),
         )
+
+    @classmethod
+    def _incident_query(
+        cls, limit: int, cursor: str | None, order: IncidentOrder, query: IncidentQuery | None
+    ) -> dict[str, str | int | list[str]]:
+        if query is None:
+            return {**cls._page(limit, cursor), "order": order}
+        if (limit, cursor, order) != (50, None, "opened_desc"):
+            raise ValueError("Use either a query or keyword list arguments")
+        # Statuses travel as repeated parameters; empty filters are left out.
+        return {
+            key: str(value).lower() if isinstance(value, bool) else value
+            for key, value in query.model_dump(mode="json", exclude_none=True).items()
+            if not isinstance(value, list) or value
+        }
 
     async def list_schedules(self, *, limit: int = 50, cursor: str | None = None) -> Page[ScheduleView]:
         return cast(Page[ScheduleView], await self.invoke("schedules.list", query=self._page(limit, cursor)))

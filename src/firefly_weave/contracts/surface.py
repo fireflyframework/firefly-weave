@@ -95,6 +95,7 @@ from firefly_weave.contracts.human_tasks import (
     TaskGroupRequest,
 )
 from firefly_weave.contracts.identity import IdentityView
+from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
 from firefly_weave.contracts.language import LanguageManifest
 from firefly_weave.contracts.lumi import (
@@ -1438,6 +1439,7 @@ OPERATIONS = {
             Page[IncidentView | UnavailableResource],
             "incident.read",
             page=True,
+            query=IncidentQuery,
         ),
         Operation(
             "incidents.list",
@@ -1446,6 +1448,15 @@ OPERATIONS = {
             Page[IncidentView | UnavailableResource],
             "incident.read",
             page=True,
+            query=IncidentQuery,
+        ),
+        Operation(
+            "incidents.read",
+            ENVIRONMENT + "/incidents/{identifier}",
+            "GET",
+            IncidentView | UnavailableResource,
+            "incident.read",
+            etag=True,
         ),
         Operation(
             "incidents.resolve",

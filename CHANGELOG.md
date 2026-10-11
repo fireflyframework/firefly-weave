@@ -38,6 +38,18 @@ SPDX-License-Identifier: Apache-2.0
 - The Python SDK's `list_runs` rejects a `query` combined with keyword filters.
 - Request telemetry records authorized `501 WV-UNAVAILABLE` answers with the
   status `unavailable` instead of `failed`.
+- Serve incident lists from incident facts without loading runs, newest opened
+  first. They filter by status, code, workflow, step, opening time, and test
+  runs (left out unless `include_test=true`). Explicit `order=id` continues
+  earlier cursors. Unknown query parameters are rejected, and an out-of-range
+  `limit` answers `WV-VALIDATION` instead of `WV-PAGE`.
+- New operation `incidents.read` (`weave runs incidents read`, SDK
+  `read_incident`) serves direct incident links and sends the revision as `ETag`.
+- Incident views add optional `opened_at`, `opened_at_estimated`, `updated_at`,
+  `workflow`, `run_status`, `test`, and `instance_key`; for a repeated step
+  instance, `node_id` is the static step ID. Earlier payloads keep their bytes.
+- The Python SDK's `list_incidents` and `run_incidents` accept a typed `query`
+  and reject one combined with keyword arguments.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.

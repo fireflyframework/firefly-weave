@@ -211,6 +211,7 @@ repeated. Platform administration alone grants no execution rights.
 | --- | --- | --- | --- |
 | `GET /runs/{run}/incidents` | `weave runs incidents run-list` | `incident.read` | Incident views, including closed history |
 | `GET /incidents` | `weave runs incidents list` | `incident.read` | Incidents across the environment |
+| `GET /incidents/{incident}` | `weave runs incidents read` | `incident.read` | One incident, with its revision as `ETag` |
 | `POST /incidents/{incident}/resolve` | `weave runs incidents resolve` | `incident.resolve` | An immutable, revision-fenced resolution |
 | `POST /runs/{run}/cancel` | `weave runs cancel` | `run.cancel` | Terminal cancellation with the external-effects flag |
 | `POST /runs/{run}/retry` | `weave runs retry` | `run.retry` and normal start admission | A new run linked by `parent_run_id` |

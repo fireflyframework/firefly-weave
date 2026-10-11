@@ -152,6 +152,7 @@ def contract_models() -> dict[str, SchemaModel]:
         TaskGroupRequest,
     )
     from firefly_weave.contracts.identity import IdentityView
+    from firefly_weave.contracts.incident_queries import IncidentQuery
     from firefly_weave.contracts.language import LanguageManifest
     from firefly_weave.contracts.lumi import (
         LumiAskRequest,
@@ -169,7 +170,13 @@ def contract_models() -> dict[str, SchemaModel]:
         PrincipalRecord,
         PrincipalStatusRequest,
     )
-    from firefly_weave.contracts.operations import EventPage, HistoryExport, RecordedEvidence, ReplayReport
+    from firefly_weave.contracts.operations import (
+        EventPage,
+        HistoryExport,
+        IncidentView,
+        RecordedEvidence,
+        ReplayReport,
+    )
     from firefly_weave.contracts.providers import (
         ProviderEvent,
         ProviderIngressResponse,
@@ -302,6 +309,8 @@ def contract_models() -> dict[str, SchemaModel]:
         "run-step-query": RunStepQuery,
         "run-log-page": RunLogPage,
         "run-log-query": RunLogQuery,
+        "incident-view": IncidentView,
+        "incident-query": IncidentQuery,
         "human-task": HumanTask,
         "human-task-command": HumanTaskCommand,
         "complete-human-task": CompleteHumanTask,

@@ -387,7 +387,7 @@ capabilities, bindings, Actions, and connection settings, plus
 
 - `limit` is 1 to 100 (50 by default). Items come in stable ID order unless a
   list documents another order: `runs.list` and run summaries are newest
-  started first by default (see below).
+  started first, and incident lists newest opened first, by default (see below).
 - Pass `next_cursor` back as `cursor` for the next page. A cursor is bound to
   its tenant, project, environment, collection, and any run or schedule filter;
   a cursor from another scope or filter is rejected.
@@ -458,6 +458,39 @@ answers `429 WV-RUNTIME-LIMIT`. A run this platform cannot run yet answers
 `422 WV-IR-UNSUPPORTED`, as `runs.read` does; a run with unavailable legacy
 evidence answers `409 WV-LEGACY-UNAVAILABLE`. In `runs.list`, only a recorded
 policy block withholds a run before its own read classifies it.
+
+**Incidents.** `incidents.list` and the paged `incidents.run_list` read
+incident facts after checking both token and current permissions; they never
+load run payloads. `incidents.read` (`GET …/incidents/{identifier}`) reads one
+incident for a direct link and sends its revision as the `ETag`, ready for
+`incidents.resolve`.
+
+- Filters: `status` (repeatable: `active`, `closed`, `resolved`; every status
+  when omitted), `code`, `workflow`, `node_id`, `opened_after`,
+  `opened_before`, and `include_test`. `node_id` is a static step ID and
+  matches every instance of that step. Opening times follow the run summary
+  rules: RFC 3339 with an offset, `opened_after` earlier than `opened_before`,
+  and a range of at most 400 days.
+- Incident lists default to `order=opened_desc` and also accept `opened_asc`
+  and `order=id`. Incidents whose opening time is unknown come last. ID order
+  without filters keeps the earlier cursors, so send explicit `order=id` to
+  continue one; every other cursor is bound to the run, each filter, and the
+  order.
+- Incidents of test runs are left out unless you send `include_test=true`.
+  Incidents of archived runs stay listed.
+- Incident views add `opened_at`, `updated_at`, `workflow` (`name` and
+  `version`), `run_status`, `test`, and, for an incident of a repeated step
+  instance, `instance_key`; `node_id` is then the static step ID. Each is left
+  out while unknown, false, or empty. `opened_at_estimated: true` marks an
+  opening time taken from the run's last recorded event because the incident's
+  own opening event was not retained; an unknown opening time is never
+  estimated.
+- An incident whose run metadata cannot be classified, or whose run has a
+  recorded policy block, is an unavailable placeholder. `incidents.read` then
+  sends no `ETag`.
+- A page is limited to 8 MiB of retained incident data; a larger page answers
+  `429` with `WV-PAGE-LIMIT`. Unknown query parameters are rejected, and a
+  `limit` outside 1 to 100 answers `422` with `WV-VALIDATION`.
 
 **Answers that say "unavailable".** Cancellation and task completion can return
 an unavailable acknowledgment when the platform cannot classify the historical
@@ -611,6 +644,7 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `runs.logs` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/logs` | run.read |
 | `incidents.run_list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/incidents` | incident.read |
 | `incidents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents` | incident.read |
+| `incidents.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents/{identifier}` | incident.read |
 | `incidents.resolve` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents/{identifier}/resolve` | incident.resolve |
 | `releases.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases` | release.activate |
 | `releases.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases` | catalog.read |
