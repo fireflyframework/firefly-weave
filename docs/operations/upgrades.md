@@ -155,6 +155,28 @@ default to `started_desc`, with `started_asc` and `updated_desc` also available.
 Clients that continue a legacy v1 cursor must send `order=id` and retain its
 original filters. New filters bind ID cursors to the normalized query; time
 orders use v2 cursors. Restart pagination after changing filters or order.
+The `weave runs list` command does not send `order=id` yet, so it cannot
+continue a cursor saved before the upgrade; start such a listing again.
+
+`runs.list` also changes how it reads requests:
+
+- It accepts the run summary filters and leaves out test runs unless the
+  request sends `include_test=true`.
+- It rejects unknown query parameters with `422 WV-VALIDATION`; the earlier
+  route ignored them.
+- A `limit` outside 1 to 100 answers `422 WV-VALIDATION` instead of
+  `422 WV-PAGE`.
+- An older server reads only `limit`, `cursor`, `business_key`,
+  `correlation_key`, a single `status` and `include_archived`. It ignores the
+  other filters, and it keeps only the last of several `status` values. Upgrade
+  servers before relying on the new filters.
+
+The Python SDK's `list_runs` takes either a `query` or the keyword filters;
+passing both raises `ValueError` instead of silently dropping the keywords.
+
+Request telemetry records an authorized `501 WV-UNAVAILABLE` answer, such as
+`runs.logs`, with the status `unavailable` instead of `failed`. Alerts that
+count `weave.requests` with `status=failed` no longer include these answers.
 
 The update-time order is a live view: a later update can move an item between
 pages. Refresh from the first page to see the latest ordering. Unknown historical

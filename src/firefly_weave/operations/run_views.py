@@ -56,10 +56,7 @@ class RunViewService:
         self.uow, self.authorization = uow, authorization
 
     async def authorize(self, actor: Principal, scope: Scope, tx: Transaction, *, context: AuditContext) -> Principal:
-        """`run.read` on the token principal and again on the principal stored now."""
-        if scope.environment_id is None:
-            raise CatalogError(422, "WV-SCOPE", "Runtime requires an environment")
-        self.authorization.require(actor, scope, "run.read", context=context)
+        """`run.read` on the principal stored now, inside the read unit; `precheck` already checked the token."""
         current = await load_principal(tx.session, actor.id)
         self.authorization.require(current, scope, "run.read", context=context)
         return current
@@ -104,10 +101,11 @@ class RunViewService:
             if len(rows) > query.limit:
                 last = visible[-1]
                 at = last["scheduled_at"]
+                # The full instance key determines the step ID, so the longest valid key still fits the cursor.
                 cursor = encode_cursor_v2(
                     scope,
                     query.cursor_collection(run_id),
-                    [at.isoformat() if at else None, last["node_id"], last["instance_key"]],
+                    at.isoformat() if at else None,
                     last["instance_key"] or last["node_id"],
                 )
             return StepFactPage(
@@ -132,6 +130,7 @@ class RunViewService:
             raise not_served("runs.logs")
 
     def precheck(self, actor: Principal, scope: Scope, context: AuditContext) -> None:
+        """`run.read` on the token principal, before any read unit opens."""
         if scope.environment_id is None:
             raise CatalogError(422, "WV-SCOPE", "Runtime requires an environment")
         self.authorization.require(actor, scope, "run.read", context=context)

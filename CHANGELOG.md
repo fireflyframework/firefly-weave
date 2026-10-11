@@ -27,6 +27,17 @@ SPDX-License-Identifier: Apache-2.0
   supported with explicit `order=id`; chronological orders use v2 cursors.
   Update-time pagination is a live view and may require a refresh after changes.
   Restored executions reappear in every order.
+- `runs.list` accepts the run summary filters and leaves out test runs unless
+  `include_test=true`. It rejects unknown query parameters, and an out-of-range
+  `limit` answers `WV-VALIDATION` instead of `WV-PAGE`. Pages stay limited to
+  8 MiB of retained run data.
+- Step timeline outputs are limited to 8 MiB per page (`429 WV-PAGE-LIMIT`).
+  Outputs of agent, tool or yield instance keys stay withheld until they have
+  their own schemas. A run waiting for a platform that runs it answers
+  `422 WV-IR-UNSUPPORTED` as `runs.read` does.
+- The Python SDK's `list_runs` rejects a `query` combined with keyword filters.
+- Request telemetry records authorized `501 WV-UNAVAILABLE` answers with the
+  status `unavailable` instead of `failed`.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.

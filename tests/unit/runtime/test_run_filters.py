@@ -16,7 +16,7 @@
 
 """Bounded exact run discovery and filter-bound cursors."""
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -60,3 +60,53 @@ def test_explicit_id_queries_retain_exact_legacy_cursor_collections():
     assert query.model_copy(update={"include_test": True}).cursor_collection() != old.cursor_collection()
     assert query.model_copy(update={"status": ["waiting", "failed"]}).cursor_collection() != old.cursor_collection()
     assert query.model_copy(update={"order": "started_desc"}).cursor_collection() != old.cursor_collection()
+
+
+async def test_keyword_list_adapter_always_pages_by_id(monkeypatch):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.access.models import Grant, Principal
+    from firefly_weave.operations.fact_reads import FactReadRepository
+    from firefly_weave.runtime.service import RuntimeService
+
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    actor = Principal(id=uuid4(), kind="human", grants=(Grant(role="viewer", scope=scope),))
+    identifiers = sorted(uuid4() for _ in range(3))
+    queries = []
+
+    class Definitions:
+        def require(self, *args):
+            pass
+
+        @asynccontextmanager
+        async def transaction(self, scope, tx, *, mutation=True):
+            yield SimpleNamespace(session=object(), scope=scope)
+
+    async def load(session, identifier):
+        return actor
+
+    async def rows(repository, query, position):
+        queries.append((query.order, position))
+        # Policy-blocked rows answer placeholders, so the adapter is observed without full-run reads.
+        return [
+            {"run_id": identifier, "policy_blocked": True}
+            for identifier in identifiers
+            if not position or identifier > position
+        ]
+
+    async def measured(repository, run_ids):
+        return 0
+
+    monkeypatch.setattr("firefly_weave.access.repository.load_principal", load)
+    monkeypatch.setattr(FactReadRepository, "legacy_rows", rows)
+    monkeypatch.setattr(FactReadRepository, "page_bytes", measured, raising=False)
+    service = RuntimeService(Definitions())
+    first = await service.list(actor, scope, limit=2, context=AuditContext())
+    # The keyword contract returns a raw ID position that the same keywords can continue.
+    assert first["next_cursor"] == str(identifiers[1])
+    rest = await service.list(actor, scope, limit=2, cursor=UUID(first["next_cursor"]), context=AuditContext())
+    assert [item["id"] for item in rest["items"]] == [str(identifiers[2])] and rest["next_cursor"] is None
+    await service.list(actor, scope, limit=2, filters=RunListFilters(), context=AuditContext())
+    assert queries == [("id", None), ("id", identifiers[1]), ("id", None)]

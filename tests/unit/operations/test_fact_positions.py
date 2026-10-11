@@ -70,40 +70,37 @@ def test_positions_normalize_times_preserve_null_and_are_immutable():
     with pytest.raises(FrozenInstanceError):
         run.at = None
     assert run_position((None, RUN)).at is None
-    step = step_position(([None, "send", "send[3]#2~1"], "send[3]#2~1"))
+    step = step_position((None, "send[3]#2~1"))
     assert (step.scheduled_at, step.node_id, step.instance_key) == (None, "send", "send[3]#2~1")
     with pytest.raises(FrozenInstanceError):
         step.node_id = "other"
-    plain = step_position((["2026-10-09T02:00:00+02:00", "send", ""], "send"))
-    assert (plain.scheduled_at, plain.instance_key) == (datetime(2026, 10, 9, tzinfo=UTC), "")
+    plain = step_position(("2026-10-09T02:00:00+02:00", "send"))
+    assert (plain.scheduled_at, plain.node_id, plain.instance_key) == (datetime(2026, 10, 9, tzinfo=UTC), "send", "")
 
 
 @pytest.mark.parametrize(
     "value,identifier",
     [
-        ([None, "send", "other[3]"], "send[3]"),
-        ([None, "send", "send[3]"], "send"),
-        ([None, "send", "send"], "send"),
-        ([None, "@join:send", ""], "@join:send"),
-        ([None, "send", "send[03]"], "send[03]"),
-        ([None, 3, ""], "3"),
-        ([None, True, ""], "true"),
-        ([None, {}, ""], "x"),
-        ([None, [], ""], "x"),
-        ([None, "send", 3], "x"),
-        ([None, "send", True], "x"),
-        ([None, "send", {}], "x"),
-        ([None, "send", []], "x"),
-        ([True, "send", ""], "send"),
-        ([3, "send", ""], "send"),
-        ([{}, "send", ""], "send"),
-        ([[], "send", ""], "send"),
-        (None, "send"),
+        (None, "send[03]"),
+        (None, "send[3]#"),
+        (None, "send[3]\n"),
+        (None, "@join:send"),
+        (None, "@branch:send:1[2]"),
+        (None, ""),
+        (None, "s" * 513),
+        (None, None),
+        (None, 3),
+        (None, True),
+        (None, {}),
+        (None, []),
+        (True, "send"),
+        (3, "send"),
         ({}, "send"),
         ([], "send"),
+        ("2026-10-09", "send"),
+        ([None, "send", ""], "send"),
+        ([None, "send", "send[3]"], "send[3]"),
         ([None, "send"], "send"),
-        ([None, "send", "", "extra"], "send"),
-        ([None, "send", ""], None),
     ],
 )
 def test_step_cursor_shape_and_identity_are_validated(value, identifier):

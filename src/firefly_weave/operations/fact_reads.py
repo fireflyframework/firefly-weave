@@ -41,20 +41,32 @@ from firefly_weave.contracts.run_views import (
     StepFactWithOutput,
     StepKind,
 )
-from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.models import CatalogError, ir_unsupported
 from firefly_weave.operations.fact_positions import RunPosition, StepPosition
 from firefly_weave.operations.facts import FactRepository, author_instance
 from firefly_weave.operations.redaction import Omission, SafeProjection
+from firefly_weave.persistence.paging import PAGE_BYTES
+from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime import admission
 
 _RUN_SCOPE = "f.tenant_id=:tenant AND f.project_id=:project AND f.environment_id=:environment"
-_RUN_SELECT = (
-    "SELECT f.*,coalesce(a.archived,false) AS archived,EXISTS(SELECT 1 FROM run_policy_blocks b "
+# Summary columns only: node kinds (up to 1 MiB) are read by the one timeline metadata query that needs them.
+_RUN_COLUMNS = (
+    "f.run_id,f.definition_version_id,f.workflow_name,f.workflow_version,f.activation_id,f.activation_name,"
+    "f.activation_revision,f.status,f.paused,f.test,f.origin,f.caller_run_id,f.caller_node_id,"
+    "f.caller_instance_key,f.retried_from_run_id,f.business_key,f.correlation_key,f.started_at,f.updated_at,"
+    "f.ended_at,f.failed_node_id,f.failed_instance_key,f.failed_error_code,f.active_incidents,f.handled_errors,"
+    "f.classification_state,f.classification_policy,f.pinned_ir_version,f.pinned_features"
+)
+_RUN_FROM = (
+    ",coalesce(a.archived,false) AS archived,EXISTS(SELECT 1 FROM run_policy_blocks b "
     "WHERE b.tenant_id=f.tenant_id AND b.project_id=f.project_id AND b.environment_id=f.environment_id "
     "AND b.run_id=f.run_id) AS policy_blocked FROM run_facts f LEFT JOIN run_archives a ON "
     "a.tenant_id=f.tenant_id AND a.project_id=f.project_id AND a.environment_id=f.environment_id "
     "AND a.run_id=f.run_id WHERE " + _RUN_SCOPE
 )
+_RUN_SELECT = "SELECT " + _RUN_COLUMNS + _RUN_FROM
+_METADATA_SELECT = "SELECT " + _RUN_COLUMNS + ",f.node_kinds" + _RUN_FROM
 _MISSING = (
     "s.tenant_id=:tenant AND s.project_id=:project AND s.environment_id=:environment AND s.run_id=:run "
     "AND left(s.node_id,1)<>'@' AND NOT EXISTS(SELECT 1 FROM step_facts f "
@@ -71,19 +83,52 @@ def unavailable(identifier: UUID) -> UnavailableResource:
     return UnavailableResource(id=identifier, omissions=[Omission(path="", reason="classification_unavailable")])
 
 
-def available(row: Mapping[str, Any]) -> bool:
+def _pinned_features(row: Mapping[str, Any]) -> list[str] | None:
     features = row.get("pinned_features")
+    if (
+        isinstance(features, list)
+        and len(features) <= 256
+        and all(type(value) is str for value in features)
+        and len(json.dumps(features, ensure_ascii=False).encode()) <= 16384
+    ):
+        return features
+    return None
+
+
+def _supported(row: Mapping[str, Any], features: list[str]) -> bool:
+    advertised = language_features.ADVERTISED_FEATURES
+    return set(features) <= set(advertised) and row.get("pinned_ir_version") in accepted_ir_versions(advertised)
+
+
+def available(row: Mapping[str, Any]) -> bool:
+    features = _pinned_features(row)
     return (
         row.get("classification_state") == "available"
         and row.get("classification_policy") == admission.POLICY
         and row.get("policy_blocked") is False
-        and isinstance(features, list)
-        and len(features) <= 256
-        and all(type(value) is str for value in features)
-        and len(json.dumps(features, ensure_ascii=False).encode()) <= 16384
-        and set(features) <= set(language_features.ADVERTISED_FEATURES)
-        and row.get("pinned_ir_version") in accepted_ir_versions(language_features.ADVERTISED_FEATURES)
+        and features is not None
+        and _supported(row, features)
     )
+
+
+def withheld(row: Mapping[str, Any]) -> CatalogError:
+    """The answer for a run whose metadata is withheld, matching what ``runs.read`` answers for it.
+
+    A run this platform does not run yet (cached as unsupported, or pinning an IR version or feature no longer
+    advertised) answers ``ir_unsupported``; it is transient. Legacy or blocked evidence stays unavailable.
+    """
+    features = _pinned_features(row)
+    if (
+        features is not None
+        and row.get("policy_blocked") is False
+        and row.get("classification_policy") == admission.POLICY
+        and (
+            row.get("classification_state") == "unsupported"
+            or (row.get("classification_state") == "available" and not _supported(row, features))
+        )
+    ):
+        return ir_unsupported(tuple(sorted(set(features) - set(language_features.ADVERTISED_FEATURES))))
+    return legacy_unavailable()
 
 
 def milliseconds(start: datetime | None, end: datetime | None) -> int | None:
@@ -183,6 +228,11 @@ def legacy_unavailable() -> CatalogError:
     return CatalogError(409, "WV-LEGACY-UNAVAILABLE", "Step classification is unavailable")
 
 
+def _segmented(key: str) -> bool:
+    parsed = split_instance(key)
+    return bool(parsed.segments) or parsed.count is not None
+
+
 def step_order(row: Mapping[str, Any]) -> tuple[bool, datetime, str, str]:
     at = row["scheduled_at"]
     return at is None, at or datetime.max.replace(tzinfo=UTC), row["node_id"], row["instance_key"]
@@ -198,6 +248,11 @@ class _Candidate:
 
 
 class FactReadRepository(FactRepository):
+    def __init__(self, tx: Transaction) -> None:
+        super().__init__(tx)
+        # One read unit is one snapshot, so a timeline reads its run metadata once.
+        self._metadata: dict[UUID, dict[str, Any]] = {}
+
     async def summary_rows(self, query: RunSummaryQuery, position: RunPosition | None) -> list[dict[str, Any]]:
         return await self._run_rows(query, position)
 
@@ -249,34 +304,66 @@ class FactReadRepository(FactRepository):
                     raise ValueError("ID order requires an ID position")
                 clauses.append("f.run_id>:position_id")
                 params["position_id"] = position
-            order = "f.run_id ASC"
-        else:
+            return await self.rows(
+                _RUN_SELECT + " AND " + " AND ".join(clauses) + " ORDER BY f.run_id ASC LIMIT :limit", **params
+            )
+        if position is not None and not isinstance(position, RunPosition):
+            raise ValueError("Chronological order requires a time position")
+        # Known times, then the unknown-time tail, as two keyset scans in one snapshot. The known-time scan excludes
+        # nulls, so the scoped DESC (nulls first) time indexes serve it in both directions with the row comparison
+        # as an index bound; the tail is read only when known times do not fill the page.
+        found: list[dict[str, Any]] = []
+        if position is None or position.at is not None:
+            known = [*clauses, f"f.{column} IS NOT NULL"]
+            bounds: dict[str, Any] = {}
             if position is not None:
-                if not isinstance(position, RunPosition):
-                    raise ValueError("Chronological order requires a time position")
-                params["position_id"] = position.id
-                if position.at is None:
-                    clauses.append(f"f.{column} IS NULL AND f.run_id{operator}:position_id")
-                else:
-                    params["position_at"] = position.at
-                    clauses.append(
-                        f"((f.{column},f.run_id){operator}(:position_at,:position_id) OR f.{column} IS NULL)"
-                    )
-            order = f"f.{column} {direction} NULLS LAST,f.run_id {direction}"
-        return await self.rows(
-            _RUN_SELECT + " AND " + " AND ".join(clauses) + " ORDER BY " + order + " LIMIT :limit", **params
+                known.append(f"(f.{column},f.run_id){operator}(:position_at,:position_id)")
+                bounds = dict(position_at=position.at, position_id=position.id)
+            found = await self.rows(
+                _RUN_SELECT
+                + " AND "
+                + " AND ".join(known)
+                + f" ORDER BY f.{column} {direction},f.run_id {direction} LIMIT :limit",
+                **params,
+                **bounds,
+            )
+            if len(found) > query.limit:
+                return found
+        unknown = [*clauses, f"f.{column} IS NULL"]
+        bounds = {"limit": query.limit + 1 - len(found)}
+        if position is not None and position.at is None:
+            unknown.append(f"f.run_id{operator}:position_id")
+            bounds["position_id"] = position.id
+        return found + await self.rows(
+            _RUN_SELECT + " AND " + " AND ".join(unknown) + f" ORDER BY f.run_id {direction} LIMIT :limit",
+            **{**params, **bounds},
         )
 
+    async def page_bytes(self, run_ids: list[UUID]) -> int:
+        """Logical bytes of the retained runs on one page, measured before any of them is fetched."""
+        if not run_ids:
+            return 0
+        rows = await self.rows(
+            "SELECT coalesce(sum(public.weave_runs_bytes(r)),0) AS bytes FROM runs r "
+            "WHERE r.tenant_id=:tenant AND r.project_id=:project AND r.environment_id=:environment "
+            "AND r.id=ANY(:ids)",
+            ids=run_ids,
+        )
+        return int(rows[0]["bytes"])
+
     async def metadata(self, run_id: UUID) -> dict[str, Any]:
-        rows = await self.rows(_RUN_SELECT + " AND f.run_id=:run", run=run_id)
+        if run_id in self._metadata:
+            return self._metadata[run_id]
+        rows = await self.rows(_METADATA_SELECT + " AND f.run_id=:run", run=run_id)
         if not rows:
             raise CatalogError(404, "WV-NOT-FOUND", "Run not found")
         row = rows[0]
         if isinstance(summary_of(row), UnavailableResource):
-            raise legacy_unavailable()
+            raise withheld(row)
         kinds = row.get("node_kinds")
         if not isinstance(kinds, dict) or len(kinds) > 10000 or len(json.dumps(kinds).encode()) > 1048576:
             raise legacy_unavailable()
+        self._metadata[run_id] = row
         return row
 
     async def step_rows(
@@ -340,12 +427,9 @@ class FactReadRepository(FactRepository):
         scanned = 0
         try:
             async with asyncio.timeout(LEGACY_SECONDS):
+                # Unsorted on purpose: the bounded heap orders candidates, so the key cap also bounds the database.
                 stream = await self.tx.session.stream(
-                    text(
-                        "SELECT s.node_id,s.status FROM step_instances s WHERE "
-                        + _MISSING
-                        + ' ORDER BY s.node_id COLLATE "C"'
-                    ),
+                    text("SELECT s.node_id,s.status FROM step_instances s WHERE " + _MISSING),
                     {**self.params, "run": run_id},
                     execution_options={"yield_per": 500},
                 )
@@ -403,7 +487,7 @@ class FactReadRepository(FactRepository):
         from firefly_weave.contracts.values import JsonObject
         from firefly_weave.operations.redaction import project
         from firefly_weave.runtime.kernel import action_schemas, workflow
-        from firefly_weave.runtime.repository import RUN_FETCH_BYTES, RuntimeRepository
+        from firefly_weave.runtime.repository import RuntimeRepository
 
         await self.metadata(run_id)
         retained = await RuntimeRepository(self.tx).run(run_id)
@@ -414,8 +498,13 @@ class FactReadRepository(FactRepository):
         }
         nodes = {node.id: node for node in ir.graph.nodes}
         keys = [row["instance_key"] or row["node_id"] for row in rows]
-        withheld = SafeProjection(available=False, omissions=[Omission(path="", reason="classification_unavailable")])
-        result = dict.fromkeys(keys, withheld)
+        unclassified = SafeProjection(
+            available=False, omissions=[Omission(path="", reason="classification_unavailable")]
+        )
+        result = dict.fromkeys(keys, unclassified)
+        # An agent turn, tool call or loop yield has no schema of its own yet; the step's schema would classify
+        # another value, so those outputs stay withheld and are never fetched.
+        keys = [key for key in keys if not _segmented(key)]
         if not keys:
             return result
         predicate = (
@@ -429,10 +518,10 @@ class FactReadRepository(FactRepository):
             "total_bytes>:budget AS oversized FROM sized",
             run=run_id,
             keys=keys,
-            budget=RUN_FETCH_BYTES,
+            budget=PAGE_BYTES,
         )
         if any(output["oversized"] for output in outputs):
-            raise CatalogError(429, "WV-RUNTIME-LIMIT", "Step outputs exceed the bounded fetch budget")
+            raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
         for output in outputs:
             identity = author_instance(output["node_id"])
             if identity is None:

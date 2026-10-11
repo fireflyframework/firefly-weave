@@ -719,8 +719,12 @@ class WeaveClient:
         order: RunListOrder = "started_desc",
         query: RunListQuery | None = None,
     ) -> Page[RunView | UnavailableResource]:
+        """List runs with either a typed ``query`` or the keyword filters; mixing them raises ``ValueError``."""
         values: dict[str, str | int | list[str]]
         if query is not None:
+            keywords = (limit, cursor, business_key, correlation_key, status, include_archived, order)
+            if keywords != (50, None, None, None, None, False, "started_desc"):
+                raise ValueError("Use either a query or keyword list arguments")
             values = {
                 key: str(value).lower() if isinstance(value, bool) else value
                 for key, value in query.model_dump(mode="json", exclude_none=True).items()

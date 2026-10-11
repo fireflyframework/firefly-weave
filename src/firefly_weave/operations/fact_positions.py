@@ -23,14 +23,14 @@ from uuid import UUID
 from pydantic import TypeAdapter
 
 from firefly_weave.contracts.definitions import ResourceName
-from firefly_weave.contracts.instance_keys import InstanceKeyTextOrEmpty, instance_view
+from firefly_weave.contracts.instance_keys import InstanceKeyText, instance_view
 from firefly_weave.contracts.run_views import utc_time
 from firefly_weave.contracts.values import JsonValue
 
 type Position = tuple[JsonValue, str] | None
 
 _NODE: TypeAdapter[str] = TypeAdapter(ResourceName)
-_INSTANCE: TypeAdapter[str] = TypeAdapter(InstanceKeyTextOrEmpty)
+_INSTANCE: TypeAdapter[str] = TypeAdapter(InstanceKeyText)
 
 
 @dataclass(frozen=True)
@@ -61,16 +61,13 @@ def run_position(position: Position) -> RunPosition | None:
 
 
 def step_position(position: Position) -> StepPosition | None:
-    """Validate a decoded step cursor and its repeated instance identity."""
+    """Validate a decoded step cursor: the scheduled time and the full author instance key it ends at.
+
+    The key alone determines the step ID and the stored instance key ('' for the step itself).
+    """
     if position is None:
         return None
-    value, identifier = position
-    if type(value) is not list or len(value) != 3:
-        raise ValueError("Invalid step position")
-    at, node, key = value
-    node = _NODE.validate_python(node, strict=True)
-    key = _INSTANCE.validate_python(key, strict=True)
-    identity = instance_view(key or node)
-    if identity.node_id != node or identity.instance_key != key or identifier != (key or node):
-        raise ValueError("Invalid step position identity")
-    return StepPosition(utc_time(at), node, key)
+    at, identifier = position
+    identity = instance_view(_INSTANCE.validate_python(identifier, strict=True))
+    _NODE.validate_python(identity.node_id, strict=True)
+    return StepPosition(utc_time(at), identity.node_id, identity.instance_key)

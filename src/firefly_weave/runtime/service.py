@@ -36,7 +36,6 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation
 from firefly_weave.contracts.human_tasks import ManualControlRequest
 from firefly_weave.contracts.operations import CancelRunRequest
-from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.run_views import RunListQuery
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
@@ -48,7 +47,7 @@ from firefly_weave.contracts.runtime import (
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.operations.fact_positions import RunPosition
-from firefly_weave.operations.fact_reads import FactReadRepository, summary_of
+from firefly_weave.operations.fact_reads import FactReadRepository, unavailable
 from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction
@@ -617,14 +616,14 @@ class RuntimeService:
         context: AuditContext,
     ) -> dict[str, Any]:
         from firefly_weave.access.repository import load_principal
+        from firefly_weave.persistence.paging import PAGE_BYTES
 
-        legacy_adapter = query is None and (filters is not None or cursor is not None)
+        # The keyword arguments are the original contract: ID order and raw UUID positions in both directions.
+        legacy_adapter = query is None
         if query is None:
             values = (filters or RunListFilters()).model_dump(mode="json")
             values["status"] = [values["status"]] if values["status"] is not None else []
-            query = RunListQuery.model_validate_json(
-                json.dumps({**values, "limit": limit, "order": "id" if legacy_adapter else "started_desc"})
-            )
+            query = RunListQuery.model_validate_json(json.dumps({**values, "limit": limit, "order": "id"}))
             position = cursor
         elif filters is not None or cursor is not None:
             raise ValueError("Use either a query or legacy list arguments")
@@ -637,14 +636,18 @@ class RuntimeService:
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
             actor = await load_principal(tx.session, actor.id)
             self.require(actor, scope, "run.read", context)
-            rows = await FactReadRepository(tx).legacy_rows(query, position)
+            repository = FactReadRepository(tx)
+            rows = await repository.legacy_rows(query, position)
             limit = query.limit
+            # Measure the whole visible page before any full run is fetched; the lookahead row is not charged.
+            if await repository.page_bytes([row["run_id"] for row in rows[:limit]]) > PAGE_BYTES:
+                raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
             items = []
             for row in rows[:limit]:
                 identifier = row["run_id"]
-                summary = summary_of(row)
-                if isinstance(summary, UnavailableResource):
-                    items.append(summary.model_dump(mode="json"))
+                # Only a policy block withholds a full-run item here; the authoritative read classifies the rest.
+                if row["policy_blocked"]:
+                    items.append(unavailable(identifier).model_dump(mode="json"))
                     continue
                 try:
                     items.append(

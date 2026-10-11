@@ -385,7 +385,9 @@ capabilities, bindings, Actions, and connection settings, plus
 
 **Lists.** Canonical lists return `{ "items": [...], "next_cursor": null | "opaque" }`.
 
-- `limit` is 1 to 100 (50 by default), and items come in stable ID order.
+- `limit` is 1 to 100 (50 by default). Items come in stable ID order unless a
+  list documents another order: `runs.list` and run summaries are newest
+  started first by default (see below).
 - Pass `next_cursor` back as `cursor` for the next page. A cursor is bound to
   its tenant, project, environment, collection, and any run or schedule filter;
   a cursor from another scope or filter is rejected.
@@ -430,7 +432,11 @@ with `WV-UNAVAILABLE`.
 - Each cursor is bound to every filter and to the order. After you change a
   filter, start again from the first page.
 - Test runs are left out unless you send `include_test=true`, and archived runs
-  unless you send `include_archived=true`.
+  unless you send `include_archived=true`. This applies to `runs.list` too.
+- `runs.list` and run summaries reject unknown query parameters, and a `limit`
+  outside 1 to 100 answers `422` with `WV-VALIDATION`.
+- A `runs.list` page is limited to 8 MiB of retained run data. A larger page
+  answers `429` with `WV-PAGE-LIMIT`; request a smaller `limit`.
 - A contradictory filter, such as `version` without `workflow`, answers `422`
   with `WV-FILTER`; the message names the rule that failed.
 - Send times as RFC 3339 with an offset. Use `Z`, or encode `+` as `%2B` in the
@@ -438,13 +444,20 @@ with `WV-UNAVAILABLE`.
 
 Step timelines do not read payloads unless `include=output` is requested. Only
 the displayed outputs are fetched, after checking the bounded run artifact and
-classifying each output. An omitted output carries an omission reason; a
-returned JSON `null` is distinct from an omitted output. Synthetic control
+classifying each output. The outputs on one page are limited to 8 MiB in total;
+a larger page answers `429 WV-PAGE-LIMIT`, so request a smaller `limit`. An
+omitted output carries an omission reason; a returned JSON `null` is distinct
+from an omitted output. The output of an instance key with an activation
+segment (`#`) or a yield count (`~`) is omitted as `classification_unavailable`,
+because its step's schema does not describe it. Synthetic control
 instances do not appear. `complete=false` means the run has author step
 instances without facts, even when they fall outside the current page or filter.
 Their unknown timestamps remain null. Legacy metadata is streamed in batches
 of 500, up to 100,000 keys and two seconds per request; exceeding either budget
-answers `429 WV-RUNTIME-LIMIT`.
+answers `429 WV-RUNTIME-LIMIT`. A run this platform cannot run yet answers
+`422 WV-IR-UNSUPPORTED`, as `runs.read` does; a run with unavailable legacy
+evidence answers `409 WV-LEGACY-UNAVAILABLE`. In `runs.list`, only a recorded
+policy block withholds a run before its own read classifies it.
 
 **Answers that say "unavailable".** Cancellation and task completion can return
 an unavailable acknowledgment when the platform cannot classify the historical

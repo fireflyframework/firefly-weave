@@ -122,19 +122,38 @@ async def test_run_readers_reach_the_not_served_answer(monkeypatch, operation, r
 
 @pytest.mark.parametrize("operation", OPERATIONS)
 @pytest.mark.parametrize(
-    "token,current",
+    "token,current,opened",
     [
-        (principal(None), principal("viewer")),
-        (principal("operator"), principal("operator")),
-        (principal("viewer", scope=Scope(tenant_id=SCOPE.tenant_id, project_id=uuid4())), principal("viewer")),
-        (principal("viewer"), principal("viewer", active=False)),
-        (principal("viewer"), principal(None)),
+        (principal(None), principal("viewer"), 0),
+        (principal("operator"), principal("operator"), 0),
+        (principal("viewer", scope=Scope(tenant_id=SCOPE.tenant_id, project_id=uuid4())), principal("viewer"), 0),
+        (principal("viewer"), principal("viewer", active=False), 1),
+        (principal("viewer"), principal(None), 1),
     ],
 )
-async def test_token_and_current_principal_both_need_run_read(monkeypatch, operation, token, current):
-    service, _ = service_with(monkeypatch, current)
+async def test_token_and_current_principal_both_need_run_read(monkeypatch, operation, token, current, opened):
+    service, unit = service_with(monkeypatch, current)
     with pytest.raises(AccessDenied):
         await call(service, token, operation)
+    # A token without run.read is refused before any read unit opens; the stored principal is checked inside one.
+    assert unit.opened == opened
+
+
+@pytest.mark.parametrize("operation", OPERATIONS)
+async def test_each_authority_is_checked_and_audited_once(monkeypatch, caplog, operation):
+    import logging
+
+    actor = principal("viewer")
+    service, unit = service_with(monkeypatch, actor)
+    with caplog.at_level(logging.INFO, logger="weave.authorization"):
+        try:
+            await call(service, actor, operation)
+        except CatalogError as error:
+            assert (operation, error.status) == ("runs.logs", 501)
+    records = [json.loads(record.getMessage()) for record in caplog.records if record.name == "weave.authorization"]
+    # One decision for the token principal and one for the principal stored now.
+    assert [(record["capability"], record["outcome"]) for record in records] == [("run.read", "allow")] * 2
+    assert unit.opened == 1
 
 
 async def test_environment_scope_is_required(monkeypatch):
@@ -203,10 +222,10 @@ async def test_controller_rejects_cursors_from_another_filter_or_run(monkeypatch
     summaries = encode_cursor_v2(SCOPE, included, "2026-10-07T12:00:00Z", str(uuid4()))
     with pytest.raises(ValueError, match="cursor"):
         await controller.summaries(request("/", f"cursor={summaries}", actor, identifier=False))
-    steps = encode_cursor_v2(SCOPE, RunStepQuery().cursor_collection(uuid4()), [None, "send"], "send[3]")
+    steps = encode_cursor_v2(SCOPE, RunStepQuery().cursor_collection(uuid4()), None, "send[3]")
     with pytest.raises(ValueError, match="cursor"):
         await controller.steps(request("/", f"cursor={steps}", actor))
-    accepted = encode_cursor_v2(SCOPE, RunStepQuery().cursor_collection(RUN), [None, "send", "send[3]"], "send[3]")
+    accepted = encode_cursor_v2(SCOPE, RunStepQuery().cursor_collection(RUN), None, "send[3]")
     assert (await controller.steps(request("/", f"cursor={accepted}", actor))).status_code == 200
     assert unit.opened == 1
 
@@ -262,6 +281,52 @@ async def test_fresh_authority_and_fact_read_share_transaction(monkeypatch):
     assert events[0][1] is events[1][1]
 
 
+@pytest.mark.parametrize(
+    "node,key",
+    [
+        # The longest valid instance key: a long step ID, fifteen maximal loop indexes and a yield count.
+        ("s" * 240, "s" * 240 + "[9007199254740991]" * 15 + "~1"),
+        ("s" * 512, ""),
+    ],
+)
+async def test_step_cursor_fits_the_longest_valid_instance_key(monkeypatch, node, key):
+    from datetime import UTC, datetime
+
+    from firefly_weave.api.transport import decode_cursor_v2
+    from firefly_weave.contracts.instance_keys import split_instance
+    from firefly_weave.operations.fact_positions import StepPosition, step_position
+    from firefly_weave.operations.fact_reads import FactReadRepository
+
+    assert len(key or node) == 512
+    split_instance(key or node)
+    at = datetime(2026, 10, 9, 23, 59, 59, 999999, tzinfo=UTC)
+    row = dict(
+        node_id=node,
+        instance_key=key,
+        kind="action",
+        status="succeeded",
+        scheduled_at=at,
+        started_at=None,
+        ended_at=None,
+        attempts=1,
+        worker_id=None,
+        error_code=None,
+        handled=None,
+        child_run_id=None,
+    )
+
+    async def steps(repository, run_id, query, position):
+        return [row, {**row, "node_id": "t", "instance_key": ""}], True
+
+    monkeypatch.setattr(FactReadRepository, "step_rows", steps)
+    service, _ = service_with(monkeypatch, principal())
+    query = RunStepQuery(limit=1)
+    page = await service.steps(principal(), SCOPE, RUN, query, None, context=CONTEXT)
+    assert page.next_cursor is not None and len(page.next_cursor) <= 2048
+    position = step_position(decode_cursor_v2(page.next_cursor, SCOPE, query.cursor_collection(RUN)))
+    assert position == StepPosition(at, node, key)
+
+
 async def test_invalid_typed_cursor_precedes_run_lookup(monkeypatch):
     service, unit = service_with(monkeypatch, principal())
     with pytest.raises(ValueError):
@@ -304,6 +369,39 @@ async def test_sdk_list_retains_old_keywords_and_encodes_repeated_status():
     assert calls[1].url.params.get_list("status") == ["failed", "waiting"]
     assert calls[1].url.params["include_test"] == "true"
     assert calls[1].url.params["order"] == "started_desc"
+
+
+@pytest.mark.parametrize(
+    "keywords",
+    [
+        {"limit": 7},
+        {"cursor": "abc"},
+        {"business_key": "kept"},
+        {"correlation_key": "kept"},
+        {"status": "waiting"},
+        {"include_archived": True},
+        {"order": "id"},
+        {"limit": 7, "cursor": "abc", "business_key": "kept"},
+    ],
+)
+async def test_sdk_list_rejects_a_query_mixed_with_keyword_filters(keywords):
+    import httpx
+
+    from firefly_weave.contracts.run_views import RunListQuery
+    from firefly_weave.sdk.client import WeaveClient
+
+    calls = []
+
+    def receive(request):
+        calls.append(request)
+        return httpx.Response(200, json={"items": [], "next_cursor": None})
+
+    async with WeaveClient(
+        "https://platform.example", lambda: "token", SCOPE, transport=httpx.MockTransport(receive)
+    ) as client:
+        with pytest.raises(ValueError, match="either a query"):
+            await client.list_runs(query=RunListQuery(limit=3), **keywords)
+    assert calls == []
 
 
 async def test_runs_route_uses_strict_filters_and_preserves_explicit_id_cursor():
@@ -358,6 +456,7 @@ async def test_historical_stream_is_bounded_and_always_closed(monkeypatch, count
     monkeypatch.setattr(fact_reads, "LEGACY_SECONDS", 60)
     closed = []
     maximum_heap = []
+    statements = []
 
     class Stream:
         def mappings(self):
@@ -365,11 +464,10 @@ async def test_historical_stream_is_bounded_and_always_closed(monkeypatch, count
 
         async def partitions(self, size):
             assert size == 500
+            # PostgreSQL returns unsorted keys; the bounded heap alone orders the page.
+            keys = list(reversed(range(count)))
             for start in range(0, count, size):
-                yield [
-                    {"node_id": f"send[{index}]", "status": "completed"}
-                    for index in range(start, min(count, start + size))
-                ]
+                yield [{"node_id": f"send[{index}]", "status": "completed"} for index in keys[start : start + size]]
 
         async def close(self):
             closed.append(True)
@@ -377,6 +475,7 @@ async def test_historical_stream_is_bounded_and_always_closed(monkeypatch, count
     class Session:
         async def stream(self, statement, params, **kwargs):
             assert kwargs["execution_options"] == {"yield_per": 500}
+            statements.append(str(statement))
             return Stream()
 
     async def metadata(repository, run_id):
@@ -402,6 +501,8 @@ async def test_historical_stream_is_bounded_and_always_closed(monkeypatch, count
             "send[10000]" if count == 100000 else "send[100]",
         ]
     assert closed == [True] and max(maximum_heap) == 2
+    # Sorting in SQL would make PostgreSQL read and sort every missing key before the cap could stop it.
+    assert len(statements) == 1 and "ORDER BY" not in statements[0].upper()
 
 
 @pytest.mark.parametrize("cancel", [False, True])

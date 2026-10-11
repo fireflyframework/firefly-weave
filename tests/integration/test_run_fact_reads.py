@@ -816,13 +816,17 @@ async def test_metadata_statements_never_select_run_payloads(operations_case):
 
 
 @pytest.mark.integration
-async def test_malformed_current_author_key_is_unavailable(operations_case):
+@pytest.mark.parametrize("stored", ["work[", "work"])
+async def test_malformed_current_author_key_is_unavailable(operations_case, stored):
     from firefly_weave.definitions.models import CatalogError
 
     case = operations_case
     run = await case.start()
+    # A step's own ID is stored as an empty instance key; any other spelling cannot be paged exactly.
     async with case.owner.begin() as session:
-        await session.execute(text("UPDATE step_facts SET instance_key='work[' WHERE run_id=:run"), {"run": run.id})
+        await session.execute(
+            text("UPDATE step_facts SET instance_key=:stored WHERE run_id=:run"), {"run": run.id, "stored": stored}
+        )
     service = RunViewService(UnitOfWork(case.sessions), AuthorizationService())
     with pytest.raises(CatalogError) as failure:
         await service.steps(case.actor, case.scope, run.id, RunStepQuery(), None, context=AuditContext())
@@ -830,16 +834,37 @@ async def test_malformed_current_author_key_is_unavailable(operations_case):
 
 
 @pytest.mark.integration
-async def test_unavailable_timeline_does_not_fetch_requested_output(operations_case, monkeypatch):
+@pytest.mark.parametrize(
+    "mode,status,code",
+    [
+        ("cached_unsupported", 422, "WV-IR-UNSUPPORTED"),
+        ("feature_withdrawn", 422, "WV-IR-UNSUPPORTED"),
+        ("unavailable", 409, "WV-LEGACY-UNAVAILABLE"),
+    ],
+)
+async def test_unavailable_timeline_does_not_fetch_requested_output(operations_case, monkeypatch, mode, status, code):
+    import json
+
+    from firefly_weave.contracts import language_features
     from firefly_weave.definitions.models import CatalogError
     from firefly_weave.runtime.repository import RuntimeRepository
 
     case = operations_case
     run = await case.start()
+    features = language_features.ADVERTISED_FEATURES
     async with case.owner.begin() as session:
-        await session.execute(
-            text("UPDATE run_facts SET classification_state='unsupported' WHERE run_id=:run"), {"run": run.id}
-        )
+        if mode == "feature_withdrawn":
+            await session.execute(
+                text("UPDATE run_facts SET pinned_features=cast(:features AS jsonb) WHERE run_id=:run"),
+                {"features": json.dumps([features[0]]), "run": run.id},
+            )
+        else:
+            await session.execute(
+                text("UPDATE run_facts SET classification_state=:state WHERE run_id=:run"),
+                {"run": run.id, "state": "unsupported" if mode == "cached_unsupported" else "unavailable"},
+            )
+    if mode == "feature_withdrawn":
+        monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", features[1:])
 
     async def forbidden(*args, **kwargs):
         pytest.fail("Unavailable metadata fetched source payloads")
@@ -850,4 +875,253 @@ async def test_unavailable_timeline_does_not_fetch_requested_output(operations_c
         await service.steps(
             case.actor, case.scope, run.id, RunStepQuery(include="output"), None, context=AuditContext()
         )
-    assert failure.value.code == "WV-LEGACY-UNAVAILABLE"
+    # A run waiting for a platform that runs it answers as runs.read does; legacy evidence stays unavailable.
+    assert (failure.value.status, failure.value.code) == (status, code)
+    if status == 422:
+        missing = [features[0]] if mode == "feature_withdrawn" else []
+        assert failure.value.result == {"reason": "ir_unsupported", "missing_features": missing}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("order", ["id", "started_desc"])
+async def test_run_list_pages_keep_the_logical_byte_ceiling(operations_case, order):
+    from firefly_weave.contracts.run_views import RunListQuery
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.persistence.paging import PAGE_BYTES
+
+    case = operations_case
+    first, second = await case.start("first"), await case.start("second")
+    page = sorted([first.id, second.id]) if order == "id" else [second.id, first.id]
+
+    async def pad(characters):
+        # Only the last item of the page grows, so a one-item page never charges it.
+        async with case.tx() as tx:
+            await tx.session.execute(
+                text("UPDATE runs SET state=jsonb_set(state,'{input}',to_jsonb(repeat('x',:count))) WHERE id=:run"),
+                {"count": characters, "run": page[-1]},
+            )
+        measured = await case.rows(
+            "SELECT public.weave_runs_bytes(r) AS bytes FROM runs r WHERE id=ANY(:ids)", ids=page
+        )
+        return sum(row["bytes"] for row in measured)
+
+    async def listed(limit):
+        query = RunListQuery(order=order, limit=limit)
+        return await case.runtime.list(case.actor, case.scope, query=query, context=AuditContext())
+
+    baseline = await pad(0)
+    assert await pad(PAGE_BYTES - baseline) == PAGE_BYTES
+    full = await listed(2)
+    assert [item["id"] for item in full["items"]] == [str(identifier) for identifier in page]
+    assert all("state" in item for item in full["items"])
+    assert await pad(PAGE_BYTES - baseline + 1) == PAGE_BYTES + 1
+    with pytest.raises(CatalogError) as rejected:
+        await listed(2)
+    assert (rejected.value.status, rejected.value.code) == (429, "WV-PAGE-LIMIT")
+    assert [item["id"] for item in (await listed(1))["items"]] == [str(page[0])]
+
+
+@pytest.mark.integration
+async def test_runs_list_withholds_only_policy_blocked_items(operations_case):
+    from firefly_weave.runtime import admission
+
+    case = operations_case
+    run = await case.start()
+    service = RunViewService(UnitOfWork(case.sessions), AuthorizationService())
+    for update in ("classification_policy='retired-policy'", "classification_state='unsupported'"):
+        async with case.owner.begin() as session:
+            await session.execute(
+                text(
+                    "UPDATE run_facts SET classification_policy=:policy,classification_state='available' "
+                    "WHERE run_id=:run"
+                ),
+                {"policy": admission.POLICY, "run": run.id},
+            )
+            await session.execute(text("UPDATE run_facts SET " + update + " WHERE run_id=:run"), {"run": run.id})
+        summaries = await service.summaries(case.actor, case.scope, RunSummaryQuery(), None, context=AuditContext())
+        assert summaries.items[0].unavailable, update
+        # The cached projection never decides a full-run item: the authoritative read classifies it.
+        listed = await case.runtime.list(case.actor, case.scope, context=AuditContext())
+        assert listed["items"][0]["id"] == str(run.id) and "state" in listed["items"][0], update
+    async with case.owner.begin() as session:
+        await session.execute(
+            text(
+                "INSERT INTO run_policy_blocks(tenant_id,project_id,environment_id,run_id,reason_code) "
+                "SELECT tenant_id,project_id,environment_id,id,'WV-LEGACY-UNAVAILABLE' FROM runs WHERE id=:run"
+            ),
+            {"run": run.id},
+        )
+    listed = await case.runtime.list(case.actor, case.scope, context=AuditContext())
+    assert listed["items"] == [
+        {"id": str(run.id), "unavailable": True, "omissions": [{"path": "", "reason": "classification_unavailable"}]}
+    ]
+
+
+@pytest.mark.integration
+async def test_step_output_pages_keep_the_logical_byte_ceiling(operations_case):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.persistence.paging import PAGE_BYTES
+
+    case = operations_case
+    run = await case.start()
+    service = RunViewService(UnitOfWork(case.sessions), AuthorizationService())
+
+    async def output_bytes(characters):
+        async with case.owner.begin() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO step_instances SELECT tenant_id,project_id,environment_id,id,'work','completed',"
+                    "to_jsonb(repeat('x',:count)) FROM runs WHERE id=:run ON CONFLICT(run_id,node_id) "
+                    "DO UPDATE SET output=excluded.output,status='completed'"
+                ),
+                {"run": run.id, "count": characters},
+            )
+        rows = await case.rows(
+            "SELECT octet_length(output::text) AS bytes FROM step_instances WHERE run_id=:run AND node_id='work'",
+            run=run.id,
+        )
+        return rows[0]["bytes"]
+
+    async def page():
+        query = RunStepQuery(include="output")
+        return await service.steps(case.actor, case.scope, run.id, query, None, context=AuditContext())
+
+    assert await output_bytes(PAGE_BYTES - 2) == PAGE_BYTES
+    served = await page()
+    assert [item.node_id for item in served.items] == ["work"]
+    assert await output_bytes(PAGE_BYTES - 1) == PAGE_BYTES + 1
+    with pytest.raises(CatalogError) as rejected:
+        await page()
+    assert (rejected.value.status, rejected.value.code) == (429, "WV-PAGE-LIMIT")
+
+
+@pytest.mark.integration
+async def test_segmented_instance_outputs_are_withheld(operations_case):
+    case = operations_case
+    run = await case.start()
+    canary = 271828182845
+    segmented = ["work#agent.tool~1", "work[0]#review", "work~2"]
+    async with case.owner.begin() as session:
+        await session.execute(
+            text(
+                "INSERT INTO step_instances SELECT tenant_id,project_id,environment_id,id,'work','completed',"
+                "'7'::jsonb FROM runs WHERE id=:run ON CONFLICT(run_id,node_id) "
+                "DO UPDATE SET output=excluded.output,status='completed'"
+            ),
+            {"run": run.id},
+        )
+        for key in segmented:
+            await session.execute(
+                text(
+                    "INSERT INTO step_instances SELECT tenant_id,project_id,environment_id,id,:key,'completed',"
+                    "to_jsonb(cast(:canary AS bigint)) FROM runs WHERE id=:run"
+                ),
+                {"run": run.id, "key": key, "canary": canary},
+            )
+    service = RunViewService(UnitOfWork(case.sessions), AuthorizationService())
+    page = await service.steps(
+        case.actor, case.scope, run.id, RunStepQuery(include="output"), None, context=AuditContext()
+    )
+    items = {item["instance_key"] or item["node_id"]: item for item in page.model_dump(mode="json")["items"]}
+    assert set(items) == {"work", *segmented}
+    assert items["work"]["output"] == 7
+    # An agent turn, tool call or yield has no schema of its own yet, so the step's schema cannot classify it.
+    for key in segmented:
+        assert "output" not in items[key], key
+        assert items[key]["omissions"] == [{"path": "/output", "reason": "classification_unavailable"}], key
+    assert str(canary) not in page.model_dump_json()
+
+
+@pytest.mark.integration
+async def test_real_legacy_deadline_while_postgresql_holds_the_first_fetch(operations_case, monkeypatch):
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.operations import fact_reads
+
+    case = operations_case
+    run = await case.start()
+    async with case.owner.begin() as session:
+        await session.execute(
+            text(
+                "INSERT INTO step_instances SELECT tenant_id,project_id,environment_id,id,"
+                "'work[1]','completed','null'::jsonb FROM runs WHERE id=:run"
+            ),
+            {"run": run.id},
+        )
+    opened, closed = [], []
+    original = AsyncSession.stream
+
+    async def tracked(session, statement, *args, **kwargs):
+        stream = await original(session, statement, *args, **kwargs)
+        opened.append(stream)
+
+        class Tracked:
+            def mappings(self):
+                return stream.mappings()
+
+            async def close(self):
+                await stream.close()
+                closed.append(stream.closed)
+
+        return Tracked()
+
+    monkeypatch.setattr(AsyncSession, "stream", tracked)
+    monkeypatch.setattr(fact_reads, "LEGACY_SECONDS", 0.5)
+    async with case.owner.begin() as blocker:
+        # The stream's first round trip waits on PostgreSQL itself, not on Python between batches.
+        await blocker.execute(text("LOCK TABLE step_instances IN ACCESS EXCLUSIVE MODE"))
+        with pytest.raises(CatalogError) as failure:
+            async with asyncio.timeout(10), UnitOfWork(case.sessions).open(case.scope, mutation=False) as tx:
+                backend = await tx.session.scalar(text("SELECT pg_backend_pid()"))
+                await fact_reads.FactReadRepository(tx).historical_steps(run.id, None, None, 1)
+        # The read unit rolled back cleanly: the refusal is the answer, not a rollback error.
+        assert (failure.value.status, failure.value.code) == (429, "WV-RUNTIME-LIMIT")
+        async with case.owner() as observer:
+            waiting = await observer.scalar(
+                text("SELECT count(*) FROM pg_locks WHERE pid=:pid AND NOT granted"), {"pid": backend}
+            )
+            state = await observer.scalar(text("SELECT state FROM pg_stat_activity WHERE pid=:pid"), {"pid": backend})
+        # While the lock is still held, PostgreSQL no longer runs or waits for the abandoned read.
+        assert waiting == 0 and state in {None, "idle"}
+    assert len(closed) == len(opened) and all(closed)
+
+
+@pytest.mark.integration
+async def test_list_pages_select_summary_columns_and_timelines_read_metadata_once(operations_case):
+    from sqlalchemy import event
+
+    case = operations_case
+    run = await case.start()
+    async with case.owner.begin() as session:
+        await session.execute(
+            text(
+                "INSERT INTO step_instances SELECT tenant_id,project_id,environment_id,id,"
+                "'work[1]','completed','7'::jsonb FROM runs WHERE id=:run"
+            ),
+            {"run": run.id},
+        )
+    statements = []
+    engine = case.sessions.kw["bind"].sync_engine
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        statements.append(" ".join(statement.lower().split()))
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        service = RunViewService(UnitOfWork(case.sessions), AuthorizationService())
+        await service.summaries(case.actor, case.scope, RunSummaryQuery(), None, context=AuditContext())
+        await case.runtime.list(case.actor, case.scope, context=AuditContext())
+        page = await service.steps(
+            case.actor, case.scope, run.id, RunStepQuery(include="output"), None, context=AuditContext()
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert not page.complete and {item.instance_key for item in page.items} == {"", "work[1]"}
+    facts = [sql for sql in statements if "from run_facts f" in sql]
+    metadata = [sql for sql in facts if "node_kinds" in sql]
+    # Pages select only summary columns; one timeline request reads its run metadata once.
+    assert len(metadata) == 1 and len(facts) - len(metadata) >= 2
+    assert not any("f.*" in sql for sql in facts)
