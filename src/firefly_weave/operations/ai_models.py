@@ -161,20 +161,22 @@ class AIModelService:
         context: AuditContext,
     ) -> AIModelsResult:
         policy = self.policy.current()
-        if not admitted:
+        entry = None if policy is None else policy.entry_for(str(revision.config.get("endpoint", "")))
+        provider = str(revision.config.get("provider", ""))
+        gateway = self.gateway.configured
+        if not admitted and gateway and entry is not None and provider in entry.providers:
+            # Only a refresh that resolves the credential and calls the gateway spends a shared AI test admission.
             self.tests.limiter.take(actor.id)
         self.cache.discard_revision(scope, revision.id)
         if policy is None:
             return AIModelsResult(approval="unknown", discovery="unknown")
-        entry = policy.entry_for(str(revision.config.get("endpoint", "")))
-        provider = str(revision.config.get("provider", ""))
         if entry is None or provider not in entry.providers:
             return AIModelsResult(approval="unknown", discovery="LLM_POLICY")
-        raw = GatewayModelList(discovery="LLM_TIMEOUT")
+        raw = GatewayModelList(discovery="LLM_TIMEOUT" if gateway else "LLM_UNREACHABLE")
         left = deadline - time.monotonic()
         credential = None
         try:
-            if left > 0:
+            if gateway and left > 0:
                 async with asyncio.timeout(left):
                     credential = await self.tests.credential(scope, revision)
                     await self.connections.revalidate(actor, scope, revision, "connection.manage", context)

@@ -60,11 +60,24 @@ SPDX-License-Identifier: Apache-2.0
   (`connection.bind`) lists only the connection revisions the caller may bind,
   without configuration or secret handles. Discovery never pulls a model.
 - With an AI policy mounted on the API (`WEAVE_AI_POLICY_FILE`), new activations
-  of workflows with AI tasks answer 422 `WV-ACTIVATION-AI-PROVIDER` when a step's
-  provider differs from its connection's, and 422 `WV-ACTIVATION-AI-MODEL` when
-  the policy does not approve the model for the connection's endpoint. An
-  unreadable policy answers 503 `WV-AI-POLICY` for activations with AI tasks
-  only. Without a policy, activation is unchanged.
+  of workflows with AI task (`llm`) steps answer 422 `WV-ACTIVATION-AI-PROVIDER`
+  when a step's provider differs from its connection's, and 422
+  `WV-ACTIVATION-AI-MODEL` when the policy does not approve the model for the
+  connection's endpoint. An unreadable policy answers 503 `WV-AI-POLICY` for
+  activations with AI task steps only. Without a policy, activation is unchanged.
+- Saving an AI connection now refreshes its model list before `connections.create`
+  answers, which can take up to about 20 seconds. When the policy approves the
+  connection's endpoint and the AI gateway is configured, the refresh contacts the
+  provider through the gateway and spends one of the six AI test admissions per
+  person per minute; a refresh that cannot call the gateway spends none.
+- `ai_connections.test` and `connections.test` of an AI connection refresh the
+  model list after the test, within the test's admission, so they answer later.
+- `connections.test` is cancelled when its client disconnects, for every connector
+  type: the result and the `connection.test.completed` audit are not written.
+- A new activation checks `connection.bind` for each bound connection revision on
+  both the request's token and the caller's stored grants. A token whose stored
+  grant was removed gets 403, and grants limited to specific revisions now bind
+  exactly those revisions.
 - Replaying an activation `Idempotency-Key` now requires the caller's current
   `release.activate` grant: a caller whose grant was revoked gets 403 (or 401)
   instead of the stored 201 answer.

@@ -363,10 +363,11 @@ permissions in the selected environment and return `Cache-Control: no-store`.
 Set `refresh=true` to discover models through the AI gateway. This also requires
 `connection.manage`. Refreshes and AI connection tests share six admissions per
 minute per person. A test and its automatic refresh use one admission. A saved AI
-connection refreshes after the save commits, using its own admission; a refresh
-failure preserves the successful save or test result. In-process callers that
-supply a save transaction must invoke `AIModelService.refresh_after` only after
-they commit that transaction.
+connection refreshes after the save commits, using its own admission, and the save
+answers after that refresh, within about 20 seconds; a refresh failure preserves
+the successful save or test result. A refresh spends an admission only when it
+calls the AI gateway: without a policy, for an endpoint or provider outside it, or
+without a gateway, it answers without resolving the credential or spending one.
 
 The cache retains metadata only, for up to five minutes, with at most 128 records,
 8 MiB in total and 256 KiB per record. Entries are isolated by environment,
@@ -384,10 +385,12 @@ Ollama discovery reads at most 50 models, in name order, within 10 seconds; a
 model whose details do not arrive in time is listed with unknown facts. Other
 providers' model lists are read up to 50 names.
 
-Approval and availability are separate. For an Ollama endpoint whose policy lists
-its approved models, a listed model that Ollama does not serve appears with
-`available: false`. Other endpoints return only the approved models they report,
-so an approved model they do not list is simply absent. Either way the worker
+Approval and availability are separate. When the policy lists an endpoint's
+approved models, each listed model the endpoint does not report appears with
+`available: false`: for Ollama the API adds these rows, and for other providers
+the AI gateway does. Because provider lists stop at 50 names and Azure endpoints
+list no deployments, outside Ollama `available: false` means that the endpoint
+did not report the model, not that it is not installed. Either way the worker
 answers `LLM_MODEL_NOT_FOUND` if a step uses a model the endpoint does not serve.
 
 Without a mounted policy (`WEAVE_AI_POLICY_FILE` on the API), `approval` is
@@ -431,14 +434,15 @@ process.
 `ai_setup.publish` accepts an empty body or `{}` and publishes the server's
 built-in AI Connector and Action in one project transaction. It requires
 `definition.publish` at project scope on both the request and current principal;
-an environment-only grant is insufficient. Digest-derived keys make retries
-return the same version IDs. Conflicting immutable versions and retired built-ins
-return 409; setup never overwrites or reactivates them. Publication rejects more
-than 1,000 project-wide worker releases or 8 MiB of release payloads with 429
-`WV-PAGE-LIMIT` before compilation. The built-in Action compiles against the
-exact built-in generate task, so publication also requires an admitted worker
-release in the project that provides it; without one it returns 422
-`WV-AI-WORKER-MISSING` before publishing anything.
+an environment-only grant is insufficient. Digest-derived keys make retries return
+the same version IDs. A conflicting immutable version answers 409
+`WV-VERSION-CONFLICT` and a retired built-in answers 409 `WV-AI-CATALOG-RETIRED`;
+setup never overwrites or reactivates them. Publication rejects more than 1,000
+project-wide worker releases or 8 MiB of release payloads with 429 `WV-PAGE-LIMIT`
+before compilation. The built-in Action compiles against the exact built-in
+generate task, so publication also requires an admitted worker release in the
+project that provides it; without one it returns 422 `WV-AI-WORKER-MISSING` before
+publishing anything.
 
 `ai_setup.grant` accepts only `{connection_revision_id}` and requires
 `connection.manage` in the selected environment. It revalidates the stored AI
@@ -479,9 +483,9 @@ environment, the caller and the filter, and a cursor from another list answers
 
 #### Activations with AI steps
 
-When the API has a policy mounted, a new activation of a workflow with an AI task
-checks each AI step against the connection bound to its slot, after every binding
-passed its own authorization and before anything is written:
+When the API has a policy mounted, a new activation of a workflow with AI task
+(`llm`) steps checks each of those steps against the connection bound to its slot,
+after every binding passed its own authorization and before anything is written:
 
 | Problem code | Status | Meaning |
 | --- | --- | --- |

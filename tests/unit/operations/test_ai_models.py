@@ -371,6 +371,27 @@ async def test_gateway_and_api_policies_intersect(model_service):
     assert answer == await listing(s)
 
 
+async def test_other_endpoints_keep_the_unreported_approved_rows_the_gateway_adds(model_service):
+    s = model_service
+    del s.document["endpoints"][0]["compat"]
+    s.publish()
+    # The AI gateway's answer for a listed endpoint that is not Ollama: it appends each approved
+    # name the provider did not report, so the API keeps that row instead of dropping it.
+    s.raw = GatewayModelList(
+        discovery="ok",
+        models=[
+            AIModel(name="approved", approved=True, available=True),
+            AIModel(name="provider-only", approved=False, available=True),
+            AIModel(name="missing", approved=True, available=False),
+        ],
+    )
+    answer = await listing(s, refresh=True)
+    assert [(m.name, m.approved, m.available, m.tools) for m in answer.models] == [
+        ("approved", True, True, "unknown"),
+        ("missing", True, False, "unknown"),
+    ]
+
+
 @pytest.mark.parametrize("code", ["LLM_TIMEOUT", "LLM_AUTH", "LLM_UNREACHABLE"])
 async def test_failed_refresh_replaces_stale_health(model_service, code):
     s = model_service
@@ -446,12 +467,33 @@ async def test_endpoint_projection_has_no_network_or_file_metadata(model_service
     }
 
 
-async def test_no_policy_refresh_authorizes_and_takes_one_slot_without_io(model_service):
+@pytest.mark.parametrize(
+    "missing,discovery",
+    [("policy", "unknown"), ("endpoint", "LLM_POLICY"), ("provider", "LLM_POLICY"), ("gateway", "LLM_UNREACHABLE")],
+)
+@pytest.mark.parametrize("trigger", ["refresh", "save"])
+async def test_refresh_without_a_gateway_call_spends_no_admission(model_service, missing, discovery, trigger):
     s = model_service
-    s.policy.path = None
-    assert (await listing(s, refresh=True)).discovery == "unknown"
-    assert not s.calls and not s.credential.await_count
-    assert len(s.tests.limiter._calls[s.actor.id]) == 1
+    if missing == "policy":
+        s.policy.path = None
+    elif missing == "gateway":
+        s.gateway.configured = False
+        s.gateway.models.side_effect = CatalogError(503, "WV-AI-GATEWAY-MISSING", "Discovery needs the AI gateway")
+    else:
+        field, value = {"endpoint": ("url", "https://other.example/v1"), "provider": ("providers", ["anthropic"])}[
+            missing
+        ]
+        s.document["endpoints"][0][field] = value
+        s.publish()
+    if trigger == "refresh":
+        assert (await listing(s, refresh=True)).discovery == discovery
+    else:
+        await s.service.refresh_after(
+            s.actor, s.scope, s.revision.id, admitted=False, deadline=time.monotonic() + 20, context=s.context
+        )
+        assert (await listing(s)).discovery == discovery
+    # Nothing is resolved or sent, so none of the person's six shared AI test admissions is spent.
+    assert not s.gateway.models.await_count and not s.credential.await_count and not s.tests.limiter._calls
 
 
 async def test_auto_refresh_uses_remaining_budget(model_service):

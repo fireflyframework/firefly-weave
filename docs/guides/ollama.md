@@ -296,5 +296,5 @@ Activating a workflow and the setup operations can answer with these codes:
 | --- | --- | --- | --- |
 | `WV-ACTIVATION-AI-MODEL` | 422 | The policy does not approve the step's model for the connection's endpoint | Approve the model with `weave platform ai models approve`, or choose an approved one |
 | `WV-ACTIVATION-AI-PROVIDER` | 422 | The step's `provider` differs from the connection's provider | Use the connection's provider (`openai-chat` for `ollama-local`) or bind another connection |
-| `WV-AI-POLICY` | 503 | The API cannot read its AI policy file; only activations with AI tasks are refused | Restore the policy with `weave platform ai enable` |
+| `WV-AI-POLICY` | 503 | The API cannot read its AI policy file. Only activations of workflows with AI task (`llm`) steps are refused, and setup never answers it; the endpoint and model lists answer it too | Restore the policy with `weave platform ai enable` |
 | `WV-AI-WORKER-MISSING` | 422 | No admitted Agentic worker release provides the AI task | Run `weave platform ai enable`, which admits the worker release |

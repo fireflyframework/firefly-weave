@@ -417,7 +417,7 @@ def test_an_owned_installation_on_the_test_context_is_accepted(root):
     assert requested == ["weave-local-a1b2c3d4e5f6"]
 
 
-@pytest.mark.parametrize("context", ["colima", "default", "desktop-linux", "colima-datacean", ""])
+@pytest.mark.parametrize("context", ["colima", "default", "desktop-linux", "other-context", ""])
 def test_another_docker_context_is_refused_before_docker_is_asked(context):
     directory = OWNED / "build/acceptance/run/private/.local/platform"
 

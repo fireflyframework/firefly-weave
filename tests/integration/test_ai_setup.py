@@ -154,13 +154,16 @@ async def ai_setup(services, access_db, provisioned, tmp_path, monkeypatch):
                 json={"ok": True, "code": "ok", "latency_ms": 12, "model": body["model"], "tool_calling": "supported"},
             )
         assert request.url.path == "/v1/models"
+        # The AI gateway's answer for this listed endpoint, which is not Ollama: provider names carry no
+        # tool facts, and each approved name the provider did not report is added as unavailable.
         return httpx.Response(
             200,
             json={
                 "discovery": "ok",
                 "models": [
-                    {"name": "chosen", "approved": True, "available": True, "tools": "yes", "context_tokens": 8192},
+                    {"name": "chosen", "approved": True, "available": True, "tools": "unknown"},
                     {"name": PROVIDER_CANARY, "approved": False, "available": True, "tools": "unknown"},
+                    {"name": "other", "approved": True, "available": False, "tools": "unknown"},
                 ],
             },
         )
@@ -517,10 +520,12 @@ async def test_model_metadata_refreshes_once_and_viewers_read_the_cached_policy_
     refreshed = await env.models.models(
         env.operator, env.scope, AIModelsQuery(connection=revision.id, refresh=True), context=AuditContext()
     )
-    # Only approved names the gateway reports remain; its unapproved row never reaches the caller.
+    # Approved names remain, including the listed one the provider did not report; the gateway's
+    # unapproved row never reaches the caller.
     assert (refreshed.approval, refreshed.discovery) == ("listed", "ok")
     assert [(row.name, row.approved, row.available, row.tools) for row in refreshed.models] == [
-        ("chosen", True, True, "yes")
+        ("chosen", True, True, "unknown"),
+        ("other", True, False, "unknown"),
     ]
     assert len(env.gateway_calls) == 1 and env.gateway_calls[0][1]["credential"] == SECRET_CANARY
     assert await env.models.models(env.viewer, env.scope, passive, context=AuditContext()) == refreshed
@@ -912,5 +917,5 @@ async def test_ai_audit_records_carry_no_secret_prompt_or_provider_text(ai_setup
             "SELECT action,target,event::text FROM access_audit WHERE action LIKE 'ai.%' ORDER BY action"
         )
     }
-    assert details["ai.models.refresh"] == {"discovery": "ok", "models": 1}
+    assert details["ai.models.refresh"] == {"discovery": "ok", "models": 2}
     assert details["ai.setup.grant"] == {"not_needed": False, "pairs": 1}
