@@ -55,7 +55,8 @@ import { OutputPane } from "./panes/output-pane";
 import { TestEventPane } from "./panes/test-event-pane";
 import { Icon } from "../../icon";
 import { coveredBy, keepUsable } from "../../modal-sheet";
-import { revealTop } from "./scroll-area";
+import { revealTop, scrollingParent, visibleBox } from "./scroll-area";
+import { moveToStep } from "./step-move";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import {
   commandFor,
@@ -102,6 +103,16 @@ export const KEY_PLATFORM: KeyPlatform =
     : "other";
 export const EXECUTE_REASON =
   "Executing a single step isn't available yet. Simulate the workflow runs every step.";
+
+/** Whether the element is wholly inside what the person sees of its scrolling pane. */
+const inView = (element: HTMLElement): boolean => {
+  const scroller = scrollingParent(element);
+  const bounds = element.getBoundingClientRect();
+  if (bounds.top < 0 || bounds.bottom > window.innerHeight) return false;
+  if (!scroller) return true;
+  const view = visibleBox(scroller);
+  return bounds.top >= view.top - 0.5 && bounds.bottom <= view.bottom + 0.5;
+};
 
 const FOCUSABLE =
   'button:not([disabled]):not([tabindex="-1"]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -431,12 +442,18 @@ export class StepDetails {
    */
   go(id: string) {
     const region = this.currentRegion() ?? "parameters";
-    void this.host().openStepDetails(id, {
-      tab: id === "$end" ? "parameters" : this.tab(),
-      focus: { kind: "region", region },
-      fresh: false,
-      revealAll: false,
-    });
+    const request = this.request();
+    void moveToStep(
+      this.host(),
+      id,
+      {
+        tab: id === "$end" ? "parameters" : this.tab(),
+        focus: { kind: "region", region },
+        fresh: false,
+        revealAll: false,
+      },
+      () => !this.lifetime.destroyed && this.details.request() === request,
+    );
   }
   move(delta: 1 | -1) {
     const id = delta > 0 ? this.next() : this.previous();
@@ -915,6 +932,19 @@ export class StepDetails {
     if (field && panel?.contains(found)) {
       found.focus({ preventScroll: true });
       revealTop(field);
+      // Focus never sits out of sight: when the control is further down, the
+      // first control in view takes it, or else the step's name.
+      if (!inView(found)) {
+        const shown = [...panel.querySelectorAll<HTMLElement>(CONTROL)].find(
+          (element) =>
+            !element.closest(".param-label-row, .param-tools") &&
+            visible(element) &&
+            inView(element),
+        );
+        (shown ?? (name && visible(name) ? name : found)).focus({
+          preventScroll: true,
+        });
+      }
     } else found.focus();
   }
   private trapTab(event: KeyboardEvent) {

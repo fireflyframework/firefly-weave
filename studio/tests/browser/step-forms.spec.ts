@@ -1377,6 +1377,9 @@ test.describe("a Call an API step", () => {
     const area = await visibleArea(formScroller(page, details.dialog));
     expect(menuBox.y).toBeGreaterThanOrEqual(area.y - 0.5);
     expect(menuBox.bottom).toBeLessThanOrEqual(area.bottom + 0.5);
+    // It opens below the button, the pane scrolling to make room.
+    await expect(menu).not.toHaveAttribute("data-side", "above");
+    expect(menuBox.y).toBeGreaterThanOrEqual((await box(add)).bottom);
     // At this size every option shows without scrolling the menu.
     expect(
       await menu.evaluate(
@@ -1519,45 +1522,158 @@ for (const size of [
       await expect(
         details.dialog.locator(".sd-tabpanel:not([hidden]) .param-intro"),
       ).toBeInViewport();
-      // Focus is on a control, not on a field's tools.
-      expect(
-        await page.evaluate(
-          () =>
-            !!document.activeElement?.closest(".sd-tabpanel") &&
-            !document.activeElement?.closest(".param-label-row, .param-tools"),
-        ),
-      ).toBe(true);
+      // Focus lands on a control the person can see, never on a field's tools,
+      // and shows its ring.
+      const focused = await page.evaluate(() => {
+        const active = document.activeElement as HTMLElement;
+        const r = active.getBoundingClientRect();
+        const sticky = [
+          ...document.querySelectorAll<HTMLElement>(".sd-segments, .sd-head"),
+        ]
+          .filter((bar) => !bar.contains(active))
+          .map((bar) => bar.getBoundingClientRect().bottom);
+        const top = Math.max(0, ...sticky);
+        const style = getComputedStyle(active);
+        return {
+          inDialog: !!active.closest(".step-details"),
+          tools: !!active.closest(".param-tools"),
+          inView:
+            r.top >= top - 0.5 &&
+            r.bottom <= innerHeight + 0.5 &&
+            r.left >= 0 &&
+            r.right <= innerWidth,
+          ring:
+            (style.outlineStyle !== "none" &&
+              parseFloat(style.outlineWidth) > 0) ||
+            style.boxShadow !== "none",
+        };
+      });
+      expect(focused).toEqual({
+        inDialog: true,
+        tools: false,
+        inView: true,
+        ring: true,
+      });
     });
   });
 
-test.describe("Add option near the bottom of a short pane", () => {
-  test.use({ viewport: { width: 1440, height: 560 } });
-  test("opens its menu above the button when there is room there", async ({
+test.describe("Add option opening", () => {
+  for (const size of [
+    { tag: "1440x900", width: 1440, height: 900 },
+    { tag: "600x500", width: 600, height: 500 },
+    { tag: "360x640", width: 360, height: 640 },
+  ])
+    test(`opens below the button, scrolling the pane when needed, at ${size.tag}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: size.width, height: size.height });
+      const details = await openStepFixture(page);
+      await details.openWithKeyboard("summarize");
+      await showParameters(page, details.dialog);
+      const add = details.dialog.getByRole("button", {
+        name: "Add option",
+        exact: true,
+      });
+      await add.scrollIntoViewIfNeeded();
+      await add.focus();
+      await page.keyboard.press("ArrowDown");
+      const menu = details.dialog.getByRole("menu", { name: "Add option" });
+      await expect(menu).toBeVisible();
+      await expect(menu).not.toHaveAttribute("data-side", "above");
+      const first = menu.getByRole("menuitem").first();
+      await expect(first).toBeFocused();
+      const button = await box(add);
+      const area = await visibleArea(formScroller(page, details.dialog));
+      expect((await box(menu)).y).toBeGreaterThanOrEqual(button.bottom);
+      expect((await box(first)).y).toBeGreaterThan(button.bottom);
+      expect((await box(menu)).bottom).toBeLessThanOrEqual(area.bottom + 0.5);
+      expect(button.y).toBeGreaterThanOrEqual(area.y - 0.5);
+    });
+
+  test("opens above only when no scroll can make room below", async ({
     page,
   }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
     const details = await openStepFixture(page);
-    await details.open("summarize");
+    await details.openWithKeyboard("summarize");
     const add = details.dialog.getByRole("button", {
       name: "Add option",
       exact: true,
     });
     const scroller = formScroller(page, details.dialog);
-    const before = await scroller.evaluate((element) => element.scrollTop);
+    // Measure the menu, then shrink the window until the pane is barely
+    // taller than the menu.
     await add.click();
     const menu = details.dialog.getByRole("menu", { name: "Add option" });
+    const height = (await box(menu)).height;
+    await page.keyboard.press("Escape");
+    const area = await visibleArea(scroller);
+    await page.setViewportSize({
+      width: 1440,
+      height: Math.round(900 - area.height + height + 20),
+    });
+    await expect
+      .poll(async () => Math.round((await visibleArea(scroller)).height))
+      .toBe(Math.round(height + 20));
+    await page.evaluate(
+      () =>
+        new Promise((done) =>
+          requestAnimationFrame(() => requestAnimationFrame(done)),
+        ),
+    );
+    // With the button almost below the pane's bottom edge, keeping it in view
+    // leaves no room below, even scrolled, while there is room above.
+    const placed = await add.evaluate(
+      (button, pane) => {
+        const view = pane!.getBoundingClientRect();
+        const bottom = view.top + pane!.clientHeight;
+        pane!.scrollTop += button.getBoundingClientRect().top - (bottom - 4);
+        button.focus({ preventScroll: true });
+        return pane!.scrollTop;
+      },
+      await scroller.elementHandle(),
+    );
+    await page.keyboard.press("ArrowDown");
     await expect(menu).toBeVisible();
     await expect(menu).toHaveAttribute("data-side", "above");
     await expect(menu.getByRole("menuitem").first()).toBeFocused();
     const menuBox = await box(menu);
-    const button = await box(add);
-    const area = await visibleArea(scroller);
-    expect(menuBox.bottom).toBeLessThanOrEqual(button.y);
-    expect(menuBox.y).toBeGreaterThanOrEqual(area.y - 0.5);
-    // Opening above doesn't scroll the pane.
+    const visible = await visibleArea(scroller);
+    expect(menuBox.bottom).toBeLessThanOrEqual((await box(add)).y);
+    expect(menuBox.y).toBeGreaterThanOrEqual(visible.y - 0.5);
     expect(await scroller.evaluate((element) => element.scrollTop)).toBe(
-      before,
+      placed,
     );
     await page.keyboard.press("Escape");
     await expect(add).toBeFocused();
   });
+});
+
+test.describe("a Call an API step on small screens", () => {
+  test.skip(!hasPython, "Needs the repository's Python environment.");
+  test.afterAll(() => stopLocalAuthoring());
+  for (const size of [
+    { tag: "600x500", width: 600, height: 500 },
+    { tag: "360x640", width: 360, height: 640 },
+  ])
+    test(`Add option opens below the button at ${size.tag}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: size.width, height: size.height });
+      const details = await openHttpStep(page);
+      await showParameters(page, details.dialog);
+      const add = details.dialog.getByRole("button", {
+        name: "Add option",
+        exact: true,
+      });
+      await add.scrollIntoViewIfNeeded();
+      await add.click();
+      const menu = details.dialog.getByRole("menu", { name: "Add option" });
+      await expect(menu.getByRole("menuitem").first()).toBeFocused();
+      await expect(menu).not.toHaveAttribute("data-side", "above");
+      const menuBox = await box(menu);
+      const area = await visibleArea(formScroller(page, details.dialog));
+      expect(menuBox.y).toBeGreaterThanOrEqual((await box(add)).bottom);
+      expect(menuBox.bottom).toBeLessThanOrEqual(area.bottom + 0.5);
+    });
 });

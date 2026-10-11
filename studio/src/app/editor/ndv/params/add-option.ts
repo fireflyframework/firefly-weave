@@ -143,10 +143,11 @@ export class AddOption {
     });
   }
   /**
-   * Shows the whole menu inside the pane that scrolls the form: below the
-   * button when it fits there; above it when there is room there; otherwise
-   * below, scrolling the pane to reveal it; and when even that can't show it
-   * all, as tall as the room below allows, scrolling inside.
+   * Shows the whole menu inside the pane that scrolls the form, below the
+   * button its chevron points to: as it opens when it fits; otherwise after
+   * scrolling the pane, as far as the button stays in view. Above the button
+   * only when no such scroll makes room, and when neither fits, as tall as
+   * the room below allows, scrolling inside.
    */
   private place() {
     const host = this.element.nativeElement;
@@ -166,13 +167,13 @@ export class AddOption {
     const height = menu.getBoundingClientRect().height;
     if (below() + gap + height <= view.bottom) return;
     const top = button.getBoundingClientRect().top;
-    if (top - gap - height >= view.top) {
-      menu.dataset["side"] = "above";
-      return;
-    }
     const scroll = below() + gap + height - view.bottom;
     if (scroll <= top - view.top) {
       scroller.scrollTop += scroll;
+      return;
+    }
+    if (top - gap - height >= view.top) {
+      menu.dataset["side"] = "above";
       return;
     }
     scroller.scrollTop += top - view.top;

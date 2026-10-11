@@ -1117,6 +1117,18 @@ test.describe("the shell while step details is open", () => {
     await expect(page.locator(".toast-region")).toContainText(
       "Executing a single step isn't available yet.",
     );
+    // And it paints above step details, where the person is looking.
+    const toast = page.locator(".toast-region .toast").last();
+    await expect(toast).toBeVisible();
+    const toastBox = await box(toast);
+    expect(intersects(toastBox, await box(details.dialog))).toBe(true);
+    expect(
+      await toast.evaluate(
+        (element, point) =>
+          element.contains(document.elementFromPoint(point.x, point.y)),
+        { x: toastBox.x + toastBox.width / 2, y: toastBox.middle },
+      ),
+    ).toBe(true);
     await details.close();
     await expect(details.node("lookup")).toBeFocused();
     expect(await exposed()).toEqual(["Ask Weave AI", "Home", "Workflows"]);
