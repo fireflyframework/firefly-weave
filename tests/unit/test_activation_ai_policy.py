@@ -16,12 +16,12 @@
 
 """Activation admits AI steps only for connections and models the operator's AI policy approves."""
 
-import importlib
+import importlib.util
 import json
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -122,6 +122,17 @@ def test_loaded_policy_rejects_provider_before_model():
         PROVIDER_MESSAGE,
     )
     validator()([node], bindings, None)
+
+
+def test_a_provider_mismatch_is_reported_even_when_the_model_is_also_unapproved():
+    # Choosing the right connection comes first; approving the model would not fix this step.
+    with pytest.raises(CatalogError) as refused:
+        validator()([ai_node(model="unlisted")], {"ai": bound(provider="openai-responses")}, approving("chosen"))
+    assert (refused.value.status, refused.value.code, str(refused.value)) == (
+        422,
+        "WV-ACTIVATION-AI-PROVIDER",
+        PROVIDER_MESSAGE,
+    )
 
 
 def test_matching_provider_and_listed_model_are_admitted():
@@ -470,7 +481,7 @@ def env(monkeypatch):
     monkeypatch.setattr(definition_module, "load_principal", current_principal)
     monkeypatch.setattr(connection_module, "load_principal", binding_principal)
     monkeypatch.setattr(definition_module, "audit", audit)
-    monkeypatch.setattr(definition_module, "validate_ai_bindings", validate, raising=False)
+    monkeypatch.setattr(definition_module, "validate_ai_bindings", validate)
 
     class Admission:
         async def admit(self, actor, given, request, artifact, *, capability, context, tx):
@@ -612,7 +623,7 @@ async def test_replays_and_new_activations_require_current_activation_authority(
     assert [row["id"] for row in env.activations] == [first.id]
 
 
-@pytest.mark.parametrize("failure", ["foreign", "unready", "revoked"])
+@pytest.mark.parametrize("failure", ["foreign", "unready", "narrowed-grant"])
 async def test_binding_authority_and_readiness_precede_any_policy_answer(env, failure):
     # The policy would refuse this revision's provider; that answer must never be what the caller sees.
     if failure == "foreign":
@@ -626,13 +637,34 @@ async def test_binding_authority_and_readiness_precede_any_policy_answer(env, fa
         )
     with pytest.raises((CatalogError, AccessDenied)) as refused:
         await activate(env)
-    expected = {"foreign": (404, "WV-NOT-FOUND"), "unready": (422, "WV-CONNECTION"), "revoked": None}[failure]
+    expected = {"foreign": (404, "WV-NOT-FOUND"), "unready": (422, "WV-CONNECTION"), "narrowed-grant": None}[failure]
     if expected is None:
-        assert isinstance(refused.value, AccessDenied)
+        # A bind grant limited to one revision carries no activation authority, so entry refuses it.
+        assert isinstance(refused.value, AccessDenied) and env.trace == ["current"]
     else:
         assert (refused.value.status, refused.value.code) == expected
         assert "openai" not in str(refused.value)
     assert "policy" not in env.trace and "validate" not in env.trace and not inserts(env)
+
+
+@pytest.mark.parametrize("snapshot", ["actor", "current"])
+async def test_bind_denied_on_one_revision_is_reported_before_any_policy_read(env, monkeypatch, snapshot):
+    # A role that may activate releases without binding connections, beside a bind limited to one revision.
+    import firefly_weave.access.authorization as authorization_module
+
+    roles = dict(authorization_module.ROLE_CAPABILITIES)
+    roles["activator"] = frozenset({"release.activate"})
+    monkeypatch.setattr(authorization_module, "ROLE_CAPABILITIES", MappingProxyType(roles))
+    grants = (
+        Grant.model_construct(role="activator", scope=env.scope, resources=()),
+        Grant(role="deployer", scope=env.scope, resources=(str(env.ai.id),)),
+    )
+    setattr(env, snapshot, getattr(env, snapshot).model_copy(update={"grants": grants}))
+    env.backup = revision(env, "backup", provider="openai-responses")  # the policy would refuse this provider
+    with pytest.raises(AccessDenied):
+        await activate(env)
+    assert env.trace == ["current", "lock", "replay", "admit", "resolved:ai"]
+    assert not inserts(env) and not env.activations
 
 
 async def test_absent_policy_keeps_existing_activation_behavior(env):

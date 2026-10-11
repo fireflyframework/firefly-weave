@@ -65,12 +65,16 @@ async def test_the_guide_summarize_workflow_runs_on_the_local_model(live):
     assert outcome["replay"] == "consistent"
 
 
-async def activation_ids(live):
+async def owned_activations(live):
     """Every activation in the owned workspace; the small fixture must fit one page, never a partial list."""
     async with live.client() as (client, _):
         page = await client.list_activations(limit=100)
     assert page.next_cursor is None, "The owned live fixture exceeds its activation snapshot bound"
-    return frozenset(str(item.id) for item in page.items)
+    return list(page.items)
+
+
+async def activation_ids(live):
+    return frozenset(str(item.id) for item in await owned_activations(live))
 
 
 async def test_a_model_the_policy_no_longer_approves_fails_with_llm_policy(live):
@@ -93,9 +97,14 @@ async def test_a_model_the_policy_no_longer_approves_fails_at_activation(live):
     try:
         removed = live.weave("ai", "models", "remove", *PROVIDER, "--model", live.model)
         assert live.model not in removed["approved"]
-        before = await activation_ids(live)
+        activations = await owned_activations(live)
+        before = frozenset(str(item.id) for item in activations)
+        # The workflow is already activated, so a new activation names its current revision; without it
+        # the platform answers 412 before it reads the policy.
+        name = live.workflow_name(live.model)
+        current = max((item.revision for item in activations if item.name == name), default=None)
         with pytest.raises(WeaveError) as refused:
-            await live.run(live.model, activation_idempotency_key=str(uuid4()))
+            await live.run(live.model, activation_idempotency_key=str(uuid4()), activation_revision=current)
         assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-MODEL")
         assert await activation_ids(live) == before
     finally:

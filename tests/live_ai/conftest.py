@@ -169,11 +169,20 @@ class Live:
         async with WeaveClient(api, lambda: token, Scope.model_validate(scope), timeout=120) as client:
             yield client, scope
 
-    async def run(self, model: str, *, activation_idempotency_key: str | None = None) -> dict[str, Any]:
+    @staticmethod
+    def workflow_name(model: str) -> str:
+        """The name of the workflow that run(model) publishes and activates."""
+        return str(summarize_workflow(model)["metadata"]["name"])
+
+    async def run(
+        self, model: str, *, activation_idempotency_key: str | None = None, activation_revision: int | None = None
+    ) -> dict[str, Any]:
         """Publish and activate the summarize workflow for this model, run it once and report how it ended.
 
         By default the activation key comes from the published workflow, release and connection, so a
-        repeated call replays the activation it created first; a new key asks for a new activation.
+        repeated call replays the activation it created first. A new key asks for a new activation; for a
+        workflow that is already activated it must name the current activation revision, which is sent
+        as the precondition, or the platform answers 412.
         """
         receipt = self.receipt()
         source = json.dumps(summarize_workflow(model), sort_keys=True, separators=(",", ":"))
@@ -192,6 +201,7 @@ class Live:
                 idempotency_key=(
                     activation_idempotency_key if activation_idempotency_key is not None else _key("activation", pins)
                 ),
+                revision=activation_revision,
             )
             run = await client.start_run(
                 StartRunRequest.model_validate_json(json.dumps({"activation_id": str(activation.id), "input": INPUT})),

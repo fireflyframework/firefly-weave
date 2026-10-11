@@ -22,7 +22,7 @@ import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -91,38 +91,67 @@ async def test_ambiguous_mutation_result_still_restores_the_owned_service(journe
     assert service.recovered
 
 
+MODEL_REFUSED = Problem(
+    status=422, code="WV-ACTIVATION-AI-MODEL", message="The model is not approved for this AI connection"
+)
+
+
 class PlatformAPI:
-    """The public API calls one run makes; each activation key keeps the activation it first created."""
+    """The public API calls one run makes, with the platform's activation rules.
+
+    A known activation key replays the activation it created. A new key must name the workflow's
+    current activation revision, as the platform answers 412 otherwise, and is then refused while
+    the policy does not approve the model. Runs fail with LLM_POLICY while it is not approved.
+    """
 
     def __init__(self):
-        self.version_id, self.release_id, self.revision_id = uuid4(), uuid4(), uuid4()
+        self.release_id, self.revision_id = uuid4(), uuid4()
         self.scope = {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
         self.calls = []
+        self.versions = {}
         self.activations = {}
-        self.refused = {}
-        self.events = [SimpleNamespace(type="task_completed", data={"output": {"usage": {"requests": 1}}})]
-        self.status = "succeeded"
+        self.approved = True
 
     async def publish(self, collection, source, format, *, idempotency_key):
-        self.calls.append(("publish", idempotency_key))
-        return SimpleNamespace(id=self.version_id, digest="a" * 64)
+        self.calls.append(("publish", idempotency_key, None))
+        name = json.loads(source)["metadata"]["name"]
+        identifier = next((key for key, value in self.versions.items() if value == name), uuid4())
+        self.versions[identifier] = name
+        return SimpleNamespace(id=identifier, digest="a" * 64)
 
-    async def activate(self, request, *, idempotency_key):
-        self.calls.append(("activate", idempotency_key))
+    async def activate(self, request, *, idempotency_key, revision=None):
+        self.calls.append(("activate", idempotency_key, revision))
         assert request.connection_revision_ids == {"ai-provider": self.revision_id}
-        if idempotency_key in self.refused:
-            raise WeaveError(self.refused[idempotency_key])
-        return SimpleNamespace(id=self.activations.setdefault(idempotency_key, uuid4()))
+        if idempotency_key in self.activations:
+            return self.activations[idempotency_key]
+        name = self.versions[request.version_id]
+        current = max((item.revision for item in self.activations.values() if item.name == name), default=None)
+        if revision != current:
+            raise WeaveError(Problem(status=412, code="WV-ETAG", message="Revision precondition failed"))
+        if not self.approved:
+            raise WeaveError(MODEL_REFUSED)
+        activation = SimpleNamespace(id=uuid4(), name=name, revision=(current or 0) + 1)
+        self.activations[idempotency_key] = activation
+        return activation
+
+    async def list_activations(self, *, limit):
+        assert limit == 100
+        return SimpleNamespace(items=list(self.activations.values()), next_cursor=None)
 
     async def start_run(self, request, *, idempotency_key):
-        self.calls.append(("start_run", request.activation_id))
+        self.calls.append(("start_run", request.activation_id, None))
         return SimpleNamespace(id=uuid4())
 
     async def read_run(self, identifier):
-        return SimpleNamespace(state=SimpleNamespace(status=self.status, output="A short summary."))
+        status = "succeeded" if self.approved else "failed"
+        return SimpleNamespace(state=SimpleNamespace(status=status, output="A short summary."))
 
     async def history(self, identifier, *, limit):
-        return SimpleNamespace(events=self.events)
+        if self.approved:
+            return SimpleNamespace(
+                events=[SimpleNamespace(type="task_completed", data={"output": {"usage": {"requests": 1}}})]
+            )
+        return SimpleNamespace(events=[SimpleNamespace(type="task_failed", data={"output": {"code": "LLM_POLICY"}})])
 
     async def replay(self, identifier):
         return SimpleNamespace(status="consistent")
@@ -140,45 +169,76 @@ class OfflineLive(HELPERS["Live"]):
             "release_id": str(self.api.release_id),
         }
 
+    def weave(self, *args):
+        """The approval commands the journeys run, applied to the platform's policy."""
+        if args[:3] == ("ai", "models", "remove") and args[-1] == self.model:
+            self.api.approved = False
+            return {"approved": []}
+        if args[:3] == ("ai", "models", "approve") and args[-1] == "--served":
+            self.api.approved = True
+            return {"approval": "served"}
+        raise AssertionError(f"Unexpected platform command {args}")
+
     @asynccontextmanager
     async def client(self):
         yield self.api, self.api.scope
 
 
-def sent_keys(api):
-    return [key for call, key in api.calls if call == "activate"]
+def sent(api):
+    return [(key, revision) for call, key, revision in api.calls if call == "activate"]
+
+
+def default_key(api):
+    version = next(iter(api.versions))
+    return HELPERS["_key"]("activation", f"{version}:{api.release_id}:{api.revision_id}")
 
 
 async def test_default_runs_replay_one_activation_and_report_its_worker_refusal():
     api = PlatformAPI()
     live = OfflineLive(api)
     first = await live.run(live.model)
-    api.status = "failed"
-    api.events = [SimpleNamespace(type="task_failed", data={"output": {"code": "LLM_POLICY"}})]
+    api.approved = False
     again = await live.run(live.model)
-    pins = f"{api.version_id}:{api.release_id}:{api.revision_id}"
-    assert sent_keys(api) == [HELPERS["_key"]("activation", pins)] * 2
-    assert first["activation_id"] == again["activation_id"] == str(next(iter(api.activations.values())))
+    assert sent(api) == [(default_key(api), None)] * 2
+    assert first["activation_id"] == again["activation_id"] == str(api.activations[default_key(api)].id)
     assert (first["status"], again["code"]) == ("succeeded", "LLM_POLICY")
-    assert [call for call in api.calls if call[0] == "start_run"] == [
-        ("start_run", api.activations[sent_keys(api)[0]])
-    ] * 2
+    activation = api.activations[default_key(api)].id
+    assert [call for call in api.calls if call[0] == "start_run"] == [("start_run", activation, None)] * 2
 
 
-async def test_a_fresh_activation_key_is_sent_unchanged_and_its_refusal_starts_no_run():
+async def test_a_fresh_activation_key_and_revision_are_sent_unchanged_and_a_refusal_starts_no_run():
     api = PlatformAPI()
     live = OfflineLive(api)
     await live.run(live.model)
     before = dict(api.activations)
-    api.refused["fresh-admission"] = Problem(
-        status=422, code="WV-ACTIVATION-AI-MODEL", message="The model is not approved for this AI connection"
-    )
-    with pytest.raises(WeaveError) as refused:
+    api.approved = False
+    with pytest.raises(WeaveError) as stale:
         await live.run(live.model, activation_idempotency_key="fresh-admission")
+    assert (stale.value.status, stale.value.code) == (412, "WV-ETAG")
+    with pytest.raises(WeaveError) as refused:
+        await live.run(live.model, activation_idempotency_key="fresh-admission", activation_revision=1)
     assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-MODEL")
-    assert sent_keys(api)[-1] == "fresh-admission" and api.calls[-1] == ("activate", "fresh-admission")
+    assert sent(api)[-1] == ("fresh-admission", 1) and api.calls[-1][0] == "activate"
     assert api.activations == before
     assert len([call for call in api.calls if call[0] == "start_run"]) == 1
+
+
+async def test_policy_refusal_journeys_replay_or_name_the_current_revision_and_create_nothing():
+    api = PlatformAPI()
+    live = OfflineLive(api)
+    guide = await live.run(live.model)
+    # A later revision of the same workflow and an unrelated workflow: only the former's revision applies.
+    name = HELPERS["summarize_workflow"](live.model)["metadata"]["name"]
+    api.activations["redeployed"] = SimpleNamespace(id=uuid4(), name=name, revision=2)
+    api.activations["unrelated"] = SimpleNamespace(id=uuid4(), name="another-workflow", revision=7)
+    before = dict(api.activations)
+    await JOURNEYS["test_a_model_the_policy_no_longer_approves_fails_with_llm_policy"](live)
+    assert sent(api)[-1] == (default_key(api), None)
+    assert api.activations[default_key(api)].id == UUID(guide["activation_id"])
+    await JOURNEYS["test_a_model_the_policy_no_longer_approves_fails_at_activation"](live)
+    fresh_key, revision = sent(api)[-1]
+    assert fresh_key not in before and revision == 2
+    assert api.activations == before and api.approved
 
 
 class ActivationPages:
