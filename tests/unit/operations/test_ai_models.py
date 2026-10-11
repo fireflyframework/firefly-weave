@@ -469,11 +469,31 @@ async def test_auto_refresh_uses_remaining_budget(model_service):
             cancelled.set()
 
     s.gateway_hook = slow
-    await s.service.refresh_after(
-        s.actor, s.scope, s.revision.id, admitted=True, deadline=time.monotonic() + 0.03, context=s.context
-    )
-    assert cancelled.is_set() and s.calls[0]["timeout_seconds"] <= 0.03
+    started = time.monotonic()
+    deadline = started + 0.03
+    await s.service.refresh_after(s.actor, s.scope, s.revision.id, admitted=True, deadline=deadline, context=s.context)
+    # The deadline holds the rounded sum, so its budget is deadline - started, which can exceed
+    # 0.03 by a rounding unit when a coarse clock gives the service the same reading.
+    assert cancelled.is_set() and 0 < s.calls[0]["timeout_seconds"] <= deadline - started
     assert not s.tests.limiter._calls
+
+
+async def test_auto_refresh_gives_the_gateway_exactly_the_time_left(model_service, monkeypatch):
+    s = model_service
+    # The reading behind a Windows CI failure: 2047.971 + 0.03 rounds up across 2048, so the deadline
+    # holds 0.03000000000020009 s, and a 15.6 ms clock tick lets the service read 2047.971 again.
+    # The credential lookup then takes 0.01 s, which the gateway's timeout must no longer include.
+    now = [2047.971]
+    monkeypatch.setattr(modules()[0], "time", SimpleNamespace(monotonic=lambda: now[0]))
+    deadline = now[0] + 0.03
+
+    async def credential(*args):
+        now[0] += 0.01
+        return "credential-canary"
+
+    s.credential.side_effect = credential
+    await s.service.refresh_after(s.actor, s.scope, s.revision.id, admitted=True, deadline=deadline, context=s.context)
+    assert s.calls[0]["timeout_seconds"] == deadline - now[0]
 
 
 async def test_auto_refresh_propagates_cancellation_and_programmer_errors(model_service):
@@ -603,7 +623,10 @@ async def test_saved_revision_refreshes_after_commit(model_service, kind):
 
     async def refresh(*args, **kwargs):
         assert events == ["committed"] and kwargs["admitted"] is False
-        assert 0 < kwargs["deadline"] - time.monotonic() <= 20
+        # The controller rounds its reading + 20.0, so deadline - now can exceed 20 by a rounding
+        # unit when a coarse clock repeats that reading; compare in the controller's own form.
+        now = time.monotonic()
+        assert now < kwargs["deadline"] <= now + 20.0
         events.append("refresh")
         await original(*args, **kwargs)
 
