@@ -1086,7 +1086,8 @@ async def test_real_legacy_deadline_while_postgresql_holds_the_first_fetch(opera
             state = await observer.scalar(text("SELECT state FROM pg_stat_activity WHERE pid=:pid"), {"pid": backend})
         # While the lock is still held, PostgreSQL no longer runs or waits for the abandoned read.
         assert waiting == 0 and state in {None, "idle"}
-    assert len(closed) == len(opened) and all(closed)
+    # The lock holds the statement inside stream() itself, so the deadline fires before any cursor exists.
+    assert opened == []
 
 
 @pytest.mark.integration

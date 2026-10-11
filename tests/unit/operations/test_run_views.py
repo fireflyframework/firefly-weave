@@ -156,6 +156,16 @@ async def test_each_authority_is_checked_and_audited_once(monkeypatch, caplog, o
     assert unit.opened == 1
 
 
+def test_the_current_principal_check_cannot_be_called_without_the_token_check():
+    # Only the read operations and the token check are public; each read runs both checks in order.
+    assert {name for name in vars(RunViewService) if not name.startswith("_")} == {
+        "summaries",
+        "steps",
+        "logs",
+        "precheck",
+    }
+
+
 async def test_environment_scope_is_required(monkeypatch):
     service, unit = service_with(monkeypatch, principal("viewer"))
     project = Scope(tenant_id=SCOPE.tenant_id, project_id=SCOPE.project_id)

@@ -55,8 +55,10 @@ class RunViewService:
     def __init__(self, uow: UnitOfWork, authorization: AuthorizationService) -> None:
         self.uow, self.authorization = uow, authorization
 
-    async def authorize(self, actor: Principal, scope: Scope, tx: Transaction, *, context: AuditContext) -> Principal:
-        """`run.read` on the principal stored now, inside the read unit; `precheck` already checked the token."""
+    async def _authorize_current(
+        self, actor: Principal, scope: Scope, tx: Transaction, *, context: AuditContext
+    ) -> Principal:
+        """`run.read` on the principal stored now, inside the read unit; callers run `precheck` first."""
         current = await load_principal(tx.session, actor.id)
         self.authorization.require(current, scope, "run.read", context=context)
         return current
@@ -67,7 +69,7 @@ class RunViewService:
         typed = run_position(position)
         self.precheck(actor, scope, context)
         async with self.uow.open(scope, mutation=False) as tx:
-            await self.authorize(actor, scope, tx, context=context)
+            await self._authorize_current(actor, scope, tx, context=context)
             rows = await FactReadRepository(tx).summary_rows(query, typed)
             visible = rows[: query.limit]
             cursor = None
@@ -92,7 +94,7 @@ class RunViewService:
         typed = step_position(position)
         self.precheck(actor, scope, context)
         async with self.uow.open(scope, mutation=False) as tx:
-            await self.authorize(actor, scope, tx, context=context)
+            await self._authorize_current(actor, scope, tx, context=context)
             repository = FactReadRepository(tx)
             rows, complete = await repository.step_rows(run_id, query, typed)
             visible = rows[: query.limit]
@@ -126,7 +128,7 @@ class RunViewService:
     ) -> RunLogPage:
         self.precheck(actor, scope, context)
         async with self.uow.open(scope, mutation=False) as tx:
-            await self.authorize(actor, scope, tx, context=context)
+            await self._authorize_current(actor, scope, tx, context=context)
             raise not_served("runs.logs")
 
     def precheck(self, actor: Principal, scope: Scope, context: AuditContext) -> None:
