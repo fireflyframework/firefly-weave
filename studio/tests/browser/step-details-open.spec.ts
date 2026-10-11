@@ -441,3 +441,36 @@ for (const size of screenSizes) {
     });
   });
 }
+
+for (const size of sizes)
+  test.describe(`moving between steps at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test("after Next step and a close, steps open again by Enter and double-click", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.openWithKeyboard("lookup");
+      await details.dialog
+        .getByRole("button", { name: "Next step", exact: true })
+        .click();
+      await expect(details.dialogFor("route-by-value")).toBeVisible();
+      await page.keyboard.press("Escape");
+      if (await details.dialog.count()) await page.keyboard.press("Escape");
+      await expect(details.dialog).toHaveCount(0);
+      await details.openWithKeyboard("summarize");
+      // Moving between steps left nothing that looks like an unapplied edit.
+      await expect(
+        page.getByText("Fix the invalid fields before continuing."),
+      ).toHaveCount(0);
+      await details.close();
+      if (size.width >= 768) await details.open("wait-for-payment");
+      else await details.openWithKeyboard("wait-for-payment");
+      // Previous step goes back the same way.
+      await details.dialog
+        .getByRole("button", { name: "Previous step", exact: true })
+        .click();
+      await expect(details.dialogFor("score")).toBeVisible();
+      await details.close();
+      await details.openWithKeyboard("check-customer");
+    });
+  });

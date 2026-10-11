@@ -423,12 +423,15 @@ export class StepDetails {
       );
     return (region as Region | null) ?? null;
   }
+  /**
+   * Moves to another step through the editor's own opener, so the step
+   * becomes the selection with the inspector following it; writing the
+   * selection here would leave the inspector on the previous step, holding
+   * what looks like an unapplied edit that blocks every later open.
+   */
   go(id: string) {
     const region = this.currentRegion() ?? "parameters";
-    if (!id.startsWith("$")) this.host().model.selected = id;
-    this.details.open({
-      ...this.request(),
-      target: id,
+    void this.host().openStepDetails(id, {
       tab: id === "$end" ? "parameters" : this.tab(),
       focus: { kind: "region", region },
       fresh: false,

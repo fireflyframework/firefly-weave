@@ -23,6 +23,7 @@ import type { ContractGap } from "../../designer/contract-gaps";
 import type { SuggestedChange } from "../../designer/diagnostics-list";
 import type { StructuredCanvasAdapter } from "../../model";
 import type { ToastAction } from "../../toast";
+import type { StepDetailsRequest } from "./step-details-service";
 import { editorNextEnabled } from "../state/editor-flag";
 
 export interface StepDetailsHost {
@@ -61,6 +62,15 @@ export interface StepDetailsHost {
   blocker(command: "simulate"): string;
   /** Settles unapplied inspector edits; false when they can't be applied. */
   ensureApplied(): Promise<boolean>;
+  /**
+   * Opens step details on a step, the trigger or End the way every opener
+   * does: pending inspector edits are applied first and the step becomes the
+   * selection, with the inspector following it. False when it can't open.
+   */
+  openStepDetails(
+    target: string,
+    request?: Partial<StepDetailsRequest>,
+  ): Promise<boolean>;
   focusStep(id: string): void;
   remove(id?: string): Promise<void>;
   duplicate(id?: string): Promise<void>;
