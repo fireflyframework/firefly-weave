@@ -169,8 +169,12 @@ class Live:
         async with WeaveClient(api, lambda: token, Scope.model_validate(scope), timeout=120) as client:
             yield client, scope
 
-    async def run(self, model: str) -> dict[str, Any]:
-        """Publish and activate the summarize workflow for this model, run it once and report how it ended."""
+    async def run(self, model: str, *, activation_idempotency_key: str | None = None) -> dict[str, Any]:
+        """Publish and activate the summarize workflow for this model, run it once and report how it ended.
+
+        By default the activation key comes from the published workflow, release and connection, so a
+        repeated call replays the activation it created first; a new key asks for a new activation.
+        """
         receipt = self.receipt()
         source = json.dumps(summarize_workflow(model), sort_keys=True, separators=(",", ":"))
         async with self.client() as (client, scope):
@@ -184,7 +188,10 @@ class Live:
             }
             pins = f"{published.id}:{receipt['release_id']}:{receipt['connection_revision_id']}"
             activation = await client.activate(
-                ActivationRequest.model_validate_json(json.dumps(request)), idempotency_key=_key("activation", pins)
+                ActivationRequest.model_validate_json(json.dumps(request)),
+                idempotency_key=(
+                    activation_idempotency_key if activation_idempotency_key is not None else _key("activation", pins)
+                ),
             )
             run = await client.start_run(
                 StartRunRequest.model_validate_json(json.dumps({"activation_id": str(activation.id), "input": INPUT})),
@@ -203,6 +210,7 @@ class Live:
             completed = next((_output(event) for event in events if event.type == "task_completed"), {})
             replay = await client.replay(run.id) if current.state.status == "succeeded" else None
         return {
+            "activation_id": str(activation.id),
             "run_id": str(run.id),
             "status": current.state.status,
             "output": current.state.output,

@@ -21,6 +21,7 @@ the refusals; the last one stops and restarts the installation's own Ollama cont
 """
 
 import hashlib
+from uuid import uuid4
 
 import pytest
 
@@ -64,12 +65,39 @@ async def test_the_guide_summarize_workflow_runs_on_the_local_model(live):
     assert outcome["replay"] == "consistent"
 
 
+async def activation_ids(live):
+    """Every activation in the owned workspace; the small fixture must fit one page, never a partial list."""
+    async with live.client() as (client, _):
+        page = await client.list_activations(limit=100)
+    assert page.next_cursor is None, "The owned live fixture exceeds its activation snapshot bound"
+    return frozenset(str(item.id) for item in page.items)
+
+
 async def test_a_model_the_policy_no_longer_approves_fails_with_llm_policy(live):
+    # The default key replays the activation the guide journey created; the worker refuses its run.
     try:
         removed = live.weave("ai", "models", "remove", *PROVIDER, "--model", live.model)
         assert live.model not in removed["approved"]
+        before = await activation_ids(live)
         outcome = await live.run(live.model)
+        assert outcome["activation_id"] in before, outcome
         assert outcome["code"] == "LLM_POLICY", outcome
+        assert await activation_ids(live) == before
+    finally:
+        restored = live.weave("ai", "models", "approve", *PROVIDER, "--served")
+    assert restored["approval"] == "served"
+
+
+async def test_a_model_the_policy_no_longer_approves_fails_at_activation(live):
+    # A new activation key asks for a new activation, which the API refuses before creating it.
+    try:
+        removed = live.weave("ai", "models", "remove", *PROVIDER, "--model", live.model)
+        assert live.model not in removed["approved"]
+        before = await activation_ids(live)
+        with pytest.raises(WeaveError) as refused:
+            await live.run(live.model, activation_idempotency_key=str(uuid4()))
+        assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-MODEL")
+        assert await activation_ids(live) == before
     finally:
         restored = live.weave("ai", "models", "approve", *PROVIDER, "--served")
     assert restored["approval"] == "served"
