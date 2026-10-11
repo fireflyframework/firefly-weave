@@ -443,7 +443,9 @@ Pass query values as strings or integers. Omitted optional fields keep their
 defaults: `refresh` is false, `limit` is 50 and `probe_tools` is true, so a
 caller that leaves them out never triggers a refresh or a larger page. `ai_setup.publish`
 takes the empty `RetirementRequest` body. A refusal raises `WeaveError` with its
-`code`, such as `WV-AI-RATE-LIMITED` or `WV-ACTIVATION-AI-MODEL`; see
+`code`, such as `WV-AI-RATE-LIMITED` for a refresh or test over the limit,
+`WV-AI-POLICY` when the API cannot read its AI policy, or `WV-AI-WORKER-MISSING`
+when setup finds no admitted Agentic worker release; see
 [AI discovery, readiness and setup](api.md#ai-discovery-readiness-and-setup).
 
 ## Device login, PKCE and stores

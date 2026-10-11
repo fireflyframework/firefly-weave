@@ -270,7 +270,9 @@ class AIFacts:
         return LumiConfiguration.model_validate_json(json.dumps(rows[0]["payload"])) if rows else None
 
     async def now(self) -> datetime:
-        value = await self.tx.session.scalar(text("SELECT transaction_timestamp()"))
+        # The clock now, not the transaction's start: a test dated with this clock that committed before
+        # this snapshot was taken must never read as a future record.
+        value = await self.tx.session.scalar(text("SELECT clock_timestamp()"))
         if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("Observation time unavailable")
         return value

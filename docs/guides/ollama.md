@@ -192,8 +192,9 @@ current grants:
   the last refresh, with `catalog.read`. Add `refresh=true` (which needs
   `connection.manage`) to ask Ollama again through the AI gateway. Each model
   reports `tools: yes`, `no` or `unknown` from Ollama's own model details, and
-  the context size and download size Ollama reports. A refresh never pulls a
-  model: use `weave platform ai models pull`.
+  the context size and download size Ollama reports. A refresh reads at most 50
+  models, in name order, within 10 seconds, and never pulls a model: use
+  `weave platform ai models pull`.
 - `ai_readiness.read` returns eight checks, from the installed worker to the last
   connection test, each `done`, `action`, `not_needed` or `unknown`. A check you
   may not read is `unknown` with the role it needs. The `ollama-local` connection

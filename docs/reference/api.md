@@ -339,9 +339,11 @@ GET  .../bindable-connections?connector=weave-agentic-provider%401.0.0&limit=50
 ```
 
 Each `...` stands for `/api/v1/tenants/{tenant}/projects/{project}/environments/{environment}`.
-Query parameters are strict: an unknown or repeated parameter, a malformed UUID,
-or a `refresh` other than `true` or `false` answers 422 `WV-VALIDATION` before
-any record is read. Request bodies are limited to 64 KiB (413 `WV-AI-LIMIT`).
+`ai_models.list` and `bindable_connections.list` parse their query strictly: an
+unknown or repeated parameter, a malformed UUID, a `refresh` other than `true`
+or `false`, or a `limit` outside 1 to 100 answers 422 `WV-VALIDATION` before any
+record is read. The other four operations take no query parameters. Request
+bodies are limited to 64 KiB (413 `WV-AI-LIMIT`).
 
 | Who | Can do |
 | --- | --- |
@@ -378,9 +380,15 @@ Discovery reports what the endpoint serves; it never pulls a model, never grants
 network access and never changes the approval. For an Ollama endpoint, the gateway
 reads Ollama's own model list and each model's details, so `tools` is `yes` only
 when Ollama reports tool support for that model, never a guess from its name.
-Approval and availability are separate: an approved model that the endpoint does
-not serve appears with `available: false`, and the worker still answers
-`LLM_MODEL_NOT_FOUND` if a step uses it.
+Ollama discovery reads at most 50 models, in name order, within 10 seconds; a
+model whose details do not arrive in time is listed with unknown facts. Other
+providers' model lists are read up to 50 names.
+
+Approval and availability are separate. For an Ollama endpoint whose policy lists
+its approved models, a listed model that Ollama does not serve appears with
+`available: false`. Other endpoints return only the approved models they report,
+so an approved model they do not list is simply absent. Either way the worker
+answers `LLM_MODEL_NOT_FOUND` if a step uses a model the endpoint does not serve.
 
 Without a mounted policy (`WEAVE_AI_POLICY_FILE` on the API), `approval` is
 `unknown` and the list is empty. A client then lets people type the model name,

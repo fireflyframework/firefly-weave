@@ -525,6 +525,21 @@ def facts(session):
     return modules()[1].AIFacts(Transaction(session, scope))
 
 
+async def test_observation_time_is_read_after_the_snapshot_with_the_test_clock():
+    # Tests are dated with clock_timestamp() when they commit. The reader's transaction start can precede
+    # a test its snapshot already includes, so the observation time is the clock read now, not the start.
+    stamped = datetime(2026, 10, 11, 9, 30, 15, 250000, tzinfo=UTC)
+    statements = []
+
+    class ClockSession:
+        async def scalar(self, statement, params=None):
+            statements.append(str(statement))
+            return stamped
+
+    assert await facts(ClockSession()).now() == stamped
+    assert statements == ["SELECT clock_timestamp()"]
+
+
 @pytest.mark.parametrize("count,size", [(1001, 1), (1, 8 * 1024 * 1024 + 1)])
 @pytest.mark.parametrize("method", ["releases", "latest_connections", "latest_tests", "granted_pairs"])
 async def test_fact_bounds_precede_payload_fetch(method, count, size):

@@ -378,8 +378,27 @@ def owned_state(directory, **changes):
     return {"context": "colima-weave-tests", "id": "a1b2c3d4e5f6", "directory": str(directory)} | changes
 
 
+INSTALLATION = OWNED / "build/acceptance/run/private/.local/platform"
+
+
+def compose_labels(project, directory=INSTALLATION, source=OWNED, service="api"):
+    """The labels Docker Compose puts on a container that `weave platform` created from these files."""
+    files = (
+        source / "compose.yaml",
+        source / "compose.identity.yaml",
+        directory / "compose.network.yaml",
+        directory / "compose.persistence.json",
+    )
+    return {
+        "com.docker.compose.project": project,
+        "com.docker.compose.service": service,
+        "com.docker.compose.project.working_dir": str(source),
+        "com.docker.compose.project.config_files": ",".join(str(path) for path in files),
+    }
+
+
 def labels_for(project, count=3):
-    return lambda requested: [{"com.docker.compose.project": project} for _ in range(count)]
+    return lambda requested: [compose_labels(project) for _ in range(count)]
 
 
 @pytest.mark.parametrize("root", ["build/acceptance/run/private/.local/platform", ".local/platform"])
@@ -389,7 +408,7 @@ def test_an_owned_installation_on_the_test_context_is_accepted(root):
 
     def labels(project):
         requested.append(project)
-        return [{"com.docker.compose.project": project, "com.docker.compose.service": "api"}]
+        return [compose_labels(project, directory, service=name) for name in ("api", "postgres", "ollama")]
 
     HELPERS["require_owned"](directory, owned_state(directory), labels)
     assert requested == ["weave-local-a1b2c3d4e5f6"]
@@ -431,20 +450,31 @@ def test_a_state_file_that_names_another_directory_is_refused():
         HELPERS["require_owned"](directory, owned_state(OWNED / ".local/platform"), labels_for("unused"))
 
 
+def test_an_installation_without_containers_is_refused():
+    with pytest.raises(AssertionError, match="No container"):
+        HELPERS["require_owned"](INSTALLATION, owned_state(INSTALLATION), lambda project: [])
+
+
+ANOTHER_INSTALLATION = OWNED / ".local/platform"
+ANOTHER_CHECKOUT = OWNED.parent / "firefly-weave"
+
+
+# Docker's project filter guarantees the project label, so each case returns it: what differs is where
+# the containers came from, as a copied platform.json or a reused installation ID would show.
 @pytest.mark.parametrize(
     "labels",
     [
-        lambda project: [],
-        lambda project: [{"com.docker.compose.project": "weave-local-ffffffffffff"}],
-        lambda project: [{"com.docker.compose.project": project}, {"com.docker.compose.project": "other"}],
-        lambda project: [{"com.docker.compose.service": "api"}],
+        lambda project: [compose_labels(project, ANOTHER_INSTALLATION)],
+        lambda project: [compose_labels(project, ANOTHER_CHECKOUT / ".local/platform", ANOTHER_CHECKOUT)],
+        lambda project: [compose_labels(project), compose_labels(project, ANOTHER_INSTALLATION, service="ollama")],
+        lambda project: [{"com.docker.compose.project": project, "com.docker.compose.service": "ollama"}],
+        lambda project: [compose_labels(project, source=ANOTHER_CHECKOUT)],
     ],
-    ids=["no-containers", "other-installation", "mixed", "unlabelled"],
+    ids=["copied-state", "other-checkout", "mixed", "created-outside-compose", "other-source"],
 )
-def test_containers_must_carry_this_installations_compose_project(labels):
-    directory = OWNED / "build/acceptance/run/private/.local/platform"
-    with pytest.raises(AssertionError, match="Compose project"):
-        HELPERS["require_owned"](directory, owned_state(directory), labels)
+def test_containers_of_another_installation_with_the_same_project_are_refused(labels):
+    with pytest.raises(AssertionError, match="Compose files"):
+        HELPERS["require_owned"](INSTALLATION, owned_state(INSTALLATION), labels)
 
 
 class GuardedLive(HELPERS["Live"]):
@@ -463,7 +493,7 @@ class GuardedLive(HELPERS["Live"]):
         if args[:2] == ("ps", "--all"):
             return "c1\nc2\n"
         if args[0] == "inspect":
-            return '{"com.docker.compose.project":"weave-local-a1b2c3d4e5f6"}\n' * 2
+            return (json.dumps(compose_labels("weave-local-a1b2c3d4e5f6")) + "\n") * 2
         raise AssertionError(f"Unexpected docker command {args}")
 
 

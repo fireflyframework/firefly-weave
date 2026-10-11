@@ -23,8 +23,9 @@ WEAVE_LIVE_AI_MODEL (qwen2.5:1.5b by default) into the installation's own Ollama
 Command output is parsed in memory; platform commands print no secret.
 
 Before any command, the installation must live under this checkout's build/ or .local/
-directory, use the colima-weave-tests Docker context, and own the containers it names: the
-journeys never change another platform, the host's Ollama or another Docker context.
+directory and use the colima-weave-tests Docker context, and every container of its Compose
+project must come from this checkout's Compose files, including at least one of its own
+directory: the journeys never change another platform, the host's Ollama or another context.
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ DEFAULT_MODEL = "qwen2.5:1.5b"
 OWNED_CONTEXT = "colima-weave-tests"
 OWNED_ROOTS = (ROOT / "build", ROOT / ".local")
 PROJECT_LABEL = "com.docker.compose.project"
+CONFIG_FILES_LABEL = "com.docker.compose.project.config_files"
 INPUT = {"text": "Firefly Weave runs durable workflows and records every step, so a run can be replayed."}
 TERMINAL = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 RUN_SECONDS = 600.0
@@ -90,7 +92,10 @@ def require_owned(directory: Path, state: Mapping[str, Any], labels: Callable[[s
     """Refuse an installation these journeys do not own, before Docker is asked about anything.
 
     ``labels`` returns the labels of every container of a Compose project; it runs only once the
-    context and the directory are known to be owned.
+    context and the directory are known to be owned. Docker's project filter already guarantees the
+    project label, so the check uses the Compose files each container was created from: all of them in
+    this checkout and at least one in this installation's directory. A copied platform.json or a reused
+    installation ID therefore cannot hand the journeys another installation's containers.
     """
     if state.get("context") != OWNED_CONTEXT:
         raise AssertionError(f"The live AI journeys run only on the {OWNED_CONTEXT} Docker context.")
@@ -100,8 +105,18 @@ def require_owned(directory: Path, state: Mapping[str, Any], labels: Callable[[s
         raise AssertionError("The installation's state names another directory.")
     project = "weave-local-" + str(state["id"])
     found = labels(project)
-    if not found or any(row.get(PROJECT_LABEL) != project for row in found):
-        raise AssertionError(f"The installation's containers must all carry its own Compose project {project}.")
+    if not found:
+        raise AssertionError(f"No container of the installation's Compose project {project} exists.")
+    for row in found:
+        files = [Path(item).resolve() for item in str(row.get(CONFIG_FILES_LABEL, "")).split(",") if item]
+        if (
+            not files
+            or not all(path.is_relative_to(ROOT) for path in files)
+            or not any(path.is_relative_to(directory) for path in files)
+        ):
+            raise AssertionError(
+                f"A container of Compose project {project} was not created from this installation's Compose files."
+            )
 
 
 def _key(kind: str, value: str) -> str:

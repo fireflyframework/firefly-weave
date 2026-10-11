@@ -354,24 +354,20 @@ def test_worker_grants_still_cross_and_the_server_keeps_its_management_check(tmp
     assert seen == [("POST", path, body)]
 
 
-@pytest.mark.parametrize(
-    "method,path",
-    [
-        ("POST", f"{ENVIRONMENT}/worker-releases"),
-        ("POST", f"{ENVIRONMENT}/tasks/credentials"),
-        ("POST", "/api/v1/admin/grants"),
-        ("POST", "/api/v1/admin/tenants"),
-    ],
-    ids=["releases.create", "tasks.credentials", "admin.grant", "admin.tenant"],
-)
-def test_operator_and_credential_operations_never_reach_the_platform(tmp_path, method, path):
+@pytest.mark.parametrize("operation", ["releases.create", "tasks.credentials", "admin.grant", "admin.tenant"])
+def test_operator_and_credential_operations_never_reach_the_platform(tmp_path, operation):
+    from firefly_weave.contracts.surface import OPERATIONS
+
     seen = []
 
     async def upstream(request):
         seen.append(request)
         return httpx.Response(200, json={})
 
+    row = OPERATIONS[operation]
+    path = row.canonical_path.format(tenant=TENANT, project=PROJECT_ID, environment=ENVIRONMENT_ID)
     with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
         headers = pair(browser)
-        assert browser.request(method, f"/studio/api{path}", json={}, headers=headers).status_code == 404
+        assert browser.app.state.studio.check_scope(path, row.method) == 404
+        assert browser.request(row.method, f"/studio/api{path}", json={}, headers=headers).status_code == 404
     assert seen == []

@@ -341,9 +341,22 @@ async def test_bindable_pages_send_no_limit_unless_asked_and_carry_no_configurat
                 await weave.invoke("bindable_connections.list")
 
 
-async def test_refusals_keep_their_problem_codes():
-    problem = {"status": 422, "code": "WV-ACTIVATION-AI-MODEL", "message": "The model is not approved"}
-    async with client(Recorder(problem, 422)) as weave:
+@pytest.mark.parametrize(
+    "operation,status,code",
+    [
+        ("ai_setup.publish", 422, "WV-AI-WORKER-MISSING"),
+        ("ai_endpoints.list", 503, "WV-AI-POLICY"),
+        ("ai_models.list", 429, "WV-AI-RATE-LIMITED"),
+    ],
+)
+async def test_refusals_keep_their_problem_codes(operation, status, code):
+    problem = {"status": status, "code": code, "message": "Refused"}
+    arguments = {
+        "ai_setup.publish": {"body": RetirementRequest()},
+        "ai_endpoints.list": {},
+        "ai_models.list": {"query": {"connection": str(uuid4()), "refresh": "true"}},
+    }[operation]
+    async with client(Recorder(problem, status)) as weave:
         with pytest.raises(WeaveError) as refused:
-            await weave.invoke("ai_readiness.read")
-    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-MODEL")
+            await weave.invoke(operation, **arguments)
+    assert (refused.value.status, refused.value.code) == (status, code)

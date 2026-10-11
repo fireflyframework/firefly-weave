@@ -21,6 +21,7 @@ marks a worker as recently seen. The AI gateway is an in-process fake: no model 
 """
 
 import json
+import runpy
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -415,10 +416,16 @@ async def test_bindable_pages_return_exactly_the_granted_revisions_across_205_co
     revisions = sorted([*ai, *others], key=lambda row: row.id)
     assert len(revisions) == 205
     allowed = {row.id for row in revisions[::7]} | {ai[0].id, ai[3].id}
-    binder = await env.principal(("deployer", env.scope, tuple(sorted(str(identifier) for identifier in allowed))))
+    binder = await env.principal(
+        ("deployer", env.scope, tuple(sorted(str(identifier) for identifier in allowed))),
+        ("deployer", env.other, ()),
+    )
     unrestricted = await env.principal(("deployer", env.scope, ()))
+    decoded = runpy.run_path(str(Path(__file__).resolve().parents[1] / "unit/test_bindable_connections.py"))[
+        "decoded_cursor_identifier"
+    ]
 
-    async def walk(principal, limit, connector=None):
+    async def walk(principal, limit, connector=None, visible=None):
         seen, cursor, pages = [], None, 0
         while True:
             page = await env.bindable.list(
@@ -431,14 +438,17 @@ async def test_bindable_pages_return_exactly_the_granted_revisions_across_205_co
             seen.extend(page.items)
             if page.next_cursor is None:
                 return seen, pages
+            # A continuation names only the last revision this caller may bind, never a denied one.
+            assert decoded(page) == page.items[-1].revision_id
+            assert visible is None or decoded(page) in visible
             cursor = page.next_cursor
 
-    granted, pages = await walk(binder, 7)
+    granted, pages = await walk(binder, 7, visible=allowed)
     assert [item.revision_id for item in granted] == sorted(allowed)
     assert pages == -(-len(allowed) // 7)
     everything, _ = await walk(unrestricted, 50)
     assert [item.revision_id for item in everything] == [row.id for row in revisions]
-    filtered, _ = await walk(binder, 50, AI_CONNECTOR)
+    filtered, _ = await walk(binder, 50, AI_CONNECTOR, visible=allowed)
     assert [item.revision_id for item in filtered] == sorted({ai[0].id, ai[3].id} | {row.id for row in ai} & allowed)
     for item in filtered:
         assert (item.connection_id, item.provider, item.endpoint_origin, item.enabled) == (
@@ -452,7 +462,14 @@ async def test_bindable_pages_return_exactly_the_granted_revisions_across_205_co
         assert leak not in serialized
     # Cursors are bound to their scope, principal and connector filter.
     first = await env.bindable.list(binder, env.scope, BindableConnectionQuery(limit=1), context=AuditContext())
-    assert first.next_cursor is not None
+    assert first.next_cursor is not None and decoded(first) in allowed
+    # The caller may list the other environment, but not continue this list there.
+    elsewhere = await env.bindable.list(binder, env.other, BindableConnectionQuery(limit=1), context=AuditContext())
+    assert elsewhere.items == []
+    with pytest.raises(ValueError):
+        await env.bindable.list(
+            binder, env.other, BindableConnectionQuery(limit=1, cursor=first.next_cursor), context=AuditContext()
+        )
     for principal, query in (
         (unrestricted, BindableConnectionQuery(limit=1, cursor=first.next_cursor)),
         (binder, BindableConnectionQuery(limit=1, cursor=first.next_cursor, connector=AI_CONNECTOR)),
