@@ -340,6 +340,25 @@ async def test_replays_reject_retired_or_conflicting_catalog_before_any_publicat
     assert len(setup.audits) == 1
 
 
+@pytest.mark.parametrize("kind", ["Connector", "Action"])
+@pytest.mark.parametrize("mutation,code", [("retired", "WV-AI-CATALOG-RETIRED"), ("digest", "WV-VERSION-CONFLICT")])
+async def test_unrepairable_catalog_is_reported_before_missing_worker_releases(setup, kind, mutation, code):
+    await publish(setup)
+    row = setup.versions[kind]
+    if mutation == "retired":
+        setup.retired.add(row.id)
+    else:
+        setup.versions[kind] = row.model_copy(update={"definition_digest": "b" * 64})
+    # Admitting a worker cannot repair a retired or conflicting catalog, so setup must not suggest it.
+    setup.releases, setup.other_releases = [], []
+    setup.service.definitions.publish.reset_mock()
+    with pytest.raises(CatalogError) as error:
+        await publish(setup)
+    assert (error.value.status, error.value.code) == (409, code)
+    setup.service.definitions.publish.assert_not_awaited()
+    assert len(setup.audits) == 1
+
+
 async def test_wrong_installed_manifest_aborts_before_first_publish(setup):
     registry = setup.service.definitions.registry
     registry._descriptors["weave-agentic-provider"] = SimpleNamespace(manifest=FrozenDocument.from_value({"bad": True}))
