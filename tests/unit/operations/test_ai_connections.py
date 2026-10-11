@@ -19,6 +19,7 @@
 import json
 import threading
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -68,6 +69,9 @@ def revision(**changes):
     return ConnectionRevision.model_validate(value)
 
 
+DATABASE_NOW = datetime(2026, 10, 11, 9, 30, 15, 250000, tzinfo=UTC)
+
+
 class Session:
     def __init__(self):
         self.statements = []
@@ -75,6 +79,11 @@ class Session:
     async def execute(self, statement, values=None):
         self.statements.append((str(statement), values or {}))
         return SimpleNamespace()
+
+    async def scalar(self, statement, values=None):
+        self.statements.append((str(statement), values or {}))
+        assert str(statement) == "SELECT clock_timestamp()"
+        return DATABASE_NOW
 
 
 class Connections:
@@ -145,6 +154,8 @@ class Store:
         sql = str(statement)
         if "platform_administrators" in sql:
             return None
+        if sql == "SELECT clock_timestamp()":
+            return DATABASE_NOW
         assert sql.startswith("SELECT payload FROM connection_revisions"), sql
         return self.saved.model_dump(mode="json", by_alias=True)
 
@@ -230,6 +241,21 @@ def audits(monkeypatch):
 
     monkeypatch.setattr(ai_connections, "audit", record)
     return found
+
+
+async def test_a_recorded_test_is_dated_by_the_database_clock_that_readiness_reads(audits):
+    # Readiness measures a test's age with the database clock, so the API host's clock must not date it.
+    saved = revision()
+    connections = Connections(saved)
+    service = AIConnectionService(connections, Gateway())
+    with po.installed(POLICY):
+        await service.test(ACTOR, SCOPE, saved.id, AIConnectionTestRequest(model="qwen3:4b"), context=CONTEXT)
+    statements = [sql for sql, _ in connections.session.statements]
+    assert statements.index("SELECT clock_timestamp()") < next(
+        index for index, sql in enumerate(statements) if "connection_test_results" in sql
+    )
+    stored = [values for sql, values in connections.session.statements if "connection_test_results" in sql]
+    assert json.loads(stored[0]["payload"])["tested_at"] == "2026-10-11T09:30:15.250000+00:00"
 
 
 async def test_a_keyless_test_sends_no_credential_and_is_recorded_and_audited(audits):

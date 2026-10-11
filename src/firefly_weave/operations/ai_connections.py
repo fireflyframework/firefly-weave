@@ -29,12 +29,12 @@ import re
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 from uuid import UUID, uuid4
 
 from pyfly.container import service
+from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
@@ -166,8 +166,10 @@ class AIConnectionService:
         context: AuditContext,
     ) -> None:
         job = uuid4()
-        payload = {"kind": "ai", "tested_at": datetime.now(UTC).isoformat(), **result.model_dump(mode="json")}
         async with self.connections.uow.open(scope) as tx:
+            # Readiness measures a test's age with the database clock, so the same clock dates the test.
+            tested_at = await tx.session.scalar(text("SELECT clock_timestamp()"))
+            payload = {"kind": "ai", "tested_at": tested_at.isoformat(), **result.model_dump(mode="json")}
             repository = ConnectionRepository(tx)
             await repository.execute(
                 "INSERT INTO connection_test_jobs VALUES(:id,:tenant,:project,:environment,:revision,:principal)",

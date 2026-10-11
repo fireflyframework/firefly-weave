@@ -154,7 +154,9 @@ def model_service(tmp_path, monkeypatch):
         before_audit=None,
     )
 
-    async def scalar(statement, params):
+    async def scalar(statement, params=None):
+        if str(statement) == "SELECT clock_timestamp()":
+            return datetime.now(UTC)
         key = (params["tenant"], params["project"], params["environment"], params["id"])
         row = state.records.get(key)
         return None if row is None else row.model_dump(mode="json", by_alias=True)
