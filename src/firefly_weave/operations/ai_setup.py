@@ -27,7 +27,7 @@ from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
-from firefly_weave.compiler.catalog import FrozenDocument
+from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument
 from firefly_weave.connections.diagnostics import AGENTIC_ADAPTER, is_agentic_revision, keyless_connection
 from firefly_weave.connections.repository import ConnectionRepository
 from firefly_weave.connections.service import ConnectionService
@@ -69,8 +69,16 @@ def credential_pairs(releases: list[WorkerRelease]) -> tuple[tuple[UUID, str], .
     return tuple(sorted(pairs))
 
 
+def _action_task_available(catalog: CatalogSnapshot) -> bool:
+    """Whether a compiler catalog resolves the built-in Action's worker task to the exact shipped contract."""
+    reference = f"{TASK_TYPE}@{TASK_VERSION}"
+    expected = CatalogSnapshot.from_definitions([], tasks=[task_capability()]).resolve("TaskCapability", reference)
+    resolved = catalog.resolve("TaskCapability", reference)
+    return expected is not None and resolved is not None and resolved.digest == expected.digest
+
+
 def _limit() -> CatalogError:
-    return CatalogError(429, "WV-AI-LIMIT", "AI setup exceeds the bounded record limit")
+    return CatalogError(429, "WV-PAGE-LIMIT", "AI setup exceeds the bounded record limit")
 
 
 @service
@@ -104,6 +112,9 @@ class AISetupService:
                 raise CatalogError(409, "WV-AI-CATALOG-RETIRED", "A built-in AI definition is retired")
             if digest != item.definition_digest:
                 raise CatalogError(409, "WV-VERSION-CONFLICT", "An immutable version already has different content")
+        # The Action compiles against this same project-wide task catalog, so check it before any publication.
+        if not _action_task_available(await self.definitions.compiler_capabilities(tx)):
+            raise CatalogError(422, "WV-AI-WORKER-MISSING", "Admit an AI worker release before publishing AI actions")
 
     async def publish(self, actor: Principal, scope: Scope, *, context: AuditContext) -> AISetupPublishResult:
         if scope.project_id is None:

@@ -171,12 +171,15 @@ class AIReadinessService:
             project = Scope(tenant_id=scope.tenant_id, project_id=scope.project_id)
             manage = self._allowed(actor, current, scope, "connection.manage", context)
             releases = await _observe(facts.releases())
-            items = [self._installed(releases)]
+            installed = self._installed(releases)
+            items = [installed]
             if self._allowed(actor, current, project, "catalog.read", context):
                 published = await _observe(facts.published())
                 publication = self._published(published)
+                # Publication compiles the Action against the installed worker task and cannot succeed before it.
                 if (
-                    not isinstance(published, _Unavailable)
+                    installed.status == "done"
+                    and not isinstance(published, _Unavailable)
                     and publication.status == "action"
                     and all(
                         not retired and digest == item.definition_digest
@@ -267,7 +270,8 @@ class AIReadinessService:
                 credentialed = [
                     row for row in connections if not keyless_connection(row.adapter, row.config, row.secret_refs)
                 ]
-                items.append(self._keys(scope, connections, credentialed))
+                keys = self._keys(scope, connections, credentialed)
+                items.append(keys)
                 if connections and not credentialed:
                     items.append(
                         AIReadinessItem(id="connection_authorized", status="not_needed", detail="no_credential")
@@ -283,7 +287,12 @@ class AIReadinessService:
                 else:
                     pairs = await _observe(facts.granted_pairs(tuple(row.id for row in credentialed)))
                     authorization = self._authorized(releases, credentialed, pairs)
-                    if authorization.status == "action" and all(credential_pairs([release]) for release in releases):
+                    # Authorization revalidates every key, so it cannot succeed while one is missing.
+                    if (
+                        authorization.status == "action"
+                        and keys.status == "done"
+                        and all(credential_pairs([release]) for release in releases)
+                    ):
                         authorization = authorization.model_copy(
                             update={
                                 "fix": AIReadinessFix(kind="operation", label="Authorize", operation="ai_setup.grant")

@@ -31,6 +31,7 @@ from pydantic import ValidationError
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied, AuthorizationService
 from firefly_weave.access.models import Grant, Principal
+from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import ScopedSecrets, SecretGrant
@@ -41,10 +42,12 @@ from firefly_weave.contracts.catalog import PublishedVersion
 from firefly_weave.contracts.connectors import ConnectionRevision
 from firefly_weave.contracts.workers import WorkerRelease
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.repository import DefinitionRepository
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.operations.ai_facts import builtin_ai_definitions
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction
+from firefly_weave.workers.service import WorkerService
 
 REFERENCE = "weave-agentic.generate@1.0.0"
 
@@ -114,6 +117,7 @@ def setup(monkeypatch):
         calls=[],
         opened=[],
         releases=[release()],
+        other_releases=[],
         project_count=1,
         project_bytes=1,
         release_count=None,
@@ -147,13 +151,32 @@ def setup(monkeypatch):
             assert state.active and params["tenant"] == scope.tenant_id and params["project"] == scope.project_id
             assert not any(word in sql for word in ("INSERT", "UPDATE", "DELETE"))
             if "worker_releases" in sql:
-                if "environment_id" not in sql:
-                    assert "count(*)" in sql and "octet_length(payload::text)" in sql
+                if "environment_id" not in sql and "count(*)" in sql:
+                    assert "octet_length(payload::text)" in sql
                     state.calls.append("project-size")
                     return SimpleNamespace(one=lambda: (state.project_count, state.project_bytes))
+                if "environment_id" not in sql:
+                    # The compiler's task catalog holds every release admitted anywhere in the project.
+                    assert sql == "SELECT payload FROM worker_releases WHERE tenant_id=:tenant AND project_id=:project"
+                    state.calls.append("project-releases")
+                    admitted = [
+                        {"payload": r.model_dump(mode="json", by_alias=True)}
+                        for r in state.releases + state.other_releases
+                    ]
+                    return SimpleNamespace(mappings=lambda: iter(admitted))
                 assert params["environment"] == scope.environment_id
                 rows = [{"id": r.id, "payload": r.model_dump(mode="json", by_alias=True)} for r in state.releases]
                 count, size, name = state.release_count, state.release_bytes, "releases"
+            elif "definition_versions" in sql and "document" in sql:
+                assert "environment_id" not in sql and state.tx.scope == project
+                documents = [
+                    dict(kind=item.kind, name=name, version=version, document=item.document)
+                    for item in builtin_ai_definitions()
+                    if item.kind in state.versions
+                    for name, version in (item.reference.split("@"),)
+                ]
+                state.calls.append("catalog" + ("-size" if "count(*)" in sql else "-rows"))
+                return SimpleNamespace(one=lambda: (len(documents), 1), mappings=lambda: iter(documents))
             elif "definition_versions" in sql:
                 assert "environment_id" not in sql and state.tx.scope == project
                 rows = [
@@ -215,6 +238,11 @@ def setup(monkeypatch):
     registry.register_descriptor(AGENTIC_DESCRIPTOR, AgenticConnectionAdapter())
     definitions.registry = registry
 
+    async def compiled(tx, source):
+        # Resolve the catalog and compile exactly as DefinitionService.publish does before any write.
+        catalog = await DefinitionRepository(tx).snapshot(await definitions.compiler_capabilities(tx))
+        return compile_source(source, format="json", catalog=catalog, action_validators=registry.action_validators())
+
     async def publish(actor, given, kind, source, format, key, *, context, tx):
         async with definitions.transaction(given, tx):
             assert tx is state.tx and tx.scope == project and context is state.context and actor is state.actor
@@ -224,6 +252,11 @@ def setup(monkeypatch):
             assert key == "weave-ai-" + kind + "-" + item.definition_digest
             if kind == "Action" and state.failure:
                 raise state.failure
+            result = await compiled(tx, source)
+            if not result.ok:
+                raise CatalogError(
+                    422, "WV-COMPILE", "Definition compilation failed", result=json.loads(result.to_bytes())
+                )
             if kind not in state.versions:
                 name, version = item.reference.split("@")
                 state.versions[kind] = PublishedVersion(
@@ -240,6 +273,8 @@ def setup(monkeypatch):
     provider = SimpleNamespace(resolve=lambda handle: pytest.fail("Setup resolved a secret"))
     secrets = ScopedSecrets({"test": provider}, (SecretGrant(scope, "private-handle", "test", "value"),))
     connections = ConnectionService(definitions.uow, definitions, registry, secrets)
+    admission = WorkerService(definitions, connections)
+    definitions.workers = SimpleNamespace(get=lambda: admission)
 
     async def contract(actor, given, identifier, *, capability, context, tx, resource=None):
         assert given == scope and tx is state.tx and identifier == state.revision.connector_version_id
@@ -346,8 +381,70 @@ async def test_project_wide_publication_bound_precedes_payload_loading_and_mutat
     setup.project_count, setup.project_bytes = count, size
     with pytest.raises(CatalogError) as error:
         await publish(setup)
-    assert error.value.status == 429
+    assert (error.value.status, error.value.code) == (429, "WV-PAGE-LIMIT")
     assert setup.calls == ["project-size"] and not setup.versions and not setup.audits
+
+
+def source(item):
+    return json.dumps(item.document, sort_keys=True, separators=(",", ":"))
+
+
+async def publish_without_setup_checks(s):
+    """Publish both built-ins in one transaction, as setup would, but without its own preflight."""
+    async with s.service.definitions.uow.open(s.project) as tx:
+        for item in builtin_ai_definitions():
+            await s.service.definitions.publish(
+                s.actor,
+                s.project,
+                item.kind,
+                source(item),
+                "json",
+                module().publication_key(item),
+                context=s.context,
+                tx=tx,
+            )
+
+
+@pytest.mark.parametrize(
+    "admitted,diagnostic",
+    [
+        ("none", "WV-COMP-UNKNOWN_TASK"),
+        ("custom", "WV-COMP-UNKNOWN_TASK"),
+        ("contract", "WV-COMP-TIMEOUT_CONTRACT"),
+    ],
+)
+async def test_publication_requires_a_project_release_with_the_exact_action_task(setup, admitted, diagnostic):
+    if admitted == "none":
+        setup.releases = []
+    else:
+        changes = {"task_type": "custom.generate"} if admitted == "custom" else {"timeout_seconds": 599}
+        setup.releases = [
+            release(capabilities=[task_capability().model_copy(update=changes)], credential_capabilities=[])
+        ]
+    with pytest.raises(CatalogError) as error:
+        await publish(setup)
+    assert (error.value.status, error.value.code) == (422, "WV-AI-WORKER-MISSING")
+    assert str(error.value) == "Admit an AI worker release before publishing AI actions"
+    setup.service.definitions.publish.assert_not_awaited()
+    assert not setup.versions and not setup.audits and not setup.active
+    assert setup.calls.index("project-size") < setup.calls.index("project-releases")
+    # The compiler resolves the same project catalog and rejects the built-in Action for the same reason.
+    with pytest.raises(CatalogError) as compiled:
+        await publish_without_setup_checks(setup)
+    assert compiled.value.code == "WV-COMPILE"
+    assert diagnostic in {row["code"] for row in compiled.value.result["diagnostics"]}
+    assert not setup.versions
+
+
+@pytest.mark.parametrize("environment", ["selected", "other"])
+async def test_publication_compiles_once_any_project_release_provides_the_exact_action_task(setup, environment):
+    if environment == "other":
+        setup.releases, setup.other_releases = [], setup.releases
+    result = await publish(setup)
+    assert len(result.actions) == 1 and set(setup.versions) == {"Connector", "Action"}
+    assert setup.service.definitions.publish.await_count == 2
+    assert [row[0] for row in setup.audits] == ["ai.setup.publish"]
+    assert "catalog-rows" in setup.calls and setup.calls.index("project-size") < setup.calls.index("project-releases")
 
 
 async def test_keyless_grant_skips_releases_grants_and_secret_resolution_even_when_empty(setup):
@@ -428,7 +525,8 @@ async def test_grant_bounds_reject_before_any_mutation(setup, group, count, size
     setattr(setup, group + "_bytes", size)
     with pytest.raises(CatalogError) as error:
         await grant(setup)
-    assert error.value.status == 429 and not setup.grants and not setup.audits
+    assert (error.value.status, error.value.code) == (429, "WV-PAGE-LIMIT")
+    assert not setup.grants and not setup.audits
     assert setup.calls[-1] == ("releases-size" if group == "release" else "grants-size")
 
 
@@ -496,7 +594,8 @@ async def test_release_and_grant_payloads_share_one_budget_before_writes(setup):
     setup.release_bytes = setup.grant_bytes = 4 * 1024 * 1024 + 1
     with pytest.raises(CatalogError) as error:
         await grant(setup)
-    assert error.value.status == 429 and not setup.grants and not setup.audits
+    assert (error.value.status, error.value.code) == (429, "WV-PAGE-LIMIT")
+    assert not setup.grants and not setup.audits
     assert setup.calls[-1] == "grants-size"
 
 

@@ -995,3 +995,42 @@ async def test_authorize_fix_does_not_offer_grants_for_an_incapable_aggregate(re
     ready.grants = set()
     item = by_id(await read(ready))["connection_authorized"]
     assert item.status == "action" and item.fix is None
+
+
+@pytest.mark.parametrize("releases", ["missing", "custom", "unavailable", "limit"])
+async def test_publish_fix_waits_until_the_ai_worker_is_installed(ready, releases):
+    ready.published = {}
+    if releases == "missing":
+        ready.releases = []
+    elif releases == "custom":
+        custom = task_capability().model_copy(update={"task_type": "custom.generate"})
+        ready.releases = [release(capabilities=[custom], credential_capabilities=[])]
+    else:
+        ready.failures["releases"] = (
+            ValueError("Unavailable") if releases == "unavailable" else modules()[1].FactLimit()
+        )
+    items = by_id(await read(ready))
+    assert items["worker_installed"].status != "done"
+    assert (items["actions_published"].status, items["actions_published"].fix) == ("action", None)
+    ready.releases, ready.failures = [release()], {}
+    items = by_id(await read(ready))
+    assert items["worker_installed"].status == "done"
+    assert items["actions_published"].fix.operation == "ai_setup.publish"
+
+
+@pytest.mark.parametrize("key", ["ungranted_handle", "no_secret_grants"])
+async def test_authorize_fix_waits_until_the_connection_key_is_available(ready, key):
+    ready.grants = set()
+    secrets = ready.service.connections.secrets
+    connection = ready.connections[0]
+    if key == "ungranted_handle":
+        ready.connections = [connection.model_copy(update={"secret_refs": {"apiKey": "missing-handle"}})]
+    else:
+        ready.service.connections.secrets = ScopedSecrets()
+    items = by_id(await read(ready))
+    assert (items["key_available"].status, items["key_available"].detail) == ("action", "key_missing")
+    assert (items["connection_authorized"].status, items["connection_authorized"].fix) == ("action", None)
+    ready.connections, ready.service.connections.secrets = [connection], secrets
+    items = by_id(await read(ready))
+    assert items["key_available"].status == "done"
+    assert items["connection_authorized"].fix.operation == "ai_setup.grant"

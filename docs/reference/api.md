@@ -368,7 +368,11 @@ built-in AI Connector and Action in one project transaction. It requires
 an environment-only grant is insufficient. Digest-derived keys make retries
 return the same version IDs. Conflicting immutable versions and retired built-ins
 return 409; setup never overwrites or reactivates them. Publication rejects more
-than 1,000 project-wide worker releases or 8 MiB of release payloads before compilation.
+than 1,000 project-wide worker releases or 8 MiB of release payloads with 429
+`WV-PAGE-LIMIT` before compilation. The built-in Action compiles against the
+exact built-in generate task, so publication also requires an admitted worker
+release in the project that provides it; without one it returns 422
+`WV-AI-WORKER-MISSING` before publishing anything.
 
 `ai_setup.grant` accepts only `{connection_revision_id}` and requires
 `connection.manage` in the selected environment. It revalidates the stored AI
@@ -378,13 +382,15 @@ revoked pairs are reenabled. An approved keyless connection returns
 `{granted: false, not_needed: true}` without reading worker grants. Credentialed
 connections with no relevant admitted release return 422 `WV-AI-WORKER-MISSING`.
 Release and existing-grant reads share an 8 MiB budget and each allow at most 1,000
-records; exceeding a bound returns 429 before any grant is written.
+records; exceeding a bound returns 429 `WV-PAGE-LIMIT` before any grant is written.
 
 Both setup operations return 200 on success, audit accepted requests, roll back
 on failure or cancellation, and return `Cache-Control: no-store`, including on
 errors. Neither operation resolves credential values or calls a provider. The
 readiness checklist offers **Publish** or **Authorize** only when both permission
-snapshots allow the operation and the observed missing state can be repaired.
+snapshots allow the operation and the operation can repair the observed missing
+state: **Publish** appears only once `worker_installed` is `done`, and
+**Authorize** only once `key_available` is `done`.
 
 ### Health probes
 
