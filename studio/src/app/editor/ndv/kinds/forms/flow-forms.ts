@@ -43,6 +43,7 @@ export const switchForm = (): FormSpec => ({
       path: [],
       type: "fields",
       label: "Paths",
+      labelHidden: true,
       hint: "Paths are checked from top to bottom. Each path is an output on the canvas, labeled with its condition.",
       children: () => [
         {

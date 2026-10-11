@@ -185,6 +185,7 @@ SPDX-License-Identifier: Apache-2.0
   --dur-expressive: 1200ms; /* the live pulse on real runs */
   /* layout */
   --panel-w: clamp(360px, 25vw, 480px);
+  --shell-header: 72px; /* the shell's top bar; dialogs over the editor start below it */
   font: var(--type-body);
   color: var(--text);
   background: var(--bg);
@@ -643,8 +644,8 @@ pre {
   overflow: hidden;
 }
 .topbar {
-  height: 72px;
-  min-height: 72px;
+  height: var(--shell-header);
+  min-height: var(--shell-header);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1476,9 +1477,10 @@ dd {
     padding: 10px;
     min-height: 44px;
   }
+  :root {
+    --shell-header: 60px;
+  }
   .topbar {
-    height: 60px;
-    min-height: 60px;
     padding: 0 12px;
   }
   .account > span:nth-child(2) {

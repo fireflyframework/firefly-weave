@@ -24,6 +24,14 @@ import {
   yamlFile,
   type StepDetailsPage,
 } from "./step-details-po";
+import {
+  box,
+  boxes,
+  clippedText,
+  contentEdges,
+  expectAligned,
+  textBox,
+} from "./step-geometry";
 
 async function show(
   details: StepDetailsPage,
@@ -567,3 +575,68 @@ test.describe("composed sample secrecy", () => {
       await expect(input).not.toHaveValue(/SAMPLE-PRIVATE/);
     });
 });
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "900x700", width: 900, height: 700 },
+  { tag: "600x500", width: 600, height: 500 },
+  { tag: "360x640", width: 360, height: 640 },
+])
+  test.describe(`pane headers at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test("each pane has one header row and one sub-row on one left edge", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("lookup");
+      const heights: number[] = [];
+      for (const name of ["Input", "Output"] as const) {
+        await show(details, name);
+        const pane = details.dialog.locator(
+          name === "Input" ? ".sd-input" : ".sd-output",
+        );
+        await expect(pane.locator(".sd-pane-title")).toBeVisible();
+        const caption = await textBox(pane.locator(".sd-pane-title"));
+        const schema = await box(
+          pane.getByRole("radio", { name: "Schema", exact: true }),
+        );
+        const search = await box(
+          pane.getByRole("button", {
+            name: name === "Input" ? "Search fields" : "Search output",
+          }),
+        );
+        // Caption, views and search share the header row.
+        expectAligned(
+          [caption.middle, schema.middle, search.middle],
+          `${name} header row`,
+          2,
+        );
+        expect(schema.x).toBeGreaterThan(caption.right);
+        const views = await box(pane.locator(".pane-views"));
+        heights.push(views.height);
+        expect(search.x).toBeGreaterThanOrEqual(views.right);
+        const edges = await contentEdges(pane.locator(".sd-pane-body"));
+        expectAligned([search.right, edges.right], `${name} header right edge`);
+        // The count shares the sub-row with the source (Input) or tag (Output).
+        const count = await textBox(pane.locator(".pane-count"));
+        const left = [edges.left, caption.x];
+        if (name === "Input") {
+          const source = await box(
+            pane.getByRole("combobox", { name: "Input source" }),
+          );
+          expectAligned([source.middle, count.middle], "source and count", 2);
+          expect(source.right).toBeLessThan(count.x);
+          // The source is a compact control, as wide as its content.
+          expect(source.width).toBeLessThan(edges.right - edges.left - 40);
+          left.push(source.x);
+          const rows = await boxes(pane.locator(".data-row"));
+          left.push(rows[0].x);
+          left.push((await textBox(pane.locator(".pane-caption"))).x);
+        }
+        expectAligned(left, `${name} pane left edge`);
+        expect(await clippedText(details.dialog)).toEqual([]);
+      }
+      // Input and Output use the same segmented control.
+      expectAligned(heights, "Input and Output view switches");
+    });
+  });

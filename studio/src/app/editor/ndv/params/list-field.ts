@@ -97,62 +97,72 @@ interface Row {
             (keydown)="rowKey($event, i)"
           >
             @if (card()) {
-              <div class="param-card-head">
-                <weave-icon
-                  class="param-grip"
-                  name="drag"
-                  [size]="16"
-                  aria-hidden="true"
-                />
-                <strong>{{ spec().item?.label ?? "Item" }} {{ i + 1 }}</strong>
-                @if (info) {
-                  <span class="param-chip-out" [attr.title]="info.chip"
-                    ><weave-icon name="switch" [size]="16" />{{
-                      info.chip
-                    }}</span
-                  >
-                  <span class="param-next">→ {{ info.next }}</span>
-                }
-                <span class="param-spacer"></span>
-                <button
-                  type="button"
-                  class="icon-button"
-                  [attr.aria-label]="'Move ' + rowName(i, rows.length) + ' up'"
-                  [disabled]="locked || i === 0"
-                  (click)="move(i, i - 1)"
-                >
-                  <weave-icon name="chevron" [size]="16" class="param-up" />
-                </button>
-                <button
-                  type="button"
-                  class="icon-button"
-                  [attr.aria-label]="
-                    'Move ' + rowName(i, rows.length) + ' down'
-                  "
-                  [disabled]="locked || i === rows.length - 1"
-                  (click)="move(i, i + 1)"
-                >
-                  <weave-icon name="chevronDown" [size]="16" />
-                </button>
-                <button
-                  type="button"
-                  class="icon-button"
-                  [attr.aria-label]="'Remove ' + rowName(i, rows.length)"
-                  [disabled]="
-                    locked || !!session().removeReason(spec(), row.key)
-                  "
-                  [attr.title]="session().removeReason(spec(), row.key)"
-                  (click)="session().listRemove(spec(), row.key)"
-                >
-                  <weave-icon name="trash" [size]="16" />
-                </button>
-              </div>
+              <!-- The card's header joins the item's label row, beside its field menu. -->
               <weave-param-field
                 [session]="session()"
                 [spec]="row.spec"
                 [entry]="entry(row.spec)"
                 [row]="true"
-              />
+              >
+                <div class="param-card-head">
+                  <weave-icon
+                    class="param-grip"
+                    name="drag"
+                    [size]="16"
+                    aria-hidden="true"
+                  />
+                  <strong
+                    >{{ spec().item?.label ?? "Item" }} {{ i + 1 }}</strong
+                  >
+                  @if (info) {
+                    <span class="param-chip-out" [attr.title]="info.chip"
+                      ><weave-icon name="switch" [size]="16" /><span
+                        class="param-chip-label"
+                        >{{ info.chip }}</span
+                      ></span
+                    >
+                    <span class="param-next" [attr.title]="'→ ' + info.next"
+                      >→ {{ info.next }}</span
+                    >
+                  }
+                  <span class="param-card-actions">
+                    <button
+                      type="button"
+                      class="icon-button"
+                      [attr.aria-label]="
+                        'Move ' + rowName(i, rows.length) + ' up'
+                      "
+                      [disabled]="locked || i === 0"
+                      (click)="move(i, i - 1)"
+                    >
+                      <weave-icon name="chevron" [size]="16" class="param-up" />
+                    </button>
+                    <button
+                      type="button"
+                      class="icon-button"
+                      [attr.aria-label]="
+                        'Move ' + rowName(i, rows.length) + ' down'
+                      "
+                      [disabled]="locked || i === rows.length - 1"
+                      (click)="move(i, i + 1)"
+                    >
+                      <weave-icon name="chevronDown" [size]="16" />
+                    </button>
+                    <button
+                      type="button"
+                      class="icon-button"
+                      [attr.aria-label]="'Remove ' + rowName(i, rows.length)"
+                      [disabled]="
+                        locked || !!session().removeReason(spec(), row.key)
+                      "
+                      [attr.title]="session().removeReason(spec(), row.key)"
+                      (click)="session().listRemove(spec(), row.key)"
+                    >
+                      <weave-icon name="trash" [size]="16" />
+                    </button>
+                  </span>
+                </div>
+              </weave-param-field>
             } @else if (keyedNames()) {
               <input
                 class="param-input"
@@ -202,7 +212,12 @@ interface Row {
           !locked &&
           (spec().maxItems === undefined || rows.length < spec().maxItems!)
         ) {
-          <button type="button" class="text-link param-add" (click)="add()">
+          <button
+            type="button"
+            class="text-link param-add"
+            [class.is-dashed]="card()"
+            (click)="add()"
+          >
             <weave-icon name="plus" [size]="16" />{{
               spec().addLabel ?? "Add item"
             }}

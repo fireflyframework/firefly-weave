@@ -127,18 +127,11 @@ SPDX-License-Identifier: Apache-2.0
       tabindex="-1"
       [hidden]="!showPane('input')"
     >
-      <header class="sd-pane-head">
-        <h3 class="sd-pane-title">
-          {{ target() === "$trigger" ? "Test event" : "Input" }}
-        </h3>
-      </header>
-      <div class="sd-pane-body">
-        @if (target() === "$trigger") {
-          <weave-test-event-pane [session]="session()" />
-        } @else {
-          <weave-input-pane [session]="session()" [mapped]="mappedRefs()" />
-        }
-      </div>
+      @if (target() === "$trigger") {
+        <weave-test-event-pane [session]="session()" />
+      } @else {
+        <weave-input-pane [session]="session()" [mapped]="mappedRefs()" />
+      }
     </section>
     @if (layout() === "three") {
       <div
@@ -210,33 +203,35 @@ SPDX-License-Identifier: Apache-2.0
           }
         </div>
         <span class="sd-spacer"></span>
-        @if (canExecute()) {
-          <div class="sd-execute">
-            <button
-              type="button"
-              class="primary"
-              aria-disabled="true"
-              aria-describedby="sd-execute-reason"
-              (click)="explainExecute()"
-            >
-              <weave-icon name="execute" [size]="16" />{{ executeLabel() }}
-            </button>
+        <div class="sd-actions">
+          @if (canExecute()) {
+            <div class="sd-execute">
+              <button
+                type="button"
+                class="primary"
+                aria-disabled="true"
+                aria-describedby="sd-execute-reason"
+                (click)="explainExecute()"
+              >
+                <weave-icon name="execute" [size]="16" />{{ executeLabel() }}
+              </button>
+              <weave-row-menu
+                label="More ways to execute"
+                icon="chevronDown"
+                [items]="executeItems()"
+              />
+              <span id="sd-execute-reason" class="sr-only">{{
+                executeReason
+              }}</span>
+            </div>
+          }
+          @if (moreItems().length) {
             <weave-row-menu
-              label="More ways to execute"
-              icon="chevronDown"
-              [items]="executeItems()"
+              [label]="'More actions for ' + name()"
+              [items]="moreItems()"
             />
-            <span id="sd-execute-reason" class="sr-only">{{
-              executeReason
-            }}</span>
-          </div>
-        }
-        @if (moreItems().length) {
-          <weave-row-menu
-            [label]="'More actions for ' + name()"
-            [items]="moreItems()"
-          />
-        }
+          }
+        </div>
       </header>
       <div
         class="sd-tabs"
@@ -322,12 +317,7 @@ SPDX-License-Identifier: Apache-2.0
       tabindex="-1"
       [hidden]="!showPane('output')"
     >
-      <header class="sd-pane-head">
-        <h3 class="sd-pane-title">Output</h3>
-      </header>
-      <div class="sd-pane-body">
-        <weave-output-pane [session]="session()" />
-      </div>
+      <weave-output-pane [session]="session()" />
     </section>
   </div>
   @if (layout() !== "sheet") {

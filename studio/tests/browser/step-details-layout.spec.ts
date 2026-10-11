@@ -18,6 +18,15 @@ SPDX-License-Identifier: Apache-2.0
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { openStepFixture, sizes, yamlFile } from "./step-details-po";
+import {
+  box,
+  contentEdges,
+  expectAligned,
+  intersects,
+  showParameters,
+  textBox,
+  type Box,
+} from "./step-geometry";
 
 const longId = "check-the-customer-record-against-the-ledger-before-routing-it";
 const wide = (cases: number) => `apiVersion: weave/v1alpha1
@@ -70,21 +79,37 @@ for (const size of sizes)
         name: "Execute step",
         exact: true,
       });
+      // Unavailable, it reads as disabled (the disabled tokens), never as the accent action.
       const tokens = await execute.evaluate((el) => {
         const sample = document.createElement("span");
-        sample.style.backgroundColor = "var(--accent)";
-        sample.style.color = "var(--on-accent)";
         el.append(sample);
-        const style = getComputedStyle(sample);
+        const read = (background: string, color: string) => {
+          sample.style.backgroundColor = background;
+          sample.style.color = color;
+          const style = getComputedStyle(sample);
+          return { background: style.backgroundColor, color: style.color };
+        };
         const result = {
-          background: style.backgroundColor,
-          color: style.color,
+          disabled: read("var(--disabled-bg)", "var(--disabled-ink)"),
+          enabled: read("var(--accent)", "var(--on-accent)"),
         };
         sample.remove();
         return result;
       });
-      await expect(execute).toHaveCSS("background-color", tokens.background);
-      await expect(execute).toHaveCSS("color", tokens.color);
+      await expect(execute).toHaveCSS(
+        "background-color",
+        tokens.disabled.background,
+      );
+      await expect(execute).toHaveCSS("color", tokens.disabled.color);
+      expect(tokens.disabled.background).not.toBe(tokens.enabled.background);
+      const toggle = dialog.getByRole("button", {
+        name: "More ways to execute",
+      });
+      await expect(toggle).toHaveCSS(
+        "background-color",
+        tokens.disabled.background,
+      );
+      await expect(toggle).toHaveCSS("color", tokens.disabled.color);
       const box = (await execute.boundingBox())!;
       const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
       expect(
@@ -826,3 +851,176 @@ for (const size of screenSizes) {
     });
   });
 }
+
+for (const size of [
+  { width: 1440, height: 900, inset: 24 },
+  { width: 1100, height: 800, inset: 24 },
+  { width: 900, height: 700, inset: 16 },
+])
+  test.describe(`step details below the shell header at ${size.width}x${size.height}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test("the top strip sits on a clear band below the shell header", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("lookup");
+      const header = await box(page.locator("header.topbar"));
+      const dialog = await box(details.dialog);
+      // The dialog starts at the shell's top bar; its strip sits the inset below it.
+      expectAligned([dialog.y, header.bottom], "dialog top");
+      expectAligned([dialog.x, size.inset], "dialog left");
+      expectAligned([dialog.right, size.width - size.inset], "dialog right");
+      expectAligned([dialog.bottom, size.height - size.inset], "dialog bottom");
+      // The scrim still covers the whole window.
+      expect(await box(page.locator(".sd-scrim"))).toMatchObject({
+        x: 0,
+        y: 0,
+        width: size.width,
+        height: size.height,
+      });
+      const strip = await box(details.dialog.locator(".sd-top"));
+      const shellText = await page.evaluate(() => {
+        const found: Box[] = [];
+        const add = (r: DOMRect) =>
+          r.width > 0 &&
+          r.height > 0 &&
+          found.push({
+            x: r.x,
+            y: r.y,
+            width: r.width,
+            height: r.height,
+            right: r.right,
+            bottom: r.bottom,
+            middle: r.y + r.height / 2,
+          });
+        for (const area of document.querySelectorAll(
+          "header.topbar, .sidebar .brand",
+        )) {
+          const walker = document.createTreeWalker(area, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (!node.textContent?.trim()) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            for (const r of range.getClientRects()) add(r);
+          }
+          for (const element of area.querySelectorAll("img, svg"))
+            if (element.getClientRects().length)
+              add(element.getBoundingClientRect());
+        }
+        return found;
+      });
+      expect(shellText.length).toBeGreaterThan(0);
+      expectAligned([strip.y, header.bottom + size.inset], "strip top");
+      // The dialog is opaque: nothing of the editor shows above, under or beside the strip.
+      const opaque = await details.dialog.evaluate(
+        (element, points) => {
+          const probe = document.createElement("span");
+          probe.style.backgroundColor = "var(--bg)";
+          element.append(probe);
+          const bg = getComputedStyle(probe).backgroundColor;
+          probe.remove();
+          return {
+            background: getComputedStyle(element).backgroundColor === bg,
+            hits: points.map((point) =>
+              element.contains(document.elementFromPoint(point.x, point.y)),
+            ),
+          };
+        },
+        [
+          { x: strip.x + strip.width / 2, y: strip.y - 4 },
+          { x: strip.x + strip.width / 2, y: strip.bottom + 4 },
+          { x: strip.x + 4, y: strip.bottom + 4 },
+        ],
+      );
+      expect(opaque).toEqual({ background: true, hits: [true, true, true] });
+      for (const text of shellText)
+        expect(
+          intersects(strip, text),
+          `strip ${JSON.stringify(strip)} over ${JSON.stringify(text)}`,
+        ).toBe(false);
+      // The strip's controls still work, and Escape still closes.
+      await details.dialog
+        .getByRole("button", { name: "Next step", exact: true })
+        .click();
+      await expect(details.dialogFor("route-by-value")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(details.dialog).toHaveCount(0);
+    });
+  });
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "600x500", width: 600, height: 500 },
+  { tag: "360x640", width: 360, height: 640 },
+  { tag: "640x360", width: 640, height: 360 },
+])
+  test.describe(`step details header alignment at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test("the header, the tabs and the form share one left edge and one center line", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("lookup");
+      const dialog = details.dialog;
+      await showParameters(page, dialog);
+      const tile = await box(dialog.locator(".sd-kind"));
+      const name = await textBox(dialog.locator(".sd-name-text"));
+      const nameButton = await box(dialog.locator("button.sd-name"));
+      const subtitle = await textBox(dialog.locator(".sd-subtitle"));
+      const block = await box(dialog.locator(".sd-name-block"));
+      const execute = await box(
+        dialog.getByRole("button", { name: "Execute step", exact: true }),
+      );
+      const toggle = await box(
+        dialog.getByRole("button", { name: "More ways to execute" }),
+      );
+      const more = await box(
+        dialog.getByRole("button", { name: "More actions for lookup" }),
+      );
+      // The name starts beside the kind tile, its subtitle under it.
+      expectAligned([nameButton.x, tile.right + 12], "name beside the tile", 2);
+      expectAligned([name.x, subtitle.x], "name and subtitle start");
+      expect(subtitle.y).toBeGreaterThanOrEqual(name.bottom - 1);
+      // Tile and name block share a center line; so do Execute step, its menu and More.
+      expectAligned([tile.middle, block.middle], "tile and name centers");
+      expectAligned(
+        [execute.middle, toggle.middle, more.middle],
+        "action centers",
+      );
+      expectAligned([execute.height, toggle.height], "split button heights");
+      if (execute.y < tile.bottom)
+        expectAligned([tile.middle, execute.middle], "header centers");
+      // Tabs and Docs sit on one baseline.
+      const tabs = details.dialog.getByRole("tablist", {
+        name: "Step details sections",
+      });
+      const parameters = await textBox(
+        tabs.getByRole("tab", { name: "Parameters" }),
+      );
+      const settings = await textBox(
+        tabs.getByRole("tab", { name: "Settings" }),
+      );
+      const docs = await textBox(tabs.getByRole("link", { name: "Docs" }));
+      expectAligned(
+        [parameters.bottom, settings.bottom, docs.bottom],
+        "tab and Docs baselines",
+      );
+      // One left edge: tile, first tab, field labels and controls.
+      const edge = await contentEdges(dialog.locator("#sd-panel-parameters"));
+      const label = await textBox(
+        dialog.locator(
+          "#sd-panel-parameters .param-form > weave-param-field > .param > .param-label-row .param-label",
+        ),
+      );
+      expectAligned(
+        [edge.left, tile.x, parameters.x, label.x],
+        "Parameters pane left edge",
+      );
+      // One right edge: More, Docs and the field menus.
+      const docsBox = await box(tabs.getByRole("link", { name: "Docs" }));
+      expectAligned(
+        [edge.right, more.right, docsBox.right],
+        "Parameters pane right edge",
+      );
+    });
+  });

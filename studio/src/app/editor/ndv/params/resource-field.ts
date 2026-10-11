@@ -84,6 +84,7 @@ class ResourceViewerLayer implements AfterViewInit {
       <div class="param-resource-row">
         @if (mode() === "list") {
           <weave-select
+            icon="chevronDown"
             [label]="spec().label"
             [hideLabel]="true"
             [controlId]="controlId()"

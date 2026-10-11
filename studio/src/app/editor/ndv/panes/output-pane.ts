@@ -52,7 +52,8 @@ import { ndvRegistry, type Json } from "../registry";
   template: `@let none = noOutput();
     @let rows = this.rows();
     @let shown = filter(rows);
-    <div class="pane-tools">
+    <header class="sd-pane-head">
+      <h3 class="sd-pane-title">Output</h3>
       <div
         class="pane-views"
         role="radiogroup"
@@ -80,16 +81,18 @@ import { ndvRegistry, type Json } from "../registry";
       >
         <weave-icon name="search" [size]="16" />
       </button>
-    </div>
+    </header>
     @if (searching()) {
-      <input
-        class="param-input pane-search"
-        aria-label="Search output"
-        placeholder="Search output"
-        [value]="query()"
-        (input)="query.set($any($event.target).value)"
-        (keydown.escape)="closeSearch($event)"
-      />
+      <div class="pane-search-row">
+        <input
+          class="param-input pane-search"
+          aria-label="Search output"
+          placeholder="Search output"
+          [value]="query()"
+          (input)="query.set($any($event.target).value)"
+          (keydown.escape)="closeSearch($event)"
+        />
+      </div>
     }
     <div class="pane-sub">
       @if (event() !== undefined && value() === undefined) {
@@ -103,47 +106,49 @@ import { ndvRegistry, type Json } from "../registry";
             : countLabel(rows.length, query() ? shown.length : undefined)
       }}</span>
     </div>
-    <div class="pane-content">
-      @if (none) {
-        <p class="pane-empty-text">{{ none }}</p>
-      } @else if (event() !== undefined && view() !== "schema") {
-        @if (view() === "table") {
-          <p class="pane-empty-text">
-            Table view isn't available for this sample yet.
-          </p>
-          <button type="button" (click)="setView('json')">View JSON</button>
+    <div class="sd-pane-body">
+      <div class="pane-content">
+        @if (none) {
+          <p class="pane-empty-text">{{ none }}</p>
+        } @else if (event() !== undefined && view() !== "schema") {
+          @if (view() === "table") {
+            <p class="pane-empty-text">
+              Table view isn't available for this sample yet.
+            </p>
+            <button type="button" (click)="setView('json')">View JSON</button>
+          } @else {
+            <pre class="pane-json" tabindex="0" aria-label="Output data">{{
+              json(event())
+            }}</pre>
+          }
+        } @else if (view() === "schema") {
+          @if (session().target === "$trigger" && event() === undefined) {
+            <p class="pane-empty-text">No test event yet</p>
+          }
+          @if (rows.length) {
+            <weave-data-tree [rows]="shown" label="Output fields" />
+          } @else {
+            <p class="pane-empty-text">This step's output can be any value.</p>
+          }
         } @else {
-          <pre class="pane-json" tabindex="0" aria-label="Output data">{{
-            json(event())
-          }}</pre>
+          <div class="pane-empty">
+            <span class="pane-empty-icon" aria-hidden="true"
+              ><weave-icon name="execute" [size]="20"
+            /></span>
+            <h4>
+              {{
+                session().target === "$trigger"
+                  ? "No test event yet"
+                  : "No output yet"
+              }}
+            </h4>
+            <p>
+              Schema shows the fields later steps can read. Executing this step
+              isn’t available yet.
+            </p>
+          </div>
         }
-      } @else if (view() === "schema") {
-        @if (session().target === "$trigger" && event() === undefined) {
-          <p class="pane-empty-text">No test event yet</p>
-        }
-        @if (rows.length) {
-          <weave-data-tree [rows]="shown" label="Output fields" />
-        } @else {
-          <p class="pane-empty-text">This step's output can be any value.</p>
-        }
-      } @else {
-        <div class="pane-empty">
-          <span class="pane-empty-icon" aria-hidden="true"
-            ><weave-icon name="execute" [size]="20"
-          /></span>
-          <h4>
-            {{
-              session().target === "$trigger"
-                ? "No test event yet"
-                : "No output yet"
-            }}
-          </h4>
-          <p>
-            Schema shows the fields later steps can read. Executing this step
-            isn’t available yet.
-          </p>
-        </div>
-      }
+      </div>
     </div>`,
 })
 export class OutputPane {

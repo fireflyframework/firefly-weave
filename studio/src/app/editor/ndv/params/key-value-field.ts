@@ -103,20 +103,22 @@ import { canMapFields } from "./drag-map";
         }
       }
       @if (!locked) {
-        <button type="button" class="text-link param-add" (click)="add()">
-          <weave-icon name="plus" [size]="16" />{{
-            spec().addLabel ?? "Add field"
-          }}
-        </button>
-        @if (!session().mappingReason(spec())) {
-          <button
-            type="button"
-            class="text-link param-add"
-            (click)="addAllFields()"
-          >
-            <weave-icon name="plus" [size]="16" />Add all fields
+        <div class="param-add-row">
+          <button type="button" class="text-link param-add" (click)="add()">
+            <weave-icon name="plus" [size]="16" />{{
+              spec().addLabel ?? "Add field"
+            }}
           </button>
-        }
+          @if (!session().mappingReason(spec())) {
+            <button
+              type="button"
+              class="text-link param-add"
+              (click)="addAllFields()"
+            >
+              <weave-icon name="plus" [size]="16" />Add all fields
+            </button>
+          }
+        </div>
       }
     </div>`,
 })

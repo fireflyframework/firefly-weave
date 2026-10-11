@@ -151,6 +151,11 @@ export interface ParamSpec {
   placeholder?: string;
   /** One short sentence under the field. */
   hint?: string;
+  /**
+   * The label names the group for assistive technology only; its hint shows
+   * in the label's place and introduces the group (a decision's paths).
+   */
+  labelHidden?: boolean;
   /** Longer help behind the "?" toggletip. */
   description?: string;
   /** "both": Fixed | Mapped (expression paths only); "fixed": structure; "mapped": references only. */

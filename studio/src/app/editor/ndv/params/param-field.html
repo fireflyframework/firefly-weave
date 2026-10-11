@@ -28,21 +28,25 @@ SPDX-License-Identifier: Apache-2.0
   (focusout)="left()"
 >
   <div class="param-label-row">
+    <ng-content select=".param-card-head" />
     @if (isGroup()) {
       <span
         class="param-label"
-        [class.sr-only]="row()"
+        [class.sr-only]="row() || spec.labelHidden"
         [id]="ids.control + '-label'"
         >{{ spec.label }}</span
       >
     } @else {
       <label
         class="param-label"
-        [class.sr-only]="row()"
+        [class.sr-only]="row() || spec.labelHidden"
         [for]="ids.control"
         [id]="ids.control + '-label'"
         >{{ spec.label }}</label
       >
+    }
+    @if (spec.labelHidden && spec.hint) {
+      <p class="param-intro">{{ spec.hint }}</p>
     }
     @if (spec.required) {
       <span class="param-required" aria-hidden="true">*</span>
@@ -110,6 +114,9 @@ SPDX-License-Identifier: Apache-2.0
       }
     </div>
   </div>
+  @if (introFirst()) {
+    <ng-container [ngTemplateOutlet]="lineTemplate" />
+  }
   <div class="param-control">
     @if (mode() === "mapped") {
       <weave-formula-field
@@ -304,6 +311,8 @@ SPDX-License-Identifier: Apache-2.0
             </div>
           } @else {
             <weave-select
+              class="param-select"
+              icon="chevronDown"
               [label]="spec.label"
               [hideLabel]="true"
               [controlId]="ids.control"
@@ -379,10 +388,15 @@ SPDX-License-Identifier: Apache-2.0
       }
     }
   </div>
+  @if (!introFirst()) {
+    <ng-container [ngTemplateOutlet]="lineTemplate" />
+  }
+</div>
+<ng-template #lineTemplate>
   <p
     class="param-line"
     [hidden]="
-      row() &&
+      (row() || (spec.labelHidden && line.kind === 'hint')) &&
       line.kind !== 'error' &&
       line.kind !== 'warning' &&
       line.kind !== 'reason' &&
@@ -408,4 +422,4 @@ SPDX-License-Identifier: Apache-2.0
       {{ line.text }}
     }
   </p>
-</div>
+</ng-template>

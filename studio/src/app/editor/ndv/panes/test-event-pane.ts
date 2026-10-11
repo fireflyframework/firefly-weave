@@ -47,26 +47,31 @@ interface SampleForm {
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [Icon, TaskForm],
-  template: `<div class="pane-sub">
+  template: `<header class="sd-pane-head">
+      <h3 class="sd-pane-title">Test event</h3>
+    </header>
+    <div class="pane-sub">
       <span class="pane-count"
         >Sample input stays in memory while this workflow is open.</span
       >
     </div>
-    <div class="pane-content">
-      <button type="button" class="pane-generate" (click)="generate()">
-        <weave-icon name="refresh" [size]="16" />Generate sample
-      </button>
-      @if (problem()) {
-        <p class="pane-empty-text" role="alert">{{ problem() }}</p>
-      }
-      @for (form of forms(); track form) {
-        <weave-task-form
-          [schema]="form.schema"
-          [schemaRoot]="form.root"
-          [initialData]="form.initial"
-          (dataChange)="changed($event, form)"
-        />
-      }
+    <div class="sd-pane-body">
+      <div class="pane-content">
+        <button type="button" class="pane-generate" (click)="generate()">
+          <weave-icon name="refresh" [size]="16" />Generate sample
+        </button>
+        @if (problem()) {
+          <p class="pane-empty-text" role="alert">{{ problem() }}</p>
+        }
+        @for (form of forms(); track form) {
+          <weave-task-form
+            [schema]="form.schema"
+            [schemaRoot]="form.root"
+            [initialData]="form.initial"
+            (dataChange)="changed($event, form)"
+          />
+        }
+      </div>
     </div>`,
 })
 export class TestEventPane {

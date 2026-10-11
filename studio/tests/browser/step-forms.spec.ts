@@ -27,7 +27,22 @@ import {
   withNewEditor,
   yamlFile,
 } from "./step-details-po";
-import { connected, lookupAction, sourceText } from "./support";
+import { connected, lookupAction, offline, sourceText } from "./support";
+import {
+  hasPython,
+  localAuthoring,
+  stopLocalAuthoring,
+} from "./local-authoring";
+import {
+  box,
+  boxes,
+  clippedText,
+  contentEdges,
+  expectAligned,
+  showParameters,
+  textBox,
+  type Box,
+} from "./step-geometry";
 
 async function openObjectItems(page: Page) {
   await withNewEditor(page);
@@ -817,3 +832,415 @@ for (const size of [
     });
   });
 }
+
+/** Every top-level field of the visible tab: its label, control, menu and Add actions. */
+async function formEdges(details: StepDetailsPage) {
+  const panel = details.dialog.locator(".sd-tabpanel:not([hidden])");
+  const edges = await contentEdges(panel);
+  const labels = await panel
+    .locator(
+      ".param-form > weave-param-field > .param > .param-label-row .param-label:not(.sr-only)",
+    )
+    .evaluateAll((elements) =>
+      elements
+        .filter((element) => element.getClientRects().length)
+        .map((element) => {
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          return range.getClientRects()[0].x;
+        }),
+    );
+  const controls = await boxes(
+    panel.locator(
+      ".param-form > weave-param-field:not(.is-option) > .param > .param-control > :first-child",
+    ),
+  );
+  const cards = await boxes(
+    panel.locator(".param-form > weave-param-field.is-option > .param"),
+  );
+  const adds = await boxes(
+    panel.locator(
+      ".param-form > weave-param-field:not(.is-option) > .param > .param-control > weave-key-value-field .param-add-row > .param-add:first-child > weave-icon, .param-form > weave-add-option",
+    ),
+  );
+  const menus = await boxes(
+    panel.locator(
+      ".param-form > weave-param-field > .param > .param-label-row .param-menu .row-menu-toggle",
+    ),
+  );
+  return { edges, labels, controls, cards, adds, menus };
+}
+
+const formSizes = [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "600x500", width: 600, height: 500 },
+  { tag: "360x640", width: 360, height: 640 },
+  { tag: "640x360", width: 640, height: 360 },
+];
+for (const size of formSizes)
+  test.describe(`parameter form alignment at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("fields share the pane's left and right edges, and hints wrap instead of clipping", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      for (const id of ["lookup", "check-customer", "summarize", "score"]) {
+        await details.open(id);
+        await showParameters(page, details.dialog);
+        const form = await formEdges(details);
+        expect(form.labels.length).toBeGreaterThan(0);
+        expectAligned(
+          [
+            form.edges.left,
+            ...form.labels,
+            ...form.controls.map((c) => c.x),
+            ...form.cards.map((c) => c.x),
+            ...form.adds.map((c) => c.x),
+          ],
+          `${id} left edge`,
+        );
+        expectAligned(
+          [form.edges.right, ...form.menus.map((m) => m.right)],
+          `${id} field menus right edge`,
+        );
+        // Labels and their required marks share a baseline.
+        for (const row of await details.dialog
+          .locator(
+            ".sd-tabpanel:not([hidden]) .param-label-row:has(.param-required)",
+          )
+          .all()) {
+          if (!(await row.isVisible())) continue;
+          const label = await textBox(row.locator(".param-label"));
+          const mark = await textBox(row.locator(".param-required"));
+          expectAligned([label.bottom, mark.bottom], `${id} required mark`);
+        }
+        expect(await clippedText(details.dialog)).toEqual([]);
+        await details.close();
+      }
+    });
+
+    test("key and value rows keep one height and one center line", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("check-customer");
+      await showParameters(page, details.dialog);
+      const field = details.field("value");
+      const rows = field.locator(".param-kv-row:not(.is-blank)");
+      await expect(rows).toHaveCount(2);
+      const label = await box(
+        field.locator(":scope > .param > .param-label-row"),
+      );
+      const first = await box(rows.first());
+      // No empty band between the field's label row and its first row.
+      expect(first.y - label.bottom).toBeLessThanOrEqual(8.5);
+      const right = (
+        await contentEdges(details.dialog.locator(".sd-tabpanel:not([hidden])"))
+      ).right;
+      const trailing = [right];
+      for (const row of await rows.all()) {
+        await row.hover();
+        const key = await box(row.locator(".param-kv-name"));
+        const value = await box(row.locator(".param-row-value"));
+        const remove = await box(row.locator(":scope > button"));
+        const grip = await box(row.locator(":scope > .param-grip"));
+        const mode = await box(row.locator(".param-row-value .param-mode"));
+        trailing.push(remove.right);
+        const sideBySide = value.y < key.bottom;
+        if (sideBySide) {
+          expectAligned(
+            [key.height, value.height, remove.height],
+            "row heights",
+          );
+          expectAligned(
+            [key.middle, value.middle, remove.middle, grip.middle],
+            "row centers",
+          );
+          expectAligned([key.y, value.y], "key and value tops");
+        } else {
+          // Too narrow for both: the value goes under its key, on the key's edge.
+          expectAligned(
+            [key.middle, remove.middle, grip.middle],
+            "row centers",
+          );
+          expectAligned([key.x, value.x], "key and value edge");
+          expectAligned([value.y, key.bottom + 8], "value under its key");
+        }
+        if (size.width >= 768) expect(sideBySide).toBe(true);
+        // Fixed | Mapped sits inside the value's box, at its right edge.
+        expect(mode.x).toBeGreaterThanOrEqual(value.x);
+        expect(mode.right).toBeLessThanOrEqual(value.right);
+        expect(mode.y).toBeGreaterThanOrEqual(value.y);
+        expect(mode.bottom).toBeLessThanOrEqual(value.bottom);
+        expect(value.right - mode.right).toBeLessThanOrEqual(56);
+      }
+      // Remove buttons and the field menu end on the pane's right edge.
+      trailing.push(
+        (
+          await box(
+            field.locator(
+              ":scope > .param > .param-label-row .param-menu .row-menu-toggle",
+            ),
+          )
+        ).right,
+      );
+      expectAligned(trailing, "row trailing edge");
+      // Add actions read as actions, not links: no underline at rest.
+      for (const add of await field.locator(".param-add").all())
+        await expect(add).toHaveCSS("text-decoration-line", "none");
+    });
+
+    test("a decision introduces its paths once, wraps the intro and starts each card's body under its header", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      await showParameters(page, details.dialog);
+      const panel = details.dialog.locator(".sd-tabpanel:not([hidden])");
+      const visiblePaths = await panel
+        .locator(".param-label:not(.sr-only)")
+        .filter({ hasText: /^Paths$/ })
+        .count();
+      expect(visiblePaths).toBeLessThanOrEqual(1);
+      const intro = panel.locator(".param-intro");
+      await expect(intro).toHaveText(
+        "Paths are checked from top to bottom. Each path is an output on the canvas, labeled with its condition.",
+      );
+      await expect(intro).toBeVisible();
+      // The intro is said once: not repeated as a hint under the paths.
+      await expect(
+        panel
+          .getByText("Paths are checked from top to bottom.", { exact: false })
+          .filter({ visible: true }),
+      ).toHaveCount(1);
+      const cards = panel.locator(".param-row.is-card");
+      await expect(cards).toHaveCount(2);
+      expect((await box(intro)).bottom).toBeLessThanOrEqual(
+        (await box(cards.first())).y,
+      );
+      for (const card of await cards.all()) {
+        // The card's header band: its title, chip, next step and buttons.
+        const head = await box(
+          card.locator(
+            ":scope > weave-param-field > .param > .param-label-row",
+          ),
+        );
+        expect(
+          await card
+            .locator(":scope > weave-param-field > .param > .param-label-row")
+            .getByRole("button", { name: /^Remove Path/ })
+            .count(),
+        ).toBe(1);
+        const body = await box(
+          card.locator(".param-control weave-param-field").first(),
+        );
+        expect(body.y - head.bottom).toBeLessThanOrEqual(16);
+      }
+      const add = panel.getByRole("button", { name: "Add path", exact: true });
+      await expect(add).toHaveCSS("border-top-style", "dashed");
+      await expect(add).toHaveCSS("text-decoration-line", "none");
+      expect(await clippedText(details.dialog)).toEqual([]);
+    });
+
+    test("Add option lists its options start-aligned", async ({ page }) => {
+      const details = await openStepFixture(page);
+      await details.open("summarize");
+      await showParameters(page, details.dialog);
+      const add = details.dialog.getByRole("button", {
+        name: "Add option",
+        exact: true,
+      });
+      await add.scrollIntoViewIfNeeded();
+      await add.click();
+      const menu = details.dialog.getByRole("menu", { name: "Add option" });
+      await expect(menu).toBeVisible();
+      const menuBox = await box(menu);
+      const starts: number[] = [];
+      for (const item of await menu.getByRole("menuitem").all()) {
+        const itemBox = await box(item);
+        expect(itemBox.height).toBeGreaterThanOrEqual(
+          size.width < 768 ? 44 : 24,
+        );
+        starts.push((await textBox(item.locator("b"))).x);
+      }
+      const menuEdge = (await contentEdges(menu)).left;
+      expect(menuEdge).toBeGreaterThan(menuBox.x);
+      expectAligned([menuEdge + 12, ...starts], "menu labels start");
+    });
+
+    test("in-place choices open downward and take their content's width", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("summarize");
+      await showParameters(page, details.dialog);
+      const model = details.field("model");
+      await expect(
+        model
+          .getByRole("button", { name: "Show choices for Model" })
+          .locator("weave-icon"),
+      ).toHaveAttribute("data-icon", "chevronDown");
+      const control = await box(model.locator(".choice-field"));
+      const edges = await contentEdges(
+        details.dialog.locator(".sd-tabpanel:not([hidden])"),
+      );
+      if (size.width >= 600)
+        expect(control.width).toBeLessThan((edges.right - edges.left) * 0.75);
+      const prompt = await box(details.field("prompt").locator(".param-input"));
+      // One control height for the form.
+      expectAligned([control.height, 44], "control height");
+      expect(prompt.height).toBeGreaterThanOrEqual(44);
+    });
+  });
+
+const httpWorkflow = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: order-intake, version: 1.3.0}
+spec:
+  inputSchema:
+    type: object
+    properties:
+      customerId: {type: string}
+      status: {type: string}
+  outputSchema: {type: object}
+  connections:
+    crm: {connector: weave-http@2.0.0, required: true}
+  steps:
+    - id: get-customer-orders
+      kind: action
+      uses: order-intake.get-customer-orders@1.0.0
+      connection: crm
+      with:
+        object:
+          path:
+            object:
+              customerId: {ref: /input/customerId}
+          query:
+            object:
+              limit: {literal: "25"}
+              status: {ref: /input/status}
+  output: {literal: {}}
+`;
+/** Opens a workflow kept on this computer whose step calls an API the workflow owns. */
+async function openHttpStep(page: Page) {
+  await withNewEditor(page);
+  await page.addInitScript((source) => {
+    const id = "2f6c1a40-0000-4000-8000-000000000001";
+    const savedAt = "2026-10-11T10:04:00.000Z";
+    localStorage.setItem(
+      `weave.localDraft.${id}`,
+      JSON.stringify({
+        source,
+        format: "yaml",
+        layout: null,
+        canvas: {
+          schemaVersion: 2,
+          kind: "weave.studio/canvas",
+          ownedActions: ["order-intake.get-customer-orders"],
+          actionRecipes: {
+            "order-intake.get-customer-orders": {
+              kind: "http",
+              method: "GET",
+              pathTemplate: "/customers/{customerId}/orders",
+              statuses: [200],
+              timeoutSeconds: 30,
+            },
+          },
+        },
+        savedAt,
+      }),
+    );
+    localStorage.setItem(
+      "weave.localDrafts.v1",
+      JSON.stringify([{ id, name: "order-intake", version: "1.3.0", savedAt }]),
+    );
+  }, httpWorkflow);
+  await localAuthoring(page);
+  await offline(page);
+  await page
+    .locator(".preview-row", { hasText: "order-intake" })
+    .first()
+    .click();
+  await expect(page.locator(".editor-bar")).toBeVisible();
+  const show = page.getByRole("button", { name: "Show canvas", exact: true });
+  const canvas = page.getByLabel("Workflow canvas", { exact: true });
+  await expect(canvas.or(show).first()).toBeVisible();
+  if (await show.isVisible()) await show.click();
+  const details = new StepDetailsPage(page);
+  await details.open("get-customer-orders");
+  return details;
+}
+
+test.describe("a Call an API step", () => {
+  test.skip(!hasPython, "Needs the repository's Python environment.");
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test.afterAll(() => stopLocalAuthoring());
+
+  test("Method, query parameters and Add option follow the field anatomy", async ({
+    page,
+  }) => {
+    const details = await openHttpStep(page);
+    const method = details.field("method");
+    await expect(
+      method
+        .getByRole("button", { name: "Show choices for Method" })
+        .locator("weave-icon"),
+    ).toHaveAttribute("data-icon", "chevronDown");
+    const edges = await contentEdges(
+      details.dialog.locator(".sd-tabpanel:not([hidden])"),
+    );
+    const methodBox = await box(method.locator(".choice-field"));
+    expect(methodBox.width).toBeLessThan((edges.right - edges.left) / 2);
+    const connection = await box(
+      details.field("connection").locator(".choice-field"),
+    );
+    expectAligned([methodBox.height, connection.height], "picker heights");
+    expectAligned([connection.right, edges.right], "connection right edge");
+    // Query parameters: one line per row, Fixed | Mapped inside the value.
+    const query = details.field("query");
+    const rows = query.locator(".param-kv-row");
+    await expect(rows).toHaveCount(2);
+    const status = rows.nth(1);
+    const key = await box(status.locator(".param-kv-name"));
+    const value = await box(status.locator(".param-row-value"));
+    const mode = await box(status.locator(".param-mode"));
+    expectAligned([key.y, value.y], "key and value tops");
+    expectAligned([key.middle, value.middle, mode.middle], "row centers");
+    expect(mode.right).toBeLessThanOrEqual(value.right);
+    expect(mode.x).toBeGreaterThanOrEqual(value.x);
+    const card = await box(query.locator(":scope > .param"));
+    const label = await box(
+      query.locator(":scope > .param > .param-label-row"),
+    );
+    expect((await box(rows.first())).y - label.bottom).toBeLessThanOrEqual(8.5);
+    const trash = await boxes(
+      query.locator(
+        ".param-kv-row > button, :scope > .param > .param-label-row .param-remove",
+      ),
+    );
+    expectAligned(
+      trash.map((t: Box) => t.right),
+      "remove buttons right edge",
+    );
+    expect(card.right - trash[0].right).toBeGreaterThan(0);
+    // The Add option menu: labels start-aligned, Body disabled with its reason.
+    const add = details.dialog.getByRole("button", {
+      name: "Add option",
+      exact: true,
+    });
+    await add.scrollIntoViewIfNeeded();
+    await add.click();
+    const menu = details.dialog.getByRole("menu", { name: "Add option" });
+    const body = menu.getByRole("menuitem", { name: /^Body/ });
+    await expect(body).toHaveAttribute("aria-disabled", "true");
+    await expect(body).toContainText("Only for POST, PUT and PATCH");
+    const starts: number[] = [];
+    for (const item of await menu.getByRole("menuitem").all())
+      starts.push((await textBox(item.locator("b"))).x);
+    expectAligned(
+      [(await contentEdges(menu)).left + 12, ...starts],
+      "menu labels",
+    );
+  });
+});

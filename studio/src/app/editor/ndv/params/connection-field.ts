@@ -29,6 +29,7 @@ const CREATE = "\u0000create";
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [Select],
   template: `<weave-select
+    icon="chevronDown"
     [label]="spec().label"
     [hideLabel]="true"
     [controlId]="controlId()"

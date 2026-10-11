@@ -34,6 +34,7 @@ import {
   durationSeconds,
   splitDuration,
 } from "../../../designer/canvas-summary";
+import { NgTemplateOutlet } from "@angular/common";
 import { canonicalJson } from "../../../forms/core/json";
 import { localDateTime, storedDateTime } from "../../../forms/core/form-model";
 import { Select, type SelectOption } from "../../../forms/ui/select";
@@ -79,6 +80,7 @@ const UNIT_CODE: Record<string, string> = {
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [
+    NgTemplateOutlet,
     Icon,
     RowMenu,
     Select,
@@ -109,6 +111,10 @@ export class ParamField {
   spec = input.required<ParamSpec>();
   entry = input.required<FieldEntry>();
   row = input(false);
+  /** A group of fields introduces its contents: its hint comes before them. */
+  introFirst(): boolean {
+    return this.spec().type === "fields";
+  }
   isGroup(): boolean {
     return ["list", "keyValue", "fields", "conditions", "schema"].includes(
       this.spec().type,

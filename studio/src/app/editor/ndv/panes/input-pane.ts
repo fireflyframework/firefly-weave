@@ -59,7 +59,8 @@ import { ndvRegistry, type Json } from "../registry";
     @let chosen = selectedSource();
     @let all = rows(chosen);
     @let shown = filter(all);
-    <div class="pane-tools">
+    <header class="sd-pane-head">
+      <h3 class="sd-pane-title">Input</h3>
       <div
         class="pane-views"
         role="radiogroup"
@@ -87,92 +88,105 @@ import { ndvRegistry, type Json } from "../registry";
       >
         <weave-icon name="search" [size]="16" />
       </button>
-    </div>
+    </header>
     @if (searching()) {
-      <input
-        class="param-input pane-search"
-        aria-label="Search fields"
-        placeholder="Search fields"
-        [value]="query()"
-        (input)="query.set($any($event.target).value)"
-        (keydown.escape)="closeSearch($event)"
-      />
+      <div class="pane-search-row">
+        <input
+          class="param-input pane-search"
+          aria-label="Search fields"
+          placeholder="Search fields"
+          [value]="query()"
+          (input)="query.set($any($event.target).value)"
+          (keydown.escape)="closeSearch($event)"
+        />
+      </div>
     }
     <div class="pane-sub">
       @if (sources.length) {
         <label class="sr-only" [for]="selectId">Input source</label>
-        <select
-          class="pane-source"
-          [id]="selectId"
-          (change)="source.set($any($event.target).value)"
-        >
-          @for (option of sources; track option.id) {
-            <option [value]="option.id" [selected]="option.id === chosen">
-              {{ option.label }}{{ option.detail ? " · " + option.detail : "" }}
-            </option>
-          }
-        </select>
+        <span class="pane-source-field">
+          <select
+            class="pane-source"
+            [id]="selectId"
+            (change)="source.set($any($event.target).value)"
+          >
+            @for (option of sources; track option.id) {
+              <option [value]="option.id" [selected]="option.id === chosen">
+                {{ option.label
+                }}{{ option.detail ? " · " + option.detail : "" }}
+              </option>
+            }
+          </select>
+          <weave-icon
+            class="pane-source-chevron"
+            name="chevronDown"
+            [size]="16"
+            aria-hidden="true"
+          />
+        </span>
       }
       <span class="pane-count">{{
         countLabel(all.length, query() ? shown.length : undefined)
       }}</span>
     </div>
-    <div class="pane-content">
-      @if (!sources.length) {
-        <p class="pane-empty-text">This step doesn't read data.</p>
-      } @else if (value() !== undefined && view() !== "schema") {
-        @if (view() === "table") {
-          <p class="pane-empty-text">
-            Table view isn't available for this sample yet.
-          </p>
-          <button type="button" (click)="setView('json')">View JSON</button>
+    <div class="sd-pane-body">
+      <div class="pane-content">
+        @if (!sources.length) {
+          <p class="pane-empty-text">This step doesn't read data.</p>
+        } @else if (value() !== undefined && view() !== "schema") {
+          @if (view() === "table") {
+            <p class="pane-empty-text">
+              Table view isn't available for this sample yet.
+            </p>
+            <button type="button" (click)="setView('json')">View JSON</button>
+          } @else {
+            <pre class="pane-json" tabindex="0" aria-label="Input data">{{
+              json(value())
+            }}</pre>
+          }
         } @else {
-          <pre class="pane-json" tabindex="0" aria-label="Input data">{{
-            json(value())
-          }}</pre>
-        }
-      } @else {
-        <div class="pane-empty">
-          <span class="pane-empty-icon" aria-hidden="true"
-            ><weave-icon name="play" [size]="20"
-          /></span>
-          <h4>No input data yet</h4>
-          <p>
-            Fields below show what this step can read. Executing previous steps
-            isn’t available yet.
-          </p>
-        </div>
-        @if (view() === "schema") {
-          <h4 class="pane-caption">Fields this step can read</h4>
-          <weave-data-tree
-            [rows]="shown"
-            label="Fields this step can read"
-            [mapped]="mapped()"
-          />
-          @if (sources.length > 1) {
-            <h4 class="pane-caption">Also available</h4>
-            <div class="pane-also">
-              @for (option of sources; track option.id) {
-                @if (option.id !== chosen) {
-                  <button
-                    type="button"
-                    class="pane-also-source"
-                    (click)="source.set(option.id)"
-                  >
-                    <weave-icon [name]="option.icon" [size]="16" />{{
-                      option.label
-                    }}
-                    @if (option.detail) {
-                      <small> · {{ option.detail }}</small>
-                    }
-                    <weave-icon name="chevron" [size]="16" />
-                  </button>
+          <div class="pane-empty">
+            <span class="pane-empty-icon" aria-hidden="true"
+              ><weave-icon name="play" [size]="20"
+            /></span>
+            <h4>No input data yet</h4>
+            <p>
+              Fields below show what this step can read. Executing previous
+              steps isn’t available yet.
+            </p>
+          </div>
+          @if (view() === "schema") {
+            <h4 class="pane-caption">Fields this step can read</h4>
+            <weave-data-tree
+              [rows]="shown"
+              label="Fields this step can read"
+              [mapped]="mapped()"
+            />
+            @if (sources.length > 1) {
+              <h4 class="pane-caption">Also available</h4>
+              <div class="pane-also">
+                @for (option of sources; track option.id) {
+                  @if (option.id !== chosen) {
+                    <button
+                      type="button"
+                      class="pane-also-source"
+                      (click)="source.set(option.id)"
+                    >
+                      <weave-icon [name]="option.icon" [size]="16" />{{
+                        option.label
+                      }}
+                      @if (option.detail) {
+                        <small> · {{ option.detail }}</small>
+                      }
+                      <weave-icon name="chevron" [size]="16" />
+                    </button>
+                  }
                 }
-              }
-            </div>
+              </div>
+            }
           }
         }
-      }
+      </div>
     </div>`,
 })
 export class InputPane {
