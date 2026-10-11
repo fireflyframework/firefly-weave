@@ -1129,6 +1129,7 @@ test.describe("the shell while step details is open", () => {
 for (const size of [
   { tag: "1440x900", width: 1440, height: 900 },
   { tag: "1100x800", width: 1100, height: 800 },
+  { tag: "360x640", width: 360, height: 640 },
 ])
   test.describe(`path card headers at ${size.tag}`, () => {
     test.use({ viewport: { width: size.width, height: size.height } });
@@ -1158,6 +1159,17 @@ for (const size of [
         if (await cut(".param-chip-label"))
           expect(await cut(".param-next")).toBe(true);
         expect(await cut(".param-chip-label")).toBe(false);
+        // A narrow card puts the chip and the next step under the title; a
+        // next step that doesn't fit beside the chip wraps under the chip.
+        const title = await box(card.locator(".param-card-head strong"));
+        const chip = await box(card.locator(".param-chip-out"));
+        const next = await box(card.locator(".param-next"));
+        if (chip.y >= title.bottom - 1) {
+          expectAligned([chip.x, title.x], "chip under the title");
+          if (next.y >= chip.bottom - 1)
+            expectAligned([next.x, chip.x], "next step under the chip");
+          else expect(next.x).toBeGreaterThan(chip.right);
+        }
       }
     });
   });

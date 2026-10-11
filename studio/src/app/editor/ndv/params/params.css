@@ -17,21 +17,21 @@ SPDX-License-Identifier: Apache-2.0
 */
 /* The parameter form, on the Parameters pane's content edge; tokens only.
    Fields sit 16 px apart and 8 px separates a label row, its control and the
-   line under it. Every control is the touch height (44 px), so inputs,
-   selects, pickers and rows share one height. A label row stays 28 px tall:
-   its tools keep 44 px targets and draw a compact face, overflowing the row
-   into the gaps around it without reaching the control below (below 768 px
-   and for coarse pointers the row grows instead). What shows at rest ends on
-   the right edge; tools that appear on hover sit inboard of it. */
+   line under it. Sizes come from step details' density tokens: on desktop
+   with a fine pointer, 36 px fields, 32 px rows and targets, 24 px label
+   rows, 12 px between fields and 4 px inside one; for touch, 44 px with 16
+   and 8 px. A label row's tools overflow it into the gaps around it without
+   reaching the control below. What shows at rest ends on the right edge;
+   tools that appear on hover sit inboard of it. */
 .param-form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--sd-field-gap);
 }
 .param {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--sd-field-inner);
   min-width: 0;
 }
 .param-label-row {
@@ -39,7 +39,7 @@ SPDX-License-Identifier: Apache-2.0
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
-  min-height: calc(var(--control-touch) - 2 * var(--space-2));
+  min-height: var(--sd-label-row);
 }
 .param-label {
   font: var(--type-label);
@@ -71,17 +71,17 @@ SPDX-License-Identifier: Apache-2.0
 }
 .step-details .param-tools > weave-row-menu .row-menu-toggle,
 .step-details .param-tools > button.param-remove {
-  width: var(--control-touch);
-  min-width: var(--control-touch);
-  height: var(--control-touch);
-  min-height: var(--control-touch);
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
 }
 .step-details .param-label-row > .param-tools > weave-row-menu .row-menu-toggle,
 .step-details .param-label-row > .param-tools > button.param-remove,
 .step-details .param-label-row > .param-tools .param-mode button[role="radio"] {
-  margin-block: calc(-1 * var(--space-2));
+  margin-block: calc((var(--sd-label-row) - var(--sd-target)) / 2);
 }
-/* Fixed | Mapped: a 24 px face inside 44 px targets. */
+/* Fixed | Mapped: a 24 px face inside its targets. */
 .param-mode {
   position: relative;
   isolation: isolate;
@@ -100,8 +100,8 @@ SPDX-License-Identifier: Apache-2.0
 .step-details .param-mode button[role="radio"] {
   position: relative;
   z-index: 0;
-  min-width: var(--control-touch);
-  min-height: var(--control-touch);
+  min-width: var(--sd-target);
+  min-height: var(--sd-target);
   padding: 0 var(--space-2);
   border: 0;
   border-radius: 0;
@@ -142,7 +142,7 @@ SPDX-License-Identifier: Apache-2.0
 .param-input {
   width: 100%;
   min-width: 0;
-  min-height: var(--control-touch);
+  min-height: var(--sd-control);
   padding: 0 var(--space-3);
   font: var(--type-body);
   color: var(--text);
@@ -183,7 +183,7 @@ SPDX-License-Identifier: Apache-2.0
 }
 /* Selects and pickers look and size like inputs: one height, one text inset. */
 .step-details .param-control .choice-field {
-  min-height: var(--control-touch);
+  min-height: var(--sd-control);
   background: var(--sunken);
 }
 .step-details .param-control .choice-field:hover {
@@ -195,23 +195,23 @@ SPDX-License-Identifier: Apache-2.0
   box-shadow: 0 0 0 1px var(--focus);
 }
 .step-details .param-control weave-select .choice-field input {
-  min-height: var(--control-touch);
+  min-height: var(--sd-control);
   margin-block: -1px;
   padding: 0 var(--space-3);
   font: var(--type-body);
 }
 .step-details .param-control weave-select .choice-field button {
   flex: none;
-  width: var(--control-touch);
-  min-width: var(--control-touch);
-  height: var(--control-touch);
-  min-height: var(--control-touch);
+  width: var(--sd-control);
+  min-width: var(--sd-control);
+  height: var(--sd-control);
+  min-height: var(--sd-control);
   margin: -1px -1px -1px 0;
   color: var(--muted);
 }
 .step-details weave-select .choice-option {
-  min-width: var(--control-touch);
-  min-height: var(--control-touch);
+  min-width: var(--sd-target);
+  min-height: var(--sd-row);
 }
 /* A choice made in place is as wide as its content. */
 @supports (field-sizing: content) {
@@ -241,7 +241,7 @@ SPDX-License-Identifier: Apache-2.0
 }
 .step-details button.param-switch {
   width: 32px;
-  min-height: var(--control-touch);
+  min-height: var(--sd-target);
   padding: 0;
   border: 0;
   background: transparent;
@@ -294,8 +294,8 @@ SPDX-License-Identifier: Apache-2.0
 .step-details .param-segments button[role="radio"] {
   position: relative;
   z-index: 0;
-  min-width: var(--control-touch);
-  min-height: var(--control-touch);
+  min-width: var(--sd-target);
+  min-height: var(--sd-control);
   padding: 0 var(--space-3);
   border: 0;
   background: transparent;
@@ -356,13 +356,13 @@ SPDX-License-Identifier: Apache-2.0
   position: relative;
   display: inline-flex;
 }
-/* The help button keeps a 44 px target around its 24 px place. */
+/* The help button keeps its target around its 24 px place. */
 .step-details button.toggletip-button {
-  width: var(--control-touch);
-  min-width: var(--control-touch);
-  min-height: var(--control-touch);
-  margin: calc(-1 * var(--space-2))
-    calc((var(--space-6) - var(--control-touch)) / 2);
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  min-height: var(--sd-target);
+  margin: calc((var(--sd-label-row) - var(--sd-target)) / 2)
+    calc((var(--space-6) - var(--sd-target)) / 2);
   color: var(--subtle);
 }
 .toggletip-text {
@@ -405,7 +405,7 @@ SPDX-License-Identifier: Apache-2.0
 .step-details button.ref-pill-button {
   width: 100%;
   justify-content: flex-start;
-  min-height: var(--control-touch);
+  min-height: var(--sd-control);
   padding: 0 var(--space-2);
   background: var(--sunken);
   border: 1px solid var(--field-border);
@@ -446,7 +446,7 @@ SPDX-License-Identifier: Apache-2.0
     margin: 0;
   }
   .step-details button.param-switch {
-    min-width: var(--control-touch);
+    min-width: var(--sd-target);
   }
 }
 
@@ -467,17 +467,17 @@ SPDX-License-Identifier: Apache-2.0
 .param-row,
 .param-kv-row {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) var(--control-touch);
+  grid-template-columns: 18px minmax(0, 1fr) var(--sd-target);
   gap: var(--space-2);
   align-items: start;
 }
 .param-kv-row {
   grid-template-columns:
     18px minmax(90px, 150px) minmax(0, 1fr)
-    var(--control-touch);
+    var(--sd-target);
 }
 :is(.param-row, .param-kv-row) > .param-grip {
-  margin-top: calc((var(--control-touch) - 16px) / 2);
+  margin-top: calc((var(--sd-row) - 16px) / 2);
 }
 .param-kv-row.is-blank {
   align-items: center;
@@ -488,7 +488,7 @@ SPDX-License-Identifier: Apache-2.0
 /* Too narrow for key and value side by side: the value goes under its key. */
 @container (max-width: 539px) {
   .param-kv-row {
-    grid-template-columns: 18px minmax(0, 1fr) var(--control-touch);
+    grid-template-columns: 18px minmax(0, 1fr) var(--sd-target);
   }
   .param-kv-row > .param-row-value,
   .param-kv-row > .param-kv-hint {
@@ -658,7 +658,7 @@ SPDX-License-Identifier: Apache-2.0
   align-items: center;
   gap: 0 var(--space-2);
   min-width: 0;
-  min-height: var(--control-touch);
+  min-height: var(--sd-target);
 }
 .param-card-head > :is(strong, .param-grip) {
   flex: none;
@@ -672,21 +672,26 @@ SPDX-License-Identifier: Apache-2.0
   flex: none;
   margin-left: auto;
 }
+/* The chip and the next step: one line after the title, the next step
+   giving way first. */
+.param-card-route {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
 /* A narrow card keeps its title and buttons on the header row and puts the
-   chip and next step on a line under the title. */
+   chip and the next step on a line under the title; a next step that doesn't
+   fit beside the chip wraps under it. */
 @container (max-width: 419px) {
   .param-card-head {
     flex-wrap: wrap;
   }
-  .param-card-head::after {
-    content: "";
+  .param-card-route {
     order: 1;
     flex-basis: 100%;
-  }
-  .param-card-head > :is(.param-chip-out, .param-next) {
-    order: 2;
-  }
-  .param-card-head > .param-chip-out {
+    flex-wrap: wrap;
     margin-left: calc(16px + var(--space-2));
   }
 }
@@ -754,7 +759,7 @@ SPDX-License-Identifier: Apache-2.0
 .param-chip-text,
 .param-chip-new {
   width: 12ch;
-  min-height: var(--control-touch);
+  min-height: var(--sd-row);
   border: 0;
   background: transparent;
   color: var(--text);
@@ -769,7 +774,7 @@ SPDX-License-Identifier: Apache-2.0
   align-items: center;
   gap: var(--space-2);
   align-self: flex-start;
-  min-height: var(--control-touch);
+  min-height: var(--sd-row);
   padding: 0;
   font: var(--type-label);
   color: var(--link);
@@ -808,7 +813,7 @@ SPDX-License-Identifier: Apache-2.0
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: var(--control-touch);
+  min-height: var(--sd-row);
 }
 .add-option-menu[data-side="above"] {
   top: auto;
@@ -834,8 +839,8 @@ SPDX-License-Identifier: Apache-2.0
   justify-content: flex-start;
   align-items: baseline;
   gap: var(--space-2);
-  min-height: var(--control-touch);
-  padding: 6px var(--space-3);
+  min-height: var(--sd-row);
+  padding: var(--space-1) var(--space-3);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -879,13 +884,45 @@ SPDX-License-Identifier: Apache-2.0
 .param-list .icon-button,
 .param-kv .icon-button,
 .param-chip .icon-button {
-  width: var(--control-touch);
-  min-width: var(--control-touch);
-  min-height: var(--control-touch);
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  min-height: var(--sd-target);
 }
-.param-list .param-input,
-.param-kv .param-input {
-  min-height: var(--control-touch);
+/* A row's key and value controls are the row height. */
+.param-kv-name,
+.param-row-value > .param > .param-control > .param-input,
+.param-row-value > .param > .param-control > weave-formula-field > .param-input,
+.step-details
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  > button.ref-pill-button,
+.step-details
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-select
+  .choice-field,
+.step-details
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-select
+  .choice-field
+  :is(input, button) {
+  min-height: var(--sd-row);
+}
+.step-details
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-select
+  .choice-field
+  button {
+  width: var(--sd-row);
+  min-width: var(--sd-row);
+  height: var(--sd-row);
 }
 @media (max-width: 600px) {
   .step-details button.add-option-item {
@@ -966,8 +1003,8 @@ weave-param-field[data-drop-hover]:is(
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  min-height: var(--control-touch);
-  min-width: var(--control-touch);
+  min-height: var(--sd-control);
+  min-width: var(--sd-target);
   white-space: nowrap;
   text-decoration: none;
 }
@@ -975,8 +1012,8 @@ weave-param-field[data-drop-hover]:is(
   text-decoration: underline;
 }
 .step-details .param-resource-modes button[role="radio"] {
-  min-height: 44px;
-  min-width: 44px;
+  min-height: var(--sd-control);
+  min-width: var(--sd-target);
 }
 .param-resource-problem {
   white-space: normal;
@@ -997,8 +1034,8 @@ weave-param-field[data-drop-hover]:is(
   min-width: 0;
 }
 .param-resource-viewer button {
-  min-width: 44px;
-  min-height: 44px;
+  min-width: var(--sd-target);
+  min-height: var(--sd-target);
 }
 .param-resource-viewer .modal-actions {
   flex: 0 0 auto;

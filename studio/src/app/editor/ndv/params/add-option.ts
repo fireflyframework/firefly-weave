@@ -31,6 +31,7 @@ import {
   signal,
 } from "@angular/core";
 import { revealPopoverOption } from "../../../forms/ui/anchored-popover";
+import { scrollingParent, visibleBox } from "../scroll-area";
 import { Icon } from "../../../icon";
 import type { OptionEntry } from "./form-model";
 import type { FormSession } from "./form-session";
@@ -143,8 +144,9 @@ export class AddOption {
   }
   /**
    * Shows the whole menu inside the pane that scrolls the form: below the
-   * button, scrolling the pane when that reveals it; above it when there is
-   * room there; otherwise as tall as the room below allows, scrolling inside.
+   * button when it fits there; above it when there is room there; otherwise
+   * below, scrolling the pane to reveal it; and when even that can't show it
+   * all, as tall as the room below allows, scrolling inside.
    */
   private place() {
     const host = this.element.nativeElement;
@@ -164,13 +166,13 @@ export class AddOption {
     const height = menu.getBoundingClientRect().height;
     if (below() + gap + height <= view.bottom) return;
     const top = button.getBoundingClientRect().top;
+    if (top - gap - height >= view.top) {
+      menu.dataset["side"] = "above";
+      return;
+    }
     const scroll = below() + gap + height - view.bottom;
     if (scroll <= top - view.top) {
       scroller.scrollTop += scroll;
-      return;
-    }
-    if (top - gap - height >= view.top) {
-      menu.dataset["side"] = "above";
       return;
     }
     scroller.scrollTop += top - view.top;
@@ -231,32 +233,4 @@ export class AddOption {
         () => this.session() === session,
       );
   }
-}
-
-/** The nearest ancestor that scrolls vertically. */
-function scrollingParent(element: HTMLElement): HTMLElement | null {
-  for (
-    let parent = element.parentElement;
-    parent;
-    parent = parent.parentElement
-  )
-    if (/^(auto|scroll)$/.test(getComputedStyle(parent).overflowY))
-      return parent;
-  return null;
-}
-
-/** What the person sees of a scroller: below the sticky bars that cover its top. */
-function visibleBox(scroller: HTMLElement) {
-  const bounds = scroller.getBoundingClientRect();
-  let top = bounds.top;
-  for (const child of scroller.querySelectorAll<HTMLElement>(
-    ":scope > *, :scope > * > *",
-  ))
-    if (getComputedStyle(child).position === "sticky")
-      top = Math.max(top, child.getBoundingClientRect().bottom);
-  return {
-    top,
-    bottom: bounds.top + scroller.clientHeight,
-    right: bounds.left + scroller.clientWidth,
-  };
 }

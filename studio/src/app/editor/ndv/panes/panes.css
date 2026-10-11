@@ -17,9 +17,9 @@ SPDX-License-Identifier: Apache-2.0
 */
 /* Input, Output and Test event panes; tokens only. Each pane is a header row
    (caption, views, search), a sub-row (source or tag, and the count) and a
-   scrolling body, all on the pane's content edge. Controls keep 44 px
-   targets; the segmented views and the source draw a compact face inside
-   them. */
+   scrolling body, all on the pane's content edge. Controls follow step
+   details' density tokens; the segmented views and the source draw a
+   compact 28 px face inside their targets. */
 weave-input-pane,
 weave-output-pane,
 weave-test-event-pane {
@@ -34,8 +34,8 @@ weave-test-event-pane {
   flex-wrap: wrap;
   align-items: center;
   gap: 0 var(--space-2);
-  /* 44 px controls, 4 px above and below, and the 1 px rule: every pane's
-     header ends on the same line. */
+  /* One height for every pane's header, whatever its controls: the touch
+     height, 4 px above and below, and the 1 px rule. */
   min-height: calc(var(--control-touch) + var(--space-2) + 1px);
   padding: var(--space-1) var(--space-4);
   border-bottom: 1px solid var(--line);
@@ -60,7 +60,7 @@ weave-test-event-pane {
 .pane-views::before {
   content: "";
   position: absolute;
-  inset: var(--space-2) 0;
+  inset: calc(50% - var(--space-5) / 2 - var(--space-1)) 0;
   z-index: -1;
   background: var(--sunken);
   border: 1px solid var(--border);
@@ -72,8 +72,8 @@ weave-test-event-pane {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  min-width: var(--control-touch);
-  min-height: var(--control-touch);
+  min-width: var(--sd-target);
+  min-height: var(--sd-target);
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-xs);
@@ -99,7 +99,7 @@ weave-test-event-pane {
 .step-details .pane-views button[role="radio"]::before {
   content: "";
   position: absolute;
-  inset: var(--space-3) 0;
+  inset: calc(50% - var(--space-5) / 2) 0;
   z-index: -1;
   border-radius: var(--radius-xs);
 }
@@ -125,10 +125,10 @@ weave-test-event-pane {
 }
 .step-details button.pane-search-toggle {
   flex: none;
-  width: var(--control-touch);
-  min-width: var(--control-touch);
-  height: var(--control-touch);
-  min-height: var(--control-touch);
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
 }
 .pane-search-row {
   padding: var(--space-2) var(--space-4);
@@ -164,7 +164,7 @@ weave-input-pane .pane-count {
 .pane-source-field::before {
   content: "";
   position: absolute;
-  inset: var(--space-2) 0;
+  inset: calc(50% - var(--space-5) / 2 - var(--space-1)) 0;
   z-index: -1;
   background: var(--sunken);
   border: 1px solid var(--field-border);
@@ -182,7 +182,7 @@ weave-input-pane .pane-count {
   width: auto;
   min-width: 0;
   max-width: 100%;
-  min-height: var(--control-touch);
+  min-height: var(--sd-target);
   padding: 0 calc(var(--space-2) + 16px + var(--space-1)) 0 var(--space-2);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -211,7 +211,7 @@ weave-input-pane .pane-count {
   min-width: 0;
 }
 .pane-content > button {
-  min-height: var(--control-touch);
+  min-height: var(--sd-control);
 }
 .pane-empty {
   display: flex;
@@ -254,7 +254,6 @@ weave-input-pane .pane-count {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 2px;
 }
 .data-row {
   display: flex;
@@ -262,7 +261,7 @@ weave-input-pane .pane-count {
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  min-height: var(--control-touch);
+  min-height: var(--sd-row);
   padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--depth, 0) * 22px);
   border-radius: var(--radius-sm);
 }
@@ -316,7 +315,7 @@ weave-input-pane .pane-count {
   align-items: center;
   gap: var(--space-2);
   max-width: 100%;
-  min-height: var(--control-touch);
+  min-height: var(--sd-control);
   padding: 0 var(--space-3);
   font: var(--type-label);
   color: var(--text);
@@ -344,16 +343,16 @@ weave-input-pane .pane-count {
 .step-details weave-test-event-pane input:not([type="checkbox"]),
 .step-details weave-test-event-pane select,
 .step-details weave-test-event-pane button {
-  min-height: var(--control-touch);
+  min-height: var(--sd-control);
 }
 .step-details weave-test-event-pane .checkbox-field {
-  min-height: var(--control-touch);
-  min-width: var(--control-touch);
+  min-height: var(--sd-target);
+  min-width: var(--sd-target);
 }
 .step-details .sd-input weave-test-event-pane .choice-field button {
-  min-width: var(--control-touch);
-  width: var(--control-touch);
+  min-width: var(--sd-control);
+  width: var(--sd-control);
 }
 .step-details .sd-input weave-test-event-pane .choice-field input {
-  padding-right: calc(var(--control-touch) + var(--space-2));
+  padding-right: calc(var(--sd-control) + var(--space-2));
 }

@@ -215,3 +215,33 @@ export function formScroller(page: Page, dialog: Locator): Locator {
     ? dialog.locator(".sd-panes")
     : dialog.locator(".sd-tabpanel:not([hidden])");
 }
+
+/**
+ * Step details has two densities: the desktop one for a fine pointer (fields
+ * 36 px, rows 32 px, targets at least 24 px), and the touch one below 768 px
+ * or for a coarse pointer (44 px everywhere).
+ */
+export async function density(page: Page) {
+  const touch = await page.evaluate(
+    () => matchMedia("(max-width: 767px), (pointer: coarse)").matches,
+  );
+  return touch
+    ? {
+        touch,
+        control: 44,
+        row: 44,
+        target: 44,
+        labelRow: 44,
+        fieldGap: 16,
+        fieldInner: 8,
+      }
+    : {
+        touch,
+        control: 36,
+        row: 32,
+        target: 24,
+        labelRow: 24,
+        fieldGap: 12,
+        fieldInner: 4,
+      };
+}

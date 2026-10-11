@@ -29,6 +29,7 @@ import {
   boxes,
   clippedText,
   contentEdges,
+  density,
   expectAligned,
   textBox,
 } from "./step-geometry";
@@ -243,10 +244,12 @@ for (const size of [
 ])
   test.describe(`data control geometry ${size.tag}`, () => {
     test.use({ viewport: { width: size.width, height: size.height } });
-    test("visible controls have44px targets, fit and receive real hits", async ({
+    test("visible controls meet their target size, fit and receive real hits", async ({
       page,
     }) => {
       const details = await openStepFixture(page);
+      // 44 px for touch; on desktop with a fine pointer at least 24 px (WCAG 2.2 AA).
+      const sizes = await density(page);
       await trigger(details);
       for (const name of ["Test event", "Output", "Input"] as const) {
         if (name === "Input") {
@@ -284,11 +287,11 @@ for (const size of [
           expect(
             geometry.width,
             JSON.stringify(geometry),
-          ).toBeGreaterThanOrEqual(44);
+          ).toBeGreaterThanOrEqual(sizes.target);
           expect(
             geometry.height,
             JSON.stringify(geometry),
-          ).toBeGreaterThanOrEqual(44);
+          ).toBeGreaterThanOrEqual(sizes.target);
           expect(geometry.left).toBeGreaterThanOrEqual(0);
           expect(geometry.right).toBeLessThanOrEqual(size.width);
           expect(geometry.hit).toBe(true);

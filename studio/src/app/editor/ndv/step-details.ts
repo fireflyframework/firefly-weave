@@ -19,8 +19,9 @@ SPDX-License-Identifier: Apache-2.0
 // Output. It opens on a step (or the trigger, or End), keeps focus inside,
 // moves to the previous and next step in Outline order without closing,
 // renames the step in place, and closes with its button, Escape or a click
-// on the dimmed editor — there is nothing to save: every edit is already in
-// the workflow as an undo step.
+// on the dimmed shell header above it (its own inset padding doesn't close
+// it) — there is nothing to save: every edit is already in the workflow as
+// an undo step.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -54,6 +55,7 @@ import { OutputPane } from "./panes/output-pane";
 import { TestEventPane } from "./panes/test-event-pane";
 import { Icon } from "../../icon";
 import { coveredBy, keepUsable } from "../../modal-sheet";
+import { revealTop } from "./scroll-area";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import {
   commandFor,
@@ -898,7 +900,19 @@ export class StepDetails {
       (name && visible(name) ? name : null) ??
       control(root) ??
       root;
-    found.focus();
+    // In the form, focus never scrolls on its own: the field's top comes
+    // into view instead, so a field whose first control is further down (a
+    // decision's paths) still opens at its start.
+    const field =
+      focus.kind === "field"
+        ? panel?.querySelector<HTMLElement>(
+            `[data-param="${CSS.escape(focus.id)}"]`,
+          )
+        : found.closest<HTMLElement>(".param-form > weave-param-field");
+    if (field && panel?.contains(found)) {
+      found.focus({ preventScroll: true });
+      revealTop(field);
+    } else found.focus();
   }
   private trapTab(event: KeyboardEvent) {
     const root = this.dialog().nativeElement;

@@ -28,6 +28,7 @@ import {
   withLanguageFeatures,
   yamlFile,
 } from "./step-details-po";
+import { density } from "./step-geometry";
 import { connected, lookupAction, sourceText } from "./support";
 
 for (const size of sizes)
@@ -782,9 +783,11 @@ for (const size of [
       expect(geometry.top).toBeGreaterThanOrEqual(0);
       expect(geometry.bottom).toBeLessThanOrEqual(size.height);
       expect(geometry.focus).not.toBe("none");
+      // Menu rows are 44 px for touch and at least 24 px on desktop.
+      const minimum = (await density(page)).target;
       for (const control of geometry.controls) {
-        expect(control.width).toBeGreaterThanOrEqual(44);
-        expect(control.height).toBeGreaterThanOrEqual(44);
+        expect(control.width).toBeGreaterThanOrEqual(minimum);
+        expect(control.height).toBeGreaterThanOrEqual(minimum);
         expect(control.hit).toBe(true);
       }
       await page.screenshot({

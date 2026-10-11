@@ -29,11 +29,15 @@ import {
 } from "./step-details-po";
 import { sourceText, connected, allCapabilities } from "./support";
 
+/** In view, hit at its center, and at least the target size: 44 px for touch, 24 px on desktop. */
 async function usable(control: Locator) {
   await control.scrollIntoViewIfNeeded();
   const geometry = await control.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     return {
+      minimum: matchMedia("(max-width: 767px), (pointer: coarse)").matches
+        ? 44
+        : 24,
       width: rect.width,
       height: rect.height,
       contained:
@@ -50,8 +54,8 @@ async function usable(control: Locator) {
     };
   });
   expect(geometry).toMatchObject({ contained: true, hit: true });
-  expect(geometry.width).toBeGreaterThanOrEqual(44);
-  expect(geometry.height).toBeGreaterThanOrEqual(44);
+  expect(geometry.width).toBeGreaterThanOrEqual(geometry.minimum);
+  expect(geometry.height).toBeGreaterThanOrEqual(geometry.minimum);
 }
 
 for (const size of [

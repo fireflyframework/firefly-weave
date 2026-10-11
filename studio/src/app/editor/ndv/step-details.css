@@ -32,6 +32,15 @@ weave-step-details {
   background: var(--scrim);
 }
 .step-details {
+  /* Density. On desktop with a fine pointer step details follows the
+     reference's compact rhythm; below 768 px and for coarse pointers it
+     keeps 44 px touch targets. */
+  --sd-control: var(--control-md); /* fields, selects and pickers */
+  --sd-row: var(--control-sm); /* key-value and data rows, menu rows */
+  --sd-target: var(--control-sm); /* icon buttons and small toggles */
+  --sd-label-row: var(--space-6);
+  --sd-field-gap: var(--space-3);
+  --sd-field-inner: var(--space-1);
   position: fixed;
   --sd-inset: var(--space-6);
   inset: var(--shell-header) 0 0;
@@ -59,17 +68,17 @@ weave-step-details {
   color: var(--muted);
   min-width: 0;
 }
-/* Icon-only buttons share one 44 px target across step details; in the
-   36 px strip they overflow it rather than grow it. */
+/* Icon-only buttons share one target size across step details; in the
+   36 px strip a touch target overflows it rather than grow it. */
 .step-details .sd-top > button.icon-button,
 .step-details .sd-actions > weave-row-menu .row-menu-toggle {
-  width: var(--control-touch);
-  min-width: var(--control-touch);
-  height: var(--control-touch);
-  min-height: var(--control-touch);
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
 }
 .step-details .sd-top > button.icon-button {
-  margin-block: calc((var(--control-md) - var(--control-touch)) / 2);
+  margin-block: calc((var(--control-md) - var(--sd-target)) / 2);
 }
 .sd-crumb {
   min-width: 0;
@@ -287,6 +296,14 @@ weave-step-details {
   }
 }
 @media (max-width: 767px), (pointer: coarse) {
+  .step-details {
+    --sd-control: var(--control-touch);
+    --sd-row: var(--control-touch);
+    --sd-target: var(--control-touch);
+    --sd-label-row: var(--control-touch);
+    --sd-field-gap: var(--space-4);
+    --sd-field-inner: var(--space-2);
+  }
   .sd-top {
     min-height: var(--control-touch);
   }
@@ -436,9 +453,11 @@ weave-step-details {
 .step-details[data-layout="sheet"] .sd-top {
   padding: 0 var(--space-2) 0 var(--space-4);
 }
+/* Whatever scrolls into view stops below the sticky pane tabs. */
 .step-details[data-layout="sheet"] .sd-panes {
   display: block;
   overflow: auto;
+  scroll-padding-top: calc(var(--control-touch) + 2 * 2px + 1px);
 }
 .step-details[data-layout="sheet"] .sd-segments {
   position: sticky;
@@ -543,8 +562,8 @@ weave-step-details {
 .step-details .sd-map-menu button[role="menuitem"] {
   display: block;
   width: 100%;
-  min-height: 44px;
-  min-width: 44px;
+  min-height: var(--sd-row);
+  min-width: var(--sd-target);
   padding: var(--space-1) var(--space-2);
   text-align: left;
   font: var(--type-body);

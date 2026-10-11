@@ -38,6 +38,7 @@ import {
   boxes,
   clippedText,
   contentEdges,
+  density,
   expectAligned,
   formScroller,
   paintedOpacity,
@@ -625,13 +626,20 @@ for (const size of sizes)
       await details.dialog.screenshot({
         path: resolve(`../build/editor-m3/task-13/keyed-${size.tag}.png`),
       });
+      // Rows are 32 px on desktop with a fine pointer and 44 px for touch;
+      // no target is under 24 px.
+      const sizes = await density(page);
       for (const control of await rows.locator("input, button").all()) {
         if (!(await control.isVisible())) continue;
         await control.scrollIntoViewIfNeeded();
         const box = await control.boundingBox();
-        expect(box!.height).toBeGreaterThanOrEqual(44);
-        if (await control.evaluate((element) => element.matches("button")))
-          expect(box!.width).toBeGreaterThanOrEqual(44);
+        const button = await control.evaluate((element) =>
+          element.matches("button"),
+        );
+        expect(box!.height).toBeGreaterThanOrEqual(
+          button ? sizes.target : sizes.row,
+        );
+        if (button) expect(box!.width).toBeGreaterThanOrEqual(sizes.target);
       }
       await details.close();
       expect(await sourceText(page)).toBe(before);
@@ -756,17 +764,18 @@ for (const size of [
       await details.close();
     });
 
-    test("object-list card controls preserve 44px targets and fit narrow forms", async ({
+    test("object-list card controls keep their target size and fit narrow forms", async ({
       page,
     }) => {
       const { details } = await openObjectItems(page);
       const items = details.field("input.items");
+      const sizes = await density(page);
       for (const control of await items.locator("input, button").all()) {
         if (!(await control.isVisible())) continue;
         await control.scrollIntoViewIfNeeded();
         const box = await control.boundingBox();
-        expect(box!.height).toBeGreaterThanOrEqual(44);
-        expect(box!.width).toBeGreaterThanOrEqual(44);
+        expect(box!.height).toBeGreaterThanOrEqual(sizes.target);
+        expect(box!.width).toBeGreaterThanOrEqual(sizes.target);
         expect(box!.x).toBeGreaterThanOrEqual(0);
         expect(box!.x + box!.width).toBeLessThanOrEqual(size.width);
         expect(
@@ -792,18 +801,19 @@ for (const size of [
       await details.close();
     });
 
-    test("collection rows and chips fit the scrolling form with 44px targets", async ({
+    test("collection rows and chips fit the scrolling form with their target sizes", async ({
       page,
     }) => {
       const details = await openStepFixture(page);
       await details.openWithKeyboard("check-customer");
       const values = details.field("value");
+      const sizes = await density(page);
       for (const control of await values.locator("input, button").all()) {
         if (!(await control.isVisible())) continue;
         await control.scrollIntoViewIfNeeded();
         const box = await control.boundingBox();
-        expect(box!.height).toBeGreaterThanOrEqual(44);
-        expect(box!.width).toBeGreaterThanOrEqual(44);
+        expect(box!.height).toBeGreaterThanOrEqual(sizes.target);
+        expect(box!.width).toBeGreaterThanOrEqual(sizes.target);
         expect(box!.x).toBeGreaterThanOrEqual(0);
         expect(box!.x + box!.width).toBeLessThanOrEqual(size.width);
       }
@@ -820,8 +830,8 @@ for (const size of [
         if (!(await control.isVisible())) continue;
         await control.scrollIntoViewIfNeeded();
         const box = await control.boundingBox();
-        expect(box!.height).toBeGreaterThanOrEqual(44);
-        expect(box!.width).toBeGreaterThanOrEqual(44);
+        expect(box!.height).toBeGreaterThanOrEqual(sizes.target);
+        expect(box!.width).toBeGreaterThanOrEqual(sizes.target);
         expect(box!.x).toBeGreaterThanOrEqual(0);
         expect(box!.x + box!.width).toBeLessThanOrEqual(size.width);
       }
@@ -1204,9 +1214,10 @@ for (const size of formSizes)
       if (size.width >= 600)
         expect(control.width).toBeLessThan((edges.right - edges.left) * 0.75);
       const prompt = await box(details.field("prompt").locator(".param-input"));
-      // One control height for the form.
-      expectAligned([control.height, 44], "control height");
-      expect(prompt.height).toBeGreaterThanOrEqual(44);
+      // One control height for the form: 36 px on desktop, 44 px for touch.
+      const sizes = await density(page);
+      expectAligned([control.height, sizes.control], "control height");
+      expect(prompt.height).toBeGreaterThanOrEqual(sizes.control);
     });
   });
 
@@ -1379,5 +1390,174 @@ test.describe("a Call an API step", () => {
       [(await contentEdges(menu)).left + 12, ...starts],
       "menu labels",
     );
+  });
+});
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900, touch: false },
+  { tag: "600x500", width: 600, height: 500, touch: false },
+  { tag: "1440x900-touch", width: 1440, height: 900, touch: true },
+])
+  test.describe(`step details density at ${size.tag}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.touch,
+    });
+    // Desktop with a fine pointer follows the reference's density: fields
+    // 36 px, rows 32 px, 24 px label rows, 12 px between fields and 4 px from
+    // a label row to its control (the reference has 22, 14 and 6). Touch
+    // keeps 44 px controls with 16 px and 8 px.
+    test("fields, rows and gaps follow the density", async ({ page }) => {
+      const details = await openStepFixture(page);
+      const sizes = await density(page);
+      expect(sizes.touch).toBe(size.width < 768 || size.touch);
+      await details.open("summarize");
+      await showParameters(page, details.dialog);
+      const model = details.field("model");
+      const prompt = details.field("prompt");
+      expectAligned(
+        [(await box(model.locator(".choice-field"))).height, sizes.control],
+        "select height",
+      );
+      const modelBox = await box(model);
+      const promptBox = await box(prompt);
+      expectAligned(
+        [promptBox.y - modelBox.bottom, sizes.fieldGap],
+        "field gap",
+      );
+      const label = await box(
+        prompt.locator(":scope > .param > .param-label-row"),
+      );
+      expectAligned([label.height, sizes.labelRow], "label row");
+      const control = await box(
+        prompt.locator(":scope > .param > .param-control"),
+      );
+      expectAligned(
+        [control.y - label.bottom, sizes.fieldInner],
+        "label to control",
+      );
+      await details.close();
+      await details.openWithKeyboard("lookup");
+      await showParameters(page, details.dialog);
+      const action = details.field("action");
+      expectAligned(
+        [
+          (await box(action.locator(".param-segments"))).height,
+          (await box(action.locator(".param-input, .choice-field").first()))
+            .height,
+          (await box(details.field("connection").locator(".choice-field")))
+            .height,
+          sizes.control,
+        ],
+        "control heights",
+      );
+      await details.close();
+      await details.openWithKeyboard("check-customer");
+      await showParameters(page, details.dialog);
+      const row = details.field("value").locator(".param-kv-row").first();
+      expectAligned(
+        [
+          (await box(row.locator(".param-kv-name"))).height,
+          (await box(row.locator(".param-row-value"))).height,
+          (await box(row.locator(":scope > button"))).height,
+          sizes.row,
+        ],
+        "key and value row",
+      );
+      if (size.width >= 768) {
+        const rows = await boxes(details.dialog.locator(".sd-input .data-row"));
+        expectAligned([...rows.map((r) => r.height), sizes.row], "data rows");
+        expectAligned([rows[1].y - rows[0].y, sizes.row], "data row pitch");
+      }
+      // No target in step details is smaller than its density allows.
+      const small = await details.dialog.evaluate(
+        (dialog, minimum) =>
+          [
+            ...dialog.querySelectorAll<HTMLElement>(
+              "button, input:not([type=hidden]), select, textarea, a[href], [role=radio], [role=tab]",
+            ),
+          ]
+            .filter(
+              (element) =>
+                element.getClientRects().length &&
+                !element.closest(".sr-only, [hidden]"),
+            )
+            .map((element) => {
+              const r = element.getBoundingClientRect();
+              return {
+                name:
+                  element.getAttribute("aria-label") ??
+                  element.textContent?.trim(),
+                width: r.width,
+                height: r.height,
+              };
+            })
+            .filter(
+              (target) =>
+                target.width < minimum - 0.5 || target.height < minimum - 0.5,
+            ),
+        sizes.target,
+      );
+      expect(small).toEqual([]);
+    });
+  });
+
+for (const size of [
+  { tag: "600x500", width: 600, height: 500 },
+  { tag: "360x640", width: 360, height: 640 },
+  { tag: "640x360", width: 640, height: 360 },
+])
+  test.describe(`a decision opening on a small screen at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test("opens at its start: the tabs and the intro are in view", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.openWithKeyboard("route-by-value");
+      await expect(details.dialog).toHaveAttribute("data-layout", "sheet");
+      await expect(details.tab("Parameters")).toBeInViewport();
+      await expect(
+        details.dialog.locator(".sd-tabpanel:not([hidden]) .param-intro"),
+      ).toBeInViewport();
+      // Focus is on a control, not on a field's tools.
+      expect(
+        await page.evaluate(
+          () =>
+            !!document.activeElement?.closest(".sd-tabpanel") &&
+            !document.activeElement?.closest(".param-label-row, .param-tools"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+test.describe("Add option near the bottom of a short pane", () => {
+  test.use({ viewport: { width: 1440, height: 560 } });
+  test("opens its menu above the button when there is room there", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page);
+    await details.open("summarize");
+    const add = details.dialog.getByRole("button", {
+      name: "Add option",
+      exact: true,
+    });
+    const scroller = formScroller(page, details.dialog);
+    const before = await scroller.evaluate((element) => element.scrollTop);
+    await add.click();
+    const menu = details.dialog.getByRole("menu", { name: "Add option" });
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute("data-side", "above");
+    await expect(menu.getByRole("menuitem").first()).toBeFocused();
+    const menuBox = await box(menu);
+    const button = await box(add);
+    const area = await visibleArea(scroller);
+    expect(menuBox.bottom).toBeLessThanOrEqual(button.y);
+    expect(menuBox.y).toBeGreaterThanOrEqual(area.y - 0.5);
+    // Opening above doesn't scroll the pane.
+    expect(await scroller.evaluate((element) => element.scrollTop)).toBe(
+      before,
+    );
+    await page.keyboard.press("Escape");
+    await expect(add).toBeFocused();
   });
 });

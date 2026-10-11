@@ -115,15 +115,17 @@ interface Row {
                     >{{ spec().item?.label ?? "Item" }} {{ i + 1 }}</strong
                   >
                   @if (info) {
-                    <span class="param-chip-out" [attr.title]="info.chip"
-                      ><weave-icon name="switch" [size]="16" /><span
-                        class="param-chip-label"
-                        >{{ info.chip }}</span
-                      ></span
-                    >
-                    <span class="param-next" [attr.title]="'→ ' + info.next"
-                      >→ {{ info.next }}</span
-                    >
+                    <span class="param-card-route">
+                      <span class="param-chip-out" [attr.title]="info.chip"
+                        ><weave-icon name="switch" [size]="16" /><span
+                          class="param-chip-label"
+                          >{{ info.chip }}</span
+                        ></span
+                      >
+                      <span class="param-next" [attr.title]="'→ ' + info.next"
+                        >→ {{ info.next }}</span
+                      >
+                    </span>
                   }
                   <span class="param-card-actions">
                     <button
