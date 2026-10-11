@@ -372,6 +372,9 @@ async def test_discovery_requires_the_pulled_model_tool_support_and_a_stable_cac
 # The journeys change only an installation this checkout owns, on the owned test Docker context.
 
 OWNED = Path(__file__).resolve().parents[2]
+# A sibling clone, named after this one: a fixed name such as "firefly-weave" is this checkout
+# itself wherever the clone keeps the repository name, as CI does in .../firefly-weave/firefly-weave.
+ANOTHER_CHECKOUT = OWNED.with_name(OWNED.name + "-copy")
 
 
 def owned_state(directory, **changes):
@@ -432,7 +435,7 @@ def test_another_docker_context_is_refused_before_docker_is_asked(context):
         Path.home() / ".local/platform",
         OWNED / "build-other/platform",
         OWNED / "tests/live_ai",
-        OWNED.parent / "firefly-weave/build/platform",
+        ANOTHER_CHECKOUT / "build/platform",
     ],
     ids=["temporary", "home", "lookalike", "source", "other-checkout"],
 )
@@ -456,7 +459,6 @@ def test_an_installation_without_containers_is_refused():
 
 
 ANOTHER_INSTALLATION = OWNED / ".local/platform"
-ANOTHER_CHECKOUT = OWNED.parent / "firefly-weave"
 
 
 # Docker's project filter guarantees the project label, so each case returns it: what differs is where
