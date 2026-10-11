@@ -47,6 +47,9 @@ import { KeyValueField } from "./key-value-field";
 import { FieldsField } from "./fields-field";
 import { ResourceField } from "./resource-field";
 import { ConnectionField } from "./connection-field";
+import { ConditionsField } from "./conditions-field";
+import { UrlField } from "./url-field";
+import { SchemaField } from "./schema-field";
 import { slotsOf } from "./slots";
 import { FormulaField } from "./formula-field";
 import type { FormSession } from "./form-session";
@@ -91,6 +94,9 @@ const UNIT_CODE: Record<string, string> = {
     ListField,
     KeyValueField,
     FieldsField,
+    ConditionsField,
+    UrlField,
+    SchemaField,
   ],
   templateUrl: "./param-field.html",
   host: {
@@ -100,6 +106,7 @@ const UNIT_CODE: Record<string, string> = {
     "(weavefielddrop)": "dropped($event)",
     "(weavefieldmappingcheck)": "checkMapping($event)",
     "[class.is-option]": "entry().option && isGroup()",
+    "[class.is-conditions]": "spec().type === 'conditions'",
     "[attr.data-param]": "spec().id",
     "[attr.data-param-path]": "pathKey()",
     "[attr.data-mode]": "mode()",
@@ -116,7 +123,7 @@ export class ParamField {
    * value in the Tab order too. Other fields keep them in the label row.
    */
   toolsAfter(): boolean {
-    return this.row() && !this.isGroup();
+    return (this.row() && !this.isGroup()) || this.spec().type === "conditions";
   }
   /** A structural group with no value of its own (a decision's paths) has no field menu. */
   hasMenu(): boolean {
@@ -125,7 +132,7 @@ export class ParamField {
   }
   /** A group of fields introduces its contents: its hint comes before them. */
   introFirst(): boolean {
-    return this.spec().type === "fields";
+    return this.spec().type === "fields" || this.spec().type === "schema";
   }
   isGroup(): boolean {
     return ["list", "keyValue", "fields", "conditions", "schema"].includes(
@@ -135,6 +142,7 @@ export class ParamField {
   readonly String = String;
   private readonly formula = viewChild(FormulaField);
   private readonly resource = viewChild(ResourceField);
+  private readonly conditions = viewChild(ConditionsField);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   readonly uid = `p${++sequence}`;
   choices: Choice[] = [];
@@ -171,7 +179,13 @@ export class ParamField {
     return JSON.stringify(this.spec().path);
   }
   checkMapping(event: Event) {
+    // Conditions place mapped data in their own rows, so only a write over
+    // the whole field (from a field around it) could lose unfinished rows.
+    const around =
+      (event as CustomEvent<HTMLElement | null>).detail !==
+      this.element.nativeElement;
     if (
+      (around && this.conditions()?.hasDraft()) ||
       this.resource()?.hasDraft() ||
       this.numberProblem() ||
       this.jsonProblem ||
@@ -205,8 +219,12 @@ export class ParamField {
       canonicalJson(this.spec()) !== canonicalJson(owner.spec)
     )
       return;
-    if (!canMapFields(this.element.nativeElement, this.session())) return;
     const { drag, x, y, shift } = (event as CustomEvent<FieldDrop>).detail;
+    if (this.spec().type === "conditions") {
+      this.conditions()?.drop(drag, y);
+      return;
+    }
+    if (!canMapFields(this.element.nativeElement, this.session())) return;
     const control = this.element.nativeElement.querySelector(
       ".param-control input:not([type=checkbox]), .param-control textarea",
     );
@@ -302,6 +320,10 @@ export class ParamField {
       };
     return line;
   }
+  /** An unfinished condition row, once the rows were left. */
+  conditionsProblem(): string {
+    return this.conditions()?.draftProblem() ?? "";
+  }
   problemShown(): boolean {
     const kind = this.line().kind;
     return kind === "error" || kind === "warning";
@@ -374,6 +396,13 @@ export class ParamField {
           run: () => void session.renameSlot(spec),
         },
       );
+    if (spec.type === "conditions")
+      items.push({
+        label: "Edit as formula",
+        detail: "Formulas are edited with Edit as YAML in the More menu.",
+        disabled: true,
+        run: () => undefined,
+      });
     items.push({ label: "Copy value", run: () => void this.copyValue() });
     if (this.entry().option && !spec.required)
       items.push({

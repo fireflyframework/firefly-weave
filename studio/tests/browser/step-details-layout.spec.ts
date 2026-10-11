@@ -1004,11 +1004,25 @@ for (const size of [
           intersects(strip, text),
           `strip ${JSON.stringify(strip)} over ${JSON.stringify(text)}`,
         ).toBe(false);
-      // The strip's controls still work, and Escape still closes.
+      // The strip's controls still work, and Escape still closes: a text box
+      // that has focus gives it up on the first Escape, the next one closes.
       await details.dialog
         .getByRole("button", { name: "Next step", exact: true })
         .click();
       await expect(details.dialogFor("route-by-value")).toBeVisible();
+      if (
+        await page.evaluate(
+          () => !!document.activeElement?.matches("input, textarea"),
+        )
+      ) {
+        await page.keyboard.press("Escape");
+        await expect(details.dialog).toBeVisible();
+        expect(
+          await page.evaluate(
+            () => !document.activeElement?.matches("input, textarea"),
+          ),
+        ).toBe(true);
+      }
       await page.keyboard.press("Escape");
       await expect(details.dialog).toHaveCount(0);
     });

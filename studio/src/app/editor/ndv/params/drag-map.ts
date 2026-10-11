@@ -47,7 +47,7 @@ export interface FieldDrop {
   shift: boolean;
 }
 
-/** Ask the affected mounted controls before a write could replace their local drafts. */
+/** Ask the affected mounted controls before a write could replace their local drafts; `detail` is the target. */
 export function canMapFields(root: HTMLElement, session: FormSession): boolean {
   const fields = [
     ...(root.matches("weave-param-field") ? [root] : []),
@@ -57,7 +57,10 @@ export function canMapFields(root: HTMLElement, session: FormSession): boolean {
     fields.some(
       (field) =>
         !field.dispatchEvent(
-          new Event(FIELD_MAPPING_CHECK, { cancelable: true }),
+          new CustomEvent<HTMLElement>(FIELD_MAPPING_CHECK, {
+            cancelable: true,
+            detail: root,
+          }),
         ),
     )
   ) {

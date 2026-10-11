@@ -27,12 +27,9 @@ import {
   withNewEditor,
   yamlFile,
 } from "./step-details-po";
-import { connected, lookupAction, offline, sourceText } from "./support";
-import {
-  hasPython,
-  localAuthoring,
-  stopLocalAuthoring,
-} from "./local-authoring";
+import { connected, lookupAction, sourceText } from "./support";
+import { hasPython, stopLocalAuthoring } from "./local-authoring";
+import { openHttpStep } from "./step-http";
 import {
   box,
   boxes,
@@ -1221,84 +1218,6 @@ for (const size of formSizes)
     });
   });
 
-const httpWorkflow = `apiVersion: weave/v1alpha1
-kind: Workflow
-metadata: {name: order-intake, version: 1.3.0}
-spec:
-  inputSchema:
-    type: object
-    properties:
-      customerId: {type: string}
-      status: {type: string}
-  outputSchema: {type: object}
-  connections:
-    crm: {connector: weave-http@2.0.0, required: true}
-  steps:
-    - id: get-customer-orders
-      kind: action
-      uses: order-intake.get-customer-orders@1.0.0
-      connection: crm
-      with:
-        object:
-          path:
-            object:
-              customerId: {ref: /input/customerId}
-          query:
-            object:
-              limit: {literal: "25"}
-              status: {ref: /input/status}
-  output: {literal: {}}
-`;
-/** Opens a workflow kept on this computer whose step calls an API the workflow owns. */
-async function openHttpStep(page: Page) {
-  await withNewEditor(page);
-  await page.addInitScript((source) => {
-    const id = "2f6c1a40-0000-4000-8000-000000000001";
-    const savedAt = "2026-10-11T10:04:00.000Z";
-    localStorage.setItem(
-      `weave.localDraft.${id}`,
-      JSON.stringify({
-        source,
-        format: "yaml",
-        layout: null,
-        canvas: {
-          schemaVersion: 2,
-          kind: "weave.studio/canvas",
-          ownedActions: ["order-intake.get-customer-orders"],
-          actionRecipes: {
-            "order-intake.get-customer-orders": {
-              kind: "http",
-              method: "GET",
-              pathTemplate: "/customers/{customerId}/orders",
-              statuses: [200],
-              timeoutSeconds: 30,
-            },
-          },
-        },
-        savedAt,
-      }),
-    );
-    localStorage.setItem(
-      "weave.localDrafts.v1",
-      JSON.stringify([{ id, name: "order-intake", version: "1.3.0", savedAt }]),
-    );
-  }, httpWorkflow);
-  await localAuthoring(page);
-  await offline(page);
-  await page
-    .locator(".preview-row", { hasText: "order-intake" })
-    .first()
-    .click();
-  await expect(page.locator(".editor-bar")).toBeVisible();
-  const show = page.getByRole("button", { name: "Show canvas", exact: true });
-  const canvas = page.getByLabel("Workflow canvas", { exact: true });
-  await expect(canvas.or(show).first()).toBeVisible();
-  if (await show.isVisible()) await show.click();
-  const details = new StepDetailsPage(page);
-  await details.open("get-customer-orders");
-  return details;
-}
-
 test.describe("a Call an API step", () => {
   test.skip(!hasPython, "Needs the repository's Python environment.");
   test.use({ viewport: { width: 1440, height: 900 } });
@@ -1533,7 +1452,16 @@ for (const size of [
           .filter((bar) => !bar.contains(active))
           .map((bar) => bar.getBoundingClientRect().bottom);
         const top = Math.max(0, ...sticky);
-        const style = getComputedStyle(active);
+        // A text box inside a field box (a picker, a select) rings the box.
+        const ringed = (element: Element) => {
+          const style = getComputedStyle(element);
+          return (
+            (style.outlineStyle !== "none" &&
+              parseFloat(style.outlineWidth) > 0) ||
+            style.boxShadow !== "none"
+          );
+        };
+        const box = active.closest(".ref-combo-field, .choice-field");
         return {
           inDialog: !!active.closest(".step-details"),
           tools: !!active.closest(".param-tools"),
@@ -1542,10 +1470,7 @@ for (const size of [
             r.bottom <= innerHeight + 0.5 &&
             r.left >= 0 &&
             r.right <= innerWidth,
-          ring:
-            (style.outlineStyle !== "none" &&
-              parseFloat(style.outlineWidth) > 0) ||
-            style.boxShadow !== "none",
+          ring: ringed(active) || (!!box && ringed(box)),
         };
       });
       expect(focused).toEqual({

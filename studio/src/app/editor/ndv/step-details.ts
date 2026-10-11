@@ -1079,9 +1079,14 @@ export class StepDetails {
         this.session() !== menu.session
       )
         return;
-      const control = this.dialog().nativeElement.querySelector<HTMLElement>(
-        `.sd-tabpanel:not([hidden]) ${selector} .param-control :is(input, textarea, button, [tabindex='0'])`,
-      );
+      // A field can name the control to continue on (a condition's test).
+      const field = `.sd-tabpanel:not([hidden]) ${selector}`;
+      const root = this.dialog().nativeElement;
+      const control =
+        root.querySelector<HTMLElement>(`${field} [data-map-focus] input`) ??
+        root.querySelector<HTMLElement>(
+          `${field} .param-control :is(input, textarea, button, [tabindex='0'])`,
+        );
       control?.focus({ preventScroll: true });
       control?.scrollIntoView({ block: "center", inline: "nearest" });
     });

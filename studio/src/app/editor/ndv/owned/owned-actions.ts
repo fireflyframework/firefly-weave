@@ -102,10 +102,11 @@ export const isWriteMethod = (method: string): boolean =>
 export const sendsBody = (method: string): boolean =>
   method === "POST" || method === "PUT" || method === "PATCH";
 
+/** A path placeholder, as the action builder reads it: `{customerId}`. */
+export const PATH_PLACEHOLDER = /\{([A-Za-z_][A-Za-z0-9_-]{0,127})\}/g;
+
 export function pathPlaceholders(path: string): string[] {
-  return [...path.matchAll(/\{([A-Za-z_][A-Za-z0-9_-]{0,127})\}/g)].map(
-    (match) => match[1],
-  );
+  return [...path.matchAll(PATH_PLACEHOLDER)].map((match) => match[1]);
 }
 
 /**

@@ -1064,3 +1064,423 @@ weave-param-field[data-drop-hover]:is(
   background: transparent;
   color: var(--text);
 }
+
+/* Call an API's URL: one field box with the connection's address, then the
+   path. At rest placeholders show as pills; focused, or under a drag, the
+   path is the text to type in or drop at. */
+.param-url {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  min-height: var(--sd-control);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.param-url:hover {
+  border-color: var(--field-border-hover);
+}
+.param-url:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.param.has-error .param-url {
+  border-color: var(--danger);
+}
+.param.is-readonly .param-url {
+  border-color: transparent;
+}
+.param-url-prefix {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  font: var(--type-caption);
+  color: var(--subtle);
+  white-space: nowrap;
+  border-right: 1px solid var(--line);
+}
+/* A narrow field leaves the room to the path; the address stays in the description. */
+weave-url-field {
+  display: block;
+  container-type: inline-size;
+}
+@container (max-width: 419px) {
+  .param-url-prefix {
+    display: none;
+  }
+}
+.param-url-path {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+/* The text box fills the field box, border included, so it is a full target. */
+.step-details .param-url-input,
+.step-details .param-url-input:is(:hover, :focus-visible) {
+  min-height: var(--sd-control);
+  margin-block: -1px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  font: var(--type-mono);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.param-url.has-view .param-url-input {
+  color: transparent;
+}
+.param-url-view {
+  position: absolute;
+  inset: 0 var(--space-3) 0 var(--space-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  font: var(--type-mono);
+  line-height: calc(var(--sd-control) - 2px);
+  color: var(--text);
+}
+.param-url-view .ref-pill {
+  vertical-align: middle;
+  font: var(--type-caption);
+}
+.param-url-brace,
+.param-url-slot {
+  color: var(--syntax-keyword);
+}
+/* Under a drag the path shows as text, so the drop lands where it shows. */
+weave-param-field[data-drop-hover] .param-url-view {
+  display: none;
+}
+weave-param-field[data-drop-hover] .param-url.has-view .param-url-input {
+  color: var(--text);
+}
+/* One row per placeholder: its name, then its value with Fixed | Mapped. */
+.param-url-parts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  container-type: inline-size;
+}
+.param-url-part {
+  display: grid;
+  grid-template-columns: minmax(90px, 150px) minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+}
+.param-url-key {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--sd-row);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-mono);
+  color: var(--syntax-keyword);
+}
+@container (max-width: 359px) {
+  .param-url-part {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+  .param-url-key {
+    min-height: 0;
+  }
+}
+
+/* A decision's conditions: rows of data, test and value at the row height,
+   each ending on its trash button on the pane's right edge. The field's
+   label names the rows for assistive technology only; its menu ends the Add
+   condition line. The test column fits the longest test ("does not
+   contain"); below 520 px the test and value go on a second line. */
+weave-param-field.is-conditions > .param {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sd-field-inner) 0;
+}
+weave-param-field.is-conditions > .param > .param-label-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 0;
+  min-height: 0;
+}
+weave-param-field.is-conditions > .param > .param-control {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+weave-param-field.is-conditions > .param > .param-tools {
+  grid-row: 1;
+  grid-column: 2;
+  align-self: end;
+  margin-bottom: calc((var(--sd-row) - var(--sd-target)) / 2);
+}
+weave-param-field.is-conditions > .param > .param-line {
+  grid-row: 2;
+  grid-column: 1 / -1;
+}
+.step-details .condition-editor.is-compact {
+  gap: var(--space-2);
+}
+.step-details .condition-editor.is-compact .condition-intro {
+  gap: var(--space-2);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.step-details .condition-editor.is-compact .condition-row {
+  grid-template-columns:
+    minmax(0, calc(var(--sd-row) + 128px)) minmax(0, 1fr)
+    var(--sd-target);
+  grid-template-areas:
+    "data data remove"
+    "test value value";
+  align-items: start;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+@container (min-width: 520px) {
+  .step-details .condition-editor.is-compact .condition-row {
+    grid-template-columns:
+      minmax(0, 1fr) minmax(0, calc(var(--sd-row) + 128px))
+      minmax(0, 140px) var(--sd-target);
+    grid-template-areas: "data test value remove";
+  }
+}
+.step-details .condition-editor.is-compact .condition-remove {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+  margin-top: calc((var(--sd-row) - var(--sd-target)) / 2);
+  color: var(--muted);
+}
+/* Every box in a row: the row height, the field look, one focus ring. */
+.step-details
+  .condition-editor.is-compact
+  :is(.ref-combo-field, .choice-field, .condition-value) {
+  min-height: var(--sd-row);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.step-details
+  .condition-editor.is-compact
+  :is(.ref-combo-field, .choice-field, .condition-value):hover {
+  border-color: var(--field-border-hover);
+}
+.step-details
+  .condition-editor.is-compact
+  :is(.ref-combo-field, .choice-field, .condition-value):focus-within {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.step-details .condition-editor.is-compact .condition-value {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+.step-details
+  .condition-editor.is-compact
+  .condition-value
+  :is(.ref-combo-field, .choice-field) {
+  min-height: calc(var(--sd-row) - 2px);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.step-details
+  .condition-editor.is-compact
+  .condition-value
+  > :is(weave-select, .condition-data) {
+  flex: 1;
+  min-width: 0;
+}
+.step-details .condition-editor.is-compact .condition-input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  height: var(--sd-row);
+  min-height: 0;
+  margin-block: -1px;
+  padding: 0 var(--space-3);
+  font: var(--type-body);
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.step-details .condition-editor.is-compact .condition-input::placeholder {
+  color: var(--subtle);
+}
+/* Text boxes and toggles fill their field box, border included, so each is
+   a full row-height target. */
+.step-details .condition-editor.is-compact .ref-combo-field {
+  grid-template-columns: minmax(0, 1fr) var(--sd-row);
+}
+.step-details
+  .condition-editor.is-compact
+  :is(.ref-combo-field, .choice-field)
+  input {
+  height: var(--sd-row);
+  min-height: 0;
+  margin-block: -1px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  font: var(--type-body);
+  background: transparent;
+}
+.step-details
+  .condition-editor.is-compact
+  :is(.ref-combo-toggle, .choice-field button) {
+  width: var(--sd-row);
+  min-width: var(--sd-row);
+  height: var(--sd-row);
+  min-height: 0;
+  margin: -1px -1px -1px 0;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+}
+/* Data as a pill at rest; its text while it is edited. */
+.condition-editor.is-compact .condition-data {
+  position: relative;
+  grid-area: data;
+  min-width: 0;
+}
+.condition-editor.is-compact .condition-pill {
+  position: absolute;
+  top: 50%;
+  left: var(--space-2);
+  max-width: calc(100% - var(--sd-row) - var(--space-3));
+  translate: 0 -50%;
+  pointer-events: none;
+}
+/* A long source gives way before the field's own name. */
+.condition-editor.is-compact .condition-pill > span:not(.ref-sep) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.condition-editor.is-compact .condition-pill > span:last-child {
+  flex-shrink: 0.1;
+}
+.condition-editor.is-compact .condition-pill > :is(.ref-sep, weave-icon) {
+  flex: none;
+}
+.condition-editor.is-compact .condition-data:focus-within .condition-pill {
+  display: none;
+}
+.condition-editor.is-compact
+  .condition-data.has-pill:not(:focus-within)
+  .ref-combo-field
+  input {
+  color: transparent;
+}
+/* Only problems show under the data: the type is in the pill and the list. */
+.step-details
+  .condition-editor.is-compact
+  .ref-combo-hint:not(.warning, .error) {
+  display: none;
+}
+/* Fixed | Mapped on the value while it has focus, at the box's right end;
+   the pill or the typed value says which at rest. */
+.condition-editor.is-compact .condition-mode {
+  flex: none;
+  align-self: center;
+  margin-right: var(--space-1);
+}
+.step-details
+  .condition-editor.is-compact
+  .condition-mode
+  button[role="radio"] {
+  padding: 0 var(--space-1);
+}
+.condition-editor.is-compact
+  .condition-value:not(:focus-within)
+  > .condition-mode {
+  display: none;
+}
+.step-details .condition-editor.is-compact .condition-join .choice-field {
+  min-height: var(--sd-row);
+}
+.step-details .condition-editor.is-compact weave-select.condition-join {
+  width: calc(var(--sd-row) + 160px);
+  max-width: 100%;
+}
+@supports (field-sizing: content) {
+  .step-details .condition-editor.is-compact weave-select.condition-join {
+    width: fit-content;
+    max-width: 100%;
+  }
+  .step-details
+    .condition-editor.is-compact
+    weave-select.condition-join
+    .choice-field
+    input {
+    flex: 0 1 auto;
+    width: auto;
+    field-sizing: content;
+  }
+}
+.step-details .condition-editor.is-compact .condition-adapted {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.step-details .condition-editor.is-compact .condition-adapted > weave-icon {
+  flex: none;
+  margin-block: 2px;
+}
+.step-details .condition-editor.is-compact .condition-tools {
+  justify-content: flex-start;
+}
+/* The schema designer under its field: the field names it, so its own
+   heading is for assistive technology, and its tools start the block. */
+.step-details weave-schema-field .sd-header {
+  justify-content: flex-start;
+}
+.step-details weave-schema-field .sd-header h3 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* Its rows at the form's density: a field per line, the row height, the
+   field menu on the row's inner edge. */
+.step-details weave-schema-field .sd,
+.step-details weave-schema-field .sd-rows {
+  gap: var(--space-2);
+}
+.step-details weave-schema-field .sd-tools button {
+  min-height: var(--sd-row);
+}
+.step-details weave-schema-field .sd-row {
+  gap: var(--space-2);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-color: var(--border);
+  border-radius: var(--radius-sm);
+}
+.step-details weave-schema-field .sd-row:has(.sd-row-main) {
+  padding-bottom: var(--space-3);
+}
+.step-details weave-schema-field .sd-summary {
+  min-height: var(--sd-row);
+  padding: 0;
+}
+.step-details weave-schema-field .sd-row-heading .row-menu-toggle {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}

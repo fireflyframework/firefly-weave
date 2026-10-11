@@ -20,10 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 @let ids = this.ids();
 @let reason = readOnly();
 @let line = this.line();
+@let local = numberProblem() || jsonProblem || conditionsProblem();
+@let quiet = row() || spec.labelHidden || spec.type === "conditions";
 <div
   class="param"
   [class.is-option]="entry.option"
-  [class.has-error]="line.kind === 'error' || numberProblem() || jsonProblem"
+  [class.has-error]="line.kind === 'error' || !!local"
   [class.is-readonly]="!!reason"
   (focusout)="left()"
 >
@@ -32,14 +34,14 @@ SPDX-License-Identifier: Apache-2.0
     @if (isGroup()) {
       <span
         class="param-label"
-        [class.sr-only]="row() || spec.labelHidden"
+        [class.sr-only]="quiet"
         [id]="ids.control + '-label'"
         >{{ spec.label }}</span
       >
     } @else {
       <label
         class="param-label"
-        [class.sr-only]="row() || spec.labelHidden"
+        [class.sr-only]="quiet"
         [for]="ids.control"
         [id]="ids.control + '-label'"
         >{{ spec.label }}</label
@@ -48,7 +50,7 @@ SPDX-License-Identifier: Apache-2.0
     @if (spec.labelHidden && spec.hint) {
       <p class="param-intro">{{ spec.hint }}</p>
     }
-    @if (spec.required) {
+    @if (spec.required && !quiet) {
       <span class="param-required" aria-hidden="true">*</span>
     }
     @if (spec.description) {
@@ -84,7 +86,10 @@ SPDX-License-Identifier: Apache-2.0
         [readOnly]="reason"
       />
     } @else if (
-      isGroup() && spec.path.length && !session().collectionRows(spec)
+      isGroup() &&
+      spec.type !== "conditions" &&
+      spec.path.length &&
+      !session().collectionRows(spec)
     ) {
       <p class="param-deferred" [id]="ids.control">
         This imported value is edited with Edit as YAML for now.
@@ -131,6 +136,31 @@ SPDX-License-Identifier: Apache-2.0
             [spec]="spec"
             [controlId]="ids.control"
             [describedBy]="describedBy()"
+            [readOnly]="reason"
+          />
+        }
+        @case ("conditions") {
+          <weave-conditions-field
+            [session]="session()"
+            [spec]="spec"
+            [labelId]="ids.control + '-label'"
+            [readOnly]="reason"
+          />
+        }
+        @case ("urlTemplate") {
+          <weave-url-field
+            [session]="session()"
+            [spec]="spec"
+            [controlId]="ids.control"
+            [describedBy]="describedBy()"
+            [readOnly]="reason"
+            [invalid]="line.kind === 'error'"
+          />
+        }
+        @case ("schema") {
+          <weave-schema-field
+            [session]="session()"
+            [spec]="spec"
             [readOnly]="reason"
           />
         }
@@ -360,17 +390,14 @@ SPDX-License-Identifier: Apache-2.0
       line.kind !== 'error' &&
       line.kind !== 'warning' &&
       line.kind !== 'reason' &&
-      !numberProblem() &&
-      !jsonProblem
+      !local
     "
     [id]="ids.line"
-    [attr.data-kind]="numberProblem() || jsonProblem ? 'error' : line.kind"
+    [attr.data-kind]="local ? 'error' : line.kind"
     [attr.role]="line.kind === 'error' ? 'alert' : null"
   >
-    @if (numberProblem() || jsonProblem) {
-      <weave-icon name="warning" [size]="16" />{{
-        numberProblem() || jsonProblem
-      }}
+    @if (local) {
+      <weave-icon name="warning" [size]="16" />{{ local }}
     } @else if (line.kind === "error" || line.kind === "warning") {
       <weave-icon name="warning" [size]="16" />{{ line.text }}
       @if (line.fix) {

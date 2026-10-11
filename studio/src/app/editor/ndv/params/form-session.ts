@@ -49,6 +49,7 @@ import { uiKey } from "../../state/browser-store";
 import { expressionRoot, WORKFLOW_ROOTS, samePath } from "./paths";
 import {
   ABSENT,
+  applyChange,
   readList,
   readKeyed,
   writeList,
@@ -71,6 +72,12 @@ import {
   type Path,
 } from "../registry";
 import { connectorOf } from "../kinds/forms/action-forms";
+import { pathPlaceholders } from "../owned/owned-actions";
+import {
+  insertPlaceholder,
+  placeholderKey,
+  reconcilePathParts,
+} from "./url-template";
 import { normalizeIdentifier } from "./identifiers";
 import {
   allSteps,
@@ -100,6 +107,8 @@ export interface FieldLine {
   fix?: () => void;
 }
 const pointer = formatPointer;
+const WHOLE_PATH =
+  "The path values are mapped as a whole. Edit them with Edit as YAML in the More menu.";
 
 export class FormSession {
   /** Fields switched to Mapped that hold no mapping yet (the data picker is open). */
@@ -226,6 +235,8 @@ export class FormSession {
   }
   clear(spec: ParamSpec): void {
     if (!this.editable(spec)) return;
+    if (spec.type === "urlTemplate")
+      return void this.typeUrl(spec, "", this.urlSnapshot(spec));
     const reason = this.resetReason(spec);
     if (reason) return this.host.notify(reason);
     const structural = this.resetCollection(spec);
@@ -314,6 +325,9 @@ export class FormSession {
     return spec.id + pointer(spec.path);
   }
   mode(spec: ParamSpec): "fixed" | "mapped" | null {
+    // Conditions choose their data row by row; a URL is always a template
+    // whose placeholders carry their own value mode.
+    if (spec.type === "conditions" || spec.type === "urlTemplate") return null;
     if (
       spec.mapping === "mapped" ||
       spec.type === "formula" ||
@@ -393,6 +407,12 @@ export class FormSession {
     const spec = entry.spec;
     const locked = this.controller.readOnlyReason() ?? this.readOnly(entry);
     if (locked) return locked;
+    // Conditions take data in a row: the open rows place it (attachConditionRows).
+    if (spec.type === "conditions") return null;
+    if (spec.type === "urlTemplate")
+      return this.subject().action
+        ? this.urlPartsReason()
+        : "This field takes a fixed value.";
     if (spec.mapping === "fixed") return "This field takes a fixed value.";
     if (["keyValue", "list"].includes(spec.type) && this.wholeMapping(spec))
       return "Use rows before adding fields.";
@@ -436,7 +456,13 @@ export class FormSession {
     )
       return null;
     const live = this.resolve(spec)?.spec;
-    const target = live?.type === "list" ? this.appendItem(live)?.spec : live;
+    // A URL drop fills a path value in the step's input: that is what reads it.
+    const target =
+      live?.type === "list"
+        ? this.appendItem(live)?.spec
+        : live?.type === "urlTemplate"
+          ? this.urlPartSpec("_")
+          : live;
     if (!target) return null;
     const entry = this.scope(target).find((entry) => entry.ref === drag.ref);
     if (!entry) return null;
@@ -450,6 +476,12 @@ export class FormSession {
     };
   }
   dropFit(spec: ParamSpec, drag: DragRef) {
+    if (spec.type === "conditions") {
+      const drop = this.conditionDrop(spec, drag);
+      return "reason" in drop
+        ? { fit: "refused" as const, text: drop.reason }
+        : { fit: "fits" as const, text: "Fits" };
+    }
     const reason = this.mappingReason(spec);
     if (reason) return { fit: "refused" as const, text: reason };
     const reference = this.dragReference(spec, drag);
@@ -458,6 +490,10 @@ export class FormSession {
         fit: "refused" as const,
         text: "This field cannot read that data.",
       };
+    if (spec.type === "urlTemplate") {
+      const part = this.urlPartSpec(this.urlKey(spec, reference.ref));
+      return dropFit(part, "fixed", this.expected(part), reference, false);
+    }
     if (!["keyValue", "list"].includes(spec.type)) {
       const plan = planDrop(spec, this.read(spec), reference, {
         caret: null,
@@ -480,6 +516,17 @@ export class FormSession {
     drag: DragRef,
     options: { caret: number | null; shift?: boolean },
   ): boolean {
+    if (spec.type === "conditions") {
+      const drop = this.conditionDrop(spec, drag);
+      if ("reason" in drop) {
+        this.announce(drop.reason);
+        return false;
+      }
+      const rows = this.conditionRows.get(this.key(spec));
+      if (rows) return rows(drop.entry);
+      this.announce("Open the path's conditions to map data into them.");
+      return false;
+    }
     const reason = this.mappingReason(spec);
     if (reason) {
       this.announce(reason);
@@ -490,6 +537,8 @@ export class FormSession {
       this.announce("This field cannot read that data.");
       return false;
     }
+    if (spec.type === "urlTemplate")
+      return this.dropUrl(spec, reference, options.caret);
     if (spec.type === "keyValue")
       return this.dropRows(spec, reference, !!options.shift);
     if (spec.type === "list") {
@@ -605,6 +654,10 @@ export class FormSession {
       if (spec.type === "fields" && !this.wholeMapping(spec)) {
         this.children(spec).shown.forEach((child) => visit(child, depth + 1));
       } else if (!this.mappingReason(spec)) out.push(spec);
+      if (spec.type === "urlTemplate")
+        this.urlParts(spec).forEach((part) =>
+          visit(this.childEntry(part), depth + 1),
+        );
       if (spec.type === "list" && spec.item && !this.wholeMapping(spec)) {
         const indices =
           this.structure(spec) === "branches"
@@ -636,6 +689,195 @@ export class FormSession {
     this.host.notify(
       "Tip: focus a field in Input and press Enter to map it without dragging.",
     );
+  }
+
+  // ------------------------------------------- the URL and conditions
+  /** The path of Call an API's URL, as its owned action keeps it. */
+  urlPath(url: ParamSpec): string {
+    const value = this.read(url);
+    return value.mode === "fixed" && typeof value.value === "string"
+      ? value.value
+      : "";
+  }
+  /** A placeholder's value: a text field in the step's input under with.path. */
+  private urlPartSpec(name: string): ParamSpec {
+    return {
+      id: `url.path.${name}`,
+      path: ["with", "path", name],
+      type: "text",
+      label: name,
+      required: true,
+      mapping: "both",
+    };
+  }
+  /** Why the path's values can't be set one by one: the input or its path part is mapped as a whole. */
+  urlPartsReason(): string | null {
+    const keyed = (path: Path) => {
+      const probe: ParamSpec = {
+        id: "probe",
+        path,
+        type: "keyValue",
+        label: "",
+      };
+      const entries = this.entries(probe);
+      // A literal that isn't an object reads as having no entries.
+      return (
+        entries.kind === "object" ||
+        (entries.kind === "absent" && this.read(probe).mode === "absent")
+      );
+    };
+    return keyed(["with"]) && keyed(["with", "path"]) ? null : WHOLE_PATH;
+  }
+  /** The fields of the path's placeholders, one per name in path order. */
+  urlParts(url: ParamSpec): ParamSpec[] {
+    if (url.type !== "urlTemplate" || this.urlPartsReason()) return [];
+    return [...new Set(pathPlaceholders(this.urlPath(url)))].map((name) =>
+      this.urlPartSpec(name),
+    );
+  }
+  private pathKeys(): string[] {
+    const entries = this.entries({
+      id: "probe",
+      path: ["with", "path"],
+      type: "keyValue",
+      label: "",
+    });
+    return entries.kind === "object" ? entries.keys : [];
+  }
+  /** The values of the path's placeholders now, for an edit of the path to keep or bring back. */
+  urlSnapshot(url: ParamSpec): Map<string, ParamValue> {
+    const held = new Set(this.pathKeys());
+    return new Map(
+      this.urlParts(url)
+        .filter((part) => held.has(String(part.path[2])))
+        .map((part) => [String(part.path[2]), this.read(part)]),
+    );
+  }
+  /**
+   * Typing the path: the action's path, and the values of placeholders the
+   * edit removed (or brought back), in one undo step. Values the path didn't
+   * use when editing began are left as they are.
+   */
+  typeUrl(
+    url: ParamSpec,
+    text: string,
+    snapshot: ReadonlyMap<string, ParamValue>,
+  ): boolean {
+    if (url.type !== "urlTemplate" || !this.editable(url)) return false;
+    const writes: [ParamSpec, ParamValue][] = [
+      [url, { mode: "fixed", value: text }],
+    ];
+    if (!this.urlPartsReason()) {
+      const { remove, restore } = reconcilePathParts(
+        snapshot,
+        text,
+        new Set(this.pathKeys()),
+      );
+      writes.push(
+        ...remove.map((key): [ParamSpec, ParamValue] => [
+          this.urlPartSpec(key),
+          ABSENT,
+        ]),
+        ...restore.map(([key, value]): [ParamSpec, ParamValue] => [
+          this.urlPartSpec(key),
+          value,
+        ]),
+      );
+    }
+    return this.commitWrites(writes, url.id);
+  }
+  /** A name for the dropped data that neither the path nor the input uses. */
+  private urlKey(url: ParamSpec, ref: string): string {
+    return placeholderKey(
+      ref,
+      new Set([...pathPlaceholders(this.urlPath(url)), ...this.pathKeys()]),
+    );
+  }
+  /** A drop on the URL: a placeholder at the caret, filled with the dropped data, in one undo step. */
+  private dropUrl(
+    url: ParamSpec,
+    drag: DragRef,
+    caret: number | null,
+  ): boolean {
+    const key = this.urlKey(url, drag.ref);
+    const part = this.urlPartSpec(key);
+    const ok = this.commitWrites(
+      [
+        [
+          url,
+          {
+            mode: "fixed",
+            value: insertPlaceholder(this.urlPath(url), caret, key),
+          },
+        ],
+        [part, { mode: "mapped", expression: { ref: drag.ref } }],
+      ],
+      `${url.id}:drop:${++this.rowOperation}`,
+    );
+    if (!ok) return false;
+    const fit = dropFit(part, "fixed", this.expected(part), drag, false);
+    this.announce(
+      `Mapped ${drag.breadcrumb} to ${url.label}${fit.fit === "mismatch" ? `. ${fit.text}.` : ""}`,
+    );
+    this.tipOnce();
+    return true;
+  }
+  /** Writes made one after another, so each sees the ones before it, committed as one edit. */
+  private commitWrites(
+    writes: [ParamSpec, ParamValue][],
+    field: string,
+  ): boolean {
+    try {
+      let subject = this.subject();
+      const changes: FormChange[] = [];
+      for (const [spec, value] of writes)
+        for (const change of writeParam(subject, spec, value)) {
+          changes.push(change);
+          subject = applyChange(subject, change);
+        }
+      return this.commit(changes, field);
+    } catch (error) {
+      if (error instanceof FormWriteError) {
+        this.host.notify(error.message);
+        return false;
+      }
+      throw error;
+    }
+  }
+  private conditionRows = new Map<string, (entry: ScopeEntry) => boolean>();
+  /**
+   * The rows on screen for a decision's conditions: they hold unfinished
+   * conditions of their own, so data mapped into the field goes through them
+   * (the first empty row, else a new one). Returns the detach function.
+   */
+  attachConditionRows(
+    spec: ParamSpec,
+    rows: (entry: ScopeEntry) => boolean,
+  ): () => void {
+    const key = this.key(spec);
+    this.conditionRows.set(key, rows);
+    return () => {
+      if (this.conditionRows.get(key) === rows) this.conditionRows.delete(key);
+    };
+  }
+  /** The data a drop on a decision's conditions would test, or why it can't. */
+  conditionDrop(
+    spec: ParamSpec,
+    drag: DragRef,
+  ): { entry: ScopeEntry } | { reason: string } {
+    const gone = { reason: "This field is no longer available." };
+    if (spec.type !== "conditions" || !this.isCurrent()) return gone;
+    const frozen = this.controller.readOnlyReason();
+    if (frozen) return { reason: frozen };
+    const live = this.resolve(spec);
+    if (!live) return gone;
+    const locked = this.readOnly(live);
+    if (locked) return { reason: locked };
+    const entry =
+      typeof drag?.ref === "string"
+        ? this.scope(live.spec).find((option) => option.ref === drag.ref)
+        : undefined;
+    return entry ? { entry } : { reason: "This field cannot read that data." };
   }
 
   // -------------------------------------------------------------- data
@@ -1280,6 +1522,10 @@ export class FormSession {
           ...this.keyed(field).map(([key]) =>
             this.childEntry(this.keyedSpec(field, key)),
           ),
+        );
+      if (field.type === "urlTemplate")
+        children.push(
+          ...this.urlParts(field).map((part) => this.childEntry(part)),
         );
       for (const child of children) {
         const found = visit(child, depth + 1);

@@ -22,6 +22,7 @@ import type { Profile, StudioApi, Validation } from "../../api";
 import type { ContractGap } from "../../designer/contract-gaps";
 import type { SuggestedChange } from "../../designer/diagnostics-list";
 import type { StructuredCanvasAdapter } from "../../model";
+import type { InferSchema } from "../../forms/ui/schema-designer";
 import type { ToastAction } from "../../toast";
 import type { StepDetailsRequest } from "./step-details-service";
 import { editorNextEnabled } from "../state/editor-flag";
@@ -50,6 +51,8 @@ export interface StepDetailsHost {
     required: boolean;
   }[];
   readonly windowWidth: number;
+  /** Fields from example JSON ("Paste sample JSON"); null hides it. */
+  readonly inferSchema: InferSchema | null;
   error: string;
   can(capability: string, resource?: string): boolean;
   label(kind: string): string;

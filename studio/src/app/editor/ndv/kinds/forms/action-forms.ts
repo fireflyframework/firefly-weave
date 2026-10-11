@@ -95,7 +95,7 @@ export const callApiForm = (): FormSpec => ({
       type: "urlTemplate",
       label: "URL",
       required: true,
-      placeholder: "/orders/{{ id }}",
+      placeholder: "/orders/{id}",
       description:
         "The connection supplies the address and sign-in. Type the path; drag fields to fill parts of it.",
     },

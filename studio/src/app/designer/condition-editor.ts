@@ -18,6 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 // A decision case's condition as rule rows: [data] [is greater than] [1000].
 // Rows write the expression tree the language already has; the property grid
 // shows anything rows can't hold in the formula editor ("Edit as formula").
+// Step details use the compact look: "Runs when all of these are true" only
+// from the second row, data as a pill, a value mode on the value, a trash
+// button, "Add condition", and a line under a row that received dropped data.
 import {
   Component,
   EventEmitter,
@@ -28,7 +31,9 @@ import {
   ElementRef,
   QueryList,
   AfterViewChecked,
+  OnDestroy,
   inject,
+  signal,
 } from "@angular/core";
 import { Select } from "../forms/ui/select";
 import { Icon } from "../icon";
@@ -141,41 +146,89 @@ let sequence = 0;
   imports: [Icon, ReferenceCombobox, Select],
   template: `<div
     class="condition-editor"
+    [class.is-compact]="compact"
     (focusout)="touched = true"
     role="group"
     [attr.aria-labelledby]="labelId || null"
     [attr.aria-label]="labelId ? null : label"
-    [attr.aria-describedby]="problem ? prefix + '-error' : null"
+    [attr.aria-describedby]="problem && !compact ? prefix + '-error' : null"
   >
-    <div class="condition-intro">
-      Take this path when
-      <weave-select
-        label="Match rules"
-        [hideLabel]="true"
-        [options]="joinOptions"
-        [value]="join"
-        [disabled]="readOnly"
-        (choose)="setJoin($any($event))"
-      />
-      of these are true:
-    </div>
+    @if (!compact) {
+      <div class="condition-intro">
+        Take this path when
+        <weave-select
+          label="Match rules"
+          [hideLabel]="true"
+          [options]="joinOptions"
+          [value]="join"
+          [disabled]="readOnly"
+          (choose)="setJoin($any($event))"
+        />
+        of these are true:
+      </div>
+    } @else if (rows.length > 1) {
+      <div class="condition-intro">
+        <span>{{ label }}</span>
+        <weave-select
+          class="condition-join"
+          label="Match rules"
+          icon="chevronDown"
+          [hideLabel]="true"
+          [options]="compactJoinOptions"
+          [value]="join"
+          [disabled]="readOnly"
+          (choose)="setJoin($any($event))"
+        />
+      </div>
+    }
     @for (row of rows; track $index) {
       @let input = inputFor(row);
       @let n = $index + 1;
       <div class="condition-row" [attr.data-row]="$index">
-        <weave-reference-combobox
-          class="condition-data"
-          [value]="row.ref"
-          [options]="references"
-          [ariaLabel]="'Condition ' + n + ' data'"
-          placeholder="Choose data"
-          [disabled]="readOnly"
-          (valueChange)="setRef($index, $event)"
-        />
+        @if (compact) {
+          @let pill = pillFor(row.ref);
+          <div class="condition-data" [class.has-pill]="!!pill">
+            <weave-reference-combobox
+              [value]="row.ref"
+              [options]="references"
+              [ariaLabel]="'Condition ' + n + ' data'"
+              placeholder="Choose data"
+              [disabled]="readOnly"
+              (valueChange)="setRef($index, $event)"
+            />
+            @if (pill) {
+              <span
+                class="ref-pill condition-pill"
+                aria-hidden="true"
+                [attr.title]="pill.parts.join(' › ')"
+              >
+                <weave-icon [name]="pill.icon" [size]="16" />
+                @for (part of pill.parts; track $index; let last = $last) {
+                  <span>{{ part }}</span>
+                  @if (!last) {
+                    <span class="ref-sep">›</span>
+                  }
+                }
+              </span>
+            }
+          </div>
+        } @else {
+          <weave-reference-combobox
+            class="condition-data"
+            [value]="row.ref"
+            [options]="references"
+            [ariaLabel]="'Condition ' + n + ' data'"
+            placeholder="Choose data"
+            [disabled]="readOnly"
+            (valueChange)="setRef($index, $event)"
+          />
+        }
         <weave-select
           class="condition-operator"
           [label]="'Condition ' + n + ' test'"
           [hideLabel]="true"
+          [icon]="compact ? 'chevronDown' : 'chevron'"
+          [attr.data-map-focus]="adapted()?.index === $index ? '' : null"
           [options]="operatorsFor(row)"
           [value]="row.operator"
           [disabled]="readOnly"
@@ -249,6 +302,109 @@ let sequence = 0;
               Add item
             </button>
           </div>
+        } @else if (!isUnary(row.operator) && compact) {
+          @let mapped = row.compareRef !== undefined;
+          <div class="condition-value" [class.is-mapped]="mapped">
+            @if (mapped) {
+              @let compare = pillFor(row.compareRef ?? "");
+              <div class="condition-data" [class.has-pill]="!!compare">
+                <weave-reference-combobox
+                  [value]="row.compareRef ?? ''"
+                  [options]="references"
+                  [target]="comparisonSchema(row)"
+                  [ariaLabel]="'Condition ' + n + ' value'"
+                  placeholder="Choose data"
+                  [disabled]="readOnly"
+                  (valueChange)="setComparisonRef(n - 1, $event)"
+                />
+                @if (compare) {
+                  <span
+                    class="ref-pill condition-pill"
+                    aria-hidden="true"
+                    [attr.title]="compare.parts.join(' › ')"
+                  >
+                    <weave-icon [name]="compare.icon" [size]="16" />
+                    @for (
+                      part of compare.parts;
+                      track $index;
+                      let last = $last
+                    ) {
+                      <span>{{ part }}</span>
+                      @if (!last) {
+                        <span class="ref-sep">›</span>
+                      }
+                    }
+                  </span>
+                }
+              </div>
+            } @else {
+              @switch (input.kind) {
+                @case ("boolean") {
+                  <weave-select
+                    [label]="'Condition ' + n + ' value'"
+                    [hideLabel]="true"
+                    icon="chevronDown"
+                    [options]="booleanOptions"
+                    [value]="row.text"
+                    [disabled]="readOnly"
+                    (choose)="setText($index, $event)"
+                  />
+                }
+                @case ("choice") {
+                  <weave-select
+                    [label]="'Condition ' + n + ' value'"
+                    [hideLabel]="true"
+                    icon="chevronDown"
+                    [options]="choiceOptions(input)"
+                    [value]="row.text"
+                    [disabled]="readOnly"
+                    (choose)="setText($index, $event)"
+                  />
+                }
+                @default {
+                  <input
+                    class="condition-input"
+                    [type]="input.kind === 'number' ? 'number' : 'text'"
+                    [attr.inputmode]="
+                      input.kind === 'number' ? 'decimal' : null
+                    "
+                    [attr.aria-label]="'Condition ' + n + ' value'"
+                    placeholder="Value"
+                    [value]="row.text"
+                    [disabled]="readOnly"
+                    (input)="setText($index, $event)"
+                  />
+                }
+              }
+            }
+            <div
+              class="param-mode condition-mode"
+              role="radiogroup"
+              [attr.aria-label]="'Value mode for Condition ' + n + ' value'"
+              (keydown)="modeKey($event, n - 1)"
+            >
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="!mapped"
+                [attr.tabindex]="mapped ? -1 : 0"
+                [disabled]="readOnly"
+                (click)="useComparisonData(n - 1, false)"
+              >
+                Fixed
+              </button>
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="mapped"
+                [attr.tabindex]="mapped ? 0 : -1"
+                [disabled]="readOnly"
+                (click)="useComparisonData(n - 1, true)"
+              >
+                Mapped
+              </button>
+            </div>
+          </div>
         } @else if (!isUnary(row.operator)) {
           <div class="condition-value">
             @if (row.compareRef !== undefined) {
@@ -319,29 +475,40 @@ let sequence = 0;
           [disabled]="readOnly"
           (click)="remove($index)"
         >
-          <weave-icon name="close" [size]="16" />
+          <weave-icon [name]="compact ? 'trash' : 'close'" [size]="16" />
         </button>
+        @if (adapted()?.index === $index) {
+          <p class="condition-adapted" aria-hidden="true">
+            <weave-icon name="ok" [size]="16" />{{ adapted()!.text }}
+          </p>
+        }
       </div>
     }
     <div class="condition-tools">
       <button
         type="button"
-        class="tertiary sm"
+        [class]="compact ? 'text-link param-add' : 'tertiary sm'"
         [disabled]="readOnly"
         (click)="add()"
       >
-        <weave-icon name="plus" [size]="16" />Add rule
+        <weave-icon name="plus" [size]="16" />{{
+          compact ? "Add condition" : "Add rule"
+        }}
       </button>
-      <button
-        type="button"
-        class="text-link"
-        [disabled]="readOnly"
-        (click)="editAsFormula()"
-      >
-        Edit as formula
-      </button>
+      @if (!compact) {
+        <button
+          type="button"
+          class="text-link"
+          [disabled]="readOnly"
+          (click)="editAsFormula()"
+        >
+          Edit as formula
+        </button>
+      }
     </div>
-    @if (touched && problem) {
+    @if (compact) {
+      <p class="sr-only" role="status">{{ adapted()?.text ?? "" }}</p>
+    } @else if (touched && problem) {
       <p class="field-error" [id]="prefix + '-error'">
         <weave-icon name="failCircle" [size]="16" />{{ problem }}
       </p>
@@ -381,6 +548,12 @@ let sequence = 0;
         grid-area: value;
         min-width: 0;
         width: 100%;
+      }
+      .condition-adapted {
+        grid-column: 1 / -1;
+        margin: 0;
+        font: var(--type-small);
+        color: var(--success-ink);
       }
       .condition-list {
         display: grid;
@@ -467,7 +640,7 @@ let sequence = 0;
     `,
   ],
 })
-export class ConditionEditor implements OnChanges, AfterViewChecked {
+export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
   @Input() value: unknown = undefined;
   @Input() label = "Condition";
   /** The id of a visible label that names the group, when there is one. */
@@ -478,6 +651,11 @@ export class ConditionEditor implements OnChanges, AfterViewChecked {
   @Output() validityChange = new EventEmitter<boolean>();
   /** The person asked to edit this condition as a formula. */
   @Output() formula = new EventEmitter<void>();
+  /** Step details look: the join line only from the second row, "Add condition", no inline formula button. */
+  @Input() compact = false;
+  /** After a drop: which row received data and how its tests changed, for 2 seconds. */
+  readonly adapted = signal<{ index: number; text: string } | null>(null);
+  private adaptedTimer: ReturnType<typeof setTimeout> | undefined;
 
   readonly prefix = `condition-${++sequence}`;
   @ViewChildren("listItem", { read: ElementRef }) listItems?: QueryList<
@@ -500,6 +678,8 @@ export class ConditionEditor implements OnChanges, AfterViewChecked {
     const incoming = JSON.stringify(this.value) ?? "unset";
     if (incoming === this.known) return;
     this.known = incoming;
+    // Rows from elsewhere (Undo, another path) aren't the ones a drop changed.
+    this.clearAdapted();
     const condition = parseCondition(this.value);
     this.join = condition?.join ?? "and";
     // An unset condition starts with one empty row to fill in.
@@ -545,6 +725,82 @@ export class ConditionEditor implements OnChanges, AfterViewChecked {
       ).focus();
     }
   }
+  ngOnDestroy() {
+    clearTimeout(this.adaptedTimer);
+  }
+  private clearAdapted() {
+    clearTimeout(this.adaptedTimer);
+    this.adaptedTimer = undefined;
+    this.adapted.set(null);
+  }
+  /**
+   * Puts dropped data in a row (the given one, else the first without data,
+   * else a new one) and says how its tests changed. False when it can't: read
+   * only, data that isn't offered here, or a row that no longer exists.
+   */
+  dropRef(ref: string, index: number | null): boolean {
+    const option = this.references.find((reference) => reference.ref === ref);
+    if (this.readOnly || !option) return false;
+    if (
+      index !== null &&
+      (!Number.isInteger(index) || index < 0 || index >= this.rows.length)
+    )
+      return false;
+    let at = index ?? this.rows.findIndex((row) => !row.ref);
+    if (at < 0) {
+      this.rows = [...this.rows, { ref: "", operator: "eq", text: "" }];
+      at = this.rows.length - 1;
+    }
+    this.setRef(at, ref);
+    const kind = this.inputFor(this.rows[at]).kind;
+    const tests =
+      kind === "number"
+        ? "number"
+        : kind === "boolean"
+          ? "yes/no"
+          : kind === "choice"
+            ? "choice"
+            : "text";
+    this.adapted.set({
+      index: at,
+      text: `Mapped ${option.label} (${option.typeLabel}). The comparisons now offer ${tests} tests.`,
+    });
+    clearTimeout(this.adaptedTimer);
+    this.adaptedTimer = setTimeout(() => this.adapted.set(null), 2000);
+    return true;
+  }
+  /** Rows typed but not finished: they live here until they are complete. */
+  hasDraft(): boolean {
+    return this.rows.some(
+      (row) =>
+        (row.ref || row.text || row.compareRef !== undefined) &&
+        !this.complete(row),
+    );
+  }
+  /** The data of a row as a pill: its icon and breadcrumb ("Input › Amount"). */
+  pillFor(ref: string): { icon: string; parts: string[] } | null {
+    const option = this.references.find((reference) => reference.ref === ref);
+    if (!option) return null;
+    return {
+      icon: option.source === "step" ? (option.stepKind ?? "action") : "source",
+      parts: option.breadcrumb
+        .replace(/^Workflow input(?= ›|$)/, "Input")
+        .split(" › "),
+    };
+  }
+  /** Arrow keys move between Fixed and Mapped and choose. */
+  modeKey(event: KeyboardEvent, index: number) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const mapped = this.rows[index]?.compareRef !== undefined;
+    this.useComparisonData(index, !mapped);
+    const group = event.currentTarget as HTMLElement;
+    setTimeout(() =>
+      group
+        .querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')
+        ?.focus(),
+    );
+  }
   /** What is wrong, in the words the validator uses. */
   get problem() {
     const typed = this.rows.filter((row) => row.ref || row.text);
@@ -563,7 +819,11 @@ export class ConditionEditor implements OnChanges, AfterViewChecked {
     return this.schemaFor(row) ?? null;
   }
   useComparisonData(index: number, enabled: boolean) {
-    if (this.readOnly) return;
+    if (
+      this.readOnly ||
+      (this.rows[index].compareRef !== undefined) === enabled
+    )
+      return;
     this.rows[index] = {
       ...this.rows[index],
       compareRef: enabled ? "" : undefined,
@@ -662,6 +922,10 @@ export class ConditionEditor implements OnChanges, AfterViewChecked {
   joinOptions = [
     { value: "and", label: "all" },
     { value: "or", label: "any" },
+  ];
+  readonly compactJoinOptions = [
+    { value: "and", label: "all of these are true" },
+    { value: "or", label: "any of these are true" },
   ];
   booleanOptions = [
     { value: "", label: "Choose…" },
