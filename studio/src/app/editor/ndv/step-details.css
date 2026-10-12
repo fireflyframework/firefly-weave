@@ -261,6 +261,7 @@ weave-step-details {
   z-index: 2;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
 }
 /* The neighbor buttons straddle the panes' outer edges. */
@@ -270,8 +271,12 @@ weave-step-details {
 .sd-after {
   right: calc(var(--sd-inset) - var(--space-4));
 }
-.step-details button.sd-neighbor {
+/* The overflow menu is one more neighbor: the same card, centered on the
+   same edge, with its count ("+1") in place of an icon. */
+.step-details button.sd-neighbor,
+.step-details .sd-neighbors button.row-menu-toggle {
   width: 32px;
+  min-width: 32px;
   min-height: 32px;
   height: 32px;
   padding: 0;
@@ -284,7 +289,14 @@ weave-step-details {
   box-shadow: var(--shadow-1);
   color: var(--muted);
 }
-.step-details button.sd-neighbor:hover {
+.step-details .sd-neighbors button.row-menu-toggle {
+  font: var(--type-label);
+}
+.step-details .sd-neighbors button.row-menu-toggle weave-icon {
+  display: none;
+}
+.step-details button.sd-neighbor:hover,
+.step-details .sd-neighbors button.row-menu-toggle:hover {
   color: var(--text);
   border-color: var(--border-hover);
 }
@@ -308,8 +320,10 @@ weave-step-details {
   .sd-docs {
     padding-block: calc((var(--control-touch) - 16px) / 2);
   }
-  .step-details button.sd-neighbor {
+  .step-details button.sd-neighbor,
+  .step-details .sd-neighbors button.row-menu-toggle {
     width: var(--control-touch);
+    min-width: var(--control-touch);
     height: var(--control-touch);
     min-height: var(--control-touch);
   }

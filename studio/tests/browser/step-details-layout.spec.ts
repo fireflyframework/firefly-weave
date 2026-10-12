@@ -20,6 +20,7 @@ import { expect, test } from "@playwright/test";
 import { openStepFixture, sizes, yamlFile } from "./step-details-po";
 import {
   box,
+  boxes,
   contentEdges,
   expectAligned,
   intersects,
@@ -244,6 +245,29 @@ for (const size of sizes)
             name: "More steps that run right after",
           }),
         ).toContainText("+1");
+        // The overflow is one more neighbor card: every card the same size,
+        // centered on the panes' outer edge, inside the window.
+        const cards = await boxes(
+          details.dialog.locator(
+            ".sd-after :is(.sd-neighbor, button.row-menu-toggle)",
+          ),
+        );
+        expect(cards).toHaveLength(7);
+        const edge = (await box(details.dialog.locator(".sd-panes"))).right;
+        expectAligned(
+          cards.map((card) => card.width),
+          "neighbor widths",
+        );
+        expectAligned(
+          cards.map((card) => card.height),
+          "neighbor heights",
+        );
+        expectAligned(
+          [...cards.map((card) => card.x + card.width / 2), edge],
+          "neighbors centered on the panes' edge",
+        );
+        for (const card of cards)
+          expect(card.right).toBeLessThanOrEqual(size.width);
       }
       const sideways = await page.evaluate(
         () => document.scrollingElement!.scrollWidth - window.innerWidth,
