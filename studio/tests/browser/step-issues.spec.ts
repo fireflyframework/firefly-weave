@@ -409,7 +409,7 @@ for (const size of sizes)
       await details.openWithKeyboard("route-by-value");
       await expect(json).toHaveValue('{"tier": ');
       await expect(lineOf(result)).toContainText("Not applied");
-      // Switching the field to Mapped replaces what the box held.
+      // Mapped keeps it out of sight and out of the list; Fixed shows it again.
       await result.getByRole("radio", { name: "Mapped", exact: true }).click();
       await expect(json).toHaveCount(0);
       await expect(lineOf(result)).not.toContainText("Not applied");
@@ -418,6 +418,51 @@ for (const size of sizes)
           entry.includes("Not applied"),
         ),
       ).toEqual([]);
+      await result.getByRole("radio", { name: "Fixed", exact: true }).click();
+      await expect(json).toHaveValue('{"tier": ');
+      await expect(lineOf(result)).toContainText("Not applied");
+      await expect(lineOf(result)).toContainText("This isn't valid JSON");
+    });
+
+    test("the toast on closing names steps in the workflow's order, three at most", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      const hold = async (
+        id: string,
+        field: string,
+        label: string,
+        settings = false,
+      ) => {
+        await details.openWithKeyboard(id);
+        if (settings) await details.tab("Settings").click();
+        const box = details.field(field).getByRole("textbox", { name: label });
+        await box.fill("abc");
+        await expect(lineOf(details.field(field))).toContainText("Not applied");
+        await details.close();
+      };
+      // Held from the last step back to the first.
+      await hold("wait-for-payment", "timeout", "Wait at most", true);
+      await hold("wait-a-minute", "duration", "Wait for");
+      await hold("notify-sales", "due", "Due after", true);
+      await details.openWithKeyboard("route-by-value");
+      await details.dialog
+        .getByRole("button", { name: "Path result" })
+        .first()
+        .click();
+      const result = details.dialog
+        .locator('[data-param="case.output"]')
+        .first();
+      await result.locator("textarea").fill('{"tier": ');
+      await page.keyboard.press("Tab");
+      await expect(lineOf(result)).toContainText("Not applied");
+      await details.close();
+      await expect(
+        page.getByText(
+          "Not applied yet: Path result, Due after in notify-sales, Wait for in wait-a-minute and 1 more step. What you typed is kept until you finish them.",
+          { exact: true },
+        ),
+      ).toBeVisible();
     });
 
     test("an entry left on another step is named when step details close", async ({
@@ -465,6 +510,14 @@ for (const size of sizes)
       const field = details.field("input.parameters.customerId");
       await lineOf(field).getByRole("button", { name: "Use data…" }).click();
       const picker = field.getByRole("combobox", { name: "Customer ID" });
+      await expect(picker).toBeFocused();
+      await expect(picker).toHaveAttribute("aria-expanded", "true");
+      await expect(field.getByRole("listbox")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(picker).toHaveAttribute("aria-expanded", "false");
+      // The issues list's entry opens the same list.
+      await issuesPill(details).click();
+      await page.getByRole("menuitem", { name: /^Customer ID/ }).click();
       await expect(picker).toBeFocused();
       await expect(picker).toHaveAttribute("aria-expanded", "true");
       await expect(field.getByRole("listbox")).toBeVisible();

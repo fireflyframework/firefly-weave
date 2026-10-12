@@ -42,8 +42,9 @@ import {
 import { FormSession } from "../src/app/editor/ndv/params/form-session";
 import { FormulaField } from "../src/app/editor/ndv/params/formula-field";
 import { ParamField } from "../src/app/editor/ndv/params/param-field";
-import { fixed } from "../src/app/editor/ndv/params/value-io";
+import { fixed, mapped } from "../src/app/editor/ndv/params/value-io";
 import type { ParamSpec } from "../src/app/editor/ndv/registry";
+import { outlineOrder } from "../src/app/editor/ndv/navigation";
 import { StepDetailsController } from "../src/app/editor/ndv/step-details-controller";
 import type { StepDetailsHost } from "../src/app/editor/ndv/step-details-host";
 import {
@@ -156,6 +157,40 @@ describe("issues in step details", () => {
       ]),
     ).toBe(
       "Not applied yet: Max tries, Wait for in wait-a-minute. What you typed is kept until you finish them.",
+    );
+  });
+  it("names three steps at most, each once, and counts the rest", () => {
+    expect(
+      leavingText([
+        { label: "Wait at most" },
+        { label: "Path result", step: "route-by-value" },
+        { label: "Due after", step: "notify-sales" },
+        { label: "Run at most", step: "fan-out" },
+        { label: "Wait for", step: "wait-a-minute" },
+      ]),
+    ).toBe(
+      "Not applied yet: Wait at most, Path result in route-by-value, Due after in notify-sales and 2 more steps. What you typed is kept until you finish them.",
+    );
+    expect(
+      leavingText([
+        { label: "Prompt", step: "summarize" },
+        { label: "Model", step: "summarize" },
+        { label: "Wait for", step: "wait-a-minute" },
+        { label: "Run at most", step: "fan-out" },
+        { label: "Due after", step: "notify-sales" },
+      ]),
+    ).toBe(
+      "Not applied yet: Prompt and Model in summarize, Wait for in wait-a-minute, Run at most in fan-out and 1 more step. What you typed is kept until you finish them.",
+    );
+    // A step holding many entries is counted, not listed.
+    expect(
+      leavingText([
+        { label: "Max tries" },
+        { label: "Timeout" },
+        { label: "Response sample" },
+      ]),
+    ).toBe(
+      "Not applied yet: Max tries and 2 more fields. What you typed is kept until you finish them.",
     );
   });
 });
@@ -610,8 +645,8 @@ describe("entries not applied yet", () => {
     get.write(sample, fixed({ id: 2 }));
     expect(h.open("lookup").heldInOtherSteps()).toEqual([]);
   });
-  it("lets go of a held entry when the field switches between Fixed and Mapped", async () => {
-    const h = harness(
+  const limitHarness = () =>
+    harness(
       {},
       {
         lookupContract: lookupAction,
@@ -625,13 +660,75 @@ describe("entries not applied yet", () => {
         },
       },
     );
+  it("keeps a held number out of sight while its field is Mapped, and shows it again on Fixed", async () => {
+    const h = limitHarness();
     const session = h.open("lookup");
     const limit = settingsSpec(session, "input.limit");
     session.hold(limit, "number", "abc", "Enter a number.");
     expect(session.held(limit)?.text).toBe("abc");
     await session.setMode(limit, "mapped");
+    expect(session.mode(limit)).toBe("mapped");
     expect(session.held(limit)).toBeNull();
     expect(session.issues().filter((issue) => issue.status)).toEqual([]);
+    await session.setMode(limit, "fixed");
+    expect(session.mode(limit)).toBe("fixed");
+    expect(session.held(limit)).toMatchObject({
+      text: "abc",
+      message: "Enter a number.",
+    });
+    expect(session.heldLabels()).toEqual(["Limit"]);
+  });
+  it("drops a held number once a mapping is written over it", async () => {
+    const h = limitHarness();
+    const session = h.open("lookup");
+    const limit = settingsSpec(session, "input.limit");
+    session.hold(limit, "number", "abc", "Enter a number.");
+    await session.setMode(limit, "mapped");
+    expect(session.write(limit, mapped({ ref: "/input/amount" }))).toBe(true);
+    // Undo puts the old number back; what was typed over it never applied.
+    h.model.undo();
+    expect(session.read(limit)).toEqual(fixed(5));
+    await session.setMode(limit, "fixed");
+    expect(session.held(limit)).toBeNull();
+    expect(h.open("lookup").held(limit)).toBeNull();
+  });
+  it("names a number kept out of sight under Mapped when step details close", async () => {
+    const h = limitHarness();
+    const session = h.open("lookup");
+    const limit = settingsSpec(session, "input.limit");
+    session.hold(limit, "number", "abc", "Enter a number.");
+    await session.setMode(limit, "mapped");
+    // Closing forgets the switch: the field opens Fixed with the entry again.
+    expect(session.heldOnLeaving()).toEqual([{ label: "Limit" }]);
+  });
+  it("lists other steps' entries in workflow order when step details close", () => {
+    const h = harness({ responseSample: { id: 1 } });
+    h.model.insert("action", "root", 0, {
+      id: "first",
+      uses: "untitled-workflow.first@1.0.0",
+      with: { literal: {} },
+    });
+    const owned = "untitled-workflow.first@1.0.0";
+    h.model.canvas = withOwnedAction(h.model.canvas, owned, {
+      ...newHttpRecipe(),
+      pathTemplate: "/first",
+      responseSample: { id: 1 },
+    } as never);
+    const order = outlineOrder(h.model.definition);
+    expect(order.indexOf("first")).toBeLessThan(order.indexOf("get"));
+    // Held last-step first: the toast still follows the workflow.
+    const get = h.open("get");
+    get.hold(settingsSpec(get, "responseSample"), "json", "{", "Bad JSON.");
+    const first = h.open("first");
+    first.hold(settingsSpec(first, "responseSample"), "json", "[", "Bad JSON.");
+    expect(h.open("lookup").heldOnLeaving()).toEqual([
+      { label: "Response sample", step: "first" },
+      { label: "Response sample", step: "get" },
+    ]);
+    expect(h.open("get").heldOnLeaving()).toEqual([
+      { label: "Response sample" },
+      { label: "Response sample", step: "first" },
+    ]);
   });
   it("drops a held entry when its field is described differently", () => {
     const h = harness({ responseSample: { id: 1 } });
@@ -749,6 +846,29 @@ describe("unapplied template text", () => {
     } as unknown as KeyboardEvent;
     first.component.key(again);
     expect(again.preventDefault).not.toHaveBeenCalled();
+  });
+  it("lets go of held template text when a Mapped draft goes back to Fixed", async () => {
+    const t = await templateHarness();
+    const session = t.open();
+    const prompt = session
+      .state("parameters")
+      .fields.find((entry) => entry.spec.id === "prompt")!.spec;
+    // A literal prompt, switched to Mapped, with text that doesn't parse.
+    t.model.update(
+      "summarize",
+      JSON.stringify({
+        ...t.model.nodes()[0].step,
+        prompt: { literal: "Hello" },
+      }),
+    );
+    await session.setMode(prompt, "mapped");
+    session.hold(prompt, "template", "Dear {{ input.name", "Close the braces.");
+    expect(session.held(prompt)?.text).toBe("Dear {{ input.name");
+    await session.setMode(prompt, "fixed");
+    expect(session.mode(prompt)).toBe("fixed");
+    expect(session.held(prompt)).toBeNull();
+    expect(t.open().held(prompt)).toBeNull();
+    expect(session.read(prompt)).toEqual(fixed("Hello"));
   });
   it("never applies held text while the workflow is read-only", async () => {
     const t = await templateHarness();

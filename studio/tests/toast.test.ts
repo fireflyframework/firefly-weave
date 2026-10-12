@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ToastService, toastDuration } from "../src/app/toast";
+import { ToastService, toastDuration, toastTime } from "../src/app/toast";
 
 describe("toasts", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -30,6 +30,21 @@ describe("toasts", () => {
     expect(toasts.current()?.text).toBe("Task released.");
     expect(toasts.current()?.tone).toBe("neutral");
     vi.advanceTimersByTime(toastDuration - 1);
+    expect(toasts.current()).not.toBeNull();
+    vi.advanceTimersByTime(1);
+    expect(toasts.current()).toBeNull();
+  });
+
+  it("keeps long text up long enough to read", () => {
+    const toasts = new ToastService();
+    const text =
+      "Not applied yet: Wait at most, Prompt in summarize, Wait for in wait-a-minute and 3 more steps. What you typed is kept until you finish them.";
+    expect(toastTime("Task claimed.")).toBe(toastDuration);
+    expect(toastTime(text)).toBeGreaterThan(toastDuration);
+    toasts.show({ text });
+    vi.advanceTimersByTime(toastDuration);
+    expect(toasts.current()?.text).toBe(text);
+    vi.advanceTimersByTime(toastTime(text) - toastDuration - 1);
     expect(toasts.current()).not.toBeNull();
     vi.advanceTimersByTime(1);
     expect(toasts.current()).toBeNull();

@@ -109,6 +109,21 @@ export function outlineOrder(workflow: Workflow): string[] {
   return order;
 }
 
+/**
+ * Where a target of step details sits in Outline order: the trigger before
+ * every step, then the steps, then End, then anything else (workflow
+ * settings, a step that is gone).
+ */
+export function outlineRank(workflow: Workflow): (target: string) => number {
+  const order = outlineOrder(workflow);
+  return (target) => {
+    if (target === "$trigger") return -1;
+    const at = order.indexOf(target);
+    if (at >= 0) return at;
+    return target === "$end" ? order.length : order.length + 1;
+  };
+}
+
 /** The lane holding a step, with the step's index in it. */
 function laneOf(
   workflow: Workflow,

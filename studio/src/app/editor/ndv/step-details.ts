@@ -497,15 +497,15 @@ export class StepDetails {
   }
   close() {
     // What doesn't apply yet stays for the next time; with step details
-    // gone nothing else shows it, so a toast names every entry still kept,
-    // on this step and on the steps it was left on.
-    const session = this.session();
-    const kept = leavingText([
-      ...session.heldLabels().map((label) => ({ label })),
-      ...session
-        .heldInOtherSteps()
-        .map(({ label, step }) => ({ label, step: NAMES[step] ?? step })),
-    ]);
+    // gone nothing else shows it, so a toast names the entries still kept,
+    // on this step and on the steps it was left on, in the workflow's order.
+    const kept = leavingText(
+      this.session()
+        .heldOnLeaving()
+        .map(({ label, step }) =>
+          step ? { label, step: NAMES[step] ?? step } : { label },
+        ),
+    );
     const host = this.host();
     // The opener gets focus back: the shell is usable again first.
     this.releaseShell();

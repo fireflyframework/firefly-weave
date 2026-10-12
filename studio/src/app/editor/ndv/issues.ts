@@ -120,11 +120,33 @@ export interface HeldLabel {
   label: string;
   step?: string;
 }
-/** What a toast says when step details close while entries don't apply yet, on any step. */
+/** How many steps the toast on closing names before it counts the rest. */
+const NAMED_STEPS = 3;
+/**
+ * What a toast says when step details close while entries don't apply yet,
+ * on any step: the open step's fields, then each other step once, in the
+ * order given (the workflow's), at most three steps before "and 2 more
+ * steps". A step that holds more than two entries names the first one and
+ * counts the others.
+ */
 export function leavingText(entries: HeldLabel[]): string {
   if (!entries.length) return "";
-  const named = entries.map(({ label, step }) =>
-    step ? `${label} in ${step}` : label,
-  );
-  return `${NOT_APPLIED} yet: ${named.join(", ")}. What you typed is kept until you finish ${entries.length === 1 ? "it" : "them"}.`;
+  const steps: { step?: string; labels: string[] }[] = [];
+  for (const { label, step } of entries) {
+    const found = steps.find((group) => group.step === step);
+    if (found) found.labels.push(label);
+    else steps.push({ step, labels: [label] });
+  }
+  const named = steps.slice(0, NAMED_STEPS).map(({ step, labels }) => {
+    const fields =
+      labels.length <= 2
+        ? labels.join(" and ")
+        : `${labels[0]} and ${labels.length - 1} more fields`;
+    return step ? `${fields} in ${step}` : fields;
+  });
+  const rest = steps.length - named.length;
+  const list = rest
+    ? `${named.join(", ")} and ${rest} more ${rest === 1 ? "step" : "steps"}`
+    : named.join(", ");
+  return `${NOT_APPLIED} yet: ${list}. What you typed is kept until you finish ${entries.length === 1 ? "it" : "them"}.`;
 }

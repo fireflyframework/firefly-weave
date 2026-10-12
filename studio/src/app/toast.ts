@@ -16,8 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Visible outcomes: one toast at a time, bottom-left of the content area. The
-// newest replaces the previous one; it stays 6 seconds, longer while hovered
-// or focused. Errors stay inline or in banners; toasts report outcomes.
+// newest replaces the previous one; it stays 6 seconds, longer when its text
+// takes longer to read, and as long as it is hovered or focused. Errors stay
+// inline or in banners; toasts report outcomes.
 import { NgTemplateOutlet } from "@angular/common";
 import {
   Component,
@@ -43,8 +44,17 @@ export interface Toast extends Required<Omit<ToastOptions, "action">> {
   action?: ToastAction;
 }
 
-/** How long a toast stays when nobody hovers or focuses it. */
+/** How long a toast stays at least when nobody hovers or focuses it. */
 export const toastDuration = 6000;
+/**
+ * How long a toast with this text stays: two seconds to notice it, then
+ * about three words a second to read it, and never less than 6 seconds.
+ */
+export const toastTime = (text: string): number =>
+  Math.max(
+    toastDuration,
+    2000 + Math.ceil((text.trim().split(/\s+/).length * 1000) / 3),
+  );
 
 @Injectable({ providedIn: "root" })
 export class ToastService {
@@ -87,8 +97,11 @@ export class ToastService {
   }
   private countdown() {
     this.stop();
-    const id = this.current()?.id;
-    this.timer = setTimeout(() => this.dismiss(id), toastDuration);
+    const toast = this.current();
+    this.timer = setTimeout(
+      () => this.dismiss(toast?.id),
+      toastTime(toast?.text ?? ""),
+    );
   }
   private stop() {
     if (this.timer) clearTimeout(this.timer);

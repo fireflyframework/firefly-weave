@@ -114,7 +114,7 @@ import {
   slotsOf,
 } from "./slots";
 import { resourceProblem } from "./resource";
-import { stepsAfter } from "../navigation";
+import { outlineRank, stepsAfter } from "../navigation";
 import type { StepDetailsController } from "../step-details-controller";
 import type { StepDetailsHost } from "../step-details-host";
 import { openRequest, type StepDetailsRequest } from "../step-details-service";
@@ -249,6 +249,8 @@ export class FormSession {
     try {
       const ok = this.commit(writeParam(this.subject(), spec, next), field);
       if (ok) {
+        // A mapping replaces what the Fixed box held that didn't apply.
+        if (next.mode === "mapped") this.release(spec);
         this.drafts.delete(spec.id + pointer(spec.path));
         for (const owner of this.rowKeys.values()) {
           const parent = owner.spec;
@@ -389,16 +391,17 @@ export class FormSession {
     if (!entry || this.readOnly(entry)) return;
     const current = this.read(spec);
     if (mode === "mapped") {
-      // Switching replaces what the box held: a number or JSON that didn't
-      // apply goes with the Fixed control it was typed in.
-      if (this.mode(spec) !== "mapped") this.release(spec);
+      // Switching to Mapped never asks. A number or JSON that didn't apply
+      // waits, out of sight, with the Fixed box it was typed in: back on
+      // Fixed it shows again, and only a mapping written over it replaces it.
       this.drafts.set(this.key(spec), spec.path);
       this.host.refreshView();
       return;
     }
     if (current.mode !== "mapped") {
-      // Back to the fixed value: template text that didn't apply goes.
-      this.release(spec);
+      // Back to the fixed value: template text that didn't apply goes; a
+      // number or JSON typed in the Fixed box shows again.
+      if (this.heldEntry(spec)?.kind === "template") this.release(spec);
       this.drafts.delete(this.key(spec));
       return this.host.refreshView();
     }
@@ -1366,21 +1369,42 @@ export class FormSession {
   }
   /**
    * Entries other steps still hold, checked against their fields as each
-   * step's own form would show them: for the toast when step details close.
+   * step's own form would show them, in the workflow's order.
    */
   heldInOtherSteps(): { label: string; step: string }[] {
     if (!this.isCurrent()) return [];
+    const rank = outlineRank(this.host.model.definition);
     return this.controller
       .heldTargets()
       .filter((target) => target !== this.target)
+      .sort((a, b) => rank(a) - rank(b))
       .flatMap((target) =>
-        new FormSession(this.host, this.controller, openRequest(target), {
-          confirm: async () => false,
-          announce: () => undefined,
-        })
+        this.reopened(target)
           .heldLabels()
           .map((label) => ({ label, step: target })),
       );
+  }
+  /**
+   * What stays not applied once step details close, for the toast: this
+   * step's entries as its form shows them when it opens again (a field
+   * switched to Mapped is Fixed again then, with its entry), then the other
+   * steps' entries in the workflow's order.
+   */
+  heldOnLeaving(): { label: string; step?: string }[] {
+    if (!this.isCurrent()) return [];
+    return [
+      ...this.reopened(this.target)
+        .heldLabels()
+        .map((label) => ({ label })),
+      ...this.heldInOtherSteps(),
+    ];
+  }
+  /** A step's form as it shows when step details open on it again. */
+  private reopened(target: string): FormSession {
+    return new FormSession(this.host, this.controller, openRequest(target), {
+      confirm: async () => false,
+      announce: () => undefined,
+    });
   }
   private pendingKey(spec: ParamSpec): string {
     return `${spec.scope ?? "step"}:${spec.id}:${pointer(spec.path)}`;
@@ -1420,6 +1444,18 @@ export class FormSession {
    * can't change: the entry waits, and is never applied then.
    */
   held(spec: ParamSpec): PendingEntry | null {
+    const entry = this.heldEntry(spec);
+    // A number or JSON belongs to the Fixed box: while the field is
+    // switched to Mapped it waits out of sight, and isn't listed.
+    if (
+      (entry?.kind === "number" || entry?.kind === "json") &&
+      this.drafts.has(this.key(spec))
+    )
+      return null;
+    return entry;
+  }
+  /** The field's entry, also while it waits out of sight under Mapped. */
+  private heldEntry(spec: ParamSpec): PendingEntry | null {
     if (!this.isCurrent() || this.controller.readOnlyReason()) return null;
     if (!this.controller.holds(this.target, this.pendingKey(spec))) return null;
     return this.controller.held(
