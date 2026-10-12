@@ -213,6 +213,76 @@ SPDX-License-Identifier: Apache-2.0
   min-width: var(--sd-target);
   min-height: var(--sd-row);
 }
+/* The data picker of a Mapped field is a field like the others: one box at
+   the field height, the fields' text, and a toggle as wide as the box is tall.
+   In a key-value row it is the row's height, inside the row's own box. */
+.step-details weave-formula-field .ref-combo-field {
+  grid-template-columns: minmax(0, 1fr) var(--sd-control);
+  min-height: var(--sd-control);
+  background: var(--sunken);
+}
+.step-details weave-formula-field .ref-combo-field:hover {
+  border-color: var(--field-border-hover);
+}
+.step-details weave-formula-field .ref-combo-field:focus-within {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.step-details .param-control weave-formula-field .ref-combo-field input {
+  min-height: var(--sd-control);
+  margin-block: -1px;
+  padding: 0 var(--space-3);
+  font: var(--type-body);
+  background: transparent;
+}
+.step-details
+  .param-control
+  weave-formula-field
+  .ref-combo-field
+  input::placeholder {
+  color: var(--subtle);
+}
+.step-details weave-formula-field .ref-combo-toggle {
+  width: var(--sd-control);
+  min-width: var(--sd-control);
+  min-height: var(--sd-control);
+  margin: -1px -1px -1px 0;
+  border-left: 0;
+  color: var(--muted);
+  background: transparent;
+}
+.step-details
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .ref-combo-field {
+  grid-template-columns: minmax(0, 1fr) var(--sd-row);
+  min-height: var(--sd-row);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.step-details
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .ref-combo-field
+  input {
+  min-height: var(--sd-row);
+}
+.step-details
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .ref-combo-toggle {
+  width: var(--sd-row);
+  min-width: var(--sd-row);
+  min-height: var(--sd-row);
+}
 /* A choice made in place is as wide as its content. */
 @supports (field-sizing: content) {
   .step-details weave-select.param-select {

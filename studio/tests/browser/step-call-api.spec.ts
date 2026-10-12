@@ -827,3 +827,93 @@ for (const size of allSizes)
       ).toBe(true);
     });
   });
+
+for (const size of allSizes)
+  test.describe(`the data picker of a Mapped field at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("looks and sizes like the other fields: one height, body text and full targets", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, stepFixture, authoring);
+      const sizes = await density(page);
+      await addCommonStep(page, "Write a file");
+      await expect(details.dialogFor("write-file")).toBeVisible();
+      const file = details.field("file");
+      const picker = file.locator(".ref-combo-field");
+      const destination = details.field("destination").locator(".param-input");
+      const connection = details.field("connection").locator(".choice-field");
+      await file.scrollIntoViewIfNeeded();
+      const field = await box(picker);
+      // The same box as the fields around it, at the density's height.
+      expectAligned(
+        [field.height, (await box(connection)).height, sizes.control],
+        "picker height",
+      );
+      const next = await box(destination);
+      expectAligned([field.x, next.x], "picker left");
+      expectAligned([field.right, next.right], "picker right");
+      // Its text is the fields' text.
+      const fontSize = (locator: typeof picker) =>
+        locator.evaluate((element) => getComputedStyle(element).fontSize);
+      const bodySize = await fontSize(destination);
+      expect(await fontSize(picker.locator("input"))).toBe(bodySize);
+      // The text box and the toggle fill the box: each a full target.
+      for (const part of [
+        picker.locator("input"),
+        picker.locator(".ref-combo-toggle"),
+      ]) {
+        const target = await box(part);
+        expect(target.height).toBeGreaterThanOrEqual(sizes.target - 0.5);
+        expect(target.width).toBeGreaterThanOrEqual(sizes.target - 0.5);
+        expect(target.y).toBeGreaterThanOrEqual(field.y - 0.5);
+        expect(target.bottom).toBeLessThanOrEqual(field.bottom + 0.5);
+      }
+      // A field switched to Mapped while empty shows the same picker.
+      await details.close();
+      await addCommonStep(page, "Send email");
+      await expect(details.dialogFor("send-email")).toBeVisible();
+      const message = details.field("message");
+      await message.scrollIntoViewIfNeeded();
+      await message.hover();
+      await message
+        .getByRole("radiogroup", { name: "Value mode for Message" })
+        .getByRole("radio", { name: "Mapped" })
+        .click();
+      const mapped = message.locator(".ref-combo-field");
+      await expect(mapped.locator("input")).toBeFocused();
+      expectAligned([(await box(mapped)).height, sizes.control], "Message");
+      expect(await fontSize(mapped.locator("input"))).toBe(bodySize);
+      // In a key-value row, the picker is the row's height.
+      await details.close();
+      await addCommonStep(page, "Call an API");
+      await expect(details.dialogFor("call-api")).toBeVisible();
+      await details.dialog.getByRole("button", { name: "Add option" }).click();
+      await page.getByRole("menuitem", { name: /^Query parameters/ }).click();
+      const query = details.field("query");
+      const name = query.getByRole("textbox", { name: "Name of row 1" });
+      await name.fill("limit");
+      await name.press("Tab");
+      const row = query.locator(".param-kv-row").first();
+      await row.hover();
+      await row
+        .getByRole("radiogroup", { name: "Value mode for Value" })
+        .getByRole("radio", { name: "Mapped" })
+        .click();
+      const inRow = row.locator(".ref-combo-field");
+      await expect(inRow.locator("input")).toBeFocused();
+      expectAligned(
+        [
+          (await box(inRow)).height,
+          (await box(row.locator(".param-kv-name"))).height,
+          sizes.row,
+        ],
+        "row picker",
+      );
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+        ),
+      ).toBe(true);
+    });
+  });
