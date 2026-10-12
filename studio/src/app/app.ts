@@ -401,7 +401,8 @@ export class App implements CanvasHost {
     detail?: string;
   } | null = null;
   lumiOpen = false;
-  private readonly operationsView = viewChild(ClustersPage);
+  // A query by name, not by class: the Clusters area stays in its deferred chunk.
+  private readonly operationsView = viewChild<ClustersPage>("clustersPage");
   get lumiOperationAttachments() {
     return this.view === "clusters"
       ? (this.operationsView()?.lumiAttachments ?? [])
