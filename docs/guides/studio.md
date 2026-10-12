@@ -1152,11 +1152,14 @@ typed, shows the problem, and makes the graph read-only until you repair it
 make on the canvas. Switching to JSON asks
 first, because JSON cannot keep comments (**Convert and remove comments**).
 
+**Outline** lists the steps as an indented tree with branch labels.
+
 Text you typed in **Source** but haven't applied is never lost or edited
 around. Leaving **Source** with it, by another view, a step's details, another
-page or the browser's Back, asks "Apply the changes typed in Source?", and so do
-an edit or a command started from **Source** (Undo, Validate, Publish…,
-Simulate, Save to file) and a new **Source format**:
+page, **Connect to a platform** or the browser's Back, asks "Apply the changes
+typed in Source?", and so do an edit or a command started from **Source** (Undo,
+a notification's **Undo**, Validate, Publish…, Simulate, Save to file) and a new
+**Source format**:
 
 - **Apply changes** applies the text as the button beside it does, then goes
   on. Text that isn't a valid definition keeps you in **Source**, with its
@@ -1166,8 +1169,9 @@ Simulate, Save to file) and a new **Source format**:
   with the caret where it was.
 
 Closing or reloading the window with such text asks first, as with any edit that
-isn't kept.
-**Outline** lists the steps as an indented tree with branch labels.
+isn't kept. A notification's **Undo** answered with **Apply changes** doesn't
+take back the text you applied; it says the change can't come back from there,
+and **Undo** in the toolbar takes back one edit at a time.
 
 **Undo and redo cover your editing only.** They undo changes to the workflow
 and its layout, never a published version, a started run, a human decision, or
