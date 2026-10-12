@@ -240,7 +240,44 @@ export class ToastHost implements OnDestroy {
         : 0;
     const atBottom = overlap(bottom);
     const atTop = overlap(top);
-    this.place(atBottom > 0 && atTop < atBottom);
+    const onTop = atBottom > 0 && atTop < atBottom;
+    this.place(onTop);
+    if (onTop ? atTop > 0 : atBottom > 0)
+      ToastHost.reveal(focused, target, onTop, top, bottom);
+  }
+  /**
+   * When both places would cover the focused control, the control scrolls
+   * into the band the toast leaves free: under the toast at the top, down to
+   * where the bottom place ends, or above the toast at the bottom, up to
+   * where the top place starts. Nothing scrolls when the band is too short.
+   */
+  private static reveal(
+    focused: HTMLElement,
+    target: DOMRect,
+    onTop: boolean,
+    top: DOMRect,
+    bottom: DOMRect,
+  ) {
+    const gap = 8;
+    const band = onTop
+      ? { start: top.bottom + gap, end: bottom.bottom }
+      : { start: top.top, end: bottom.top - gap };
+    if (target.height > band.end - band.start) return;
+    const by = onTop ? target.top - band.start : target.bottom - band.end;
+    for (
+      let scroller = focused.parentElement;
+      scroller;
+      scroller = scroller.parentElement
+    ) {
+      const { overflowY } = getComputedStyle(scroller);
+      if (
+        /auto|scroll/.test(overflowY) &&
+        scroller.scrollHeight > scroller.clientHeight
+      ) {
+        scroller.scrollBy({ top: by, behavior: "instant" });
+        return;
+      }
+    }
   }
   /** Applied at once, so the toast moves before the focus is painted. */
   private place(top: boolean) {

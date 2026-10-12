@@ -465,6 +465,58 @@ for (const size of sizes)
           expectAligned([now.bottom, corner.bottom], `toast for control ${i}`);
       }
     });
+
+    test("on a phone sheet of step details, a toast never covers the focused field", async ({
+      page,
+    }) => {
+      test.skip(size.width >= 768, "Panes have their own check.");
+      const details = await openStepFixture(page);
+      await details.openWithKeyboard("notify-sales");
+      // A toast raised in step details: the rename's, with its Undo, on
+      // two lines, so it may cover a field in either of its places.
+      const name =
+        "notify-sales-team-of-the-regional-office-about-every-new-order";
+      await details.dialog
+        .getByRole("button", { name: "Rename notify-sales" })
+        .click();
+      await details.dialog
+        .getByRole("textbox", { name: "Step name" })
+        .fill(name);
+      await page.keyboard.press("Enter");
+      const toast = page.locator(".toast-region .toast");
+      await expect(toast).toContainText(name);
+      await settled(toast);
+      const text = await box(toast.locator(".toast-text"));
+      expect(text.height, "toast text on two lines").toBeGreaterThan(30);
+      const fields = details.dialog
+        .locator(
+          ".sd-tabpanel:not([hidden]) .param-form :is(input, textarea, [role=combobox])",
+        )
+        .filter({ visible: true });
+      const count = await fields.count();
+      expect(count).toBeGreaterThan(1);
+      for (let i = 0; i < count; i++) {
+        const field = fields.nth(i);
+        await field.focus();
+        await page.evaluate(
+          () =>
+            new Promise((done) =>
+              requestAnimationFrame(() => requestAnimationFrame(done)),
+            ),
+        );
+        const focused = await box(field);
+        const now = await box(toast);
+        expect(
+          intersects(now, focused),
+          `toast ${now.y}–${now.bottom} over field ${i} at ${focused.y}–${focused.bottom}`,
+        ).toBe(false);
+        // The field stays in the window.
+        expect(focused.y, `field ${i} top`).toBeGreaterThanOrEqual(0);
+        expect(focused.bottom, `field ${i} bottom`).toBeLessThanOrEqual(
+          size.height,
+        );
+      }
+    });
   });
 
 // A dialog's answers sit on one row, or each on its own full-width row:
