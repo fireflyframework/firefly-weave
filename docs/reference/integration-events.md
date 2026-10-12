@@ -258,7 +258,9 @@ These details matter when you size replicas or investigate slow deliveries.
 **Scheduling.** A separate loop owned by the API process polls every second, using
 execute-only scheduler catalog authority and durable tenant and environment
 cursors. Recovery and schedule loops keep their own pace. API-only replicas
-disable the scheduler. No in-memory queue owns pending deliveries.
+disable the scheduler. No in-memory queue owns pending deliveries. While the
+platform is not ready, such as while it starts or after a compatibility rescan
+withdraws readiness, the loop waits: it moves no cursor and claims nothing.
 
 **Capacity.** At most four sends are in flight per process. Capacity is reserved
 before a cursor advances or a delivery is claimed, so a full process does not

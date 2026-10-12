@@ -169,3 +169,23 @@ async def test_other_catalog_errors_on_recheck_still_revoke(monkeypatch):
     assert await harness.attempt() == "incident"
 
     assert harness.settled == [("AUTHORITY_REVOKED", False, True)]
+
+
+@pytest.mark.parametrize("limit", [1, 11])
+async def test_a_refused_traversal_turn_gives_back_the_capacity_it_was_handed(limit):
+    from firefly_weave.operations import event_delivery
+
+    def restricted():
+        raise CatalogError(503, "WV-COMPATIBILITY", "Execution compatibility unavailable")
+
+    registry = SimpleNamespace(require_operational=restricted if limit == 1 else lambda: None)
+    subscriptions = SimpleNamespace(uow=None, bindings=SimpleNamespace(connections=SimpleNamespace(registry=registry)))
+    dispatcher = OutboxDispatcher(SimpleNamespace(), subscriptions, None, HttpPolicy())  # type: ignore[arg-type]
+    before = event_delivery.available()
+    # A traversal reserves its turn before handing it over, as while effects open on a restricted platform.
+    reserved = event_delivery.reserve(1)
+    assert reserved == 1
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    with pytest.raises((CatalogError, ValueError)):
+        await dispatcher._dispatch(scope, limit, None, None, None, reserved=reserved)  # type: ignore[arg-type]
+    assert event_delivery.available() == before
