@@ -905,6 +905,52 @@ test.describe("chains and refresh", () => {
     expect(runs.steps.length).toBe(settled);
   });
 
+  test("steps added with Load more steps stay through the 2 s reads of an active run", async ({
+    page,
+  }) => {
+    const fixture = data();
+    const turns = fixture.steps[fixtureIds.running].items;
+    for (let i = 3; i < 260; i++) {
+      const at = new Date(
+        Date.parse("2026-10-07T11:31:00Z") + i * 1000,
+      ).toISOString();
+      turns.push({
+        ...turns[1],
+        instance_key: `support#${i}`,
+        scheduled_at: at,
+        started_at: at,
+        ended_at: at,
+      });
+    }
+    const runs = await platform(page, operator, fixture);
+    await openRuns(page);
+    await names(page).first().click();
+    await expect(page).toHaveURL(
+      new RegExp(`/operate/runs/${fixtureIds.running}$`),
+    );
+    const detail = page.locator(".record-detail");
+    const stepRows = detail.locator(".step-row");
+    await expect(stepRows).toHaveCount(200);
+    await detail.getByRole("button", { name: "Load more steps" }).click();
+    await expect(stepRows).toHaveCount(260);
+    await expect(
+      detail.getByRole("button", { name: "Load more steps" }),
+    ).toHaveCount(0);
+    // The next 2 s read takes both pages again; the rows stay.
+    await runs.pause();
+    const before = runs.steps.length;
+    await page.clock.runFor(2_100);
+    await expect.poll(() => runs.steps.length).toBe(before + 2);
+    expect(runs.steps.at(-2)!.searchParams.has("cursor")).toBe(false);
+    expect(runs.steps.at(-1)!.searchParams.has("cursor")).toBe(true);
+    await drawn(page, () =>
+      expect(stepRows).toHaveCount(260, { timeout: 100 }),
+    );
+    await expect(
+      detail.getByRole("button", { name: "Load more steps" }),
+    ).toHaveCount(0);
+  });
+
   test("bulk Cancel and Retry take the selected runs one by one and report each", async ({
     page,
   }) => {

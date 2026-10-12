@@ -126,7 +126,11 @@ interface StepsState {
   items: StepFact[];
   complete: boolean;
   nextCursor: string | null;
+  /** Pages of steps on screen: each read takes as many again, up to MAX_PAGES. */
+  pages: number;
   loading: boolean;
+  /** Load more steps is reading the next page. */
+  appending: boolean;
   error: PlainError | null;
   outputs: Map<string, StepOutputState>;
 }
@@ -1456,7 +1460,9 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
       items: [],
       complete: true,
       nextCursor: null,
+      pages: 1,
       loading: true,
+      appending: false,
       error: null,
       outputs: new Map(),
     };
@@ -1494,21 +1500,39 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
     this.cdr.markForCheck();
     return true;
   }
-  /** Reads the first page of the open run's steps. */
+  /**
+   * Reads the open run's steps from the start: as many pages as are on
+   * screen, so a poll never takes back what Load more steps added.
+   */
   private async readSteps(state: StepsState) {
+    const wanted = Math.min(Math.max(1, state.pages), MAX_PAGES);
     try {
-      const page = await listRunSteps(
-        {
-          environment: state.environment,
-          request: (path) => this.host.api.request(path),
-        },
-        state.runId,
-        { limit: STEP_PAGE },
-      );
-      if (state !== this.steps) return;
-      state.items = page.items;
-      state.complete = page.complete;
-      state.nextCursor = page.next_cursor;
+      const items: StepFact[] = [];
+      let cursor: string | null = null;
+      let complete = true;
+      let read = 0;
+      do {
+        const page = await listRunSteps(
+          {
+            environment: state.environment,
+            request: (path) => this.host.api.request(path),
+          },
+          state.runId,
+          { limit: STEP_PAGE, ...(cursor ? { cursor } : {}) },
+        );
+        if (state !== this.steps) return;
+        items.push(...page.items);
+        complete = complete && page.complete;
+        cursor = page.next_cursor;
+        read++;
+      } while (cursor && read < wanted);
+      // Load more steps finished meanwhile: this read holds fewer pages than
+      // the screen, and the next one reads them all.
+      if (state.pages > wanted) return;
+      state.items = items;
+      state.complete = complete;
+      state.nextCursor = cursor;
+      state.pages = read;
       state.error = null;
     } catch (error) {
       if (state !== this.steps) return;
@@ -1523,8 +1547,14 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
     }
   }
   private async moreSteps(state: StepsState) {
-    if (!state.nextCursor || state.loading) return;
-    state.loading = true;
+    if (
+      !state.nextCursor ||
+      state.loading ||
+      state.appending ||
+      state.pages >= MAX_PAGES
+    )
+      return;
+    state.appending = true;
     this.stepsView$ = null;
     try {
       const page = await listRunSteps(
@@ -1536,14 +1566,20 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
         { limit: STEP_PAGE, cursor: state.nextCursor },
       );
       if (state !== this.steps) return;
-      state.items = [...state.items, ...page.items];
+      // A poll may have read these steps again meanwhile: each shows once.
+      const shown = new Set(state.items.map(instanceKey));
+      state.items = [
+        ...state.items,
+        ...page.items.filter((item) => !shown.has(instanceKey(item))),
+      ];
       state.nextCursor = page.next_cursor;
       state.complete = state.complete && page.complete;
+      state.pages++;
     } catch (error) {
       if (state === this.steps) state.error = describeError(error);
     } finally {
       if (state === this.steps) {
-        state.loading = false;
+        state.appending = false;
         this.stepsView$ = null;
         this.cdr.markForCheck();
       }
@@ -1605,8 +1641,10 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
       runId: state.runId,
       items: state.items,
       complete: state.complete,
-      nextCursor: state.nextCursor,
-      loading: state.loading,
+      // Load more stops at the most a page reads; the note says so.
+      nextCursor: state.pages < MAX_PAGES ? state.nextCursor : null,
+      limited: !!state.nextCursor && state.pages >= MAX_PAGES,
+      loading: state.loading || state.appending,
       error: state.error,
       now: new Date(),
       outputs: new Map(state.outputs),

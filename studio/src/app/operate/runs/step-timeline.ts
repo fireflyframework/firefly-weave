@@ -113,6 +113,8 @@ export interface RunStepsView {
   /** false when some steps ran before the platform recorded their timings. */
   complete: boolean;
   nextCursor: string | null;
+  /** More steps follow beyond the most the page reads. */
+  limited?: boolean;
   loading: boolean;
   error: PlainError | null;
   /** The server's clock, for steps still running. */
@@ -326,6 +328,10 @@ type Tab = "timeline" | "io" | "logs";
             >
               Load more steps
             </button>
+          } @else if (v.limited) {
+            <p class="steps-note" role="status">
+              Showing the first {{ v.items.length }} step instances.
+            </p>
           }
         }
       </div>
