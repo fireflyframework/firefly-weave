@@ -945,7 +945,9 @@ added option. When a field that applies only to some choices goes away, such as
 **Undo**.
 
 Fields that take data have a **Fixed | Mapped** switch. It shows when you point
-at the field or focus it, and stays while the field is Mapped:
+at the field or focus it, and stays while the field is Mapped. On a touch screen
+it shows once you tap into the field, so a tap near a value never switches it,
+and the same goes for a field's ⋯ menu:
 
 - **Fixed** is a value you type.
 - **Mapped** reads data from earlier in the workflow and shows it as a pill.

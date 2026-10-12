@@ -782,7 +782,19 @@ for (const size of [
               rect.left + rect.width / 2,
               rect.top + rect.height / 2,
             );
-            return !!hit && (hit === element || element.contains(hit));
+            // A tool hidden at rest takes no tap on a touch screen until
+            // focus in its field shows it (step-mode-touch checks that).
+            let painted = 1;
+            for (
+              let node: Element | null = element;
+              node;
+              node = node.parentElement
+            )
+              painted *= parseFloat(getComputedStyle(node).opacity);
+            return (
+              painted === 0 ||
+              (!!hit && (hit === element || element.contains(hit)))
+            );
           }),
         ).toBe(true);
       }

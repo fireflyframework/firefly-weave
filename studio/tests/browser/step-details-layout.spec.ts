@@ -808,14 +808,19 @@ for (const size of screenSizes) {
               r.y + r.height / 2,
             );
             const minimum = touch ? 44 : 24;
+            // A tool hidden at rest takes no tap on a touch screen until
+            // focus in its field shows it (step-mode-touch checks that).
+            let painted = 1;
+            for (let node: Element | null = e; node; node = node.parentElement)
+              painted *= parseFloat(getComputedStyle(node).opacity);
+            const reachable = painted === 0 || (!!hit && e.contains(hit));
             return r.width < minimum ||
               r.height < minimum ||
               r.x < 0 ||
               r.right > window.innerWidth ||
               r.y < 0 ||
               r.bottom > window.innerHeight ||
-              !hit ||
-              !e.contains(hit)
+              !reachable
               ? {
                   name: e.getAttribute("aria-label") || e.textContent?.trim(),
                   width: r.width,

@@ -181,6 +181,18 @@ SPDX-License-Identifier: Apache-2.0
 .param:not(:hover, :focus-within) .param-remove {
   opacity: 0;
 }
+/* A touch screen has no hover: a tap only presses for a moment, and a tool
+   it showed would take the tap meant for the value under it or beside it.
+   There a hidden tool shows, and takes taps, only once focus is in its
+   field. The keyboard still reaches it, and shows it. */
+@media (hover: none), (pointer: coarse) {
+  [data-mode="fixed"] > .param:not(:focus-within) .param-mode,
+  .param:not(:focus-within) .param-menu,
+  .param:not(:focus-within) .param-remove {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
 .param-input {
   width: 100%;
   min-width: 0;
@@ -805,6 +817,7 @@ SPDX-License-Identifier: Apache-2.0
     .param-tools
     :is(.param-mode, .param-menu) {
     opacity: 1;
+    pointer-events: auto;
   }
 }
 /* Cards: a decision's paths and other groups of fields. The card's header
@@ -838,6 +851,7 @@ SPDX-License-Identifier: Apache-2.0
   > .param-tools
   > .param-menu {
   opacity: 1;
+  pointer-events: auto;
 }
 :is(.step-details, .sd-form-scope)
   .param-row.is-card
@@ -1725,6 +1739,14 @@ weave-param-field.is-conditions > .param > .param-line {
   .condition-value:not(:hover, :focus-within, .is-mapped)
   > .condition-mode {
   opacity: 0;
+}
+@media (hover: none), (pointer: coarse) {
+  .condition-editor.is-compact
+    .condition-value:not(:focus-within, .is-mapped)
+    > .condition-mode {
+    opacity: 0;
+    pointer-events: none;
+  }
 }
 :is(.step-details, .sd-form-scope)
   .condition-editor.is-compact

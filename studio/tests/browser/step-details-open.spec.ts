@@ -402,6 +402,17 @@ for (const size of screenSizes) {
             box.y + box.height / 2,
           );
           const minimum = touch ? 44 : 24;
+          // A tool hidden at rest takes no tap on a touch screen until
+          // focus in its field shows it (step-mode-touch checks that).
+          let painted = 1;
+          for (
+            let node: Element | null = element;
+            node;
+            node = node.parentElement
+          )
+            painted *= parseFloat(getComputedStyle(node).opacity);
+          const reachable =
+            painted === 0 || (!!target && element.contains(target));
           return {
             width: document.documentElement.scrollWidth,
             viewport: window.innerWidth,
@@ -412,8 +423,7 @@ for (const size of screenSizes) {
               box.right > window.innerWidth ||
               box.y < 0 ||
               box.bottom > window.innerHeight ||
-              !target ||
-              !element.contains(target)
+              !reachable
                 ? [
                     {
                       name,
