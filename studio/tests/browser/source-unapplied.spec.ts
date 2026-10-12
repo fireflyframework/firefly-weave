@@ -398,6 +398,44 @@ test.describe("leaving Source with text that isn't applied", () => {
   });
 });
 
+// Back pressed again while the question is open, the way a phone's back
+// gesture tries to close a dialog: the question stays, and once answered
+// Studio goes back one entry, not one per press.
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900, touch: false },
+  { tag: "360x640", width: 360, height: 640, touch: true },
+])
+  test.describe(`Back pressed while asking at ${size.tag}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.touch,
+    });
+
+    for (const choice of ["Discard changes", "Apply changes"] as const)
+      test(`goes back one entry: ${choice}`, async ({ page }) => {
+        await openStepFixture(page);
+        await typeInSource(page);
+        const designer = page.url();
+        await page.evaluate(() => history.back());
+        await expect(question(page)).toBeVisible();
+        await expect.poll(() => page.url()).toBe(designer);
+        await page.evaluate(() => history.back());
+        // Taken back again, and still one question.
+        await expect.poll(() => page.url()).toBe(designer);
+        await expect(page.getByRole("dialog")).toHaveCount(1);
+        await answer(page, choice);
+        await expect(page.getByLabel("Choose a workflow file")).toBeAttached();
+        const home = page.url();
+        expect(home).toMatch(/\/home$/);
+        // No second move follows: Studio stays one entry back.
+        await page.waitForTimeout(500);
+        expect(page.url()).toBe(home);
+        await page.goForward();
+        await expect(page.locator(".editor-bar")).toBeVisible();
+        expect(page.url()).toBe(designer);
+      });
+  });
+
 // The question's layout: one left edge and one right edge, answers of the
 // density's height inside them, in one row on a desktop with the main one
 // at the right edge.

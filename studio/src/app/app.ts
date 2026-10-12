@@ -8330,6 +8330,22 @@ export class App implements CanvasHost {
   runNodes() {
     return this.runCanvas?.nodes() ?? [];
   }
+  /** The move Back or Forward makes again once Source's question is answered. */
+  private sourceReplay: (() => void) | null = null;
+  /**
+   * Makes a move taken back for Source's question again once the text is
+   * settled: one move, however many times Back was pressed while asking.
+   */
+  private replayAfterSource(again: () => void) {
+    const waiting = this.sourceReplay !== null;
+    this.sourceReplay = again;
+    if (waiting) return;
+    void this.settleSource().then((settled) => {
+      const replay = this.sourceReplay;
+      this.sourceReplay = null;
+      if (settled) replay?.();
+    });
+  }
   /**
    * Takes back a Back or Forward that would leave the designer, and returns
    * how to make the same move again.
@@ -8369,8 +8385,7 @@ export class App implements CanvasHost {
       const asks = !refused && this.sourcePending;
       if (refused || asks) {
         const again = this.stayInHistory(position);
-        if (asks)
-          void this.settleSource().then((settled) => settled && again());
+        if (asks) this.replayAfterSource(again);
         return;
       }
     }
