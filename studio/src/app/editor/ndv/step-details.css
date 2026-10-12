@@ -124,6 +124,16 @@ weave-step-details {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-3);
 }
+/* A dialog opened from inside step details (an example, a document to
+   view, the step's YAML) is modal over all of them, as one opened from the
+   shell is: Parameters rises above the separators, neighbor buttons and
+   pane tabs while it holds one, and step details rise above toasts. */
+.sd-main:has(.modal-backdrop) {
+  z-index: 7;
+}
+.step-details:has(.modal-backdrop) {
+  z-index: 19;
+}
 .sd-head {
   display: flex;
   align-items: center;

@@ -1183,6 +1183,101 @@ test.describe("the shell while step details is open", () => {
 
 for (const size of [
   { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "1280x720", width: 1280, height: 720 },
+  { tag: "360x740", width: 360, height: 740 },
+])
+  test.describe(`dialogs opened from step details at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("a dialog opened from Parameters sits above all of step details", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.trigger().dblclick();
+      await showParameters(page, details.dialog);
+      await details
+        .field("inputSchema")
+        .getByRole("button", { name: "Paste sample JSON" })
+        .click();
+      const example = page.getByRole("dialog", {
+        name: "Find fields from an example",
+      });
+      await expect(example).toBeVisible();
+      // A real pointer reaches each of its controls, wherever step details'
+      // separators and neighbor buttons are under it.
+      const controls = example.locator("button, textarea, input");
+      for (let i = 0; i < (await controls.count()); i++) {
+        const control = controls.nth(i);
+        if (!(await control.isVisible())) continue;
+        const at = await box(control);
+        expect(
+          await control.evaluate(
+            (element, point) => {
+              const hit = document.elementFromPoint(point.x, point.y);
+              return (
+                !!hit &&
+                (element.contains(hit) ||
+                  hit.contains(element) ||
+                  !!hit.closest('[role="dialog"]')?.contains(element))
+              );
+            },
+            { x: at.x + at.width / 2, y: at.middle },
+          ),
+          `control ${i} of the dialog takes the pointer`,
+        ).toBe(true);
+      }
+      // What step details shows on its edges is under the dialog's backdrop.
+      for (const edge of await boxes(
+        details.dialog.locator(".sd-separator, .sd-neighbors button"),
+      ))
+        expect(
+          await page.evaluate(
+            (point) =>
+              !!document
+                .elementFromPoint(point.x, point.y)
+                ?.closest(".modal-backdrop"),
+            { x: edge.x + edge.width / 2, y: edge.middle },
+          ),
+        ).toBe(true);
+      await example
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+      await expect(example).toHaveCount(0);
+    });
+
+    test("a toast never sits over a dialog opened from step details", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("lookup");
+      await page.keyboard.press("ControlOrMeta+Enter");
+      const toast = page.locator(".toast-region .toast").last();
+      await expect(toast).toContainText(
+        "Executing a single step isn't available yet.",
+      );
+      await details.dialog
+        .getByRole("button", { name: "More actions for lookup" })
+        .click();
+      await page.getByRole("menuitem", { name: "Edit as YAML" }).click();
+      const yaml = page.getByRole("dialog", { name: "Edit lookup as YAML" });
+      await expect(yaml).toBeVisible();
+      await expect(toast).toBeAttached();
+      // A real pointer over the toast lands on the dialog's backdrop.
+      const shown = await box(toast);
+      expect(
+        await page.evaluate(
+          (point) =>
+            document
+              .elementFromPoint(point.x, point.y)
+              ?.closest(".modal-backdrop, .toast")?.className ?? "",
+          { x: shown.x + shown.width / 2, y: shown.middle },
+        ),
+      ).toContain("modal-backdrop");
+    });
+  });
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900 },
   { tag: "1100x800", width: 1100, height: 800 },
   { tag: "360x640", width: 360, height: 640 },
 ])
