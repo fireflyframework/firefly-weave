@@ -215,8 +215,9 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         if identifier.split(".")[0] in STUDIO_FAMILIES or identifier in STUDIO_OPERATIONS
     }
     assert {"releases.create", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
-    # The AI setup operations add exactly these six, and direct incident reads join the
-    # incidents family; every earlier crossing stays as it was.
+    # The AI setup operations add exactly these six, direct incident reads join the incidents
+    # family and stale-worker retirement joins the workers family; every earlier crossing stays
+    # as it was. Release usage stays outside until the releases allowlist names it.
     approved_additions = {
         "ai_endpoints.list",
         "ai_models.list",
@@ -225,6 +226,7 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "ai_setup.grant",
         "bindable_connections.list",
         "incidents.read",
+        "workers.retire_stale",
     }
     assert approved_additions <= crossing
     preserved = crossing - approved_additions
@@ -233,7 +235,9 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "3ba280e1522358905e2cdb2e4bf66976fdc988018cdc08742c4956b87d1ab159"
     )
     assert {"workers.grant", "ai_connections.test"} <= preserved
-    assert {"releases.create", "tasks.credentials", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
+    assert {"releases.create", "tasks.credentials", "admin.grant", "admin.tenant", "releases.usage"}.isdisjoint(
+        crossing
+    )
 
 
 @pytest.mark.parametrize(

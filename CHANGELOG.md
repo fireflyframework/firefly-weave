@@ -87,6 +87,33 @@ SPDX-License-Identifier: Apache-2.0
   `members` an upgraded runner reports, so observe jobs fail and applies end
   `reconciliation_required`. Earlier CLIs and SDKs fail with `502 WV-WIRE` on
   observation reads and lists that carry members.
+- `workers.list` reads each page with one query and lists current workers by
+  default: not revoked, and seen (or, never seen, registered) in the last hour;
+  `state=all` lists every worker. It filters by `presence`, `draining`,
+  `release_id`, `task_type`, `target_id` and `host_prefix` (a literal,
+  case-sensitive prefix) and orders by `last_seen_desc` (default) or
+  `registered_desc`, unknown times last. Cursors issued before the upgrade are
+  refused, unknown query parameters are rejected, and an out-of-range `limit`
+  answers `WV-VALIDATION` instead of `WV-PAGE`. Pages stay limited to 8 MiB.
+- Worker reads and lists add optional `placement` (target, deployment and
+  component), matched from the latest complete, unexpired observation of the
+  targets the reader may read, and `drained_at`, when the worker started
+  draining; drain and resume answers add `drained_at`. Upgrade CLIs and SDKs
+  with the server: earlier releases fail with `502 WV-WIRE` on placed or
+  draining workers.
+- New operation `workers.retire_stale` (`weave workers retire-stale`, SDK
+  `retire_stale_workers`) revokes up to 100 workers per command that hold no
+  active lease and were last seen, or registered if never seen, longer ago than
+  `older_than_seconds` (one hour to 30 days), oldest first. `dry_run` previews
+  the same batch, and `matched` counts every eligible worker.
+- New operation `releases.usage` (`weave workers releases usage`, SDK
+  `release_usage`) counts a release's online, offline, draining and revoked
+  workers and the activations that pin it, and pages the deployment components
+  that run it on targets the reader may read.
+- The Python SDK's `list_workers` accepts a typed `query` and rejects one
+  combined with keyword arguments.
+- Kubernetes runners no longer read a pod's free-text status reason, and a pod
+  whose readiness is unknown is listed as a member that is not ready.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.

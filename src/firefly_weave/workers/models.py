@@ -25,7 +25,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from firefly_weave.contracts.workers import WorkerIdentity, WorkerInstance, WorkerStatus
+from firefly_weave.contracts.workers import WorkerIdentity, WorkerInstance, WorkerPlacement, WorkerStatus
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import checked_deadline
@@ -57,6 +57,32 @@ def stored_identity(value: object) -> WorkerIdentity | None:
         return None
 
 
+def stored_placement(value: object) -> WorkerPlacement | None:
+    """A placement the fleet query derived; one that does not validate reads as unknown."""
+    if not value:
+        return None
+    try:
+        return WorkerPlacement.model_validate_json(json.dumps(value))
+    except ValidationError:
+        return None
+
+
+def fleet_status(row: dict[str, Any], observed_at: datetime) -> WorkerStatus:
+    """A worker read from one fleet query row, without any per-worker query."""
+    return observed_worker(
+        WorkerInstance.model_validate_json(json.dumps({**row["payload"], "revoked": row["revoked"]})),
+        last_seen_at=row["last_seen_at"],
+        draining=row["draining"],
+        revision=row["control_revision"],
+        active_leases=row["active_leases"],
+        observed_at=observed_at,
+        identity=stored_identity(row["identity"]),
+        registered_at=row["registered_at"],
+        placement=stored_placement(row["placement"]),
+        drained_at=row["drained_at"],
+    )
+
+
 def observed_worker(
     instance: WorkerInstance,
     *,
@@ -67,6 +93,8 @@ def observed_worker(
     observed_at: datetime,
     identity: WorkerIdentity | None = None,
     registered_at: datetime | None = None,
+    placement: WorkerPlacement | None = None,
+    drained_at: datetime | None = None,
 ) -> WorkerStatus:
     expires = last_seen_at + timedelta(seconds=60) if last_seen_at else None
     presence: Literal["unknown", "recent", "stale"] = (
@@ -79,6 +107,8 @@ def observed_worker(
         **instance.model_dump(),
         identity=identity,
         registered_at=registered_at,
+        placement=placement,
+        drained_at=drained_at,
         revision=revision,
         draining=draining,
         presence=presence,

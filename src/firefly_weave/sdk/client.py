@@ -117,6 +117,13 @@ from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.contracts.whatsapp import WhatsAppDeliveryState, WhatsAppStatusFact
+from firefly_weave.contracts.worker_queries import (
+    ReleaseUsage,
+    ReleaseUsageQuery,
+    RetireStaleRequest,
+    RetireStaleResult,
+    WorkerListQuery,
+)
 from firefly_weave.contracts.workers import (
     ClaimRequest,
     CompleteRequest,
@@ -767,8 +774,40 @@ class WeaveClient:
             ),
         )
 
-    async def list_workers(self, *, limit: int = 50, cursor: str | None = None) -> Page[WorkerStatus]:
-        return cast(Page[WorkerStatus], await self.invoke("workers.list", query=self._page(limit, cursor)))
+    async def list_workers(
+        self, *, limit: int = 50, cursor: str | None = None, query: WorkerListQuery | None = None
+    ) -> Page[WorkerStatus]:
+        """Workers with either a typed ``query`` or the page keywords; mixing them raises ``ValueError``.
+
+        Without a query the server lists current workers, most recently seen first.
+        """
+        if query is not None and (limit, cursor) != (50, None):
+            raise ValueError("Use either a query or keyword list arguments")
+        values = self._page(limit, cursor) if query is None else self._query(query)
+        return cast(Page[WorkerStatus], await self.invoke("workers.list", query=values))
+
+    async def retire_stale_workers(self, request: RetireStaleRequest, *, idempotency_key: str) -> RetireStaleResult:
+        """Revoke (or, with ``dry_run``, preview) up to 100 workers offline longer than the threshold."""
+        return cast(
+            RetireStaleResult,
+            await self.invoke("workers.retire_stale", body=request, idempotency_key=idempotency_key),
+        )
+
+    async def release_usage(self, identifier: UUID, *, query: ReleaseUsageQuery | None = None) -> ReleaseUsage:
+        """Worker counts, pinning activations and the readable deployments that run a release."""
+        return cast(
+            ReleaseUsage,
+            await self.invoke("releases.usage", identifier=identifier, query=self._query(query or ReleaseUsageQuery())),
+        )
+
+    @staticmethod
+    def _query(query: BaseModel) -> dict[str, str | int | list[str]]:
+        # Booleans travel as true or false; unset filters and empty lists are left out.
+        return {
+            key: str(value).lower() if isinstance(value, bool) else value
+            for key, value in query.model_dump(mode="json", exclude_none=True).items()
+            if not isinstance(value, list) or value
+        }
 
     async def list_releases(self, *, limit: int = 50, cursor: str | None = None) -> Page[WorkerRelease]:
         return cast(Page[WorkerRelease], await self.invoke("releases.list", query=self._page(limit, cursor)))

@@ -107,6 +107,22 @@ class WorkerIdentity(ContractModel):
         return self
 
 
+# A target, deployment or component name as deployment records store it.
+type PlacementName = Annotated[str, Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$")]
+
+
+class WorkerPlacement(ContractModel):
+    """Where the latest complete, current observation of a target places a worker, matched by its host.
+
+    The server derives it for targets the reader may see; a worker never reports it.
+    """
+
+    target_id: UUID
+    target_name: PlacementName
+    deployment_id: UUID
+    component: PlacementName
+
+
 class InstanceFields(ContractModel):
     """What a registration request and the stored instance share."""
 
@@ -136,8 +152,9 @@ class WorkerControlRequest(ContractModel):
 class WorkerStatus(WorkerInstance):
     """A scoped observation, separate from the stable worker registration protocol.
 
-    `identity` and `registered_at` come from the worker's facts and are left out when unknown,
-    as they are for workers registered before they were recorded.
+    `identity`, `registered_at` and `drained_at` come from the worker's facts and are left out when unknown,
+    as they are for workers registered or drained before they were recorded. `placement` is left out when
+    no observation the reader may see places the worker.
     """
 
     revision: int = Field(ge=1)
@@ -151,6 +168,8 @@ class WorkerStatus(WorkerInstance):
     available_capacity: int | None = Field(ge=0, le=100)
     identity: WorkerIdentity | None = Field(default=None, exclude_if=lambda v: v is None)
     registered_at: AwareDatetime | None = Field(default=None, exclude_if=lambda v: v is None)
+    placement: WorkerPlacement | None = Field(default=None, exclude_if=lambda v: v is None)
+    drained_at: AwareDatetime | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class LeaseProof(ContractModel):

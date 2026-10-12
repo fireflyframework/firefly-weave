@@ -217,6 +217,13 @@ def contract_models() -> dict[str, SchemaModel]:
     from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
     from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
     from firefly_weave.contracts.whatsapp import WhatsAppDeliveryState, WhatsAppStatusFact
+    from firefly_weave.contracts.worker_queries import (
+        ReleaseUsage,
+        ReleaseUsageQuery,
+        RetireStaleRequest,
+        RetireStaleResult,
+        WorkerListQuery,
+    )
     from firefly_weave.contracts.workers import (
         ClaimRequest,
         CompleteRequest,
@@ -235,6 +242,7 @@ def contract_models() -> dict[str, SchemaModel]:
         WorkerControlRequest,
         WorkerIdentity,
         WorkerInstance,
+        WorkerPlacement,
         WorkerRelease,
         WorkerStatus,
     )
@@ -399,6 +407,12 @@ def contract_models() -> dict[str, SchemaModel]:
         "worker-instance": WorkerInstance,
         "worker-status": WorkerStatus,
         "worker-control-request": WorkerControlRequest,
+        "worker-placement": WorkerPlacement,
+        "worker-list-query": WorkerListQuery,
+        "retire-stale-request": RetireStaleRequest,
+        "retire-stale-result": RetireStaleResult,
+        "release-usage-query": ReleaseUsageQuery,
+        "release-usage": ReleaseUsage,
         "lease-proof": LeaseProof,
         "task-lease": TaskLease,
         "completion-receipt": CompletionReceipt,

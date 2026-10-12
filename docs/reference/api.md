@@ -710,6 +710,65 @@ same client and credentials; any other failure is not retried. Native executors
 register inside the API process and always use a server of their own version.
 The registration answer's schema (`WorkerInstance`) has no `identity` field.
 
+**Worker fleet.** `workers.list` reads every page with one database query,
+including each worker's active leases, and checks `status.read` on both the
+token and the current principal.
+
+- By default it lists current workers: not revoked, and seen in the last hour
+  or, never seen, registered in the last hour. `state=all` lists every worker,
+  including revoked ones and workers registered before registration times were
+  recorded.
+- Filters: `presence` (`recent`, `stale`, or `unknown`, with the 60-second
+  presence window), `draining`, `release_id`, `task_type` (a capability as
+  workers register it, such as `echo@1.2.0`), `target_id`, and `host_prefix`, a
+  literal, case-sensitive prefix of the reported host in which `%` and `_`
+  match only themselves. `target_id` needs `deployment.read` on that target.
+- Orders: `last_seen_desc` (default) and `registered_desc`; unknown times come
+  last, and equal times are ordered by ID. Cursors are bound to every filter and
+  the order. A `limit` outside 1 to 100 or an unknown query parameter answers
+  `422 WV-VALIDATION`, and a page is limited to 8 MiB of worker data
+  (`429 WV-PAGE-LIMIT`).
+- `placement` names the deployment component a worker runs in:
+  `target_id`, `target_name`, `deployment_id`, and `component`. The server
+  matches the worker's reported `host` against the members of the latest
+  complete observation of each target, taken at the target's current revision
+  and not yet expired. A host listed by more than one target or component, a
+  native executor (`runtime: embedded`), and a worker without a reported host
+  have no placement. Only targets that both the token and the current principal
+  may read with `deployment.read` are considered, so other targets' names never
+  appear.
+- `drained_at` is the time the worker started draining. A repeated drain keeps
+  it and resuming clears it; workers drained before the time was recorded show
+  none. `workers.read` returns the same fields as the list, and `workers.drain`
+  and `workers.resume` answers include `drained_at` but no placement.
+
+`workers.retire_stale` (`POST …/workers/retire-stale`, `release.retire`,
+Idempotency-Key) revokes workers that hold no active lease and whose last
+contact (or registration, if never seen) is older than `older_than_seconds`,
+from one hour to 30 days. A worker without either time is never retired. Each
+command revokes at most 100 workers, oldest last contact first, and answers
+`{matched, revoked, worker_ids}`: `matched` counts every eligible worker, and
+`revoked` and `worker_ids` describe this batch. `dry_run: true` returns the same
+batch without revoking it. Repeating an Idempotency-Key returns the saved
+answer; send a new key for the next batch. Retirement never deletes or settles
+leases, and a worker another command is holding is left for the next batch.
+
+`releases.usage` (`GET …/worker-releases/{identifier}/usage`, `catalog.read`)
+answers `{workers, deployments, activations, next_cursor}`:
+
+- `workers` counts every instance of the release once: `revoked`, else
+  `draining`, else `online` (seen in the last 60 seconds) or `offline`.
+- `activations` counts the activation revisions that pin the release and can
+  still start runs.
+- `deployments` lists, at most `limit` (1 to 100, default 100) at a time, the
+  desired deployment components whose admitted release and image digest are
+  this release: `target_id`, `target_name`, `deployment_id`, `deployment_name`,
+  `component`, and `replicas`. Only targets that both the token and the current
+  principal may read with `deployment.read` are listed; without that capability
+  the list is empty. `next_cursor` continues the list for the same release and
+  readable targets.
+- A release of another environment answers `404 WV-NOT-FOUND`.
+
 **Answers that say "unavailable".** Cancellation and task completion can return
 an unavailable acknowledgment when the platform cannot classify the historical
 data or compare payloads; task completion then includes
@@ -873,10 +932,12 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `releases.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases` | release.activate |
 | `releases.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases` | catalog.read |
 | `releases.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases/{identifier}` | catalog.read |
+| `releases.usage` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases/{identifier}/usage` | catalog.read |
 | `workers.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers` | worker.register |
 | `workers.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers` | status.read |
 | `workers.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}` | status.read |
 | `workers.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/revoke` | release.retire |
+| `workers.retire_stale` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/retire-stale` | release.retire |
 | `workers.grant` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-connection-grants` | connection.manage |
 | `tasks.claim` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/claim` | task.claim |
 | `tasks.context` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/context` | task.claim |

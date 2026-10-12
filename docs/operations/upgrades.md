@@ -45,7 +45,7 @@ the desktop app never migrates a platform.
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
-| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Upgrade CLIs and SDKs together with the server, and upgrade the server before its deployment runners; see [incident list compatibility](#incident-list-compatibility) and [worker identity compatibility](#worker-identity-compatibility). |
+| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Upgrade CLIs and SDKs together with the server, and upgrade the server before its deployment runners; see [incident list compatibility](#incident-list-compatibility), [worker identity compatibility](#worker-identity-compatibility) and [worker fleet compatibility](#worker-fleet-compatibility). |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -287,6 +287,40 @@ was applied. Upgrade the API first, then each runner.
   runner, grant it `list` on `pods` in the namespace. Without that permission
   the runner leaves `members` out. See
   [the runner guide](operations-runner.md#kubernetes).
+
+## Worker fleet compatibility
+
+`workers.list` now reads each page with one query and changes what it lists by
+default:
+
+- **Current workers only.** Without `state=all`, it leaves out revoked workers
+  and workers neither seen nor registered in the last hour. Workers registered
+  before the upgrade that were never seen are listed only with `state=all`.
+- **Newest contact first.** The default order is `last_seen_desc`;
+  `registered_desc` is also available, and unknown times come last.
+- **Cursors.** Cursors issued before the upgrade are refused with
+  `422 WV-VALIDATION`; start the listing again. `weave workers list` sends only
+  `limit` and `cursor`, so it lists current workers.
+- **Requests.** Unknown query parameters are refused with `422 WV-VALIDATION`
+  instead of being ignored, and a `limit` outside 1 to 100 answers
+  `422 WV-VALIDATION` instead of `422 WV-PAGE`. An older server ignores the new
+  filters and lists every worker in ID order, so upgrade servers before relying
+  on them.
+
+Worker reads and lists add optional `placement` and `drained_at`, and drain and
+resume answers add `drained_at`. **Upgrade CLIs and SDKs with the server.**
+Earlier releases reject these fields: `weave workers list`, `read`, `drain`, and
+`resume`, and the Python SDK's `read_worker`, `list_workers`, `drain_worker`,
+and `resume_worker`, fail with `502 WV-WIRE` for a placed or draining worker. A
+drain or resume is still applied. Stored worker records and the registration
+answer keep their bytes, and workers drained before the upgrade show no drain
+time.
+
+Two operations are new: `workers.retire_stale` (`weave workers retire-stale`,
+SDK `retire_stale_workers`) revokes up to 100 offline workers without active
+leases per command, and `releases.usage` (`weave workers releases usage`, SDK
+`release_usage`) reports where a release runs. Neither changes an existing
+answer. Earlier servers do not serve them and answer `404` or `405`.
 
 ## Operational fact storage
 

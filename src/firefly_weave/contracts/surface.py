@@ -189,6 +189,13 @@ from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleReques
 from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
 from firefly_weave.contracts.values import JsonObjectData
 from firefly_weave.contracts.whatsapp import MessageId, WhatsAppDeliveryState, WhatsAppStatusFact
+from firefly_weave.contracts.worker_queries import (
+    ReleaseUsage,
+    ReleaseUsageQuery,
+    RetireStaleRequest,
+    RetireStaleResult,
+    WorkerListQuery,
+)
 from firefly_weave.contracts.workers import (
     ClaimRequest,
     CompleteRequest,
@@ -1529,6 +1536,14 @@ OPERATIONS = {
         ),
         Operation("releases.read", ENVIRONMENT + "/worker-releases/{identifier}", "GET", WorkerRelease, "catalog.read"),
         Operation(
+            "releases.usage",
+            ENVIRONMENT + "/worker-releases/{identifier}/usage",
+            "GET",
+            ReleaseUsage,
+            "catalog.read",
+            query=ReleaseUsageQuery,
+        ),
+        Operation(
             "workers.create",
             ENVIRONMENT + "/workers",
             "POST",
@@ -1537,7 +1552,15 @@ OPERATIONS = {
             InstanceRequest,
             (201,),
         ),
-        Operation("workers.list", ENVIRONMENT + "/workers", "GET", Page[WorkerStatus], "status.read", page=True),
+        Operation(
+            "workers.list",
+            ENVIRONMENT + "/workers",
+            "GET",
+            Page[WorkerStatus],
+            "status.read",
+            page=True,
+            query=WorkerListQuery,
+        ),
         Operation("workers.read", ENVIRONMENT + "/workers/{identifier}", "GET", WorkerStatus, "status.read"),
         *(
             Operation(
@@ -1552,6 +1575,15 @@ OPERATIONS = {
             for action in ("drain", "resume")
         ),
         Operation("workers.revoke", ENVIRONMENT + "/workers/{identifier}/revoke", "POST", Revoked, "release.retire"),
+        Operation(
+            "workers.retire_stale",
+            ENVIRONMENT + "/workers/retire-stale",
+            "POST",
+            RetireStaleResult,
+            "release.retire",
+            RetireStaleRequest,
+            idempotency=True,
+        ),
         Operation(
             "workers.grant",
             ENVIRONMENT + "/worker-connection-grants",
