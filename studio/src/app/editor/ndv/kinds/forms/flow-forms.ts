@@ -79,6 +79,7 @@ export const switchForm = (): FormSpec => ({
           label: "Otherwise",
           default: emptyBranch(),
           whenRemoved: "default",
+          trailingCard: true,
           hint: "Runs when no path applies.",
           children: () => [pathResult("default.output", ["default", "output"])],
         },

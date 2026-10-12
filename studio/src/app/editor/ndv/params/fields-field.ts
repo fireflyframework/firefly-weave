@@ -17,7 +17,9 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A group of fields (an object input, a decision path, Otherwise, branch
 // results): its children in order; optional children at their default wait
-// behind "+ <label>" buttons at the end of the group.
+// behind "+ <label>" buttons at the end of the group. A child shown as a
+// trailing card (a decision's Otherwise) ends the cards of the list before
+// it, above that list's add button.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -42,24 +44,55 @@ import { ParamField } from "./param-field";
       role="group"
       [attr.aria-labelledby]="labelId() || null"
     >
-      @for (entry of parts.shown; track session().fieldKey(entry)) {
-        <weave-param-field
-          [session]="session()"
-          [spec]="entry.spec"
-          [entry]="
-            readOnly()
-              ? {
-                  spec: entry.spec,
-                  option: false,
-                  readOnly: readOnly(),
-                  disabled: entry.disabled,
-                }
-              : entry
-          "
-          [actions]="
-            entry === host && !readOnly() ? addActions(parts.collapsed) : []
-          "
-        />
+      @for (
+        entry of parts.shown;
+        track session().fieldKey(entry);
+        let i = $index
+      ) {
+        @if (!trailing(parts.shown, i - 1)) {
+          <weave-param-field
+            [session]="session()"
+            [spec]="entry.spec"
+            [entry]="entryOf(entry)"
+            [actions]="
+              entry === host && !readOnly() ? addActions(parts.collapsed) : []
+            "
+          >
+            @if (trailing(parts.shown, i); as card) {
+              <div
+                class="is-card param-card-end"
+                role="group"
+                ngProjectAs=".param-list-end"
+                [attr.aria-label]="card.spec.label"
+              >
+                <weave-param-field
+                  [session]="session()"
+                  [spec]="card.spec"
+                  [entry]="entryOf(card)"
+                  [card]="true"
+                >
+                  <div class="param-card-head">
+                    <span class="param-grip-space" aria-hidden="true"></span>
+                    <strong>{{ card.spec.label }}</strong>
+                    @if (session().rowInfo(card.spec.path); as info) {
+                      <span class="param-card-route">
+                        <span class="param-chip-out" [attr.title]="info.chip"
+                          ><weave-icon name="switch" [size]="16" /><span
+                            class="param-chip-label"
+                            >{{ info.chip }}</span
+                          ></span
+                        >
+                        <span class="param-next" [attr.title]="'→ ' + info.next"
+                          >→ {{ info.next }}</span
+                        >
+                      </span>
+                    }
+                  </div>
+                </weave-param-field>
+              </div>
+            }
+          </weave-param-field>
+        }
       }
       @if (parts.collapsed.length && !readOnly() && !host) {
         <div class="param-group-add">
@@ -87,6 +120,32 @@ export class FieldsField {
     actions: { label: string; run: () => void }[];
   } | null = null;
 
+  /** The entry as shown: read-only throughout while the group is. */
+  entryOf(entry: FieldEntry): FieldEntry {
+    const reason = this.readOnly();
+    return reason
+      ? {
+          spec: entry.spec,
+          option: false,
+          readOnly: reason,
+          disabled: entry.disabled,
+        }
+      : entry;
+  }
+  /**
+   * The trailing card that follows the list at `index`: a group of fields
+   * shown as one more card of that list, above its add button.
+   */
+  trailing(shown: FieldEntry[], index: number): FieldEntry | null {
+    const list = shown[index];
+    const next = shown[index + 1];
+    return list?.spec.type === "list" &&
+      list.spec.item?.type === "fields" &&
+      next?.spec.type === "fields" &&
+      next.spec.trailingCard
+      ? next
+      : null;
+  }
   /**
    * A path's conditions end with their own add line: the group's options
    * join it ("Add condition", "Path result") instead of a line of their own.

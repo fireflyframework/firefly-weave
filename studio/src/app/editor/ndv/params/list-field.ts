@@ -210,6 +210,7 @@ interface Row {
             }
           </div>
         }
+        <ng-content select=".param-list-end" />
         @if (
           !locked &&
           (spec().maxItems === undefined || rows.length < spec().maxItems!)

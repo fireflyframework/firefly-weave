@@ -213,6 +213,12 @@ export interface ParamSpec {
   addLabel?: string;
   /** list only: chips for short identifier lists such as answers. */
   display?: "rows" | "chips";
+  /**
+   * fields only: shown as one more card after the cards of the list just
+   * before it, above that list's add button (a decision's Otherwise, after
+   * its paths and before Add path).
+   */
+  trailingCard?: boolean;
   /** A manifest feature gate; disabled with the reason when missing. */
   feature?: string;
   /** The reason it is read-only, shown as the hint; null when editable. */

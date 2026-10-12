@@ -822,23 +822,24 @@ SPDX-License-Identifier: Apache-2.0
     pointer-events: auto;
   }
 }
-/* Cards: a decision's paths and other groups of fields. The card's header
-   joins the item's label row, so its tools share the header line. */
-.param-row.is-card {
+/* Cards: a decision's paths, its Otherwise and other groups of fields. The
+   card's header joins the item's label row, so its tools share the header
+   line. */
+.is-card {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
-.param-row.is-card > weave-param-field {
+.is-card > weave-param-field {
   width: 100%;
   min-width: 0;
 }
-.param-row.is-card > weave-param-field > .param {
+.is-card > weave-param-field > .param {
   gap: 0;
 }
-.param-row.is-card > weave-param-field > .param > .param-label-row {
+.is-card > weave-param-field > .param > .param-label-row {
   container-type: inline-size;
   align-items: flex-start;
   gap: var(--space-2);
@@ -846,7 +847,7 @@ SPDX-License-Identifier: Apache-2.0
   border-bottom: 1px solid var(--line);
 }
 /* A card's field menu ends its header at rest, muted, on the card's inner edge. */
-.param-row.is-card
+.is-card
   > weave-param-field
   > .param
   > .param-label-row
@@ -856,7 +857,7 @@ SPDX-License-Identifier: Apache-2.0
   pointer-events: auto;
 }
 :is(.step-details, .sd-form-scope)
-  .param-row.is-card
+  .is-card
   > weave-param-field
   > .param
   > .param-label-row
@@ -866,10 +867,10 @@ SPDX-License-Identifier: Apache-2.0
   margin-block: 0;
   color: var(--muted);
 }
-.param-row.is-card > weave-param-field > .param > .param-control {
+.is-card > weave-param-field > .param > .param-control {
   padding: var(--space-3);
 }
-.param-row.is-card > weave-param-field > .param > .param-line {
+.is-card > weave-param-field > .param > .param-line {
   padding: 0 var(--space-3) var(--space-3);
 }
 /* One line: the next step gives way first, then the chip (both keep their
@@ -885,7 +886,12 @@ SPDX-License-Identifier: Apache-2.0
 .param-card-head > :is(strong, .param-grip) {
   flex: none;
 }
+/* The title's line is a target tall, as are the move and remove buttons
+   beside it, so a card without them (Otherwise) keeps the same header. */
 .param-card-head strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--sd-target);
   font: var(--type-label);
   white-space: nowrap;
 }
@@ -919,6 +925,24 @@ SPDX-License-Identifier: Apache-2.0
 }
 .param-grip {
   color: var(--subtle);
+}
+/* A card that doesn't move (Otherwise) keeps its title where a path's title
+   follows its grip. */
+.param-grip-space {
+  flex: none;
+  width: 16px;
+}
+/* A line that opens a card's body (Otherwise's "Runs when no path
+   applies."): the card's inner padding above it, a field's inner gap under. */
+.is-card > weave-param-field > .param > .param-label-row + .param-line {
+  padding: var(--space-3) var(--space-3) 0;
+}
+.is-card
+  > weave-param-field
+  > .param
+  > .param-line:not([hidden])
+  + .param-control {
+  padding-top: var(--sd-field-inner);
 }
 .param-up {
   transform: rotate(-90deg);

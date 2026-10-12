@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 @let line = this.line();
 @let heldText = heldProblem();
 @let local = heldText || conditionsProblem();
-@let quiet = row() || spec.labelHidden || spec.type === "conditions";
+@let quiet = row() || card() || spec.labelHidden || spec.type === "conditions";
 <div
   class="param"
   [class.is-option]="entry.option"
@@ -103,7 +103,8 @@ SPDX-License-Identifier: Apache-2.0
             [spec]="spec"
             [labelId]="ids.control + '-label'"
             [readOnly]="reason"
-          />
+            ><ng-content select=".param-list-end" ngProjectAs=".param-list-end"
+          /></weave-list-field>
         }
         @case ("keyValue") {
           <weave-key-value-field

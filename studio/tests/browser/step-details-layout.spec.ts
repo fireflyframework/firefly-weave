@@ -1322,4 +1322,76 @@ for (const size of [
         }
       }
     });
+
+    test("Otherwise is the last card, built like the paths, and Add path follows it", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      await showParameters(page, details.dialog);
+      const paths = details.field("cases").locator(".param-row.is-card");
+      await expect(paths).toHaveCount(2);
+      const otherwise = details.dialog.locator(".is-card").last();
+      const head = otherwise.locator(".param-card-head");
+      await expect(head.locator("strong")).toHaveText("Otherwise");
+      // Its output on the canvas, and the step its path starts with.
+      await expect(head.locator(".param-chip-out")).toHaveText("Otherwise");
+      await expect(head.locator(".param-next")).toHaveText("→ fan-out");
+      await expect(otherwise.locator(".param-line")).toBeVisible();
+      await expect(otherwise.locator(".param-line")).toHaveText(
+        "Runs when no path applies.",
+      );
+      const last = await box(paths.last());
+      const card = await box(otherwise);
+      const add = await box(
+        details.dialog.getByRole("button", { name: "Add path", exact: true }),
+      );
+      // In order: the paths, Otherwise, then Add path, one gap apart.
+      expect(card.y).toBeGreaterThan(last.bottom);
+      expect(add.y).toBeGreaterThan(card.bottom);
+      expectAligned([card.y - last.bottom, add.y - card.bottom], "card gaps");
+      // The same edges, title, chip and header as a path's card.
+      expectAligned([card.x, last.x, add.x], "cards' left edge");
+      expectAligned([card.right, last.right], "cards' right edge");
+      const pathHead = paths.last().locator(".param-card-head");
+      const title = await box(head.locator("strong"));
+      const pathTitle = await box(pathHead.locator("strong"));
+      expectAligned([title.x, pathTitle.x], "title's left edge");
+      // The chip follows the title, or starts a line under it on a narrow card.
+      const chip = await box(head.locator(".param-chip-out"));
+      const pathChip = await box(pathHead.locator(".param-chip-out"));
+      if (pathChip.y >= pathTitle.bottom - 1)
+        expectAligned([chip.x, pathChip.x], "chip under the title");
+      else
+        expectAligned(
+          [chip.x - title.right, pathChip.x - pathTitle.right],
+          "chip after the title",
+        );
+      const header = await box(otherwise.locator(".param-label-row").first());
+      const pathHeader = await box(
+        paths.last().locator(".param-label-row").first(),
+      );
+      expectAligned([header.height, pathHeader.height], "header height");
+      expectAligned(
+        [title.y - header.y, pathTitle.y - pathHeader.y],
+        "title in the header",
+      );
+      // Its body starts on the path cards' inner edge.
+      const result = await box(
+        otherwise.getByRole("button", { name: "Path result", exact: true }),
+      );
+      const addCondition = await box(
+        paths
+          .last()
+          .getByRole("button", { name: "Add condition", exact: true }),
+      );
+      const hint = await textBox(otherwise.locator(".param-line"));
+      expectAligned([hint.x, result.x, addCondition.x], "body's left edge");
+      expect(hint.y).toBeGreaterThan(header.bottom);
+      expect(result.y).toBeGreaterThan(hint.bottom);
+      expectAligned(
+        [card.bottom - result.bottom, last.bottom - addCondition.bottom],
+        "body's bottom padding",
+      );
+    });
   });

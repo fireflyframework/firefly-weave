@@ -120,6 +120,11 @@ export class ParamField {
   spec = input.required<ParamSpec>();
   entry = input.required<FieldEntry>();
   row = input(false);
+  /**
+   * A card's own group (Otherwise): the card's header names it, so its label
+   * is for assistive technology only, and its hint opens the card's body.
+   */
+  card = input(false);
   /** Add actions of the group around this field, shown on its own add line (a path's options after Add condition). */
   actions = input<readonly { label: string; run: () => void }[]>([]);
   /**
