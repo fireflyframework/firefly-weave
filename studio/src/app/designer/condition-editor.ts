@@ -35,7 +35,6 @@ import {
   inject,
   signal,
 } from "@angular/core";
-import { NgTemplateOutlet } from "@angular/common";
 import { Select } from "../forms/ui/select";
 import { Icon } from "../icon";
 import {
@@ -144,7 +143,7 @@ let sequence = 0;
 @Component({
   selector: "weave-condition-editor",
   standalone: true,
-  imports: [Icon, NgTemplateOutlet, ReferenceCombobox, Select],
+  imports: [Icon, ReferenceCombobox, Select],
   template: `<div
     class="condition-editor"
     [class.is-compact]="compact"
@@ -212,10 +211,15 @@ let sequence = 0;
               (picked)="editing.set(null)"
             />
             @if (pill) {
-              <ng-container
-                [ngTemplateOutlet]="pillTemplate"
-                [ngTemplateOutletContext]="{ $implicit: pill }"
-              />
+              <span class="ref-pill condition-pill" aria-hidden="true">
+                <weave-icon [name]="pill.icon" [size]="16" />
+                @for (part of pill.parts; track $index; let last = $last) {
+                  <span>{{ part }}</span>
+                  @if (!last) {
+                    <span class="ref-sep">›</span>
+                  }
+                }
+              </span>
             }
           </div>
         } @else {
@@ -339,10 +343,19 @@ let sequence = 0;
                   (picked)="editing.set(null)"
                 />
                 @if (compare) {
-                  <ng-container
-                    [ngTemplateOutlet]="pillTemplate"
-                    [ngTemplateOutletContext]="{ $implicit: compare }"
-                  />
+                  <span class="ref-pill condition-pill" aria-hidden="true">
+                    <weave-icon [name]="compare.icon" [size]="16" />
+                    @for (
+                      part of compare.parts;
+                      track $index;
+                      let last = $last
+                    ) {
+                      <span>{{ part }}</span>
+                      @if (!last) {
+                        <span class="ref-sep">›</span>
+                      }
+                    }
+                  </span>
                 }
               </div>
             } @else {
@@ -539,17 +552,6 @@ let sequence = 0;
         <weave-icon name="failCircle" [size]="16" />{{ problem }}
       </p>
     }
-    <ng-template #pillTemplate let-pill>
-      <span class="ref-pill condition-pill" aria-hidden="true">
-        <weave-icon [name]="pill.icon" [size]="16" />
-        @for (part of pill.parts; track $index; let last = $last) {
-          <span>{{ part }}</span>
-          @if (!last) {
-            <span class="ref-sep">›</span>
-          }
-        }
-      </span>
-    </ng-template>
   </div>`,
   styles: [
     `
