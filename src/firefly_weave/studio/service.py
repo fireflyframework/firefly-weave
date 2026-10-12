@@ -73,8 +73,13 @@ STUDIO_FAMILIES = frozenset(
         "email_receipts",
         "email_tokens",
         "connections",
+        "bindable_connections",
         # AI connection tests run in the AI gateway; connection.manage is checked server-side.
         "ai_connections",
+        "ai_endpoints",
+        "ai_models",
+        "ai_readiness",
+        "ai_setup",
         "files",
         "lumi",
         "connector_descriptors",

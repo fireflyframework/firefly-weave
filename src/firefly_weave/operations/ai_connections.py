@@ -28,28 +28,29 @@ import json
 import re
 import time
 from collections import deque
-from collections.abc import Callable
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 from uuid import UUID, uuid4
 
 from pyfly.container import service
+from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.access.service import audit
-from firefly_weave.connections.diagnostics import AGENTIC_ADAPTER, keyless_connection
+from firefly_weave.connections.diagnostics import AGENTIC_ADAPTER, is_agentic_revision, keyless_connection
 from firefly_weave.connections.repository import ConnectionRepository
 from firefly_weave.connections.secret_execution import resolve_secret
 from firefly_weave.connections.secrets import SecretUnavailable
 from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
-from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, CONNECTOR_REFERENCE
 from firefly_weave.contracts.ai import MODEL_NAME_PATTERN, AIConnectionTestRequest, AIConnectionTestResult
 from firefly_weave.contracts.connectors import BoundConnection, ConnectionRevision, ConnectionTestResult
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
+
+type AIRefreshHook = Callable[[Principal, Scope, UUID, float, AuditContext], Awaitable[None]]
 
 TESTS_PER_MINUTE = 6
 # The same bound the generic connection test gives secret resolution.
@@ -77,10 +78,6 @@ class AIRateLimit:
         calls.append(now)
 
 
-def _agentic(revision: ConnectionRevision) -> bool:
-    return revision.connector == CONNECTOR_REFERENCE and revision.connector_digest == AGENTIC_DESCRIPTOR.manifest.digest
-
-
 def _gateway_result(raw: dict[str, Any], model: str | None) -> AIConnectionTestResult:
     """The gateway's answer for the requested model, or for a well-formed model name when none was requested."""
     try:
@@ -99,6 +96,7 @@ class AIConnectionService:
     def __init__(self, connections: ConnectionService, gateway: LumiGatewayClient) -> None:
         self.connections, self.gateway = connections, gateway
         self.limiter = AIRateLimit()
+        self.refresh: AIRefreshHook | None = None
 
     async def test(
         self,
@@ -114,7 +112,7 @@ class AIConnectionService:
         revision = await self.connections.ready_revision(
             actor, scope, revision_id, "connection.manage", context=context
         )
-        if not _agentic(revision):
+        if not is_agentic_revision(revision):
             raise CatalogError(422, "WV-AI-CONNECTION", "Choose an AI connection")
         if not self.gateway.configured:
             raise CatalogError(
@@ -122,17 +120,23 @@ class AIConnectionService:
                 "WV-AI-GATEWAY-MISSING",
                 "Tests need the AI gateway. Run weave platform ai enable, or ask an operator to deploy it.",
             )
-        credential = await self._credential(scope, revision)
-        await self.connections.revalidate(actor, scope, revision, "connection.manage", context)
-        raw = await self.gateway.test(
-            dict(revision.config),
-            credential,
-            provider=str(revision.config.get("provider")),
-            model=request.model,
-            probe_tools=request.probe_tools,
-        )
+        deadline = time.monotonic() + 130.0
+        credential = await self.credential(scope, revision)
+        try:
+            await self.connections.revalidate(actor, scope, revision, "connection.manage", context)
+            raw = await self.gateway.test(
+                dict(revision.config),
+                credential,
+                provider=str(revision.config.get("provider")),
+                model=request.model,
+                probe_tools=request.probe_tools,
+            )
+        finally:
+            credential = None
         result = _gateway_result(raw, request.model)
         await self._record(actor, scope, revision, result, context)
+        if self.refresh is not None and deadline > time.monotonic():
+            await self.refresh(actor, scope, revision.id, deadline, context)
         return result
 
     def admit(self, actor: Principal, revision: ConnectionRevision) -> None:
@@ -140,7 +144,7 @@ class AIConnectionService:
         if revision.adapter == AGENTIC_ADAPTER:
             self.limiter.take(actor.id)
 
-    async def _credential(self, scope: Scope, revision: ConnectionRevision) -> str | None:
+    async def credential(self, scope: Scope, revision: ConnectionRevision) -> str | None:
         if keyless_connection(revision.adapter, revision.config, revision.secret_refs):
             # The reserved no-credential handle is never resolved, leased, logged or sent.
             return None
@@ -162,8 +166,10 @@ class AIConnectionService:
         context: AuditContext,
     ) -> None:
         job = uuid4()
-        payload = {"kind": "ai", "tested_at": datetime.now(UTC).isoformat(), **result.model_dump(mode="json")}
         async with self.connections.uow.open(scope) as tx:
+            # Readiness measures a test's age with the database clock, so the same clock dates the test.
+            tested_at = await tx.session.scalar(text("SELECT clock_timestamp()"))
+            payload = {"kind": "ai", "tested_at": tested_at.isoformat(), **result.model_dump(mode="json")}
             repository = ConnectionRepository(tx)
             await repository.execute(
                 "INSERT INTO connection_test_jobs VALUES(:id,:tenant,:project,:environment,:revision,:principal)",

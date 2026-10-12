@@ -40,6 +40,7 @@ from firefly_weave.compiler.parser import parse_source
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation, ActivationRequest, DefinitionKind, Draft, PublishedVersion
+from firefly_weave.contracts.connectors import BoundConnection
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
 from firefly_weave.contracts.public import (
@@ -51,9 +52,11 @@ from firefly_weave.contracts.public import (
 )
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.contracts.workers import ConnectorExecutionPin
+from firefly_weave.definitions.ai import validate_ai_bindings
 from firefly_weave.definitions.models import CatalogError, ir_unsupported
 from firefly_weave.definitions.ports import ConnectionBindingPort, WorkerAdmissionPort
 from firefly_weave.definitions.repository import DefinitionRepository
+from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.execution import execute_pure
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.persistence.idempotency import Idempotency, lock
@@ -85,6 +88,7 @@ class DefinitionService:
         connections: Provider[ConnectionBindingPort],
         workers: Provider[WorkerAdmissionPort],
         outbox: OutboxService,
+        ai_policy: APIAIPolicy,
     ) -> None:
         self.uow = uow
         self.authorization = authorization
@@ -92,6 +96,7 @@ class DefinitionService:
         self.connections = connections
         self.workers = workers
         self.outbox = outbox
+        self.ai_policy = ai_policy
 
     @property
     def capabilities(self) -> CatalogSnapshot:
@@ -155,10 +160,11 @@ class DefinitionService:
         capability: str,
         context: AuditContext,
         tx: Transaction,
+        resource: str | None = None,
     ) -> dict[str, Any]:
         if capability not in {"connection.manage", "connection.bind"}:
             raise AccessDenied()
-        self.require(actor, scope, capability, context)
+        self.authorization.require(actor, scope, capability, resource=resource, context=context)
         async with self.transaction(scope, tx, mutation=False) as enlisted:
             row = await DefinitionRepository(enlisted).version(identifier)
             if row["kind"] != "Connector" or row["retired"]:
@@ -478,6 +484,8 @@ class DefinitionService:
             raise CatalogError(422, "WV-SCOPE", "Activation pins must match the target environment")
         self.require(actor, scope, "release.activate", context)
         async with self.transaction(scope, tx) as tx:
+            # A replay returns a committed activation only to someone who may still activate.
+            self.require(await load_principal(tx.session, actor.id), scope, "release.activate", context)
             replay = Idempotency(
                 tx,
                 actor.id,
@@ -502,22 +510,24 @@ class DefinitionService:
             connector_pins = await self.execution_readiness(
                 actor, scope, request, artifact, capability="release.activate", context=context, tx=tx
             )
-            from firefly_weave.compiler.ir import HumanTaskNode
+            from firefly_weave.compiler.ir import ActionNode, HumanTaskNode
             from firefly_weave.human_tasks.service import pin_assignments
             from firefly_weave.runtime.kernel import workflow
 
+            nodes = workflow(artifact).graph.nodes
             assignment_pins = await pin_assignments(
                 tx,
                 request.assignment_binding_ids,
-                {node.assignment for node in workflow(artifact).graph.nodes if isinstance(node, HumanTaskNode)},
+                {node.assignment for node in nodes if isinstance(node, HumanTaskNode)},
             )
             requirements = spec.get("connections", {})
             required = {slot for slot, requirement in requirements.items() if requirement.get("required", True)}
             supplied_slots = set(request.connection_revision_ids)
             if not required <= supplied_slots or not supplied_slots <= requirements.keys():
                 raise CatalogError(422, "WV-CONNECTION", "Activation connection slots do not match requirements")
+            bindings: dict[str, BoundConnection] = {}
             for slot, identifier in request.connection_revision_ids.items():
-                await self.connections.get().resolve_binding(
+                bindings[slot] = await self.connections.get().resolve_binding(
                     actor, scope, slot, identifier, requirements[slot]["connector"], context=context, tx=tx
                 )
             await lock(tx, f"activation:{scope.tenant_id}:{scope.project_id}:{scope.environment_id}:{row['name']}")
@@ -530,6 +540,10 @@ class DefinitionService:
             )
             current = rows[0]["revision"] if rows else None
             check_revision(current, expected_revision)
+            # New activations only: the policy is read now, after every binding passed current authority,
+            # and only for workflows with AI steps, so other activations never depend on it.
+            if any(isinstance(node, ActionNode) and node.llm_profile is not None for node in nodes):
+                validate_ai_bindings(nodes, bindings, self.ai_policy.current())
             activation = Activation(
                 id=uuid4(),
                 revision=(current or 0) + 1,

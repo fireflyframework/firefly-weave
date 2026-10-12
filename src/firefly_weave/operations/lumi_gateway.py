@@ -35,6 +35,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from firefly_weave import private_origins
+from firefly_weave.contracts.ai import GatewayModelList
 from firefly_weave.contracts.lumi import LumiAskRequest, LumiConfiguration, LumiReply
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.definitions.models import CatalogError
@@ -196,6 +197,40 @@ class LumiGatewayClient:
             if not isinstance(value, dict):
                 raise ValueError("Unexpected gateway answer")
             return value
+        except TimeoutError:
+            raise CatalogError(504, "WV-AI-GATEWAY-TIMEOUT", "The AI gateway did not answer in time") from None
+        except Exception:
+            raise CatalogError(503, "WV-AI-GATEWAY-UNAVAILABLE", "The AI gateway is unavailable") from None
+        finally:
+            self.active -= 1
+
+    async def models(
+        self,
+        connection_config: dict[str, JsonValue],
+        credential: str | None,
+        *,
+        provider: str,
+        timeout_seconds: float = 15.0,
+    ) -> GatewayModelList:
+        """Discover bounded model metadata through the same owned, authenticated gateway transport."""
+        if not self.configured:
+            raise CatalogError(503, "WV-AI-GATEWAY-MISSING", "Discovery needs the AI gateway")
+        if self.active >= self.settings.max_concurrency:
+            raise CatalogError(429, "WV-LUMI-CAPACITY", "The AI gateway is busy; try again later")
+        self.active += 1
+        try:
+            body: dict[str, Any] = {
+                "provider": provider,
+                "endpoint": connection_config["endpoint"],
+                "expires_at": (datetime.now(UTC) + timedelta(seconds=timeout_seconds)).isoformat(),
+            }
+            if connection_config.get("apiVersion") is not None:
+                body["api_version"] = connection_config["apiVersion"]
+            if credential is not None:
+                body["credential"] = credential
+            async with asyncio.timeout(timeout_seconds + 5):
+                raw = await self._post(self.route("models"), body, timeout_seconds + 5, 262144)
+            return GatewayModelList.model_validate_json(raw)
         except TimeoutError:
             raise CatalogError(504, "WV-AI-GATEWAY-TIMEOUT", "The AI gateway did not answer in time") from None
         except Exception:

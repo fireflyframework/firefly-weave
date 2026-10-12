@@ -716,7 +716,7 @@ async def test_provider_discovery_lists_bounded_names_and_the_approved_models_it
 
     async def provider(request):
         seen.append(request)
-        names = ["fixture-model", "gpt-4o", "bad name<script>", "y" * 201]
+        names = ["fixture-model", "gpt-4o", "fixture-model", "gpt-4o", "bad name<script>", "y" * 201]
         return httpx2.Response(
             200,
             json={
@@ -867,3 +867,67 @@ async def test_a_model_side_value_error_on_the_assistant_route_is_not_a_bad_requ
     async with gateway(tmp_path, builder=faulty) as client:
         response = await client.post("/v1/lumi", json=ask, headers=AUTH)
     assert response.status_code == 503 and response.json() == {"code": "LUMI_UNAVAILABLE"}
+
+
+async def test_duplicate_normalization_does_not_scan_for_fifty_unique_names():
+    from weave_agentic_worker.discovery import provider_models, unique_model_items
+
+    inspected = []
+
+    async def listing():
+        for index in range(51):
+            inspected.append(index)
+            yield SimpleNamespace(id="first" if index < 50 else "outside-the-bound")
+
+    owned = SimpleNamespace(client=SimpleNamespace(models=SimpleNamespace(list=listing)))
+    names = await provider_models(owned, "openai-chat")
+    rows = [{"name": name, "available": True} for name in names]
+    assert unique_model_items(rows) == [{"name": "first", "available": True}]
+    assert inspected == list(range(50))
+
+
+def test_duplicate_normalization_preserves_first_metadata_and_order():
+    from weave_agentic_worker.discovery import unique_model_items
+
+    rows = [{"name": "b", "available": True}, {"name": "a", "available": True}, {"name": "b", "available": False}]
+    assert unique_model_items(rows) == rows[:2]
+
+
+async def test_ollama_discovery_keeps_the_first_duplicate_tag_metadata(tmp_path):
+    paths = []
+
+    def respond(request):
+        paths.append(request.url.path)
+        if request.url.path == "/api/tags":
+            return httpx2.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": "qwen3:4b", "size": 100, "details": {"family": "qwen3"}},
+                        {"name": "qwen3:4b", "size": 200, "details": {"family": "other"}},
+                    ]
+                },
+            )
+        return httpx2.Response(200, json={"capabilities": ["completion", "tools"]})
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    app = create_app(
+        ollama_gateway_policy(tmp_path), token, transport_factory=lambda entry: httpx2.MockTransport(respond)
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://gateway") as client:
+        response = await client.post("/v1/models", json=models_request(), headers=AUTH)
+    assert response.json() == {
+        "discovery": "ok",
+        "models": [
+            {
+                "name": "qwen3:4b",
+                "size_bytes": 100,
+                "family": "qwen3",
+                "tools": "yes",
+                "approved": True,
+                "available": True,
+            }
+        ],
+    }
+    assert paths == ["/api/tags", "/api/show", "/api/show"]

@@ -27,7 +27,18 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from firefly_weave.compiler.catalog import CatalogLock
-from firefly_weave.contracts.ai import AIConnectionTestRequest, AIConnectionTestResult
+from firefly_weave.contracts.ai import (
+    AIConnectionTestRequest,
+    AIConnectionTestResult,
+    AIEndpointsResult,
+    AIModelsQuery,
+    AIModelsResult,
+    AIReadinessResult,
+    AISetupGrantRequest,
+    AISetupGrantResult,
+    AISetupPublishResult,
+)
+from firefly_weave.contracts.bindable_connections import BindableConnection, BindableConnectionQuery
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
 from firefly_weave.contracts.catalog import (
     Activation,
@@ -272,9 +283,15 @@ class Operation:
         if self.query is not None:
             for name, field in self.query.model_fields.items():
                 documented = (
-                    {} if field.default is None or field.default_factory is not None else {"default": field.default}
+                    {}
+                    if field.is_required() or field.default is None or field.default_factory is not None
+                    else {"default": field.default}
                 )
-                params.append(OpenAPIParameter(name, "query", _present(field.annotation), required=False, **documented))
+                params.append(
+                    OpenAPIParameter(
+                        name, "query", _present(field.annotation), required=field.is_required(), **documented
+                    )
+                )
         if self.id == "runs.list":
             params += [
                 OpenAPIParameter("business_key", "query", Annotated[str, Field(max_length=200)], required=False),
@@ -1345,6 +1362,14 @@ OPERATIONS = {
             optional_idempotency=True,
         ),
         Operation(
+            "bindable_connections.list",
+            ENVIRONMENT + "/bindable-connections",
+            "GET",
+            Page[BindableConnection],
+            "connection.bind",
+            query=BindableConnectionQuery,
+        ),
+        Operation(
             "connections.list",
             ENVIRONMENT + "/connections",
             "GET",
@@ -1367,6 +1392,28 @@ OPERATIONS = {
             "connection.manage",
             RetirementRequest,
             request_required=False,
+        ),
+        Operation(
+            "ai_setup.publish",
+            ENVIRONMENT + "/ai/setup/publish",
+            "POST",
+            AISetupPublishResult,
+            "definition.publish",
+            RetirementRequest,
+            request_required=False,
+        ),
+        Operation(
+            "ai_setup.grant",
+            ENVIRONMENT + "/ai/setup/grant",
+            "POST",
+            AISetupGrantResult,
+            "connection.manage",
+            AISetupGrantRequest,
+        ),
+        Operation("ai_readiness.read", ENVIRONMENT + "/ai/readiness", "GET", AIReadinessResult, "catalog.read"),
+        Operation("ai_endpoints.list", ENVIRONMENT + "/ai/endpoints", "GET", AIEndpointsResult, "catalog.read"),
+        Operation(
+            "ai_models.list", ENVIRONMENT + "/ai/models", "GET", AIModelsResult, "catalog.read", query=AIModelsQuery
         ),
         Operation(
             "ai_connections.test",

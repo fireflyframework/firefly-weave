@@ -27,6 +27,8 @@ from firefly_weave.contracts.ai import (
     AIConnectionTestRequest,
     AIConnectionTestResult,
     AIErrorCode,
+    AIModel,
+    GatewayModelList,
     ai_message,
 )
 from firefly_weave.runtime.recovery import TRANSIENT_FAILURE_CODES
@@ -75,3 +77,37 @@ def test_the_test_request_takes_an_exact_model_name():
     assert AIConnectionTestRequest(model="qwen3:4b").probe_tools is True
     with pytest.raises(ValidationError):
         AIConnectionTestRequest(model="*")
+
+
+def test_discovery_has_a_bounded_allowlisted_union():
+    row = {"name": "qwen3:4b", "approved": True, "available": True, "tools": "yes"}
+    assert AIModel.model_validate(row).model_dump(mode="json") == row
+    rows = [{**row, "name": f"model-{index}"} for index in range(150)]
+    assert len(GatewayModelList(discovery="ok", models=rows).models) == 150
+    with pytest.raises(ValidationError):
+        GatewayModelList(discovery="ok", models=rows + [{**row, "name": "overflow"}])
+    with pytest.raises(ValidationError):
+        GatewayModelList(discovery="ok", models=[row, row])
+    with pytest.raises(ValidationError):
+        AIModel.model_validate({**row, "secretRef": {"apiKey": "canary"}})
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"tools": "supported"},
+        {"approved": "true"},
+        {"available": 1},
+        {"name": "*"},
+        {"name": "bad name"},
+        {"name": "x" * 201},
+        {"context_tokens": 0},
+        {"context_tokens": "8192"},
+        {"size_bytes": -1},
+        {"size_bytes": True},
+        {"family": "x" * 101},
+    ],
+)
+def test_discovery_rejects_malformed_metadata(changes):
+    with pytest.raises(ValidationError):
+        AIModel.model_validate({"name": "qwen3:4b", "approved": True, "available": True, **changes})
