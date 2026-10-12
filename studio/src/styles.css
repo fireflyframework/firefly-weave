@@ -1167,10 +1167,12 @@ dd {
   margin: calc((var(--modal-close) - 1lh) / 2) 0 0;
   overflow-wrap: anywhere;
 }
+/* A message never ends on a lone word. */
 .dialog-message {
   font-size: 13px;
   color: var(--muted);
   overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 .dialog-form label {
   margin: 16px 0 6px;

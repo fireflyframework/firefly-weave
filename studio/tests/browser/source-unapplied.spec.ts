@@ -453,5 +453,22 @@ for (const size of [
         );
       }
       expect(await clippedText(dialog, "")).toEqual([]);
+      // The message's last line holds more than its last word.
+      const lastTwo = await dialog
+        .locator(".dialog-message")
+        .evaluate((message) => {
+          const node = message.firstChild!;
+          const text = node.textContent!.trimEnd();
+          const last = text.lastIndexOf(" ");
+          const before = text.lastIndexOf(" ", last - 1);
+          const top = (from: number, to: number) => {
+            const range = document.createRange();
+            range.setStart(node, from);
+            range.setEnd(node, to);
+            return range.getClientRects()[0].top;
+          };
+          return [top(before + 1, last), top(last + 1, text.length)];
+        });
+      expectAligned(lastTwo, "the message's last two words on one line");
     });
   });
