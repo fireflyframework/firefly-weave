@@ -17,6 +17,7 @@
 """Explicit server settings, loaded only by the server entry point."""
 
 import os
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -113,6 +114,7 @@ class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     lumi: LumiGatewaySettings = Field(default_factory=LumiGatewaySettings)
+    ai_policy_file: str | None = None
     operations: OperationsPolicy = Field(default_factory=OperationsPolicy)
     telemetry: TelemetryOptions = Field(default_factory=TelemetryOptions)
     connector_packages: tuple[str, ...] = ()
@@ -131,6 +133,13 @@ class Settings(BaseModel):
     mail_allowed_ports: tuple[int, ...] = Field(default=(25, 465, 587, 143, 993), min_length=1, max_length=128)
     mail_allow_local_fixture: bool = False
     private_origins: PrivateOrigins = Field(default_factory=PrivateOrigins.empty)
+
+    @field_validator("ai_policy_file")
+    @classmethod
+    def absolute_ai_policy_file(cls, value: str | None) -> str | None:
+        if value is not None and not Path(value).is_absolute():
+            raise ValueError("The AI policy file path must be absolute")
+        return value
 
     @field_validator("mail_allowed_ports")
     @classmethod
@@ -258,6 +267,7 @@ class Settings(BaseModel):
             docs_enabled=docs_enabled == "true",
             operations=operations_from_env(),
             lumi=LumiGatewaySettings.model_validate_json(os.environ.get("WEAVE_LUMI_GATEWAY", "{}")),
+            ai_policy_file=os.environ.get("WEAVE_AI_POLICY_FILE") or None,
             connector_packages=TypeAdapter(tuple[str, ...]).validate_json(
                 os.environ.get("WEAVE_CONNECTOR_PACKAGES", "[]")
             ),

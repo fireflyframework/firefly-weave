@@ -21,6 +21,11 @@ every test here is skipped with that reason; with it, any missing precondition f
 journeys run weave platform ai enable in container mode themselves, which pulls
 WEAVE_LIVE_AI_MODEL (qwen2.5:1.5b by default) into the installation's own Ollama volume.
 Command output is parsed in memory; platform commands print no secret.
+
+Before any command, the installation must live under this checkout's build/ or .local/
+directory and use the colima-weave-tests Docker context, and every container of its Compose
+project must come from this checkout's Compose files, including at least one of its own
+directory: the journeys never change another platform, the host's Ollama or another context.
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -55,6 +60,10 @@ GUIDE = ROOT / "docs/guides/ai-workers.md"
 DIRECTORY = "WEAVE_LIVE_AI_DIRECTORY"
 MODEL = "WEAVE_LIVE_AI_MODEL"
 DEFAULT_MODEL = "qwen2.5:1.5b"
+OWNED_CONTEXT = "colima-weave-tests"
+OWNED_ROOTS = (ROOT / "build", ROOT / ".local")
+PROJECT_LABEL = "com.docker.compose.project"
+CONFIG_FILES_LABEL = "com.docker.compose.project.config_files"
 INPUT = {"text": "Firefly Weave runs durable workflows and records every step, so a run can be replayed."}
 TERMINAL = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 RUN_SECONDS = 600.0
@@ -77,6 +86,37 @@ def summarize_workflow(model: str) -> dict[str, Any]:
         timeoutSeconds=300,
     )
     return dict(document)
+
+
+def require_owned(directory: Path, state: Mapping[str, Any], labels: Callable[[str], list[dict[str, str]]]) -> None:
+    """Refuse an installation these journeys do not own, before Docker is asked about anything.
+
+    ``labels`` returns the labels of every container of a Compose project; it runs only once the
+    context and the directory are known to be owned. Docker's project filter already guarantees the
+    project label, so the check uses the Compose files each container was created from: all of them in
+    this checkout and at least one in this installation's directory. A copied platform.json or a reused
+    installation ID therefore cannot hand the journeys another installation's containers.
+    """
+    if state.get("context") != OWNED_CONTEXT:
+        raise AssertionError(f"The live AI journeys run only on the {OWNED_CONTEXT} Docker context.")
+    if not any(directory.is_relative_to(root) for root in OWNED_ROOTS):
+        raise AssertionError("The live AI installation must live under this checkout's build/ or .local/ directory.")
+    if Path(str(state.get("directory", ""))).resolve() != directory:
+        raise AssertionError("The installation's state names another directory.")
+    project = "weave-local-" + str(state["id"])
+    found = labels(project)
+    if not found:
+        raise AssertionError(f"No container of the installation's Compose project {project} exists.")
+    for row in found:
+        files = [Path(item).resolve() for item in str(row.get(CONFIG_FILES_LABEL, "")).split(",") if item]
+        if (
+            not files
+            or not all(path.is_relative_to(ROOT) for path in files)
+            or not any(path.is_relative_to(directory) for path in files)
+        ):
+            raise AssertionError(
+                f"A container of Compose project {project} was not created from this installation's Compose files."
+            )
 
 
 def _key(kind: str, value: str) -> str:
@@ -129,6 +169,18 @@ class Live:
             )
         return dict(json.loads(result.stdout))
 
+    def require_owned(self) -> None:
+        """Check, read-only, that this checkout owns the installation and every container it names."""
+
+        def labels(project: str) -> list[dict[str, str]]:
+            containers = self.docker("ps", "--all", "--quiet", "--filter", f"label={PROJECT_LABEL}={project}").split()
+            if not containers:
+                return []
+            output = self.docker("inspect", "--format", "{{json .Config.Labels}}", *containers)
+            return [dict(json.loads(line)) for line in output.splitlines() if line.strip()]
+
+        require_owned(self.directory, local._load(self.directory), labels)
+
     def docker(self, *args: str) -> str:
         """Run one docker command against this installation's own context."""
         context = local._load(self.directory)["context"]
@@ -169,8 +221,21 @@ class Live:
         async with WeaveClient(api, lambda: token, Scope.model_validate(scope), timeout=120) as client:
             yield client, scope
 
-    async def run(self, model: str) -> dict[str, Any]:
-        """Publish and activate the summarize workflow for this model, run it once and report how it ended."""
+    @staticmethod
+    def workflow_name(model: str) -> str:
+        """The name of the workflow that run(model) publishes and activates."""
+        return str(summarize_workflow(model)["metadata"]["name"])
+
+    async def run(
+        self, model: str, *, activation_idempotency_key: str | None = None, activation_revision: int | None = None
+    ) -> dict[str, Any]:
+        """Publish and activate the summarize workflow for this model, run it once and report how it ended.
+
+        By default the activation key comes from the published workflow, release and connection, so a
+        repeated call replays the activation it created first. A new key asks for a new activation; for a
+        workflow that is already activated it must name the current activation revision, which is sent
+        as the precondition, or the platform answers 412.
+        """
         receipt = self.receipt()
         source = json.dumps(summarize_workflow(model), sort_keys=True, separators=(",", ":"))
         async with self.client() as (client, scope):
@@ -184,7 +249,11 @@ class Live:
             }
             pins = f"{published.id}:{receipt['release_id']}:{receipt['connection_revision_id']}"
             activation = await client.activate(
-                ActivationRequest.model_validate_json(json.dumps(request)), idempotency_key=_key("activation", pins)
+                ActivationRequest.model_validate_json(json.dumps(request)),
+                idempotency_key=(
+                    activation_idempotency_key if activation_idempotency_key is not None else _key("activation", pins)
+                ),
+                revision=activation_revision,
             )
             run = await client.start_run(
                 StartRunRequest.model_validate_json(json.dumps({"activation_id": str(activation.id), "input": INPUT})),
@@ -203,6 +272,7 @@ class Live:
             completed = next((_output(event) for event in events if event.type == "task_completed"), {})
             replay = await client.replay(run.id) if current.state.status == "succeeded" else None
         return {
+            "activation_id": str(activation.id),
             "run_id": str(run.id),
             "status": current.state.status,
             "output": current.state.output,
@@ -210,6 +280,13 @@ class Live:
             "usage": completed.get("usage") or {},
             "replay": None if replay is None else replay.status,
         }
+
+
+def open_live(directory: Path, model: str) -> Live:
+    """The journeys' platform, once its ownership is checked and before any command changes it."""
+    live = Live(directory, model)
+    live.require_owned()
+    return live
 
 
 @pytest.fixture(scope="module")
@@ -220,4 +297,4 @@ def live() -> Live:
     directory = Path(value).expanduser().resolve()
     if not (directory / "platform.json").is_file():
         pytest.fail(f"{DIRECTORY} must name a Docker platform installation created with weave platform up.")
-    return Live(directory, os.environ.get(MODEL) or DEFAULT_MODEL)
+    return open_live(directory, os.environ.get(MODEL) or DEFAULT_MODEL)

@@ -31,6 +31,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
+from firefly_weave.operations.ai_policy import APIAIPolicy
 
 MANIFEST = HTTP_PROFILE_DESCRIPTOR.manifest.value
 ACTION = {
@@ -142,6 +143,7 @@ def service(monkeypatch):
         SimpleNamespace(get=lambda: None),
         SimpleNamespace(get=Workers),
         SimpleNamespace(),
+        APIAIPolicy(),
     )
     return SimpleNamespace(definitions=definitions, actor=actor, scope=scope, session=session)
 

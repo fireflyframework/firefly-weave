@@ -131,3 +131,15 @@ async def first_model(entry: PolicyEndpoint, provider: str, transport: httpx2.As
         return None
     served = await ollama_models(entry, transport)
     return served[0].name if served else None
+
+
+def unique_model_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the first facts for each name in an already bounded discovery result."""
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for item in items:
+        name = item["name"]
+        if name not in seen:
+            seen.add(name)
+            unique.append(item)
+    return unique

@@ -14,13 +14,14 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Enable AI, run the guide's AI task on a real local model, and check each refusal against real services.
+"""Enable AI, discover and run the guide's AI task on a real local model, and check each refusal.
 
-The tests run in file order and share one platform: setup first, then the typed call, then
-the refusals; the last one stops and restarts the installation's own Ollama container.
+The tests run in file order and share one platform: setup and discovery first, then the typed
+call, then the refusals; the last one stops and restarts the installation's own Ollama container.
 """
 
 import hashlib
+from uuid import uuid4
 
 import pytest
 
@@ -56,6 +57,19 @@ def test_enable_sets_up_ai_and_a_repeated_enable_changes_nothing(live):
     assert live.model in {item["name"] for item in status["models"]["served"]}
 
 
+async def test_discovery_lists_the_pulled_model_with_tool_support(live):
+    # Ollama's own tags and show metadata report tool support; the cached answer is the refreshed one.
+    async with live.client() as (client, _):
+        revision = live.receipt()["connection_revision_id"]
+        result = await client.invoke("ai_models.list", query={"connection": revision, "refresh": "true"})
+        assert result.approval == "served" and result.discovery == "ok", result
+        row = next((item for item in result.models if item.name == live.model), None)
+        assert row is not None, result
+        assert (row.approved, row.available, row.tools) == (True, True, "yes")
+        cached = await client.invoke("ai_models.list", query={"connection": revision})
+        assert cached == result
+
+
 async def test_the_guide_summarize_workflow_runs_on_the_local_model(live):
     outcome = await live.run(live.model)
     assert outcome["status"] == "succeeded", outcome
@@ -64,12 +78,48 @@ async def test_the_guide_summarize_workflow_runs_on_the_local_model(live):
     assert outcome["replay"] == "consistent"
 
 
+async def owned_activations(live):
+    """Every activation in the owned workspace; the small fixture must fit one page, never a partial list."""
+    async with live.client() as (client, _):
+        page = await client.list_activations(limit=100)
+    assert page.next_cursor is None, "The owned live fixture exceeds its activation snapshot bound"
+    return list(page.items)
+
+
+async def activation_ids(live):
+    return frozenset(str(item.id) for item in await owned_activations(live))
+
+
 async def test_a_model_the_policy_no_longer_approves_fails_with_llm_policy(live):
+    # The default key replays the activation the guide journey created; the worker refuses its run.
     try:
         removed = live.weave("ai", "models", "remove", *PROVIDER, "--model", live.model)
         assert live.model not in removed["approved"]
+        before = await activation_ids(live)
         outcome = await live.run(live.model)
+        assert outcome["activation_id"] in before, outcome
         assert outcome["code"] == "LLM_POLICY", outcome
+        assert await activation_ids(live) == before
+    finally:
+        restored = live.weave("ai", "models", "approve", *PROVIDER, "--served")
+    assert restored["approval"] == "served"
+
+
+async def test_a_model_the_policy_no_longer_approves_fails_at_activation(live):
+    # A new activation key asks for a new activation, which the API refuses before creating it.
+    try:
+        removed = live.weave("ai", "models", "remove", *PROVIDER, "--model", live.model)
+        assert live.model not in removed["approved"]
+        activations = await owned_activations(live)
+        before = frozenset(str(item.id) for item in activations)
+        # The workflow is already activated, so a new activation names its current revision; without it
+        # the platform answers 412 before it reads the policy.
+        name = live.workflow_name(live.model)
+        current = max((item.revision for item in activations if item.name == name), default=None)
+        with pytest.raises(WeaveError) as refused:
+            await live.run(live.model, activation_idempotency_key=str(uuid4()), activation_revision=current)
+        assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-MODEL")
+        assert await activation_ids(live) == before
     finally:
         restored = live.weave("ai", "models", "approve", *PROVIDER, "--served")
     assert restored["approval"] == "served"

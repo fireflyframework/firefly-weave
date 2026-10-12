@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+import time
 from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -26,12 +27,15 @@ from uuid import UUID, uuid4
 from pyfly.container import service
 
 from firefly_weave.access.audit import AuditContext
+from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
+from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.connections.diagnostics import (
     connector_unavailable,
+    is_agentic_revision,
     keyless_connection,
     readiness_issues,
     rejected,
@@ -59,6 +63,7 @@ from firefly_weave.persistence.idempotency import Idempotency, lock
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
 
 if TYPE_CHECKING:
+    from firefly_weave.operations.ai_connections import AIRefreshHook
     from firefly_weave.workers.models import VerifiedTask
 
 
@@ -82,11 +87,28 @@ class ConnectionService(ConnectionBindingPort):
         # Set at startup for connections whose test calls a model, such as AI connections: a per-person
         # limit taken after authorization and before the test job, any secret or the provider call.
         self.test_admission: Callable[[Principal, ConnectionRevision], None] | None = None
+        self.refresh: AIRefreshHook | None = None
 
     def require(self, actor: Principal, scope: Scope, capability: str, context: AuditContext) -> None:
         self.definitions.require(actor, scope, capability, context)
         if scope.environment_id is None:
             raise unavailable()
+
+    def require_revision(
+        self,
+        actor: Principal,
+        current: Principal,
+        scope: Scope,
+        revision_id: UUID,
+        capability: str,
+        context: AuditContext,
+    ) -> None:
+        if scope.environment_id is None:
+            raise AccessDenied()
+        for principal in (actor, current):
+            self.definitions.authorization.require(
+                principal, scope, capability, resource=str(revision_id), context=context
+            )
 
     async def create_revision(
         self,
@@ -189,10 +211,11 @@ class ConnectionService(ConnectionBindingPort):
         context: AuditContext,
         tx: Transaction | None = None,
     ) -> BoundConnection:
-        self.require(actor, scope, "connection.bind", context)
         async with self.definitions.transaction(scope, tx, mutation=False) as tx:
+            current = await load_principal(tx.session, actor.id)
+            self.require_revision(actor, current, scope, revision_id, "connection.bind", context)
             revision = await ConnectionRepository(tx).revision(revision_id)
-            await self._ready(actor, scope, revision, "connection.bind", context, tx)
+            await self._ready(current, scope, revision, "connection.bind", context, tx, resource=str(revision_id))
             if revision.connector != connector:
                 raise unavailable()
             # Only worker lease admission may replace this fail-closed accessor, after checking a live lease.
@@ -208,10 +231,17 @@ class ConnectionService(ConnectionBindingPort):
         tx: Transaction,
         *,
         explain: bool = False,
+        resource: str | None = None,
     ) -> None:
         try:
             contract = await self.definitions.connector_contract(
-                actor, scope, revision.connector_version_id, capability=capability, context=context, tx=tx
+                actor,
+                scope,
+                revision.connector_version_id,
+                capability=capability,
+                context=context,
+                tx=tx,
+                resource=resource,
             )
         except CatalogError as error:
             if not explain or error.code != "WV-CONNECTION":
@@ -266,6 +296,7 @@ class ConnectionService(ConnectionBindingPort):
         self, actor: Principal, scope: Scope, revision_id: UUID, *, context: AuditContext
     ) -> ConnectionTestResult:
         self.require(actor, scope, "connection.manage", context)
+        deadline = time.monotonic() + 30.0
         job_id = uuid4()
         async with self.uow.open(scope) as tx:
             repository = ConnectionRepository(tx)
@@ -297,7 +328,7 @@ class ConnectionService(ConnectionBindingPort):
             return resolved[name]
 
         try:
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(max(0.0, deadline - time.monotonic())):
                 keyless = keyless_connection(revision.adapter, revision.config, revision.secret_refs)
                 async with asyncio.timeout(5):
                     for name, handle in revision.secret_refs.items():
@@ -315,6 +346,8 @@ class ConnectionService(ConnectionBindingPort):
         finally:
             active = False
             resolved.clear()
+        if self.refresh is not None and is_agentic_revision(revision) and deadline > time.monotonic():
+            await self.refresh(actor, scope, revision.id, deadline, context)
         # Plain HTTP is allowed but never silent: the answer says whether requests to the base URL are encrypted.
         result = ConnectionTestResult(
             ok=ok, code="ok" if ok else "failed", job_id=job_id, encrypted=transport_encrypted(revision.config)

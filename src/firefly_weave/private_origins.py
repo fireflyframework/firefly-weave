@@ -88,12 +88,12 @@ PURPOSES: Mapping[str, PurposeRule] = {
     "worker-auth": PurposeRule(_HTTP, _PLAIN_HTTP, False, False),
     "platform-api": PurposeRule(_HTTP, _PLAIN_HTTP, False, False),
     "runner": PurposeRule(_HTTP, _PLAIN_HTTP, False, False),
-    # Connectors and webhooks keep plain HTTP to public addresses, as before C8 (owner, 2026-10-07).
+    # Connectors and webhooks keep plain HTTP to public addresses.
     "http-connector": PurposeRule(_HTTP, _PLAIN_HTTP, True, True),
     "event-delivery": PurposeRule(_HTTP, _PLAIN_HTTP, True, True),
     "mail": PurposeRule(frozenset({"smtp", "smtps", "imap", "imaps"}), frozenset({"smtp", "imap"}), True, False),
     "broker": PurposeRule(frozenset({"kafka", "kafka+ssl"}), frozenset({"kafka"}), True, False),
-    # Public FTP stays where the Files worker policy sets allow_cleartext_ftp; that client maps it in S6-M3.
+    # Public FTP follows the Files worker's allow_cleartext_ftp policy.
     "file-transfer": PurposeRule(frozenset({"ftp", "ftps", "sftp"}), frozenset({"ftp"}), True, False),
     # PostgreSQL negotiates TLS inside the connection, so its clients pass plaintext= explicitly;
     # its legacy entry allows plain text only inside WEAVE_POSTGRES_PLAINTEXT_NETWORKS, which adds no reach.

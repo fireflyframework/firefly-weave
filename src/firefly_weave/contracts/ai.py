@@ -23,9 +23,12 @@ from the step or connection, never from a provider response.
 
 from collections.abc import Mapping
 from typing import Literal, NamedTuple
+from uuid import UUID
 
-from pydantic import Field
+from pydantic import AwareDatetime, Field, model_validator
 
+from firefly_weave.ai_policy import Provider
+from firefly_weave.contracts.catalog import PublishedVersion
 from firefly_weave.contracts.definitions import ContractModel
 
 AIErrorCode = Literal[
@@ -112,3 +115,118 @@ class AIConnectionTestResult(ContractModel):
     model: str = Field(min_length=1, max_length=200)
     tool_calling: ToolCalling = "unknown"
     context_tokens: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+
+
+class AIModel(ContractModel):
+    """Allowlisted model facts returned by discovery."""
+
+    name: str = Field(min_length=1, max_length=200, pattern=MODEL_NAME_PATTERN)
+    approved: bool
+    available: bool
+    tools: Literal["yes", "no", "unknown"] = "unknown"
+    context_tokens: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+    size_bytes: int | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
+    family: str | None = Field(default=None, max_length=100, exclude_if=lambda value: value is None)
+
+
+class GatewayModelList(ContractModel):
+    discovery: Literal["ok"] | AIErrorCode
+    models: list[AIModel] = Field(default_factory=list, max_length=150)
+
+    @model_validator(mode="after")
+    def unique_names(self) -> "GatewayModelList":
+        if len({row.name for row in self.models}) != len(self.models):
+            raise ValueError("Each model appears once")
+        return self
+
+
+class AIEndpoint(ContractModel):
+    id: str
+    label: str
+    url: str
+    providers: list[Provider] = Field(min_length=1, max_length=5)
+    compat: Literal["ollama"] | None
+    credential: Literal["none", "required"]
+    models: Literal["served", "listed"]
+    context_tokens: int | None
+    development_only: bool
+
+
+class AIEndpointsResult(ContractModel):
+    policy: Literal["loaded", "absent"]
+    endpoints: list[AIEndpoint] = Field(default_factory=list, max_length=100)
+
+
+class AIModelsQuery(ContractModel):
+    connection: UUID
+    refresh: bool = False
+
+
+class AIModelsResult(ContractModel):
+    approval: Literal["served", "listed", "unknown"]
+    discovery: Literal["ok", "unknown"] | AIErrorCode
+    discovered_at: AwareDatetime | None = None
+    models: list[AIModel] = Field(default_factory=list, max_length=150)
+
+
+ReadinessId = Literal[
+    "worker_installed",
+    "actions_published",
+    "worker_online",
+    "connection",
+    "key_available",
+    "connection_authorized",
+    "model_responds",
+    "weave_ai",
+]
+READINESS_IDS: tuple[ReadinessId, ...] = (
+    "worker_installed",
+    "actions_published",
+    "worker_online",
+    "connection",
+    "key_available",
+    "connection_authorized",
+    "model_responds",
+    "weave_ai",
+)
+
+
+class AIReadinessFix(ContractModel):
+    kind: Literal["operation", "command", "navigate", "ask"]
+    label: str = Field(min_length=1, max_length=160)
+    operation: (
+        Literal["ai_setup.publish", "ai_setup.grant", "ai_connections.test", "lumi.configuration.write"] | None
+    ) = None
+    command: str | None = Field(default=None, max_length=160)
+    route: Literal["settings/ai", "operate/workers"] | None = None
+
+
+class AIReadinessItem(ContractModel):
+    id: ReadinessId
+    status: Literal["done", "action", "not_needed", "unknown"]
+    detail: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    fix: AIReadinessFix | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class AIReadinessResult(ContractModel):
+    items: list[AIReadinessItem] = Field(min_length=8, max_length=8)
+
+    @model_validator(mode="after")
+    def ordered_items(self) -> "AIReadinessResult":
+        if tuple(item.id for item in self.items) != READINESS_IDS:
+            raise ValueError("Readiness items must appear once in checklist order")
+        return self
+
+
+class AISetupPublishResult(ContractModel):
+    connector: PublishedVersion
+    actions: list[PublishedVersion] = Field(min_length=1, max_length=2)
+
+
+class AISetupGrantRequest(ContractModel):
+    connection_revision_id: UUID
+
+
+class AISetupGrantResult(ContractModel):
+    granted: bool
+    not_needed: bool = False
