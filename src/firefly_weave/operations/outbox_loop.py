@@ -77,8 +77,9 @@ class OutboxLoop:
     async def cycle(self) -> bool | None:
         """One bounded traversal turn.
 
-        False when a delivery turn failed since the previous cycle. None while the platform is not ready: no turn
-        starts then, so the cycle is neither a success nor a failure, as for schedules.
+        False when a delivery turn failed since the previous cycle. None when no turn could start, because the
+        platform is not ready or no delivery slot is free: the cycle is neither a success nor a failure, so the
+        outbox reads degraded once that lasts longer than three intervals.
         """
         healthy, self.turn_failed = not self.turn_failed, False
         # A turn started now would be refused, so wait for readiness without moving a cursor.
@@ -86,7 +87,8 @@ class OutboxLoop:
             return None if healthy else False
         count = reserve(1)
         if not count:
-            return healthy
+            # Every slot is held by a delivery in flight, or was never given back.
+            return None if healthy else False
         owned = True
         try:
             assert self.engine is not None
@@ -138,10 +140,12 @@ class OutboxLoop:
             except Exception:
                 logging.getLogger(__name__).error("Outbox traversal failed; retrying bounded turn")
                 healthy = False
-            # While the platform is not ready the cycle proves nothing, so its last success keeps aging.
-            if healthy is True:
+            if healthy is None:
+                # No turn could start, so the cycle proves nothing and the last success keeps aging.
+                self.health.skipped("outbox_loop")
+            elif healthy:
                 self.health.succeeded("outbox_loop")
-            elif healthy is False:
+            else:
                 self.health.failed("outbox_loop")
             await asyncio.sleep(TRAVERSAL_SECONDS)
 
