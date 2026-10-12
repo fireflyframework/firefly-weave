@@ -409,9 +409,10 @@ for (const size of sizes)
           pane.right + 0.5,
         );
       }
-      // Undo keeps its 28 px place in the row; for touch it is a 44 px
-      // target reaching into the toast's padding, never past its edge.
-      const place = 28;
+      // Undo's place in the row is a pointer target, 24 px like the dismiss
+      // button; for touch it is a 44 px target reaching into the toast's
+      // padding, never past its edge.
+      const place = 24;
       const action = await box(toast.getByRole("button", { name: "Undo" }));
       const text = await box(toast.locator(".toast-text"));
       const { touch, target } = await density(page);

@@ -2469,8 +2469,9 @@ input[type="file"][hidden] {
   animation: toast-in var(--dur) var(--ease);
 }
 .toast button {
-  /* An action's place in the toast's row. */
-  --toast-action: 28px;
+  /* An action's place in the toast's row: a pointer target, as the
+     dismiss button's. */
+  --toast-action: var(--target-min);
   min-height: var(--toast-action);
   padding: 0 8px;
   background: transparent;
