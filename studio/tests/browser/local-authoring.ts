@@ -77,18 +77,41 @@ let child: ChildProcess | null = null;
 let waiting: ((line: string) => void)[] = [];
 let queue: Promise<unknown> = Promise.resolve();
 
+/**
+ * Answers every request still waiting on a helper that is gone, so the
+ * requests queued after them (in a later test of this worker) aren't stuck.
+ */
+function release() {
+  const pending = waiting;
+  waiting = [];
+  for (const done of pending)
+    done(
+      JSON.stringify({
+        status: 503,
+        body: { code: "WV-STUDIO-REQUEST", message: "Helper stopped" },
+      }),
+    );
+}
+
 function start() {
   if (child && child.exitCode === null) return child;
-  child = spawn(python, ["-u", "-c", helper], {
+  release();
+  const started = spawn(python, ["-u", "-c", helper], {
     cwd: repository,
     env: { ...process.env, PYTHONPATH: resolve(repository, "src") },
     stdio: ["pipe", "pipe", "inherit"],
   });
-  waiting = [];
-  createInterface({ input: child.stdout! }).on("line", (line) =>
-    waiting.shift()?.(line),
-  );
-  return child;
+  child = started;
+  // Only the current helper answers; a stopped one's late lines are dropped.
+  createInterface({ input: started.stdout! }).on("line", (line) => {
+    if (child === started) waiting.shift()?.(line);
+  });
+  started.on("exit", () => {
+    if (child !== started) return;
+    child = null;
+    release();
+  });
+  return started;
 }
 
 /** One request at a time, in order, like the host's bounded worker slots. */
@@ -106,8 +129,10 @@ function ask(path: string, body: string) {
 }
 
 export function stopLocalAuthoring() {
-  child?.kill();
+  const stopped = child;
   child = null;
+  stopped?.kill();
+  release();
 }
 
 /** What Studio sent to the local authoring endpoints, in order. */
