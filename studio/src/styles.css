@@ -3216,11 +3216,6 @@ details.disclosure[open] > summary::before {
   border: 2px solid var(--accent);
   box-shadow: 0 0 0 4px var(--accent-glow);
 }
-/* Edits in the inspector that aren't applied yet. */
-.graph-node.dirty .node-body {
-  outline: 2px dashed var(--accent);
-  outline-offset: 3px;
-}
 /* Problems on the canvas: a border and a chip that names them. */
 .graph-node.has-error .node-body {
   border: 2px solid var(--danger);
@@ -4282,7 +4277,6 @@ kbd {
 @media (forced-colors: active) {
   .node-chip,
   .branch-label,
-  .graph-node.dirty .node-body,
   .graph-node.has-error .node-body {
     border: 1px solid CanvasText;
   }

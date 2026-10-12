@@ -662,7 +662,6 @@ import type { App } from "../app";
                       class="graph-node"
                       [class.selected]="h.model.selected === node.step.id"
                       [class.decision]="node.step.kind === 'switch'"
-                      [class.dirty]="h.dirtyStep === node.step.id"
                       [class.has-error]="info.status === 'error'"
                       [class.has-warning]="info.status === 'warning'"
                       [class.incomplete]="info.status === 'incomplete'"

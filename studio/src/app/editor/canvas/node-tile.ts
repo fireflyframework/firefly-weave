@@ -77,7 +77,6 @@ export interface TileView {
         [class.selected]="v.borders.selected"
         [class.live]="v.borders.live"
         [class.pulse]="v.pulse"
-        [class.unapplied]="v.borders.unapplied"
         [class.error]="v.borders.error"
       ></span>
       @if (v.kind !== "end") {

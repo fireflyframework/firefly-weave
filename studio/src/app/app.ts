@@ -2734,9 +2734,6 @@ export class App implements CanvasHost {
     const id = this.selected?.step.id;
     if (id) await this.renameStep(id, value);
   }
-  get dirtyStep() {
-    return "";
-  }
   /** The inspector's ⋯ menu: Move to…, Duplicate, Delete step. */
   get stepMenu(): RowMenuItem[] {
     const id = this.model.selected;

@@ -127,7 +127,6 @@ const NO_FACTS: StepFacts = { errors: [], warnings: [], setup: [] };
 const NO_BORDERS: TileBorders = {
   selected: false,
   live: false,
-  unapplied: false,
   error: false,
 };
 
@@ -423,7 +422,6 @@ export class CanvasView implements OnInit, DoCheck {
       layout: LtrLayout,
       facts: ReadonlyMap<string, StepFacts>,
       selection: Selection,
-      dirty: string,
       active: string,
       run: CanvasRun | null,
       canvas: CanvasSidecar,
@@ -435,7 +433,6 @@ export class CanvasView implements OnInit, DoCheck {
         const state = tile.step ? tileRun(tile.id, run) : null;
         return this.tileView(tile, ctx, facts.get(tile.id) ?? NO_FACTS, {
           selected: chosen.has(tile.id),
-          unapplied: tile.id === dirty,
           active: tile.id === active,
           run: state,
           pulse: pulses(state, run),
@@ -455,7 +452,6 @@ export class CanvasView implements OnInit, DoCheck {
       this.layout(),
       h.canvasFacts(),
       this.selection,
-      h.dirtyStep,
       this.active(),
       h.canvasRun(),
       h.model.canvas,
@@ -475,7 +471,6 @@ export class CanvasView implements OnInit, DoCheck {
     facts: StepFacts,
     state: {
       selected: boolean;
-      unapplied: boolean;
       active: boolean;
       run: TileRun;
       pulse: boolean;
@@ -524,7 +519,6 @@ export class CanvasView implements OnInit, DoCheck {
       failure: state.run === "failed" ? {} : null,
       stale: null,
       pinned: false,
-      unapplied: state.unapplied,
       selected: state.selected,
     };
     const badge = tileBadge(shown);
