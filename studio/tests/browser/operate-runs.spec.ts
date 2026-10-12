@@ -1092,7 +1092,13 @@ test.describe("chains and refresh", () => {
     await expect(bar).toContainText("2 selected");
     await bar.getByRole("button", { name: "Cancel runs" }).click();
     const dialog = page.getByRole("dialog", { name: "Cancel 2 runs?" });
+    // The reason is required: nothing is sent without one.
+    const confirm = dialog.getByRole("button", { name: "Cancel runs" });
+    await expect(confirm).toBeDisabled();
+    await dialog.getByLabel("Reason").fill("   ");
+    await expect(confirm).toBeDisabled();
     await dialog.getByLabel("Reason").fill("Duplicate invoices");
+    await expect(confirm).toBeEnabled();
     await dialog.getByRole("button", { name: "Cancel runs" }).click();
     const results = page.getByRole("region", { name: "Cancel runs" });
     await expect(results.locator(".bulk-result")).toHaveCount(2);
@@ -1477,6 +1483,108 @@ test.describe("commands on the page", () => {
     );
     await expect(rows(page)).toHaveCount(8);
     await expect(page.locator(".run-row.started")).toHaveCount(0);
+  });
+});
+
+test.describe("another person on the same environment", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("rows, keys and late answers read for the person before never show for the next one", async ({
+    page,
+  }) => {
+    await page.clock.install({ time: new Date(NOW) });
+    // The platform can't be reached at first, so Studio reads the identity
+    // itself (jane); Try again then finds john signed in on the same
+    // environment, while the page stays open.
+    let person = "jane";
+    let reachable = false;
+    await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: (host) =>
+        reachable
+          ? {
+              json: {
+                session: host.session(),
+                identity: {
+                  ...host.identity(),
+                  principal_id: `principal-${person}`,
+                },
+                workspaces: host.current?.workspaces ?? [],
+                truncated: false,
+                workspace_revoked: false,
+              },
+            }
+          : {
+              status: 503,
+              json: { code: "WV-STUDIO-UPSTREAM", message: "Unreachable" },
+            },
+    });
+    let releaseJane: () => void = () => undefined;
+    const janeHeld = new Promise<void>((resolve) => (releaseJane = resolve));
+    let releaseJohn: () => void = () => undefined;
+    const johnHeld = new Promise<void>((resolve) => (releaseJohn = resolve));
+    const requests: { person: string; query: URLSearchParams }[] = [];
+    await page.route("**/run-summaries?**", async (route) => {
+      const asked = person;
+      const query = new URL(route.request().url()).searchParams;
+      requests.push({ person: asked, query });
+      if (asked === "jane" && query.get("business_key") === "jane-secret")
+        await janeHeld;
+      if (asked === "john") await johnHeld;
+      await route
+        .fulfill({
+          json: {
+            items: [
+              started(
+                uuid(asked === "jane" ? 600 : 700),
+                "2026-10-07T11:59:00Z",
+                {
+                  business_key: asked === "jane" ? "JANE-1" : "JOHN-1",
+                },
+              ),
+            ],
+            next_cursor: null,
+          },
+        })
+        .catch(() => undefined);
+    });
+    await page.getByRole("button", { name: "Runs", exact: true }).click();
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page).first()).toContainText("JANE-1");
+    // A read for jane is still out when john turns out to be signed in.
+    await page.getByLabel("Business key").fill("jane-secret");
+    await expect
+      .poll(() => requests.at(-1)?.query.get("business_key"))
+      .toBe("jane-secret");
+    person = "john";
+    reachable = true;
+    await page
+      .locator(".platform-banner")
+      .getByRole("button", { name: "Try again" })
+      .click();
+    // Nothing read for jane stays, though her read is still out.
+    await expect(page.locator(".platform-banner")).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(0);
+    await expect(page.getByLabel("Business key")).toHaveValue("");
+    // Her answer lands after the change: it is dropped, and john's first
+    // page is read next.
+    releaseJane();
+    await expect
+      .poll(
+        () => requests.filter((request) => request.person === "john").length,
+      )
+      .toBeGreaterThan(0);
+    await expect(rows(page)).toHaveCount(0);
+    await expect(page.locator("weave-runs-page")).not.toContainText("JANE-1");
+    releaseJohn();
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page).first()).toContainText("JOHN-1");
+    await expect(page.locator("weave-runs-page")).not.toContainText("JANE-1");
+    for (const request of requests.filter((item) => item.person === "john")) {
+      expect(request.query.has("business_key")).toBe(false);
+      expect(request.query.has("cursor")).toBe(false);
+    }
   });
 });
 

@@ -872,6 +872,104 @@ test.describe("switching workspace", () => {
   });
 });
 
+test.describe("another person on the same environment", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("the summary read for the person before, and a late answer for them, never show for the next one", async ({
+    page,
+  }) => {
+    // The platform can't be reached at first, so Studio reads the identity
+    // itself (jane); Try again then finds john signed in on the same
+    // environment, while the page stays open.
+    let person = "jane";
+    let reachable = false;
+    const withStatus = (host: PlatformHost) => ({
+      ...host.identity(),
+      principal_id: `principal-${person}`,
+      grants: host.identity().grants.map((grant) => ({
+        ...grant,
+        capabilities: every,
+      })),
+    });
+    const host: PlatformHost = await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: (current) =>
+        reachable
+          ? {
+              json: {
+                session: current.session(),
+                identity: withStatus(current),
+                workspaces: current.current?.workspaces ?? [],
+                truncated: false,
+                workspace_revoked: false,
+              },
+            }
+          : {
+              status: 503,
+              json: { code: "WV-STUDIO-UPSTREAM", message: "Unreachable" },
+            },
+    });
+    await page.route("**/studio/api/api/v1/identity", (route) =>
+      route.fulfill({ json: withStatus(host) }),
+    );
+    let holdJane = false;
+    let releaseJane: () => void = () => undefined;
+    const janeHeld = new Promise<void>((resolve) => (releaseJane = resolve));
+    let releaseJohn: () => void = () => undefined;
+    const johnHeld = new Promise<void>((resolve) => (releaseJohn = resolve));
+    const asked: string[] = [];
+    await page.route("**/environments/*/operations/summary", async (route) => {
+      const who = person;
+      asked.push(who);
+      if (who === "jane" && holdJane) await janeHeld;
+      if (who === "john") await johnHeld;
+      await route
+        .fulfill({
+          json: summary({
+            api: { ...summary().api, version: `1.0.0-${who}` },
+          }),
+        })
+        .catch(() => undefined);
+    });
+    await page.getByRole("button", { name: "Overview", exact: true }).click();
+    const details = page.getByRole("button", {
+      name: "API details",
+      exact: true,
+    });
+    await details.click();
+    await expect(
+      page.getByRole("dialog", { name: "API details" }),
+    ).toContainText("1.0.0-jane");
+    await details.click();
+    // A read for jane is still out when john turns out to be signed in.
+    holdJane = true;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect.poll(() => asked.length).toBe(2);
+    person = "john";
+    reachable = true;
+    await page
+      .locator(".platform-banner")
+      .getByRole("button", { name: "Try again" })
+      .click();
+    await expect(page.locator(".platform-banner")).toHaveCount(0);
+    // Nothing read for jane stays while john's summary is on its way.
+    await expect(page.getByText("Loading platform health…")).toBeAttached();
+    await expect(details).toHaveCount(0);
+    releaseJane();
+    await expect.poll(() => asked.includes("john")).toBe(true);
+    await expect(details).toHaveCount(0);
+    releaseJohn();
+    await details.click();
+    await expect(
+      page.getByRole("dialog", { name: "API details" }),
+    ).toContainText("1.0.0-john");
+    await expect(page.locator("weave-overview-page")).not.toContainText(
+      "1.0.0-jane",
+    );
+  });
+});
+
 test.describe("layout", () => {
   for (const viewport of [
     { width: 1440, height: 900 },
