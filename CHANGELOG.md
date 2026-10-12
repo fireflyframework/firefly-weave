@@ -91,7 +91,8 @@ SPDX-License-Identifier: Apache-2.0
   readiness was withdrawn, which can last up to the shutdown timeout (10 seconds
   by default) while native connector calls finish. Once all four slots were
   lost, scheduled deliveries and manual retries delivered nothing until the
-  process restarted, and nothing reported it.
+  process restarted, and nothing reported it. A turn cancelled before it
+  starts, as when the event loop shuts down, also gives its slot back now.
 
 ## 0.1.0a15
 
