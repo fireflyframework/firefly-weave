@@ -24,6 +24,7 @@ import { readFileSync } from "node:fs";
 import { parse, stringify } from "yaml";
 import {
   addCommonStep,
+  fitCanvas,
   openConnectedFixture,
   openStepFixture,
   sizes,
@@ -44,7 +45,7 @@ import {
 } from "./step-geometry";
 import { httpWorkflow, openHttpStep } from "./step-http";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
-import { sourceText, tokenColor } from "./support";
+import { command, sourceText, tokenColor } from "./support";
 
 /** A diagnostic as live validation reports it. */
 interface Reported {
@@ -459,7 +460,7 @@ for (const size of sizes)
       await details.close();
       await expect(
         page.getByText(
-          "Not applied yet: Path result, Due after in notify-sales, Wait for in wait-a-minute and 1 more step. What you typed is kept until you finish them.",
+          "Not applied yet: Path result (path 1), Due after in notify-sales, Wait for in wait-a-minute and 1 more step. What you typed is kept until you finish them.",
           { exact: true },
         ),
       ).toBeVisible();
@@ -1016,6 +1017,208 @@ test.describe("issues layout", () => {
         await expect(details.dialogFor("check-customer")).toBeVisible();
         await expect(issuesPill(details)).toHaveCount(0);
         expect((await box(head)).height).toBeCloseTo(headBox.height, 0);
+      });
+    });
+});
+
+/** A step's issue badge on the canvas. */
+const tileIssue = (page: Page, id: string) =>
+  page.locator(`.tile-node[data-tile="${id}"] .tile-issue`);
+/** The field that holds focus, as its data path. */
+const focusedField = (page: Page) =>
+  page.evaluate(() => {
+    const field = document.activeElement?.closest("[data-param]");
+    return [
+      field?.getAttribute("data-param"),
+      field?.getAttribute("data-param-path"),
+    ];
+  });
+
+test.describe("entries not applied yet, on the canvas and after an Undo", () => {
+  for (const size of sizes)
+    test.describe(`at ${size.tag}`, () => {
+      test.use({ viewport: { width: size.width, height: size.height } });
+
+      test("a step's tile shows an entry that isn't applied, and its badge opens that field", async ({
+        page,
+      }) => {
+        const details = await openStepFixture(page);
+        // On Settings, after the step's Parameters fields.
+        await details.openWithKeyboard("wait-for-payment");
+        await details.tab("Settings").click();
+        const field = details.field("timeout");
+        const amount = field.getByRole("textbox", { name: "Wait at most" });
+        await amount.fill("abc");
+        await expect(lineOf(field)).toContainText("Not applied");
+        await details.close();
+        await fitCanvas(page);
+        const badge = tileIssue(page, "wait-for-payment");
+        await expect(badge).toHaveAccessibleName(
+          "Show issues for wait-for-payment: Not applied yet: Wait at most",
+        );
+        await badge.click();
+        await expect(details.dialogFor("wait-for-payment")).toBeVisible();
+        await expect(details.tab("Settings")).toHaveAttribute(
+          "aria-selected",
+          "true",
+        );
+        await expect(amount).toBeFocused();
+        await expect(amount).toHaveValue("abc");
+        // Taken back, nothing is left to show.
+        await page.keyboard.press("Escape");
+        await expect(amount).toHaveValue("1");
+        await details.close();
+        await expect(tileIssue(page, "wait-for-payment")).toHaveCount(0);
+      });
+
+      test("the badge opens the entry it names, though step details list another issue first", async ({
+        page,
+      }) => {
+        // No URL: step details list it first, on Parameters, and the canvas
+        // doesn't count it; the entry not applied is on Settings.
+        const details = await openHttpStep(page, "");
+        await details.tab("Settings").click();
+        const field = details.field("timeout");
+        const timeout = field.getByRole("textbox", { name: "Timeout" });
+        await timeout.fill("abc");
+        await expect(lineOf(field)).toContainText("Not applied");
+        await details.close();
+        await fitCanvas(page);
+        const badge = tileIssue(page, "get-customer-orders");
+        await expect(badge).toHaveAccessibleName(
+          "Show issues for get-customer-orders: Not applied yet: Timeout",
+        );
+        await badge.click();
+        await expect(details.dialogFor("get-customer-orders")).toBeVisible();
+        await expect(details.tab("Settings")).toHaveAttribute(
+          "aria-selected",
+          "true",
+        );
+        await expect(timeout).toBeFocused();
+        await expect(timeout).toHaveValue("abc");
+      });
+
+      test("the badge names and opens the problem the Problems strip opens, before an entry not applied", async ({
+        page,
+      }) => {
+        const details = await openStepFixture(page);
+        await validateWith(page, [
+          {
+            code: "WV-COMP-TYPE_MISMATCH",
+            severity: "error",
+            message: "The second path's condition doesn't compare",
+            path: "/spec/steps/2/cases/1/when",
+          },
+        ]);
+        // Path 1's result, before path 2's condition, holds JSON that doesn't parse.
+        await details.openWithKeyboard("route-by-value");
+        await showParameters(page, details.dialog);
+        await details.dialog
+          .getByRole("button", { name: "Path result" })
+          .first()
+          .click();
+        const result = details.dialog
+          .locator('[data-param="case.output"]')
+          .first();
+        await result.locator("textarea").fill('{"tier": ');
+        await page.keyboard.press("Tab");
+        await expect(lineOf(result)).toContainText("Not applied");
+        await details.close();
+        await fitCanvas(page);
+        const badge = tileIssue(page, "route-by-value");
+        await expect(badge).toHaveAccessibleName(
+          "Show issues for route-by-value: The second path's condition doesn't compare",
+        );
+        await badge.click();
+        await expect(details.dialogFor("route-by-value")).toBeVisible();
+        await expect
+          .poll(() => focusedField(page))
+          .toEqual(["case.when", JSON.stringify(["cases", 1, "when"])]);
+        await details.close();
+        const strip = page.getByRole("region", {
+          name: "Compiler diagnostics",
+        });
+        const toggle = strip.getByRole("button", { name: "Diagnostics" });
+        if ((await toggle.getAttribute("aria-expanded")) !== "true")
+          await toggle.click();
+        await strip
+          .locator(".diagnostic-row .diagnostic-where")
+          .first()
+          .click();
+        await expect(details.dialogFor("route-by-value")).toBeVisible();
+        await expect
+          .poll(() => focusedField(page))
+          .toEqual(["case.when", JSON.stringify(["cases", 1, "when"])]);
+      });
+
+      test("a rename, Close, then Undo on the canvas keeps the entry, and Redo too", async ({
+        page,
+      }) => {
+        await withLanguageFeatures(page);
+        const details = await openStepFixture(page, templateWorkflow());
+        await details.openWithKeyboard("summarize");
+        await showParameters(page, details.dialog);
+        const text = details
+          .field("prompt")
+          .getByRole("textbox", { name: "Prompt" });
+        await text.focus();
+        await text.press("ControlOrMeta+a");
+        await page.keyboard.type("Dear {{ input.customerId", { delay: 5 });
+        await expect(lineOf(details.field("prompt"))).toContainText(
+          "Not applied",
+        );
+        await details.dialog
+          .getByRole("button", { name: "Rename summarize" })
+          .click();
+        await details.dialog
+          .getByRole("textbox", { name: "Step name" })
+          .fill("summary");
+        await page.keyboard.press("Enter");
+        await expect(details.dialogFor("summary")).toBeVisible();
+        await details.close();
+        await command(page, "Undo");
+        await expect(details.node("summarize")).toHaveCount(1);
+        await details.openWithKeyboard("summarize");
+        await showParameters(page, details.dialog);
+        await expect(text).toHaveValue("Dear {{ input.customerId");
+        await expect(lineOf(details.field("prompt"))).toContainText(
+          "Not applied",
+        );
+        await details.close();
+        await command(page, "Redo");
+        await details.openWithKeyboard("summary");
+        await showParameters(page, details.dialog);
+        await expect(text).toHaveValue("Dear {{ input.customerId");
+      });
+
+      test("Escape takes back a note that isn't saved, and closing says it is kept until it fits", async ({
+        page,
+      }) => {
+        const details = await openHttpStep(page, undefined, undefined, {
+          recipe: { responseSample: "s".repeat(261_300) },
+        });
+        await details.tab("Settings").click();
+        const field = details.field("notes");
+        const notes = field.getByRole("textbox", { name: "Notes" });
+        await notes.click();
+        await page.keyboard.insertText("x".repeat(1500));
+        await expect(field.getByRole("alert")).toContainText("Not saved.");
+        await details.close();
+        await expect(
+          page.getByText("Not saved yet: Notes. It's kept until it fits.", {
+            exact: true,
+          }),
+        ).toBeVisible();
+        await details.open("get-customer-orders");
+        await details.tab("Settings").click();
+        await expect(notes).toHaveValue("x".repeat(1500));
+        await notes.focus();
+        await page.keyboard.press("Escape");
+        await expect(notes).toHaveValue("");
+        await expect(notes).toBeFocused();
+        await expect(field.getByRole("alert")).toHaveCount(0);
+        await expect(details.dialog).toBeVisible();
+        await expect(issuesPill(details)).toHaveCount(0);
       });
     });
 });

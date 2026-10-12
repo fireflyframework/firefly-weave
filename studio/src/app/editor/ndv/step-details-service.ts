@@ -34,7 +34,9 @@ export type FocusTarget =
   /** The field of the step's first issue (a tile badge). */
   | { kind: "firstIssue" }
   /** The field that holds a diagnostic's path (`["with"]`, `["cases", 0, "when"]`). */
-  | { kind: "path"; path: Path };
+  | { kind: "path"; path: Path }
+  /** The field of one of the step's issues, by its key (an entry not applied yet). */
+  | { kind: "issue"; key: string };
 export interface StepDetailsRequest {
   /** A step ID, "$trigger" or "$end". */
   target: string;
@@ -61,6 +63,20 @@ export interface OwnedPublishOutcome {
   reason?: string;
   /** The workflow source its actions were published for, once all are. */
   source?: string;
+}
+/** An entry not applied yet, as its step's tile shows it. */
+export interface HeldFact {
+  /** The issue it is in step details, to open on. */
+  key: string;
+  /** The field, named for a toast or a tooltip. */
+  label: string;
+  /** "Not applied", or "Not saved" for a note. */
+  status: string;
+}
+/** A step an Undo or Redo renamed: its entries not applied yet follow it. */
+export interface StepRename {
+  from: string;
+  to: string;
 }
 /** The publish dialog's request, and the command waiting for its outcome. */
 export interface OwnedPublishOpen {
@@ -93,6 +109,22 @@ export class StepDetailsService {
   readonly ownedPublish = signal<OwnedPublishOpen | null>(null);
   /** Designers on screen that can show it. */
   mounted = 0;
+  /**
+   * Each step's entries not applied yet, checked against their fields, in
+   * its form's order: the canvas counts them on the step's tile.
+   */
+  readonly held = signal<ReadonlyMap<string, readonly HeldFact[]>>(new Map());
+  private renames: StepRename[] = [];
+  /** Steps an Undo or Redo renamed, for their entries to follow on the next change. */
+  followRenames(renames: readonly StepRename[]): void {
+    this.renames.push(...renames);
+  }
+  /** The renames to follow, once. */
+  takeRenames(): StepRename[] {
+    const renames = this.renames;
+    this.renames = [];
+    return renames;
+  }
 
   open(request: StepDetailsRequest): void {
     this.workflowSettings.set(false);

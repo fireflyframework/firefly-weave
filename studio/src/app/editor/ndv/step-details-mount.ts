@@ -37,13 +37,17 @@ import { OwnedDocuments } from "./owned/owned-documents";
 import { OwnedPublishDialog } from "./owned/owned-publish-dialog";
 import { StepDetails } from "./step-details";
 import { StepDetailsController } from "./step-details-controller";
+import { FormSession } from "./params/form-session";
 import type { StepDetailsHost } from "./step-details-host";
 import {
   StepDetailsService,
+  type HeldFact,
   type OwnedPublishOutcome,
 } from "./step-details-service";
 import { loadKindRegistrations } from "./kinds";
 import { WorkflowSettingsDialog } from "./workflow-settings-dialog";
+
+const NONE_HELD: ReadonlyMap<string, readonly HeldFact[]> = new Map();
 
 @Component({
   selector: "weave-step-details-mount",
@@ -110,12 +114,23 @@ export class StepDetailsMount {
     effect(() => {
       const host = this.host();
       host.tick();
+      const ready = this.ready();
       untracked(() => {
         this.documentsFor(host).sync();
+        const controller = this.made?.controller;
+        // A step an Undo or Redo renamed keeps its entries under its name.
+        for (const { from, to } of this.details.takeRenames())
+          controller?.renamePending(from, to);
         // Entries typed for a step that is gone never reach a step made
         // again with its name; the open step keeps its own while step
         // details follow a rename back.
-        this.made?.controller.prunePending(this.details.request()?.target);
+        controller?.prunePending(this.details.request()?.target);
+        // What is left, checked against its fields, for the canvas.
+        const held =
+          ready && controller
+            ? FormSession.heldByStep(host, controller)
+            : NONE_HELD;
+        if (held.size || this.details.held().size) this.details.held.set(held);
       });
       if (
         !this.ready() ||

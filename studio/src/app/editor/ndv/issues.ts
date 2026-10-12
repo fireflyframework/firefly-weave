@@ -128,18 +128,13 @@ export const targetName = (target: string): string =>
 export interface HeldLabel {
   label: string;
   step?: string;
+  /** "Not saved" for a note the canvas has no room for; otherwise not applied. */
+  status?: string;
 }
 /** How many steps the toast on closing names before it counts the rest. */
 const NAMED_STEPS = 3;
-/**
- * What a toast says when step details close while entries don't apply yet,
- * on any step: the open step's fields, then each other step once, in the
- * order given (the workflow's), at most three steps before "and 2 more
- * steps". A step that holds more than two entries names the first one and
- * counts the others.
- */
-export function leavingText(entries: HeldLabel[]): string {
-  if (!entries.length) return "";
+/** The fields of one kind of entry, each step once, three steps at most. */
+function namedEntries(entries: HeldLabel[]): string {
   const steps: { step?: string; labels: string[] }[] = [];
   for (const { label, step } of entries) {
     const found = steps.find((group) => group.step === step);
@@ -154,22 +149,40 @@ export function leavingText(entries: HeldLabel[]): string {
     return step ? `${fields} in ${step}` : fields;
   });
   const rest = steps.length - named.length;
-  const list = rest
+  return rest
     ? `${named.join(", ")} and ${rest} more ${rest === 1 ? "step" : "steps"}`
     : named.join(", ");
-  return `${NOT_APPLIED} yet: ${list}. What you typed is kept until you finish ${entries.length === 1 ? "it" : "them"}.`;
+}
+/**
+ * What a toast says when step details close while entries don't apply yet,
+ * on any step: the open step's fields, then each other step once, in the
+ * order given (the workflow's), at most three steps before "and 2 more
+ * steps". A step that holds more than two entries names the first one and
+ * counts the others. A note that isn't saved is said apart, as its field
+ * says it: it is kept until it fits, not until it is finished.
+ */
+export function leavingText(entries: HeldLabel[]): string {
+  const applied = entries.filter((entry) => entry.status !== NOT_SAVED);
+  const saved = entries.filter((entry) => entry.status === NOT_SAVED);
+  return [
+    applied.length
+      ? `${NOT_APPLIED} yet: ${namedEntries(applied)}. What you typed is kept until you finish ${applied.length === 1 ? "it" : "them"}.`
+      : "",
+    saved.length
+      ? `${NOT_SAVED} yet: ${namedEntries(saved)}. ${saved.length === 1 ? "It's kept until it fits." : "They're kept until they fit."}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 /**
  * The toast on closing, with each step's entries under its name. Leaving for
  * another step's details, `from` names the target being left, so its own
  * entries never read as fields of the step that opens.
  */
-export const leavingToast = (
-  entries: { label: string; step?: string }[],
-  from?: string,
-): string =>
+export const leavingToast = (entries: HeldLabel[], from?: string): string =>
   leavingText(
-    entries.map(({ label, step = from }) =>
-      step ? { label, step: targetName(step) } : { label },
+    entries.map(({ step = from, ...entry }) =>
+      step ? { ...entry, step: targetName(step) } : entry,
     ),
   );

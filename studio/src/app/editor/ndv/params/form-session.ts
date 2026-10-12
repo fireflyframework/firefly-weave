@@ -72,7 +72,12 @@ import {
 } from "./drop";
 import { dragSchema } from "../panes/views";
 import { uiKey } from "../../state/browser-store";
-import { expressionRoot, WORKFLOW_ROOTS, samePath } from "./paths";
+import {
+  expressionRoot,
+  pathStartsWith,
+  WORKFLOW_ROOTS,
+  samePath,
+} from "./paths";
 import {
   ABSENT,
   applyChange,
@@ -117,7 +122,11 @@ import { resourceProblem } from "./resource";
 import { outlineRank, stepsAfter } from "../navigation";
 import type { StepDetailsController } from "../step-details-controller";
 import type { StepDetailsHost } from "../step-details-host";
-import { openRequest, type StepDetailsRequest } from "../step-details-service";
+import {
+  openRequest,
+  type HeldFact,
+  type StepDetailsRequest,
+} from "../step-details-service";
 
 export type FormName = "parameters" | "settings";
 export interface SessionHooks {
@@ -1335,11 +1344,49 @@ export class FormSession {
     this.issueCache = { key, issues: sorted };
     return sorted;
   }
-  /** Labels of the fields holding entries that don't apply yet, for the toast on leaving. */
-  heldLabels(): string[] {
+  /**
+   * The fields holding entries that don't apply yet, named for the toast on
+   * leaving, with "Not saved" for a note.
+   */
+  heldEntries(): { label: string; status?: string }[] {
     return this.issues()
       .filter((issue) => issue.status && issue.field)
-      .map((issue) => issue.field!.spec.label);
+      .map((issue) => ({
+        label: this.entryLabel(issue.field!),
+        ...(issue.status === NOT_APPLIED ? {} : { status: issue.status }),
+      }));
+  }
+  /** Labels of the fields holding entries that don't apply yet. */
+  heldLabels(): string[] {
+    return this.heldEntries().map((entry) => entry.label);
+  }
+  /**
+   * A field's name where a list could make it ambiguous: a row names its
+   * list and the row ("Accepted status codes (row 2)", "Headers (X-Trace)"),
+   * and a field inside a row names the row ("Path result (path 1)").
+   */
+  private entryLabel(placed: PlacedSpec): string {
+    const { spec } = placed;
+    const scope = spec.scope ?? "step";
+    let list: ParamSpec | null = null;
+    for (const { spec: other } of this.placedSpecs())
+      if (
+        (other.type === "list" || other.type === "keyValue") &&
+        (other.scope ?? "step") === scope &&
+        other.path.length < spec.path.length &&
+        pathStartsWith(spec.path, other.path) &&
+        (!list || other.path.length > list.path.length)
+      )
+        list = other;
+    if (!list) return spec.label;
+    const row = spec.path[list.path.length];
+    if (spec.path.length > list.path.length + 1)
+      return typeof row === "number"
+        ? `${spec.label} (${(list.item?.label ?? "row").toLowerCase()} ${row + 1})`
+        : `${spec.label} (${row})`;
+    return typeof row === "number"
+      ? `${list.label} (row ${row + 1})`
+      : `${list.label} (${row})`;
   }
   runFix(issue: StepIssue): void {
     const fix = issue.fix;
@@ -1376,7 +1423,7 @@ export class FormSession {
    * Entries other steps still hold, checked against their fields as each
    * step's own form would show them, in the workflow's order.
    */
-  heldInOtherSteps(): { label: string; step: string }[] {
+  heldInOtherSteps(): { label: string; step: string; status?: string }[] {
     if (!this.isCurrent()) return [];
     const rank = outlineRank(this.host.model.definition);
     return this.controller
@@ -1385,8 +1432,8 @@ export class FormSession {
       .sort((a, b) => rank(a) - rank(b))
       .flatMap((target) =>
         this.reopened(target)
-          .heldLabels()
-          .map((label) => ({ label, step: target })),
+          .heldEntries()
+          .map((entry) => ({ ...entry, step: target })),
       );
   }
   /**
@@ -1395,14 +1442,56 @@ export class FormSession {
    * switched to Mapped is Fixed again then, with its entry), then the other
    * steps' entries in the workflow's order.
    */
-  heldOnLeaving(): { label: string; step?: string }[] {
+  heldOnLeaving(): { label: string; step?: string; status?: string }[] {
     if (!this.isCurrent()) return [];
     return [
-      ...this.reopened(this.target)
-        .heldLabels()
-        .map((label) => ({ label })),
+      ...this.reopened(this.target).heldEntries(),
       ...this.heldInOtherSteps(),
     ];
+  }
+  /**
+   * Every step's entries that don't apply yet, checked against their fields
+   * once the workflow changed: an entry that no longer belongs to its field
+   * or the value it was typed over goes now (reading one never drops it),
+   * and the rest are listed per step in its form's order, for the canvas.
+   */
+  static heldByStep(
+    host: StepDetailsHost,
+    controller: StepDetailsController,
+  ): Map<string, HeldFact[]> {
+    const held = new Map<string, HeldFact[]>();
+    for (const target of controller.heldTargets()) {
+      const session = new FormSession(host, controller, openRequest(target), {
+        confirm: async () => false,
+        announce: () => undefined,
+      });
+      session.pruneHeld();
+      const facts = session
+        .issues()
+        .filter((issue) => issue.status && issue.field)
+        .map((issue) => ({
+          key: issue.key,
+          label: session.entryLabel(issue.field!),
+          status: issue.status!,
+        }));
+      if (facts.length) held.set(target, facts);
+    }
+    return held;
+  }
+  /** Drops this step's entries that no longer belong to their field or its value. */
+  pruneHeld(): void {
+    if (!this.isCurrent() || this.controller.readOnlyReason(this.target))
+      return;
+    const stale = (key: string, owner: () => PendingOwner) =>
+      this.controller.holds(this.target, key) &&
+      !this.controller.held(this.target, key, owner());
+    for (const { spec } of this.placedSpecs()) {
+      const key = this.pendingKey(spec);
+      if (stale(key, () => this.pendingOwner(spec)))
+        this.controller.release(this.target, key);
+    }
+    if (stale(NOTE_KEY, () => this.noteOwner()))
+      this.controller.release(this.target, NOTE_KEY);
   }
   /** A step's form as it shows when step details open on it again. */
   private reopened(target: string): FormSession {

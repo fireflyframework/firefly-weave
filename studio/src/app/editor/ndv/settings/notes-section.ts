@@ -81,6 +81,7 @@ interface NoteDraft {
           placeholder="Add a note for people who read this workflow"
           [value]="text()"
           (input)="typed($event)"
+          (keydown)="key($event)"
           (blur)="leave()"
         ></textarea>
       </div>
@@ -139,6 +140,21 @@ export class NotesSection {
     if (refused) session.holdNote(text, refused);
     else session.releaseNote();
     this.draft.set({ text, stored: this.note().text });
+  }
+  /**
+   * Escape in a note that isn't saved takes it back, as in a field holding
+   * an entry that doesn't apply: the box shows the saved note again, and
+   * stays focused. Without one, Escape is step details'.
+   */
+  key(event: KeyboardEvent) {
+    const session = this.session();
+    if (event.key !== "Escape" || !this.refused() || !session.isCurrent())
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    session.releaseNote();
+    this.draft.set(null);
+    session.host.refreshView();
   }
   /** Leaving keeps a refused note on screen; spaces typed into no note go. */
   leave() {

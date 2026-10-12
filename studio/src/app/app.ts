@@ -23,6 +23,7 @@ import {
 import {
   StepDetailsService,
   openRequest,
+  type FocusTarget,
   type StepDetailsRequest,
 } from "./editor/ndv/step-details-service";
 import { changeSlot, slotValidation } from "./integrations/connection-slots";
@@ -108,6 +109,7 @@ import {
   Kind,
   kinds,
   ownerLabel,
+  renamedSteps,
   StructuredCanvasAdapter,
   Workflow,
   Node,
@@ -958,6 +960,9 @@ export class App implements CanvasHost {
       warnings: number;
       errorMessages: string[];
       warningMessages: string[];
+      /** Where the first error and the first warning are, as step details find them. */
+      errorAt?: (string | number)[];
+      warningAt?: (string | number)[];
     }
   >();
   private infoCache: {
@@ -1036,7 +1041,7 @@ export class App implements CanvasHost {
     if (stepDetailsEnabled(this as StepDetailsHost)) {
       void this.openStepDetails(node.step.id, {
         revealAll: true,
-        focus: { kind: "firstIssue" },
+        focus: this.badgeFocus(node.step.id),
       });
       return;
     }
@@ -2950,13 +2955,17 @@ export class App implements CanvasHost {
             warnings: number;
             errorMessages: string[];
             warningMessages: string[];
+            errorAt?: (string | number)[];
+            warningAt?: (string | number)[];
           }
         >();
         for (const d of result.diagnostics) {
           const path = d["path"];
           if (typeof path !== "string") continue;
-          const { stepId } = locateDiagnostic(path, definition);
+          const location = locateDiagnostic(path, definition);
+          const { stepId } = location;
           if (stepId === "$workflow") continue;
+          const at = [...location.field, ...location.dataPath];
           const entry = steps.get(stepId) ?? {
             errors: 0,
             warnings: 0,
@@ -2966,9 +2975,11 @@ export class App implements CanvasHost {
           if (d.severity === "warning") {
             entry.warnings++;
             entry.warningMessages.push(d.message);
+            entry.warningAt ??= at;
           } else if (d.severity !== "info") {
             entry.errors++;
             entry.errorMessages.push(d.message);
+            entry.errorAt ??= at;
           }
           steps.set(stepId, entry);
         }
@@ -3296,7 +3307,9 @@ export class App implements CanvasHost {
       return;
     }
     this.flushInspector();
+    const before = this.model.definition;
     this.model.undo();
+    this.stepDetails.followRenames(renamedSteps(before, this.model.definition));
     this.dirty = true;
     this.changed();
   }
@@ -3307,7 +3320,9 @@ export class App implements CanvasHost {
       return;
     }
     this.cancelInspectorCommit();
+    const before = this.model.definition;
     this.model.redo();
+    this.stepDetails.followRenames(renamedSteps(before, this.model.definition));
     this.dirty = true;
     this.changed();
   }
@@ -3316,17 +3331,20 @@ export class App implements CanvasHost {
     tick: number;
     steps: unknown;
     gaps: unknown;
+    held: unknown;
     facts: Map<string, StepFacts>;
-  } = { tick: -1, steps: null, gaps: null, facts: new Map() };
+  } = { tick: -1, steps: null, gaps: null, held: null, facts: new Map() };
   /** Errors, warnings and setup per step; the same map until they change. */
   canvasFacts(): ReadonlyMap<string, StepFacts> {
     const gaps = this.contractIssues;
     const tick = this.tick();
+    const held = this.stepDetails.held();
     const cache = this.factsCache;
     if (
       cache.tick === tick &&
       cache.steps === this.diagnosticSteps &&
-      cache.gaps === gaps
+      cache.gaps === gaps &&
+      cache.held === held
     )
       return cache.facts;
     const facts = new Map<string, StepFacts>();
@@ -3339,13 +3357,41 @@ export class App implements CanvasHost {
           .map((gap) => setupPhrase(gap.label)),
         ...(chip ? [setupPhrase(chip)] : []),
       ];
-      const errors = found?.errorMessages ?? [];
+      // One order for what a badge says and opens (see badgeFocus):
+      // compiler errors as the Problems strip lists them, then entries in
+      // step details that aren't applied yet.
+      const errors = [
+        ...(found?.errorMessages ?? []),
+        ...(held.get(node.step.id) ?? []).map(
+          (entry) => `${entry.status} yet: ${entry.label}`,
+        ),
+      ];
       const warnings = found?.warningMessages ?? [];
       if (errors.length || warnings.length || setup.length)
         facts.set(node.step.id, { errors, warnings, setup });
     }
-    this.factsCache = { tick, steps: this.diagnosticSteps, gaps, facts };
+    this.factsCache = { tick, steps: this.diagnosticSteps, gaps, held, facts };
     return facts;
+  }
+  /**
+   * Where a step's issue badge leads: the problem the badge names, in the
+   * order canvasFacts lists them. A compiler message opens its field as
+   * the Problems strip does; then an entry not applied yet; then what the
+   * step still needs; then a warning.
+   */
+  private badgeFocus(id: string): FocusTarget {
+    const found = this.diagnosticSteps.get(id);
+    if (found?.errorAt) return { kind: "path", path: found.errorAt };
+    const held = this.stepDetails.held().get(id)?.[0];
+    if (held) return { kind: "issue", key: held.key };
+    const gap = this.contractIssues.find((item) => item.stepId === id);
+    if (gap)
+      return {
+        kind: "path",
+        path: gap.field === "with" ? ["with", ...gap.dataPath] : [gap.field],
+      };
+    if (found?.warningAt) return { kind: "path", path: found.warningAt };
+    return { kind: "firstIssue" };
   }
   private runCache: {
     nodes: SimulationNodes | null;
@@ -3447,14 +3493,10 @@ export class App implements CanvasHost {
       id = renamed.to;
     if (stepDetailsEnabled(this as StepDetailsHost)) {
       await this.openStepDetails(id, {
-        focus: {
-          kind:
-            focus === "rename"
-              ? "rename"
-              : focus === "issues"
-                ? "firstIssue"
-                : "first",
-        },
+        focus:
+          focus === "issues"
+            ? this.badgeFocus(id)
+            : { kind: focus === "rename" ? "rename" : "first" },
         revealAll: focus === "issues",
       });
       return;

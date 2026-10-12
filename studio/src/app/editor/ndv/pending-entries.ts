@@ -74,13 +74,14 @@ export class PendingEntries {
     this.entries.set(id(target, key), { ...entry, ...owner, target, key });
     this.version++;
   }
-  /** The entry, while it still belongs to this field and value; a stale one goes. */
+  /**
+   * The entry, while it still belongs to this field and value. Reading never
+   * drops a stale one (a render reads): the check after a change does, with
+   * release().
+   */
   get(target: string, key: string, owner: PendingOwner): PendingEntry | null {
     const held = this.entries.get(id(target, key));
-    if (!held) return null;
-    if (owns(held, owner)) return held;
-    this.release(target, key);
-    return null;
+    return held && owns(held, owner) ? held : null;
   }
   get size(): number {
     return this.entries.size;

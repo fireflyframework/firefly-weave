@@ -1023,7 +1023,11 @@ export class StepDetails {
       this.startRename();
       return;
     }
-    if (focus.kind === "firstIssue" || focus.kind === "path") {
+    if (
+      focus.kind === "firstIssue" ||
+      focus.kind === "path" ||
+      focus.kind === "issue"
+    ) {
       // The field of the issue, on its tab: Settings for a Settings field.
       const session = this.session();
       const reported =
@@ -1038,7 +1042,10 @@ export class StepDetails {
                     (this.pseudo() ? "workflow" : "step"),
                 ),
             )
-          : null;
+          : focus.kind === "issue"
+            ? (session.issues().find((issue) => issue.key === focus.key)
+                ?.field ?? null)
+            : null;
       const field = reported ?? firstIssueField(session.issues());
       if (field) return this.focusField(field);
     }

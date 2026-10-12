@@ -184,6 +184,38 @@ function branches(step: Step): [string, Branch][] {
     return Object.entries(step["branches"] as Record<string, Branch>);
   return [];
 }
+/**
+ * The steps that changed only their ID between two versions of a workflow,
+ * as an Undo or Redo of a rename leaves them: every step in the same place
+ * with the same kind and the same branches. Anything else that changed shape
+ * (a step added, removed or moved) means no rename is told.
+ */
+export function renamedSteps(
+  before: Workflow,
+  after: Workflow,
+): { from: string; to: string }[] {
+  const renames: { from: string; to: string }[] = [];
+  const walk = (a: Step[] | undefined, b: Step[] | undefined): boolean => {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length)
+      return false;
+    return a.every((step, i) => {
+      const other = b[i];
+      if (!other || step.kind !== other.kind) return false;
+      const left = branches(step);
+      const right = branches(other);
+      if (
+        left.length !== right.length ||
+        left.some(([name], at) => name !== right[at][0])
+      )
+        return false;
+      if (step.id !== other.id) renames.push({ from: step.id, to: other.id });
+      return left.every(([, branch], at) =>
+        walk(branch?.steps, right[at][1]?.steps),
+      );
+    });
+  };
+  return walk(before.spec?.steps, after.spec?.steps) ? renames : [];
+}
 function preserveYamlComments(old: unknown, replacement: unknown): void {
   if (!isNode(old) || !isNode(replacement)) return;
   replacement.comment = old.comment;

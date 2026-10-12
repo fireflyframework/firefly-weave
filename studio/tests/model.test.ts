@@ -22,6 +22,7 @@ import {
   StructuredCanvasAdapter,
   freshWorkflow,
   ownerLabel,
+  renamedSteps,
   type Kind,
 } from "../src/app/model";
 import {
@@ -104,6 +105,28 @@ describe("structured workflow authoring", () => {
     model.undo();
     expect(model.canUndo).toBe(false);
     expect(seconds()).toEqual([99]);
+  });
+  it("tells which steps an Undo or Redo renamed, and only when nothing else changed shape", () => {
+    const model = new StructuredCanvasAdapter();
+    const wait = model.insert("wait");
+    const fail = model.insert("fail");
+    model.renameStep(wait.id, "pause");
+    const renamed = model.definition;
+    model.undo();
+    expect(renamedSteps(renamed, model.definition)).toEqual([
+      { from: "pause", to: wait.id },
+    ]);
+    const before = model.definition;
+    model.redo();
+    expect(renamedSteps(before, model.definition)).toEqual([
+      { from: wait.id, to: "pause" },
+    ]);
+    // A step removed or added is no rename.
+    model.remove(fail.id);
+    const removed = model.definition;
+    model.undo();
+    expect(renamedSteps(removed, model.definition)).toEqual([]);
+    expect(renamedSteps(model.definition, model.definition)).toEqual([]);
   });
   it("keeps the rendered node identity stable until rename teardown", () => {
     const model = new StructuredCanvasAdapter();

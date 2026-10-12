@@ -780,9 +780,17 @@ describe("entries not applied yet", () => {
     const h = harness({ responseSample: { id: 1 } });
     const session = h.open();
     const sample = settingsSpec(session, "responseSample");
-    session.hold(sample, "json", "{", "This isn't valid JSON.");
-    expect(session.held({ ...sample, label: "Example answer" })).toBeNull();
+    // Typed while the field was described another way.
+    session.hold(
+      { ...sample, label: "Example answer" },
+      "json",
+      "{",
+      "This isn't valid JSON.",
+    );
     expect(session.held(sample)).toBeNull();
+    expect(h.controller.heldTargets()).toEqual(["get"]);
+    session.pruneHeld();
+    expect(h.controller.heldTargets()).toEqual([]);
   });
 });
 
@@ -990,5 +998,85 @@ describe("number and JSON entries not applied yet", () => {
     expect(ownedActionsOf(h.model.canvas)[USES].responseSample).toEqual({
       id: 2,
     });
+  });
+});
+
+describe("entries not applied yet, on leaving and on the canvas", () => {
+  const rowOf = (session: FormSession, at: number) =>
+    session
+      .placedSpecs()
+      .find((p) => p.spec.id === "status" && p.spec.path[1] === at)!.spec;
+  it("says a note that isn't saved is kept until it fits, apart from entries not applied", () => {
+    expect(leavingText([{ label: "Notes", status: "Not saved" }])).toBe(
+      "Not saved yet: Notes. It's kept until it fits.",
+    );
+    expect(
+      leavingText([
+        { label: "Max tries" },
+        { label: "Notes", status: "Not saved" },
+        { label: "Wait for", step: "wait-a-minute" },
+        { label: "Notes", step: "wait-a-minute", status: "Not saved" },
+      ]),
+    ).toBe(
+      "Not applied yet: Max tries, Wait for in wait-a-minute. What you typed is kept until you finish them. Not saved yet: Notes, Notes in wait-a-minute. They're kept until they fit.",
+    );
+  });
+  it("names a list's row by the list and the row", () => {
+    const h = harness({ statuses: [200, 201, 204] });
+    const session = h.open();
+    session.hold(rowOf(session, 1), "number", "abc", "Enter a number.");
+    expect(session.heldOnLeaving()).toEqual([
+      { label: "Accepted status codes (row 2)" },
+    ]);
+    expect(h.open("lookup").heldInOtherSteps()).toEqual([
+      { label: "Accepted status codes (row 2)", step: "get" },
+    ]);
+  });
+  it("reads an entry that no longer belongs to its value without dropping it, and drops it when checked", () => {
+    const h = harness({
+      retry: { maxAttempts: 5, initialDelaySeconds: 2, maxDelaySeconds: 30 },
+    });
+    const session = h.open();
+    const tries = settingsSpec(session, "retry.maxAttempts");
+    session.hold(tries, "number", "1", "Use a number from 2 to 10.");
+    session.write(tries, fixed(7));
+    // Reading, as a render does, changes nothing.
+    expect(session.held(tries)).toBeNull();
+    expect(
+      h
+        .open()
+        .issues()
+        .filter((i) => i.status),
+    ).toEqual([]);
+    expect(h.controller.heldTargets()).toEqual(["get"]);
+    // The check after a change drops it, and lists what is left per step.
+    expect(FormSession.heldByStep(h.host, h.controller)).toEqual(new Map());
+    expect(h.controller.heldTargets()).toEqual([]);
+  });
+  it("lists each step's entries for its tile, checked against their fields", () => {
+    const h = harness({ statuses: [200, 201, 204], responseSample: { id: 1 } });
+    const session = h.open();
+    session.hold(rowOf(session, 1), "number", "abc", "Enter a number.");
+    session.hold(
+      settingsSpec(session, "responseSample"),
+      "json",
+      "{",
+      "This isn't valid JSON.",
+    );
+    const held = FormSession.heldByStep(h.host, h.controller);
+    expect([...held.keys()]).toEqual(["get"]);
+    expect(
+      held.get("get")!.map(({ label, status }) => [label, status]),
+    ).toEqual([
+      ["Response sample", "Not applied"],
+      ["Accepted status codes (row 2)", "Not applied"],
+    ]);
+    // Each names the issue it is, for step details to open on.
+    const keys = h
+      .open()
+      .issues()
+      .filter((i) => i.status)
+      .map((i) => i.key);
+    expect(held.get("get")!.map((fact) => fact.key)).toEqual(keys);
   });
 });

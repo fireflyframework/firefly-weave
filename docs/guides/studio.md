@@ -1004,10 +1004,15 @@ an error, every field is read-only and says "Fix the source to edit this step."
 **Entries that don't apply yet.** Studio never blocks typing. A number outside
 its limits, or JSON or a text template that isn't finished, stays in its field,
 marked **Not applied**, while the workflow keeps the last value that applied.
-The entry stays while you close step details, move to other steps and come
-back, for as long as the workflow is open. Press Escape in the field to take it
-back. When step details close with such entries, a message names their fields
-and the steps they are in.
+A note the canvas has no room for stays the same way, marked **Not saved**,
+until it fits. The entry stays while you close step details, move to other
+steps and come back, and while you rename the step and undo or redo that, for
+as long as the workflow is open. Press Escape in the field to take it back.
+When step details close with such entries, a message names their fields (a
+list's row by its list and row, such as "Accepted status codes (row 2)") and
+the steps they are in. On the canvas, the step's problem badge counts them
+after the step's errors from the last check, and opens the problem it names,
+the same field the **Diagnostics** row opens.
 
 #### Edit workflow settings with the gear
 
