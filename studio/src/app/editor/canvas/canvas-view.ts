@@ -254,6 +254,12 @@ export class CanvasView implements OnInit, DoCheck {
   private fitted = -1;
   private fitPending = false;
   private revealed = "";
+  /**
+   * The step a pointer press on its card just selected. It is in view where
+   * the pointer is, so selecting it pans only when part of it is hidden:
+   * otherwise the second click of a double-click would miss it.
+   */
+  private pointed = "";
   private readonly positions = new WeakMap<LtrTile, Point>();
 
   private readonly lifetime = inject(DestroyRef);
@@ -314,8 +320,10 @@ export class CanvasView implements OnInit, DoCheck {
     const selected = h.model.selected;
     if (selected !== this.revealed) {
       this.revealed = selected;
+      const margin = selected && selected === this.pointed ? 0 : undefined;
+      this.pointed = "";
       if (selected)
-        afterNextRender(() => this.revealTile(selected), {
+        afterNextRender(() => this.revealTile(selected, margin), {
           injector: this.injector,
         });
     }
@@ -736,12 +744,14 @@ export class CanvasView implements OnInit, DoCheck {
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggledCovering(this.selection, id, this.places());
       this.seenSelected = this.selection.focus ?? "";
+      this.pointed = this.selection.focus === id ? id : "";
       if (this.selection.focus) await h.selectStep(this.selection.focus, false);
       else await h.deselect();
       return;
     }
     this.selection = only(id);
     this.seenSelected = id;
+    this.pointed = id;
     await h.selectStep(id, false);
   }
   private insertAt(control: HTMLElement) {
