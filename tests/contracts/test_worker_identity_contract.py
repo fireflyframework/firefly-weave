@@ -169,7 +169,7 @@ def test_old_worker_instance_and_status_answers_still_deserialize():
         "revoked": False,
     }
     parsed = WorkerInstance.model_validate_json(json.dumps(instance))
-    assert parsed.identity is None and json.loads(parsed.model_dump_json()) == instance
+    assert "identity" not in WorkerInstance.model_fields and json.loads(parsed.model_dump_json()) == instance
     now = datetime.now(UTC).isoformat()
     status = {
         **instance,
@@ -333,3 +333,50 @@ def test_identity_and_member_contracts_are_exported():
     assert "worker-identity" in schemas and "operations-observed-member" in schemas
     request = schemas["worker-instance-request"]
     assert "identity" in request["properties"] and "identity" not in request.get("required", [])
+
+
+def boundary_identity(over: bool = False) -> WorkerIdentity:
+    """An identity of exactly 4,096 bytes as PostgreSQL renders it from jsonb, or one byte more.
+
+    `{"labels": {…}, "runtime": "process", "platform_hint": "none"}` takes 139 bytes of keys, quotes and
+    `", "`/`": "` separators. Seven labels of 256 "é" add 512 UTF-8 bytes each (3,584), and the eighth holds
+    117 double quotes, escaped to 2 bytes each, plus 139 letters: 373 bytes. 139 + 3,584 + 373 = 4,096.
+    """
+    labels = {f"k{index}": "é" * 256 for index in range(7)}
+    labels["k7"] = '"' * (118 if over else 117) + "a" * (138 if over else 139)
+    return WorkerIdentity(runtime="process", labels=labels)
+
+
+def test_identity_of_exactly_4096_stored_bytes_is_accepted_and_one_more_is_refused():
+    from firefly_weave.contracts.workers import identity_text_bytes
+
+    identity = boundary_identity()
+    assert identity_text_bytes(identity.model_dump(mode="json")) == 4096
+    with pytest.raises(ValidationError, match="4 KiB"):
+        boundary_identity(over=True)
+
+
+def test_registration_answer_schema_has_only_what_the_answer_sends():
+    from firefly_weave.contracts.openapi import export_openapi
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    schemas = export_schemas()
+    assert "identity" not in schemas["worker-instance"]["properties"]
+    assert {"identity", "registered_at"} <= set(schemas["worker-status"]["properties"])
+    assert "identity" in schemas["worker-instance-request"]["properties"]
+    components = export_openapi()["components"]["schemas"]
+    assert "identity" not in components["WorkerInstance"]["properties"]
+    assert "identity" in components["WorkerStatus"]["properties"]
+    with pytest.raises(ValidationError):
+        WorkerInstance.model_validate_json(
+            json.dumps(
+                {
+                    "release_id": str(uuid4()),
+                    "task_types": ["echo@1.0.0"],
+                    "capacity": 1,
+                    "id": str(uuid4()),
+                    "principal_id": str(uuid4()),
+                    "identity": {"runtime": "process"},
+                }
+            )
+        )

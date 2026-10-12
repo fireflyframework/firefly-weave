@@ -901,7 +901,7 @@ async def test_worker_registration_facts_match_source(operations_case, identity)
     assert "identity" not in rows[0]["payload"]
     assert rows[0]["identity"] == ({} if identity is None else identity.model_dump(mode="json", exclude_none=True))
     # The registration answer keeps its bytes; identity is read from the worker's facts.
-    assert registered.identity is None and "identity" not in registered.model_dump(mode="json")
+    assert "identity" not in registered.model_dump(mode="json")
     status = await case.workers.read(case.actor, case.scope, registered.id, context=AuditContext())
     assert status.identity == identity and status.registered_at == rows[0]["registered_at"]
     from operations_support import assert_usage
@@ -926,24 +926,22 @@ async def test_workers_without_facts_or_identity_read_as_unknown(operations_case
     assert all("identity" not in item and "registered_at" not in item for item in page["items"])
 
 
-async def test_largest_identity_fits_its_database_column(operations_case):
+def boundary_labels(over=False):
+    """Labels that make a process identity exactly 4,096 bytes as jsonb text, or one byte more."""
+    labels = {f"k{index}": "é" * 256 for index in range(7)}
+    labels["k7"] = '"' * (118 if over else 117) + "a" * (138 if over else 139)
+    return labels
+
+
+async def test_identity_at_the_size_limit_fits_its_database_column(operations_case):
     import json
 
-    from firefly_weave.contracts.workers import WorkerIdentity
+    from sqlalchemy.exc import DBAPIError
+
+    from firefly_weave.contracts.workers import WorkerIdentity, identity_text_bytes
 
     case = operations_case
-    identity = WorkerIdentity(
-        host="h" * 253,
-        runtime="container",
-        sdk_version="s" * 64,
-        language_version="l" * 64,
-        os="o" * 64,
-        arch="a" * 64,
-        platform_hint="kubernetes",
-        namespace="n" * 253,
-        node="d" * 253,
-        labels={f"key-{index}": 'é\\"' + "v" * 150 for index in range(8)},
-    )
+    identity = WorkerIdentity(runtime="process", labels=boundary_labels())
     registered = await case.workers.register_instance(
         case.actor, case.scope, registration_request(case, identity), context=AuditContext()
     )
@@ -952,8 +950,20 @@ async def test_largest_identity_fits_its_database_column(operations_case):
             "SELECT octet_length(identity::text) AS size FROM worker_facts WHERE worker_id=:id", id=registered.id
         )
     )[0]["size"]
-    text_form = json.dumps(identity.model_dump(mode="json"), ensure_ascii=False, separators=(", ", ": "))
-    assert measured == len(text_form.encode()) <= 4096
+    assert measured == identity_text_bytes(identity.model_dump(mode="json")) == 4096
+    over = {"runtime": "process", "platform_hint": "none", "labels": boundary_labels(over=True)}
+    async with case.owner.begin() as owner:
+        assert (
+            await owner.scalar(text("SELECT octet_length(cast(:value AS jsonb)::text)"), {"value": json.dumps(over)})
+            == 4097
+        )
+        with pytest.raises(DBAPIError) as caught:
+            async with owner.begin_nested():
+                await owner.execute(
+                    text("UPDATE worker_facts SET identity=cast(:value AS jsonb) WHERE worker_id=:id"),
+                    {"value": json.dumps(over), "id": registered.id},
+                )
+        assert caught.value.orig.sqlstate == "23514"
 
 
 async def worker_rows(case):
@@ -1062,6 +1072,7 @@ async def test_registration_over_http_reports_identity_and_refuses_forged_fields
         {**body, "placement": placement},
         {**body, "identity": {**identity, "placement": placement}},
         {**body, "identity": {**identity, "labels": {"api_token": "x"}}},
+        {**body, "identity": {"runtime": "process", "labels": boundary_labels(over=True)}},
         {**body, "registered_at": "2026-10-01T00:00:00Z"},
     ):
         refused = await client.post(env_url + "/workers", headers=headers, json=forged)

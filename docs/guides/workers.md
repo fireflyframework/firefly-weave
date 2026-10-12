@@ -254,9 +254,9 @@ older server refuses it. The checked-in example registers without one.
 
 Labels are visible to everyone who can read workers. Never put credentials in
 them: keys that name a token, password, secret or authorization are refused,
-and an invalid label stops the worker before it registers (for native
-executors, it stops the API's executor start), with a message that does not
-repeat the value. An invalid hostname or platform value is left out
+and an invalid label stops the worker before it registers, with a message that
+does not repeat the value. On the API host, with native executors configured,
+an invalid label stops the API from starting. An invalid hostname or platform value is left out
 instead.
 
 ## 4. Observe one task through completion

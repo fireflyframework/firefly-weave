@@ -107,16 +107,21 @@ class WorkerIdentity(ContractModel):
         return self
 
 
-class InstanceRequest(ContractModel):
+class InstanceFields(ContractModel):
+    """What a registration request and the stored instance share."""
+
     release_id: UUID
     task_types: list[str] = Field(min_length=1, max_length=100)
     capacity: int = Field(ge=1, le=100)
+
+
+class InstanceRequest(InstanceFields):
     # Sent by current workers; a server that predates it refuses the field, and workers then
     # register once more without it.
     identity: WorkerIdentity | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
-class WorkerInstance(InstanceRequest):
+class WorkerInstance(InstanceFields):
     """The stable registration answer and stored instance. Identity lives in the worker's facts."""
 
     id: UUID
@@ -144,6 +149,7 @@ class WorkerStatus(WorkerInstance):
     observed_at: AwareDatetime
     active_leases: int = Field(ge=0)
     available_capacity: int | None = Field(ge=0, le=100)
+    identity: WorkerIdentity | None = Field(default=None, exclude_if=lambda v: v is None)
     registered_at: AwareDatetime | None = Field(default=None, exclude_if=lambda v: v is None)
 
 

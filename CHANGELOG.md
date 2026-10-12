@@ -64,20 +64,29 @@ SPDX-License-Identifier: Apache-2.0
   `identity` with host, runtime, versions, platform, Kubernetes namespace and
   node, and up to 8 labels from `WEAVE_WORKER_LABELS`
   (`WEAVE_WORKER_REPORT_HOST=false` leaves out the host). The Agentic and Files
-  workers, native executors and the SDK's `register_worker` send it, and retry
-  once without it when an older server answers `422 WV-VALIDATION`. New SDK
-  helpers: `worker_identity` and `register_worker_http`.
+  workers and the SDK's `register_worker` send it and retry once without it when
+  an older server answers `422 WV-VALIDATION`; native executors send it inside
+  the API process. With native executors configured, an invalid
+  `WEAVE_WORKER_LABELS` stops the API from starting. New SDK helpers:
+  `worker_identity` and `register_worker_http`.
 - Worker reads, lists, and drain or resume answers add optional `identity` and
   `registered_at`. Upgrade CLIs and SDKs with the server: earlier releases fail
   with `502 WV-WIRE` on workers registered after the upgrade. The registration
   answer and stored worker records keep their bytes, and a worker cannot report
   a placement.
-- Deployment observations list up to 100 `members` of each worker component:
-  Compose containers and Kubernetes pods, with host, ordinal, state, readiness,
-  start time, restarts and node. Observations without members keep their bytes
-  and digests. Kubernetes runners need `list` on the namespace's pods to
-  observe worker components; a worker component with more than 100 members
-  fails the observation instead of being truncated.
+- Deployment observations list up to 100 live `members` of each worker
+  component: running or starting Compose containers and Kubernetes pods, with
+  host, ordinal, state, readiness, start time, restarts and node. Stopped,
+  terminating, finished, failed and evicted ones are left out. With more than 100
+  live members, or when the runner cannot list them all, `members` is left out
+  (placement unknown) and the observation still succeeds. Kubernetes runners
+  read members through the deployment's selector, including set-based
+  `matchExpressions`, and need `list` on the namespace's pods. Observations
+  without members keep their bytes and digests.
+- Upgrade the server before its deployment runners: an older server refuses the
+  `members` an upgraded runner reports, so observe jobs fail and applies end
+  `reconciliation_required`. Earlier CLIs and SDKs fail with `502 WV-WIRE` on
+  observation reads and lists that carry members.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.

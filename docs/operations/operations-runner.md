@@ -57,9 +57,12 @@ substantial host authority: isolate the runner and keep its provider permissions
 within the destination it operates. For Kubernetes, grant only the namespace and
 resource permissions needed by the allowed deployments. API-component updates
 also require reading that namespace's horizontal pod autoscalers so the runner
-can reject a conflicting scaling policy. Observing a worker component also lists
-the namespace's pods (`list` on `pods`), so grant that read before upgrading
-the runner; without it, observing a target with a worker component fails.
+can reject a conflicting scaling policy. To report where worker pods run, the
+runner also lists the namespace's pods (`list` on `pods`); without that read,
+observations leave the worker's members out. Upgrade the API server before its
+runners: an older server refuses the members a newer runner reports, so its
+observe jobs fail and its applies end in reconciliation. Grant the read after
+the server upgrade and before the runner upgrade.
 
 ## 2. Copy the destination's actual identity
 
@@ -213,6 +216,13 @@ then applies only the named services and waits for container readiness. Add
 meaningful health checks to your Compose services; without one, a running
 process is the only readiness evidence Docker provides.
 
+For a worker service, the observation also lists its live containers as
+members: the container ID prefix, which is the container's default hostname,
+and its Compose number. Exited, dead, and removing containers are left out. With
+more than 100 live containers, or a container whose details cannot be read, the
+observation leaves the members out (placement unknown) and still succeeds. A
+service that sets its own `hostname` gets no placement.
+
 ### Kubernetes
 
 The adapter manages **existing deployments**, not arbitrary resources. Each
@@ -238,14 +248,18 @@ The adapter changes only the selected container's image/resources, replicas,
 and its ownership label. A worker scaling plan does not change the image.
 Objects already labeled as belonging to another Weave target are rejected.
 
-For a worker component, the observation also lists the deployment's pods as
-members, read with the deployment's own `matchLabels` selector inside the
-pinned namespace. A pod counts only when its controlling ReplicaSet is named
-after the deployment and its pod template hash. More than 100 member pods, or a
-selector label that is not valid Kubernetes label syntax, fails the observation
-instead of reporting part of it. A Compose worker service reports its containers the same way,
-using each container's ID prefix and Compose number; it also fails with more
-than 100 containers.
+For a worker component, the observation also lists the deployment's live pods
+as members, inside the pinned namespace and through the deployment's own
+selector: `matchLabels` become `key=value` and `matchExpressions` become
+set-based requirements (`key in (a,b)`, `key notin (a,b)`, `key`, `!key`). The
+runner reads only the few pod fields it needs. A pod counts only when its
+controlling ReplicaSet is named after the deployment and its pod template hash;
+terminating, finished, failed, and evicted pods are left out. Members are
+placement only and never fail an observation or an apply: with more than 100
+live pods, a selector kubectl cannot express exactly, a label that is not valid
+Kubernetes syntax, or a listing that fails, the observation leaves the members
+out (placement unknown) instead of reporting part of them, and it never lists
+the whole namespace.
 
 ### Azure Container Apps
 

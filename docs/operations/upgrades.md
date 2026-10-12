@@ -45,7 +45,7 @@ the desktop app never migrates a platform.
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
-| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Upgrade CLIs and SDKs together with the server; see [incident list compatibility](#incident-list-compatibility) and [worker identity compatibility](#worker-identity-compatibility). |
+| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Upgrade CLIs and SDKs together with the server, and upgrade the server before its deployment runners; see [incident list compatibility](#incident-list-compatibility) and [worker identity compatibility](#worker-identity-compatibility). |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -240,14 +240,15 @@ unknown.
 ## Worker identity compatibility
 
 Workers can now report where they run when they register, and worker reads
-return it. The change crosses versions in both directions:
+return it. Deployment observations can also list the containers or pods of a
+worker component. Both changes cross versions:
 
-- **New workers, older server.** The Agentic and Files workers, native
-  executors, and the Python SDK's `register_worker` send an `identity`. A server
-  without it refuses the field with `422 WV-VALIDATION`; the worker then
-  registers exactly once more without it, on the same connection and
-  credentials. Other failures are not retried. Upgrade servers first to keep the
-  identity.
+- **New workers, older server.** The Agentic and Files workers and the Python
+  SDK's `register_worker` send an `identity`. A server without it refuses the
+  field with `422 WV-VALIDATION`; the worker then registers exactly once more
+  without it, on the same connection and credentials. Other failures are not
+  retried. Upgrade servers first to keep the identity. Native executors register
+  inside the API process, so they always use a server of their own version.
 - **Older clients, new server.** Worker reads, lists, and drain or resume
   answers add `identity` and `registered_at` when they are known. **Upgrade
   CLIs and SDKs with the server.** Earlier releases reject the new fields:
@@ -259,14 +260,33 @@ return it. The change crosses versions in both directions:
   records keep their earlier shape.
 - **Labels.** `WEAVE_WORKER_LABELS` is read only from the worker's own
   environment. An invalid label stops the worker before it registers, so check
-  the setting before rolling out new worker images.
+  the setting before rolling out new worker images. With native executors
+  configured, an invalid label on the API's own environment stops the API from
+  starting.
 
-Deployment observations add `members` to worker components, left out when
-empty, so existing observations, their digests, and plans reviewed against them
-are unchanged. Compose and Kubernetes resource versions are also unchanged. A
-Kubernetes runner now lists the namespace's pods to observe a worker component:
-grant `list` on `pods` in that namespace before upgrading the runner. See
-[the runner guide](operations-runner.md#kubernetes).
+**Upgrade the server before its runners.** An upgraded runner reports
+`members` for worker components, and an older server refuses them: the runner's
+observe jobs fail, and an apply that touches a worker component ends
+`reconciliation_required` with an ambiguous receipt, even though the change
+was applied. Upgrade the API first, then each runner.
+
+- **Older clients, observations with members.** Observations that an upgraded
+  runner recorded with `members` fail with `502 WV-WIRE` in earlier releases:
+  `weave operations observations read` and `list`, and the Python SDK's
+  `invoke("deployment_observations.read")` and
+  `invoke("deployment_observations.list")`. Upgrade CLIs and SDKs with the
+  server before upgrading runners.
+- **Unchanged.** Observations without members, their digests, plans reviewed
+  against them, and Compose and Kubernetes resource versions keep their bytes.
+- **Members are placement only.** They list live containers or pods: stopped,
+  terminating, finished, failed, and evicted ones are left out. When a worker
+  component has more than 100 live members, or the runner cannot list them all,
+  `members` is left out and placement is unknown; the observation itself still
+  succeeds.
+- **Kubernetes.** After upgrading the server, and before upgrading a Kubernetes
+  runner, grant it `list` on `pods` in the namespace. Without that permission
+  the runner leaves `members` out. See
+  [the runner guide](operations-runner.md#kubernetes).
 
 ## Operational fact storage
 

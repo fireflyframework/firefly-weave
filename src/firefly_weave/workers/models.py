@@ -76,7 +76,7 @@ def observed_worker(
     if draining or instance.revoked:
         available = 0
     return WorkerStatus(
-        **instance.model_dump(exclude={"identity"}),
+        **instance.model_dump(),
         identity=identity,
         registered_at=registered_at,
         revision=revision,

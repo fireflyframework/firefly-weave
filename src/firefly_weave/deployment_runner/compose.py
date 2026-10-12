@@ -21,6 +21,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import stat
 import tempfile
 from collections.abc import Awaitable, Callable
@@ -57,31 +58,44 @@ def _versioned(fact: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in fact.items() if key != "number"}
 
 
-def _members(facts: list[dict[str, Any]]) -> list[ObservedMember]:
-    """Worker containers as members; more than the contract holds refuses instead of truncating."""
-    if len(facts) > 100:
+def _ordinal(number: object) -> int | None:
+    """The Compose container number; only ASCII digits, as Compose writes it."""
+    if number in (None, ""):
+        return None
+    if not isinstance(number, str) or not re.fullmatch(r"[0-9]{1,7}", number):
         raise RunnerPolicyError()
-    members = []
-    for fact in facts:
-        number = fact.get("number")
-        if number not in (None, "") and not (isinstance(number, str) and number.isdigit() and len(number) <= 7):
-            raise RunnerPolicyError()
-        try:
-            members.append(
-                ObservedMember(
-                    # Docker's default hostname, which the worker reports, is the ID prefix.
-                    host=fact["id"][:12],
-                    ordinal=int(number) if number else None,
-                    state=fact["state"],
-                    ready=_ready(fact),
-                    started_at=observed_time(fact["started"]),
-                    restarts=fact["restart"],
-                    node=None,
-                )
+    return int(number)
+
+
+# Containers in these states run no worker that placement could describe.
+_STOPPED = frozenset({"exited", "dead", "removing"})
+
+
+def _members(facts: list[dict[str, Any]]) -> list[ObservedMember] | None:
+    """Live worker containers as members, or None when they cannot all be reported.
+
+    Members are placement only, so they never fail an observation or an apply: more than 100 live
+    containers or one unreadable container leaves them out (unknown) rather than reporting part of them.
+    """
+    live = [fact for fact in facts if fact.get("state") not in _STOPPED]
+    if len(live) > 100:
+        return None
+    try:
+        return [
+            ObservedMember(
+                # Docker's default hostname, which the worker reports, is the ID prefix.
+                host=fact["id"][:12],
+                ordinal=_ordinal(fact.get("number")),
+                state=fact["state"],
+                ready=_ready(fact),
+                started_at=observed_time(fact["started"]),
+                restarts=fact["restart"],
+                node=None,
             )
-        except (KeyError, ValidationError):
-            raise RunnerPolicyError() from None
-    return members
+            for fact in live
+        ]
+    except (KeyError, RunnerPolicyError, ValidationError):
+        return None
 
 
 class ComposeAdapter:
@@ -194,7 +208,7 @@ class ComposeAdapter:
                     ownership="managed" if managed else "imported",
                     state="stopped" if stopped else "ready" if stable else "progressing",
                     # Placement only concerns workers; other components keep their observation bytes.
-                    members=_members(members) if binding.kind == "worker" else [],
+                    members=(_members(members) or []) if binding.kind == "worker" else [],
                 )
             )
         return ObservationReport(resources=resources, complete=True, settled=settled)

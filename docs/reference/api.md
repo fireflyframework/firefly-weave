@@ -704,9 +704,11 @@ where the worker runs: `host`, `runtime` (`embedded`, `container`, or
   registration) when they are known. Workers registered before the server
   recorded them have neither.
 
-An older server refuses `identity` with `422` `WV-VALIDATION`. Current workers
-and the Python SDK then register exactly once more without it, using the same
-client and credentials; any other failure is not retried.
+An older server refuses `identity` with `422` `WV-VALIDATION`. Current packaged
+workers and the Python SDK then register exactly once more without it, using the
+same client and credentials; any other failure is not retried. Native executors
+register inside the API process and always use a server of their own version.
+The registration answer's schema (`WorkerInstance`) has no `identity` field.
 
 **Answers that say "unavailable".** Cancellation and task completion can return
 an unavailable acknowledgment when the platform cannot classify the historical
@@ -956,13 +958,17 @@ and runner registrations belong to one environment. Child-resource reads check
 the target grant. Lists filter authorized target IDs before pagination; use
 `target_id` to select a target, and `deployment_id` to narrow plan history.
 An observation is a dated snapshot, not a promise of current health.
-A worker component's observed resource lists up to 100 `members`, one per
-container or pod: `host`, `ordinal`, `state`, `ready`, `started_at`,
-`restarts`, and `node`. Compose reports the container ID prefix, which is the
-container's default hostname, and its Compose number as `ordinal`; Kubernetes
-reports the pod name and node. A runner refuses to report a worker component
-with more than 100 members rather than truncate it. Resources without members
-leave the field out, so their observations keep their digests.
+A worker component's observed resource lists up to 100 live `members`, one per
+running or starting container or pod: `host`, `ordinal`, `state`, `ready`,
+`started_at`, `restarts`, and `node`. Compose reports the container ID prefix,
+which is the container's default hostname, and its Compose number as
+`ordinal`; Kubernetes reports the pod name and node. Stopped, terminating,
+finished, failed, and evicted containers or pods are left out. Members are
+placement only: with more than 100 live members, or when the runner cannot list
+them all, the field is left out (placement unknown) rather than truncated, and
+the observation still succeeds. A resource without the field therefore has no
+members or unknown ones, and its observation keeps its digest. Upgrade the
+server before its runners; an older server refuses a report with `members`.
 
 The server creates an immutable plan from the desired revision and a fresh,
 complete observation. Approval records its exact digest. Applying checks the

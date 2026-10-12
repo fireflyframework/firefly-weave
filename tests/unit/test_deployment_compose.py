@@ -351,16 +351,29 @@ def container(identifier, number, **changes):
     }
 
 
-async def test_worker_members_report_hostname_number_and_state(tmp_path):
+async def test_worker_members_are_the_live_containers(tmp_path):
     config = policy(tmp_path)
     containers = [
         container("b" * 64, "2", state="exited", started="0001-01-01T00:00:00Z", restart=3, health=""),
         container("a" * 64, "1"),
         container("c" * 64, "3", health="unhealthy", started="2026-10-03T09:00:00Z"),
+        container("d" * 64, "4", state="created", started="0001-01-01T00:00:00Z", health=""),
+        container("e" * 64, "5", state="dead", health=""),
+        container("f" * 64, "6", state="removing", health=""),
+        container("0" * 64, "7", state="restarting", restart=5, health=""),
     ]
     report = await ComposeAdapter(config, command=worker_project(config, containers)).observe()
     members = [member.model_dump(mode="json") for member in report.resources[0].members]
     assert members == [
+        {
+            "host": "0" * 12,
+            "ordinal": 7,
+            "state": "restarting",
+            "ready": False,
+            "started_at": "2026-10-03T08:15:30.123456Z",
+            "restarts": 5,
+            "node": None,
+        },
         {
             "host": "a" * 12,
             "ordinal": 1,
@@ -368,15 +381,6 @@ async def test_worker_members_report_hostname_number_and_state(tmp_path):
             "ready": True,
             "started_at": "2026-10-03T08:15:30.123456Z",
             "restarts": 0,
-            "node": None,
-        },
-        {
-            "host": "b" * 12,
-            "ordinal": 2,
-            "state": "exited",
-            "ready": False,
-            "started_at": None,
-            "restarts": 3,
             "node": None,
         },
         {
@@ -388,8 +392,18 @@ async def test_worker_members_report_hostname_number_and_state(tmp_path):
             "restarts": 0,
             "node": None,
         },
+        {
+            "host": "d" * 12,
+            "ordinal": 4,
+            "state": "created",
+            "ready": False,
+            "started_at": None,
+            "restarts": 0,
+            "node": None,
+        },
     ]
-    assert report.resources[0].ready_replicas == 1 and report.resources[0].replicas == 3
+    # Replica counts still describe every container; only placement leaves stopped ones out.
+    assert report.resources[0].ready_replicas == 1 and report.resources[0].replicas == 7
 
 
 async def test_member_number_does_not_change_the_reviewed_resource_version(tmp_path):
@@ -409,22 +423,44 @@ async def test_container_without_a_compose_number_has_no_ordinal(tmp_path):
 
 @pytest.mark.parametrize(
     "changes",
-    [{"number": "1x"}, {"number": 1}, {"started": "yesterday"}, {"restart": -1}, {"state": "Running Now"}],
+    [
+        {"number": "1x"},
+        {"number": 1},
+        {"number": "\u00b2"},
+        {"number": "\u0661"},
+        {"number": "12345678"},
+        {"started": "yesterday"},
+        {"restart": -1},
+        {"state": "Running Now"},
+    ],
 )
-async def test_malformed_member_facts_refuse_the_observation(tmp_path, changes):
+async def test_one_malformed_live_container_leaves_all_members_out(tmp_path, changes):
     config = policy(tmp_path)
-    with pytest.raises(RunnerPolicyError):
-        await ComposeAdapter(
-            config, command=worker_project(config, [{**container("a" * 64, "1"), **changes}])
-        ).observe()
+    containers = [container("a" * 64, "1"), {**container("b" * 64, "2"), **changes}]
+    report = await ComposeAdapter(config, command=worker_project(config, containers)).observe()
+    assert report.complete and report.resources[0].members == []
+    assert "members" not in report.model_dump(mode="json")["resources"][0]
 
 
-async def test_more_than_one_hundred_worker_containers_refuse_instead_of_truncating(tmp_path):
+@pytest.mark.parametrize("number", ["\u00b2", "\u0661", "\uff11", "1x", "", "12345678"])
+def test_compose_numbers_are_ascii_digits(number):
+    from firefly_weave.deployment_runner.compose import _ordinal
+
+    if number == "":
+        assert _ordinal(number) is None
+    else:
+        with pytest.raises(RunnerPolicyError):
+            _ordinal(number)
+    assert _ordinal("1234567") == 1234567 and _ordinal(None) is None
+
+
+async def test_more_than_one_hundred_live_worker_containers_leave_members_out(tmp_path):
     config = policy(tmp_path)
     containers = [container(f"{index:064x}", str(index + 1)) for index in range(101)]
-    with pytest.raises(RunnerPolicyError):
-        await ComposeAdapter(config, command=worker_project(config, containers)).observe()
-    report = await ComposeAdapter(config, command=worker_project(config, containers[:100])).observe()
+    report = await ComposeAdapter(config, command=worker_project(config, containers)).observe()
+    assert report.complete and report.resources[0].members == [] and report.resources[0].replicas == 101
+    stopped = [container(f"{index + 200:064x}", str(index + 200), state="exited", health="") for index in range(5)]
+    report = await ComposeAdapter(config, command=worker_project(config, containers[:100] + stopped)).observe()
     assert len(report.resources[0].members) == 100
 
 
