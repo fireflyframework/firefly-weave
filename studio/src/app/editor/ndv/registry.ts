@@ -185,6 +185,8 @@ export interface ParamSpec {
   maxItems?: number;
   units?: ("seconds" | "minutes" | "hours" | "days")[];
   maxLength?: number;
+  /** text only: "version" takes a semantic version (1.2.0), as the language requires. */
+  format?: "version";
   /** Normalized on blur like step names. */
   identifier?: boolean;
   showWhen?(step: Step, ctx: KindContext): boolean;

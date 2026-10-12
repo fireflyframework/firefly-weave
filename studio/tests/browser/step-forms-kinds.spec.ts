@@ -21,6 +21,7 @@ import { expect, test } from "@playwright/test";
 import {
   StepDetailsPage,
   addCommonStep,
+  settingsGear,
   sizes,
   withNewEditor,
 } from "./step-details-po";
@@ -78,9 +79,7 @@ for (const size of sizes)
       await details.trigger().dblclick();
       await expect(details.topFields(), "Manual form trigger").toHaveCount(1);
       await details.close();
-      await page
-        .getByRole("button", { name: "Workflow settings", exact: true })
-        .click();
+      await settingsGear(page).click();
       await expect(
         page
           .getByRole("dialog", { name: "Workflow settings" })

@@ -115,6 +115,15 @@ export function firstIssueField(issues: StepIssue[]): PlacedSpec | null {
   );
 }
 
+/** What the trigger, End and workflow settings are called where a step's ID would show. */
+const TARGET_NAMES: Record<string, string> = {
+  $trigger: "Manual form trigger",
+  $end: "End",
+  $workflow: "workflow settings",
+};
+export const targetName = (target: string): string =>
+  TARGET_NAMES[target] ?? target;
+
 /** An entry not applied yet, and the step that holds it when it isn't the open one. */
 export interface HeldLabel {
   label: string;
@@ -150,3 +159,12 @@ export function leavingText(entries: HeldLabel[]): string {
     : named.join(", ");
   return `${NOT_APPLIED} yet: ${list}. What you typed is kept until you finish ${entries.length === 1 ? "it" : "them"}.`;
 }
+/** The toast on closing, with each step's entries under its name. */
+export const leavingToast = (
+  entries: { label: string; step?: string }[],
+): string =>
+  leavingText(
+    entries.map(({ label, step }) =>
+      step ? { label, step: targetName(step) } : { label },
+    ),
+  );

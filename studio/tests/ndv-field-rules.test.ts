@@ -102,6 +102,19 @@ describe("field rules", () => {
       })[0].message,
     ).toBe("Use at most 2.");
   });
+  it("flags a version that isn't a semantic version, and keeps it", () => {
+    const version = spec({ format: "version" });
+    expect(fieldRules(version, fixed("abc"), none)).toEqual([
+      {
+        code: "format",
+        message: "Use a semantic version such as 1.0.0.",
+        severity: "error",
+      },
+    ]);
+    expect(fieldRules(version, fixed("1.2.0"), none)).toEqual([]);
+    expect(fieldRules(version, fixed("2.0.0-rc.1+build.5"), none)).toEqual([]);
+    expect(fieldRules(spec({}), fixed("abc"), none)).toEqual([]);
+  });
   it("hides required messages on a fresh step until the field is left or everything is revealed", () => {
     const problems = [
       { code: "required", message: "Enter a value." },

@@ -73,7 +73,8 @@ import { IssuesIndicator } from "./issues-indicator";
 import {
   fieldFor,
   firstIssueField,
-  leavingText,
+  leavingToast,
+  targetName,
   type PlacedSpec,
   type StepIssue,
 } from "./issues";
@@ -129,10 +130,6 @@ const FOCUSABLE =
   'button:not([disabled]):not([tabindex="-1"]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const CONTROL =
   'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [role="combobox"], [role="switch"], [role="radio"][tabindex="0"], button:not([disabled]):not([tabindex="-1"])';
-const NAMES: Record<string, string> = {
-  $trigger: "Manual form trigger",
-  $end: "End",
-};
 /** What the live region says when step details move on from a step that keeps entries. */
 export const keptText = (name: string, count: number): string =>
   `${name} keeps ${count} ${count === 1 ? "entry that isn't" : "entries that aren't"} applied yet.`;
@@ -390,7 +387,7 @@ export class StepDetails {
     return this.target().startsWith("$");
   }
   name(): string {
-    return NAMES[this.target()] ?? this.target();
+    return targetName(this.target());
   }
   layout(): "three" | "two" | "sheet" {
     const width = this.host().windowWidth;
@@ -530,13 +527,7 @@ export class StepDetails {
     // What doesn't apply yet stays for the next time; with step details
     // gone nothing else shows it, so a toast names the entries still kept,
     // on this step and on the steps it was left on, in the workflow's order.
-    const kept = leavingText(
-      this.session()
-        .heldOnLeaving()
-        .map(({ label, step }) =>
-          step ? { label, step: NAMES[step] ?? step } : { label },
-        ),
-    );
+    const kept = leavingToast(this.session().heldOnLeaving());
     const host = this.host();
     // The opener gets focus back: the shell is usable again first.
     this.releaseShell();

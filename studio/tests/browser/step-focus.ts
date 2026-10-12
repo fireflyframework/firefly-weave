@@ -27,7 +27,7 @@ export interface FocusStop {
   link: boolean;
 }
 
-/** What the focused control shows: its own ring, or one in the focus color on its face or its field box. */
+/** What the focused control shows: a ring in the focus color on itself, its face or its field box. */
 export async function focusStop(page: Page): Promise<FocusStop | null> {
   return page.evaluate(() => {
     const element = document.activeElement as HTMLElement | null;
@@ -59,13 +59,11 @@ export async function focusStop(page: Page): Promise<FocusStop | null> {
     )
       if (parent.matches(":focus-within") && rings(getComputedStyle(parent)))
         around = true;
+    // Only a ring in the focus color counts, on the control itself too: a
+    // shadow it wears at rest is no focus ring.
     return {
       key: element.outerHTML.slice(0, 160),
-      ring:
-        (style.outlineStyle !== "none" && style.outlineWidth !== "0px") ||
-        style.boxShadow !== "none" ||
-        face ||
-        around,
+      ring: rings(style) || face || around,
       size: Math.min(box.width, box.height),
       link: element.tagName === "A",
     };

@@ -18,8 +18,15 @@ SPDX-License-Identifier: Apache-2.0
 // The trigger's step details (Test event, its input fields, the event as
 // Output) and workflow settings, drawn by the same form as step details.
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { parse } from "yaml";
-import { openStepFixture, sizes } from "./step-details-po";
+import { readFileSync } from "node:fs";
+import { parse, stringify } from "yaml";
+import {
+  openStepFixture,
+  settingsGear,
+  sizes,
+  stepFixture,
+  yamlFile,
+} from "./step-details-po";
 import { walkFocus } from "./step-focus";
 import {
   box,
@@ -32,6 +39,25 @@ import {
   textBox,
 } from "./step-geometry";
 import { sourceText } from "./support";
+
+/** The fixture with two more slots no step uses, and a long slot name. */
+function withSpareSlots(long = false) {
+  const document = parse(readFileSync(stepFixture, "utf8"));
+  document.spec.connections = {
+    ...document.spec.connections,
+    archive: { connector: "weave-http@2.0.0", required: false },
+    spare: { connector: "weave-http@2.0.0", required: false },
+    ...(long
+      ? {
+          "customer-orders-archive-in-the-regional-data-warehouse-eu-west": {
+            connector: "weave-postgresql-with-a-very-long-connector@1.0.0",
+            required: false,
+          },
+        }
+      : {}),
+  };
+  return yamlFile("order-intake.yaml", stringify(document));
+}
 
 for (const size of sizes)
   test.describe(`the trigger and workflow settings at ${size.tag}`, () => {
@@ -78,10 +104,7 @@ for (const size of sizes)
       page,
     }) => {
       await openStepFixture(page);
-      const gear = page.getByRole("button", {
-        name: "Workflow settings",
-        exact: true,
-      });
+      const gear = settingsGear(page);
       await gear.click();
       const dialog = page.getByRole("dialog", { name: "Workflow settings" });
       await expect(
@@ -112,10 +135,7 @@ for (const size of sizes)
       page,
     }) => {
       const details = await openStepFixture(page);
-      const gear = page.getByRole("button", {
-        name: "Workflow settings",
-        exact: true,
-      });
+      const gear = settingsGear(page);
       await gear.click();
       const dialog = page.getByRole("dialog", { name: "Workflow settings" });
       const slots = dialog.getByRole("region", { name: "Connection slots" });
@@ -201,6 +221,241 @@ async function clippedSelects(scope: Locator): Promise<string[]> {
   );
 }
 
+for (const size of sizes)
+  test.describe(`workflow settings, keys and unapplied work at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("the gear has a name of its own", async ({ page }) => {
+      await openStepFixture(page);
+      await expect(settingsGear(page)).toHaveAccessibleName(
+        "Open workflow settings",
+      );
+      await expect(
+        page.getByRole("button", { name: "Open workflow settings" }),
+      ).toHaveCount(1);
+    });
+
+    test("workflow settings open on the Name box, not on a field's menu", async ({
+      page,
+    }) => {
+      await openStepFixture(page);
+      await settingsGear(page).click();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      await expect(
+        dialog.getByRole("textbox", { name: "Name", exact: true }),
+      ).toBeFocused();
+    });
+
+    test("focus stays in workflow settings after Rename slot and Remove slot", async ({
+      page,
+    }) => {
+      await openStepFixture(page, withSpareSlots());
+      await settingsGear(page).click();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      const menuOf = (name: string) =>
+        dialog.getByRole("button", { name: `Actions for slot ${name}` });
+      const inDialog = () =>
+        page.evaluate(
+          () =>
+            !!document.activeElement?.closest(
+              '[role="dialog"][aria-modal="true"]',
+            ),
+        );
+      const rename = async (from: string) => {
+        await menuOf(from).click();
+        await page.getByRole("menuitem", { name: "Rename slot" }).click();
+        return page.getByRole("dialog", { name: `Rename slot ${from}` });
+      };
+      // Cancel gives focus back to the row's menu.
+      let prompt = await rename("ledger-db");
+      await prompt.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(prompt).toHaveCount(0);
+      await expect(menuOf("ledger-db")).toBeFocused();
+      // Rename gives it to the renamed row's menu.
+      prompt = await rename("ledger-db");
+      await prompt
+        .getByRole("textbox", { name: "Slot name" })
+        .fill("orders-db");
+      await prompt.getByRole("button", { name: "Rename", exact: true }).click();
+      await expect(prompt).toHaveCount(0);
+      await expect(menuOf("orders-db")).toBeFocused();
+      // Removing a row gives focus to the next row's menu, else the one before.
+      const remove = async (name: string) => {
+        await menuOf(name).click();
+        await page.getByRole("menuitem", { name: /^Remove slot/ }).click();
+        await expect(menuOf(name)).toHaveCount(0);
+      };
+      await remove("archive");
+      await expect(menuOf("spare")).toBeFocused();
+      await remove("spare");
+      await expect(menuOf("orders-db")).toBeFocused();
+      await page.keyboard.press("Tab");
+      expect(await inDialog()).toBe(true);
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Shift+Tab");
+      expect(await inDialog()).toBe(true);
+    });
+
+    test("closing workflow settings names what isn't applied, and step details name it later", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await settingsGear(page).click();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      await dialog.getByRole("button", { name: "Add option" }).click();
+      await page.getByRole("menuitem", { name: /^Stop runs after/ }).click();
+      await dialog
+        .getByRole("textbox", { name: "Stop runs after", exact: true })
+        .fill("abc");
+      await expect(dialog.getByText("Not applied")).toBeVisible();
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(
+        page.getByText(
+          "Not applied yet: Stop runs after. What you typed is kept until you finish it.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await page
+        .getByRole("button", { name: "Dismiss notification" })
+        .first()
+        .click();
+      await details.openWithKeyboard("check-customer");
+      await details.close();
+      await expect(
+        page.getByText(
+          "Not applied yet: Stop runs after in workflow settings. What you typed is kept until you finish it.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+    });
+
+    test("Escape in a text box of workflow settings blurs it first, then closes", async ({
+      page,
+    }) => {
+      await openStepFixture(page);
+      const gear = settingsGear(page);
+      await gear.click();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      const version = dialog.getByRole("textbox", { name: "Version" });
+      await version.focus();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeVisible();
+      await expect(version).not.toBeFocused();
+      expect(
+        await page.evaluate(
+          () => !!document.activeElement?.closest('[role="dialog"]'),
+        ),
+      ).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(gear).toBeFocused();
+    });
+
+    test("a version that isn't a semantic version is flagged", async ({
+      page,
+    }) => {
+      await openStepFixture(page);
+      await settingsGear(page).click();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      const version = dialog.getByRole("textbox", { name: "Version" });
+      await version.fill("abc");
+      await version.press("Tab");
+      const field = dialog.locator('[data-param="version"]');
+      await expect(field).toContainText(
+        "Use a semantic version such as 1.0.0.",
+      );
+      await expect(version).toHaveAttribute("aria-invalid", "true");
+      await version.fill("1.2.0");
+      await expect(field).not.toContainText("Use a semantic version");
+    });
+
+    test("workflow settings say why they are read-only", async ({ page }) => {
+      await openStepFixture(page);
+      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      const source = page.getByRole("textbox", { name: "Workflow source" });
+      await source.fill(`${await source.inputValue()}\n  broken: [`);
+      await page
+        .getByRole("button", { name: "Apply changes", exact: true })
+        .click();
+      await settingsGear(page).click();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      await expect(dialog).toContainText(
+        "Fix the source to edit workflow settings.",
+      );
+      await expect(dialog).not.toContainText("edit this step");
+    });
+  });
+
+// The gear settles what the editor holds that isn't applied, as opening
+// step details does: an inspector edit that can't apply keeps it closed,
+// and text typed in Source applies first.
+test.describe("the gear and unapplied edits", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("an inspector edit that can't apply keeps workflow settings closed", async ({
+    page,
+  }) => {
+    await openStepFixture(page);
+    const version = page
+      .locator(".inspector")
+      .getByRole("textbox", { name: "Version", exact: true })
+      .first();
+    await version.fill("");
+    await settingsGear(page).click();
+    await expect(
+      page.getByText(
+        "Fix the invalid fields before continuing. Your edits are still here.",
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "Workflow settings" }),
+    ).toHaveCount(0);
+    await expect(version).toHaveValue("");
+  });
+
+  for (const size of sizes)
+    test(`text typed in Source applies before workflow settings open at ${size.tag}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: size.width, height: size.height });
+      await openStepFixture(page);
+      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      const source = page.getByRole("textbox", { name: "Workflow source" });
+      await source.fill(
+        (await source.inputValue()).replace(
+          "id: check-customer",
+          "id: check-client",
+        ),
+      );
+      await settingsGear(page).click();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      await dialog.getByRole("textbox", { name: "Version" }).fill("1.0.1");
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      const text = await source.inputValue();
+      expect(text).toContain("id: check-client");
+      expect(parse(text).metadata.version).toBe("1.0.1");
+    });
+
+  test("source text that doesn't apply keeps workflow settings closed and stays", async ({
+    page,
+  }) => {
+    await openStepFixture(page);
+    await page.getByRole("tab", { name: "Source", exact: true }).click();
+    const source = page.getByRole("textbox", { name: "Workflow source" });
+    const typed = `${await source.inputValue()}\n  broken: [`;
+    await source.fill(typed);
+    await settingsGear(page).click();
+    // The text is applied as Apply changes would: its problem shows there.
+    await expect(page.locator(".source-error")).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "Workflow settings" }),
+    ).toHaveCount(0);
+    await expect(source).toHaveValue(typed);
+  });
+});
+
 test.describe("workflow settings and the trigger's details, laid out", () => {
   for (const size of [
     ...sizes,
@@ -219,10 +474,7 @@ test.describe("workflow settings and the trigger's details, laid out", () => {
       }) => {
         await openStepFixture(page);
         const d = await density(page);
-        const gear = page.getByRole("button", {
-          name: "Workflow settings",
-          exact: true,
-        });
+        const gear = settingsGear(page);
         // The gear sits on the workflow's name line, a whole target of its own.
         const gearBox = await box(gear);
         expectAligned(
@@ -396,13 +648,70 @@ test.describe("workflow settings and the trigger's details, laid out", () => {
         await noSidewaysScroll(page, dialog);
       });
 
+      test("a long slot name breaks between its parts, keeps its separator with the connector, and stays in its row", async ({
+        page,
+      }) => {
+        await openStepFixture(page, withSpareSlots(true));
+        await settingsGear(page).click();
+        const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+        const rows = dialog.locator(".wf-row");
+        await expect(rows).toHaveCount(5);
+        const long = rows.filter({
+          hasText: "customer-orders-archive-in-the-regional-data-warehouse",
+        });
+        await long.scrollIntoViewIfNeeded();
+        const list = await box(long.locator("xpath=.."));
+        const menu = await box(long.locator(".row-menu-toggle"));
+        const text = await box(long.locator(".wf-text"));
+        expect(intersects(menu, text)).toBe(false);
+        expectAligned([menu.middle, text.middle], "long row center");
+        expect(text.x).toBeGreaterThanOrEqual(list.x);
+        expect(menu.right).toBeLessThanOrEqual(list.right);
+        // Every part fits its line: nothing runs past the text column.
+        const runs = await long.locator(".wf-title").evaluate((title) => {
+          const column = title.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(title);
+          return [...range.getClientRects()].map((r) => ({
+            left: r.left,
+            right: r.right,
+            column: column.right,
+          }));
+        });
+        for (const run of runs)
+          expect(run.right).toBeLessThanOrEqual(run.column + 1);
+        // The separator shares its line with the connector's first letter.
+        const lines = await long.locator(".wf-title").evaluate((title) => {
+          const walker = document.createTreeWalker(title, NodeFilter.SHOW_TEXT);
+          const chars: { node: Text; at: number }[] = [];
+          for (let node = walker.nextNode(); node; node = walker.nextNode())
+            for (let at = 0; at < (node.textContent ?? "").length; at++)
+              chars.push({ node: node as Text, at });
+          const top = ({ node, at }: { node: Text; at: number }) => {
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + 1);
+            return range.getClientRects()[0]?.top ?? NaN;
+          };
+          const dot = chars.findIndex(
+            ({ node, at }) => node.textContent![at] === "·",
+          );
+          const next = chars.findIndex(
+            ({ node, at }, index) =>
+              index > dot && /\S/.test(node.textContent![at]),
+          );
+          return { dot: top(chars[dot]), next: top(chars[next]) };
+        });
+        expectAligned([lines.dot, lines.next], "separator line", 2);
+        expect(await clippedText(dialog, "")).toEqual([]);
+        await noSidewaysScroll(page, dialog);
+      });
+
       test("workflow settings take every key on the way, with names, rings and 24 px targets", async ({
         page,
       }) => {
         await openStepFixture(page);
-        await page
-          .getByRole("button", { name: "Workflow settings", exact: true })
-          .click();
+        await settingsGear(page).click();
         const dialog = page.getByRole("dialog", { name: "Workflow settings" });
         expect(await walkFocus(page, dialog)).toBeGreaterThanOrEqual(6);
       });

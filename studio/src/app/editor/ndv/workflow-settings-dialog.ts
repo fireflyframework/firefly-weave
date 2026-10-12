@@ -21,10 +21,14 @@ SPDX-License-Identifier: Apache-2.0
 // uses each one, Rename slot and Remove slot (once no step uses it), and
 // Open for the steps that use a profile.
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
+  Injector,
   ViewEncapsulation,
+  afterNextRender,
   inject,
   input,
   output,
@@ -32,6 +36,7 @@ import {
 } from "@angular/core";
 import { DialogService, Modal } from "../../dialog";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
+import { leavingToast } from "./issues";
 import { FormSession } from "./params/form-session";
 import { ParameterForm } from "./params/param-form";
 import { allSteps, slotsOf, usedBy, type Slot } from "./params/slots";
@@ -41,6 +46,11 @@ import { openRequest } from "./step-details-service";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
+/** A control a person types in, where Escape first lets go of it. */
+const isTyping = (element: Element | null): boolean =>
+  !!element?.matches(
+    'input:not([type="checkbox"]):not([type="radio"]):not([type="button"]), textarea, select',
+  );
 
 export interface ProfileRow {
   name: string;
@@ -59,22 +69,26 @@ export interface ProfileRow {
     heading="Workflow settings"
     closeLabel="Close"
     [wide]="true"
-    (dismiss)="closed.emit()"
+    (dismiss)="close()"
   >
-    <div class="sd-form-scope wf-settings">
+    <div class="sd-form-scope wf-settings" (keydown)="key($event)">
       <weave-parameter-form [session]="session()" name="parameters" />
       <section class="wf-section" aria-labelledby="wf-slots">
-        <h3 id="wf-slots" class="param-label">Connection slots</h3>
+        <h3 id="wf-slots" class="param-label" tabindex="-1">
+          Connection slots
+        </h3>
         @if (slots(); as list) {
           @if (list.length) {
             <ul class="wf-list">
               @for (slot of list; track slot.name) {
                 @let users = slotUsers(slot.name);
-                <li class="wf-row">
+                <li class="wf-row" [attr.data-slot]="slot.name">
                   <span class="wf-text">
                     <span class="wf-title"
-                      ><code class="wf-part">{{ slot.name }}</code> ·
-                      <span class="wf-part">{{ slot.connector }}</span></span
+                      ><code class="wf-part">{{ slot.name }}</code
+                      >&ngsp;<span class="wf-part"
+                        >·&nbsp;{{ slot.connector }}</span
+                      ></span
                     >
                     <span class="wf-meta"
                       >{{ slot.required ? "Required" : "Optional" }} ·
@@ -109,7 +123,9 @@ export interface ProfileRow {
                     <span class="wf-title"
                       ><code class="wf-part">{{ profile.name }}</code>
                       @if (profile.model) {
-                        · <span class="wf-part">{{ profile.model }}</span>
+                        &ngsp;<span class="wf-part"
+                          >·&nbsp;{{ profile.model }}</span
+                        >
                       }
                     </span>
                     <span class="wf-meta">{{ usedBy(profile.steps) }}</span>
@@ -134,7 +150,7 @@ export interface ProfileRow {
     </div>
   </weave-modal>`,
 })
-export class WorkflowSettingsDialog {
+export class WorkflowSettingsDialog implements AfterViewInit {
   host = input.required<StepDetailsHost>();
   controller = input.required<StepDetailsController>();
   closed = output<void>();
@@ -142,7 +158,37 @@ export class WorkflowSettingsDialog {
   readonly usedBy = usedBy;
   private readonly dialogs = inject(DialogService);
   private readonly lifetime = inject(DestroyRef);
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
   private cached: FormSession | null = null;
+
+  /** Opens on the first field's control, never on a tool of its label row. */
+  ngAfterViewInit() {
+    const field = this.element.nativeElement.querySelector<HTMLElement>(
+      ".param-form > [data-param] .param-control",
+    );
+    (field && this.session().firstControl(field))?.focus();
+  }
+  /**
+   * Closes, naming in a toast what isn't applied yet here and on the steps
+   * it was left on, as step details do on Close.
+   */
+  close() {
+    const kept = leavingToast(this.session().heldOnLeaving());
+    const host = this.host();
+    this.closed.emit();
+    if (kept) host.notify(kept);
+  }
+  /** Escape in a text box lets go of it first; a second Escape closes. */
+  key(event: KeyboardEvent) {
+    const target = event.target as HTMLElement;
+    if (event.key !== "Escape" || event.defaultPrevented || !isTyping(target))
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    target.blur();
+    target.closest<HTMLElement>(".modal-panel")?.focus({ preventScroll: true });
+  }
 
   session(): FormSession {
     if (
@@ -175,13 +221,13 @@ export class WorkflowSettingsDialog {
     return this.session().slotUsers(name);
   }
   slotItems(slot: Slot, users: readonly string[]): RowMenuItem[] {
-    const locked = this.controller().readOnlyReason();
+    const locked = this.controller().readOnlyReason("$workflow");
     return [
       {
         label: "Rename slot",
         disabled: !!locked,
         detail: locked ?? undefined,
-        run: () => void this.session().renameWorkflowSlot(slot.name),
+        run: () => void this.renameSlot(slot.name),
       },
       {
         label: "Remove slot",
@@ -192,9 +238,37 @@ export class WorkflowSettingsDialog {
           (users.length
             ? `${usedBy(users)}. Choose another slot there first.`
             : undefined),
-        run: () => this.session().removeWorkflowSlot(slot.name),
+        run: () => this.removeSlot(slot.name),
       },
     ];
+  }
+  /** Focus comes back to the slot's menu, under its new name when it took one. */
+  private async renameSlot(name: string) {
+    const renamed = await this.session().renameWorkflowSlot(name);
+    this.focusSlot(renamed ?? name);
+  }
+  /** Focus moves to the next slot's menu, else the one before, else the heading. */
+  private removeSlot(name: string) {
+    const names = this.slots().map((slot) => slot.name);
+    const at = names.indexOf(name);
+    if (!this.session().removeWorkflowSlot(name)) return;
+    const rest = names.filter((other) => other !== name);
+    this.focusSlot(rest[at] ?? rest[at - 1] ?? null);
+  }
+  private focusSlot(name: string | null) {
+    afterNextRender(
+      () => {
+        if (this.lifetime.destroyed) return;
+        const root = this.element.nativeElement;
+        (name
+          ? root.querySelector<HTMLElement>(
+              `[data-slot="${CSS.escape(name)}"] .row-menu-toggle`,
+            )
+          : root.querySelector<HTMLElement>("#wf-slots")
+        )?.focus();
+      },
+      { injector: this.injector },
+    );
   }
   profiles(): ProfileRow[] {
     const definition = this.host().model.definition;

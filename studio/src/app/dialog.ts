@@ -126,7 +126,12 @@ export class Modal implements AfterViewInit, OnDestroy {
     const opener = this.opener;
     if (opener?.isConnected)
       queueMicrotask(() => {
-        if (!document.querySelector(".modal-panel")) opener.focus();
+        // Back to the control that opened it, once no dialog is left, or
+        // when that control sits in the dialog this one was opened from.
+        if (!opener.isConnected) return;
+        const under = opener.closest(".modal-panel");
+        if (!document.querySelector(".modal-panel") || under?.isConnected)
+          opener.focus();
       });
   }
   /** A press on the backdrop keeps focus in the dialog, so Tab and Escape still work. */

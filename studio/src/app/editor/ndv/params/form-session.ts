@@ -386,7 +386,8 @@ export class FormSession {
   }
 
   async setMode(spec: ParamSpec, mode: "fixed" | "mapped"): Promise<void> {
-    if (!this.isCurrent() || this.controller.readOnlyReason()) return;
+    if (!this.isCurrent() || this.controller.readOnlyReason(this.target))
+      return;
     const entry = this.resolve(spec);
     if (!entry || this.readOnly(entry)) return;
     const current = this.read(spec);
@@ -412,7 +413,8 @@ export class FormSession {
       confirmLabel: "Replace",
       cancelLabel: "Keep the mapping",
     });
-    if (!replace || !owns() || this.controller.readOnlyReason()) return;
+    if (!replace || !owns() || this.controller.readOnlyReason(this.target))
+      return;
     const live = this.resolve(spec);
     if (!live || this.readOnly(live)) return;
     this.release(spec);
@@ -455,7 +457,8 @@ export class FormSession {
     appendList = true,
   ): string | null {
     const spec = entry.spec;
-    const locked = this.controller.readOnlyReason() ?? this.readOnly(entry);
+    const locked =
+      this.controller.readOnlyReason(this.target) ?? this.readOnly(entry);
     if (locked) return locked;
     // Conditions take data in a row: the open rows place it (attachConditionRows).
     if (spec.type === "conditions") return null;
@@ -917,7 +920,7 @@ export class FormSession {
   ): { entry: ScopeEntry } | { reason: string } {
     const gone = { reason: "This field is no longer available." };
     if (spec.type !== "conditions" || !this.isCurrent()) return gone;
-    const frozen = this.controller.readOnlyReason();
+    const frozen = this.controller.readOnlyReason(this.target);
     if (frozen) return { reason: frozen };
     const live = this.resolve(spec);
     if (!live) return gone;
@@ -1068,7 +1071,7 @@ export class FormSession {
       this.controller.ownedProblems(),
       this.controller.features(),
       this.controller.issueMarks(),
-      this.controller.readOnlyReason(),
+      this.controller.readOnlyReason(this.target),
       this.controller.added(this.target).size,
       this.expanded.size,
       this.drafts.size,
@@ -1456,7 +1459,8 @@ export class FormSession {
   }
   /** The field's entry, also while it waits out of sight under Mapped. */
   private heldEntry(spec: ParamSpec): PendingEntry | null {
-    if (!this.isCurrent() || this.controller.readOnlyReason()) return null;
+    if (!this.isCurrent() || this.controller.readOnlyReason(this.target))
+      return null;
     if (!this.controller.holds(this.target, this.pendingKey(spec))) return null;
     return this.controller.held(
       this.target,
@@ -1470,7 +1474,8 @@ export class FormSession {
     text: string,
     message: string,
   ): void {
-    if (!this.isCurrent() || this.controller.readOnlyReason()) return;
+    if (!this.isCurrent() || this.controller.readOnlyReason(this.target))
+      return;
     this.controller.hold(
       this.target,
       this.pendingKey(spec),
@@ -1496,7 +1501,8 @@ export class FormSession {
   }
   /** A note the canvas had no room for, while the saved note is the one it was typed over. */
   heldNote(): PendingEntry | null {
-    if (!this.isCurrent() || this.controller.readOnlyReason()) return null;
+    if (!this.isCurrent() || this.controller.readOnlyReason(this.target))
+      return null;
     if (!this.controller.holds(this.target, NOTE_KEY)) return null;
     return this.controller.held(this.target, NOTE_KEY, this.noteOwner());
   }
@@ -1619,24 +1625,28 @@ export class FormSession {
       () => owns() && this.editable(spec) && connector === this.connector(spec),
     );
   }
-  /** Renames a slot from workflow settings; every step that uses it follows. */
-  async renameWorkflowSlot(from: string): Promise<void> {
-    if (!this.isCurrent() || this.controller.readOnlyReason()) return;
-    await this.renameSlotFrom(
+  /**
+   * Renames a slot from workflow settings; every step that uses it follows.
+   * The slot's name afterwards, or null when nothing was renamed.
+   */
+  async renameWorkflowSlot(from: string): Promise<string | null> {
+    if (!this.isCurrent() || this.controller.readOnlyReason(this.target))
+      return null;
+    return this.renameSlotFrom(
       from,
-      () => this.isCurrent() && !this.controller.readOnlyReason(),
+      () => this.isCurrent() && !this.controller.readOnlyReason(this.target),
     );
   }
   private async renameSlotFrom(
     from: string,
     valid: () => boolean,
-  ): Promise<void> {
+  ): Promise<string | null> {
     if (
       !this.hooks.prompt ||
       !from ||
       !slotsOf(this.host.model.definition).some((slot) => slot.name === from)
     )
-      return;
+      return null;
     const declared = () =>
       canonicalJson(
         (
@@ -1668,9 +1678,9 @@ export class FormSession {
       },
     });
     const to = typed === null ? "" : normalizeIdentifier(typed);
-    if (!to || to === from) return;
+    if (!to || to === from) return null;
     const current = () => valid() && !conflict(to) && declared() === original;
-    if (!current()) return;
+    if (!current()) return null;
     let accepted = false;
     this.host.perform(() => {
       if (!current()) return;
@@ -1691,7 +1701,9 @@ export class FormSession {
       });
       accepted = true;
     });
-    if (accepted) this.announce(`Renamed the slot to ${to}.`);
+    if (!accepted) return null;
+    this.announce(`Renamed the slot to ${to}.`);
+    return to;
   }
   /** The steps that use a slot of the workflow, in the order they are written. */
   slotUsers(name: string): string[] {
@@ -1699,14 +1711,14 @@ export class FormSession {
       .filter((step) => step["connection"] === name)
       .map((step) => step.id);
   }
-  /** Removes a slot no step uses, as one undo step. */
-  removeWorkflowSlot(name: string): void {
+  /** Removes a slot no step uses, as one undo step; true when it went. */
+  removeWorkflowSlot(name: string): boolean {
     if (
       !this.isCurrent() ||
-      this.controller.readOnlyReason() ||
+      this.controller.readOnlyReason(this.target) ||
       this.slotUsers(name).length
     )
-      return;
+      return false;
     const connections = this.host.model.definition.spec["connections"];
     if (
       !connections ||
@@ -1714,7 +1726,7 @@ export class FormSession {
       Array.isArray(connections) ||
       !Object.hasOwn(connections, name)
     )
-      return;
+      return false;
     let accepted = false;
     this.host.perform(() => {
       const document = structuredClone(this.host.model.definition);
@@ -1726,13 +1738,14 @@ export class FormSession {
       accepted = true;
     });
     if (accepted) this.announce(`Removed the slot ${name}.`);
+    return accepted;
   }
 
   // ---------------------------------------------------------- options
   addOption(id: string): void {
     if (
       !this.isCurrent() ||
-      this.controller.readOnlyReason() ||
+      this.controller.readOnlyReason(this.target) ||
       ![
         ...this.state("parameters").addable,
         ...this.state("settings").addable,
@@ -2194,7 +2207,7 @@ export class FormSession {
       this.isCurrent() &&
       !!entry &&
       !this.readOnly(entry) &&
-      !this.controller.readOnlyReason()
+      !this.controller.readOnlyReason(this.target)
     );
   }
   private validCount(spec: ParamSpec, count: number): boolean {

@@ -125,6 +125,12 @@ export async function withLanguageFeatures(
   );
 }
 
+/** The editor bar's gear that opens workflow settings (with the new editor on). */
+export const settingsGear = (page: Page): Locator =>
+  page
+    .locator(".editor-identity")
+    .getByRole("button", { name: /workflow settings$/i });
+
 export class StepDetailsPage {
   constructor(readonly page: Page) {}
   get dialog(): Locator {

@@ -83,6 +83,7 @@ export const workflowSettingsForm = (): FormSpec => ({
       type: "text",
       label: "Version",
       required: true,
+      format: "version",
       default: "1.0.0",
       whenRemoved: "default",
       placeholder: "1.0.0",

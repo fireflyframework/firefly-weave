@@ -16,15 +16,17 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The rules a single field checks itself (required, range, length, list
-// size), in one sentence each, and when they show: on a step inserted a
-// moment ago, "required" waits until the field is left empty or everything
-// is revealed (Execute step, opening from an issue); nothing else waits.
+// size, a version's form), in one sentence each, and when they show: on a
+// step inserted a moment ago, "required" waits until the field is left
+// empty or everything is revealed (Execute step, opening from an issue);
+// nothing else waits.
 // Out-of-range values are stored and flagged, never clamped.
+import { validVersion } from "../../../forms/core/identifiers";
 import type { ParamSpec } from "../registry";
 import type { Entries, ParamValue } from "./value-io";
 
 export interface RuleProblem {
-  code: "required" | "range" | "length" | "items" | "positive";
+  code: "required" | "range" | "length" | "items" | "positive" | "format";
   message: string;
   severity: "error" | "warning";
 }
@@ -122,6 +124,13 @@ export function fieldRules(
     v.length > spec.maxLength
   )
     problems.push(error("length", `Use at most ${spec.maxLength} characters.`));
+  if (
+    spec.format === "version" &&
+    typeof v === "string" &&
+    v !== "" &&
+    !validVersion(v)
+  )
+    problems.push(error("format", "Use a semantic version such as 1.0.0."));
   const count =
     entries.kind === "array"
       ? entries.length

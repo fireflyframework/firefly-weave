@@ -30,6 +30,7 @@ import {
   issueCount,
   issueTone,
   leavingText,
+  targetName,
   type PlacedSpec,
   type StepIssue,
 } from "../src/app/editor/ndv/issues";
@@ -158,6 +159,12 @@ describe("issues in step details", () => {
     ).toBe(
       "Not applied yet: Max tries, Wait for in wait-a-minute. What you typed is kept until you finish them.",
     );
+  });
+  it("names the trigger, End and workflow settings in words", () => {
+    expect(targetName("$trigger")).toBe("Manual form trigger");
+    expect(targetName("$end")).toBe("End");
+    expect(targetName("$workflow")).toBe("workflow settings");
+    expect(targetName("check-customer")).toBe("check-customer");
   });
   it("names three steps at most, each once, and counts the rest", () => {
     expect(

@@ -286,8 +286,12 @@ export class StepDetailsController {
       this.actionOf(step),
     );
   }
-  readOnlyReason(): string | null {
-    if (this.host.model.readonly) return "Fix the source to edit this step.";
+  /** Why nothing can change now, in words for the step, trigger or settings at `target`. */
+  readOnlyReason(target?: string): string | null {
+    if (this.host.model.readonly)
+      return target === "$workflow"
+        ? "Fix the source to edit workflow settings."
+        : "Fix the source to edit this step.";
     if (this.host.editingLocked)
       return "A simulation is running. Stop it to edit.";
     return null;
@@ -297,7 +301,7 @@ export class StepDetailsController {
       this.subject(target),
       this.step(target) ?? WORKFLOW_STAND_IN,
       this.kindContext(),
-      this.readOnlyReason(),
+      this.readOnlyReason(target),
       this.added(target),
     );
   }

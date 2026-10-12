@@ -6508,6 +6508,30 @@ export class App implements CanvasHost {
   stepDetailsOn(): boolean {
     return stepDetailsEnabled(this as StepDetailsHost);
   }
+  /**
+   * Opens workflow settings (the editor bar's gear) the way step details
+   * open: the inspector's pending edits apply first, and text typed in
+   * Source applies as Apply changes would. When either can't, the dialog
+   * stays closed and the problem shows where it is, with the edits kept.
+   */
+  async openSettingsDialog(): Promise<boolean> {
+    if (
+      !stepDetailsEnabled(this as StepDetailsHost) ||
+      this.view !== "designer"
+    )
+      return false;
+    if (!(await this.ensureApplied())) return false;
+    if (this.sourceBuffer !== this.model.source) {
+      this.updateSource();
+      if (this.error || this.model.error) {
+        this.cdr.markForCheck();
+        return false;
+      }
+    }
+    this.stepDetails.openWorkflowSettings();
+    this.cdr.markForCheck();
+    return true;
+  }
   /** Where the simulated run is, for a node's accessible name. */
   simulationNote(id: string) {
     const nodes = this.simNodes;

@@ -313,6 +313,12 @@ describe("the step details controller", () => {
     expect(controller.readOnlyReason()).toBe(
       "Fix the source to edit this step.",
     );
+    expect(controller.readOnlyReason("$workflow")).toBe(
+      "Fix the source to edit workflow settings.",
+    );
+    expect(controller.env("$workflow").readOnly).toBe(
+      "Fix the source to edit workflow settings.",
+    );
     expect(
       controller.commit(
         "pause",
