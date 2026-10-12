@@ -1362,6 +1362,9 @@ weave-param-field.is-conditions > .param > .param-line {
   background: transparent;
   border: 0;
   outline: none;
+  /* At rest a value too long for its box ends in "…"; its tooltip holds the
+     whole text, and while it has focus the text scrolls. */
+  text-overflow: ellipsis;
 }
 .step-details .condition-editor.is-compact .condition-input::placeholder {
   color: var(--subtle);

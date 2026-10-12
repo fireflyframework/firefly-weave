@@ -518,9 +518,14 @@ export class ParamField {
       (at + (event.key === "ArrowRight" ? 1 : items.length - 1)) % items.length
     ].focus();
   }
-  /** "=" in an empty Fixed field switches it to Mapped. */
+  /**
+   * "=" in an empty Fixed field switches it to Mapped. With Ctrl, Cmd or Alt
+   * the key belongs to the browser (Ctrl/Cmd+= zooms in).
+   */
   controlKey(event: KeyboardEvent) {
-    if (event.key !== "=" || this.mode() !== "fixed") return;
+    if (event.key !== "=" || event.ctrlKey || event.metaKey || event.altKey)
+      return;
+    if (this.mode() !== "fixed") return;
     const target = event.target as HTMLInputElement;
     if (target.value) return;
     event.preventDefault();

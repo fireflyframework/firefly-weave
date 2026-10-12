@@ -280,7 +280,50 @@ for (const size of sizes)
         fixture.spec.steps[2].cases,
       );
     });
+
+    test("Ctrl/Cmd+= in an empty value is left to the browser's zoom", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      await showParameters(page, details.dialog);
+      const when = conditionsOf(details, 2);
+      const value = when.getByLabel("Condition 1 value", { exact: true });
+      await value.fill("");
+      const keys = await recordEqualsKeys(page);
+      for (const chord of ["ControlOrMeta+=", "Alt+="])
+        await value.press(chord);
+      // The value stays Fixed and empty, and every key reached the page.
+      await expect(value).toBeFocused();
+      await expect(value).toHaveValue("");
+      await expect(
+        when.locator(".condition-row").first().locator(".condition-value"),
+      ).not.toHaveClass(/is-mapped/);
+      expect(await keys()).toEqual([false, false]);
+      await value.press("=");
+      await expect(
+        when.getByRole("combobox", { name: "Condition 1 value" }),
+      ).toBeFocused();
+    });
   });
+
+/**
+ * Records every "=" key that reaches the document, as whether its default was
+ * prevented: a key a control kept for itself never arrives.
+ */
+async function recordEqualsKeys(page: Page): Promise<() => Promise<boolean[]>> {
+  await page.evaluate(() => {
+    const seen: boolean[] = [];
+    (window as unknown as { equalsKeys: boolean[] }).equalsKeys = seen;
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "=") seen.push(event.defaultPrevented);
+    });
+  });
+  return () =>
+    page.evaluate(
+      () => (window as unknown as { equalsKeys: boolean[] }).equalsKeys,
+    );
+}
 
 for (const size of allSizes)
   test.describe(`condition rows at ${size.tag}`, () => {
@@ -645,6 +688,62 @@ for (const size of [
       await expect(
         when.locator(".condition-row").nth(1).locator(".condition-value"),
       ).not.toHaveClass(/is-mapped/);
+      expect(await noSideways(page)).toBe(true);
+    });
+
+    test("a Fixed value too long for its box ends in an ellipsis at rest, with its whole text as a tooltip", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      await showParameters(page, details.dialog);
+      // "tier is gold" compares text, so any value is kept as typed.
+      const when = conditionsOf(details, 2);
+      const row = when.locator(".condition-row").first();
+      await row.scrollIntoViewIfNeeded();
+      const value = when.getByLabel("Condition 1 value", { exact: true });
+      const before = await box(value);
+      for (const text of [
+        "gold",
+        "2026-10-11",
+        "gold member",
+        "priority-customers@example.com",
+        "customers of the northern region who renewed their gold membership",
+      ]) {
+        await value.fill(text);
+        await value.blur();
+        // At rest: no hover, no focus.
+        await details.dialog
+          .getByRole("button", { name: "Close", exact: true })
+          .hover();
+        const cut = await value.evaluate(
+          (input: HTMLInputElement) =>
+            input.scrollWidth > input.clientWidth + 1,
+        );
+        const field = await box(value);
+        if (cut) {
+          await expect(value).toHaveCSS("text-overflow", "ellipsis");
+          expect(
+            await tooltipAt(page, { x: field.x + 8, y: field.middle }),
+            `${text} as a tooltip`,
+          ).toBe(text);
+        } else await expect(value).not.toHaveAttribute("title");
+        // The tooltip costs no room: the box and its toggle stay put.
+        expect(field.width).toBe(before.width);
+        expect(field.x).toBe(before.x);
+        expect(await clippedText(details.dialog)).toEqual([]);
+      }
+      // The longest one can't fit anywhere, so its tooltip was checked.
+      expect(
+        await value.evaluate(
+          (input: HTMLInputElement) =>
+            input.scrollWidth > input.clientWidth + 1,
+        ),
+      ).toBe(true);
+      // Typing it shorter takes the tooltip away.
+      await value.fill("gold");
+      await value.blur();
+      await expect(value).not.toHaveAttribute("title");
       expect(await noSideways(page)).toBe(true);
     });
 

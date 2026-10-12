@@ -159,7 +159,14 @@ export async function clippedText(scope: Locator): Promise<string[]> {
           shown(input) &&
           !!input.value &&
           painted(input) &&
-          input.scrollWidth > input.clientWidth + 1,
+          input.scrollWidth > input.clientWidth + 1 &&
+          // A box at rest may end in "…" when its tooltip is the whole value.
+          !(
+            document.activeElement !== input &&
+            getComputedStyle(input).textOverflow === "ellipsis" &&
+            input.title === input.value &&
+            reachableTitle(input)
+          ),
       )
       .map((input) => input.value.slice(0, 80));
     return [...text, ...boxes];

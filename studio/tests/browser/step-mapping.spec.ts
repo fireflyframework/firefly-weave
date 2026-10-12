@@ -57,6 +57,22 @@ for (const size of sizes)
       await expect(toggle.getByRole("radio", { name: "Fixed" })).toBeChecked();
       const text = prompt.getByRole("textbox", { name: "Prompt" });
       await text.fill("");
+      // Ctrl/Cmd+= and Alt+= belong to the browser (zoom): the field stays Fixed.
+      await page.evaluate(() => {
+        const seen: boolean[] = [];
+        (window as unknown as { equalsKeys: boolean[] }).equalsKeys = seen;
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "=") seen.push(event.defaultPrevented);
+        });
+      });
+      for (const chord of ["ControlOrMeta+=", "Alt+="]) await text.press(chord);
+      await expect(toggle.getByRole("radio", { name: "Fixed" })).toBeChecked();
+      await expect(text).toBeFocused();
+      expect(
+        await page.evaluate(
+          () => (window as unknown as { equalsKeys: boolean[] }).equalsKeys,
+        ),
+      ).toEqual([false, false]);
       await text.press("=");
       await expect(toggle.getByRole("radio", { name: "Mapped" })).toBeChecked();
       const data = prompt.getByRole("combobox", { name: "Prompt" });

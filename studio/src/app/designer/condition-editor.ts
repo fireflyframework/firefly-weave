@@ -125,6 +125,14 @@ export function typedValue(
   return text === "" ? undefined : text;
 }
 
+/** A value its box cuts off carries its whole text as a tooltip. */
+function titleIfCut(input: HTMLInputElement) {
+  const cut = !!input.value && input.scrollWidth > input.clientWidth + 1;
+  if (cut) {
+    if (input.title !== input.value) input.title = input.value;
+  } else if (input.hasAttribute("title")) input.removeAttribute("title");
+}
+
 /** The text a stored literal shows as. */
 const textOf = (row: ConditionRow, input: ValueInput) =>
   row.value === undefined
@@ -747,8 +755,20 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
   join: ConditionJoin = "and";
   /** The value last shown or emitted; "unset" for no condition. */
   private known: string | null = null;
+  /** Fixed value boxes, watched so that a cut-off value gets its tooltip. */
+  private readonly valueBoxes =
+    typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver((entries) => {
+          for (const entry of entries)
+            titleIfCut(entry.target as HTMLInputElement);
+        });
+  private readonly watchedBoxes = new WeakSet<Element>();
+  /** The values changed since their tooltips were last decided. */
+  private valuesChanged = true;
 
   ngOnChanges() {
+    this.valuesChanged = true;
     const incoming = JSON.stringify(this.value) ?? "unset";
     if (incoming === this.known) return;
     this.known = incoming;
@@ -777,6 +797,7 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
   }
 
   ngAfterViewChecked() {
+    this.titleCutValues();
     if (this.pendingCompare !== null) {
       const input = this.host.nativeElement.querySelector<HTMLInputElement>(
         `.condition-row[data-row="${this.pendingCompare}"] .condition-value input[role=combobox]`,
@@ -811,6 +832,26 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
   }
   ngOnDestroy() {
     clearTimeout(this.adaptedTimer);
+    this.valueBoxes?.disconnect();
+  }
+  /**
+   * A Fixed value that its box cuts off ends in "…" at rest and shows its
+   * whole text as a tooltip: decided for new boxes, after the values change
+   * and whenever a box changes size.
+   */
+  private titleCutValues() {
+    const boxes =
+      this.host.nativeElement.querySelectorAll<HTMLInputElement>(
+        ".condition-input",
+      );
+    for (const input of boxes) {
+      if (!this.watchedBoxes.has(input)) {
+        this.watchedBoxes.add(input);
+        this.valueBoxes?.observe(input);
+      } else if (!this.valuesChanged) continue;
+      titleIfCut(input);
+    }
+    this.valuesChanged = false;
   }
   private clearAdapted() {
     clearTimeout(this.adaptedTimer);
@@ -894,10 +935,15 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
     (event.target as HTMLInputElement).select?.();
     this.editing.set(cell);
   }
-  /** "=" in an empty value compares with data instead. */
+  /**
+   * "=" in an empty value compares with data instead. With Ctrl, Cmd or Alt
+   * the key belongs to the browser (Ctrl/Cmd+= zooms in).
+   */
   valueKey(event: KeyboardEvent, index: number) {
     const row = this.rows[index];
-    if (event.key !== "=" || !row || row.text || this.readOnly) return;
+    if (event.key !== "=" || event.ctrlKey || event.metaKey || event.altKey)
+      return;
+    if (!row || row.text || this.readOnly) return;
     event.preventDefault();
     this.useComparisonData(index, true);
     this.pendingCompare = index;
@@ -1180,6 +1226,7 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
         ? event
         : (event.target as HTMLInputElement).value;
     this.rows[index] = { ...this.rows[index], text, source: undefined };
+    this.valuesChanged = true;
     this.emit();
   }
   setItem(index: number, item: number, event: Event | string) {
