@@ -195,7 +195,7 @@ function shell(open: string | null = first) {
       calls.notices.push({ text, tone }),
     fail: (error: unknown) => calls.failures.push(error),
     readDetail: async () => void calls.reads++,
-    refresh: async () => undefined,
+    refreshRuns: async () => undefined,
     viewRun: async () => undefined,
     dialogs: {
       form: async (): Promise<Json | null> => {
