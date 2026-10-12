@@ -23,7 +23,6 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
-  ElementRef,
   Injector,
   afterNextRender,
   computed,
@@ -179,7 +178,6 @@ export class FormulaField {
   readonly templateError = signal("");
   readonly words = words;
   private readonly lifetime = inject(DestroyRef);
-  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
   private pendingRef = "";
   private localOwner: {
@@ -384,8 +382,9 @@ export class FormulaField {
     )
       return;
     // Choosing from the picker (Enter, or a press in its list) keeps focus in
-    // the field: the pill that replaces the picker takes it.
-    const focused = this.host.nativeElement.contains(document.activeElement);
+    // the field: the pill that replaces the picker takes it. Both carry the
+    // field's control ID.
+    const focused = document.activeElement?.id === this.controlId();
     this.pendingRef = "";
     this.pickerOwner = null;
     this.picking.set(false);
@@ -416,16 +415,13 @@ export class FormulaField {
   }
   /** Focuses the field's control once it renders, unless focus moved on meanwhile. */
   private focusControlAfterRender() {
+    const id = this.controlId();
     afterNextRender(
       () => {
         if (this.lifetime.destroyed) return;
-        const host = this.host.nativeElement;
         const active = document.activeElement;
-        if (active && active !== document.body && !host.contains(active))
-          return;
-        host
-          .querySelector<HTMLElement>(`#${CSS.escape(this.controlId())}`)
-          ?.focus();
+        if (active && active !== document.body && active.id !== id) return;
+        document.getElementById(id)?.focus();
       },
       { injector: this.injector },
     );
