@@ -615,9 +615,46 @@ function demoRun() {
   ).run_id;
 }
 
+/** The platform's next answer to Operate › Runs' list (run_summaries.list). */
+function runSummaries(page: Page) {
+  return page.waitForResponse(
+    (r) =>
+      r.request().method() === "GET" &&
+      new URL(r.url()).pathname.endsWith("/run-summaries"),
+    { timeout: 30_000 },
+  );
+}
+
 /**
- * Runs lists the demo run: real data through the signed-in host. The platform
- * answers this visit's own request, so earlier rows can't satisfy the check.
+ * Shows the platform's oldest runs of the last 30 days, the first-run demo run
+ * first among them, and checks that the platform's own answer lists it and
+ * that its row shows its short ID in the Run column.
+ */
+async function showDemoRun(page: Page) {
+  const oldest = page.waitForResponse(
+    (r) =>
+      r.request().method() === "GET" &&
+      new URL(r.url()).pathname.endsWith("/run-summaries") &&
+      new URL(r.url()).searchParams.get("order") === "started_asc",
+    { timeout: 30_000 },
+  );
+  await selectChoice(page.getByLabel("Time range", { exact: true }), "30d");
+  const more = page.getByRole("button", { name: "More filters" });
+  if ((await more.getAttribute("aria-expanded")) !== "true") await more.click();
+  await selectChoice(page.getByLabel("Order", { exact: true }), "started_asc");
+  const response = await oldest;
+  expect(response.status(), "the platform's run summaries").toBe(200);
+  const listing = (await response.json()) as { items: { id: string }[] };
+  expect(listing.items.map((item) => item.id)).toContain(demoRun());
+  await expect(
+    page.locator(`.runs-table .cell-run code[title="${demoRun()}"]`),
+  ).toHaveText(demoRun().slice(0, 8), { timeout: 30_000 });
+}
+
+/**
+ * Runs lists real data through the signed-in host, and the demo run among it.
+ * The platform answers this visit's own requests, so earlier rows can't
+ * satisfy the check.
  */
 async function expectRunsLoad(page: Page) {
   await openSidebar(page, "Home");
@@ -625,21 +662,50 @@ async function expectRunsLoad(page: Page) {
     "Loading your",
     { timeout: 30_000 },
   );
-  const listed = page.waitForResponse(
-    (r) =>
-      r.request().method() === "GET" &&
-      new URL(r.url()).pathname.endsWith("/runs"),
-    { timeout: 30_000 },
-  );
+  const listed = runSummaries(page);
   await openSidebar(page, "Runs");
   const response = await listed;
-  expect(response.status(), "the platform's run list").toBe(200);
-  const listing = (await response.json()) as { items: { id: string }[] };
-  expect(listing.items.map((item) => item.id)).toContain(demoRun());
-  // Rows read as workflows and keys; the ID shows in the run's detail.
-  await expect(page.locator(".resource-row").first()).toBeVisible({
-    timeout: 30_000,
-  });
+  expect(response.status(), "the platform's run summaries").toBe(200);
+  await showDemoRun(page);
+}
+
+/**
+ * Starts a run of the first-run demo through the host's API bridge, as any
+ * other client of the platform would; Studio's own commands play no part.
+ */
+async function startDemoRun(page: Page): Promise<string> {
+  const { environment } = setup();
+  const receipt = JSON.parse(
+    readFileSync(join(platformDir, "first-run.json"), "utf8"),
+  ) as { activation_id: string };
+  const path = `/studio/api/api/v1/tenants/${environment.tenant_id}/projects/${environment.project_id}/environments/${environment.environment_id}/runs`;
+  const answer = await page.evaluate(
+    async ({ path, activation }) => {
+      const session = (await (
+        await fetch("/studio/session", { credentials: "same-origin" })
+      ).json()) as { csrfToken?: string };
+      const response = await fetch(path, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Weave-CSRF": session.csrfToken ?? "",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          activation_id: activation,
+          input: { message: "Started after Runs opened" },
+        }),
+      });
+      return {
+        status: response.status,
+        body: (await response.json()) as Record<string, unknown>,
+      };
+    },
+    { path, activation: receipt.activation_id },
+  );
+  expect(answer.status, JSON.stringify(answer.body)).toBe(201);
+  return String(answer.body["id"]);
 }
 
 // --- the suite ----------------------------------------------------------------------
@@ -853,16 +919,15 @@ test("5-6: silent refresh after expiry, then an ended session keeps local work",
     );
     await expect(page.locator('[data-step="transform-1"]')).toBeVisible();
     await expect(banner(page)).toHaveCount(0);
+    const listed = runSummaries(page);
     await openSidebar(page, "Runs");
     await page
       .getByRole("dialog", { name: "Leave the designer?" })
       .getByRole("button", { name: "Leave designer" })
       .click();
-    // Rows show the short run ID; the full ID is in the run's detail.
-    await expect(page.locator(".resource-table")).toContainText(
-      `Run ${demoRun().slice(0, 8)}`,
-      { timeout: 30_000 },
-    );
+    expect((await listed).status(), "the platform's run summaries").toBe(200);
+    // The Run column shows the demo run's short ID; the full ID is in its detail.
+    await showDemoRun(page);
     await shot(page, "06-signed-in-again");
   });
   expect(s.errors).toEqual([]);
@@ -1260,4 +1325,49 @@ test("11: sign out with revocation, then remove the platform", async ({
   await removePlatform(page, name, "11");
   expectNoCredentialsLeft();
   expect(s.errors).toEqual([]);
+});
+
+test("12: Refresh finds a run started after Runs opened", async ({ page }) => {
+  test.setTimeout(240_000);
+  const { person } = setup();
+  const s = await session(page);
+  const name = uniqueName("e2e-new-run");
+  await pair(page, s.host!, "12-pairing");
+  await connectAndSignIn(page, name, person);
+  const opened = runSummaries(page);
+  await openSidebar(page, "Runs");
+  const first = await opened;
+  expect(first.status(), "the platform's run summaries").toBe(200);
+  const before = new URL(first.url()).searchParams;
+  // Only Refresh reads the list from here on.
+  await page.getByRole("switch", { name: "Auto-refresh" }).uncheck();
+  await shot(page, "12-runs-opened");
+
+  // Another client starts a run on the platform after the page opened.
+  const runId = await startDemoRun(page);
+  const refreshed = runSummaries(page);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  const second = await refreshed;
+  expect(second.status(), "the platform's run summaries").toBe(200);
+  const query = new URL(second.url()).searchParams;
+  expect(query.has("cursor")).toBe(false);
+  const listing = (await second.json()) as {
+    items: { id: string; started_at?: string }[];
+  };
+  expect(listing.items[0]?.id, "the newest run").toBe(runId);
+  // The refreshed window ends after the run started, later than the first one.
+  const startedBefore = Date.parse(query.get("started_before")!);
+  expect(startedBefore).toBeGreaterThan(
+    Date.parse(listing.items[0].started_at!),
+  );
+  expect(startedBefore).toBeGreaterThan(
+    Date.parse(before.get("started_before")!),
+  );
+  await expect(
+    page.locator(".runs-table .run-row").first().locator(".cell-run code"),
+  ).toHaveText(runId.slice(0, 8), { timeout: 30_000 });
+  await shot(page, "12-refreshed");
+  expect(s.errors).toEqual([]);
+  await removePlatform(page, name, "12");
+  expectNoCredentialsLeft();
 });

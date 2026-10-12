@@ -1463,8 +1463,8 @@ security policy, start preferences, and local validation when the repository
 Python `.venv` is available. Connected API fixtures test request shapes and
 failure handling; they are separate from database/mail transport integration
 evidence. `tests/browser/real-platform.spec.ts` drives the connection, sign-in,
-session expiry and revocation, switch-account, and quick-integration journeys
-against a running local platform and its Keycloak, with the system credential
+session expiry and revocation, switch-account, quick-integration and Runs
+refresh journeys against a running local platform and its Keycloak, with the system credential
 store; it is skipped unless `WEAVE_E2E_PLATFORM_DIR` and
 `WEAVE_E2E_PERSON_FILE` are set, as its header explains. Its quick-integration
 test also needs `WEAVE_E2E_ACME_ORIGIN`, the Acme fixture origin the platform
