@@ -448,6 +448,32 @@ SPDX-License-Identifier: Apache-2.0
 .param-line:is([hidden], [data-kind="none"]) {
   display: none;
 }
+.param-line > .param-line-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Not applied: what the field holds isn't in the workflow, the last value
+   that applied is. The pill sits on the message's first line. */
+.param-line > .param-status {
+  flex: none;
+  height: 20px;
+}
+/* A fix Studio knows ends on the form's right edge, centered on the
+   message's first line; its target follows the density, and the message
+   moves down to its center instead of the fix reaching into the control. */
+.step-details .param-line > button.param-fix {
+  flex: none;
+  min-height: var(--sd-label-row);
+  padding: 0 0 0 var(--space-2);
+  font: var(--type-small);
+  font-weight: 600;
+}
+.param-line:has(> .param-fix) > .param-line-text {
+  padding-top: calc((var(--sd-label-row) - 20px) / 2);
+}
+.param-line:has(> .param-fix) > weave-icon {
+  margin-top: calc((var(--sd-label-row) - 20px) / 2 + 2px);
+}
 .toggletip {
   position: relative;
   display: inline-flex;
@@ -514,10 +540,6 @@ SPDX-License-Identifier: Apache-2.0
   background: var(--sunken);
   border-radius: var(--radius-sm);
   overflow-wrap: anywhere;
-}
-.param-template-error {
-  font: var(--type-small);
-  color: var(--danger-ink);
 }
 .param-deferred {
   margin: 0;

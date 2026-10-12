@@ -51,6 +51,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export const retryOn = (value: unknown): boolean =>
   isRecord(value) && Number(value["maxAttempts"] ?? 1) > 1;
 
+/** Retry is on for a step whose action may run again: never one that changes data. */
+export const retryShown = (
+  step: Step,
+  ctx: KindContext,
+  value: unknown,
+): boolean =>
+  actionSideEffect(step, ctx) !== "non_idempotent" && retryOn(value);
+
 /** The retry the switch writes: on asks for three tries, off for one; the waits stay. */
 export function retrySwitched(value: unknown, on: boolean): RetrySettings {
   const current = isRecord(value) ? value : {};

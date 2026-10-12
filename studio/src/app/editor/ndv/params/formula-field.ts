@@ -89,6 +89,7 @@ export class RefPill {
           [value]="templateText()"
           (focus)="beginEdit()"
           (input)="typed($event)"
+          (keydown)="key($event)"
           (blur)="leave()"
         ></textarea>
       } @else {
@@ -103,13 +104,9 @@ export class RefPill {
           [value]="templateText()"
           (focus)="beginEdit()"
           (input)="typed($event)"
+          (keydown)="key($event)"
           (blur)="leave()"
         />
-      }
-      @if (templateError()) {
-        <span class="param-template-error" role="alert">{{
-          templateError()
-        }}</span>
       }
     }
     @case ("formula") {
@@ -174,8 +171,8 @@ export class FormulaField {
    * field that is Mapped and empty when the form renders waits to be entered.
    */
   readonly picking = signal(false);
+  /** Text being typed that applies (literal text waits for blur). */
   readonly editingText = signal<string | null>(null);
-  readonly templateError = signal("");
   readonly words = words;
   private readonly lifetime = inject(DestroyRef);
   private readonly injector = inject(Injector);
@@ -240,9 +237,40 @@ export class FormulaField {
     this.pendingRef = "";
     untracked(() => {
       this.editingText.set(null);
-      this.templateError.set("");
       this.picking.set(false);
     });
+  }
+  /**
+   * Template text that doesn't parse: the session keeps it, Not applied,
+   * through closing and reopening step details, while the workflow keeps
+   * the last value that applied.
+   */
+  private heldText(): { text: string; message: string } | null {
+    const held = this.session().held(this.spec());
+    return held?.kind === "template" ? held : null;
+  }
+  /** Why the text on screen doesn't apply, or "". */
+  templateError(): string {
+    this.syncIdentity();
+    return this.heldText()?.message ?? "";
+  }
+  /**
+   * Escape in a template that doesn't apply takes it back to the last value
+   * that did, and stays in the field; with nothing to take back, Escape is
+   * step details' (it leaves the field, then closes).
+   */
+  key(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !this.heldText()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const session = this.session();
+    // The field stays Mapped, as it was while the text was typed.
+    if (session.read(this.spec()).mode !== "mapped")
+      void session.setMode(this.spec(), "mapped");
+    session.release(this.spec());
+    this.editingText.set(null);
+    this.beginEdit();
+    session.host.refreshView();
   }
   private reconcile() {
     this.syncIdentity();
@@ -251,10 +279,7 @@ export class FormulaField {
       this.session().isCurrent() &&
       this.editingOwner.stored !== canonicalJson(this.stored())
     ) {
-      untracked(() => {
-        this.editingText.set(null);
-        this.templateError.set("");
-      });
+      untracked(() => this.editingText.set(null));
       this.beginEdit();
     }
   }
@@ -291,6 +316,8 @@ export class FormulaField {
   }
   leave() {
     this.syncIdentity();
+    // Text that doesn't parse stays, Not applied; nothing is written.
+    if (this.heldText()) return;
     const text = this.editingText();
     if (text !== null) {
       const parsed = textToExpression(text);
@@ -300,7 +327,6 @@ export class FormulaField {
     }
     this.editingOwner = null;
     this.editingText.set(null);
-    this.templateError.set("");
   }
 
   private stored() {
@@ -337,7 +363,9 @@ export class FormulaField {
     );
     if (
       this.session().templates(this.spec()) &&
-      (this.editingText() !== null || (!!parts && editable && !single))
+      (this.editingText() !== null ||
+        !!this.heldText() ||
+        (!!parts && editable && !single))
     )
       return "template";
     if (value.mode === "mapped" && !single) return "formula";
@@ -348,7 +376,11 @@ export class FormulaField {
   templateText(): string {
     this.reconcile();
     const parts = this.parts();
-    return this.editingText() ?? (parts ? partsToText(parts) : "");
+    return (
+      this.heldText()?.text ??
+      this.editingText() ??
+      (parts ? partsToText(parts) : "")
+    );
   }
   formulaText(): string {
     const value = this.stored();
@@ -443,8 +475,9 @@ export class FormulaField {
     const text = (event.target as HTMLInputElement).value;
     this.editingText.set(text);
     const parsed = textToExpression(text);
-    if (!parsed.ok) return this.templateError.set(parsed.message);
-    this.templateError.set("");
+    if (!parsed.ok)
+      return this.session().hold(this.spec(), "template", text, parsed.message);
+    this.session().release(this.spec());
     // Literal text waits for blur so typing braces cannot replace the focused editor.
     if (
       parsed.value.mode === "mapped" &&

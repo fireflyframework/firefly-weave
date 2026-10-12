@@ -20,7 +20,8 @@ SPDX-License-Identifier: Apache-2.0
 @let ids = this.ids();
 @let reason = readOnly();
 @let line = this.line();
-@let local = numberProblem() || jsonProblem || conditionsProblem();
+@let heldText = heldProblem();
+@let local = heldText || conditionsProblem();
 @let quiet = row() || spec.labelHidden || spec.type === "conditions";
 <div
   class="param"
@@ -227,7 +228,9 @@ SPDX-License-Identifier: Apache-2.0
               [id]="ids.control"
               [attr.aria-label]="spec.label"
               [attr.aria-required]="spec.required || null"
-              [attr.aria-invalid]="line.kind === 'error' || null"
+              [attr.aria-invalid]="
+                line.kind === 'error' || !!numberProblem() || null
+              "
               [attr.aria-describedby]="
                 only ? ids.control + '-unit ' + describedBy() : describedBy()
               "
@@ -235,6 +238,7 @@ SPDX-License-Identifier: Apache-2.0
               [placeholder]="durationPlaceholder(parts.unit)"
               [value]="numberText ?? parts.amount"
               (input)="duration(amount.value, unitOf(amount))"
+              (keydown)="heldKey($event)"
             />
             @if (only) {
               <!-- One unit: it names itself inside the box, like a number's. -->
@@ -352,8 +356,9 @@ SPDX-License-Identifier: Apache-2.0
             [attr.aria-describedby]="describedBy()"
             [attr.aria-invalid]="!!jsonProblem || null"
             [readOnly]="!!reason"
-            [value]="json()"
+            [value]="jsonShown()"
             (change)="jsonText($event)"
+            (keydown)="heldKey($event)"
           ></textarea>
         }
         @case ("notice") {
@@ -411,12 +416,21 @@ SPDX-License-Identifier: Apache-2.0
     "
     [id]="ids.line"
     [attr.data-kind]="local ? 'error' : line.kind"
-    [attr.role]="line.kind === 'error' ? 'alert' : null"
+    [attr.role]="line.kind === 'error' || local ? 'alert' : null"
   >
-    @if (local) {
-      <weave-icon name="warning" [size]="16" />{{ local }}
+    @if (heldText) {
+      <!-- What the field holds isn't in the workflow: the last value that
+           applied is. -->
+      <span class="pill param-status" data-tone="danger">Not applied</span
+      ><span class="param-line-text">{{ heldText }}</span>
+    } @else if (local) {
+      <weave-icon name="warning" [size]="16" /><span class="param-line-text">{{
+        local
+      }}</span>
     } @else if (line.kind === "error" || line.kind === "warning") {
-      <weave-icon name="warning" [size]="16" />{{ line.text }}
+      <weave-icon name="warning" [size]="16" /><span class="param-line-text">{{
+        line.text
+      }}</span>
       @if (line.fix) {
         <button type="button" class="text-link param-fix" (click)="line.fix()">
           {{ line.fixLabel ?? "Fix" }}

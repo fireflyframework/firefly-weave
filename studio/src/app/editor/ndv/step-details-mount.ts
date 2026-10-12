@@ -80,7 +80,13 @@ export class StepDetailsMount {
     effect(() => {
       const host = this.host();
       host.tick();
-      untracked(() => this.ownedDocuments(host).sync());
+      untracked(() => {
+        this.ownedDocuments(host).sync();
+        // Entries typed for a step that is gone never reach a step made
+        // again with its name; the open step keeps its own while step
+        // details follow a rename back.
+        this.made?.controller.prunePending(this.details.request()?.target);
+      });
       if (!this.ready() || !this.details.request()) return;
       const controller = this.controller();
       const model = host.model;
@@ -102,7 +108,9 @@ export class StepDetailsMount {
     const host = this.host();
     const opened = host.model.opened;
     if (!this.made || this.made.host !== host || this.made.opened !== opened) {
-      this.made = { host, opened, controller: new StepDetailsController(host) };
+      const controller = new StepDetailsController(host);
+      controller.ownedProblems = () => this.ownedDocuments(host).problems();
+      this.made = { host, opened, controller };
     }
     return this.made.controller;
   }
@@ -119,10 +127,6 @@ export class StepDetailsMount {
       };
     }
     return this.documents.documents;
-  }
-  /** The built documents' problems, for the fields that caused them (issues read it). */
-  ownedProblems() {
-    return this.ownedDocuments(this.host()).problems;
   }
   closed(target: string) {
     this.details.close();

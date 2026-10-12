@@ -19,7 +19,14 @@ SPDX-License-Identifier: Apache-2.0
 // the workflow's): what each field reads, writes, shows under itself and
 // offers in its menu. Components read through it; every write goes through
 // the controller as an undo step.
-import { canonicalJson, formatPointer, getAt } from "../../../forms/core/json";
+import {
+  canonicalJson,
+  formatPointer,
+  getAt,
+  parsePointer,
+} from "../../../forms/core/json";
+import { describeDiagnostic } from "../../../designer/diagnostic-copy";
+import { suggestedChange } from "../../../designer/diagnostics-list";
 import type { DialogField, DialogOptions } from "../../../dialog";
 import {
   referenceScope,
@@ -28,7 +35,26 @@ import {
   type ScopeEntry,
 } from "../../../forms/core/scope";
 import { decode, get } from "../../../forms/core/binding";
-import { fieldRules, shownProblems, type RuleProblem } from "./field-rules";
+import {
+  fieldRules,
+  requiredMessage,
+  shownProblems,
+  type RuleProblem,
+} from "./field-rules";
+import {
+  NOT_APPLIED,
+  NOT_SAVED,
+  fieldFor,
+  fixFor,
+  type PlacedSpec,
+  type StepIssue,
+} from "../issues";
+import type {
+  PendingEntry,
+  PendingKind,
+  PendingOwner,
+} from "../pending-entries";
+import { retryProblem, retryShown } from "../settings/settings-rules";
 import {
   formState,
   featureReason,
@@ -100,6 +126,8 @@ export interface SessionHooks {
     options: DialogOptions & { field: DialogField },
   ): Promise<string | null>;
   announce(text: string): void;
+  /** Moves focus to a field, switching tab when needed; `open` also opens its choices. */
+  focusField?(field: PlacedSpec, open: boolean): void;
 }
 export interface FieldLine {
   kind: "error" | "warning" | "preview" | "hint" | "reason" | "none";
@@ -107,6 +135,14 @@ export interface FieldLine {
   fixLabel?: string;
   fix?: () => void;
 }
+/** The stand-in for Notes, which is no field of the form, in the issues list. */
+const NOTES: PlacedSpec = {
+  spec: { id: "notes", path: [], type: "multiline", label: "Notes" },
+  tab: "settings",
+};
+const NOTE_KEY = "note";
+/** Fixes the field itself offers: Studio shows them only in the issues list. */
+const AT_THE_FIELD = new Set(["focus", "connection"]);
 const pointer = formatPointer;
 const WHOLE_PATH =
   "The path values are mapped as a whole. Edit them with Edit as YAML in the More menu.";
@@ -339,7 +375,9 @@ export class FormSession {
     const mapped =
       (structured
         ? this.wholeMapping(spec)
-        : this.read(spec).mode === "mapped") || this.drafts.has(this.key(spec));
+        : this.read(spec).mode === "mapped") ||
+      this.drafts.has(this.key(spec)) ||
+      this.held(spec)?.kind === "template";
     return mapped ? "mapped" : spec.mapping === "both" ? "fixed" : null;
   }
 
@@ -933,13 +971,26 @@ export class FormSession {
   touch(spec: ParamSpec): void {
     this.controller.touch(this.target, spec.id);
   }
-  problems(spec: ParamSpec): RuleProblem[] {
+  /**
+   * The field's own problems as they show now (required ones wait on a new
+   * step). A read-only field isn't asked for a value: it shows why it can't
+   * change instead.
+   */
+  problems(spec: ParamSpec, readOnly: string | null = null): RuleProblem[] {
     const all = fieldRules(spec, this.read(spec), this.entries(spec));
-    return shownProblems(spec.id, all, {
+    return shownProblems(
+      spec.id,
+      readOnly ? all.filter((problem) => problem.code !== "required") : all,
+      this.timing(),
+    );
+  }
+  private timing() {
+    return {
       fresh: this.request.fresh,
       touched: this.controller.touched(this.target),
-      revealAll: this.request.revealAll,
-    });
+      revealAll:
+        this.request.revealAll || this.controller.revealed(this.target),
+    };
   }
   requiredEmpty(spec: ParamSpec): boolean {
     return fieldRules(spec, this.read(spec), this.entries(spec)).some(
@@ -950,8 +1001,20 @@ export class FormSession {
     return entry.readOnly ?? entry.disabled;
   }
   line(spec: ParamSpec, entry: FieldEntry | null): FieldLine {
-    const problem = this.problems(spec)[0];
+    const reason = entry ? this.readOnly(entry) : null;
+    // The field's own rule speaks first; it needs no Fix: the field is here.
+    const problem = this.problems(spec, reason)[0];
     if (problem) return { kind: problem.severity, text: problem.message };
+    // A compiler message, a builder problem or a missing input placed here.
+    const issue = this.issues().find(
+      (item) =>
+        !item.key.startsWith("rule:") &&
+        !item.status &&
+        item.field?.spec.id === spec.id &&
+        samePath(item.field.spec.path, spec.path),
+    );
+    if (issue)
+      return this.withFix({ kind: issue.severity, text: issue.message }, issue);
     const value = this.read(spec);
     if (value.mode === "mapped") {
       const preview = this.controller
@@ -963,13 +1026,420 @@ export class FormSession {
           text: `= ${JSON.stringify(preview.value)}`.slice(0, 200),
         };
     }
-    const reason = entry ? this.readOnly(entry) : null;
     if (reason) return { kind: "reason", text: reason };
     if (spec.type === "connection")
       return { kind: "hint", text: spec.hint ?? SLOT_HINT };
     return spec.hint
       ? { kind: "hint", text: spec.hint }
       : { kind: "none", text: "" };
+  }
+
+  /** A message's Fix at the field, when the field itself doesn't already offer it. */
+  private withFix(line: FieldLine, issue: StepIssue): FieldLine {
+    const fix = issue.fix;
+    if (!fix || AT_THE_FIELD.has(fix.kind)) return line;
+    return { ...line, fixLabel: fix.label, fix: () => this.runFix(issue) };
+  }
+
+  // ------------------------------------------------------------ issues
+  private placedCache: { key: unknown[]; specs: PlacedSpec[] } | null = null;
+  private issueCache: { key: unknown[]; issues: StepIssue[] } | null = null;
+  /** What issues depend on: when none of it changed, they are the same. */
+  private issueKey(): unknown[] {
+    const host = this.host;
+    return [
+      host.model,
+      host.model.opened,
+      host.model.revision,
+      host.model.canvas,
+      host.tick?.(),
+      host.diagnostics,
+      host.diagnosticsDefinition,
+      host.contractIssues,
+      host.catalogContracts,
+      this.controller.ownedProblems(),
+      this.controller.features(),
+      this.controller.issueMarks(),
+      this.controller.readOnlyReason(),
+      this.controller.added(this.target).size,
+      this.expanded.size,
+      this.drafts.size,
+      this.structureRevision,
+    ];
+  }
+  private static same(a: unknown[], b: unknown[]): boolean {
+    return a.length === b.length && a.every((value, i) => value === b[i]);
+  }
+  /** Every field shown on both tabs (groups, rows and URL values opened), with its tab. */
+  placedSpecs(): PlacedSpec[] {
+    const key = this.issueKey();
+    if (this.placedCache && FormSession.same(this.placedCache.key, key))
+      return this.placedCache.specs;
+    const out: PlacedSpec[] = [];
+    const visit = (
+      entry: FieldEntry,
+      tab: FormName,
+      inherited: string | null,
+      depth: number,
+    ) => {
+      if (depth > 32) return;
+      const readOnly = this.readOnly(entry) ?? inherited;
+      out.push({ spec: entry.spec, tab, readOnly });
+      for (const child of this.shownChildren(entry.spec))
+        visit(child, tab, readOnly, depth + 1);
+    };
+    for (const entry of this.state("parameters").fields)
+      visit(entry, "parameters", null, 0);
+    for (const entry of this.state("settings").fields)
+      visit(entry, "settings", null, 0);
+    this.placedCache = { key, specs: out };
+    return out;
+  }
+  /** The fields a field shows inside it, as the form draws them. */
+  private shownChildren(field: ParamSpec): FieldEntry[] {
+    if (this.wholeMapping(field) || this.mode(field) === "mapped") return [];
+    if (field.type === "fields") {
+      if (field.id === "retry" && field.scope === "action") {
+        const step = this.controller.step(this.target);
+        if (
+          !step ||
+          !retryShown(step, this.controller.kindContext(), this.fixedOf(field))
+        )
+          return [];
+      }
+      return this.children(field).shown;
+    }
+    if (!this.collectionRows(field)) return [];
+    if (field.type === "list" && field.item) {
+      const indices =
+        this.structure(field) === "branches"
+          ? this.keyed(field).map(([key]) => key)
+          : this.list(field).map((_, i) => i);
+      return indices.map((index) =>
+        this.childEntry(this.itemSpec(field, index, field.item!)),
+      );
+    }
+    if (field.type === "keyValue")
+      return this.keyed(field).map(([key]) =>
+        this.childEntry(this.keyedSpec(field, key)),
+      );
+    if (field.type === "urlTemplate")
+      return this.urlParts(field).map((part) => this.childEntry(part));
+    return [];
+  }
+  private fixedOf(spec: ParamSpec): unknown {
+    const value = this.read(spec);
+    return value.mode === "fixed" ? value.value : undefined;
+  }
+  /**
+   * The step's issues, fields first in the order they show: field rules
+   * (with their timing), entries that don't apply yet, compiler messages,
+   * problems the action builder found, missing required inputs, and
+   * answers that choose no path.
+   */
+  issues(): StepIssue[] {
+    const key = this.issueKey();
+    if (this.issueCache && FormSession.same(this.issueCache.key, key))
+      return this.issueCache.issues;
+    const specs = this.placedSpecs();
+    const timing = this.timing();
+    const issues: StepIssue[] = [];
+    const ruled = new Set<string>();
+    const fieldKey = (placed: PlacedSpec) =>
+      `${placed.spec.id}\n${pointer(placed.spec.path)}`;
+    for (const placed of specs) {
+      for (const problem of this.problems(
+        placed.spec,
+        placed.readOnly ?? null,
+      )) {
+        issues.push({
+          key: `rule:${fieldKey(placed)}:${problem.code}`,
+          severity: problem.severity,
+          message: problem.message,
+          field: placed,
+          fix:
+            problem.code === "required"
+              ? fixFor("required", null, placed)
+              : { kind: "focus", label: "Fix" },
+        });
+        ruled.add(fieldKey(placed));
+      }
+      if (placed.spec.id === "retry" && placed.spec.scope === "action") {
+        const problem = retryProblem(this.fixedOf(placed.spec));
+        const longest = specs.find(
+          (other) => other.spec.id === "retry.maxDelaySeconds",
+        );
+        if (problem && longest) {
+          issues.push({
+            key: "rule:retry:waits",
+            severity: "error",
+            message: problem,
+            field: longest,
+            fix: { kind: "focus", label: "Fix" },
+          });
+          ruled.add(fieldKey(longest));
+        }
+      }
+    }
+    // What the person typed that doesn't apply yet.
+    for (const placed of specs) {
+      const held = this.held(placed.spec);
+      if (!held) continue;
+      issues.push({
+        key: `held:${fieldKey(placed)}`,
+        severity: "error",
+        message: held.message,
+        status: NOT_APPLIED,
+        field: placed,
+        fix: { kind: "focus", label: "Fix" },
+      });
+      ruled.add(fieldKey(placed));
+    }
+    const note = this.heldNote();
+    if (note)
+      issues.push({
+        key: "held:notes",
+        severity: "error",
+        message: note.message,
+        status: NOT_SAVED,
+        field: NOTES,
+        fix: { kind: "focus", label: "Fix" },
+      });
+    const pseudo = this.target.startsWith("$");
+    const scoped = specs.filter(
+      (placed) =>
+        (placed.spec.scope ?? "step") === (pseudo ? "workflow" : "step"),
+    );
+    const definition = this.host.diagnosticsDefinition;
+    this.controller.diagnostics(this.target).forEach((diagnostic, index) => {
+      const field = fieldFor(diagnostic.at, scoped);
+      if (
+        /REQUIRED$/.test(diagnostic.code) &&
+        field &&
+        timing.fresh &&
+        !timing.revealAll &&
+        !timing.touched.has(field.spec.id)
+      )
+        return;
+      const message = describeDiagnostic(diagnostic).text;
+      if (
+        field &&
+        issues.some(
+          (item) =>
+            item.field === field &&
+            item.message === message &&
+            item.key.startsWith("rule:"),
+        )
+      )
+        return;
+      issues.push({
+        key: `compiler:${index}`,
+        severity: diagnostic.severity === "warning" ? "warning" : "error",
+        message,
+        field,
+        fix: fixFor(
+          diagnostic.code,
+          suggestedChange(diagnostic.suggestedEdit, definition),
+          field,
+        ),
+      });
+    });
+    const step = this.controller.step(this.target);
+    const uses = String(step?.["uses"] ?? "");
+    const actionSpecs = specs.filter(
+      (placed) => placed.spec.scope === "action",
+    );
+    (this.controller.ownedProblems().get(uses) ?? []).forEach(
+      (problem, index) => {
+        const at = parsePointer(String(problem.path ?? "")) ?? [];
+        const field =
+          fieldFor(at, actionSpecs) ??
+          (at[0] === "pathTemplate"
+            ? (specs.find((placed) => placed.spec.type === "urlTemplate") ??
+              null)
+            : null);
+        // The field's own message already says what is wrong there.
+        if (field && ruled.has(fieldKey(field))) return;
+        issues.push({
+          key: `owned:${index}`,
+          severity: problem.severity === "warning" ? "warning" : "error",
+          message: problem.message,
+          field,
+          fix: null,
+        });
+      },
+    );
+    (this.host.contractIssues ?? [])
+      .filter((gap) => gap.stepId === this.target)
+      .forEach((gap, index) => {
+        const field = fieldFor(
+          gap.field === "with" ? ["with", ...gap.dataPath] : ["connection"],
+          scoped,
+        );
+        if (field && ruled.has(fieldKey(field))) return;
+        // A missing required input waits like the field's own required message.
+        if (
+          field &&
+          timing.fresh &&
+          !timing.revealAll &&
+          !timing.touched.has(field.spec.id)
+        )
+          return;
+        issues.push({
+          key: `gap:${index}`,
+          severity: "error",
+          message: field
+            ? requiredMessage(field.spec)
+            : gap.field === "connection"
+              ? "Choose a connection."
+              : `Map required field ${gap.label}.`,
+          field,
+          fix: fixFor("required", null, field),
+        });
+      });
+    const node = this.host.model
+      .nodes()
+      .find((item) => item.step.id === this.target);
+    if (node?.answerPrompt)
+      issues.push({
+        key: "answers",
+        severity: "warning",
+        message: "Its answers don't choose a path yet.",
+        field: null,
+        fix: { kind: "answers", label: "Add paths for answers" },
+      });
+    // Fields in the order they show, then what belongs to the step as a whole.
+    const order = (issue: StepIssue) =>
+      issue.field === NOTES
+        ? specs.length
+        : issue.field
+          ? specs.indexOf(issue.field)
+          : specs.length + 1;
+    const sorted = issues
+      .map((issue, index) => ({ issue, index }))
+      .sort((a, b) => order(a.issue) - order(b.issue) || a.index - b.index)
+      .map(({ issue }) => issue);
+    this.issueCache = { key, issues: sorted };
+    return sorted;
+  }
+  /** Labels of the fields holding entries that don't apply yet, for the toast on leaving. */
+  heldLabels(): string[] {
+    return this.issues()
+      .filter((issue) => issue.status && issue.field)
+      .map((issue) => issue.field!.spec.label);
+  }
+  runFix(issue: StepIssue): void {
+    const fix = issue.fix;
+    if (!fix || !this.isCurrent()) return;
+    switch (fix.kind) {
+      case "suggestion":
+        void this.host.applySuggestion(fix.change);
+        return;
+      case "answers":
+        void this.host.branchOnDecision(this.target);
+        return;
+      case "update":
+        window.open(fix.href, "_blank", "noopener");
+        return;
+      case "picker": {
+        const field = issue.field;
+        if (!field) return;
+        void this.setMode(field.spec, "mapped").then(() => {
+          if (this.isCurrent()) this.hooks.focusField?.(field, true);
+        });
+        return;
+      }
+      default:
+        if (issue.field)
+          this.hooks.focusField?.(issue.field, fix.kind === "connection");
+    }
+  }
+
+  // ------------------------------------------- entries not applied yet
+  private pendingKey(spec: ParamSpec): string {
+    return `${spec.scope ?? "step"}:${spec.id}:${pointer(spec.path)}`;
+  }
+  /** The field as described, the value under it and the rows around it. */
+  private pendingOwner(spec: ParamSpec): PendingOwner {
+    const counts: [number, number][] = [];
+    spec.path.forEach((segment, at) => {
+      if (typeof segment !== "number" || at === 0) return;
+      const entries = this.entries({
+        id: "probe",
+        type: "list",
+        label: "",
+        path: spec.path.slice(0, at),
+        scope: spec.scope,
+      });
+      counts.push([at, entries.kind === "array" ? entries.length : -1]);
+    });
+    return {
+      descriptor: canonicalJson(spec),
+      baseline: canonicalJson(this.read(spec)),
+      structure: JSON.stringify(counts),
+    };
+  }
+  /**
+   * What a field holds that doesn't apply yet, while it still belongs to the
+   * field and the value it was typed over. Nothing shows while the workflow
+   * can't change: the entry waits, and is never applied then.
+   */
+  held(spec: ParamSpec): PendingEntry | null {
+    if (!this.isCurrent() || this.controller.readOnlyReason()) return null;
+    if (!this.controller.holds(this.target, this.pendingKey(spec))) return null;
+    return this.controller.held(
+      this.target,
+      this.pendingKey(spec),
+      this.pendingOwner(spec),
+    );
+  }
+  hold(
+    spec: ParamSpec,
+    kind: PendingKind,
+    text: string,
+    message: string,
+  ): void {
+    if (!this.isCurrent() || this.controller.readOnlyReason()) return;
+    this.controller.hold(
+      this.target,
+      this.pendingKey(spec),
+      this.pendingOwner(spec),
+      {
+        kind,
+        text,
+        message,
+        label: spec.label,
+      },
+    );
+  }
+  release(spec: ParamSpec): void {
+    if (this.isCurrent())
+      this.controller.release(this.target, this.pendingKey(spec));
+  }
+  private noteOwner(): PendingOwner {
+    return {
+      descriptor: NOTE_KEY,
+      baseline: this.controller.note(this.target).text,
+      structure: "",
+    };
+  }
+  /** A note the canvas had no room for, while the saved note is the one it was typed over. */
+  heldNote(): PendingEntry | null {
+    if (!this.isCurrent() || this.controller.readOnlyReason()) return null;
+    if (!this.controller.holds(this.target, NOTE_KEY)) return null;
+    return this.controller.held(this.target, NOTE_KEY, this.noteOwner());
+  }
+  holdNote(text: string, reason: string): void {
+    if (!this.isCurrent()) return;
+    this.controller.hold(this.target, NOTE_KEY, this.noteOwner(), {
+      kind: "note",
+      text,
+      message: reason,
+      label: "Notes",
+    });
+  }
+  releaseNote(): void {
+    if (this.isCurrent()) this.controller.release(this.target, NOTE_KEY);
   }
 
   /** The action owns its connector; an imported slot is the local fallback. */
@@ -1492,7 +1962,8 @@ export class FormSession {
         !child.required &&
         child.default !== undefined &&
         isDefault(this.subject(), child) &&
-        !this.expanded.has(key)
+        !this.expanded.has(key) &&
+        !this.controller.holds(this.target, this.pendingKey(child))
       )
         collapsed.push(child);
       else

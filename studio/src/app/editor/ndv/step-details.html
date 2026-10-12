@@ -184,19 +184,30 @@ SPDX-License-Identifier: Apache-2.0
               >{{ renameHintText() }}</span
             >
           } @else {
-            <button
-              type="button"
-              class="sd-name"
-              [disabled]="pseudo()"
-              [attr.title]="name()"
-              [attr.aria-label]="pseudo() ? name() : 'Rename ' + name()"
-              (click)="startRename()"
-            >
-              <span class="sd-name-text">{{ name() }}</span>
-              @if (!pseudo()) {
-                <weave-icon name="edit" [size]="16" />
+            <!-- The step's issues sit on its name's line, so they come and
+                 go without moving the header. -->
+            <div class="sd-name-row">
+              <button
+                type="button"
+                class="sd-name"
+                [disabled]="pseudo()"
+                [attr.title]="name()"
+                [attr.aria-label]="pseudo() ? name() : 'Rename ' + name()"
+                (click)="startRename()"
+              >
+                <span class="sd-name-text">{{ name() }}</span>
+                @if (!pseudo()) {
+                  <weave-icon name="edit" [size]="16" />
+                }
+              </button>
+              @let found = issues();
+              @if (found.length) {
+                <weave-issues-indicator
+                  [issues]="found"
+                  (chosen)="goToIssue($event)"
+                />
               }
-            </button>
+            </div>
             <span class="sd-subtitle" [attr.title]="subtitle()">{{
               subtitle()
             }}</span>

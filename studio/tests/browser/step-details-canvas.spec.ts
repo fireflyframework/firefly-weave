@@ -314,7 +314,7 @@ test("closing and switching to Source keeps focus in the selected view", async (
   await expect(details.dialog).toHaveCount(0);
 });
 
-test("an issue in a pending Settings field falls back to a visible parameter", async ({
+test("an issue in a Settings field opens Settings on that field", async ({
   page,
 }) => {
   const details = await openStepFixture(page);
@@ -340,9 +340,11 @@ test("an issue in a pending Settings field falls back to a visible parameter", a
     .locator('.tile-node[data-tile="wait-for-payment"] .tile-issue')
     .click();
   await expect(details.dialogFor("wait-for-payment")).toBeVisible();
-  await expect(details.tab("Parameters")).toHaveAttribute(
+  await expect(details.tab("Settings")).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(details.field("name").getByRole("textbox")).toBeFocused();
+  await expect(
+    details.field("timeout").getByRole("textbox", { name: "Wait at most" }),
+  ).toBeFocused();
 });

@@ -3025,7 +3025,10 @@ export class App implements CanvasHost {
     ) {
       await this.openStepDetails(location.stepId, {
         revealAll: true,
-        focus: { kind: "path", path: location.field },
+        focus: {
+          kind: "path",
+          path: [...location.field, ...location.dataPath],
+        },
       });
       return;
     }

@@ -19,7 +19,8 @@ SPDX-License-Identifier: Apache-2.0
 // and "Show on canvas" to put its first line under the step's name. Typing
 // is one undo step per burst, like a field; a note that is only spaces is
 // no note. A note the canvas has no room for stays on screen, marked as not
-// saved, until it fits.
+// saved, until it fits: the session keeps it through switching tabs,
+// moving between steps and closing step details.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -32,13 +33,11 @@ import type { FormSession } from "../params/form-session";
 
 let sequence = 0;
 
-/** What is on screen while it differs from the stored note, and why. */
+/** Spaces typed into no note: on screen until the box is left. */
 interface NoteDraft {
   text: string;
   /** The stored text it was typed over: a change from elsewhere replaces it. */
   stored: string;
-  /** Why it isn't saved; none for a blank note, which is simply no note. */
-  refused?: string;
 }
 
 @Component({
@@ -116,13 +115,17 @@ export class NotesSection {
     const draft = this.draft();
     return draft && draft.stored === this.note().text ? draft : null;
   }
-  /** The text on screen: the stored note, or what is being typed. */
+  /** The text on screen: a note that isn't saved, what is being typed, or the stored note. */
   text(): string {
-    return this.current()?.text ?? this.note().text;
+    return (
+      this.session().heldNote()?.text ??
+      this.current()?.text ??
+      this.note().text
+    );
   }
   /** Why the note on screen isn't saved, if it isn't. */
   refused(): string | null {
-    return this.current()?.refused ?? null;
+    return this.session().heldNote()?.message ?? null;
   }
   typed(event: Event) {
     const session = this.session();
@@ -133,11 +136,9 @@ export class NotesSection {
       session.target,
       text.trim() ? { ...note, text } : null,
     );
-    this.draft.set({
-      text,
-      stored: this.note().text,
-      ...(refused ? { refused } : {}),
-    });
+    if (refused) session.holdNote(text, refused);
+    else session.releaseNote();
+    this.draft.set({ text, stored: this.note().text });
   }
   /** Leaving keeps a refused note on screen; spaces typed into no note go. */
   leave() {

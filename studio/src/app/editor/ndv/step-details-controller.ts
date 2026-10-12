@@ -76,6 +76,12 @@ import {
   type StepKindDescriptor,
 } from "./registry";
 import type { StepDetailsHost } from "./step-details-host";
+import type { HostDiagnostic } from "../../integrations/http-action-client";
+import {
+  PendingEntries,
+  type PendingEntry,
+  type PendingOwner,
+} from "./pending-entries";
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -96,6 +102,15 @@ export type ControllerHost = Pick<
   | "cacheDecisionContract"
   | "can"
 >;
+/** A diagnostic of one step, located in it. */
+export interface StepDiagnostic {
+  code: string;
+  severity: string;
+  message: string;
+  path: string;
+  at: Path;
+  suggestedEdit?: unknown;
+}
 export interface CommitOutcome {
   ok: boolean;
   /** Labels of fields the change hid and cleared. */
@@ -221,6 +236,8 @@ export class StepDetailsController {
     this.session = { model, opened: model.opened };
     this.addedBy.clear();
     this.touchedBy.clear();
+    this.revealedBy.clear();
+    this.marks++;
     this.burst = null;
   }
 
@@ -320,11 +337,106 @@ export class StepDetailsController {
   }
   touch(target: string, id: string): void {
     this.syncSession();
-    this.set(this.touchedBy, target).add(id);
+    const touched = this.set(this.touchedBy, target);
+    if (touched.has(id)) return;
+    touched.add(id);
+    this.marks++;
   }
   touched(target: string): ReadonlySet<string> {
     this.syncSession();
     return this.touchedBy.get(target) ?? new Set();
+  }
+  private revealedBy = new Set<string>();
+  /** Every message of a step shows from now on (Execute step was pressed). */
+  reveal(target: string): void {
+    this.syncSession();
+    if (this.revealedBy.has(target)) return;
+    this.revealedBy.add(target);
+    this.marks++;
+  }
+  revealed(target: string): boolean {
+    this.syncSession();
+    return this.revealedBy.has(target);
+  }
+  /** Problems the host's builder found in the actions this workflow owns (set by the mount). */
+  ownedProblems: () => ReadonlyMap<string, HostDiagnostic[]> = () => new Map();
+  /** Changes when what decides an issue's timing changes: a field left, a step revealed, an entry held or dropped. */
+  issueMarks(): number {
+    return this.marks + this.pendingStore().version;
+  }
+  private marks = 0;
+
+  // ------------------------------------------------ entries not applied yet
+  private readonly pending = new PendingEntries();
+  private pendingScope: {
+    model: StructuredCanvasAdapter;
+    opened: number;
+    profile: string;
+    account: string | undefined;
+    api: ControllerHost["api"];
+  } | null = null;
+  /**
+   * Entries typed but not applied belong to the workflow that is open, with
+   * the platform, account and connection it was opened with: anything else
+   * forgets them, so no text reaches another workflow or account.
+   */
+  private pendingStore(): PendingEntries {
+    const { model, profile, api } = this.host;
+    const scope = this.pendingScope;
+    if (
+      scope?.model !== model ||
+      scope.opened !== model.opened ||
+      scope.profile !== canonicalJson(profile) ||
+      scope.account !== this.host.stepDataScope ||
+      scope.api !== api
+    ) {
+      this.pendingScope = {
+        model,
+        opened: model.opened,
+        profile: canonicalJson(profile),
+        account: this.host.stepDataScope,
+        api,
+      };
+      this.pending.clear();
+    }
+    return this.pending;
+  }
+  hold(
+    target: string,
+    key: string,
+    owner: PendingOwner,
+    entry: PendingEntry,
+  ): void {
+    this.pendingStore().hold(target, key, owner, entry);
+  }
+  held(target: string, key: string, owner: PendingOwner): PendingEntry | null {
+    return this.pendingStore().get(target, key, owner);
+  }
+  holds(target: string, key: string): boolean {
+    return this.pendingStore().has(target, key);
+  }
+  release(target: string, key: string): void {
+    this.pendingStore().release(target, key);
+  }
+  /** The keys of the entries a step holds. */
+  heldKeys(target: string): string[] {
+    return this.pendingStore().keys(target);
+  }
+  /** A rename made in step details (or its Undo): the step's entries follow it. */
+  renamePending(from: string, to: string): void {
+    this.pendingStore().rename(from, to);
+  }
+  /**
+   * Forgets the entries of steps that are gone, so a step made again with
+   * the same name never gets them; `open` keeps the step step details show
+   * while they follow a rename back.
+   */
+  prunePending(open?: string): void {
+    if (!this.pendingStore().size) return;
+    const ids = new Set(this.host.model.nodes().map((node) => node.step.id));
+    this.pendingStore().prune(
+      (target) => PSEUDO.has(target) || target === open || ids.has(target),
+    );
   }
 
   /** Remove option: back to the default, and out of the form. */
@@ -571,23 +683,15 @@ export class StepDetailsController {
     };
   }
 
-  /** Diagnostics of the last check that point into this step, with paths relative to it. */
-  diagnostics(target: string): {
-    code: string;
-    severity: string;
-    message: string;
-    path: string;
-    suggestedEdit?: unknown;
-  }[] {
+  /**
+   * Diagnostics of the last check that point into this step, with paths
+   * relative to it; `at` is the field path with the data keys inside an
+   * expression (`["with", "parameters", "customerId"]`).
+   */
+  diagnostics(target: string): StepDiagnostic[] {
     const result = this.host.diagnostics;
     if (!result) return [];
-    const out: {
-      code: string;
-      severity: string;
-      message: string;
-      path: string;
-      suggestedEdit?: unknown;
-    }[] = [];
+    const out: StepDiagnostic[] = [];
     for (const d of result.diagnostics) {
       if (typeof d["path"] !== "string") continue;
       const where = locateDiagnostic(
@@ -614,6 +718,7 @@ export class StepDetailsController {
         severity: String(d.severity ?? "error"),
         message: d.message,
         path: where.fieldPath,
+        at: [...where.field, ...where.dataPath],
         ...(d["suggestedEdit"] !== undefined
           ? { suggestedEdit: d["suggestedEdit"] }
           : {}),

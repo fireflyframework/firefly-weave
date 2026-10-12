@@ -588,3 +588,116 @@ weave-step-details {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
+
+/* The issues pill: a 24 px face in the step's tone, on the name's line and
+   centered on it; its target is the name line's height (24 px on desktop,
+   44 px for touch), so the header keeps its height when issues come and go.
+   The name gives way first: it ellipsizes, the pill stays whole. Its list
+   sits in the top layer; entries name the field, then the problem. */
+.sd-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+.sd-name-row > .sd-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+weave-issues-indicator {
+  display: inline-flex;
+  flex: none;
+}
+.step-details button.sd-issues-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--sd-label-row);
+  min-height: var(--sd-label-row);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.step-details button.sd-issues-pill:hover {
+  background: transparent;
+}
+.step-details .sd-issues-face {
+  height: var(--space-6);
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+}
+.step-details
+  button.sd-issues-pill:is(:hover, [aria-expanded="true"])
+  .sd-issues-face {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.step-details .sd-issues-list {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-1);
+  overflow: auto;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.step-details .sd-issues-list button[role="menuitem"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  justify-items: start;
+  gap: 2px;
+  width: 100%;
+  min-height: var(--sd-row);
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  white-space: normal;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+.step-details
+  .sd-issues-list
+  button[role="menuitem"]:is(:hover, :focus-visible) {
+  background: var(--hover);
+}
+.step-details .sd-issues-list :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.sd-issue-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+.sd-issue-head > weave-icon {
+  flex: none;
+  color: var(--danger-ink);
+}
+[data-severity="warning"] > .sd-issue-head > weave-icon {
+  color: var(--warning-ink);
+}
+.sd-issue-field {
+  min-width: 0;
+  font: var(--type-label);
+  overflow-wrap: anywhere;
+}
+.step-details .sd-issue-status {
+  flex: none;
+  height: 20px;
+}
+/* The message starts under the field's name, past the icon. */
+.sd-issue-message {
+  padding-left: calc(16px + var(--space-2));
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}

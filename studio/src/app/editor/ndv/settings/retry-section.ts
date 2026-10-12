@@ -32,7 +32,6 @@ import { stringify } from "yaml";
 import { Modal } from "../../../dialog";
 import { canonicalJson } from "../../../forms/core/json";
 import { Icon } from "../../../icon";
-import { actionSideEffect } from "../kinds/forms/action-forms";
 import { recipeOf } from "../owned/owned-actions";
 import type { FieldEntry } from "../params/form-model";
 import type { FormSession } from "../params/form-session";
@@ -41,8 +40,8 @@ import { ResourceViewerLayer } from "../params/resource-field";
 import { fixed } from "../params/value-io";
 import { allSteps } from "../step-walk";
 import {
-  retryOn,
   retryProblem,
+  retryShown,
   retrySwitched,
   savedInText,
 } from "./settings-rules";
@@ -173,9 +172,7 @@ export class RetrySection {
     const step = this.step();
     return (
       !!step &&
-      actionSideEffect(step, this.session().controller.kindContext()) !==
-        "non_idempotent" &&
-      retryOn(this.value())
+      retryShown(step, this.session().controller.kindContext(), this.value())
     );
   }
   /** The tries and waits: while retry is on, and while focus is in them. */

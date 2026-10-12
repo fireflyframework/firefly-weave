@@ -111,7 +111,8 @@ const UNIT_CODE: Record<string, string> = {
     "[attr.data-param]": "spec().id",
     "[attr.data-param-path]": "pathKey()",
     "[attr.data-mode]": "mode()",
-    "[attr.data-required-empty]": "session().requiredEmpty(spec()) ? '' : null",
+    "[attr.data-required-empty]":
+      "!readOnly() && session().requiredEmpty(spec()) ? '' : null",
   },
 })
 export class ParamField {
@@ -160,33 +161,74 @@ export class ParamField {
   } | null = null;
   private choicesLoading = false;
   private choicesError = "";
-  private pendingNumber: string | null = null;
   /**
-   * The field and stored value a typed entry belongs to. It stays on screen
-   * while both stay (an emptied box keeps empty while clearing writes the
-   * default); Undo, Redo or another change of the value shows the value.
+   * An emptied number or duration box, while the person retypes it: the
+   * field, session and stored value it belongs to (clearing has already
+   * saved the default). Undo, Redo or another change of the value shows the
+   * value again.
    */
-  private numberOwner: {
+  private emptied: {
     session: FormSession;
     descriptor: string;
     stored: string;
   } | null = null;
+  /**
+   * The text in a number or duration box that isn't the stored value: "" while
+   * an emptied box is retyped, else an entry that doesn't apply (not a
+   * number, or below a minimum the field can't hold), which the session keeps
+   * through closing and reopening; null when the box shows the stored value.
+   */
   get numberText(): string | null {
+    const emptied = this.emptied;
     if (
-      this.numberOwner?.session !== this.session() ||
-      this.numberOwner.descriptor !== canonicalJson(this.spec()) ||
-      this.numberOwner.stored !== canonicalJson(this.value())
+      emptied?.session === this.session() &&
+      emptied.descriptor === canonicalJson(this.spec()) &&
+      emptied.stored === canonicalJson(this.value())
     )
-      this.pendingNumber = null;
-    return this.pendingNumber;
+      return "";
+    this.emptied = null;
+    const held = this.session().held(this.spec());
+    return held?.kind === "number" ? held.text : null;
   }
   set numberText(value: string | null) {
-    this.numberOwner = {
-      session: this.session(),
-      descriptor: canonicalJson(this.spec()),
-      stored: canonicalJson(this.value()),
-    };
-    this.pendingNumber = value;
+    this.emptied =
+      value === ""
+        ? {
+            session: this.session(),
+            descriptor: canonicalJson(this.spec()),
+            stored: canonicalJson(this.value()),
+          }
+        : null;
+    if (value)
+      this.session().hold(
+        this.spec(),
+        "number",
+        value,
+        this.numberMessage(value),
+      );
+    else this.session().release(this.spec());
+  }
+  /** What a field holds that doesn't apply yet, and why: shown under it, marked Not applied. */
+  heldProblem(): string {
+    const held = this.session().held(this.spec());
+    return held && held.kind !== "note" ? held.message : "";
+  }
+  /**
+   * Escape in a field holding an entry that doesn't apply takes it back: the
+   * box shows the saved value again. Without one, Escape is step details'.
+   */
+  heldKey(event: KeyboardEvent): void {
+    this.discardHeld(event);
+  }
+  private discardHeld(event: KeyboardEvent): boolean {
+    if (event.key !== "Escape" || !this.session().held(this.spec()))
+      return false;
+    event.preventDefault();
+    event.stopPropagation();
+    this.emptied = null;
+    this.session().release(this.spec());
+    this.session().host.refreshView();
+    return true;
   }
   pathKey(): string {
     return JSON.stringify(this.spec().path);
@@ -200,8 +242,7 @@ export class ParamField {
     if (
       (around && this.conditions()?.hasDraft()) ||
       this.resource()?.hasDraft() ||
-      this.numberProblem() ||
-      this.jsonProblem ||
+      this.heldProblem() ||
       this.formula()?.templateError() ||
       this.formula()?.typedRef
     )
@@ -534,6 +575,7 @@ export class ParamField {
    * the key belongs to the browser (Ctrl/Cmd+= zooms in).
    */
   controlKey(event: KeyboardEvent) {
+    if (this.discardHeld(event)) return;
     if (event.key !== "=" || event.ctrlKey || event.metaKey || event.altKey)
       return;
     if (this.mode() !== "fixed") return;
@@ -595,9 +637,11 @@ export class ParamField {
       this.numberText = "";
       return;
     }
-    this.numberText = text;
     const value = Number(text);
-    if (!Number.isFinite(value) || this.heldBelowMin(value)) return;
+    if (!Number.isFinite(value) || this.heldBelowMin(value)) {
+      this.numberText = text;
+      return;
+    }
     this.numberText = null;
     this.session().write(this.spec(), { mode: "fixed", value });
   }
@@ -607,17 +651,17 @@ export class ParamField {
     return !!spec.holdBelowMin && spec.min !== undefined && value < spec.min;
   }
   numberProblem(): string {
-    const text = this.numberText;
-    if (text === null || text === "") return "";
+    const held = this.session().held(this.spec());
+    return held?.kind === "number" ? held.message : "";
+  }
+  /** Why a typed number doesn't apply: it isn't one, or it is below what the field can hold. */
+  private numberMessage(text: string): string {
     const value = Number(text);
     if (!Number.isFinite(value)) return "Enter a number.";
-    return this.heldBelowMin(value)
-      ? (fieldRules(
-          this.spec(),
-          { mode: "fixed", value },
-          { kind: "absent" },
-        )[0]?.message ?? "")
-      : "";
+    return (
+      fieldRules(this.spec(), { mode: "fixed", value }, { kind: "absent" })[0]
+        ?.message ?? "Enter a number."
+    );
   }
   units(): string[] {
     return [...(this.spec().units ?? ["seconds", "minutes", "hours", "days"])];
@@ -660,14 +704,18 @@ export class ParamField {
       this.numberText = "";
       return;
     }
-    this.numberText = null;
     const seconds = durationSeconds(amountText, UNIT_CODE[unit] ?? "s");
     const value =
       seconds === undefined || Number.isNaN(seconds)
         ? Number(amountText) * (UNIT_SECONDS[unit] ?? 1)
         : seconds;
-    if (Number.isFinite(value))
-      this.session().write(this.spec(), { mode: "fixed", value });
+    if (!Number.isFinite(value)) {
+      // Not a number: it waits in the box, Not applied, with its message.
+      this.numberText = amountText.trim();
+      return;
+    }
+    this.numberText = null;
+    this.session().write(this.spec(), { mode: "fixed", value });
   }
   /** A switch, a presence switch (one choice: on writes it), or Not set / Yes / No for optional booleans. */
   presence(): Choice | null {
@@ -839,19 +887,35 @@ export class ParamField {
     const value = this.fixedValue();
     return value === undefined ? "" : JSON.stringify(value, null, 2);
   }
-  jsonProblem = "";
+  /** The JSON on screen: what the person typed that doesn't parse, else the stored value. */
+  jsonShown(): string {
+    const held = this.session().held(this.spec());
+    return held?.kind === "json" ? held.text : this.json();
+  }
+  /** Why the JSON on screen doesn't apply, or "". */
+  get jsonProblem(): string {
+    const held = this.session().held(this.spec());
+    return held?.kind === "json" ? held.message : "";
+  }
   jsonText(event: Event) {
     const text = (event.target as HTMLTextAreaElement).value;
     if (!text.trim()) {
-      this.jsonProblem = "";
+      this.session().release(this.spec());
       return this.session().clear(this.spec());
     }
+    let value: Json;
     try {
-      const value = JSON.parse(text) as Json;
-      this.jsonProblem = "";
-      this.session().write(this.spec(), { mode: "fixed", value });
+      value = JSON.parse(text) as Json;
     } catch (error) {
-      this.jsonProblem = `This isn't valid JSON: ${(error as Error).message}`;
+      this.session().hold(
+        this.spec(),
+        "json",
+        text,
+        `This isn't valid JSON: ${(error as Error).message}`,
+      );
+      return;
     }
+    this.session().release(this.spec());
+    this.session().write(this.spec(), { mode: "fixed", value });
   }
 }

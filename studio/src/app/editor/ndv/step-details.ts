@@ -69,8 +69,15 @@ import { docsUrl, headerSubtitle } from "./header";
 import { adjacent, breadcrumb, neighbors } from "./navigation";
 import { recipeOf } from "./owned/owned-actions";
 import { FormSession } from "./params/form-session";
-import { getAt, parsePointer } from "../../forms/core/json";
-import { pathStartsWith } from "./params/paths";
+import { IssuesIndicator } from "./issues-indicator";
+import {
+  fieldFor,
+  firstIssueField,
+  leavingText,
+  type PlacedSpec,
+  type StepIssue,
+} from "./issues";
+import { getAt } from "../../forms/core/json";
 import { ParameterForm } from "./params/param-form";
 import { DragMap, activeDrag, canMapFields } from "./params/drag-map";
 import { mappedRefs, type DragRef } from "./params/drop";
@@ -151,6 +158,7 @@ const visible = (element: HTMLElement): boolean =>
     OutputPane,
     TestEventPane,
     SettingsTab,
+    IssuesIndicator,
   ],
   templateUrl: "./step-details.html",
   styleUrls: ["./step-details.css", "./panes/panes.css"],
@@ -194,6 +202,14 @@ export class StepDetails {
           {
             confirm: (options) => this.dialogs.confirm(options),
             prompt: (options) => this.dialogs.prompt(options),
+            focusField: (field, open) => {
+              if (
+                !this.lifetime.destroyed &&
+                this.details.request() === request &&
+                this.details.opening() === opening
+              )
+                this.focusField(field, open);
+            },
             announce: (text) => {
               this.announcement.set("");
               setTimeout(() => {
@@ -465,9 +481,15 @@ export class StepDetails {
     if (id) this.go(id);
   }
   close() {
+    // What doesn't apply yet stays for the next time; with step details
+    // gone nothing else shows it, so a toast says so. Moving to another
+    // step needs none: the entries show again on the way back.
+    const kept = leavingText(this.session().heldLabels());
+    const host = this.host();
     // The opener gets focus back: the shell is usable again first.
     this.releaseShell();
     this.closed.emit(this.target());
+    if (kept) host.notify(kept);
   }
   /** The open step was renamed back by Undo, or deleted: follow it, or close. */
   private keepTarget() {
@@ -480,6 +502,7 @@ export class StepDetails {
         (to === target && from === selected),
     );
     if (followsRename && this.controller().step(selected)) {
+      this.controller().renamePending(target, selected);
       this.details.open({
         ...this.request(),
         target: selected,
@@ -586,6 +609,8 @@ export class StepDetails {
     return this.target() !== "$end" && !this.controller().readOnlyReason();
   }
   explainExecute() {
+    // Execute step shows every message of the step, required ones too.
+    this.controller().reveal(this.target());
     this.host().notify(EXECUTE_REASON);
   }
   executeItems(): RowMenuItem[] {
@@ -604,6 +629,61 @@ export class StepDetails {
         },
       },
     ];
+  }
+
+  // -------------------------------------------------------------- issues
+  issues(): StepIssue[] {
+    return this.session().issues();
+  }
+  /**
+   * Focuses a field's control, switching pane and tab first when needed;
+   * `open` also opens its choices (a connection's list, the data picker).
+   */
+  focusField(field: PlacedSpec, open = false): void {
+    if (this.layout() === "sheet" && this.pane() !== "parameters") {
+      this.pane.set("parameters");
+      afterNextRender(() => this.focusField(field, open), {
+        injector: this.injector,
+      });
+      return;
+    }
+    if (this.tab() !== field.tab) {
+      this.tab.set(field.tab);
+      afterNextRender(() => this.focusField(field, open), {
+        injector: this.injector,
+      });
+      return;
+    }
+    const panel = this.dialog().nativeElement.querySelector<HTMLElement>(
+      ".sd-tabpanel:not([hidden])",
+    );
+    const id = CSS.escape(field.spec.id);
+    const host =
+      panel?.querySelector<HTMLElement>(
+        `[data-param="${id}"][data-param-path="${CSS.escape(JSON.stringify(field.spec.path))}"]`,
+      ) ?? panel?.querySelector<HTMLElement>(`[data-param="${id}"]`);
+    if (!panel || !host)
+      return this.applyFocus({ kind: "region", region: "parameters" });
+    const control = [...host.querySelectorAll<HTMLElement>(".param-control")]
+      .flatMap((part) => [...part.querySelectorAll<HTMLElement>(CONTROL)])
+      .find(
+        (element) =>
+          !element.closest(".param-label-row, .param-tools") &&
+          visible(element),
+      );
+    if (!control)
+      return this.applyFocus({ kind: "region", region: "parameters" });
+    control.focus({ preventScroll: true });
+    revealTop(host);
+    if (!inView(control))
+      control.scrollIntoView({ block: "center", inline: "nearest" });
+    if (open) control.click();
+  }
+  /** An entry of the issues list: its field, else its fix, else the step's name. */
+  goToIssue(issue: StepIssue): void {
+    if (issue.field) return this.focusField(issue.field);
+    if (issue.fix) return this.session().runFix(issue);
+    this.dialog().nativeElement.querySelector<HTMLElement>(".sd-name")?.focus();
   }
 
   // ---------------------------------------------------------------- more
@@ -751,6 +831,7 @@ export class StepDetails {
     const renamed = result as RenameResult | null;
     if (!renamed || renamed.id === old) return this.focusName();
     this.renames.push({ from: old, to: renamed.id });
+    this.controller().renamePending(old, renamed.id);
     const revision = host.model.revision;
     const count = renamed.references;
     host.notify(
@@ -852,45 +933,29 @@ export class StepDetails {
         region: this.lastRegion ?? "parameters",
       });
   }
-  applyFocus(focus: FocusTarget) {
+  applyFocus(focus: FocusTarget): void {
     if (focus.kind === "rename") {
       this.startRename();
       return;
     }
     if (focus.kind === "firstIssue" || focus.kind === "path") {
+      // The field of the issue, on its tab: Settings for a Settings field.
       const session = this.session();
-      const fields = (["parameters", "settings"] as const).flatMap((tab) =>
-        session
-          .state(tab)
-          .fields.filter(({ spec }) =>
-            this.dialog().nativeElement.querySelector(
-              `[data-param="${CSS.escape(spec.id)}"]`,
-            ),
-          )
-          .map(({ spec }) => ({ tab, spec })),
-      );
-      const paths =
+      const reported =
         focus.kind === "path"
-          ? [focus.path]
-          : this.controller()
-              .diagnostics(this.target())
-              .flatMap((issue) => {
-                const path = parsePointer(issue.path);
-                return path ? [path] : [];
-              });
-      const reported = paths.flatMap((path) =>
-        fields
-          .filter(
-            ({ spec }) => spec.path.length && pathStartsWith(path, spec.path),
-          )
-          .sort((a, b) => b.spec.path.length - a.spec.path.length),
-      );
-      const field =
-        reported[0] ?? fields.find(({ spec }) => session.requiredEmpty(spec));
-      if (field) {
-        this.applyFocus({ kind: "field", id: field.spec.id, tab: field.tab });
-        return;
-      }
+          ? fieldFor(
+              focus.path,
+              session
+                .placedSpecs()
+                .filter(
+                  ({ spec }) =>
+                    (spec.scope ?? "step") ===
+                    (this.pseudo() ? "workflow" : "step"),
+                ),
+            )
+          : null;
+      const field = reported ?? firstIssueField(session.issues());
+      if (field) return this.focusField(field);
     }
     const region = focus.kind === "region" ? focus.region : "parameters";
     if (this.layout() === "sheet") {
