@@ -1743,6 +1743,42 @@ test.describe("layout", () => {
           );
         expect(small).toEqual([]);
       }
+      // Filter checkboxes are the rows' 16 px box, centred on their label.
+      const folded = page.locator(".filters-toggle");
+      if (viewport.width < 768) await folded.click();
+      await expect(
+        page.getByRole("checkbox", { name: "Include test runs" }),
+      ).toBeVisible();
+      const checks = await page
+        .locator("weave-runs-page label.checkbox-field")
+        .evaluateAll((labels) =>
+          labels
+            .filter((label) => label.getClientRects().length)
+            .map((label) => {
+              const box = label.querySelector("input")!.getBoundingClientRect();
+              const text = [...label.childNodes].find(
+                (node) => node.nodeType === 3 && node.textContent!.trim(),
+              )!;
+              const range = document.createRange();
+              range.selectNodeContents(text);
+              const line = range.getBoundingClientRect();
+              return {
+                label: label.textContent!.trim(),
+                size: [box.width, box.height],
+                offset: Math.abs(
+                  box.top + box.height / 2 - (line.top + line.height / 2),
+                ),
+              };
+            }),
+        );
+      expect(checks.map((check) => check.label)).toEqual(
+        expect.arrayContaining(["Auto-refresh", "Include test runs"]),
+      );
+      for (const check of checks) {
+        expect(check.size, check.label).toEqual([16, 16]);
+        expect(check.offset, check.label).toBeLessThanOrEqual(0.5);
+      }
+      if (viewport.width < 768) await folded.click();
       await expectNoClipping(page);
       // Every visible list control except the row's own name: the smallest
       // height, and those under the 36 px desktop control height.
@@ -1820,6 +1856,7 @@ test.describe("layout", () => {
         ),
         listTargetsUnder36: controls.filter((control) => control.height < 35.5),
         rowHeights: row.map((box) => round(box.height)),
+        checkboxes: checks,
         stepTrackLeftSpread: spread(tracks.map((track) => track.left)),
         stepTrackRightSpread: spread(tracks.map((track) => track.right)),
         stepCenterSpread: most(stepCenters.map((line) => spread(line))),
