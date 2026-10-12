@@ -26,6 +26,7 @@ import {
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import type { ParamSpec } from "../registry";
+import type { FieldEntry } from "./form-model";
 import type { FormSession } from "./form-session";
 import { ParamField } from "./param-field";
 
@@ -35,6 +36,7 @@ import { ParamField } from "./param-field";
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [Icon, forwardRef(() => ParamField)],
   template: `@let parts = session().children(spec());
+    @let host = actionHost(parts.shown);
     <div
       class="param-group"
       role="group"
@@ -54,9 +56,12 @@ import { ParamField } from "./param-field";
                 }
               : entry
           "
+          [actions]="
+            entry === host && !readOnly() ? addActions(parts.collapsed) : []
+          "
         />
       }
-      @if (parts.collapsed.length && !readOnly()) {
+      @if (parts.collapsed.length && !readOnly() && !host) {
         <div class="param-group-add">
           @for (child of parts.collapsed; track child.id) {
             <button
@@ -76,4 +81,37 @@ export class FieldsField {
   spec = input.required<ParamSpec>();
   labelId = input("");
   readOnly = input<string | null>(null);
+  private actionCache: {
+    session: FormSession;
+    children: string;
+    actions: { label: string; run: () => void }[];
+  } | null = null;
+
+  /**
+   * A path's conditions end with their own add line: the group's options
+   * join it ("Add condition", "Path result") instead of a line of their own.
+   */
+  actionHost(shown: FieldEntry[]): FieldEntry | null {
+    const last = shown.at(-1);
+    return last?.spec.type === "conditions" ? last : null;
+  }
+  addActions(collapsed: ParamSpec[]): { label: string; run: () => void }[] {
+    const session = this.session();
+    const children = JSON.stringify(
+      collapsed.map((child) => [child.id, child.path]),
+    );
+    if (
+      this.actionCache?.session !== session ||
+      this.actionCache.children !== children
+    )
+      this.actionCache = {
+        session,
+        children,
+        actions: collapsed.map((child) => ({
+          label: child.label,
+          run: () => session.expandChild(child),
+        })),
+      };
+    return this.actionCache.actions;
+  }
 }

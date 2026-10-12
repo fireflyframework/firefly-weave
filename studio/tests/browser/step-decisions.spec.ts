@@ -251,6 +251,26 @@ for (const size of sizes)
         details.field("cases").getByRole("group", { name: "Path 2 of 2" }),
       ).toContainText("Finish this condition, or remove it.");
       await expect(data).toHaveValue("Input › Amount");
+      // The message names the row's controls as invalid and describes them.
+      const message = details
+        .field("cases")
+        .getByRole("group", { name: "Path 2 of 2" })
+        .locator("p", { hasText: "Finish this condition, or remove it." });
+      const id = await message.getAttribute("id");
+      expect(id).toBeTruthy();
+      for (const control of [
+        data,
+        when.getByRole("combobox", { name: "Condition 2 test" }),
+        when.getByLabel("Condition 2 value", { exact: true }),
+      ]) {
+        await expect(control).toHaveAttribute("aria-invalid", "true");
+        expect(
+          (await control.getAttribute("aria-describedby")) ?? "",
+        ).toContain(id!);
+      }
+      await expect(
+        when.getByLabel("Condition 1 value", { exact: true }),
+      ).not.toHaveAttribute("aria-invalid", "true");
       await when.getByRole("button", { name: "Remove condition 2" }).click();
       await details.close();
       const fixture = parse(readFileSync(stepFixture, "utf8"));
@@ -309,27 +329,30 @@ for (const size of allSizes)
         );
         // The trash button is a row-height target.
         expectAligned([trash.height, sizes.row], "trash target");
-        lefts.push(data.x);
-        rights.push(trash.right);
-        if (test.y === data.y) {
-          // One line: data, test, value and trash share a center.
+        // Line by line: each line's cells share a center, start on the
+        // rows' left edge and end on their right edge, left to right.
+        const cells = [data, test, value, trash];
+        const lines = new Map<number, Box[]>();
+        for (const cell of cells)
+          lines.set(Math.round(cell.y), [
+            ...(lines.get(Math.round(cell.y)) ?? []),
+            cell,
+          ]);
+        for (const line of lines.values()) {
           expectAligned(
-            [data.middle, test.middle, value.middle, trash.middle],
-            "row centers",
+            line.map((cell) => cell.middle),
+            "line center",
           );
-          expect(test.x).toBeGreaterThanOrEqual(data.right);
-          expect(value.x).toBeGreaterThanOrEqual(test.right);
-          expect(trash.x).toBeGreaterThanOrEqual(value.right);
-        } else {
-          // Two lines: data and trash, then test and value, on the same edges.
-          expectAligned([data.middle, trash.middle], "first line center");
-          expectAligned([test.middle, value.middle], "second line center");
-          expectAligned([test.x, data.x], "second line start");
-          expectAligned([value.right, trash.right], "second line end");
-          rights.push(value.right);
-          expect(test.y).toBeGreaterThanOrEqual(data.bottom);
+          lefts.push(line[0].x);
+          rights.push(line.at(-1)!.right);
+          for (let i = 1; i < line.length; i++)
+            expect(line[i].x).toBeGreaterThanOrEqual(line[i - 1].right);
         }
-        if (size.width >= 600) expect(test.y).toBe(data.y);
+        // The data leads: alone on its line, or first on a one-line row.
+        expect(data.y).toBeLessThanOrEqual(test.y);
+        expect(lines.get(Math.round(trash.y))).toContain(trash);
+        // On a desktop with a fine pointer a wide row is one line.
+        if (!sizes.touch && size.width >= 1440) expect(lines.size).toBe(1);
         // The test's words fit its box.
         expect(
           await row
@@ -359,7 +382,212 @@ for (const size of allSizes)
       expectAligned([menuBox.middle, (await box(add)).middle], "menu line");
       expectAligned(lefts, "conditions left edge");
       expectAligned(rights, "conditions right edge");
+      // Add condition and Path result share one line, as designed.
+      const pathResult = await box(
+        card.getByRole("button", { name: "Path result" }),
+      );
+      const addBox = await box(add);
+      expectAligned([pathResult.middle, addBox.middle], "add actions line");
+      expect(pathResult.x).toBeGreaterThan(addBox.right);
+      // Each condition reads as a unit: on several lines, a rule separates
+      // conditions, which sit further apart than the lines of one condition.
+      const rowsOf = when.locator(".condition-row");
+      const cellsOf = (index: number) =>
+        boxes(
+          rowsOf
+            .nth(index)
+            .locator(
+              ".condition-data .ref-combo-field, .condition-operator .choice-field, .condition-value, .condition-remove",
+            ),
+        );
+      const [one, two] = [await cellsOf(0), await cellsOf(1)];
+      const within =
+        Math.min(...one.filter((c) => c.y > one[0].y + 1).map((c) => c.y)) -
+        one[0].bottom;
+      if (Number.isFinite(within)) {
+        const between =
+          Math.min(...two.map((c) => c.y)) -
+          Math.max(...one.map((c) => c.bottom));
+        expect(between).toBeGreaterThanOrEqual(within + 8);
+        await expect(rowsOf.nth(1)).toHaveCSS("border-top-width", "1px");
+      }
       expect(await clippedText(details.dialog)).toEqual([]);
+      expect(await noSideways(page)).toBe(true);
+    });
+  });
+
+/** Path N's conditions in the open decision. */
+const conditionsOf = (details: StepDetailsPage, path: 1 | 2) =>
+  details
+    .field("cases")
+    .getByRole("group", { name: `Path ${path} of 2` })
+    .locator('[data-param="case.when"]');
+
+/** Whether the element under a point carries `text` as a reachable tooltip. */
+const tooltipAt = (page: Page, point: { x: number; y: number }) =>
+  page.evaluate(({ x, y }) => {
+    const hit = document.elementFromPoint(x, y);
+    return hit?.closest("[title]")?.getAttribute("title") ?? null;
+  }, point);
+
+for (const size of [
+  ...allSizes,
+  { tag: "1440x900-coarse", width: 1440, height: 900, coarse: true },
+])
+  test.describe(`condition cells at ${size.tag}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: "coarse" in size,
+    });
+
+    test("the data leads the row and shows its pill whole, with its name as a tooltip", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      await showParameters(page, details.dialog);
+      for (const path of [1, 2] as const) {
+        const row = conditionsOf(details, path)
+          .locator(".condition-row")
+          .first();
+        await row.scrollIntoViewIfNeeded();
+        const data = row.locator(".condition-data");
+        const pill = data.locator(".condition-pill");
+        await expect(pill).toBeVisible();
+        // The pill is whole: none of its parts is cut.
+        for (const part of await pill.locator(":scope > span").all())
+          expect(
+            await part.evaluate((e) => e.scrollWidth <= e.clientWidth + 1),
+          ).toBe(true);
+        const field = await box(data.locator(".ref-combo-field"));
+        const pillBox = await box(pill);
+        expect(pillBox.right).toBeLessThanOrEqual(field.right);
+        // No in-cell chevron: the list opens from the cell itself.
+        await expect(data.locator(".ref-combo-toggle")).toBeHidden();
+        // The pointer reaches the whole name as a tooltip.
+        expect(
+          await tooltipAt(page, { x: pillBox.x + 8, y: pillBox.middle }),
+        ).toBe((await pill.innerText()).replace(/\s*›\s*/g, " › ").trim());
+        const test = await box(
+          row.locator(".condition-operator .choice-field"),
+        );
+        const trash = await box(row.locator(".condition-remove"));
+        if (test.y === field.y)
+          // On one line the data takes about 40 % of the row, as designed.
+          expect(field.width / (trash.right - field.x)).toBeGreaterThan(0.37);
+        else expectAligned([field.right, trash.right], "data spans its line");
+      }
+      // A click opens the list; so does Alt+ArrowDown.
+      const data = conditionsOf(details, 2).getByRole("combobox", {
+        name: "Condition 1 data",
+      });
+      await data.click();
+      await expect(
+        page.getByRole("listbox", { name: "Condition 1 data suggestions" }),
+      ).toBeVisible();
+      await data.press("Escape");
+      await data.press("Alt+ArrowDown");
+      await expect(
+        page.getByRole("listbox", { name: "Condition 1 data suggestions" }),
+      ).toBeVisible();
+      expect(await noSideways(page)).toBe(true);
+    });
+
+    test("a focused data cell keeps its pill until the person types, opens the list or deletes", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      await showParameters(page, details.dialog);
+      // The decision opens on its first condition's data (on small screens,
+      // on its name when that data is out of view): a pill, not cut text.
+      const first = conditionsOf(details, 1).getByRole("combobox", {
+        name: "Condition 1 data",
+      });
+      if (!(await first.evaluate((e) => e === document.activeElement)))
+        await first.focus();
+      const row = conditionsOf(details, 1).locator(".condition-row").first();
+      await expect(row.locator(".condition-pill")).toBeVisible();
+      expect(await clippedText(details.dialog)).toEqual([]);
+      // Another data cell that receives focus shows its pill too.
+      const second = conditionsOf(details, 2).getByRole("combobox", {
+        name: "Condition 1 data",
+      });
+      await second.focus();
+      const other = conditionsOf(details, 2).locator(".condition-row").first();
+      await expect(other.locator(".condition-pill")).toBeVisible();
+      expect(await clippedText(details.dialog)).toEqual([]);
+      // Typing starts a search in place of the pill.
+      await page.keyboard.press("t");
+      await expect(other.locator(".condition-pill")).toBeHidden();
+      await expect(second).toHaveValue("t");
+      await expect(
+        page.getByRole("listbox", { name: "Condition 1 data suggestions" }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+      // Deleting removes the data.
+      await first.focus();
+      await expect(row.locator(".condition-pill")).toBeVisible();
+      await page.keyboard.press("Backspace");
+      await expect(row.locator(".condition-pill")).toHaveCount(0);
+      await expect(first).toHaveValue("");
+    });
+
+    test("a focused value keeps its width, and Fixed | Mapped floats above it inside the row", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      await showParameters(page, details.dialog);
+      const when = conditionsOf(details, 1);
+      const row = when.locator(".condition-row").first();
+      const value = when.getByLabel("Condition 1 value", { exact: true });
+      await value.scrollIntoViewIfNeeded();
+      const rest = await box(row.locator(".condition-value"));
+      await value.click();
+      const mode = when.getByRole("radiogroup", {
+        name: "Value mode for Condition 1 value",
+      });
+      await expect(mode).toBeVisible();
+      const cell = await box(row.locator(".condition-value"));
+      expect(cell).toEqual(rest);
+      // The value keeps the whole box and shows whole.
+      const input = await box(value);
+      expect(input.width).toBeGreaterThanOrEqual(cell.width - 2.5);
+      expect(
+        await value.evaluate(
+          (e: HTMLInputElement) => e.scrollWidth <= e.clientWidth + 1,
+        ),
+      ).toBe(true);
+      // Fixed | Mapped sits above the box's top-right corner, inside the row.
+      const toggle = await box(mode);
+      const trash = await box(row.locator(".condition-remove"));
+      const data = await box(row.locator(".condition-data .ref-combo-field"));
+      expect(toggle.bottom).toBeLessThanOrEqual(cell.y + 0.5);
+      expect(toggle.right).toBeLessThanOrEqual(trash.right + 0.5);
+      expect(toggle.x).toBeGreaterThanOrEqual(data.x - 0.5);
+      const sizes = await density(page);
+      for (const radio of await mode.getByRole("radio").all())
+        expect((await box(radio)).height).toBeGreaterThanOrEqual(
+          sizes.touch ? 44 : 24,
+        );
+      // It is on top, and choosing Mapped turns the value into data.
+      const mapped = mode.getByRole("radio", { name: "Mapped" });
+      const center = await box(mapped);
+      expect(
+        await page.evaluate(
+          ({ x, y }) =>
+            !!document
+              .elementFromPoint(x, y)
+              ?.closest('[role="radio"]')
+              ?.textContent?.includes("Mapped"),
+          { x: center.x + center.width / 2, y: center.middle },
+        ),
+      ).toBe(true);
+      await mapped.click();
+      await expect(
+        when.getByRole("combobox", { name: "Condition 1 value" }),
+      ).toBeVisible();
       expect(await noSideways(page)).toBe(true);
     });
   });
@@ -538,7 +766,11 @@ test.describe("the URL of a Call an API step", () => {
         const field = await box(url.locator(".param-url"));
         const view = url.locator(".param-url-view");
         expect((await box(view)).right).toBeLessThanOrEqual(field.right);
-        await expect(view).toHaveAttribute("title", long);
+        // The whole path is a tooltip the pointer reaches.
+        const viewBox = await box(view);
+        expect(
+          await tooltipAt(page, { x: viewBox.x + 8, y: viewBox.middle }),
+        ).toBe(long);
         const path = url.getByRole("textbox", { name: "URL" });
         await path.click();
         // The end of the line: End, or Command+Right on a Mac.
@@ -581,6 +813,9 @@ for (const size of sizes)
         expect(row.height).toBeGreaterThanOrEqual(sizes.row);
         expect(row.height).toBeLessThanOrEqual(sizes.row + 2);
       }
+      // The "Only allow these fields" box starts on the pane's edge.
+      const only = await box(field.getByRole("checkbox").last());
+      expectAligned([only.x, edges.left], "schema checkbox edge");
       await field.getByRole("button", { name: "Add field" }).click();
       const name = field.getByRole("textbox", { name: "Field name" }).last();
       await expect(name).toBeFocused();

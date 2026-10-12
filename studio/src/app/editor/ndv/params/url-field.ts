@@ -47,7 +47,7 @@ import type { ParamValue } from "./value-io";
       <span class="param-url-prefix" [id]="controlId() + '-prefix'"
         >Connection address</span
       >
-      <span class="param-url-path">
+      <span class="param-url-path" [attr.title]="pills ? path() : null">
         <input
           class="param-input param-url-input"
           autocomplete="off"
@@ -65,7 +65,7 @@ import type { ParamValue } from "./value-io";
           (blur)="end()"
         />
         @if (pills) {
-          <span class="param-url-view" aria-hidden="true" [attr.title]="path()">
+          <span class="param-url-view" aria-hidden="true">
             @for (part of view; track $index) {
               @if (isText(part)) {
                 <span class="param-url-text">{{ part.text }}</span>

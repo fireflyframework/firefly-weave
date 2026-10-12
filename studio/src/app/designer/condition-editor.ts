@@ -35,6 +35,7 @@ import {
   inject,
   signal,
 } from "@angular/core";
+import { NgTemplateOutlet } from "@angular/common";
 import { Select } from "../forms/ui/select";
 import { Icon } from "../icon";
 import {
@@ -143,7 +144,7 @@ let sequence = 0;
 @Component({
   selector: "weave-condition-editor",
   standalone: true,
-  imports: [Icon, ReferenceCombobox, Select],
+  imports: [Icon, NgTemplateOutlet, ReferenceCombobox, Select],
   template: `<div
     class="condition-editor"
     [class.is-compact]="compact"
@@ -184,32 +185,37 @@ let sequence = 0;
     @for (row of rows; track $index) {
       @let input = inputFor(row);
       @let n = $index + 1;
+      @let invalid = rowInvalid(row);
       <div class="condition-row" [attr.data-row]="$index">
         @if (compact) {
           @let pill = pillFor(row.ref);
-          <div class="condition-data" [class.has-pill]="!!pill">
+          @let cell = $index + ":data";
+          <div
+            class="condition-data"
+            [class.has-pill]="!!pill"
+            [class.is-editing]="editing() === cell"
+            [attr.title]="pill ? pill.parts.join(' › ') : null"
+            (keydown)="cellKey($event, cell)"
+            (click)="cellClick($event, cell)"
+            (focusout)="cellLeft($event, cell)"
+          >
             <weave-reference-combobox
               [value]="row.ref"
               [options]="references"
               [ariaLabel]="'Condition ' + n + ' data'"
               placeholder="Choose data"
               [disabled]="readOnly"
+              [openOnClick]="true"
+              [invalid]="invalid"
+              [describedByIds]="invalid ? errorId : ''"
               (valueChange)="setRef($index, $event)"
+              (picked)="editing.set(null)"
             />
             @if (pill) {
-              <span
-                class="ref-pill condition-pill"
-                aria-hidden="true"
-                [attr.title]="pill.parts.join(' › ')"
-              >
-                <weave-icon [name]="pill.icon" [size]="16" />
-                @for (part of pill.parts; track $index; let last = $last) {
-                  <span>{{ part }}</span>
-                  @if (!last) {
-                    <span class="ref-sep">›</span>
-                  }
-                }
-              </span>
+              <ng-container
+                [ngTemplateOutlet]="pillTemplate"
+                [ngTemplateOutletContext]="{ $implicit: pill }"
+              />
             }
           </div>
         } @else {
@@ -229,6 +235,8 @@ let sequence = 0;
           [hideLabel]="true"
           [icon]="compact ? 'chevronDown' : 'chevron'"
           [attr.data-map-focus]="adapted()?.index === $index ? '' : null"
+          [invalid]="invalid"
+          [describedBy]="invalid ? errorId : null"
           [options]="operatorsFor(row)"
           [value]="row.operator"
           [disabled]="readOnly"
@@ -307,7 +315,16 @@ let sequence = 0;
           <div class="condition-value" [class.is-mapped]="mapped">
             @if (mapped) {
               @let compare = pillFor(row.compareRef ?? "");
-              <div class="condition-data" [class.has-pill]="!!compare">
+              @let cell = $index + ":value";
+              <div
+                class="condition-data"
+                [class.has-pill]="!!compare"
+                [class.is-editing]="editing() === cell"
+                [attr.title]="compare ? compare.parts.join(' › ') : null"
+                (keydown)="cellKey($event, cell)"
+                (click)="cellClick($event, cell)"
+                (focusout)="cellLeft($event, cell)"
+              >
                 <weave-reference-combobox
                   [value]="row.compareRef ?? ''"
                   [options]="references"
@@ -315,26 +332,17 @@ let sequence = 0;
                   [ariaLabel]="'Condition ' + n + ' value'"
                   placeholder="Choose data"
                   [disabled]="readOnly"
+                  [openOnClick]="true"
+                  [invalid]="invalid"
+                  [describedByIds]="invalid ? errorId : ''"
                   (valueChange)="setComparisonRef(n - 1, $event)"
+                  (picked)="editing.set(null)"
                 />
                 @if (compare) {
-                  <span
-                    class="ref-pill condition-pill"
-                    aria-hidden="true"
-                    [attr.title]="compare.parts.join(' › ')"
-                  >
-                    <weave-icon [name]="compare.icon" [size]="16" />
-                    @for (
-                      part of compare.parts;
-                      track $index;
-                      let last = $last
-                    ) {
-                      <span>{{ part }}</span>
-                      @if (!last) {
-                        <span class="ref-sep">›</span>
-                      }
-                    }
-                  </span>
+                  <ng-container
+                    [ngTemplateOutlet]="pillTemplate"
+                    [ngTemplateOutletContext]="{ $implicit: compare }"
+                  />
                 }
               </div>
             } @else {
@@ -347,6 +355,8 @@ let sequence = 0;
                     [options]="booleanOptions"
                     [value]="row.text"
                     [disabled]="readOnly"
+                    [invalid]="invalid"
+                    [describedBy]="invalid ? errorId : null"
                     (choose)="setText($index, $event)"
                   />
                 }
@@ -358,6 +368,8 @@ let sequence = 0;
                     [options]="choiceOptions(input)"
                     [value]="row.text"
                     [disabled]="readOnly"
+                    [invalid]="invalid"
+                    [describedBy]="invalid ? errorId : null"
                     (choose)="setText($index, $event)"
                   />
                 }
@@ -369,6 +381,8 @@ let sequence = 0;
                       input.kind === 'number' ? 'decimal' : null
                     "
                     [attr.aria-label]="'Condition ' + n + ' value'"
+                    [attr.aria-invalid]="invalid || null"
+                    [attr.aria-describedby]="invalid ? errorId : null"
                     placeholder="Value"
                     [value]="row.text"
                     [disabled]="readOnly"
@@ -495,6 +509,18 @@ let sequence = 0;
           compact ? "Add condition" : "Add rule"
         }}
       </button>
+      @if (compact) {
+        @for (action of actions; track action.label) {
+          <button
+            type="button"
+            class="text-link param-add"
+            [disabled]="readOnly"
+            (click)="action.run()"
+          >
+            <weave-icon name="plus" [size]="16" />{{ action.label }}
+          </button>
+        }
+      }
       @if (!compact) {
         <button
           type="button"
@@ -513,6 +539,17 @@ let sequence = 0;
         <weave-icon name="failCircle" [size]="16" />{{ problem }}
       </p>
     }
+    <ng-template #pillTemplate let-pill>
+      <span class="ref-pill condition-pill" aria-hidden="true">
+        <weave-icon [name]="pill.icon" [size]="16" />
+        @for (part of pill.parts; track $index; let last = $last) {
+          <span>{{ part }}</span>
+          @if (!last) {
+            <span class="ref-sep">›</span>
+          }
+        }
+      </span>
+    </ng-template>
   </div>`,
   styles: [
     `
@@ -653,6 +690,15 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
   @Output() formula = new EventEmitter<void>();
   /** Step details look: the join line only from the second row, "Add condition", no inline formula button. */
   @Input() compact = false;
+  /** The id of the message about unfinished rows, which describes their controls. */
+  @Input() errorId = "";
+  /** More add actions on the Add condition line (a path's own options). */
+  @Input() actions: readonly { label: string; run: () => void }[] = [];
+  /**
+   * The data cell being edited ("1:data", "1:value"): its pill gives way to
+   * text only once the person types, opens the list or deletes.
+   */
+  readonly editing = signal<string | null>(null);
   /** After a drop: which row received data and how its tests changed, for 2 seconds. */
   readonly adapted = signal<{ index: number; text: string } | null>(null);
   private adaptedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -680,6 +726,7 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
     this.known = incoming;
     // Rows from elsewhere (Undo, another path) aren't the ones a drop changed.
     this.clearAdapted();
+    this.editing.set(null);
     const condition = parseCondition(this.value);
     this.join = condition?.join ?? "and";
     // An unset condition starts with one empty row to fill in.
@@ -768,6 +815,43 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
     clearTimeout(this.adaptedTimer);
     this.adaptedTimer = setTimeout(() => this.adapted.set(null), 2000);
     return true;
+  }
+  /** Typing, deleting or opening the list starts editing; the first key replaces the data. */
+  cellKey(event: KeyboardEvent, cell: string) {
+    if (this.editing() === cell || event.ctrlKey || event.metaKey) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp")
+      return this.editing.set(cell);
+    if (
+      event.key.length === 1 ||
+      event.key === "Backspace" ||
+      event.key === "Delete"
+    ) {
+      (event.target as HTMLInputElement).select?.();
+      this.editing.set(cell);
+    }
+  }
+  /** A click in the text box opens the list; a pick in the list ends editing. */
+  cellClick(event: MouseEvent, cell: string) {
+    if (!(event.target as HTMLElement).closest('[role="listbox"]'))
+      this.editing.set(cell);
+  }
+  cellLeft(event: FocusEvent, cell: string) {
+    const next = event.relatedTarget as Node | null;
+    if (
+      this.editing() === cell &&
+      !(event.currentTarget as HTMLElement).contains(next)
+    )
+      this.editing.set(null);
+  }
+  /** A typed row that isn't complete, once the rows were left: its controls are invalid. */
+  rowInvalid(row: DraftRow): boolean {
+    return (
+      this.compact &&
+      this.touched &&
+      !!this.errorId &&
+      !!(row.ref || row.text || row.compareRef !== undefined) &&
+      !this.complete(row)
+    );
   }
   /** Rows typed but not finished: they live here until they are complete. */
   hasDraft(): boolean {
@@ -1065,6 +1149,7 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
   }
   remove(index: number) {
     if (this.readOnly) return;
+    this.editing.set(null);
     this.rows = this.rows.filter((_, i) => i !== index);
     if (!this.rows.length) this.rows = [{ ref: "", operator: "eq", text: "" }];
     this.emit();

@@ -118,6 +118,8 @@ export class ParamField {
   spec = input.required<ParamSpec>();
   entry = input.required<FieldEntry>();
   row = input(false);
+  /** Add actions of the group around this field, shown on its own add line (a path's options after Add condition). */
+  actions = input<readonly { label: string; run: () => void }[]>([]);
   /**
    * A row's value shows its tools after it, inside its box: they follow the
    * value in the Tab order too. Other fields keep them in the label row.

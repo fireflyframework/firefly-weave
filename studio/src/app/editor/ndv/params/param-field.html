@@ -145,6 +145,8 @@ SPDX-License-Identifier: Apache-2.0
             [spec]="spec"
             [labelId]="ids.control + '-label'"
             [readOnly]="reason"
+            [errorId]="ids.line"
+            [actions]="actions()"
           />
         }
         @case ("urlTemplate") {

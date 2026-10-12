@@ -112,21 +112,34 @@ export async function contentEdges(
   });
 }
 
-/** Visible leaf text inside `scope` that its own box cuts off. */
+/**
+ * Visible text inside `scope` that its own box cuts off: leaf text, and the
+ * text a person sees in a text box. Text may end in "…" only where a tooltip
+ * with the whole text is reachable: an element with a title that takes the
+ * pointer (a tooltip on a `pointer-events: none` layer never shows).
+ */
 export async function clippedText(scope: Locator): Promise<string[]> {
-  return scope.evaluate((container) =>
-    [
+  return scope.evaluate((container) => {
+    const painted = (element: Element) => {
+      const match = getComputedStyle(element).color.match(/rgba?\(([^)]*)\)/);
+      const parts = match ? match[1].split(",").map(Number) : [];
+      return parts.length < 4 || parts[3] > 0;
+    };
+    const reachableTitle = (element: Element) => {
+      const titled = element.closest<HTMLElement>("[title]");
+      return !!titled && getComputedStyle(titled).pointerEvents !== "none";
+    };
+    const shown = (element: HTMLElement) =>
+      element.getClientRects().length > 0 && !element.closest(".sr-only");
+    const text = [
       ...container.querySelectorAll<HTMLElement>(
         ".sd-pane:not([hidden]) :is(p, span, label, button, strong, b, h3, h4, small)",
       ),
     ]
       .filter((element) => {
-        if (!element.getClientRects().length || element.closest(".sr-only"))
-          return false;
+        if (!shown(element)) return false;
         const style = getComputedStyle(element);
-        // A name may ellipsize when its full text stays available as a title;
-        // anything else cut off is a defect.
-        if (style.textOverflow === "ellipsis" && element.closest("[title]"))
+        if (style.textOverflow === "ellipsis" && reachableTitle(element))
           return false;
         return (
           element.children.length === 0 &&
@@ -135,8 +148,22 @@ export async function clippedText(scope: Locator): Promise<string[]> {
           style.overflowX !== "visible"
         );
       })
-      .map((element) => element.innerText.trim().slice(0, 80)),
-  );
+      .map((element) => element.innerText.trim().slice(0, 80));
+    const boxes = [
+      ...container.querySelectorAll<HTMLInputElement>(
+        ".sd-pane:not([hidden]) input:not([type=checkbox], [type=radio], [type=hidden])",
+      ),
+    ]
+      .filter(
+        (input) =>
+          shown(input) &&
+          !!input.value &&
+          painted(input) &&
+          input.scrollWidth > input.clientWidth + 1,
+      )
+      .map((input) => input.value.slice(0, 80));
+    return [...text, ...boxes];
+  });
 }
 
 /** Whether two boxes overlap by more than a hairline. */

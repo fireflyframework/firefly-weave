@@ -29,6 +29,7 @@ import {
   viewChild,
 } from "@angular/core";
 import { ConditionEditor } from "../../../designer/condition-editor";
+import { Icon } from "../../../icon";
 import {
   missingConditionText,
   parseCondition,
@@ -45,7 +46,7 @@ const FORMULA =
   selector: "weave-conditions-field",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ConditionEditor],
+  imports: [ConditionEditor, Icon],
   template: `@if (rowsCanShow()) {
       <weave-condition-editor
         [value]="when()"
@@ -54,6 +55,8 @@ const FORMULA =
         [references]="references()"
         [readOnly]="!!readOnly()"
         [compact]="true"
+        [errorId]="errorId()"
+        [actions]="actions()"
         (valueChange)="changed($event)"
       />
     } @else {
@@ -64,6 +67,19 @@ const FORMULA =
         [attr.aria-labelledby]="labelId()"
         >{{ json() }}</pre
       >
+      @if (actions().length) {
+        <div class="param-group-add">
+          @for (action of actions(); track action.label) {
+            <button
+              type="button"
+              class="text-link param-add"
+              (click)="action.run()"
+            >
+              <weave-icon name="plus" [size]="16" />{{ action.label }}
+            </button>
+          }
+        </div>
+      }
     }`,
 })
 export class ConditionsField {
@@ -71,6 +87,10 @@ export class ConditionsField {
   spec = input.required<ParamSpec>();
   labelId = input.required<string>();
   readOnly = input<string | null>(null);
+  /** The id of the field's message line, which describes unfinished rows. */
+  errorId = input("");
+  /** The path's own add actions, on the Add condition line. */
+  actions = input<readonly { label: string; run: () => void }[]>([]);
   readonly formula = FORMULA;
   private readonly editor = viewChild(ConditionEditor);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
