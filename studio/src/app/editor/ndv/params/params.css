@@ -1239,7 +1239,7 @@ weave-param-field.is-conditions > .param > .param-line {
 }
 .step-details .condition-editor.is-compact .condition-row {
   grid-template-columns:
-    minmax(0, calc(var(--sd-row) + 132px)) minmax(0, 1fr)
+    minmax(0, calc(var(--sd-row) + 122px)) minmax(0, 1fr)
     var(--sd-target);
   grid-template-areas:
     "data data data"
@@ -1267,8 +1267,8 @@ weave-param-field.is-conditions > .param > .param-line {
 @container (min-width: 480px) {
   .step-details .condition-editor.is-compact .condition-row {
     grid-template-columns:
-      minmax(0, 1fr) minmax(0, calc(var(--space-6) + 132px))
-      minmax(0, 120px) var(--sd-target);
+      minmax(0, 1fr) minmax(0, calc(var(--space-6) + 122px))
+      minmax(0, 0.65fr) var(--sd-target);
     grid-template-areas: "data test value remove";
   }
   .step-details .condition-editor.is-compact .condition-row + .condition-row {
@@ -1280,7 +1280,7 @@ weave-param-field.is-conditions > .param > .param-line {
   @container (min-width: 480px) and (max-width: 679px) {
     .step-details .condition-editor.is-compact .condition-row {
       grid-template-columns:
-        minmax(0, calc(var(--sd-row) + 132px)) minmax(0, 1fr)
+        minmax(0, calc(var(--sd-row) + 122px)) minmax(0, 1fr)
         var(--sd-target);
       grid-template-areas:
         "data data data"
@@ -1294,8 +1294,8 @@ weave-param-field.is-conditions > .param > .param-line {
   @container (min-width: 680px) {
     .step-details .condition-editor.is-compact .condition-row {
       grid-template-columns:
-        minmax(0, 1fr) minmax(0, calc(var(--sd-row) + 132px))
-        minmax(0, 120px) var(--sd-target);
+        minmax(0, 1fr) minmax(0, calc(var(--sd-row) + 122px))
+        minmax(0, 0.65fr) var(--sd-target);
     }
   }
 }
@@ -1356,7 +1356,7 @@ weave-param-field.is-conditions > .param > .param-line {
   height: var(--sd-row);
   min-height: 0;
   margin-block: -1px;
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
   font: var(--type-body);
   color: var(--text);
   background: transparent;
@@ -1379,7 +1379,7 @@ weave-param-field.is-conditions > .param > .param-line {
   height: var(--sd-row);
   min-height: 0;
   margin-block: -1px;
-  padding: 0 var(--space-1) 0 var(--space-3);
+  padding: 0 0 0 var(--space-2);
   font: var(--type-body);
   background: transparent;
 }
@@ -1457,6 +1457,7 @@ weave-param-field.is-conditions > .param > .param-line {
   input {
   color: transparent;
   caret-color: transparent;
+  cursor: pointer;
 }
 /* Only problems show under the data: the type is in the pill and the list. */
 .step-details
@@ -1464,39 +1465,79 @@ weave-param-field.is-conditions > .param > .param-line {
   .ref-combo-hint:not(.warning, .error) {
   display: none;
 }
-/* Fixed | Mapped for the value while it has focus: above the box's top-right
-   corner, so the value keeps its whole box; the pill or the typed value says
-   which at rest. */
+/* Fixed | Mapped for the value, inside its box at the right end, like the
+   key-value rows: shown on hover, on focus and while Mapped, its room kept
+   at rest. One-line rows with a fine pointer use a pair of 24 px icons;
+   wider values show the words, 12 px from the box's end. */
 .condition-editor.is-compact .condition-mode {
-  position: absolute;
-  right: -1px;
-  bottom: calc(100% + 1px);
-  z-index: 3;
-  border-radius: var(--radius-xs);
-  box-shadow: var(--shadow-2);
+  flex: none;
+  align-self: center;
+  margin-right: calc(var(--space-3) - 1px);
 }
-.condition-editor.is-compact .condition-mode::before {
-  inset: 0;
+.condition-editor.is-compact
+  .condition-value:not(:hover, :focus-within, .is-mapped)
+  > .condition-mode {
+  opacity: 0;
 }
 .step-details
   .condition-editor.is-compact
   .condition-mode
   button[role="radio"] {
-  min-height: var(--space-6);
-  padding: 0 var(--space-2);
+  margin-block: -1px;
 }
-@media (max-width: 767px), (pointer: coarse) {
+.condition-editor.is-compact .condition-mode-icon {
+  display: none;
+}
+/* A narrow value (one-line rows) uses a pair of icons: 24 px with a fine
+   pointer, the touch target otherwise. */
+.condition-editor.is-compact .condition-value {
+  container: condition-value / inline-size;
+}
+@container condition-value (max-width: 219px) {
+  .condition-editor.is-compact .condition-mode {
+    margin-right: var(--space-1);
+    padding: 0;
+  }
   .step-details
     .condition-editor.is-compact
     .condition-mode
     button[role="radio"] {
-    min-height: var(--sd-target);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--space-6);
+    min-width: var(--space-6);
+    height: var(--space-6);
+    min-height: var(--space-6);
+    margin: 0;
+    padding: 0;
+  }
+  .condition-editor.is-compact .condition-mode-icon {
+    display: block;
+  }
+  .condition-editor.is-compact .condition-mode-text {
+    display: none;
   }
 }
-.condition-editor.is-compact
-  .condition-value:not(:focus-within)
-  > .condition-mode {
-  display: none;
+@media (max-width: 767px), (pointer: coarse) {
+  @container condition-value (max-width: 219px) {
+    .step-details
+      .condition-editor.is-compact
+      .condition-mode
+      button[role="radio"] {
+      width: var(--sd-target);
+      min-width: var(--sd-target);
+      height: var(--sd-target);
+      min-height: var(--sd-target);
+      margin-block: -1px;
+    }
+  }
+}
+/* A narrow compared value names its field; the whole path is its tooltip. */
+@container condition-value (max-width: 299px) {
+  .condition-editor.is-compact .condition-value-pill > :not(span:last-child) {
+    display: none;
+  }
 }
 .step-details .condition-editor.is-compact .condition-join .choice-field {
   min-height: var(--sd-row);

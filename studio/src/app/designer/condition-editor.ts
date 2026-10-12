@@ -195,6 +195,10 @@ let sequence = 0;
             [class.is-editing]="editing() === cell"
             [attr.title]="pill ? pill.parts.join(' › ') : null"
             (keydown)="cellKey($event, cell)"
+            (keyup)="cellKeyUp($event, cell)"
+            (paste)="cellInsert($event, cell)"
+            (compositionstart)="cellInsert($event, cell)"
+            (beforeinput)="cellInsert($event, cell)"
             (click)="cellClick($event, cell)"
             (focusout)="cellLeft($event, cell)"
           >
@@ -326,6 +330,10 @@ let sequence = 0;
                 [class.is-editing]="editing() === cell"
                 [attr.title]="compare ? compare.parts.join(' › ') : null"
                 (keydown)="cellKey($event, cell)"
+                (keyup)="cellKeyUp($event, cell)"
+                (paste)="cellInsert($event, cell)"
+                (compositionstart)="cellInsert($event, cell)"
+                (beforeinput)="cellInsert($event, cell)"
                 (click)="cellClick($event, cell)"
                 (focusout)="cellLeft($event, cell)"
               >
@@ -343,7 +351,10 @@ let sequence = 0;
                   (picked)="editing.set(null)"
                 />
                 @if (compare) {
-                  <span class="ref-pill condition-pill" aria-hidden="true">
+                  <span
+                    class="ref-pill condition-pill condition-value-pill"
+                    aria-hidden="true"
+                  >
                     <weave-icon [name]="compare.icon" [size]="16" />
                     @for (
                       part of compare.parts;
@@ -399,6 +410,7 @@ let sequence = 0;
                     placeholder="Value"
                     [value]="row.text"
                     [disabled]="readOnly"
+                    (keydown)="valueKey($event, $index)"
                     (input)="setText($index, $event)"
                   />
                 }
@@ -413,22 +425,34 @@ let sequence = 0;
               <button
                 type="button"
                 role="radio"
+                aria-label="Fixed"
+                title="Fixed"
                 [attr.aria-checked]="!mapped"
                 [attr.tabindex]="mapped ? -1 : 0"
                 [disabled]="readOnly"
                 (click)="useComparisonData(n - 1, false)"
               >
-                Fixed
+                <weave-icon
+                  class="condition-mode-icon"
+                  name="typeText"
+                  [size]="16"
+                /><span class="condition-mode-text">Fixed</span>
               </button>
               <button
                 type="button"
                 role="radio"
+                aria-label="Mapped"
+                title="Mapped"
                 [attr.aria-checked]="mapped"
                 [attr.tabindex]="mapped ? 0 : -1"
                 [disabled]="readOnly"
                 (click)="useComparisonData(n - 1, true)"
               >
-                Mapped
+                <weave-icon
+                  class="condition-mode-icon"
+                  name="source"
+                  [size]="16"
+                /><span class="condition-mode-text">Mapped</span>
               </button>
             </div>
           </div>
@@ -718,6 +742,8 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
   touched = false;
   private host = inject<ElementRef<HTMLElement>>(ElementRef);
   private pendingRow = false;
+  /** The row whose comparison data takes focus once it shows. */
+  private pendingCompare: number | null = null;
   join: ConditionJoin = "and";
   /** The value last shown or emitted; "unset" for no condition. */
   private known: string | null = null;
@@ -751,6 +777,15 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
   }
 
   ngAfterViewChecked() {
+    if (this.pendingCompare !== null) {
+      const input = this.host.nativeElement.querySelector<HTMLInputElement>(
+        `.condition-row[data-row="${this.pendingCompare}"] .condition-value input[role=combobox]`,
+      );
+      if (input) {
+        this.pendingCompare = null;
+        input.focus();
+      }
+    }
     if (this.pendingRow) {
       const input = [
         ...this.host.nativeElement.querySelectorAll<HTMLElement>(
@@ -787,7 +822,11 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
    * else a new one) and says how its tests changed. False when it can't: read
    * only, data that isn't offered here, or a row that no longer exists.
    */
-  dropRef(ref: string, index: number | null): boolean {
+  dropRef(
+    ref: string,
+    index: number | null,
+    into: "data" | "value" = "data",
+  ): boolean {
     const option = this.references.find((reference) => reference.ref === ref);
     if (this.readOnly || !option) return false;
     if (
@@ -795,6 +834,14 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
       (!Number.isInteger(index) || index < 0 || index >= this.rows.length)
     )
       return false;
+    if (into === "value") {
+      const row = index === null ? undefined : this.rows[index];
+      if (!row || unary(row.operator) || membership(row.operator)) return false;
+      this.rows[index!] = { ...row, compareRef: ref, source: undefined };
+      this.emit();
+      this.say(index!, `Compared with ${option.label} (${option.typeLabel}).`);
+      return true;
+    }
     let at = index ?? this.rows.findIndex((row) => !row.ref);
     if (at < 0) {
       this.rows = [...this.rows, { ref: "", operator: "eq", text: "" }];
@@ -810,13 +857,17 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
           : kind === "choice"
             ? "choice"
             : "text";
-    this.adapted.set({
-      index: at,
-      text: `Mapped ${option.label} (${option.typeLabel}). The comparisons now offer ${tests} tests.`,
-    });
+    this.say(
+      at,
+      `Mapped ${option.label} (${option.typeLabel}). The comparisons now offer ${tests} tests.`,
+    );
+    return true;
+  }
+  /** The line under a row that received data, for 2 seconds. */
+  private say(index: number, text: string) {
+    this.adapted.set({ index, text });
     clearTimeout(this.adaptedTimer);
     this.adaptedTimer = setTimeout(() => this.adapted.set(null), 2000);
-    return true;
   }
   /** Typing, deleting or opening the list starts editing; the first key replaces the data. */
   cellKey(event: KeyboardEvent, cell: string) {
@@ -831,6 +882,25 @@ export class ConditionEditor implements OnChanges, AfterViewChecked, OnDestroy {
       (event.target as HTMLInputElement).select?.();
       this.editing.set(cell);
     }
+  }
+  /** Escape after the list closed: back to the pill. */
+  cellKeyUp(event: KeyboardEvent, cell: string) {
+    if (event.key === "Escape" && this.editing() === cell)
+      this.editing.set(null);
+  }
+  /** Text that arrives without a key (a paste, an input method) replaces the data too. */
+  cellInsert(event: Event, cell: string) {
+    if (this.editing() === cell) return;
+    (event.target as HTMLInputElement).select?.();
+    this.editing.set(cell);
+  }
+  /** "=" in an empty value compares with data instead. */
+  valueKey(event: KeyboardEvent, index: number) {
+    const row = this.rows[index];
+    if (event.key !== "=" || !row || row.text || this.readOnly) return;
+    event.preventDefault();
+    this.useComparisonData(index, true);
+    this.pendingCompare = index;
   }
   /** A click in the text box opens the list; a pick in the list ends editing. */
   cellClick(event: MouseEvent, cell: string) {

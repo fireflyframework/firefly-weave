@@ -142,32 +142,60 @@ export class ConditionsField {
     const problem = editor?.touched ? editor.problem : "";
     return problem && problem !== missingConditionText ? problem : "";
   }
-  /** A drop on the rows: the row under the pointer, else the first without data, else a new one. */
-  drop(drag: DragRef, y: number | null): boolean {
+  /**
+   * A drop on the rows: on a value it compares with the dropped data;
+   * otherwise it becomes the data of the row under the pointer, else of the
+   * first row without data, else of a new row.
+   */
+  drop(drag: DragRef, x: number | null, y: number | null): boolean {
     const session = this.session();
     const decision = session.conditionDrop(this.spec(), drag);
     if ("reason" in decision) {
       session.announce(decision.reason);
       return false;
     }
-    return this.place(decision.entry.ref, y === null ? null : this.rowAt(y));
+    const row = y === null ? null : this.rowAt(y);
+    const value = row?.element
+      .querySelector(".condition-value")
+      ?.getBoundingClientRect();
+    const onValue =
+      !!value &&
+      x !== null &&
+      y !== null &&
+      x >= value.left - 8 &&
+      x <= value.right + 8 &&
+      y >= value.top - 8 &&
+      y <= value.bottom + 8;
+    return this.place(
+      decision.entry.ref,
+      row?.index ?? null,
+      onValue ? "value" : "data",
+    );
   }
   /** The row whose box is nearest the pointer, within 8 px. */
-  private rowAt(y: number): number | null {
-    let best: { index: number; distance: number } | null = null;
+  private rowAt(y: number): { index: number; element: HTMLElement } | null {
+    let best: {
+      index: number;
+      element: HTMLElement;
+      distance: number;
+    } | null = null;
     for (const row of this.element.nativeElement.querySelectorAll<HTMLElement>(
       ".condition-row",
     )) {
       const box = row.getBoundingClientRect();
       const distance = y < box.top ? box.top - y : Math.max(0, y - box.bottom);
       if (distance <= 8 && (!best || distance < best.distance))
-        best = { index: Number(row.dataset["row"]), distance };
+        best = { index: Number(row.dataset["row"]), element: row, distance };
     }
-    return best?.index ?? null;
+    return best;
   }
-  private place(ref: string, index: number | null): boolean {
+  private place(
+    ref: string,
+    index: number | null,
+    into: "data" | "value" = "data",
+  ): boolean {
     const editor = this.editor();
-    if (editor?.dropRef(ref, index)) return true;
+    if (editor?.dropRef(ref, index, into)) return true;
     this.session().announce(
       editor ? "This field cannot read that data." : FORMULA,
     );

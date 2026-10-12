@@ -41,6 +41,7 @@ import {
   contentEdges,
   density,
   expectAligned,
+  paintedOpacity,
   showParameters,
   type Box,
 } from "./step-geometry";
@@ -204,10 +205,11 @@ for (const size of sizes)
       const mode = when.getByRole("radiogroup", {
         name: "Value mode for Condition 1 value",
       });
-      // The value mode shows while the value has focus.
-      await expect(mode).toBeHidden();
+      // The value mode shows while the value has focus (its room is kept).
+      await page.mouse.move(1, 1);
+      expect(await paintedOpacity(mode)).toBe(0);
       await value.focus();
-      await expect(mode).toBeVisible();
+      expect(await paintedOpacity(mode)).toBe(1);
       await page.keyboard.press("Tab");
       await expect(mode.getByRole("radio", { name: "Fixed" })).toBeFocused();
       await page.keyboard.press("ArrowRight");
@@ -533,62 +535,222 @@ for (const size of [
       await expect(first).toHaveValue("");
     });
 
-    test("a focused value keeps its width, and Fixed | Mapped floats above it inside the row", async ({
+    test("a focused value keeps Fixed | Mapped in its own box and every other control takes its own clicks", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      await showParameters(page, details.dialog);
+      const sizes = await density(page);
+      const when = conditionsOf(details, 1);
+      // Two complete conditions, so each value has neighbors on every side.
+      await when.getByRole("button", { name: "Add condition" }).click();
+      const data2 = when.getByRole("combobox", { name: "Condition 2 data" });
+      await data2.fill("/input/amount");
+      await data2.press("Enter");
+      await when.getByLabel("Condition 2 value", { exact: true }).fill("5");
+      for (const n of [1, 2]) {
+        const row = when.locator(".condition-row").nth(n - 1);
+        const value = when.getByLabel(`Condition ${n} value`, { exact: true });
+        await value.scrollIntoViewIfNeeded();
+        await value.focus();
+        const cell = await box(row.locator(".condition-value"));
+        const mode = when.getByRole("radiogroup", {
+          name: `Value mode for Condition ${n} value`,
+        });
+        expect(await paintedOpacity(mode)).toBe(1);
+        const toggle = await box(mode);
+        // Inside the value's own box, on its right end.
+        expect(toggle.x).toBeGreaterThanOrEqual(cell.x);
+        expect(toggle.right).toBeLessThanOrEqual(cell.right);
+        expect(toggle.y).toBeGreaterThanOrEqual(cell.y);
+        expect(toggle.bottom).toBeLessThanOrEqual(cell.bottom);
+        expectAligned([toggle.middle, cell.middle], "value mode center");
+        const radios = mode.getByRole("radio");
+        await expect(radios).toHaveCount(2);
+        await expect(radios.first()).toHaveAccessibleName("Fixed");
+        await expect(radios.last()).toHaveAccessibleName("Mapped");
+        for (const radio of await radios.all())
+          expect((await box(radio)).height).toBeGreaterThanOrEqual(
+            sizes.touch ? 44 : 24,
+          );
+        const oneLine =
+          (await box(row.locator(".condition-operator .choice-field"))).y ===
+          (await box(row.locator(".condition-data .ref-combo-field"))).y;
+        if (oneLine && !sizes.touch) {
+          // A compact pair of 24 px icons on one-line rows.
+          for (const radio of await radios.all())
+            expectAligned([(await box(radio)).width, 24], "icon radio");
+        } else {
+          // The full Fixed | Mapped, 12 px from the box's right end.
+          await expect(mode).toContainText("Fixed");
+          expectAligned([toggle.right, cell.right - 12], "value mode inset", 2);
+        }
+        // The value shows whole beside it.
+        const input = await box(value);
+        expect(input.right).toBeLessThanOrEqual(toggle.x + 0.5);
+        expect(
+          await value.evaluate(
+            (e: HTMLInputElement) => e.scrollWidth <= e.clientWidth + 1,
+          ),
+        ).toBe(true);
+        // Every other control of the conditions takes a click at its center.
+        const covered = await details.dialog.evaluate(
+          (dialog, focused) => {
+            // Below the bars that stay on top while the sheet scrolls.
+            const top = Math.max(
+              0,
+              ...[
+                ...dialog.querySelectorAll<HTMLElement>(
+                  ".sd-segments, .sd-head",
+                ),
+              ]
+                .filter((bar) => getComputedStyle(bar).position === "sticky")
+                .map((bar) => bar.getBoundingClientRect().bottom),
+            );
+            const cells = [
+              ...dialog.querySelectorAll<HTMLElement>(
+                '[data-param="cases"] :is(.condition-data .ref-combo-field, .condition-operator .choice-field, .condition-value, .condition-remove, .condition-intro .choice-field, .param-card-actions button, .condition-tools button)',
+              ),
+            ].filter((cell) => {
+              const r = cell.getBoundingClientRect();
+              return (
+                cell.getClientRects().length &&
+                !cell.contains(focused) &&
+                r.top >= top &&
+                r.bottom <= innerHeight &&
+                r.left >= 0 &&
+                r.right <= innerWidth
+              );
+            });
+            return cells
+              .filter((cell) => {
+                const r = cell.getBoundingClientRect();
+                const hit = document.elementFromPoint(
+                  r.x + r.width / 2,
+                  r.y + r.height / 2,
+                );
+                return !hit || !cell.contains(hit);
+              })
+              .map((cell) => cell.className || cell.getAttribute("aria-label"));
+          },
+          await value.elementHandle(),
+        );
+        expect(covered).toEqual([]);
+      }
+      // A click on the first value while the second has focus goes there.
+      const first = when.getByLabel("Condition 1 value", { exact: true });
+      await first.click();
+      await expect(first).toBeFocused();
+      await expect(
+        when.locator(".condition-row").nth(1).locator(".condition-value"),
+      ).not.toHaveClass(/is-mapped/);
+      expect(await noSideways(page)).toBe(true);
+    });
+
+    test("= in an empty value, or a drop on it, compares with data", async ({
       page,
     }) => {
       const details = await openStepFixture(page);
       await details.open("route-by-value");
       await showParameters(page, details.dialog);
       const when = conditionsOf(details, 1);
-      const row = when.locator(".condition-row").first();
+      await when.getByRole("button", { name: "Add condition" }).click();
+      const data2 = when.getByRole("combobox", { name: "Condition 2 data" });
+      await data2.fill("/input/tier");
+      await data2.press("Enter");
+      const value = when.getByLabel("Condition 2 value", { exact: true });
+      await value.focus();
+      await page.keyboard.press("=");
+      const compare = when.getByRole("combobox", { name: "Condition 2 value" });
+      await expect(compare).toBeFocused();
+      await compare.fill("/input/status");
+      await compare.press("Enter");
+      await compare.press("Tab");
+      await expect(
+        when.locator(".condition-row").nth(1).locator(".condition-value"),
+      ).toHaveClass(/is-mapped/);
+      if (size.width >= 768 && !("coarse" in size)) {
+        // A drop on a value compares with the dropped data.
+        const input = await inputPane(details);
+        await input
+          .getByRole("combobox", { name: "Input source" })
+          .selectOption("input");
+        await input
+          .getByRole("listitem", { name: /^email, / })
+          .dragTo(when.getByLabel("Condition 1 value", { exact: true }));
+        await expect(
+          when.locator(".condition-row").first().locator(".condition-value"),
+        ).toHaveClass(/is-mapped/);
+        await expect(when.getByRole("status")).toHaveText(
+          "Compared with Email (Text).",
+        );
+      }
+      await details.close();
+      const condition = parse(await sourceText(page)).spec.steps[2].cases[0]
+        .when;
+      expect(condition.op.args[1]).toEqual({
+        op: {
+          name: "eq",
+          args: [{ ref: "/input/tier" }, { ref: "/input/status" }],
+        },
+      });
+      if (size.width >= 768 && !("coarse" in size))
+        expect(condition.op.args[0].op.args[1]).toEqual({
+          ref: "/input/email",
+        });
+    });
+
+    test("a mapped value shows its data whole, and the data list closes back to its pill", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      await showParameters(page, details.dialog);
+      const when = conditionsOf(details, 2);
       const value = when.getByLabel("Condition 1 value", { exact: true });
       await value.scrollIntoViewIfNeeded();
-      const rest = await box(row.locator(".condition-value"));
-      await value.click();
-      const mode = when.getByRole("radiogroup", {
-        name: "Value mode for Condition 1 value",
-      });
-      await expect(mode).toBeVisible();
-      const cell = await box(row.locator(".condition-value"));
-      expect(cell).toEqual(rest);
-      // The value keeps the whole box and shows whole.
-      const input = await box(value);
-      expect(input.width).toBeGreaterThanOrEqual(cell.width - 2.5);
+      await value.focus();
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("ArrowRight");
+      const compare = when.getByRole("combobox", { name: "Condition 1 value" });
+      await compare.fill("/input/status");
+      await compare.press("Enter");
+      await compare.press("Tab");
+      await page.mouse.move(1, 1);
+      const pill = when
+        .locator(".condition-row")
+        .first()
+        .locator(".condition-value .condition-pill");
+      await expect(pill).toBeVisible();
+      for (const part of await pill.locator(":scope > span").all())
+        if (await part.isVisible())
+          expect(
+            await part.evaluate((e) => e.scrollWidth <= e.clientWidth + 1),
+          ).toBe(true);
+      const pillBox = await box(pill);
       expect(
-        await value.evaluate(
-          (e: HTMLInputElement) => e.scrollWidth <= e.clientWidth + 1,
-        ),
-      ).toBe(true);
-      // Fixed | Mapped sits above the box's top-right corner, inside the row.
-      const toggle = await box(mode);
-      const trash = await box(row.locator(".condition-remove"));
-      const data = await box(row.locator(".condition-data .ref-combo-field"));
-      expect(toggle.bottom).toBeLessThanOrEqual(cell.y + 0.5);
-      expect(toggle.right).toBeLessThanOrEqual(trash.right + 0.5);
-      expect(toggle.x).toBeGreaterThanOrEqual(data.x - 0.5);
-      const sizes = await density(page);
-      for (const radio of await mode.getByRole("radio").all())
-        expect((await box(radio)).height).toBeGreaterThanOrEqual(
-          sizes.touch ? 44 : 24,
-        );
-      // It is on top, and choosing Mapped turns the value into data.
-      const mapped = mode.getByRole("radio", { name: "Mapped" });
-      const center = await box(mapped);
-      expect(
-        await page.evaluate(
-          ({ x, y }) =>
-            !!document
-              .elementFromPoint(x, y)
-              ?.closest('[role="radio"]')
-              ?.textContent?.includes("Mapped"),
-          { x: center.x + center.width / 2, y: center.middle },
-        ),
-      ).toBe(true);
-      await mapped.click();
+        await tooltipAt(page, { x: pillBox.x + 4, y: pillBox.middle }),
+      ).toBe("Input › status");
+      // The data cell: a pointer over its pill, and Escape back to the pill.
+      const data = when.getByRole("combobox", { name: "Condition 1 data" });
+      const row = when.locator(".condition-row").first();
+      await expect(data).toHaveCSS("cursor", "pointer");
+      await data.click();
       await expect(
-        when.getByRole("combobox", { name: "Condition 1 value" }),
+        row.locator(":scope > .condition-data .condition-pill"),
+      ).toBeHidden();
+      await data.press("Escape");
+      await expect(
+        page.getByRole("listbox", { name: "Condition 1 data suggestions" }),
+      ).toBeHidden();
+      await expect(
+        row.locator(":scope > .condition-data .condition-pill"),
       ).toBeVisible();
-      expect(await noSideways(page)).toBe(true);
+      await expect(data).toBeFocused();
+      // Text that arrives without a key (paste, an input method) replaces it.
+      await page.keyboard.insertText("tier");
+      await expect(data).toHaveValue("tier");
     });
   });
 

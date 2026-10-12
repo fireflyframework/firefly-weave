@@ -223,7 +223,7 @@ export class ParamField {
       return;
     const { drag, x, y, shift } = (event as CustomEvent<FieldDrop>).detail;
     if (this.spec().type === "conditions") {
-      this.conditions()?.drop(drag, y);
+      this.conditions()?.drop(drag, x, y);
       return;
     }
     if (!canMapFields(this.element.nativeElement, this.session())) return;
