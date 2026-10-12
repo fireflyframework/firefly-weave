@@ -39,7 +39,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.run_views import RunStepQuery, RunSummaryQuery
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.facts import FactRepository, listing_metadata
-from firefly_weave.operations.loop import OperationsLoop
+from firefly_weave.operations.loop import ENVIRONMENT_SECONDS, OperationsLoop
 from firefly_weave.operations.loop_health import LoopHealth
 from firefly_weave.operations.run_views import RunViewService
 from firefly_weave.persistence.uow import UnitOfWork
@@ -81,10 +81,29 @@ async def refresh(operations_case, scheduler_url):
         health,
     )
     loop.engine = create_async_engine(scheduler_url)
+    # Quanta whose budget ran out: each can cut short at most the one refresh it was running.
+    loop.cut_short = 0  # type: ignore[attr-defined]
+    environment = loop._environment
+
+    async def quantum(authority):
+        started = loop.monotonic()
+        try:
+            await environment(authority)
+        except Exception:
+            if loop.monotonic() >= started + ENVIRONMENT_SECONDS - 0.01:
+                loop.cut_short += 1  # type: ignore[attr-defined]
+            raise
+
+    loop._environment = quantum  # type: ignore[method-assign]
     try:
         yield loop
     finally:
         await loop.engine.dispose()
+
+
+def extra_reads(reads: Counter, runs) -> int:
+    """Reads beyond one per run: refreshes cut short at a budget edge and retried after the keyset wrapped."""
+    return sum(reads[run] for run in runs) - len(runs)
 
 
 class Reads(Counter):
@@ -211,8 +230,18 @@ async def cancelled_source(case) -> UUID:
     return run.id
 
 
-async def clone(case, run: UUID, identifiers, *, environment=None, activation=None, future=False, node_kinds=None):
-    """Retained copies of a real run, each cached as unsupported like a backfill on a rolled-back server."""
+async def clone(
+    case,
+    run: UUID,
+    identifiers,
+    *,
+    environment=None,
+    activation=None,
+    future=False,
+    node_kinds=None,
+    state="unsupported",
+):
+    """Retained copies of a real run, each cached (unsupported by default) like a backfill on a rolled-back server."""
     artifact = "jsonb_set(r.artifact,'{executable,irVersion}','\"weave/ir-future\"')" if future else "r.artifact"
     async with case.owner.begin() as session:
         await session.execute(
@@ -229,7 +258,7 @@ async def clone(case, run: UUID, identifiers, *, environment=None, activation=No
                 "INSERT INTO run_facts SELECT (jsonb_populate_record(NULL::run_facts,to_jsonb(f) || jsonb_build_object("
                 "'run_id',c.id,'environment_id',coalesce(cast(:environment AS uuid),f.environment_id),"
                 "'activation_id',coalesce(cast(:activation AS uuid),f.activation_id),"
-                "'classification_state','unsupported','pinned_features','[\"text.concat\"]'::jsonb,"
+                "'classification_state',cast(:state AS text),'pinned_features','[\"text.concat\"]'::jsonb,"
                 "'pinned_ir_version',CASE WHEN :future THEN 'weave/ir-future' ELSE f.pinned_ir_version END,"
                 "'node_kinds',coalesce(cast(:node_kinds AS jsonb),'{}'::jsonb)))).* "
                 "FROM run_facts f CROSS JOIN unnest(cast(:ids AS uuid[])) AS c(id) WHERE f.run_id=:run"
@@ -240,6 +269,7 @@ async def clone(case, run: UUID, identifiers, *, environment=None, activation=No
                 "environment": environment,
                 "activation": activation,
                 "future": future,
+                "state": state,
                 "node_kinds": None if node_kinds is None else json.dumps(node_kinds),
             },
         )
@@ -430,6 +460,9 @@ async def test_policy_change_withholds_until_cache_is_revalidated(operations_cas
     first = (await case.start("first")).id
     monkeypatch.setattr(admission, "POLICY", "classified-v2")
     assert (await summary(case, first)).unavailable
+    with pytest.raises(CatalogError) as withheld:
+        await service(case).steps(case.actor, case.scope, first, RunStepQuery(), None, context=AuditContext())
+    assert (withheld.value.status, withheld.value.code) == (409, "WV-LEGACY-UNAVAILABLE")
     assert await refresh.cycle() is True
     assert payload_reads == Counter({first: 1})
     assert (await cached(case, first))["classification_policy"] == "classified-v2"
@@ -638,6 +671,8 @@ async def test_cache_refresh_advances_across_250_due_rows_and_two_environments(
     turns = await due_progress(refresh, case, due + elsewhere, cycles=80, done=finished)
     # Every due row was refreshed and none was read once its decision was stored; the still-unsupported rows never.
     assert set(payload_reads) == set(due + elsewhere) and payload_reads.after_success == []
+    # A row is read again only after a quantum ran out of budget while refreshing it.
+    assert extra_reads(payload_reads, due + elsewhere) <= refresh.cut_short
     assert set((await states(case, still_unsupported)).values()) == {"unsupported"}
     environments = {environment for environment, _ in (await cursors(case))["facts"]}
     assert environments == {case.scope.environment_id, other.environment_id}
@@ -706,6 +741,7 @@ async def test_failed_first_cache_candidate_does_not_starve_later_rows(
             await service(case).steps(case.actor, case.scope, failing, RunStepQuery(), None, context=AuditContext())
         assert withheld.value.code == "WV-IR-UNSUPPORTED"
         assert all(payload_reads[run] >= 1 for run in later + elsewhere) and payload_reads.after_success == []
+        assert extra_reads(payload_reads, later + elsewhere) <= refresh.cut_short
         assert attempts.index(failing) < attempts.index(later[0])
     finally:
         await transaction.rollback()
@@ -774,39 +810,170 @@ async def test_environment_overrun_keeps_its_cursor_and_the_next_environment_pro
         results.append(await refresh.cycle())
     assert set((await states(case, due + elsewhere)).values()) == {"available"}
     assert set(payload_reads) == set(due + elsewhere) and payload_reads.after_success == []
+    assert extra_reads(payload_reads, due + elsewhere) <= refresh.cut_short
 
 
 async def test_each_quantum_lowers_its_database_timeouts_to_the_remaining_budget(operations_case, refresh, monkeypatch):
     case = operations_case
     run = (await case.start()).id
     await record_rolled_back_decision(case, run)
+    clock = {"now": 1000.0}
+
+    def tick() -> float:
+        # Every reading advances the budget clock by an eighth of a second, exactly representable.
+        clock["now"] += 0.125
+        return clock["now"]
+
+    refresh.monotonic = tick
     observed = []
-
-    async def settings(tx):
-        observed.append(
-            tuple(
-                [
-                    await tx.session.scalar(text("SELECT current_setting(:name)"), {"name": name})
-                    for name in ("statement_timeout", "lock_timeout")
-                ]
-            )
-        )
-
     for name in ("revalidation_candidates", "advance_revalidation_cursor", "refresh_listing_metadata"):
         original = getattr(FactRepository, name)
 
-        def observing(original):
+        def observing(original, name):
             async def method(self, *args):
-                await settings(self.tx)
+                values = [
+                    await self.tx.session.scalar(text("SELECT current_setting(:name)"), {"name": setting})
+                    for setting in ("statement_timeout", "lock_timeout")
+                ]
+                if self.tx.scope.environment_id == case.scope.environment_id:
+                    observed.append((name, *values))
                 return await original(self, *args)
 
             return method
 
-        monkeypatch.setattr(FactRepository, name, observing(original))
+        monkeypatch.setattr(FactRepository, name, observing(original, name))
     assert await refresh.cycle() is True
-    assert len(observed) >= 3
+    # The quantum starts with one second; each transaction gets what is left after it verified its authority.
+    assert observed == [
+        ("revalidation_candidates", "750ms", "750ms"),
+        ("advance_revalidation_cursor", "375ms", "375ms"),
+        ("refresh_listing_metadata", "125ms", "125ms"),
+    ]
+    assert (await cached(case, run))["classification_state"] == "available"
 
-    def milliseconds(value: str) -> int:
-        return int(value[:-2]) if value.endswith("ms") else int(value[:-1]) * 1000
 
-    assert all(0 < milliseconds(value) <= 1000 for pair in observed for value in pair)
+async def test_a_decision_changed_after_selection_keeps_its_newer_value(
+    operations_case, refresh, payload_reads, monkeypatch
+):
+    case = operations_case
+    run = (await case.start()).id
+    await record_rolled_back_decision(case, run)
+    selection = FactRepository.revalidation_candidates
+
+    async def candidates(self, after):
+        found = await selection(self, after)
+        if run in found:
+            # An authoritative writer withholds the run between the selection and its refresh.
+            async with case.owner.begin() as session:
+                await session.execute(
+                    text("UPDATE run_facts SET classification_state='unavailable' WHERE run_id=:run"), {"run": run}
+                )
+        return found
+
+    monkeypatch.setattr(FactRepository, "revalidation_candidates", candidates)
+    assert await refresh.cycle() is True
+    # The recheck under the lock sees the newer decision: nothing is read and nothing is overwritten.
+    assert payload_reads == Counter()
+    assert (await cached(case, run))["classification_state"] == "unavailable"
+
+
+async def test_the_due_scan_uses_the_revalidation_index(operations_case, refresh, monkeypatch):
+    case = operations_case
+    origin = await cancelled_source(case)
+    final = (await cached(case, origin))["node_kinds"]
+    await clone(case, origin, ids(0x20000000, 3000), node_kinds=final, state="available")
+    due = ids(0x30000000, 20)
+    await clone(case, origin, due)
+    async with case.owner.begin() as session:
+        await session.execute(text("ANALYZE run_facts"))
+    plans = []
+    rows = FactRepository.rows
+
+    async def explained(self, sql, **values):
+        if "ORDER BY f.run_id LIMIT" in sql:
+            plan = await self.tx.session.scalar(text("EXPLAIN (FORMAT JSON) " + sql), {**values, **self.params})
+            plans.append(json.dumps(plan))
+        return await rows(self, sql, **values)
+
+    monkeypatch.setattr(FactRepository, "rows", explained)
+    assert await refresh.cycle() is True
+    assert plans and all('"Index Name": "run_facts_revalidation"' in plan for plan in plans)
+    assert set((await states(case, due)).values()) == {"available"}
+
+
+async def test_a_policy_change_never_upgrades_a_decision_the_upgrade_withheld(
+    empty_settings, payload_reads, monkeypatch
+):
+    """Runs whose history the upgrade could not trust stay unavailable, whatever later policy re-checks the rest."""
+    import os
+    import secrets
+    from datetime import UTC, datetime
+    from pathlib import Path
+    from uuid import uuid4
+
+    from operations_support import seed_prior_head
+    from sqlalchemy import make_url
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from test_incident_migration import upgrade
+
+    owner_url = make_url(empty_settings.database_url.get_secret_value())
+    owner = create_async_engine(owner_url, hide_parameters=True)
+    logins = {}
+    async with owner.begin() as connection:
+        await upgrade(connection, "0030_worker_presence")
+        identifiers = await seed_prior_head(connection, count=20)
+        await upgrade(connection, "0031_operations_facts")
+        for role in ("weave_app", "weave_scheduler"):
+            name, password = f"{role}_{uuid4().hex}", secrets.token_urlsafe(32)
+            await connection.execute(text(f"CREATE ROLE {name} LOGIN PASSWORD '{password}' IN ROLE {role}"))
+            logins[role] = owner_url.set(username=name, password=password)
+            manifest = os.environ.get("WEAVE_TEST_RESOURCE_MANIFEST")
+            if manifest:
+                with Path(manifest).open("a") as handle:
+                    entry = {"kind": "role", "name": name, "observed_at": datetime.now(UTC).isoformat()}
+                    handle.write(json.dumps(entry) + "\n")
+    application = create_async_engine(logins["weave_app"], hide_parameters=True)
+    withheld = [identifiers[name] for name in ("incoherent", "no_events")]
+
+    async def facts(runs):
+        async with owner.connect() as connection:
+            rows = await connection.execute(
+                text(f"SELECT run_id,{CLASSIFICATION} FROM run_facts WHERE run_id=ANY(:ids) ORDER BY run_id"),
+                {"ids": list(runs)},
+            )
+            return [dict(row) for row in rows.mappings()]
+
+    try:
+        before = await facts(withheld)
+        # The upgrade withheld them for their history, although each run row alone would classify as available.
+        assert {row["classification_state"] for row in before} == {"unavailable"}
+        async with owner.connect() as connection:
+            row = dict(
+                (await connection.execute(text("SELECT * FROM runs WHERE id=:id"), {"id": identifiers["incoherent"]}))
+                .mappings()
+                .one()
+            )
+        assert listing_metadata(row)["classification_state"] == "available"
+        monkeypatch.setattr(admission, "POLICY", "classified-v2")
+        health = LoopHealth()
+        health.register("operations_loop", 60, enabled=True)
+        loop = OperationsLoop(
+            Settings(scheduler_enabled=False, database_url=logins["weave_app"].render_as_string(hide_password=False)),
+            UnitOfWork(async_sessionmaker(application, expire_on_commit=False)),
+            health,
+        )
+        loop.engine = create_async_engine(logins["weave_scheduler"], hide_parameters=True)
+        try:
+            # The seeded tenant has two environments and each cycle visits one of them.
+            for _ in range(4):
+                assert await loop.cycle() is True
+        finally:
+            await loop.engine.dispose()
+        assert not any(payload_reads[run] for run in withheld) and await facts(withheld) == before
+        # Decisions that are available under the earlier policy are re-checked under the new one.
+        [first] = await facts([identifiers["first_run"]])
+        assert payload_reads[identifiers["first_run"]] == 1
+        assert (first["classification_state"], first["classification_policy"]) == ("available", "classified-v2")
+    finally:
+        await application.dispose()
+        await owner.dispose()

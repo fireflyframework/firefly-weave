@@ -644,8 +644,10 @@ evidence answers `409 WV-LEGACY-UNAVAILABLE`. Timelines, summaries and incident
 lists follow the run's stored listing decision. After an upgrade lets the
 platform run such a run again, `runs.read` serves it at once, but its timeline
 keeps answering `422 WV-IR-UNSUPPORTED` until the scheduler re-checks the
-decision in the background, up to 100 runs per environment each minute. In
-`runs.list`, only a recorded policy block withholds a run before its own read
+decision in the background. Each minute the scheduler visits up to 16 tenants
+and re-checks at most 100 runs in one environment of each, so a large backlog
+takes a long time; see [Upgrades](../operations/upgrades.md#runs-that-need-a-newer-server).
+In `runs.list`, only a recorded policy block withholds a run before its own read
 classifies it.
 
 **Incidents.** `incidents.list` and the paged `incidents.run_list` read

@@ -363,8 +363,9 @@ provenance. Backfill inventories retained data without granting extra admission
 capacity: a platform already above a quota can still migrate, but new work must
 satisfy the unchanged quotas. Purging an authorized archived run also removes
 its run, step, task and incident facts; deleting a worker removes its facts.
-The cursor tables hold one row in all, per tenant or per environment and have
-no business payload or retained history.
+The cursor tables hold a single row for tenants, one row per tenant for
+environments, and one row per environment for re-checks. They have no business
+payload or retained history.
 
 ## Start and inspect compatibility
 
@@ -488,9 +489,16 @@ timelines and incident lists keep withholding it until the scheduler re-checks
 its stored listing decision; its timeline answers `422 WV-IR-UNSUPPORTED`
 meanwhile. The scheduler does this in the background: each minute it visits up
 to 16 tenants, gives each one's next environment up to one second of database
-work, and re-checks up to 100 runs there, so a large backlog takes several
-minutes or more. Runs recorded
-under an earlier classification policy are re-checked the same way. API
+work, and re-checks at most 100 runs there, fewer when the second runs out
+first. A tenant's environments take turns, one per minute. So in an installation
+with one tenant and one environment, 10,000 waiting runs take at least 100
+minutes, and a million about a week. More environments in a tenant, or more
+than 16 tenants, make each environment wait longer.
+
+Runs recorded under an earlier classification policy are re-checked the same
+way, and their timelines answer `409 WV-LEGACY-UNAVAILABLE` meanwhile. A policy
+change re-checks available and unsupported decisions only: unavailable ones,
+such as runs whose history the upgrade could not trust, stay unavailable. API
 replicas that disable the scheduler rely on the scheduler replica for this. A
 run whose re-check fails, for example because its record cannot be locked in
 time or ordinary storage is full, stays withheld, is logged by error class, and

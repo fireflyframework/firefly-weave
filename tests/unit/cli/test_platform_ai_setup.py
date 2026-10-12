@@ -295,6 +295,13 @@ async def test_presence_ignores_workers_of_another_release():
     assert await setup.presence(Client(workers=[other]), str(RELEASE)) == {"presence": "unknown", "last_seen_at": None}
 
 
+async def test_presence_ignores_revoked_workers_of_the_release():
+    revoked = SimpleNamespace(id=uuid4(), release_id=RELEASE, presence="recent", revoked=True, last_seen_at=None)
+    own = SimpleNamespace(id=uuid4(), release_id=RELEASE, presence="stale", revoked=False, last_seen_at=None)
+    found = await setup.presence(Client(workers=[revoked, own]), str(RELEASE))
+    assert found == {"presence": "stale", "last_seen_at": None, "worker_id": str(own.id)}
+
+
 async def test_the_connection_test_returns_its_result_with_a_timestamp():
     client = Client()
     result = await setup.test_connection(client, str(REVISION), "qwen2.5:1.5b")

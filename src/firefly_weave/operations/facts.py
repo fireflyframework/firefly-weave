@@ -121,15 +121,19 @@ REVALIDATION_BATCH = 100
 def revalidation_due(policy: str) -> str:
     """SQL condition: the cached decision of fact row ``f`` is due for a refresh from its retained source.
 
-    Due when it was recorded under another classification policy, or when it is a transient unsupported decision
-    whose pinned IR version and features this platform runs again. Bind ``runtime.admission.runnable_parameters()``.
-    The policy is written as a literal so the planner can prove that the partial index ``run_facts_revalidation``,
-    which holds the rows not classified under the current policy and the unsupported ones, applies.
+    Due when an available or unsupported decision was recorded under another classification policy, or when it is a
+    transient unsupported decision whose pinned IR version and features this platform runs again. A policy change
+    never re-checks an unavailable decision: it can rest on evidence the source row does not show, such as an
+    incoherent event history found by the upgrade, so it stays unavailable. Bind
+    ``runtime.admission.runnable_parameters()``. The policy is written as a literal so the planner can prove that the
+    partial index ``run_facts_revalidation``, which holds the rows not classified under the current policy and the
+    unsupported ones, applies.
     """
     if re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,63}", policy) is None:
         raise ValueError("Classification policy must be a plain identifier")
     return (
-        f"(f.classification_policy<>'{policy}' OR (f.classification_state='unsupported' "
+        f"((f.classification_policy<>'{policy}' AND f.classification_state<>'unavailable') "
+        "OR (f.classification_state='unsupported' "
         "AND f.pinned_ir_version=ANY(cast(:ir_versions AS text[])) "
         "AND f.pinned_features <@ cast(:ir_features AS jsonb)))"
     )

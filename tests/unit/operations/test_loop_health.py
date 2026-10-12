@@ -180,6 +180,21 @@ def test_scheduler_disabled_marks_every_scheduler_loop_disabled():
     states = {snapshot.component: snapshot.state for snapshot in enabled.snapshots()}
     # Nothing has run yet: enabled loops are down until their task starts, and alerts do not exist yet.
     assert states == {**{name: "down" for name in COMPONENTS}, "alert_evaluator": "disabled"}
+    # The broker consumer follows its own switch, whatever the scheduler setting.
+    for scheduler, consumer, expected in ((False, True, "down"), (True, False, "disabled")):
+        health = LoopHealth()
+        register_background_loops(
+            health,
+            Settings(
+                database_url=DATABASE,
+                scheduler_enabled=scheduler,
+                scheduler_database_url=SCHEDULER,
+                broker=BrokerPolicy(enabled=True, max_clients=2),
+                kafka_consumer_enabled=consumer,
+            ),
+        )
+        assert health.snapshot("kafka_loop").state == expected
+        assert health.snapshot("outbox_loop").state == ("down" if scheduler else "disabled")
 
 
 class Traversal:
@@ -199,6 +214,7 @@ class Traversal:
 
 
 def recovery_loop(monkeypatch, *, tenants=2, recovery_errors=(), schedule_errors=(), operational=True):
+    """A recovery loop over fake tenants; ``operational`` is a fixed answer or a sequence of answers."""
     from firefly_weave.runtime.scheduler import RecoveryLoop
 
     Traversal(monkeypatch, "firefly_weave.runtime.scheduler", tenants)
@@ -221,7 +237,7 @@ def recovery_loop(monkeypatch, *, tenants=2, recovery_errors=(), schedule_errors
         None,  # type: ignore[arg-type]
         SimpleNamespace(_scan_scheduled=recover, _scan_terminal_scheduled=recover),  # type: ignore[arg-type]
         SimpleNamespace(_scan_scheduled=fire),  # type: ignore[arg-type]
-        operational=lambda: operational,
+        operational=(lambda: operational) if isinstance(operational, bool) else iter(operational).__next__,
         health=health,
     )
     loop.engine = object()  # type: ignore[assignment]
@@ -281,6 +297,11 @@ async def test_schedules_report_separately_from_recovery(monkeypatch):
     assert await loop.cycle() is True
     snapshot = health.snapshot("schedules")
     assert (snapshot.last_started_at, snapshot.last_ok_at, snapshot.consecutive_failures) == (None, None, 0)
+    # Restricted after the cycle began: the schedules it skipped make it a failed schedules cycle.
+    loop, health = recovery_loop(monkeypatch, tenants=1, operational=[True, True, False])
+    assert await loop.cycle() is True
+    snapshot = health.snapshot("schedules")
+    assert snapshot.last_started_at is not None and snapshot.consecutive_failures == 1
 
 
 async def test_a_failed_catalog_page_fails_recovery_and_schedules(monkeypatch):
@@ -323,6 +344,9 @@ async def test_outbox_and_broker_turn_failures_fail_the_next_cycle(monkeypatch):
     async def failing_dispatch(*args, **kwargs):
         raise RuntimeError("delivery")
 
+    async def delivered(*args, **kwargs):
+        return None
+
     monkeypatch.setattr(outbox_loop, "next_scope", next_scope)
     monkeypatch.setattr(outbox_loop, "reserve", lambda count: count)
     monkeypatch.setattr(outbox_loop, "release", lambda count: None)
@@ -331,6 +355,12 @@ async def test_outbox_and_broker_turn_failures_fail_the_next_cycle(monkeypatch):
     assert await outbox.cycle() is True
     await asyncio.gather(*outbox.turns)
     assert await outbox.cycle() is False
+    await asyncio.gather(*outbox.turns)
+    # The failure was reported once; the next cycle starts clean.
+    outbox.dispatcher = SimpleNamespace(_dispatch=delivered)
+    assert await outbox.cycle() is False
+    await asyncio.gather(*outbox.turns)
+    assert await outbox.cycle() is True
     await asyncio.gather(*outbox.turns)
     await outbox.close()
 
