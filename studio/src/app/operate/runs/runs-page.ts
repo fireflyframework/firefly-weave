@@ -1482,7 +1482,8 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   }
   /**
    * Every 2 s while the run is going: its steps, and the run itself. When the
-   * run changed, the shell reads its whole detail again, as Refresh does.
+   * run changed, the shell shows it and reads its lifecycle and history
+   * again; the next read is due 2 s after this one either way.
    */
   private async pollDetail(): Promise<boolean> {
     const state = this.steps;
@@ -1495,7 +1496,7 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
     ]);
     if (state !== this.steps || this.openRunId() !== state.runId) return false;
     if (JSON.stringify(view) !== JSON.stringify(this.host.selectedRecord))
-      await this.host.readDetail();
+      void this.host.followRun(view);
     if (isTerminal(view)) this.detailPoller.stop();
     this.cdr.markForCheck();
     return true;

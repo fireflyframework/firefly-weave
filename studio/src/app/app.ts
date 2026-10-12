@@ -412,6 +412,8 @@ export class App implements CanvasHost {
   emailSubmission: Record<string, unknown> | null = null;
   runHistory: Record<string, unknown> | null = null;
   runCanvas: StructuredCanvasAdapter | null = null;
+  /** The published version `runCanvas` draws, exported once per open run. */
+  private runCanvasVersion = "";
   runLifecycle: Record<string, unknown> | null = null;
   debugSession: Record<string, unknown> | null = null;
   pendingMutation: {
@@ -5592,6 +5594,39 @@ export class App implements CanvasHost {
   /** Tasks filtered to one run ("Open My tasks" from a run). */
   taskRunFilter = "";
   private runTaskSequence = 0;
+  private runFollow = 0;
+  /**
+   * The open run changed while the Runs page follows it: Studio shows its new
+   * view and reads its lifecycle and history again. The drawing of its
+   * version stays; it never changes during a run.
+   */
+  async followRun(view: Record<string, unknown>) {
+    const id = view["id"];
+    if (this.view !== "runs" || this.selectedRecord?.["id"] !== id) return;
+    const follow = ++this.runFollow;
+    this.selectedRecord = view;
+    this.cdr.markForCheck();
+    const base = `${this.api.environment}/runs/${encodeURIComponent(String(id))}`;
+    try {
+      const [lifecycle, history] = await Promise.all([
+        this.api.request<Record<string, unknown>>(`${base}/lifecycle`),
+        this.api.request<Record<string, unknown>>(`${base}/history?limit=100`),
+      ]);
+      if (
+        follow !== this.runFollow ||
+        this.view !== "runs" ||
+        this.selectedRecord?.["id"] !== id
+      )
+        return;
+      this.runLifecycle = lifecycle;
+      this.runHistory = history;
+      void this.findRunTask(this.selectedRecord);
+    } catch {
+      // The run's next read, 2 s later, tries again.
+    } finally {
+      this.cdr.markForCheck();
+    }
+  }
   private refreshRunTaskAfterIdentity() {
     if (this.view === "runs" && this.selectedRecord)
       void this.findRunTask(this.selectedRecord);
@@ -5694,8 +5729,11 @@ export class App implements CanvasHost {
         const activation = detail["activation"] as
           | { request?: { version_id?: string } }
           | undefined;
-        if (activation?.request?.version_id) {
-          const versionId = activation.request.version_id;
+        const versionId = activation?.request?.version_id;
+        if (
+          versionId &&
+          !(this.runCanvas && this.runCanvasVersion === versionId)
+        ) {
           const exported = await this.api.request<{ document: Workflow }>(
             `${this.api.project}/workflows/${versionId}/export`,
           );
@@ -5703,6 +5741,7 @@ export class App implements CanvasHost {
           canvas.setSource(JSON.stringify(exported.document), "json");
           canvas.readonly = true;
           this.runCanvas = canvas;
+          this.runCanvasVersion = versionId;
           const metadata = exported.document?.metadata;
           if (metadata?.name)
             this.workflowVersions.set(versionId, {

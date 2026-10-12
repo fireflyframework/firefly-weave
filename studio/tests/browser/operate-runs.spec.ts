@@ -95,6 +95,12 @@ interface Platform {
   views: Map<string, string>;
   fixture: RunViewsFixture;
   posts: { path: string; body: unknown }[];
+  /** A run's own reads, in order: "view", "lifecycle" or "history". */
+  details: string[];
+  /** Run view reads answered so far. */
+  viewsAnswered: number;
+  /** Step reads answered so far. */
+  stepsAnswered: number;
 }
 /**
  * Connects at `NOW` (the fixture's day) and answers run summaries and steps
@@ -145,6 +151,9 @@ async function platform(
     views,
     fixture,
     posts,
+    details: [],
+    viewsAnswered: 0,
+    stepsAnswered: 0,
   };
   await page.route("**/run-summaries?**", async (route) => {
     const url = route.request().url();
@@ -165,6 +174,7 @@ async function platform(
     await pauseIfAsked("steps");
     const answer = answerRunViews(url, fixture)!;
     await route.fulfill({ status: answer.status, json: answer.body });
+    result.stepsAnswered++;
   });
   await page.route("**/runs/*/logs**", async (route) => {
     logs.push(route.request().url());
@@ -183,6 +193,7 @@ async function platform(
         json: { code: "WV-NOT-FOUND", message: "Run not found" },
       });
     const status = views.get(id) ?? run.status;
+    result.details.push("view");
     await route.fulfill({
       json: {
         id,
@@ -197,13 +208,18 @@ async function platform(
         state: { status, active: [], input: { invoice: id.slice(0, 4) } },
       },
     });
+    result.viewsAnswered++;
   });
-  await page.route(`${environment}/runs/*/lifecycle`, (route) =>
-    route.fulfill({ json: { archived: false, purged: false, revision: 1 } }),
-  );
-  await page.route(`${environment}/runs/*/history?*`, (route) =>
-    route.fulfill({ json: { events: [], next_cursor: null } }),
-  );
+  await page.route(`${environment}/runs/*/lifecycle`, (route) => {
+    result.details.push("lifecycle");
+    return route.fulfill({
+      json: { archived: false, purged: false, revision: 1 },
+    });
+  });
+  await page.route(`${environment}/runs/*/history?*`, (route) => {
+    result.details.push("history");
+    return route.fulfill({ json: { events: [], next_cursor: null } });
+  });
   await page.route(`${environment}/runs/*/cancel`, async (route) => {
     posts.push({
       path: new URL(route.request().url()).pathname,
@@ -270,6 +286,30 @@ async function refreshAndPause(page: Page, runs: Platform) {
   await drawn(page, () =>
     expect(rows(page)).toHaveCount(shown + 1, { timeout: 100 }),
   );
+}
+/**
+ * Waits until every run and step read asked so far is answered, then lets the
+ * page take the answers (message tasks run while the clock is paused), so the
+ * open run's next 2 s wait has started before the test moves time.
+ */
+async function readsSettled(page: Page, runs: Platform) {
+  await expect
+    .poll(
+      () =>
+        runs.viewsAnswered ===
+          runs.details.filter((read) => read === "view").length &&
+        runs.stepsAnswered === runs.steps.length,
+    )
+    .toBe(true);
+  for (let turn = 0; turn < 3; turn++)
+    await page.evaluate(
+      () =>
+        new Promise<void>((done) => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = () => done();
+          channel.port2.postMessage(null);
+        }),
+    );
 }
 const statusChoice = (page: Page, name: string) =>
   page
@@ -887,11 +927,14 @@ test.describe("chains and refresh", () => {
         timeout: 100,
       }),
     );
+    await readsSettled(page, runs);
     const before = runs.steps.length;
     await page.clock.runFor(2_100);
     await expect.poll(() => runs.steps.length).toBe(before + 1);
+    await readsSettled(page, runs);
     await page.clock.runFor(2_100);
     await expect.poll(() => runs.steps.length).toBe(before + 2);
+    await readsSettled(page, runs);
     // It finishes: one last read, then nothing more.
     runs.views.set(fixtureIds.running, "succeeded");
     await page.clock.runFor(2_100);
@@ -903,6 +946,90 @@ test.describe("chains and refresh", () => {
     const settled = runs.steps.length;
     await page.clock.runFor(10_000);
     expect(runs.steps.length).toBe(settled);
+  });
+
+  test("each 2 s read of an active run asks only for what changed", async ({
+    page,
+  }) => {
+    const runs = await platform(page);
+    const versionId =
+      runViewsFixture.runs[0].summary.workflow.definition_version_id;
+    let status = "running";
+    // The open run names its version: its drawing is exported once.
+    await page.route(
+      `${environment}/runs/${fixtureIds.running}`,
+      async (route) => {
+        runs.details.push("view");
+        await route.fulfill({
+          json: {
+            id: fixtureIds.running,
+            business_key: null,
+            correlation_key: null,
+            artifact_digest: "sha256:" + "0".repeat(64),
+            activation: {
+              id: "act-1",
+              name: "invoice-approval",
+              revision: 1,
+              request: { version_id: versionId },
+            },
+            state: { status, active: [], input: {} },
+          },
+        });
+        runs.viewsAnswered++;
+      },
+    );
+    const exports: string[] = [];
+    await page.route(`**/workflows/${versionId}/export`, (route) => {
+      exports.push(route.request().url());
+      return route.fulfill({
+        json: {
+          document: {
+            apiVersion: "weave/v1alpha1",
+            kind: "Workflow",
+            metadata: { name: "invoice-approval", version: "1.3.0" },
+            spec: {
+              steps: [],
+              output: { literal: {} },
+            },
+          },
+        },
+      });
+    });
+    await openRuns(page);
+    await names(page).first().click();
+    const detail = page.locator(".record-detail");
+    await expect(
+      detail.getByRole("list", { name: "Step timeline" }),
+    ).toBeVisible();
+    await expect.poll(() => exports.length).toBe(1);
+    await expect
+      .poll(() => runs.details.join(" "))
+      .toBe("view lifecycle history");
+    await runs.pause();
+    await readsSettled(page, runs);
+    // Nothing changed: the run and its steps only.
+    let from = runs.details.length;
+    await page.clock.runFor(2_100);
+    await expect.poll(() => runs.details.slice(from)).toEqual(["view"]);
+    await readsSettled(page, runs);
+    // The run changed: it shows at once, with its lifecycle and history again;
+    // its version is not exported again.
+    status = "waiting";
+    from = runs.details.length;
+    await page.clock.runFor(2_100);
+    await expect
+      .poll(() => [...runs.details.slice(from)].sort())
+      .toEqual(["history", "lifecycle", "view"]);
+    await drawn(page, () =>
+      expect(detail.locator(".run-meta .status-pill")).toHaveText("Waiting", {
+        timeout: 100,
+      }),
+    );
+    await readsSettled(page, runs);
+    from = runs.details.length;
+    await page.clock.runFor(2_100);
+    await expect.poll(() => runs.details.slice(from)).toEqual(["view"]);
+    expect(exports).toHaveLength(1);
   });
 
   test("steps added with Load more steps stay through the 2 s reads of an active run", async ({
