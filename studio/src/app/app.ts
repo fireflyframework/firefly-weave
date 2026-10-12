@@ -6510,9 +6510,10 @@ export class App implements CanvasHost {
   }
   /**
    * Opens workflow settings (the editor bar's gear) the way step details
-   * open: the inspector's pending edits apply first, and text typed in
-   * Source applies as Apply changes would. When either can't, the dialog
-   * stays closed and the problem shows where it is, with the edits kept.
+   * open: the inspector's pending edits apply first. Text typed in Source
+   * applies only as Apply changes would, from Source with editing allowed;
+   * anywhere else, or while editing is paused, nothing is applied, the
+   * dialog stays closed and a toast says why. The edits are kept.
    */
   async openSettingsDialog(): Promise<boolean> {
     if (
@@ -6522,6 +6523,15 @@ export class App implements CanvasHost {
       return false;
     if (!(await this.ensureApplied())) return false;
     if (this.sourceBuffer !== this.model.source) {
+      const refused = this.editingLocked
+        ? "Editing is paused while the simulation runs."
+        : this.tab !== "Source" || this.model.readonly
+          ? "Apply or undo the changes typed in Source first."
+          : "";
+      if (refused) {
+        this.notify(refused);
+        return false;
+      }
       this.updateSource();
       if (this.error || this.model.error) {
         this.cdr.markForCheck();

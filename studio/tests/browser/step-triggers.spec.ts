@@ -330,6 +330,59 @@ for (const size of sizes)
       ).toBeVisible();
     });
 
+    test("a dialog opened from workflow settings gives focus back to its opener there", async ({
+      page,
+    }) => {
+      await openStepFixture(page);
+      await settingsGear(page).click();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      const menu = dialog.getByRole("button", {
+        name: "Actions for slot ledger-db",
+      });
+      await menu.click();
+      await page.getByRole("menuitem", { name: "Rename slot" }).click();
+      const prompt = page.getByRole("dialog", {
+        name: "Rename slot ledger-db",
+      });
+      await expect(prompt).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(prompt).toHaveCount(0);
+      await expect(dialog).toBeVisible();
+      await expect(menu).toBeFocused();
+      await page.keyboard.press("Tab");
+      expect(
+        await page.evaluate(
+          () => !!document.activeElement?.closest(".modal-panel"),
+        ),
+      ).toBe(true);
+    });
+
+    test("opening a step from a profile names what isn't applied in workflow settings", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await settingsGear(page).click();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      await dialog.getByRole("button", { name: "Add option" }).click();
+      await page.getByRole("menuitem", { name: /^Stop runs after/ }).click();
+      await dialog
+        .getByRole("textbox", { name: "Stop runs after", exact: true })
+        .fill("abc");
+      await expect(dialog.getByText("Not applied")).toBeVisible();
+      await dialog
+        .getByRole("button", { name: "Actions for AI profile default" })
+        .click();
+      await page.getByRole("menuitem", { name: "Open summarize" }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(details.dialogFor("summarize")).toBeVisible();
+      await expect(
+        page.getByText(
+          "Not applied yet: Stop runs after. What you typed is kept until you finish it.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+    });
+
     test("Escape in a text box of workflow settings blurs it first, then closes", async ({
       page,
     }) => {
@@ -437,6 +490,52 @@ test.describe("the gear and unapplied edits", () => {
       expect(text).toContain("id: check-client");
       expect(parse(text).metadata.version).toBe("1.0.1");
     });
+
+  for (const size of sizes)
+    for (const view of ["Designer", "Outline"] as const)
+      for (const parses of [true, false])
+        test(`from ${view}, text typed in Source ${parses ? "that parses" : "that doesn't parse"} is neither applied nor lost at ${size.tag}`, async ({
+          page,
+        }) => {
+          await page.setViewportSize({
+            width: size.width,
+            height: size.height,
+          });
+          await openStepFixture(page);
+          await page.getByRole("tab", { name: "Source", exact: true }).click();
+          const source = page.getByRole("textbox", { name: "Workflow source" });
+          const original = await source.inputValue();
+          const typed = parses
+            ? original.replace("id: check-customer", "id: check-client")
+            : `${original}\n  broken: [`;
+          await source.fill(typed);
+          await page.getByRole("tab", { name: view, exact: true }).click();
+          await settingsGear(page).click();
+          // The reason shows where the person is, and nothing opens.
+          await expect(
+            page.getByText("Apply or undo the changes typed in Source first.", {
+              exact: true,
+            }),
+          ).toBeVisible();
+          await expect(
+            page.getByRole("dialog", { name: "Workflow settings" }),
+          ).toHaveCount(0);
+          // Nothing was applied: the step keeps its name and the editor
+          // isn't read-only.
+          if (view === "Outline")
+            await expect(
+              page.locator('[data-outline="check-customer"]'),
+            ).toHaveCount(1);
+          else
+            await expect(
+              page.locator(
+                '[data-step="check-customer"], .tile-node[data-tile="check-customer"]',
+              ),
+            ).not.toHaveCount(0);
+          await page.getByRole("tab", { name: "Source", exact: true }).click();
+          await expect(source).toHaveValue(typed);
+          await expect(page.locator(".source-error")).toHaveCount(0);
+        });
 
   test("source text that doesn't apply keeps workflow settings closed and stays", async ({
     page,

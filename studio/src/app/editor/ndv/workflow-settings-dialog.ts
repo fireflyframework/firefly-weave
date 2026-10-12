@@ -242,10 +242,13 @@ export class WorkflowSettingsDialog implements AfterViewInit {
       },
     ];
   }
-  /** Focus comes back to the slot's menu, under its new name when it took one. */
+  /**
+   * A renamed slot's row is a new one: focus goes to its menu. Without a
+   * rename, the prompt gives focus back to the menu that opened it.
+   */
   private async renameSlot(name: string) {
     const renamed = await this.session().renameWorkflowSlot(name);
-    this.focusSlot(renamed ?? name);
+    if (renamed) this.focusSlot(renamed);
   }
   /** Focus moves to the next slot's menu, else the one before, else the heading. */
   private removeSlot(name: string) {
@@ -299,7 +302,13 @@ export class WorkflowSettingsDialog implements AfterViewInit {
       ];
     return profile.steps.map((id) => ({
       label: `Open ${id}`,
-      run: () => void this.host().openStepDetails(id),
+      run: () => void this.openStep(id),
     }));
+  }
+  /** Leaves for a step's details, naming what isn't applied, as Close does. */
+  private async openStep(id: string) {
+    const kept = leavingToast(this.session().heldOnLeaving());
+    const host = this.host();
+    if ((await host.openStepDetails(id)) && kept) host.notify(kept);
   }
 }
