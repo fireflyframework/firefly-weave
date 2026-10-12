@@ -305,9 +305,12 @@ export class WorkflowSettingsDialog implements AfterViewInit {
       run: () => void this.openStep(id),
     }));
   }
-  /** Leaves for a step's details, naming what isn't applied, as Close does. */
+  /**
+   * Leaves for a step's details, naming what isn't applied as Close does,
+   * with "in workflow settings" after the entries left here.
+   */
   private async openStep(id: string) {
-    const kept = leavingToast(this.session().heldOnLeaving());
+    const kept = leavingToast(this.session().heldOnLeaving(), "$workflow");
     const host = this.host();
     if ((await host.openStepDetails(id)) && kept) host.notify(kept);
   }

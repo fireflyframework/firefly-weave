@@ -375,9 +375,10 @@ for (const size of sizes)
       await page.getByRole("menuitem", { name: "Open summarize" }).click();
       await expect(dialog).toHaveCount(0);
       await expect(details.dialogFor("summarize")).toBeVisible();
+      // Summarize's details are open: the entry is named where it is.
       await expect(
         page.getByText(
-          "Not applied yet: Stop runs after. What you typed is kept until you finish it.",
+          "Not applied yet: Stop runs after in workflow settings. What you typed is kept until you finish it.",
           { exact: true },
         ),
       ).toBeVisible();
@@ -536,6 +537,59 @@ test.describe("the gear and unapplied edits", () => {
           await expect(source).toHaveValue(typed);
           await expect(page.locator(".source-error")).toHaveCount(0);
         });
+
+  for (const size of sizes)
+    test(`while the source has an error, the gear opens read-only, and refuses over a fix typed in Source at ${size.tag}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: size.width, height: size.height });
+      await openStepFixture(page);
+      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      const source = page.getByRole("textbox", { name: "Workflow source" });
+      const original = await source.inputValue();
+      await source.fill(`${original}\n  broken: [`);
+      const apply = page.getByRole("button", {
+        name: "Apply changes",
+        exact: true,
+      });
+      await apply.click();
+      await expect(page.locator(".source-error")).toBeVisible();
+      const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+      const name = dialog.getByRole("textbox", { name: "Name", exact: true });
+
+      // Nothing typed since the error: the gear opens, read-only, and says why.
+      await settingsGear(page).click();
+      await expect(dialog).toContainText(
+        "Fix the source to edit workflow settings.",
+      );
+      await expect(name).toHaveAttribute("readonly", "");
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+
+      // A fix typed but not applied: the gear doesn't apply it for the
+      // person; Apply changes, beside the text, stays the way out.
+      await source.fill(original);
+      await settingsGear(page).click();
+      await expect(
+        page.getByText("Apply or undo the changes typed in Source first.", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(dialog).toHaveCount(0);
+      await expect(source).toHaveValue(original);
+      await expect(page.locator(".source-error")).toBeVisible();
+      await expect(apply).toBeEnabled();
+
+      // Applied, the source is fine again and the gear opens editable.
+      await apply.click();
+      await expect(page.locator(".source-error")).toHaveCount(0);
+      await settingsGear(page).click();
+      await expect(dialog).toBeVisible();
+      await expect(dialog).not.toContainText(
+        "Fix the source to edit workflow settings.",
+      );
+      await expect(name).not.toHaveAttribute("readonly", "");
+    });
 
   test("source text that doesn't apply keeps workflow settings closed and stays", async ({
     page,

@@ -30,6 +30,7 @@ import {
   issueCount,
   issueTone,
   leavingText,
+  leavingToast,
   targetName,
   type PlacedSpec,
   type StepIssue,
@@ -165,6 +166,25 @@ describe("issues in step details", () => {
     expect(targetName("$end")).toBe("End");
     expect(targetName("$workflow")).toBe("workflow settings");
     expect(targetName("check-customer")).toBe("check-customer");
+  });
+  it("names where the entries are when leaving for another step", () => {
+    // Leaving workflow settings for a step's details: its own entries are
+    // named with it, so they never read as fields of the step that opens.
+    expect(
+      leavingToast(
+        [
+          { label: "Stop runs after" },
+          { label: "Wait for", step: "wait-a-minute" },
+        ],
+        "$workflow",
+      ),
+    ).toBe(
+      "Not applied yet: Stop runs after in workflow settings, Wait for in wait-a-minute. What you typed is kept until you finish them.",
+    );
+    // Closing names the open target's entries alone, as before.
+    expect(leavingToast([{ label: "Stop runs after" }])).toBe(
+      "Not applied yet: Stop runs after. What you typed is kept until you finish it.",
+    );
   });
   it("names three steps at most, each once, and counts the rest", () => {
     expect(

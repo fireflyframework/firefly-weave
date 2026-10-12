@@ -159,12 +159,17 @@ export function leavingText(entries: HeldLabel[]): string {
     : named.join(", ");
   return `${NOT_APPLIED} yet: ${list}. What you typed is kept until you finish ${entries.length === 1 ? "it" : "them"}.`;
 }
-/** The toast on closing, with each step's entries under its name. */
+/**
+ * The toast on closing, with each step's entries under its name. Leaving for
+ * another step's details, `from` names the target being left, so its own
+ * entries never read as fields of the step that opens.
+ */
 export const leavingToast = (
   entries: { label: string; step?: string }[],
+  from?: string,
 ): string =>
   leavingText(
-    entries.map(({ label, step }) =>
+    entries.map(({ label, step = from }) =>
       step ? { label, step: targetName(step) } : { label },
     ),
   );
