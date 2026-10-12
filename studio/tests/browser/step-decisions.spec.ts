@@ -1006,6 +1006,15 @@ test.describe("the URL of a Call an API step", () => {
         const mode = await box(row.locator(".param-mode"));
         expectAligned([mode.middle, value.middle], "value mode center");
         expectAligned([mode.right, value.right - 12], "value mode inset", 2);
+        // Beside the connection's address, each value starts on the path's
+        // edge, under the address's rule, and its pill under the path's text.
+        if (await url.locator(".param-url-prefix").isVisible()) {
+          const path = await box(url.locator(".param-url-input"));
+          const text = await box(url.locator(".param-url-text").first());
+          const valuePill = await box(row.locator(".ref-pill"));
+          expectAligned([value.x, path.x], "value under the path's edge");
+          expectAligned([valuePill.x, text.x], "value's pill under the path");
+        }
         // The next field starts one field gap below the values.
         const next = await box(details.field("query"));
         expectAligned(

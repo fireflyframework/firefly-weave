@@ -1315,10 +1315,13 @@ weave-param-field[data-drop-hover]:is(
 .param.is-readonly .param-url {
   border-color: transparent;
 }
+/* The address is as wide as a placeholder's name and the gap after it, so
+   the rule after it is the edge each placeholder's value starts on. */
 .param-url-prefix {
   display: inline-flex;
   flex: none;
   align-items: center;
+  min-width: calc(var(--url-key) + var(--space-2));
   padding: 0 var(--space-2) 0 var(--space-3);
   font: var(--type-caption);
   color: var(--subtle);
@@ -1327,6 +1330,8 @@ weave-param-field[data-drop-hover]:is(
 }
 /* A narrow field leaves the room to the path; the address stays in the description. */
 weave-url-field {
+  /* A placeholder's name, at most. */
+  --url-key: 150px;
   display: block;
   container-type: inline-size;
 }
@@ -1392,7 +1397,7 @@ weave-param-field[data-drop-hover] .param-url.has-view .param-url-input {
 }
 .param-url-part {
   display: grid;
-  grid-template-columns: minmax(90px, 150px) minmax(0, 1fr);
+  grid-template-columns: minmax(90px, var(--url-key)) minmax(0, 1fr);
   gap: var(--space-2);
   align-items: start;
 }
