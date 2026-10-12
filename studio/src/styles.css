@@ -1095,6 +1095,8 @@ dd {
   padding: 16px;
 }
 .modal-panel {
+  /* Its answers stack by the room the panel has (see .dialog-actions). */
+  container: dialog / inline-size;
   background: var(--surface);
   border-radius: var(--radius-lg);
   padding: 24px 28px 28px;
@@ -1199,9 +1201,12 @@ dd {
   gap: var(--space-2);
   margin-top: var(--space-6);
 }
-/* On a phone a dialog's buttons stack: full width and of equal height, in
-   reading order, so the main one comes last, as it does in a row. */
-@media (max-width: 480px) {
+/* In a narrow dialog the answers stack: full width and of equal height, in
+   reading order, so the main one comes last, as it does in a row. The panel
+   stacks them while its content is narrower than three answers need at
+   touch density (about 400 px), with room for wider fonts, so they never
+   wrap into uneven rows. */
+@container dialog (max-width: 424px) {
   .modal-panel :is(.dialog-actions, .dialog-footer) {
     flex-direction: column;
     flex-wrap: nowrap;

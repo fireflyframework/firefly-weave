@@ -467,6 +467,53 @@ for (const size of sizes)
     });
   });
 
+// A dialog's answers sit on one row, or each on its own full-width row:
+// never two on one row and one under them, at any window width.
+for (const touch of [false, true])
+  test.describe(`answers as the window narrows, ${touch ? "touch" : "fine pointer"}`, () => {
+    test.use({ viewport: { width: 900, height: 800 }, hasTouch: touch });
+
+    test("stay on one row or stack, never in uneven rows", async ({ page }) => {
+      await openStepFixture(page);
+      /** Narrows the window a pixel at a time with the dialog open. */
+      const narrow = async (name: string, dialog: Locator) => {
+        await expect(dialog).toBeVisible();
+        const answers = dialog.locator(".dialog-actions button");
+        for (let width = 900; width >= 320; width -= 1) {
+          await page.setViewportSize({ width, height: 800 });
+          const shown = await boxes(answers);
+          const rows = new Set(shown.map((answer) => Math.round(answer.y)));
+          if (rows.size === 1) continue;
+          // Stacked: one answer per row, all as wide as each other.
+          expect(rows.size, `${name} at ${width} px: rows`).toBe(shown.length);
+          expectAligned(
+            shown.map((answer) => answer.width),
+            `${name} at ${width} px: stacked widths`,
+          );
+        }
+        await page.setViewportSize({ width: 900, height: 800 });
+      };
+      // Three answers: the question about text typed in Source.
+      const question = await askAboutSource(page);
+      await narrow("Source question", question);
+      await question
+        .getByRole("button", { name: "Keep editing", exact: true })
+        .click();
+      // Two answers: converting the source to JSON, once nothing is typed.
+      const source = page.getByRole("textbox", { name: "Workflow source" });
+      await source.fill(
+        (await source.inputValue()).replace("version: 1.0.1", "version: 1.0.0"),
+      );
+      await page
+        .getByRole("combobox", { name: "Source format" })
+        .selectOption("json");
+      await narrow(
+        "Convert to JSON?",
+        page.getByRole("dialog", { name: "Convert to JSON?" }),
+      );
+    });
+  });
+
 test.describe("Save to file", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
