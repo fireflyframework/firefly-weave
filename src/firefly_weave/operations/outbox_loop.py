@@ -25,17 +25,23 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from firefly_weave.access.scheduler import next_scope
 from firefly_weave.operations.event_delivery import OutboxDispatcher, release, reserve
+from firefly_weave.operations.loop_health import TRAVERSAL_SECONDS, LoopHealth, track
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.settings import Settings
 
 
 class OutboxLoop:
-    def __init__(self, settings: Settings, uow: UnitOfWork, dispatcher: OutboxDispatcher) -> None:
+    def __init__(
+        self, settings: Settings, uow: UnitOfWork, dispatcher: OutboxDispatcher, *, health: LoopHealth | None = None
+    ) -> None:
         self.settings, self.uow, self.dispatcher = settings, uow, dispatcher
+        self.health = health if health is not None else LoopHealth()
         self.engine: AsyncEngine | None = None
         self.task: asyncio.Task[None] | None = None
         self.turns: set[asyncio.Task[None]] = set()
+        # A delivery turn runs in its own task; its failure fails the next traversal cycle.
+        self.turn_failed = False
 
     async def open(self) -> None:
         if not self.settings.scheduler_enabled:
@@ -63,14 +69,17 @@ class OutboxLoop:
             # A request can open this loop. An empty context keeps the request's execution
             # lease and identity, which end with its response, out of the long-lived task.
             self.task = asyncio.create_task(self.poll(), name="weave-outbox-traversal", context=Context())
+            track(self.health, self.task, "outbox_loop")
         except BaseException:
             await self.close()
             raise
 
-    async def cycle(self) -> None:
+    async def cycle(self) -> bool:
+        """One bounded traversal turn; False when a delivery turn failed since the previous cycle."""
+        healthy, self.turn_failed = not self.turn_failed, False
         count = reserve(1)
         if not count:
-            return
+            return healthy
         owned = True
         try:
             assert self.engine is not None
@@ -80,15 +89,16 @@ class OutboxLoop:
                     await connection.execute(text("SET LOCAL lock_timeout='1000ms'"))
                     tenant = await connection.scalar(text("SELECT weave_outbox_tenants(1)"))
                 if tenant is None:
-                    return
+                    return healthy
                 authority = await next_scope(self.uow, tenant, outbox=True)
                 if authority is None:
-                    return
+                    return healthy
 
             async def turn() -> None:
                 try:
                     await self.dispatcher._dispatch(authority.scope, 1, None, AuditContext(), authority, reserved=count)
                 except Exception:
+                    self.turn_failed = True
                     logging.getLogger(__name__).error("Outbox turn failed; durable lease recovery remains available")
 
             from firefly_weave.access.audit import AuditContext
@@ -100,14 +110,21 @@ class OutboxLoop:
         finally:
             if owned:
                 release(count)
+        return healthy
 
     async def poll(self) -> None:
         while True:
+            self.health.started("outbox_loop")
             try:
-                await self.cycle()
+                healthy = await self.cycle()
             except Exception:
                 logging.getLogger(__name__).error("Outbox traversal failed; retrying bounded turn")
-            await asyncio.sleep(1)
+                healthy = False
+            if healthy:
+                self.health.succeeded("outbox_loop")
+            else:
+                self.health.failed("outbox_loop")
+            await asyncio.sleep(TRAVERSAL_SECONDS)
 
     async def close(self) -> None:
         if self.task is not None:
@@ -115,6 +132,7 @@ class OutboxLoop:
             with suppress(asyncio.CancelledError):
                 await self.task
             self.task = None
+        self.health.running("outbox_loop", False)
         for task in tuple(self.turns):
             task.cancel()
         if self.turns:

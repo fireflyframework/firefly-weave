@@ -640,8 +640,13 @@ Their unknown timestamps remain null. Legacy metadata is streamed in batches
 of 500, up to 100,000 keys and two seconds per request; exceeding either budget
 answers `429 WV-RUNTIME-LIMIT`. A run this platform cannot run yet answers
 `422 WV-IR-UNSUPPORTED`, as `runs.read` does; a run with unavailable legacy
-evidence answers `409 WV-LEGACY-UNAVAILABLE`. In `runs.list`, only a recorded
-policy block withholds a run before its own read classifies it.
+evidence answers `409 WV-LEGACY-UNAVAILABLE`. Timelines, summaries and incident
+lists follow the run's stored listing decision. After an upgrade lets the
+platform run such a run again, `runs.read` serves it at once, but its timeline
+keeps answering `422 WV-IR-UNSUPPORTED` until the scheduler re-checks the
+decision in the background, up to 100 runs per environment each minute. In
+`runs.list`, only a recorded policy block withholds a run before its own read
+classifies it.
 
 **Incidents.** `incidents.list` and the paged `incidents.run_list` read
 incident facts after checking both token and current permissions; they never

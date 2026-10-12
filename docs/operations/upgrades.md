@@ -331,8 +331,12 @@ answer. Earlier servers do not serve them and answer `404` or `405`.
 ## Operational fact storage
 
 The `0031_operations_facts` migration adds five scoped operational projections
-and two bounded traversal cursors. It does not add columns to stored runs or
-events. Apply it explicitly with all writers stopped, using the procedure above.
+and the operations loop's bounded traversal cursors: one for tenants, one per
+tenant for environments, and one per environment for re-checking stored listing
+decisions. The scheduler login reaches tenants through the new execute-only
+`weave_operations_tenants(integer)`, granted to `weave_scheduler`, so it never
+moves the recovery traversal's cursors. The migration does not add columns to
+stored runs or events. Apply it explicitly with all writers stopped, using the procedure above.
 
 The migration holds schema locks in one transaction and reads retained runs in
 UUID order, at most 10,000 IDs per batch. Its history work is proportional to the
@@ -359,8 +363,8 @@ provenance. Backfill inventories retained data without granting extra admission
 capacity: a platform already above a quota can still migrate, but new work must
 satisfy the unchanged quotas. Purging an authorized archived run also removes
 its run, step, task and incident facts; deleting a worker removes its facts.
-The two cursor tables hold only one row per tenant or environment and have no
-business payload or retained history.
+The cursor tables hold one row in all, per tenant or per environment and have
+no business payload or retained history.
 
 ## Start and inspect compatibility
 
@@ -478,6 +482,19 @@ on the older server records only the cancellation, as for
 [runs with unavailable legacy evidence](../reference/incident-operations.md#runs-with-unavailable-legacy-evidence),
 and its state stays withheld after you upgrade. To keep a run's full record,
 let it finish or cancel it before you roll back.
+
+After the upgrade, `runs.read` serves the run at once, but run summaries, step
+timelines and incident lists keep withholding it until the scheduler re-checks
+its stored listing decision; its timeline answers `422 WV-IR-UNSUPPORTED`
+meanwhile. The scheduler does this in the background: each minute it visits up
+to 16 tenants, gives each one's next environment up to one second of database
+work, and re-checks up to 100 runs there, so a large backlog takes several
+minutes or more. Runs recorded
+under an earlier classification policy are re-checked the same way. API
+replicas that disable the scheduler rely on the scheduler replica for this. A
+run whose re-check fails, for example because its record cannot be locked in
+time or ordinary storage is full, stays withheld, is logged by error class, and
+is tried again on a later pass while the others continue.
 
 **A server whose capabilities do not list `language_features` predates
 language features.** It cannot recognize such a run, treats it as legacy

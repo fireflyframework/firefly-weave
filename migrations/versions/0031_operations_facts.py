@@ -128,6 +128,34 @@ def tables() -> None:
         f"({tenant}) WITH CHECK ({tenant})"
     )
     op.execute("GRANT SELECT,INSERT,UPDATE ON operations_environment_cursors TO weave_app")
+    # The operations traversal pages tenants with its own cursor, so it never moves the recovery traversal's.
+    op.execute("CREATE TABLE operations_tenant_cursor(singleton boolean PRIMARY KEY CHECK(singleton),tenant_id uuid)")
+    op.execute("INSERT INTO operations_tenant_cursor VALUES(true,NULL)")
+    op.execute("GRANT SELECT,UPDATE ON operations_tenant_cursor TO weave_catalog_reader")
+    op.execute("""CREATE FUNCTION weave_operations_tenants(page_size integer) RETURNS SETOF uuid
+      LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+      DECLARE prior uuid; candidate uuid; visited uuid[] := ARRAY[]::uuid[];
+      BEGIN
+        IF page_size IS NULL OR page_size<1 OR page_size>16 THEN RAISE EXCEPTION 'Bounded catalog page required'; END IF;
+        SELECT tenant_id INTO prior FROM public.operations_tenant_cursor WHERE singleton FOR UPDATE;
+        FOR candidate IN SELECT id FROM public.tenants WHERE prior IS NULL OR id>prior ORDER BY id LIMIT page_size LOOP
+          visited := array_append(visited,candidate); RETURN NEXT candidate;
+        END LOOP;
+        IF array_length(visited,1) IS NULL OR array_length(visited,1)<page_size THEN
+          FOR candidate IN SELECT id FROM public.tenants WHERE id<=prior ORDER BY id
+            LIMIT page_size-coalesce(array_length(visited,1),0) LOOP
+            visited := array_append(visited,candidate); RETURN NEXT candidate;
+          END LOOP;
+        END IF;
+        IF array_length(visited,1)>0 THEN
+          UPDATE public.operations_tenant_cursor SET tenant_id=visited[array_length(visited,1)] WHERE singleton;
+        END IF;
+      END $$""")
+    op.execute("GRANT CREATE ON SCHEMA public TO weave_catalog_reader")
+    op.execute("ALTER FUNCTION weave_operations_tenants(integer) OWNER TO weave_catalog_reader")
+    op.execute("REVOKE CREATE ON SCHEMA public FROM weave_catalog_reader")
+    op.execute("REVOKE ALL ON FUNCTION weave_operations_tenants(integer) FROM PUBLIC")
+    op.execute("GRANT EXECUTE ON FUNCTION weave_operations_tenants(integer) TO weave_scheduler")
     op.execute(f"""CREATE TABLE operations_fact_cursors({SCOPE_COLUMNS},after_run_id uuid,
         PRIMARY KEY({SCOPE_KEY}),FOREIGN KEY({SCOPE_KEY}) REFERENCES environments(tenant_id,project_id,id)
         ON DELETE CASCADE)""")
@@ -152,6 +180,12 @@ def indexes() -> None:
         ("retry", "retried_from_run_id", "WHERE retried_from_run_id IS NOT NULL"),
         ("ended", "ended_at", "WHERE ended_at IS NOT NULL"),
         ("active_test", "", "WHERE test AND ended_at IS NULL"),
+        # Rows a listing-metadata refresh can need: another policy's decisions and transient unsupported ones.
+        (
+            "revalidation",
+            "run_id",
+            "WHERE classification_state='unsupported' OR classification_policy<>'classified-v1'",
+        ),
     ):
         op.execute(
             f"CREATE INDEX run_facts_{name} ON run_facts({SCOPE_KEY}{',' + columns if columns else ''}) {condition}"

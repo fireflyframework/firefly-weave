@@ -17,8 +17,10 @@
 """Transaction-bound SQL for operational projections."""
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from typing import Any, Literal
 from uuid import UUID
 
@@ -113,6 +115,26 @@ def listing_metadata(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+REVALIDATION_BATCH = 100
+
+
+def revalidation_due(policy: str) -> str:
+    """SQL condition: the cached decision of fact row ``f`` is due for a refresh from its retained source.
+
+    Due when it was recorded under another classification policy, or when it is a transient unsupported decision
+    whose pinned IR version and features this platform runs again. Bind ``runtime.admission.runnable_parameters()``.
+    The policy is written as a literal so the planner can prove that the partial index ``run_facts_revalidation``,
+    which holds the rows not classified under the current policy and the unsupported ones, applies.
+    """
+    if re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,63}", policy) is None:
+        raise ValueError("Classification policy must be a plain identifier")
+    return (
+        f"(f.classification_policy<>'{policy}' OR (f.classification_state='unsupported' "
+        "AND f.pinned_ir_version=ANY(cast(:ir_versions AS text[])) "
+        "AND f.pinned_features <@ cast(:ir_features AS jsonb)))"
+    )
+
+
 def task_fact_update(source: str) -> str:
     """Enlist task metadata in the existing authoritative source statement."""
     return (
@@ -167,6 +189,92 @@ class FactRepository:
     async def rows(self, sql: str, **values: Any) -> list[dict[str, Any]]:
         result = await self.tx.session.execute(text(sql), {**values, **self.params})
         return [dict(row) for row in result.mappings()]
+
+    async def revalidation_cursor(self) -> UUID | None:
+        """The environment's keyset boundary: the last run whose refresh was started."""
+        value: UUID | None = await self.tx.session.scalar(
+            text(f"SELECT after_run_id FROM operations_fact_cursors WHERE {SCOPE}"), self.params
+        )
+        return value
+
+    async def advance_revalidation_cursor(self, after: UUID | None) -> None:
+        """Move the boundary; bookkeeping only, with no fact or source change and no storage charge."""
+        await self.execute(
+            "INSERT INTO operations_fact_cursors(tenant_id,project_id,environment_id,after_run_id) "
+            "VALUES(:tenant,:project,:environment,:after) ON CONFLICT(tenant_id,project_id,environment_id) "
+            "DO UPDATE SET after_run_id=excluded.after_run_id",
+            after=after,
+        )
+
+    async def revalidation_candidates(self, after: UUID | None) -> list[UUID]:
+        """Up to ``REVALIDATION_BATCH`` due runs after ``after`` in UUID order, from fact metadata only."""
+        from firefly_weave.runtime import admission
+
+        rows = await self.rows(
+            "SELECT f.run_id FROM run_facts f WHERE f.tenant_id=:tenant AND f.project_id=:project "
+            f"AND f.environment_id=:environment AND {revalidation_due(admission.POLICY)} "
+            f"AND (cast(:after AS uuid) IS NULL OR f.run_id>:after) ORDER BY f.run_id LIMIT {REVALIDATION_BATCH}",
+            after=after,
+            **admission.runnable_parameters(),
+        )
+        return [row["run_id"] for row in rows]
+
+    async def refresh_listing_metadata(self, run_id: UUID) -> None:
+        """Recompute one run's cached listing decision from its retained source.
+
+        Only the five classification columns change: never the run's state, timing or status, and never a runtime
+        transition, capacity block or policy block. Runtime admission stays the authority for execution. A source
+        larger than the bounded fetch is recorded unavailable without being read. A run whose fact changed since it
+        was selected, so that it is no longer due, keeps that newer decision.
+        """
+        from firefly_weave.operations.execution import execute_pure
+        from firefly_weave.runtime import admission
+        from firefly_weave.runtime.repository import RUN_FETCH_BYTES, RuntimeRepository
+
+        values = {**self.params, "run": run_id}
+        # Lock the source first, in the order runtime writers lock a run and then its facts.
+        locked = await self.tx.session.scalar(text(f"SELECT id FROM runs WHERE {SCOPE} AND id=:run FOR UPDATE"), values)
+        if locked is None:
+            return
+        # Rechecked under the lock: an authoritative update since the selection keeps its newer decision.
+        due = await self.tx.session.scalar(
+            text(
+                "SELECT f.run_id FROM run_facts f WHERE f.tenant_id=:tenant AND f.project_id=:project "
+                f"AND f.environment_id=:environment AND f.run_id=:run AND {revalidation_due(admission.POLICY)} "
+                "FOR UPDATE"
+            ),
+            {**values, **admission.runnable_parameters()},
+        )
+        if due is None:
+            return
+        # Measured under the lock, so the size cannot change before the fetch.
+        size = await self.tx.session.scalar(
+            text(f"SELECT public.weave_runs_bytes(runs) FROM runs WHERE {SCOPE} AND id=:run"), values
+        )
+        if size is None or size > RUN_FETCH_BYTES:
+            await self.execute(
+                "UPDATE run_facts SET classification_state='unavailable',classification_policy=:policy "
+                f"WHERE {SCOPE} AND run_id=:run",
+                policy=admission.POLICY,
+                run=run_id,
+            )
+            return
+        row = await RuntimeRepository(self.tx).run(run_id, lock=True)
+        # A refresh is never a runtime candidate: a failed write must not leave a capacity block on the run.
+        self.tx.session.info.pop("weave_runtime_candidate", None)
+        metadata = await execute_pure(partial(listing_metadata, row))
+        await self.execute(
+            "UPDATE run_facts SET classification_state=:classification_state,"
+            "classification_policy=:classification_policy,pinned_ir_version=:pinned_ir_version,"
+            "pinned_features=cast(:pinned_features AS jsonb),node_kinds=cast(:node_kinds AS jsonb) "
+            f"WHERE {SCOPE} AND run_id=:run",
+            run=run_id,
+            classification_state=metadata["classification_state"],
+            classification_policy=metadata["classification_policy"],
+            pinned_ir_version=metadata["pinned_ir_version"],
+            pinned_features=json.dumps(metadata["pinned_features"], ensure_ascii=False),
+            node_kinds=json.dumps(metadata["node_kinds"], ensure_ascii=False),
+        )
 
     async def insert_run(
         self, view: RunView, artifact: dict[str, Any], request: StartRunRequest, facts: RunStartFacts, at: datetime

@@ -35,6 +35,14 @@ SPDX-License-Identifier: Apache-2.0
   Outputs of agent, tool or yield instance keys stay withheld until they have
   their own schemas. A run waiting for a platform that runs it answers
   `422 WV-IR-UNSUPPORTED` as `runs.read` does.
+- The scheduler re-checks stored run listing decisions in the background. Each
+  minute it visits up to 16 tenants and gives each one's next environment up to
+  one second of database work and up to 100 runs: runs recorded while this
+  platform could not run them, which it now runs, and runs recorded under an
+  earlier classification policy. Until a run is re-checked, run summaries, step timelines and incident
+  lists keep withholding it even when `runs.read` serves it again, and its
+  timeline answers `422 WV-IR-UNSUPPORTED`. A retained run larger than 128 MiB
+  is recorded as unavailable without being read.
 - The Python SDK's `list_runs` rejects a `query` combined with keyword filters.
 - Request telemetry records authorized `501 WV-UNAVAILABLE` answers with the
   status `unavailable` instead of `failed`.
