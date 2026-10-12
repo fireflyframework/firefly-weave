@@ -1979,6 +1979,8 @@ export class App implements CanvasHost {
     });
   }
   async insert(kind: Kind) {
+    if (stepDetailsEnabled(this as StepDetailsHost))
+      return this.insertAndOpen(kind);
     this.showPalette = false;
     if (this.editingLocked || !(await this.ensureApplied())) return;
     const n = this.selected;
@@ -4988,6 +4990,8 @@ export class App implements CanvasHost {
   }
   /** Inserts the picked step at the picker's "+" and focuses the new node. */
   async insertFromPicker(choice: StepPickerChoice) {
+    if (choice.common || stepDetailsEnabled(this as StepDetailsHost))
+      return this.insertFromPickerAndOpen(choice);
     const picker = this.picker;
     this.picker = null;
     if (!picker || !(await this.ensureApplied())) return;
@@ -6374,6 +6378,128 @@ export class App implements CanvasHost {
     if (!stepDetailsEnabled(this as StepDetailsHost)) return;
     event.preventDefault();
     void this.openStepDetails("$trigger");
+  }
+  /**
+   * What an insert started with: the workflow, its opening, the account and
+   * the designer, with editing allowed. Work that waited (for applied edits
+   * or an action's details) checks it before it reveals or opens anything.
+   */
+  private insertOwner(): () => boolean {
+    const model = this.model;
+    const opened = model.opened;
+    const profile = canonicalJson(this.profile);
+    const scope = this.stepDataScope;
+    return () =>
+      this.model === model &&
+      model.opened === opened &&
+      canonicalJson(this.profile) === profile &&
+      this.stepDataScope === scope &&
+      this.view === "designer" &&
+      !this.editingLocked;
+  }
+  /**
+   * Opens a new step's details on its first required empty field, unless
+   * the person has moved on since (another step, workflow or view).
+   */
+  private openInserted(id: string, current: () => boolean) {
+    if (!id || !current() || this.model.selected !== id) return;
+    void this.openStepDetails(id, {
+      fresh: true,
+      focus: { kind: "firstRequiredEmpty" },
+    });
+  }
+  /** The palette's insert with the new editor: after the selected step, then its details. */
+  async insertAndOpen(kind: Kind): Promise<void> {
+    this.showPalette = false;
+    const current = this.insertOwner();
+    if (this.editingLocked || !(await this.ensureApplied()) || !current())
+      return;
+    const n = this.selected;
+    this.perform(() =>
+      this.model.insert(kind, n?.owner ?? "root", n ? n.index + 1 : undefined),
+    );
+    this.cdr.markForCheck();
+    if (this.error) return;
+    this.revealSelected();
+    this.openInserted(this.model.selected, current);
+  }
+  /**
+   * The picker's insert with the new editor: a kind, a published action or
+   * a common action at the picker's "+", then the new step's details.
+   */
+  async insertFromPickerAndOpen(choice: StepPickerChoice): Promise<void> {
+    const picker = this.picker;
+    this.picker = null;
+    const current = this.insertOwner();
+    if (!picker || !(await this.ensureApplied()) || !current()) return;
+    let id = "";
+    if (choice.common)
+      id = await this.insertCommon(choice.common, picker.target, current);
+    else if (choice.uses) {
+      const bridge = await import("./integrations/editor-bridge");
+      if (!current()) return;
+      // The real ID, or "" when the workflow changed while the action's details loaded.
+      id = await bridge.insertCatalogAction(
+        this,
+        { uses: choice.uses },
+        picker.target,
+        true,
+      );
+    } else {
+      this.perform(() =>
+        this.model.insert(
+          choice.kind,
+          picker.target.owner,
+          picker.target.index,
+          {},
+        ),
+      );
+      if (!this.error) {
+        id = this.model.selected;
+        this.message = `Inserted ${id}, ${this.label(choice.kind)}.`;
+      }
+    }
+    this.cdr.markForCheck();
+    if (!id || !current()) return;
+    this.revealSelected();
+    this.openInserted(id, current);
+  }
+  /**
+   * Inserts Call an API, an email or a file step at `target` with the action
+   * the workflow owns for it, as one undo step. Returns the new step's ID,
+   * or "" when nothing was inserted (also when the workflow, account or view
+   * changed while the insert loaded).
+   */
+  async insertCommon(
+    id: string,
+    target: Pick<Target, "owner" | "index">,
+    current = this.insertOwner(),
+  ): Promise<string> {
+    if (this.editingLocked) return "";
+    const [{ COMMON_ACTIONS }, { insertOwnedStep, reservedActionNames }] =
+      await Promise.all([
+        import("./editor/ndv/owned/common-actions"),
+        import("./editor/ndv/owned/insert-owned"),
+      ]);
+    const action = COMMON_ACTIONS.find((item) => item.id === id);
+    if (!action || !current()) return "";
+    let inserted = "";
+    this.perform(() => {
+      inserted = insertOwnedStep(
+        this.model,
+        action,
+        target.owner,
+        target.index,
+        reservedActionNames(
+          this.catalogContracts,
+          this.actionVersions,
+          this.model.canvas,
+        ),
+      );
+    });
+    if (this.error || !inserted) return "";
+    this.message = `Inserted ${inserted}, ${action.label}.`;
+    return inserted;
   }
   /** Where the simulated run is, for a node's accessible name. */
   simulationNote(id: string) {

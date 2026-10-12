@@ -76,7 +76,11 @@ export class CanvasPage {
     }).toPass({ timeout: 15_000 });
     await expect(this.root).toHaveAttribute("data-ready", "");
   }
-  /** Chooses an entry in today's step picker by its exact label ("Decision", not "Decision table"). */
+  /**
+   * Chooses an entry in today's step picker by its exact label ("Decision",
+   * not "Decision table"). The new step's details open on insert; this waits
+   * for them, so the next action meets them (`closeInspector` hides them).
+   */
   async pick(label: string) {
     await this.page
       .getByRole("option")
@@ -88,16 +92,19 @@ export class CanvasPage {
       .filter({ visible: true })
       .first()
       .click();
+    await expect(
+      this.page.getByRole("dialog", { name: /^Step details: / }),
+    ).toBeVisible();
   }
   async addFirstStep(label: string) {
     await this.insertTarget("Add first step").click();
     await this.pick(label);
   }
   /**
-   * Hides the step details when they are on screen, and waits until they are
-   * gone: with their Close button where it shows (narrow windows), else with
-   * "Hide inspector" in the editor's toolbar. A narrow window doesn't open
-   * them for a step added with the step picker, so there is nothing to hide.
+   * Hides the step details when they are on screen (a step added with the
+   * step picker opens them), then the inspector, and waits until they are
+   * gone: the inspector with its Close button where it shows (narrow
+   * windows), else with "Hide inspector" in the editor's toolbar.
    */
   async closeInspector() {
     const details = this.page.getByRole("dialog", { name: /^Step details: / });

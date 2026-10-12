@@ -40,6 +40,9 @@ for (const size of sizes)
       await details.openWithKeyboard("check-customer");
       await details.close();
       await insertStep(page, "Call an action");
+      // An insert opens the new step's details; the badge opens them again.
+      await expect(details.dialogFor("call-action-1")).toBeVisible();
+      await details.close();
       const chip = page.locator(
         '.tile-node[data-tile="call-action-1"] .tile-issue',
       );

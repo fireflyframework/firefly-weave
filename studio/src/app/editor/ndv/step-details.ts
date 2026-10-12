@@ -76,6 +76,7 @@ import { DragMap, activeDrag, canMapFields } from "./params/drag-map";
 import { mappedRefs, type DragRef } from "./params/drop";
 import { ndvRegistry, type ParamSpec } from "./registry";
 import { renameHint, renameWithExtras, type RenameResult } from "./rename";
+import { reservedActionNames } from "./owned/insert-owned";
 import type { StepDetailsController } from "./step-details-controller";
 import type { StepDetailsHost } from "./step-details-host";
 import {
@@ -732,7 +733,16 @@ export class StepDetails {
     const host = this.host();
     let result = null as RenameResult | null;
     host.perform(() => {
-      result = renameWithExtras(host.model, old, text);
+      result = renameWithExtras(
+        host.model,
+        old,
+        text,
+        reservedActionNames(
+          host.catalogContracts,
+          host.actionVersions,
+          host.model.canvas,
+        ),
+      );
     });
     const renamed = result as RenameResult | null;
     if (!renamed || renamed.id === old) return this.focusName();

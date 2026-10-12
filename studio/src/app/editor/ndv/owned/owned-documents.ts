@@ -32,6 +32,7 @@ import type { StructuredCanvasAdapter } from "../../../model";
 import type { Json } from "../registry";
 import { findStep } from "../step-walk";
 import { ConnectorActions } from "./connector-actions";
+import { pruneOwned } from "./insert-owned";
 import {
   connectorDocument,
   httpBuildRequest,
@@ -77,6 +78,8 @@ export class OwnedDocuments {
   private pending = new Set<Promise<void>>();
   /** The `uses` whose document this service put in the contract cache. */
   private cached = new Set<string>();
+  /** The opening of the workflow whose unused owned actions were dropped. */
+  private opened = -1;
 
   constructor(
     private readonly host: OwnedDocumentsHost,
@@ -93,7 +96,14 @@ export class OwnedDocuments {
    * parameters and response.
    */
   sync(): void {
-    const owned = ownedActionsOf(this.host.model.canvas);
+    const model = this.host.model;
+    // A workflow opens with an empty undo history, so the actions no step
+    // calls can't come back: they go once, when its source is readable.
+    if (model.opened !== this.opened && !model.readonly) {
+      this.opened = model.opened;
+      model.canvas = pruneOwned(model.canvas, model.definition, model.unplaced);
+    }
+    const owned = ownedActionsOf(model.canvas);
     let dropped = false;
     for (const uses of [...this.sent.keys()])
       if (!Object.hasOwn(owned, uses)) {
@@ -105,12 +115,20 @@ export class OwnedDocuments {
     for (const [uses, recipe] of Object.entries(owned)) {
       if (recipe.kind === "http") {
         const step = findStep(
-          this.host.model.definition.spec.steps,
+          model.definition.spec.steps,
           (candidate) => candidate["uses"] === uses,
         );
+        // Without a description of its own, the action says which step uses it.
+        const described =
+          recipe.description || !step
+            ? recipe
+            : {
+                ...recipe,
+                description: `Used by step ${step.id} of ${model.definition.metadata.name}`,
+              };
         const request = httpBuildRequest(
           nameOfUses(uses),
-          recipe,
+          described,
           step?.["with"],
         );
         const key = JSON.stringify([request, recipe.retry ?? null]);

@@ -56,8 +56,15 @@ export class ConnectionField {
   options(): SelectOption[] {
     const host = this.session().host,
       connector = this.session().connector(this.spec());
+    // A step that calls its own file action moves between file servers.
+    const servers = this.session().fileServers(this.spec());
     const all = slotsOf(host.model.definition),
-      slots = all.filter((slot) => !connector || slot.connector === connector);
+      slots = all.filter(
+        (slot) =>
+          !connector ||
+          slot.connector === connector ||
+          !!servers?.has(slot.connector),
+      );
     const options: SelectOption[] = slots.map((slot) => ({
       value: slot.name,
       label: slot.name,
@@ -100,7 +107,13 @@ export class ConnectionField {
       return session.newSlot(spec, session.connector(spec));
     if (value === CREATE) return session.createConnection(spec);
     const option = this.options().find((option) => option.value === value);
-    if (option && !option.disabled)
-      session.write(spec, { mode: "fixed", value });
+    if (!option || option.disabled) return;
+    const slot = slotsOf(session.host.model.definition).find(
+      (item) => item.name === value,
+    );
+    if (slot && slot.connector !== session.connector(spec))
+      if (session.fileServers(spec)?.has(slot.connector))
+        return void session.useFileServer(spec, value);
+    session.write(spec, { mode: "fixed", value });
   }
 }

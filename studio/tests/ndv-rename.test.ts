@@ -104,6 +104,31 @@ describe("renaming a step", () => {
     ]);
     expect(Object.keys(stepNotesOf(m.canvas))).toEqual(["get-orders"]);
   });
+  it("never renames an owned action onto one another step or the workspace calls", () => {
+    const m = model();
+    // A published action that happens to have the name the rename would give.
+    m.insert("action", "root", undefined, {
+      id: "published",
+      uses: "untitled-workflow.fetch-orders@1.0.0",
+      with: { literal: {} },
+    });
+    expect(renameWithExtras(m, "get-orders", "Fetch orders").uses).toEqual({
+      from: "untitled-workflow.get-orders@1.0.0",
+      to: "untitled-workflow.fetch-orders-2@1.0.0",
+    });
+    expect(
+      renameWithExtras(
+        m,
+        "fetch-orders",
+        "List orders",
+        new Set(["untitled-workflow.list-orders"]),
+      ).uses?.to,
+    ).toBe("untitled-workflow.list-orders-2@1.0.0");
+    // Its own name is free for it.
+    expect(renameWithExtras(m, "list-orders", "list-orders-2").uses?.to).toBe(
+      "untitled-workflow.list-orders-2@1.0.0",
+    );
+  });
   it("suffixes a taken name", () => {
     const m = model();
     expect(renameWithExtras(m, "get-orders", "Shape").id).toBe("shape-2");

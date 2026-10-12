@@ -25,7 +25,10 @@ import {
   newConnectorRecipe,
   newHttpRecipe,
 } from "../src/app/editor/ndv/owned/owned-actions";
-import { withOwnedAction } from "../src/app/editor/ndv/owned/owned-store";
+import {
+  ownedActionsOf,
+  withOwnedAction,
+} from "../src/app/editor/ndv/owned/owned-store";
 import { StructuredCanvasAdapter } from "../src/app/model";
 
 const USES = "untitled-workflow.get@1.0.0";
@@ -218,6 +221,45 @@ describe("owned action documents", () => {
   });
 });
 
+describe("owned actions of a workflow that opens", () => {
+  const OLD = "untitled-workflow.old@1.0.0";
+  const owned = (f: ReturnType<typeof fixture>) =>
+    Object.keys(ownedActionsOf(f.model.canvas));
+  it("drops the actions no step calls once per opening, and never while the source is broken", () => {
+    const f = fixture();
+    f.model.canvas = withOwnedAction(f.model.canvas, OLD, newHttpRecipe());
+    f.documents.sync();
+    expect(owned(f)).toEqual([USES]);
+    // Within one opening, an action a removed step called stays for Undo.
+    f.model.canvas = withOwnedAction(f.model.canvas, OLD, newHttpRecipe());
+    f.documents.sync();
+    expect(owned(f)).toEqual([USES, OLD]);
+    // Another workflow opens while its source doesn't parse: nothing is dropped yet.
+    f.model.clearHistory();
+    f.model.readonly = true;
+    f.documents.sync();
+    expect(owned(f)).toEqual([USES, OLD]);
+    f.model.readonly = false;
+    f.documents.sync();
+    expect(owned(f)).toEqual([USES]);
+  });
+  it("describes a Call an API action by its step until it has a description of its own", async () => {
+    const f = fixture();
+    f.documents.sync();
+    expect(f.requests[0]["description"]).toBe(
+      "Used by step ignored of untitled-workflow",
+    );
+    f.model.canvas = withOwnedAction(f.model.canvas, USES, {
+      ...newHttpRecipe(),
+      pathTemplate: "/orders",
+      retry: DEFAULT_RETRY,
+      description: "Lists open orders",
+    });
+    f.documents.sync();
+    expect(f.requests[1]["description"]).toBe("Lists open orders");
+  });
+});
+
 describe("the cached document of an owned action that goes away", () => {
   /** Builds and caches the document of the fixture's action. */
   async function cacheIt(f: ReturnType<typeof fixture>) {
@@ -278,6 +320,11 @@ describe("the cached document of an owned action that goes away", () => {
       ],
     }));
     f.model.canvas = withOwnedAction(f.model.canvas, USES, null);
+    // A step calls it: an action no step calls is dropped when the workflow opens.
+    f.model.insert("action", "root", undefined, {
+      id: "send-email",
+      uses: SEND,
+    });
     f.model.canvas = withOwnedAction(
       f.model.canvas,
       SEND,

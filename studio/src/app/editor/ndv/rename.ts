@@ -19,7 +19,8 @@ SPDX-License-Identifier: Apache-2.0
 // text into an unused ID and renames the step, every reference to it, its
 // note and, for Call an API, the action it owns, as one undo step.
 import type { StructuredCanvasAdapter } from "../../model";
-import { ownedName, ownedUses } from "./owned/owned-actions";
+import { nameOfUses, ownedName, ownedUses } from "./owned/owned-actions";
+import { takenNames } from "./owned/insert-owned";
 import { ownedActionsOf, renameOwnedAction } from "./owned/owned-store";
 import { normalizeIdentifier, uniqueIdentifier } from "./params/identifiers";
 import { allSteps, findStep } from "./step-walk";
@@ -58,7 +59,8 @@ export function renameHint(
  * Renames a step, as one undo step. `model.renameStep` rewrites the
  * references and moves the step's note in the canvas sidecar; a Call an API
  * step that is the only one using its owned action also takes the action
- * along (`<workflow>.<step>`), so the two keep matching. When any part is
+ * along (`<workflow>.<step>`), so the two keep matching, under a name no
+ * other step, document or `reserved` name has. When any part is
  * refused (a name the canvas can't hold, a step that is gone) nothing is
  * changed, and the error reaches the caller as it was thrown.
  */
@@ -66,6 +68,7 @@ export function renameWithExtras(
   model: StructuredCanvasAdapter,
   oldId: string,
   text: string,
+  reserved: ReadonlySet<string> = new Set(),
 ): RenameResult {
   const target = renameTarget(text, oldId, model.stepIdSet());
   if (!target) return { id: oldId, references: 0, uses: null };
@@ -81,11 +84,9 @@ export function renameWithExtras(
         ...model.unplaced,
       ].filter((s) => s["uses"] === fromUses).length;
       if (sharedBy === 1) {
-        const others = new Set(
-          Object.keys(owned)
-            .filter((name) => name !== fromUses)
-            .map((name) => name.slice(0, name.lastIndexOf("@"))),
-        );
+        // Any name but one another action already has; its own is free.
+        const others = takenNames(model, reserved);
+        others.delete(nameOfUses(fromUses));
         const toUses = ownedUses(
           ownedName(model.definition.metadata.name, target, others),
         );

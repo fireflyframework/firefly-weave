@@ -35,6 +35,7 @@ import {
   workflowSettingsForm,
 } from "./kinds/forms/workflow-forms";
 import { ownedActionsOf, withOwnedAction } from "./owned/owned-store";
+import { moveFileStep, reservedActionNames } from "./owned/insert-owned";
 import { CANVAS_TOO_BIG, canvasBytes } from "../state/canvas-sidecar";
 import { CANVAS_MAX_BYTES } from "../state/test-data";
 import type { OwnedRecipe } from "./owned/owned-actions";
@@ -413,6 +414,39 @@ export class StepDetailsController {
       );
     }
     return outcome;
+  }
+
+  /**
+   * Moves a step that calls its own file action to a slot on another file
+   * server, as one undo step: the action follows the slot (shared with
+   * steps on that server, copied when other steps keep the old one).
+   */
+  useFileServer(target: string, slot: string): CommitOutcome {
+    this.syncSession();
+    if (this.readOnlyReason()) return { ok: false, removed: [] };
+    const model = this.host.model;
+    let ok = false;
+    this.host.perform(() => {
+      model.batch(() => {
+        moveFileStep(
+          model,
+          target,
+          slot,
+          reservedActionNames(
+            this.host.catalogContracts,
+            this.host.actionVersions,
+            model.canvas,
+          ),
+        );
+        // The recipes live in the canvas sidecar, which has a size cap.
+        if (canvasBytes(model.canvas) > CANVAS_MAX_BYTES)
+          throw new Error(CANVAS_TOO_BIG);
+      });
+      ok = true;
+    });
+    // The next edit is an undo step of its own.
+    if (ok) this.burst = null;
+    return { ok, removed: [] };
   }
 
   private write(target: string, changes: FormChange[]): void {

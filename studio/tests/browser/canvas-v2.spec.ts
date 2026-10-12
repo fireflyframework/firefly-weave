@@ -366,11 +366,13 @@ test.describe("the left-to-right canvas", () => {
       page.getByRole("combobox", { name: "Search steps and actions" }),
     ).toBeFocused();
     await canvas.pick("Transform");
+    await canvas.closeInspector();
     await expect(canvas.tile("transform-1")).toBeVisible();
     await expect(canvas.tileBody("$trigger:manual")).toBeVisible();
     await expect(canvas.tileBody("$end")).toBeVisible();
     await canvas.insertTarget("Add a step after transform-1").click();
     await canvas.pick("Wait for time");
+    await canvas.closeInspector();
     expect(await canvas.rootSteps()).toEqual(["transform-1", "wait-1"]);
   });
 

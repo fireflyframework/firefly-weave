@@ -72,7 +72,8 @@ import {
   type Path,
 } from "../registry";
 import { connectorOf } from "../kinds/forms/action-forms";
-import { pathPlaceholders } from "../owned/owned-actions";
+import { pathPlaceholders, recipeOf } from "../owned/owned-actions";
+import { FILE_CONNECTORS } from "../owned/common-actions";
 import {
   insertPlaceholder,
   placeholderKey,
@@ -1013,6 +1014,40 @@ export class FormSession {
     );
     if (accepted && this.host.model.revision !== before)
       this.announce(`Declared the slot ${name}.`);
+  }
+  /**
+   * The file servers this Connection field moves between: every one for a
+   * step that calls its own file action, whose action follows the slot;
+   * null for any other step, which keeps to its connector's slots.
+   */
+  fileServers(spec: ParamSpec): ReadonlySet<string> | null {
+    if (spec.type !== "connection") return null;
+    const step = this.controller.step(this.target);
+    const recipe = step ? recipeOf(step, this.controller.kindContext()) : null;
+    return recipe?.kind === "connector" && FILE_CONNECTORS.has(recipe.connector)
+      ? FILE_CONNECTORS
+      : null;
+  }
+  /**
+   * Chooses a slot on another file server for a step that calls its own file
+   * action; the action follows, in one undo step. False, with nothing
+   * written, when the field can't be edited now or the slot isn't on a file
+   * server.
+   */
+  useFileServer(spec: ParamSpec, slot: string): boolean {
+    const servers = this.fileServers(spec);
+    if (!servers || !this.editable(spec)) return false;
+    const chosen = slotsOf(this.host.model.definition).find(
+      (item) => item.name === slot,
+    );
+    if (!chosen || !servers.has(chosen.connector)) return false;
+    const ok =
+      this.isCurrent() && this.controller.useFileServer(this.target, slot).ok;
+    if (ok)
+      this.announce(
+        `Now uses the slot ${slot}. The fields follow its file server.`,
+      );
+    return ok;
   }
   createConnection(spec: ParamSpec): void {
     if (

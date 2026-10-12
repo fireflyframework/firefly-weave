@@ -64,6 +64,56 @@ export async function openStepFixture(
   return new StepDetailsPage(page);
 }
 
+/**
+ * The "+" at the start of the workflow, on the designer or on the new canvas
+ * ("Insert a step before" its first step once it has steps).
+ */
+export const START_PLUS =
+  /^(?:Add (?:a step here, at the start|a step at the start|your first step|first step)|Insert a step before \S+)$/;
+
+/**
+ * Shows the whole workflow: the designer's Fit all or the new canvas's Fit
+ * view, from its View menu where the toolbar is too narrow for the button.
+ */
+export async function fitCanvas(page: Page) {
+  const fit = page
+    .getByRole("button", { name: /^Fit (?:all|view)\b/ })
+    .filter({ visible: true });
+  if (await fit.count()) return fit.first().click();
+  const view = page
+    .getByRole("button", { name: "Canvas view" })
+    .filter({ visible: true });
+  if (!(await view.count())) return;
+  await view.first().click();
+  await page.getByRole("menuitem", { name: "Fit view" }).click();
+}
+
+/**
+ * Chooses a common action (Call an API, Send email…) in the step picker of a
+ * "+": the one at the start of the workflow unless another is named.
+ */
+export async function addCommonStep(
+  page: Page,
+  label: string,
+  plus: string | RegExp = START_PLUS,
+) {
+  await fitCanvas(page);
+  await page
+    .getByRole("button", {
+      name: plus,
+      exact: typeof plus === "string",
+    })
+    .filter({ visible: true })
+    .first()
+    .click();
+  await page
+    .getByRole("group", { name: "Common actions" })
+    .getByRole("option", { name: new RegExp(`^${label}\\b`) })
+    .filter({ visible: true })
+    .first()
+    .click();
+}
+
 /** Makes the platform report these language features (templates need text.concat). */
 export async function withLanguageFeatures(
   page: Page,
