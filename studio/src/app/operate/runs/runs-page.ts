@@ -42,7 +42,7 @@ import { shortId } from "../../format";
 import { Icon } from "../../icon";
 import { ModalSheet, sheetWhen } from "../../modal-sheet";
 import { RunDetail } from "../../operations/run-detail";
-import { statusLabel, toneAttribute } from "../../status-labels";
+import { statusLabel, statusTone, toneAttribute } from "../../status-labels";
 import { MAX_PAGES } from "../operate-limits";
 import { environmentOf, listFailure, scopeKeyOf } from "../operate-list";
 import { viewFromPath, viewPath } from "../operate-routes";
@@ -137,6 +137,13 @@ interface Chain {
   query: RunSummaryQuery;
   cursor: string | null;
 }
+/** A run started from this page that the list's first page does not include yet. */
+interface StartedRun {
+  id: string;
+  status: string;
+}
+/** The most just-started runs the list keeps showing until it includes them. */
+const STARTED_LIMIT = 10;
 interface BulkResult {
   id: string;
   ok: boolean;
@@ -584,7 +591,7 @@ interface BulkResult {
               />
             } @else if (!loaded) {
               <weave-operate-state kind="loading" noun="runs" [rows]="6" />
-            } @else if (!runs.length) {
+            } @else if (!runs.length && !startedRuns.length) {
               @if (filterCount()) {
                 <weave-operate-state
                   kind="empty"
@@ -641,6 +648,51 @@ interface BulkResult {
                   </div>
                 </div>
                 <div role="rowgroup">
+                  @for (run of startedShown(); track run.id) {
+                    <div class="resource-row run-row started" role="row">
+                      <span role="cell" class="cell-select"></span
+                      ><span role="cell" class="cell-status badges"
+                        ><span
+                          class="status-pill"
+                          [attr.data-tone]="startedTone(run)"
+                          >{{ statusWord(run.status) }}</span
+                        ></span
+                      ><span role="cell" class="cell-workflow"
+                        ><button
+                          type="button"
+                          class="row-open"
+                          [attr.aria-current]="
+                            openRunId() === run.id ? 'true' : null
+                          "
+                          (click)="openLinked(run.id)"
+                        >
+                          New run
+                        </button></span
+                      ><span
+                        role="cell"
+                        class="cell-origin cell-explain"
+                        aria-colspan="5"
+                        >Just started. It joins the list once the platform lists
+                        it.</span
+                      ><span role="cell" class="cell-run"
+                        ><code [attr.title]="run.id">{{ short(run.id) }}</code
+                        ><button
+                          type="button"
+                          class="icon-button copy-id"
+                          [attr.aria-label]="'Copy run ID ' + run.id"
+                          (click)="copy(run.id)"
+                        >
+                          <weave-icon name="copy" [size]="16" /></button></span
+                      ><span role="cell" class="cell-meta"
+                        ><span
+                          >Just started. It joins the list once the platform
+                          lists it.</span
+                        ><code [attr.title]="run.id">{{
+                          short(run.id)
+                        }}</code></span
+                      >
+                    </div>
+                  }
                   @for (item of runs; track item.id) {
                     @if (unavailable(item)) {
                       <div class="resource-row run-row unavailable" role="row">
@@ -921,6 +973,8 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   bulk: { title: string; results: BulkResult[] } | null = null;
   bulkRunning = false;
   steps: StepsState | null = null;
+  /** Runs started here, shown first until a first page includes them. */
+  startedRuns: StartedRun[] = [];
   private pages = 1;
   private generation = 0;
   private scopeKey = "";
@@ -966,10 +1020,17 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   get atLimit() {
     return !!this.chain?.cursor && this.pages >= MAX_PAGES;
   }
+  /** What the shell may do with this list: read it again, or show a run just started. */
+  private readonly list = {
+    refresh: () => this.poller.refresh(),
+    started: (run: Record<string, unknown>) => this.started(run),
+  };
   ngOnInit() {
+    this.host.runsList = this.list;
     this.poller.start(false);
   }
   ngOnDestroy() {
+    if (this.host.runsList === this.list) this.host.runsList = null;
     this.navigated.unsubscribe();
     clearInterval(this.ticker);
     if (this.privateTimer) clearTimeout(this.privateTimer);
@@ -1000,6 +1061,7 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
       this.appending = false;
       this.selection = new Set();
       this.bulk = null;
+      this.startedRuns = [];
       this.steps = null;
       this.detailStatus = "";
       this.detailPoller.stop();
@@ -1047,6 +1109,7 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
       this.selection = new Set(
         [...this.selection].filter((id) => listed.has(id)),
       );
+      this.startedRuns = this.startedRuns.filter((run) => !listed.has(run.id));
       return true;
     } catch (error) {
       if (generation !== this.generation || key !== scopeKeyOf(this.host))
@@ -1109,6 +1172,27 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
     this.selection = new Set();
     void this.poller.refresh();
   }
+  /** A run started from this page shows first until the list includes it. */
+  private started(run: Record<string, unknown>) {
+    const id = run["id"];
+    if (typeof id !== "string" || !id) return;
+    const state = isRecord(run["state"]) ? run["state"] : {};
+    const status = typeof state["status"] === "string" ? state["status"] : "";
+    this.startedRuns = [
+      { id, status: status || "queued" },
+      ...this.startedRuns.filter((item) => item.id !== id),
+    ].slice(0, STARTED_LIMIT);
+    this.cdr.markForCheck();
+  }
+  /** Started runs the rows below do not hold yet. */
+  startedShown() {
+    if (!this.startedRuns.length) return this.startedRuns;
+    const listed = new Set(this.runs.map((item) => item.id));
+    return this.startedRuns.filter((run) => !listed.has(run.id));
+  }
+  startedTone(run: StartedRun) {
+    return toneAttribute(statusTone("run", run.status));
+  }
   setAutoRefresh(on: boolean) {
     this.autoRefresh = on;
     if (on) void this.poller.refresh();
@@ -1148,7 +1232,7 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
           ),
     );
   }
-  statusWord(status: RunStatus) {
+  statusWord(status: string) {
     return statusLabel("run", status);
   }
   rangeId() {
@@ -1252,6 +1336,7 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   private changed() {
     this.selection = new Set();
     this.bulk = null;
+    this.startedRuns = [];
     void this.poller.refresh();
   }
   /** Workflow names this person has seen: published versions and listed runs. */

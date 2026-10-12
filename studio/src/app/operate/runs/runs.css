@@ -473,7 +473,8 @@ weave-operate-state {
     overflow-wrap: anywhere;
   }
 }
-/* With a run open beside it, the list is a column of names and statuses. */
+/* With a run open beside it, the list is a column of names and statuses; a
+   run without a summary keeps its explanation and ID there instead. */
 @media (min-width: 1025px) {
   .run-focus .runs-table .resource-row .cell-meta {
     display: none;
@@ -482,6 +483,23 @@ weave-operate-state {
     grid-template-areas:
       "select workflow"
       ". status";
+  }
+  .run-focus .runs-table .resource-row.unavailable {
+    grid-template-areas:
+      "select workflow"
+      ". meta";
+  }
+  .run-focus .runs-table .resource-row.started {
+    grid-template-areas:
+      "select workflow"
+      ". status"
+      ". meta";
+  }
+  .run-focus .runs-table .resource-row:is(.unavailable, .started) .cell-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--group-gap);
   }
 }
 

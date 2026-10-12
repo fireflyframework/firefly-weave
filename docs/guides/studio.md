@@ -1297,7 +1297,10 @@ short run ID with **Copy**.
   relative time range then ends at that moment. **Refresh** does the same at
   once. **Load more runs** continues exactly the list you are reading, so pages
   never shift under you; while more than the first page is open, or runs are
-  selected, the list waits for **Refresh**.
+  selected, the list waits for **Refresh**. Starting, canceling, retrying,
+  archiving or restoring a run, or deleting its data, from this page reads the
+  first page again at once. A run you just started shows first, as "Just
+  started", until the list includes it.
 - **Act on several runs.** Select runs, up to 50, and choose **Cancel runs**
   (one reason for all) or **Retry runs** (each on its own version with its own
   input). Studio sends them one at a time and reports the result for each run.

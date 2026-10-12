@@ -741,8 +741,14 @@ export class App implements CanvasHost {
   records: Record<string, unknown>[] = [];
   nextCursor: string | null = null;
   selectedRecord: Record<string, unknown> | null = null;
-  /** The Runs list was refused (403): the page names the access it needs. */
-  runsRefused = false;
+  /**
+   * The Runs page while it is open. A command taken there (Start run, Cancel,
+   * Retry, Archive, Restore, Delete data) reads its list again through it.
+   */
+  runsList: {
+    refresh(): Promise<void>;
+    started(run: Record<string, unknown>): void;
+  } | null = null;
   /** The run whose read was refused (403); it stays until another opens. */
   runRefused = "";
   loading = false;
@@ -1562,7 +1568,6 @@ export class App implements CanvasHost {
       this.records = [];
       this.nextCursor = null;
       this.taskRunFilter = "";
-      this.runsRefused = false;
       this.runRefused = "";
     }
     this.view = view;
@@ -5983,6 +5988,15 @@ export class App implements CanvasHost {
       this.cdr.markForCheck();
     }
   }
+  /**
+   * After a command on the Runs page: the published versions and the list's
+   * first page again, so the list shows what the command changed.
+   */
+  async refreshRuns() {
+    if (this.view !== "runs") return;
+    void this.loadWorkflowVersions();
+    await this.runsList?.refresh();
+  }
   /** Starts the run; failures stay in the dialog, success opens the new run. */
   async confirmStartRun(body: StartRunRequest) {
     this.runStartError = null;
@@ -6000,10 +6014,9 @@ export class App implements CanvasHost {
         run: () => void this.viewRun(run),
       });
       if (this.view === "runs") {
-        await this.refresh();
-        // The list may not include a run this new yet; show it first.
-        if (run["id"] && !this.records.some((r) => r["id"] === run["id"]))
-          this.records = [run, ...this.records];
+        // The list may not include a run this new yet; it shows it first.
+        this.runsList?.started(run);
+        await this.refreshRuns();
       }
     } catch (e) {
       const plain = describeError(e);
@@ -6045,12 +6058,7 @@ export class App implements CanvasHost {
   async viewRun(run: Record<string, unknown>) {
     if (this.view !== "runs") await this.navigate("runs");
     if (this.view !== "runs" || !run["id"]) return;
-    const listed = this.records.find((r) => r["id"] === run["id"]);
-    if (!listed) this.records = [run, ...this.records];
-    await this.open(listed ?? run);
-    // A run that could not be read leaves no placeholder row behind.
-    if (!listed && this.runRefused === run["id"])
-      this.records = this.records.filter((r) => r !== run);
+    await this.open(run);
   }
   applyTaskFilter(event: Event) {
     this.taskFilter = this.value(event);
@@ -6407,7 +6415,6 @@ export class App implements CanvasHost {
     this.showActivation = false;
     this.exportFallback = null;
     this.records = [];
-    this.runsRefused = false;
     this.runRefused = "";
     this.closeRecord();
     this.emailDetail = null;
@@ -7694,7 +7701,7 @@ export class App implements CanvasHost {
             ? "Run archived."
             : "Run restored.",
       );
-      await this.refresh();
+      await this.refreshRuns();
     } catch (e) {
       this.fail(e);
     } finally {

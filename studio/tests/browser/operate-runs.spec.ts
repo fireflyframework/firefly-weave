@@ -30,7 +30,7 @@ import {
   type RunViewsFixture,
 } from "../../src/app/operate/run-views.fixture";
 import type { RunSummary } from "../../src/app/operate/run-contracts";
-import { connected } from "./support";
+import { connected, selectChoice } from "./support";
 import { acme, acmePlatform, platformHost } from "./platform-host";
 
 const environment =
@@ -1094,6 +1094,216 @@ test.describe("chains and refresh", () => {
     await expect(page.locator("weave-runs-page")).not.toContainText(
       "secret-key",
     );
+  });
+});
+
+test.describe("commands on the page", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const versionId = "44444444-4444-4444-8444-444444444444";
+  /** Start run's dialog: one activation whose version takes no input. */
+  async function startable(page: Page) {
+    await page.route(`${environment}/activations?*`, (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: "act-1",
+              name: "invoice-approval",
+              revision: 1,
+              request: { version_id: versionId },
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route(`**/projects/project/workflows/${versionId}/export`, (r) =>
+      r.fulfill({
+        json: {
+          document: {
+            apiVersion: "weave/v1alpha1",
+            kind: "Workflow",
+            metadata: { name: "invoice-approval", version: "1.3.0" },
+            spec: {
+              inputSchema: { type: "object", properties: {} },
+              outputSchema: { type: "object" },
+              steps: [],
+              output: { literal: {} },
+            },
+          },
+        },
+      }),
+    );
+  }
+  /** Starts a run from the page; the clock stops as it is sent, so only the command moves the list. */
+  async function startOne(page: Page, runs: Platform) {
+    await page.getByRole("button", { name: "Start run", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Start a run" });
+    await selectChoice(
+      dialog.getByLabel("Version to run", { exact: true }),
+      "act-1",
+    );
+    await runs.pause();
+    await dialog.getByRole("button", { name: "Start run" }).click();
+  }
+
+  test("canceling the open run reads the list again at once", async ({
+    page,
+  }) => {
+    const runs = await platform(page);
+    await page.route(`${environment}/runs/*/cancel`, async (route) => {
+      const id = new URL(route.request().url()).pathname.split("/").at(-2)!;
+      const run = runs.fixture.runs.find((item) => item.summary.id === id)!;
+      run.summary = {
+        ...run.summary,
+        status: "cancelled",
+        ended_at: run.summary.started_at,
+        duration_ms: 1000,
+      };
+      runs.views.set(id, "cancelled");
+      await route.fulfill({ json: { id, state: { status: "cancelled" } } });
+    });
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    await names(page).first().click();
+    const detail = page.locator(".record-detail");
+    await expect(
+      detail.getByRole("button", { name: "Cancel run", exact: true }),
+    ).toBeVisible();
+    await detail
+      .getByRole("button", { name: "Cancel run", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Cancel this run?" });
+    await dialog.getByLabel("Reason").fill("Duplicate invoice");
+    // Only the command moves the list: no clock passes from here on.
+    await runs.pause();
+    const before = runs.requestedSummaries.length;
+    await dialog.getByRole("button", { name: "Cancel run" }).click();
+    await expect.poll(() => runs.requestedSummaries.length).toBe(before + 1);
+    expect(last(runs).has("cursor")).toBe(false);
+    await drawn(page, () =>
+      expect(rows(page).first().locator(".cell-status")).toContainText(
+        "Canceled",
+        { timeout: 100 },
+      ),
+    );
+  });
+
+  test("archiving the open run takes it off the list at once", async ({
+    page,
+  }) => {
+    const runs = await platform(page);
+    await page.route(`${environment}/runs/*/archive`, async (route) => {
+      const id = new URL(route.request().url()).pathname.split("/").at(-2)!;
+      const run = runs.fixture.runs.find((item) => item.summary.id === id)!;
+      run.summary = { ...run.summary, archived: true };
+      await route.fulfill({ json: { archived: true, revision: 2 } });
+    });
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    const failed = rows(page).filter({
+      has: page.locator(`.cell-run code[title="${fixtureIds.failed}"]`),
+    });
+    await expect(failed).toHaveCount(1);
+    await failed.locator(".row-open").click();
+    const detail = page.locator(".record-detail");
+    await expect(
+      detail.getByRole("button", { name: "Archive run", exact: true }),
+    ).toBeEnabled();
+    await detail
+      .getByRole("button", { name: "Archive run", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Archive this run?" });
+    await dialog.getByLabel("Reason").fill("Handled by hand");
+    await runs.pause();
+    const before = runs.requestedSummaries.length;
+    await dialog.getByRole("button", { name: "Archive run" }).click();
+    await expect.poll(() => runs.requestedSummaries.length).toBe(before + 1);
+    await drawn(page, () =>
+      expect(rows(page)).toHaveCount(5, { timeout: 100 }),
+    );
+    await expect(failed).toHaveCount(0);
+  });
+
+  test("with a run open beside the list, an unavailable row keeps its ID and explanation", async ({
+    page,
+  }) => {
+    await platform(page);
+    await openRuns(page);
+    await names(page).first().click();
+    await expect(
+      page.locator(".record-detail #record-detail-title"),
+    ).toHaveText("invoice-approval");
+    const unavailable = rows(page).filter({ hasText: "Unavailable run" });
+    await expect(unavailable.locator(".cell-meta")).toBeVisible();
+    await expect(unavailable.locator(".cell-meta")).toContainText(
+      "Studio can't show this run's details.",
+    );
+    await expect(unavailable.locator(".cell-meta code")).toHaveText(
+      fixtureIds.unavailable.slice(0, 8),
+    );
+  });
+
+  test("a run started here shows first, also before the list includes it", async ({
+    page,
+  }) => {
+    const runs = await platform(page, [...operator, "run.start"]);
+    await startable(page);
+    const fresh = uuid(950);
+    let listNow = true;
+    await page.route(`${environment}/runs`, async (route) => {
+      if (listNow)
+        runs.fixture.runs.push({
+          summary: started(fresh, "2026-10-07T11:59:50Z", {
+            status: "queued",
+            ended_at: null,
+            duration_ms: null,
+            business_key: "STARTED-1",
+          }),
+        });
+      await route.fulfill({
+        status: 201,
+        json: { id: listNow ? fresh : uuid(951), state: { status: "queued" } },
+      });
+    });
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    // The first page already lists it: it is the first row.
+    let before = runs.requestedSummaries.length;
+    await startOne(page, runs);
+    await expect.poll(() => runs.requestedSummaries.length).toBe(before + 1);
+    await drawn(page, () =>
+      expect(rows(page).first()).toContainText("STARTED-1", { timeout: 100 }),
+    );
+    await expect(rows(page)).toHaveCount(7);
+    // A first page that doesn't list it yet: it still shows first, as just started.
+    listNow = false;
+    await page.clock.resume();
+    before = runs.requestedSummaries.length;
+    await startOne(page, runs);
+    await expect.poll(() => runs.requestedSummaries.length).toBe(before + 1);
+    const pending = rows(page).first();
+    await drawn(page, () =>
+      expect(pending).toContainText("Just started.", { timeout: 100 }),
+    );
+    await expect(pending).toContainText(uuid(951).slice(0, 8));
+    await expect(pending.locator(".status-pill")).toHaveText("Queued");
+    await expect(rows(page)).toHaveCount(8);
+    // Once a first page lists it, it is an ordinary row, shown once.
+    runs.fixture.runs.push({
+      summary: started(uuid(951), "2026-10-07T11:59:55Z", {
+        status: "queued",
+        ended_at: null,
+        duration_ms: null,
+        business_key: "STARTED-2",
+      }),
+    });
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await drawn(page, () =>
+      expect(rows(page).first()).toContainText("STARTED-2", { timeout: 100 }),
+    );
+    await expect(rows(page)).toHaveCount(8);
+    await expect(page.locator(".run-row.started")).toHaveCount(0);
   });
 });
 
