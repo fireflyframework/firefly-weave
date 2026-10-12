@@ -121,6 +121,10 @@ SPDX-License-Identifier: Apache-2.0
   combined with keyword arguments.
 - Kubernetes runners no longer read a pod's free-text status reason, and a pod
   whose readiness is unknown is listed as a member that is not ready.
+- An outbox delivery turn that starts while the platform is still restricted,
+  such as while it opens its background work after startup, gives back its
+  delivery slot. Before, each such turn kept one of the process's four slots
+  until a restart, and event delivery stopped once all four were lost.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.
