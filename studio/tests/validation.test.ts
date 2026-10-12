@@ -415,6 +415,19 @@ describe("manual validation and the project compile", () => {
     expect(service.publishBlocker("v3", "yaml")).toBe(
       "Validate against the project catalog before publishing.",
     );
+    // A compile that didn't finish still blocks, whatever the actions.
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: true,
+      diagnostics: [],
+      ownedPending: 2,
+    });
+    await service.validateNow("v4", "yaml");
+    expect(service.publishBlocker("v4", "yaml")).toBe(
+      "Validate against the project catalog before publishing.",
+    );
   });
 });
 
@@ -605,7 +618,7 @@ describe("banner copy", () => {
       headline: "Studio couldn't check this workflow. Try again.",
     });
   });
-  it("says the workflow's own actions publish first when they are all the project check is missing", async () => {
+  it("says steps that call the workflow's own actions are checked again when those actions publish", async () => {
     const ctx = { connected: true, canCompile: true, scope: "p" };
     const { service, compile } = harness(ctx);
     compile.mockResolvedValueOnce({
@@ -623,7 +636,26 @@ describe("banner copy", () => {
       tone: "checked",
       passedProjectCatalog: false,
       headline:
-        "No problems found. Publish… and Simulate publish the actions of Call an API, email and file steps first.",
+        "No other problems found. Steps that call this workflow's own actions are checked again when Publish… or Simulate publishes those actions.",
     });
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: false,
+      diagnostics: [
+        { code: "WV-STUDIO-OWNED_UNPUBLISHED", severity: "info", message: "x" },
+        {
+          code: "WV-COMP-REFERENCE_PRESENCE",
+          severity: "warning",
+          message: "y",
+        },
+      ],
+      ownedPending: 1,
+    });
+    await service.validateNow("v2", "yaml");
+    expect(summarize(service.snapshot, ctx).headline).toBe(
+      "No other errors, 1 warning. Steps that call this workflow's own actions are checked again when Publish… or Simulate publishes those actions.",
+    );
   });
 });

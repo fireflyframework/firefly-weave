@@ -120,6 +120,19 @@ def test_a_workflow_whose_own_actions_are_not_published_reports_each_one():
         ("WV-COMP-UNKNOWN_ACTION", "/spec/steps/0/uses"),
         ("WV-COMP-UNKNOWN_ACTION", "/spec/steps/1/uses"),
     ]
+    # Studio counts these two as the only errors: a complete check that failed for them alone.
+    assert result.error_count == 2
+    assert result.partial is False
+    assert result.validation_ok is False
+
+
+def test_a_step_input_that_needs_the_action_is_checked_only_once_the_action_is_published():
+    without_recipient = WORKFLOW.replace("{to: [ana@example.com], subject:", "{subject:")
+    assert without_recipient != WORKFLOW
+    pending = compile_source(without_recipient, format="yaml", catalog=catalog())
+    assert [code for code, _ in errors(pending)] == ["WV-COMP-UNKNOWN_ACTION", "WV-COMP-UNKNOWN_ACTION"]
+    published = compile_source(without_recipient, format="yaml", catalog=catalog(api_action(), email_action()))
+    assert errors(published) == [("WV-COMP-TYPE_MISMATCH", "/spec/steps/1/with")]
 
 
 def test_the_actions_compile_on_their_own_and_then_the_workflow_compiles_with_them():

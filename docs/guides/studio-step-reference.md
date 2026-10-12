@@ -436,7 +436,10 @@ the workflow**. It then publishes each action, and the workflow last.
 publishes only the actions. Publishing them needs the same permission as
 publishing workflows. Until then, checking the workflow against the platform
 notes each such step ("This step's action is published with the workflow")
-instead of reporting its action missing.
+instead of reporting its action missing. What a step sends to such an action
+is checked once the action is published: if the platform then refuses the
+workflow, the actions stay published, and publishing again reuses them. While
+Studio publishes, the dialog keeps the keyboard, and the workflow can't change.
 
 A published version never changes. Your next change to a published action in
 step details starts its next version, such as 1.0.1, and every step that uses

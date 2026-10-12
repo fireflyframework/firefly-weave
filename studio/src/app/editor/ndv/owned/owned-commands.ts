@@ -140,6 +140,21 @@ export async function publishOwnedFirst(
       workflow: { name, version },
     });
     if (outcome.reason) stop(host, outcome.reason);
+    // The keyboard is the dialog's while it publishes; should the workflow
+    // still have changed, what was confirmed isn't what would be published.
+    if (
+      outcome.done &&
+      outcome.source !== undefined &&
+      outcome.source !== host.model.source
+    ) {
+      stop(
+        host,
+        purpose === "publish"
+          ? "The workflow changed while its actions were published, so it wasn't published. Its actions stay published; select Publish… again."
+          : "The workflow changed while its actions were published, so the simulation didn't start. Select Simulate again.",
+      );
+      return { result: "stopped", published: outcome.published };
+    }
     return {
       result: !outcome.done
         ? "stopped"

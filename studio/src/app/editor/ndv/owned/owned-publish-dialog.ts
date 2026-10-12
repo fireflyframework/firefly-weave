@@ -30,6 +30,7 @@ import {
   inject,
   input,
   output,
+  type OnDestroy,
   type OnInit,
 } from "@angular/core";
 import { Modal } from "../../../dialog";
@@ -105,39 +106,25 @@ let sequence = 0;
         </ul>
       }
       <p class="owned-summary" role="status">{{ publisher.summary() }}</p>
+      <!-- One main button through every phase, so focus stays on it while
+           the dialog is busy. -->
       <div class="dialog-footer">
-        @switch (publisher.phase()) {
-          @case ("confirm") {
-            <button type="button" (click)="finish()">Keep editing</button>
-            <button type="button" class="primary" (click)="go()">
-              {{ confirmLabel() }}
-            </button>
-          }
-          @case ("partial") {
-            <button type="button" (click)="finish()">Close</button>
-            <button type="button" class="primary" (click)="go()">
-              {{ retryLabel() }}
-            </button>
-          }
-          @case ("blocked") {
-            <button type="button" (click)="check()">Check again</button>
-            <button type="button" class="primary" (click)="finish()">
-              Close
-            </button>
-          }
-          @default {
-            <button type="button" class="primary" disabled>
-              {{
-                publisher.phase() === "publishing" ? "Publishing…" : "Checking…"
-              }}
-            </button>
-          }
+        @if (secondaryLabel(); as label) {
+          <button type="button" (click)="secondary()">{{ label }}</button>
         }
+        <button
+          type="button"
+          class="primary"
+          [attr.aria-disabled]="waiting() ? 'true' : null"
+          (click)="primary()"
+        >
+          {{ primaryLabel() }}
+        </button>
       </div>
     </div>
   </weave-modal>`,
 })
-export class OwnedPublishDialog implements OnInit {
+export class OwnedPublishDialog implements OnInit, OnDestroy {
   readonly host = input.required<StepDetailsHost>();
   readonly request = input.required<OwnedPublishRequest>();
   readonly documents = input.required<OwnedDocuments>();
@@ -214,6 +201,46 @@ export class OwnedPublishDialog implements OnInit {
       ? `Publish ${actions} and the workflow`
       : `Publish ${actions} and simulate`;
   }
+  /** Checking or publishing: the main button waits, and so do Escape and Close. */
+  waiting(): boolean {
+    const phase = this.publisher.phase();
+    return phase === "preparing" || phase === "publishing" || phase === "done";
+  }
+  primaryLabel(): string {
+    switch (this.publisher.phase()) {
+      case "confirm":
+        return this.confirmLabel();
+      case "partial":
+        return this.retryLabel();
+      case "blocked":
+        return "Close";
+      case "preparing":
+        return "Checking…";
+      default:
+        return "Publishing…";
+    }
+  }
+  primary(): void {
+    const phase = this.publisher.phase();
+    if (phase === "confirm" || phase === "partial") void this.go();
+    else if (phase === "blocked") this.finish();
+  }
+  secondaryLabel(): string {
+    switch (this.publisher.phase()) {
+      case "confirm":
+        return "Keep editing";
+      case "partial":
+        return "Close";
+      case "blocked":
+        return "Check again";
+      default:
+        return "";
+    }
+  }
+  secondary(): void {
+    if (this.publisher.phase() === "blocked") void this.check();
+    else this.finish();
+  }
   retryLabel(): string {
     return this.publisher.rows().some((row) => row.proposal)
       ? "Publish as suggested"
@@ -240,6 +267,8 @@ export class OwnedPublishDialog implements OnInit {
     else this.focusPrimary();
   }
   async check(): Promise<void> {
+    // The button pressed goes away while checking: focus waits on the main one.
+    this.primaryButton()?.focus();
     await this.publisher.prepare();
     if (this.publisher.phase() === "done") this.finish();
     else this.focusPrimary();
@@ -251,17 +280,22 @@ export class OwnedPublishDialog implements OnInit {
   finish(): void {
     if (this.finished) return;
     this.finished = true;
+    this.publisher.abandon();
     this.closed.emit(this.publisher.outcome());
   }
-  private focusPrimary(): void {
-    afterNextRender(
-      () =>
-        this.element.nativeElement
-          .querySelector<HTMLButtonElement>(
-            ".dialog-footer .primary:not([disabled])",
-          )
-          ?.focus(),
-      { injector: this.injector },
+  /** Closed, or its designer went away: nothing more is sent. */
+  ngOnDestroy(): void {
+    this.publisher?.abandon();
+  }
+  private primaryButton(): HTMLButtonElement | null {
+    return this.element.nativeElement.querySelector<HTMLButtonElement>(
+      ".dialog-footer .primary",
     );
+  }
+  private focusPrimary(): void {
+    if (this.finished) return;
+    afterNextRender(() => this.primaryButton()?.focus(), {
+      injector: this.injector,
+    });
   }
 }

@@ -174,12 +174,23 @@ export class OwnedPublisher {
   private published = 0;
   /** A fresh key for a row whose content-derived key the platform saw with other content. */
   private readonly keys = new Map<string, string>();
+  /** The dialog went away: nothing more is sent, moved or recorded. */
+  private abandoned = false;
+  /** The workflow source the actions were published for. */
+  private confirmed: string | undefined;
 
   constructor(private readonly ports: OwnedPublishPorts) {}
 
-  /** Publishing is under way: the dialog can't close now. */
+  /**
+   * Publishing is under way, from the press that starts it (and any check
+   * of suggested names) to its last answer: the dialog can't close now.
+   */
   busy(): boolean {
     return this.phase() === "publishing";
+  }
+  /** Stops for good: no request is sent, and nothing changes, after this. */
+  abandon(): void {
+    this.abandoned = true;
   }
   outcome(): OwnedPublishOutcome {
     const phase = this.phase();
@@ -188,6 +199,9 @@ export class OwnedPublisher {
       published: this.published,
       ...(phase === "partial" || phase === "blocked"
         ? { reason: this.summary() }
+        : {}),
+      ...(phase === "done" && this.confirmed !== undefined
+        ? { source: this.confirmed }
         : {}),
     };
   }
@@ -198,6 +212,7 @@ export class OwnedPublisher {
     this.phase.set("preparing");
     this.summary.set("");
     if (model.readonly) return this.stop("Fix the workflow source first.");
+    if (this.abandoned) return;
     if (driftedOwned(model).length) {
       if (this.ports.editingLocked())
         return this.stop(
@@ -215,6 +230,7 @@ export class OwnedPublisher {
     }
     this.ports.sync();
     await this.ports.settled();
+    if (this.abandoned) return;
     const owned = ownedActionsOf(model.canvas);
     this.rows.set(
       pendingOwned(model).map((uses) => {
@@ -235,10 +251,19 @@ export class OwnedPublisher {
     await this.check();
   }
 
-  /** Applies the proposals, then publishes every row that isn't published yet, in order. */
+  /**
+   * Applies the proposals, then publishes every row that isn't published
+   * yet, in order. Busy from the first moment, so the dialog can't close or
+   * start it twice; a suggested name found taken too asks again, sending
+   * nothing.
+   */
   async publish(): Promise<boolean> {
     const { model } = this.ports;
+    if (this.busy() || this.abandoned) return false;
+    const before = this.phase();
     const moving = this.rows().filter((row) => row.proposal);
+    this.phase.set("publishing");
+    this.summary.set(moving.length ? "Checking the suggested names…" : "");
     if (moving.length) {
       if (this.ports.editingLocked()) {
         this.stop(
@@ -251,7 +276,12 @@ export class OwnedPublisher {
           for (const row of moving) moveOwned(model, row.uses, row.proposal!);
         }),
       );
-      if (!moved) return false;
+      if (!moved) {
+        // The shell says why; the rows stay as they were.
+        this.phase.set(before);
+        this.summary.set("");
+        return false;
+      }
       this.rows.update((rows) =>
         rows.map((row) =>
           row.proposal
@@ -269,14 +299,22 @@ export class OwnedPublisher {
       );
       this.ports.sync();
       await this.ports.settled();
-      // The new name or version may be taken too.
+      if (this.abandoned) return false;
+      // The new name or version may be taken too: then the dialog asks again.
       await this.check();
-      if (this.phase() !== "confirm") return false;
+      if (
+        this.abandoned ||
+        this.phase() !== "confirm" ||
+        this.rows().some((row) => row.proposal)
+      )
+        return false;
+      this.phase.set("publishing");
     }
-    this.phase.set("publishing");
+    this.confirmed = model.source;
     const rows = this.rows();
     for (const row of rows) {
       if (row.state === "published") continue;
+      if (this.abandoned) return false;
       const document = this.ports.document(row.uses);
       if (!document) {
         this.set(row.uses, {
@@ -298,6 +336,8 @@ export class OwnedPublisher {
         this.failed(row, key, error);
         return this.stopped();
       }
+      // Gone meanwhile: the platform keeps the version, and a later publish reuses it.
+      if (this.abandoned) return false;
       this.ports.record(() => {
         model.canvas = markPublished(model, row.uses);
       });
@@ -333,6 +373,7 @@ export class OwnedPublisher {
     });
   }
   private async checkOnPlatform(row: OwnedRow): Promise<void> {
+    if (this.abandoned) return;
     const document = this.ports.document(row.uses)!;
     this.set(row.uses, { state: "checking" });
     let result: PlatformCompileResult;

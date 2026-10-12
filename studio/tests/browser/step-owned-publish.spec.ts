@@ -83,6 +83,8 @@ interface PlatformCall {
   name: string;
   version: string;
   key: string;
+  /** What a workflow publish sent. */
+  source?: string;
 }
 interface PlatformOptions {
   capabilities?: string[];
@@ -201,6 +203,7 @@ async function ownedPlatform(page: Page, options: PlatformOptions) {
       name,
       version,
       key: route.request().headers()["idempotency-key"] ?? "",
+      source: body.source,
     });
     const result = (await compile(body.source, body.format)) as { ok: boolean };
     if (!result.ok)
@@ -403,7 +406,7 @@ for (const size of sizes)
       const { details, platform } = await withOwnedSteps(page);
       await command(page, "Validate");
       await expect(page.locator("#main")).toContainText(
-        "No problems found. Publish… and Simulate publish the actions of Call an API, email and file steps first.",
+        "No other problems found. Steps that call this workflow's own actions are checked again when Publish… or Simulate publishes those actions.",
       );
       await details.open("call-api");
       await expect(details.dialog.locator(".sd-issues-pill")).toHaveCount(0);
@@ -625,15 +628,21 @@ for (const size of sizes)
       await expectTidy(page, dialog, size.height);
     });
 
-    test("the publish dialog starts on its main button, keeps Tab inside, and Escape waits while publishing", async ({
+    test("while the actions publish, focus stays in the dialog, and Undo, Escape and Tab change nothing", async ({
       page,
     }) => {
       const { platform } = await withOwnedSteps(page, { hold: true });
+      // One more edit after the steps: the summary's value.
+      const document = parse(await sourceText(page));
+      const summary = (document.spec.steps as Record<string, unknown>[]).find(
+        (step) => step["id"] === "summary",
+      )!;
+      summary["value"] = { literal: { done: false, edited: "last" } };
+      await applySource(page, stringify(document));
       await command(page, "Publish…");
       const dialog = publishDialog(page);
-      const primary = dialog.getByRole("button", {
-        name: "Publish 2 actions and the workflow",
-      });
+      const primary = dialog.locator(".dialog-footer .primary");
+      await expect(primary).toHaveText("Publish 2 actions and the workflow");
       await expect(primary).toBeFocused();
       await page.keyboard.press("Tab");
       await expect(
@@ -643,11 +652,87 @@ for (const size of sizes)
       await expect(primary).toBeFocused();
       await primary.click();
       await expect(dialog.getByRole("status")).toHaveText("Publishing 1 of 2…");
+      await expect(primary).toBeFocused();
+      await expect(primary).toHaveAttribute("aria-disabled", "true");
+      const focusInDialog = () =>
+        page.evaluate(() => !!document.activeElement?.closest(".modal-panel"));
+      for (const key of ["Control+z", "Escape", "Tab", "Shift+Tab", "Tab"]) {
+        await page.keyboard.press(key);
+        expect(await focusInDialog(), `focus after ${key}`).toBe(true);
+      }
+      await expect(dialog).toBeVisible();
+      // Even with focus lost, the shell leaves its keys alone while the dialog is open.
+      await page.evaluate(() =>
+        (document.activeElement as HTMLElement | null)?.blur(),
+      );
+      await page.keyboard.press("Control+z");
       await page.keyboard.press("Escape");
       await expect(dialog).toBeVisible();
       platform.release();
       await expect(dialog).toHaveCount(0);
+      await workflowPublished(page);
       expect(posted(platform.calls)).toEqual([API, EMAIL, "workflows"]);
+      expect(platform.calls.at(-1)!.source).toContain("edited: last");
+      expect(await sourceText(page)).toContain("edited: last");
+    });
+
+    test("while a suggested name is checked, the dialog can't be left or started again", async ({
+      page,
+    }) => {
+      const send = (
+        builtinActions() as {
+          actions: {
+            connector: string;
+            action: string;
+            document: Definition;
+          }[];
+        }
+      ).actions.find(
+        (entry) =>
+          entry.connector === "weave-email@1.0.0" && entry.action === "send",
+      )!.document;
+      const taken = {
+        ...structuredClone(send),
+        metadata: { name: "order-intake.send-email", version: "1.0.0" },
+      };
+      (taken["spec"] as Record<string, unknown>)["timeoutSeconds"] = 10;
+      const { platform } = await withOwnedSteps(page, { taken: [taken] });
+      await command(page, "Publish…");
+      const dialog = publishDialog(page);
+      await expect(
+        dialog
+          .locator(".owned-row", { hasText: "order-intake.send-email" })
+          .locator(".owned-state"),
+      ).toHaveText("Taken");
+      // The check of the suggested name waits until the test lets it answer.
+      let answer = () => undefined as void;
+      const held = new Promise<void>((done) => (answer = done));
+      await page.route(`${project}/compiler/compile`, async (route) => {
+        await held;
+        await route.fallback();
+      });
+      const primary = dialog.locator(".dialog-footer .primary");
+      await primary.click();
+      await expect(dialog.getByRole("status")).toHaveText(
+        "Checking the suggested names…",
+      );
+      await expect(primary).toBeFocused();
+      await expect(primary).toHaveAttribute("aria-disabled", "true");
+      await expect(
+        dialog.getByRole("button", { name: "Keep editing" }),
+      ).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      // A second press of the main button starts nothing.
+      const at = await box(primary);
+      await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
+      await expect(dialog).toBeVisible();
+      answer();
+      await expect(dialog).toHaveCount(0);
+      expect(posted(platform.calls)).toEqual([
+        API,
+        "order-intake.send-email-2@1.0.0",
+        "workflows",
+      ]);
     });
 
     test("Escape keeps editing, and nothing is published", async ({ page }) => {

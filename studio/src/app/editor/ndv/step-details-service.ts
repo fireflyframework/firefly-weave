@@ -59,6 +59,8 @@ export interface OwnedPublishOutcome {
   published: number;
   /** Why it stopped, for the banner, when it did. */
   reason?: string;
+  /** The workflow source its actions were published for, once all are. */
+  source?: string;
 }
 /** The publish dialog's request, and the command waiting for its outcome. */
 export interface OwnedPublishOpen {

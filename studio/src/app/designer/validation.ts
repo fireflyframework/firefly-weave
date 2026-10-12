@@ -479,8 +479,8 @@ export function summarize(
       headline: complete
         ? found
         : result.ownedPending && !result.partial
-          ? // The workflow's own actions are all it misses; they publish first.
-            `${found} Publish… and Simulate publish the actions of Call an API, email and file steps first.`
+          ? // The workflow's own actions are all it misses; what depends on them is checked once they publish.
+            `${warned ? `No other errors, ${plural(counts!.warnings, "warning")}.` : "No other problems found."} Steps that call this workflow's own actions are checked again when Publish… or Simulate publishes those actions.`
           : "No errors found, but the project catalog check didn't finish. Validate again.",
     };
   }

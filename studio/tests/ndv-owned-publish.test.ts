@@ -178,7 +178,11 @@ describe("publishing the actions a workflow owns", () => {
     await publisher.prepare();
     expect(await publisher.publish()).toBe(true);
     expect(publisher.phase()).toBe("done");
-    expect(publisher.outcome()).toEqual({ done: true, published: 2 });
+    expect(publisher.outcome()).toEqual({
+      done: true,
+      published: 2,
+      source: model.source,
+    });
     expect(sent.map((item) => nameIn(item.yaml))).toEqual([
       "order-intake.call-api",
       "order-intake.send-email",
@@ -192,7 +196,7 @@ describe("publishing the actions a workflow owns", () => {
   });
   it("stops at a failure, keeps what was published, and Try again sends the same request", async () => {
     let failures = 1;
-    const { publisher, sent } = setup(({ sent }) => ({
+    const { publisher, sent, model } = setup(({ sent }) => ({
       publish: async (yaml, key) => {
         sent.push({ yaml, key });
         if (yaml.includes("send-email") && failures-- > 0)
@@ -224,7 +228,11 @@ describe("publishing the actions a workflow owns", () => {
       sent[1].key,
       sent[1].key,
     ]);
-    expect(publisher.outcome()).toEqual({ done: true, published: 2 });
+    expect(publisher.outcome()).toEqual({
+      done: true,
+      published: 2,
+      source: model.source,
+    });
   });
   it("offers a free name for a taken action never published, and the next version for one published before", async () => {
     const { publisher, model, sent } = setup(() => ({
@@ -415,5 +423,100 @@ describe("publishing the actions a workflow owns", () => {
     expect(publisher.summary()).toBe(
       "0 of 2 actions published. The simulation didn't start. Try again publishes the rest.",
     );
+  });
+  it("is busy from the moment publishing starts, takes no second start, and sends nothing once abandoned", async () => {
+    let release = () => undefined as void;
+    const slow = new Promise<void>((done) => (release = done));
+    let checks = 0;
+    const { publisher, model, sent } = setup(() => ({
+      compile: async (document) => {
+        const { name, version: at } = document["metadata"] as {
+          name: string;
+          version: string;
+        };
+        // The first check finds the email's name taken; the check of the new name is slow.
+        if (checks++ >= 2) await slow;
+        return `${name}@${at}` === EMAIL ? taken : ok;
+      },
+    }));
+    await publisher.prepare();
+    expect(publisher.rows()[1].proposal).toBe(
+      "order-intake.send-email-2@1.0.0",
+    );
+    const going = publisher.publish();
+    expect(publisher.busy()).toBe(true);
+    expect(publisher.summary()).toBe("Checking the suggested names…");
+    expect(await publisher.publish()).toBe(false);
+    publisher.abandon();
+    release();
+    expect(await going).toBe(false);
+    expect(sent).toEqual([]);
+    expect(pendingOwned(model)).toEqual([
+      API,
+      "order-intake.send-email-2@1.0.0",
+    ]);
+  });
+  it("asks again, sending nothing, when a suggested name turns out to be taken too", async () => {
+    const takenToo = [EMAIL, "order-intake.send-email-2@1.0.0"];
+    const { publisher, model, sent } = setup(() => ({
+      compile: async (document) => {
+        const { name, version: at } = document["metadata"] as {
+          name: string;
+          version: string;
+        };
+        return takenToo.includes(`${name}@${at}`) ? taken : ok;
+      },
+    }));
+    await publisher.prepare();
+    expect(await publisher.publish()).toBe(false);
+    expect(sent).toEqual([]);
+    expect(publisher.phase()).toBe("confirm");
+    expect(
+      publisher.rows().map((row) => [row.uses, row.state, row.proposal]),
+    ).toEqual([
+      [API, "ready", undefined],
+      [
+        "order-intake.send-email-2@1.0.0",
+        "conflict",
+        "order-intake.send-email-2-2@1.0.0",
+      ],
+    ]);
+    expect(await publisher.publish()).toBe(true);
+    expect(sent.map((item) => nameIn(item.yaml))).toEqual([
+      "order-intake.call-api",
+      "order-intake.send-email-2-2",
+    ]);
+    expect(model.nodes().map((node) => node.step["uses"])).toEqual([
+      API,
+      "order-intake.send-email-2-2@1.0.0",
+    ]);
+  });
+  it("sends a request the platform saw with other content again under a fresh key, for that action only", async () => {
+    let conflicts = 1;
+    const { publisher, sent } = setup(({ sent }) => ({
+      publish: async (yaml, key) => {
+        sent.push({ yaml, key });
+        if (yaml.includes("send-email") && conflicts-- > 0)
+          throw new ApiError(409, {
+            code: "WV-IDEMPOTENCY-CONFLICT",
+            message: "This key was used with other content",
+          });
+        return version(`${nameIn(yaml)}@1.0.0`);
+      },
+    }));
+    await publisher.prepare();
+    expect(await publisher.publish()).toBe(false);
+    expect(publisher.rows()[1]).toMatchObject({
+      state: "failed",
+      message:
+        "The platform saw this request before with different content. Try again sends it as a new request.",
+    });
+    expect(await publisher.publish()).toBe(true);
+    const keys = sent.map((item) => item.key);
+    expect(keys).toHaveLength(3);
+    expect(keys[2]).not.toBe(keys[1]);
+    expect(keys[2].startsWith(keys[1].slice(0, 186))).toBe(true);
+    expect(keys[2].length).toBeLessThanOrEqual(200);
+    expect(nameIn(sent[2].yaml)).toBe("order-intake.send-email");
   });
 });

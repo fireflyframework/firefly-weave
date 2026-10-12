@@ -8229,8 +8229,10 @@ export class App implements CanvasHost {
     if (route?.id && this.view === "runs") void this.viewRun({ id: route.id });
   }
   @HostListener("window:keydown", ["$event"]) key(event: KeyboardEvent) {
-    // Step details and workflow settings run their own keys.
+    // Step details, workflow settings and the publish dialog run their own
+    // keys; while that dialog is open, nothing else may change the workflow.
     if (
+      this.stepDetails.ownedPublish() ||
       (event.target as HTMLElement).closest?.(
         "weave-step-details, weave-workflow-settings-dialog",
       )
