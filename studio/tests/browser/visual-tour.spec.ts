@@ -2964,7 +2964,7 @@ spec:
   async "canvas-v2-selection"({ page, shot, size }) {
     const canvas = await openWorkflow(page);
     await canvas.tileBody("prepare-request").click();
-    await hideStepDetails(page, size.width, true);
+    await hideStepDetails(page, size.width);
     await canvas.tileBody("approval").click({ modifiers: ["Shift"] });
     await expect(
       canvas.root.getByRole("toolbar", { name: "Selected steps" }),
@@ -3183,14 +3183,15 @@ spec:
   },
 
   // The editor's navigation: nothing chosen (full at 1440 px and wider, the
-  // rail below), and collapsed by the person. A step is open on the right.
-  async "editor-nav-expanded"({ page, shot }) {
+  // rail below), and collapsed by the person. A step is selected, and shown
+  // on the right where there is room for it.
+  async "editor-nav-expanded"({ page, shot, size }) {
     const canvas = await openWorkflow(page);
-    await openStepDetails(page, canvas);
+    await selectStep(page, canvas, size.width);
     await shot("88-editor-nav-expanded");
   },
 
-  async "editor-nav-collapsed"({ page, shot }) {
+  async "editor-nav-collapsed"({ page, shot, size }) {
     const canvas = await openWorkflow(page);
     const toggle = page.getByRole("button", {
       name: /^(Collapse|Expand) navigation$/,
@@ -3203,7 +3204,7 @@ spec:
       await toggle.click();
       await expect(toggle).toHaveAttribute("aria-expanded", "false");
     }
-    await openStepDetails(page, canvas);
+    await selectStep(page, canvas, size.width);
     await shot("89-editor-nav-collapsed");
   },
   async incidents({ page, shot }) {
@@ -3480,29 +3481,32 @@ async function panIntoView(
  * (`opened`). It waits for them to show, then closes them with the panel's
  * own button where it has one (1280 px and narrower), else the toolbar's.
  */
-async function hideStepDetails(page: Page, width: number, opened = false) {
+/**
+ * Hides the inspector beside the canvas. Up to 1280 px it isn't there: a
+ * click on a step on the new canvas only selects it.
+ */
+async function hideStepDetails(page: Page, width: number) {
   const details = new DesignerPage(page).inspector;
-  if (!opened && width <= 1280) return expect(details).toBeHidden();
+  if (width <= 1280) return expect(details).toBeHidden();
   await expect(details).toBeVisible();
-  await (
-    width <= 1280
-      ? details.getByRole("button", { name: "Close inspector", exact: true })
-      : page.getByRole("button", { name: "Hide inspector", exact: true })
-  ).click();
+  await page
+    .getByRole("button", { name: "Hide inspector", exact: true })
+    .click();
   await expect(details).toBeHidden();
 }
 
-/** Selects a step on the new canvas and waits for its details on the right. */
-async function openStepDetails(page: Page, canvas: CanvasPage) {
-  await canvas.tileBody("prepare-request").click();
+/**
+ * Selects a step on the new canvas: a click only selects it. Wider than
+ * 1280 px the inspector beside the canvas shows it; opening it (Enter)
+ * would cover the window, the navigation too, with its step details.
+ */
+async function selectStep(page: Page, canvas: CanvasPage, width: number) {
+  const tile = canvas.tileBody("prepare-request");
+  await tile.click();
+  await expect(tile).toHaveAttribute("aria-pressed", "true");
   const details = new DesignerPage(page).inspector;
-  // Phones keep the panel closed until asked for: Enter opens it.
-  try {
-    await expect(details).toBeVisible({ timeout: 1500 });
-  } catch {
-    await canvas.tileBody("prepare-request").press("Enter");
-    await expect(details).toBeVisible();
-  }
+  if (width <= 1280) await expect(details).toBeHidden();
+  else await expect(details).toBeVisible();
 }
 
 for (const size of sizes)
