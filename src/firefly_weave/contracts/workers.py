@@ -16,7 +16,8 @@
 
 """Remote worker protocol. No persistence, startup or secret-provider dependencies."""
 
-from typing import Literal
+import json
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
@@ -63,13 +64,61 @@ class WorkerRelease(ReleaseRequest):
     id: UUID
 
 
+# A hostname, pod name, or Kubernetes namespace or node name: never a path, URL or shell text.
+type WorkerHost = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")]
+# A reported software or platform value, such as 0.1.0a15, 3.12.4, Linux or x86_64.
+type WorkerVersion = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")]
+type WorkerLabelKey = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")]
+type WorkerLabelValue = Annotated[str, Field(max_length=256, pattern=r"^[^\x00-\x1f\x7f-\x9f]*$")]
+
+# Label keys that would invite operators to put credentials into worker metadata.
+CREDENTIAL_LABEL_WORDS = ("token", "password", "secret", "authorization")
+# The worker_facts.identity column stores at most this many bytes of jsonb text.
+WORKER_IDENTITY_BYTES = 4096
+
+
+def identity_text_bytes(value: object) -> int:
+    """The size of a JSON value as PostgreSQL renders it from jsonb, in UTF-8 bytes."""
+    return len(json.dumps(value, ensure_ascii=False, separators=(", ", ": ")).encode())
+
+
+class WorkerIdentity(ContractModel):
+    """Where a worker says it runs. Display metadata only: it never grants authority or placement."""
+
+    host: WorkerHost | None = Field(default=None, exclude_if=lambda v: v is None)
+    runtime: Literal["embedded", "container", "process"]
+    sdk_version: WorkerVersion | None = Field(default=None, exclude_if=lambda v: v is None)
+    language_version: WorkerVersion | None = Field(default=None, exclude_if=lambda v: v is None)
+    os: WorkerVersion | None = Field(default=None, exclude_if=lambda v: v is None)
+    arch: WorkerVersion | None = Field(default=None, exclude_if=lambda v: v is None)
+    platform_hint: Literal["kubernetes", "docker", "none"] = "none"
+    namespace: WorkerHost | None = Field(default=None, exclude_if=lambda v: v is None)
+    node: WorkerHost | None = Field(default=None, exclude_if=lambda v: v is None)
+    labels: dict[WorkerLabelKey, WorkerLabelValue] = Field(
+        default_factory=dict, max_length=8, exclude_if=lambda v: not v
+    )
+
+    @model_validator(mode="after")
+    def bounded(self) -> Self:
+        if any(word in key.lower() for key in self.labels for word in CREDENTIAL_LABEL_WORDS):
+            raise ValueError("Worker labels cannot name credentials")
+        if identity_text_bytes(self.model_dump(mode="json")) > WORKER_IDENTITY_BYTES:
+            raise ValueError("Worker identity exceeds 4 KiB")
+        return self
+
+
 class InstanceRequest(ContractModel):
     release_id: UUID
     task_types: list[str] = Field(min_length=1, max_length=100)
     capacity: int = Field(ge=1, le=100)
+    # Sent by current workers; a server that predates it refuses the field, and workers then
+    # register once more without it.
+    identity: WorkerIdentity | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class WorkerInstance(InstanceRequest):
+    """The stable registration answer and stored instance. Identity lives in the worker's facts."""
+
     id: UUID
     principal_id: UUID
     revoked: bool = False
@@ -80,7 +129,11 @@ class WorkerControlRequest(ContractModel):
 
 
 class WorkerStatus(WorkerInstance):
-    """A scoped observation, separate from the stable worker registration protocol."""
+    """A scoped observation, separate from the stable worker registration protocol.
+
+    `identity` and `registered_at` come from the worker's facts and are left out when unknown,
+    as they are for workers registered before they were recorded.
+    """
 
     revision: int = Field(ge=1)
     draining: bool
@@ -91,6 +144,7 @@ class WorkerStatus(WorkerInstance):
     observed_at: AwareDatetime
     active_leases: int = Field(ge=0)
     available_capacity: int | None = Field(ge=0, le=100)
+    registered_at: AwareDatetime | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class LeaseProof(ContractModel):

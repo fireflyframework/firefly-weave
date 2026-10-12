@@ -136,6 +136,7 @@ from firefly_weave.contracts.workers import (
 )
 from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugSession
 from firefly_weave.sdk.errors import ContractError, PreconditionFailed, TransportError, WeaveError
+from firefly_weave.sdk.worker_registration import negotiate_worker_registration
 from firefly_weave.triggers.models import Trigger, TriggerRequest
 
 if TYPE_CHECKING:
@@ -567,7 +568,13 @@ class WeaveClient:
         return cast(WorkerRelease, await self.invoke("releases.create", body=request))
 
     async def register_worker(self, request: InstanceRequest) -> WorkerInstance:
-        return cast(WorkerInstance, await self.invoke("workers.create", body=request))
+        """Register a worker; a server that predates `identity` gets one retry without it."""
+
+        async def send(include_identity: bool) -> WorkerInstance:
+            value = request if include_identity else request.model_copy(update={"identity": None})
+            return cast(WorkerInstance, await self.invoke("workers.create", body=value))
+
+        return await negotiate_worker_registration(send, has_identity=request.identity is not None)
 
     async def read_release(self, identifier: UUID) -> WorkerRelease:
         return cast(WorkerRelease, await self.invoke("releases.read", identifier=identifier))

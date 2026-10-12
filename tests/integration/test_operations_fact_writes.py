@@ -705,6 +705,15 @@ async def test_listing_cache_cannot_veto_admitted_completion(
         if cache == "backfilled":
             for table in ("run_event_evidence", "run_events", "run_facts"):
                 await owner.execute(text(f"DELETE FROM {table} WHERE run_id=:id"), {"id": run.id})
+            # Registration already recorded these workers' facts. The frozen backfill runs once on an
+            # empty worker_facts table during the upgrade, so restore that state before replaying it.
+            await owner.execute(
+                text(
+                    "DELETE FROM worker_facts WHERE tenant_id=:tenant AND project_id=:project "
+                    "AND environment_id=:environment"
+                ),
+                params,
+            )
             frozen = runpy.run_path(
                 str(Path(__file__).resolve().parents[2] / "migrations/versions/0031_operations_facts.py")
             )
@@ -854,3 +863,229 @@ async def test_join_progress_preserves_first_observed_times(
         assert (fact["ended_at"] is not None) is (status == "succeeded")
     async with case.owner() as owner:
         await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})
+
+
+def worker_identity_value():
+    from firefly_weave.contracts.workers import WorkerIdentity
+
+    return WorkerIdentity(host="worker-1", runtime="process")
+
+
+def registration_request(case, identity):
+    from firefly_weave.contracts.workers import InstanceRequest
+
+    existing = case.instances[0]
+    return InstanceRequest(
+        release_id=existing.release_id, task_types=existing.task_types, capacity=1, identity=identity
+    )
+
+
+WORKER_FACTS = (
+    "SELECT w.payload,f.identity,f.registered_at FROM worker_instances w "
+    "JOIN worker_facts f ON f.worker_id=w.id AND f.tenant_id=w.tenant_id "
+    "AND f.project_id=w.project_id AND f.environment_id=w.environment_id "
+    "WHERE w.tenant_id=:tenant AND w.project_id=:project AND w.environment_id=:environment AND w.id=:id"
+)
+
+
+@pytest.mark.parametrize("identity", [None, "bounded"])
+async def test_worker_registration_facts_match_source(operations_case, identity):
+    case = operations_case
+    identity = worker_identity_value() if identity else None
+    request = registration_request(case, identity)
+    async with case.tx() as tx:
+        before = await tx.session.scalar(text("SELECT clock_timestamp()"))
+    registered = await case.workers.register_instance(case.actor, case.scope, request, context=AuditContext())
+    rows = await case.rows(WORKER_FACTS, id=registered.id)
+    assert len(rows) == 1 and rows[0]["registered_at"] is not None and rows[0]["registered_at"] >= before
+    assert "identity" not in rows[0]["payload"]
+    assert rows[0]["identity"] == ({} if identity is None else identity.model_dump(mode="json", exclude_none=True))
+    # The registration answer keeps its bytes; identity is read from the worker's facts.
+    assert registered.identity is None and "identity" not in registered.model_dump(mode="json")
+    status = await case.workers.read(case.actor, case.scope, registered.id, context=AuditContext())
+    assert status.identity == identity and status.registered_at == rows[0]["registered_at"]
+    from operations_support import assert_usage
+
+    async with case.owner() as owner:
+        await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})
+
+
+async def test_workers_without_facts_or_identity_read_as_unknown(operations_case):
+    case = operations_case
+    legacy, backfilled = case.instances
+    async with case.owner.begin() as owner:
+        await owner.execute(text("DELETE FROM worker_facts WHERE worker_id=:id"), {"id": legacy.id})
+        await owner.execute(
+            text("UPDATE worker_facts SET registered_at=NULL,identity='{}' WHERE worker_id=:id"), {"id": backfilled.id}
+        )
+    for instance in (legacy, backfilled):
+        status = await case.workers.read(case.actor, case.scope, instance.id, context=AuditContext())
+        assert status.identity is None and status.registered_at is None
+        assert not {"identity", "registered_at"} & set(status.model_dump(mode="json"))
+    page = await case.workers.list(case.actor, case.scope, context=AuditContext())
+    assert all("identity" not in item and "registered_at" not in item for item in page["items"])
+
+
+async def test_largest_identity_fits_its_database_column(operations_case):
+    import json
+
+    from firefly_weave.contracts.workers import WorkerIdentity
+
+    case = operations_case
+    identity = WorkerIdentity(
+        host="h" * 253,
+        runtime="container",
+        sdk_version="s" * 64,
+        language_version="l" * 64,
+        os="o" * 64,
+        arch="a" * 64,
+        platform_hint="kubernetes",
+        namespace="n" * 253,
+        node="d" * 253,
+        labels={f"key-{index}": 'é\\"' + "v" * 150 for index in range(8)},
+    )
+    registered = await case.workers.register_instance(
+        case.actor, case.scope, registration_request(case, identity), context=AuditContext()
+    )
+    measured = (
+        await case.rows(
+            "SELECT octet_length(identity::text) AS size FROM worker_facts WHERE worker_id=:id", id=registered.id
+        )
+    )[0]["size"]
+    text_form = json.dumps(identity.model_dump(mode="json"), ensure_ascii=False, separators=(", ", ": "))
+    assert measured == len(text_form.encode()) <= 4096
+
+
+async def worker_rows(case):
+    async with case.owner() as owner:
+        return {
+            table: (await owner.execute(text(f"SELECT to_jsonb(t)::text AS row FROM {table} t ORDER BY 1")))
+            .scalars()
+            .all()
+            for table in ("worker_instances", "worker_facts", "operation_usage", "access_audit")
+        }
+
+
+@pytest.mark.parametrize("after", [False, True])
+async def test_failed_worker_fact_insert_rolls_back_the_registration(operations_case, monkeypatch, after):
+    from firefly_weave.workers.repository import WorkerRepository
+
+    case = operations_case
+    before = await worker_rows(case)
+    original = WorkerRepository.record_registration
+    reached = []
+
+    async def fail(self, *args, **kwargs):
+        reached.append(
+            await self.tx.session.scalar(text("SELECT count(*) FROM worker_instances WHERE id=:id"), {"id": args[0]})
+        )
+        if after:
+            await original(self, *args, **kwargs)
+        raise RuntimeError("worker fact rollback")
+
+    monkeypatch.setattr(WorkerRepository, "record_registration", fail)
+    with pytest.raises(RuntimeError, match="worker fact rollback"):
+        await case.workers.register_instance(
+            case.actor, case.scope, registration_request(case, worker_identity_value()), context=AuditContext()
+        )
+    assert reached == [1]
+    assert await worker_rows(case) == before
+
+
+@pytest.mark.parametrize("refused", ["before_registration", "at_fact_insert"])
+async def test_worker_registration_facts_roll_back_at_quota(operations_case, monkeypatch, refused):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.workers.repository import WorkerRepository
+
+    case = operations_case
+    saturate = text(
+        "UPDATE operation_policy SET limits=jsonb_set(limits,'{ordinary_bytes}',to_jsonb((SELECT value FROM "
+        "operation_usage WHERE tenant_id=:tenant AND project_id=:project "
+        "AND environment_id='00000000-0000-0000-0000-000000000000' AND metric='ordinary_bytes')))"
+    )
+    scope = {"tenant": case.scope.tenant_id, "project": case.scope.project_id}
+    reached = []
+    if refused == "before_registration":
+        async with case.owner.begin() as owner:
+            await owner.execute(saturate, scope)
+    else:
+        original = WorkerRepository.record_registration
+
+        async def saturate_then_record(self, *args, **kwargs):
+            # The source row is already charged in this transaction; the limit now equals the
+            # committed usage, so only the fact insert can exceed it.
+            reached.append(args[0])
+            async with case.owner.begin() as owner:
+                await owner.execute(saturate, scope)
+            await original(self, *args, **kwargs)
+
+        monkeypatch.setattr(WorkerRepository, "record_registration", saturate_then_record)
+    before = await worker_rows(case)
+    with pytest.raises(CatalogError) as caught:
+        await case.workers.register_instance(
+            case.actor, case.scope, registration_request(case, worker_identity_value()), context=AuditContext()
+        )
+    assert (caught.value.status, caught.value.code) == (429, "WV-OPERATION-CAPACITY")
+    assert len(reached) == (0 if refused == "before_registration" else 1)
+    assert await worker_rows(case) == before
+    from operations_support import assert_usage
+
+    async with case.owner() as owner:
+        await assert_usage(owner, scope)
+
+
+async def test_registration_over_http_reports_identity_and_refuses_forged_fields(
+    client, access_db, provisioned, headers, env_url, worker_runtime_fixture
+):
+    from firefly_weave.access.models import Grant
+    from firefly_weave.sdk.worker_registration import register_worker_http
+
+    sessions, owner, access, _ = access_db
+    scope = provisioned[1][0]
+    async with sessions() as tx:
+        principal = await tx.scalar(text("SELECT principal_id FROM identity_links WHERE subject='0'"))
+    for role in ("deployer", "operator", "worker"):
+        await access.grant(provisioned[0], principal, Grant(role=role, scope=scope))
+    contract = next(
+        v.definition.value for k, v in worker_runtime_fixture["catalog"].resources.items() if k[0] == "TaskCapability"
+    )
+    release = await client.post(
+        env_url + "/worker-releases",
+        headers=headers,
+        json={"image_digest": "sha256:" + "c" * 64, "capabilities": [contract]},
+    )
+    assert release.status_code == 201, release.text
+    body = {"release_id": release.json()["id"], "task_types": ["echo@1.2.0"], "capacity": 1}
+    identity = {"host": "worker-1", "runtime": "container", "platform_hint": "docker", "labels": {"team": "a"}}
+    placement = {"target_id": str(uuid4()), "target_name": "t", "deployment_id": str(uuid4()), "component": "w"}
+    for forged in (
+        {**body, "placement": placement},
+        {**body, "identity": {**identity, "placement": placement}},
+        {**body, "identity": {**identity, "labels": {"api_token": "x"}}},
+        {**body, "registered_at": "2026-10-01T00:00:00Z"},
+    ):
+        refused = await client.post(env_url + "/workers", headers=headers, json=forged)
+        assert (refused.status_code, refused.json()["code"]) == (422, "WV-VALIDATION"), refused.text
+    sent = []
+
+    async def count(request):
+        sent.append(request)
+
+    hooks = list(client.event_hooks["request"])
+    client.event_hooks = {**client.event_hooks, "request": [*hooks, count]}
+    client.headers.update(headers)
+    try:
+        # A server that knows worker identity accepts it on the first request.
+        response = await register_worker_http(client, env_url, {**body, "identity": identity})
+    finally:
+        client.event_hooks = {**client.event_hooks, "request": hooks}
+    assert response.status_code == 201 and len(sent) == 1
+    assert set(response.json()) == {"release_id", "task_types", "capacity", "id", "principal_id", "revoked"}
+    read = await client.get(env_url + "/workers/" + response.json()["id"], headers=headers)
+    assert read.status_code == 200, read.text
+    assert read.json()["identity"] == identity and read.json()["registered_at"]
+    async with owner() as tx:
+        stored = (
+            await tx.execute(text("SELECT payload FROM worker_instances WHERE id=:id"), {"id": response.json()["id"]})
+        ).scalar_one()
+    assert "identity" not in stored

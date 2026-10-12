@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Protocol, cast
@@ -39,6 +40,29 @@ from firefly_weave.sdk.client import WeaveClient
 class RunnerPolicyError(Exception):
     def __init__(self) -> None:
         super().__init__("The operation does not match the runner's local authority or current observation.")
+
+
+_OBSERVED_TIME = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})")
+
+
+def observed_time(value: object) -> datetime | None:
+    """An RFC 3339 time a provider reported, to the microsecond; its zero time means never.
+
+    Docker reports nanoseconds and `0001-01-01T00:00:00Z` for a container that never started.
+    Anything else that is not such a time refuses the observation instead of guessing.
+    """
+    if value is None:
+        return None
+    match = _OBSERVED_TIME.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        raise RunnerPolicyError()
+    if match[1].startswith("0001-01-01T"):
+        return None
+    fraction = "." + match[2][:6].ljust(6, "0") if match[2] else ""
+    try:
+        return datetime.fromisoformat(match[1] + fraction + ("+00:00" if match[3] == "Z" else match[3]))
+    except ValueError:
+        raise RunnerPolicyError() from None
 
 
 class InfrastructureAdapter(Protocol):

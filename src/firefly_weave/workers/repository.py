@@ -23,10 +23,16 @@ from uuid import UUID
 
 from sqlalchemy import text
 
-from firefly_weave.contracts.workers import CompletionReceipt, WorkerInstance, WorkerRelease, WorkerStatus
+from firefly_weave.contracts.workers import (
+    CompletionReceipt,
+    WorkerIdentity,
+    WorkerInstance,
+    WorkerRelease,
+    WorkerStatus,
+)
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.uow import Transaction
-from firefly_weave.workers.models import observed_worker, unavailable
+from firefly_weave.workers.models import observed_worker, stored_identity, unavailable
 
 SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
 
@@ -76,9 +82,25 @@ class WorkerRepository:
             id=identifier,
         )
 
+    async def record_registration(self, identifier: UUID, identity: WorkerIdentity | None) -> None:
+        """Record a new instance's facts in its registration transaction, never in its payload."""
+        await self.execute(
+            "INSERT INTO worker_facts(tenant_id,project_id,environment_id,worker_id,registered_at,identity) "
+            "VALUES(:tenant,:project,:environment,:id,clock_timestamp(),cast(:identity AS jsonb))",
+            id=identifier,
+            identity=json.dumps({} if identity is None else identity.model_dump(mode="json")),
+        )
+
     async def status(self, identifier: UUID, observed_at: datetime | None = None) -> WorkerStatus:
         now = observed_at or await self.now()
-        rows = await self.rows(f"SELECT * FROM worker_instances WHERE {SCOPE} AND id=:id", id=identifier)
+        rows = await self.rows(
+            "SELECT w.payload,w.revoked,w.draining,w.control_revision,w.last_seen_at,"
+            "f.identity,f.registered_at FROM worker_instances w LEFT JOIN worker_facts f "
+            "ON f.worker_id=w.id AND f.tenant_id=w.tenant_id AND f.project_id=w.project_id "
+            "AND f.environment_id=w.environment_id WHERE w.tenant_id=:tenant AND w.project_id=:project "
+            "AND w.environment_id=:environment AND w.id=:id",
+            id=identifier,
+        )
         if not rows:
             raise CatalogError(404, "WV-NOT-FOUND", "Worker resource not found")
         row = rows[0]
@@ -95,6 +117,8 @@ class WorkerRepository:
             revision=row["control_revision"],
             active_leases=active[0]["count"],
             observed_at=now,
+            identity=stored_identity(row["identity"]),
+            registered_at=row["registered_at"],
         )
 
     async def lease(self, task: UUID, generation: int) -> dict[str, Any]:

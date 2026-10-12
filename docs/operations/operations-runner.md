@@ -57,7 +57,9 @@ substantial host authority: isolate the runner and keep its provider permissions
 within the destination it operates. For Kubernetes, grant only the namespace and
 resource permissions needed by the allowed deployments. API-component updates
 also require reading that namespace's horizontal pod autoscalers so the runner
-can reject a conflicting scaling policy.
+can reject a conflicting scaling policy. Observing a worker component also lists
+the namespace's pods (`list` on `pods`), so grant that read before upgrading
+the runner; without it, observing a target with a worker component fails.
 
 ## 2. Copy the destination's actual identity
 
@@ -235,6 +237,15 @@ that singleton rule in your cluster admission and operator policies too.
 The adapter changes only the selected container's image/resources, replicas,
 and its ownership label. A worker scaling plan does not change the image.
 Objects already labeled as belonging to another Weave target are rejected.
+
+For a worker component, the observation also lists the deployment's pods as
+members, read with the deployment's own `matchLabels` selector inside the
+pinned namespace. A pod counts only when its controlling ReplicaSet is named
+after the deployment and its pod template hash. More than 100 member pods, or a
+selector label that is not valid Kubernetes label syntax, fails the observation
+instead of reporting part of it. A Compose worker service reports its containers the same way,
+using each container's ID prefix and Compose number; it also fails with more
+than 100 containers.
 
 ### Azure Container Apps
 

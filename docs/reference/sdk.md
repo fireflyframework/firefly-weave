@@ -378,6 +378,17 @@ code. Paginated methods return a typed `Page`, except run history, whose
 belong to the client's scope. Secret leases use the `CredentialLease` model,
 whose ordinary serialization leaves out the resolved value.
 
+**Worker registration.** `register_worker` sends the request's optional
+`identity`, usually from `worker_identity()` in `firefly_weave.sdk.worker_identity`.
+When an older server refuses it with `422` `WV-VALIDATION`, the method registers
+exactly once more without it; other errors are raised unchanged. A worker that
+registers with its own HTTP client calls
+`register_worker_http(client, environment_url, body)` from
+`firefly_weave.sdk.worker_registration` for the same behavior on that client.
+`worker_identity()` reads only `WEAVE_WORKER_REPORT_HOST`, `WEAVE_WORKER_LABELS`,
+`WEAVE_POD_NAMESPACE`, `WEAVE_NODE_NAME`, and `KUBERNETES_SERVICE_HOST`; see
+[worker identity](../guides/workers.md#report-where-a-worker-runs).
+
 ## Deployment Operations through the SDK
 
 Use `WeaveClient.invoke` with models from

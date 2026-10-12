@@ -17,12 +17,15 @@
 """Lease identities and shared safe failures."""
 
 import hashlib
+import json
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from firefly_weave.contracts.workers import WorkerInstance, WorkerStatus
+from pydantic import ValidationError
+
+from firefly_weave.contracts.workers import WorkerIdentity, WorkerInstance, WorkerStatus
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import checked_deadline
@@ -44,6 +47,16 @@ def unavailable() -> CatalogError:
     return CatalogError(409, "WV-LEASE", "Lease or worker authority unavailable")
 
 
+def stored_identity(value: object) -> WorkerIdentity | None:
+    """A worker's recorded identity; empty (never reported) or unreadable reads as unknown."""
+    if not value:
+        return None
+    try:
+        return WorkerIdentity.model_validate_json(json.dumps(value))
+    except ValidationError:
+        return None
+
+
 def observed_worker(
     instance: WorkerInstance,
     *,
@@ -52,6 +65,8 @@ def observed_worker(
     revision: int,
     active_leases: int,
     observed_at: datetime,
+    identity: WorkerIdentity | None = None,
+    registered_at: datetime | None = None,
 ) -> WorkerStatus:
     expires = last_seen_at + timedelta(seconds=60) if last_seen_at else None
     presence: Literal["unknown", "recent", "stale"] = (
@@ -61,7 +76,9 @@ def observed_worker(
     if draining or instance.revoked:
         available = 0
     return WorkerStatus(
-        **instance.model_dump(),
+        **instance.model_dump(exclude={"identity"}),
+        identity=identity,
+        registered_at=registered_at,
         revision=revision,
         draining=draining,
         presence=presence,

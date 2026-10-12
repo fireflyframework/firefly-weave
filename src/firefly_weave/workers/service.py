@@ -159,7 +159,8 @@ class WorkerService(WorkerAdmissionPort):
                 raise AccessDenied()
             for capability in request.task_types:
                 await self.require(actor, scope, "worker.register", context, tx, capability)
-            instance = WorkerInstance(id=uuid4(), principal_id=actor.id, **request.model_dump())
+            # The stored instance and the registration answer keep their bytes; identity is a fact.
+            instance = WorkerInstance(id=uuid4(), principal_id=actor.id, **request.model_dump(exclude={"identity"}))
             await repository.execute(
                 "INSERT INTO worker_instances "
                 "(id,tenant_id,project_id,environment_id,release_id,principal_id,payload,revoked) "
@@ -170,6 +171,7 @@ class WorkerService(WorkerAdmissionPort):
                 principal=actor.id,
                 payload=instance.model_dump_json(),
             )
+            await repository.record_registration(instance.id, request.identity)
             await audit(
                 tx.session,
                 actor,

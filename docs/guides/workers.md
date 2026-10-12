@@ -230,6 +230,35 @@ and stops claiming early enough to drain its declared 180-second tasks; a
 supervisor can restart it with fresh credentials. It is not an indefinitely
 refreshing token client.
 
+### Report where a worker runs
+
+A worker can describe where it runs when it registers. Operators then see the
+host, runtime, versions and labels on the worker, and the server can match the
+host to a container or pod of an observed deployment. The identity is display
+metadata: it never grants a worker more authority, and a worker cannot report
+its own placement.
+
+The packaged Agentic and Files workers and the API's native executors send it
+automatically. A worker you write sends it by registering with
+`register_worker_http(client, environment_url, body)`, with
+`"identity": worker_identity().model_dump(mode="json")` in the body, or with
+`WeaveClient.register_worker`. Both retry once without the identity when an
+older server refuses it. The checked-in example registers without one.
+
+| Variable | Effect |
+| --- | --- |
+| `WEAVE_WORKER_REPORT_HOST` | `false` leaves out the hostname (the pod name in Kubernetes); default `true` |
+| `WEAVE_WORKER_LABELS` | Up to 8 `key=value` pairs separated by commas, for example `team=payments,tier=gold` |
+| `WEAVE_POD_NAMESPACE`, `WEAVE_NODE_NAME` | The pod's namespace and node, set from the Kubernetes downward API |
+| `KUBERNETES_SERVICE_HOST` | Set by Kubernetes; the worker then reports a `container` runtime and the `kubernetes` platform |
+
+Labels are visible to everyone who can read workers. Never put credentials in
+them: keys that name a token, password, secret or authorization are refused,
+and an invalid label stops the worker before it registers (for native
+executors, it stops the API's executor start), with a message that does not
+repeat the value. An invalid hostname or platform value is left out
+instead.
+
 ## 4. Observe one task through completion
 
 Start a workflow that calls the published Action. Inspect its run history and

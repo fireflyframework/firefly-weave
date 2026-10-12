@@ -27,21 +27,61 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import ValidationError
+
 from firefly_weave.compiler.canonical import canonical_digest
-from firefly_weave.contracts.deployments import DeploymentPlan, ObservationReport, ObservedResource
+from firefly_weave.contracts.deployments import DeploymentPlan, ObservationReport, ObservedMember, ObservedResource
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.deployment_runner.command import run_command
 from firefly_weave.deployment_runner.policy import DestinationPolicy
-from firefly_weave.deployment_runner.runtime import RunnerPolicyError
+from firefly_weave.deployment_runner.runtime import RunnerPolicyError, observed_time
 
 _INSPECT = (
     '{"id":{{json .Id}},"image":{{json .Config.Image}},"state":{{json .State.Status}},'
     '"started":{{json .State.StartedAt}},"restart":{{json .RestartCount}},'
     '"project":{{json (index .Config.Labels "com.docker.compose.project")}},'
     '"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
+    '"number":{{json (index .Config.Labels "com.docker.compose.container-number")}},'
     '"target":{{json (index .Config.Labels "firefly.weave.target")}},'
     '"health":{{with (index .State "Health")}}{{json .Status}}{{else}}""{{end}}}'
 )
+
+
+def _ready(fact: dict[str, Any]) -> bool:
+    return fact.get("state") == "running" and fact.get("health") in {"", "healthy"}
+
+
+def _versioned(fact: dict[str, Any]) -> dict[str, Any]:
+    # The container number is read for members only. Leaving it out keeps each resource
+    # version, and the plans reviewed against it, as they were before members existed.
+    return {key: value for key, value in fact.items() if key != "number"}
+
+
+def _members(facts: list[dict[str, Any]]) -> list[ObservedMember]:
+    """Worker containers as members; more than the contract holds refuses instead of truncating."""
+    if len(facts) > 100:
+        raise RunnerPolicyError()
+    members = []
+    for fact in facts:
+        number = fact.get("number")
+        if number not in (None, "") and not (isinstance(number, str) and number.isdigit() and len(number) <= 7):
+            raise RunnerPolicyError()
+        try:
+            members.append(
+                ObservedMember(
+                    # Docker's default hostname, which the worker reports, is the ID prefix.
+                    host=fact["id"][:12],
+                    ordinal=int(number) if number else None,
+                    state=fact["state"],
+                    ready=_ready(fact),
+                    started_at=observed_time(fact["started"]),
+                    restarts=fact["restart"],
+                    node=None,
+                )
+            )
+        except (KeyError, ValidationError):
+            raise RunnerPolicyError() from None
+    return members
 
 
 class ComposeAdapter:
@@ -132,7 +172,7 @@ class ComposeAdapter:
                 image = None
             if not isinstance(image, str) or not self.policy.allows_image(image):
                 image = None
-            ready = sum(item.get("state") == "running" and item.get("health") in {"", "healthy"} for item in members)
+            ready = sum(_ready(item) for item in members)
             desired = spec.get("deploy", {}).get("replicas", 1)
             stopped = not members and desired == 0
             stable = stopped or (ready == len(members) == desired)
@@ -148,9 +188,13 @@ class ComposeAdapter:
                     image=image,
                     replicas=len(members),
                     ready_replicas=ready,
-                    version=canonical_digest(cast(JsonObject, {"configuration": configuration, "members": members})),
+                    version=canonical_digest(
+                        cast(JsonObject, {"configuration": configuration, "members": [_versioned(m) for m in members]})
+                    ),
                     ownership="managed" if managed else "imported",
                     state="stopped" if stopped else "ready" if stable else "progressing",
+                    # Placement only concerns workers; other components keep their observation bytes.
+                    members=_members(members) if binding.kind == "worker" else [],
                 )
             )
         return ObservationReport(resources=resources, complete=True, settled=settled)

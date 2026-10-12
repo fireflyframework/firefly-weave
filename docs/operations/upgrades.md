@@ -45,7 +45,7 @@ the desktop app never migrates a platform.
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
-| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Upgrade CLIs and SDKs together with the server; see [incident list compatibility](#incident-list-compatibility). |
+| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Upgrade CLIs and SDKs together with the server; see [incident list compatibility](#incident-list-compatibility) and [worker identity compatibility](#worker-identity-compatibility). |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -237,6 +237,37 @@ event was not retained, the upgrade used the run's last recorded event and
 marks the time `opened_at_estimated`; without either, the opening time stays
 unknown.
 
+## Worker identity compatibility
+
+Workers can now report where they run when they register, and worker reads
+return it. The change crosses versions in both directions:
+
+- **New workers, older server.** The Agentic and Files workers, native
+  executors, and the Python SDK's `register_worker` send an `identity`. A server
+  without it refuses the field with `422 WV-VALIDATION`; the worker then
+  registers exactly once more without it, on the same connection and
+  credentials. Other failures are not retried. Upgrade servers first to keep the
+  identity.
+- **Older clients, new server.** Worker reads, lists, and drain or resume
+  answers add `identity` and `registered_at` when they are known. **Upgrade
+  CLIs and SDKs with the server.** Earlier releases reject the new fields:
+  `weave workers list`, `read`, `drain`, and `resume`, and the Python SDK's
+  `read_worker`, `list_workers`, `drain_worker`, and `resume_worker`, fail with
+  `502 WV-WIRE` for a worker registered after the upgrade. A drain or resume is
+  still applied; read the worker again with an upgraded client. Workers
+  registered before the upgrade, the registration answer, and stored worker
+  records keep their earlier shape.
+- **Labels.** `WEAVE_WORKER_LABELS` is read only from the worker's own
+  environment. An invalid label stops the worker before it registers, so check
+  the setting before rolling out new worker images.
+
+Deployment observations add `members` to worker components, left out when
+empty, so existing observations, their digests, and plans reviewed against them
+are unchanged. Compose and Kubernetes resource versions are also unchanged. A
+Kubernetes runner now lists the namespace's pods to observe a worker component:
+grant `list` on `pods` in that namespace before upgrading the runner. See
+[the runner guide](operations-runner.md#kubernetes).
+
 ## Operational fact storage
 
 The `0031_operations_facts` migration adds five scoped operational projections
@@ -257,9 +288,10 @@ instead of being labeled as queued. A run requiring an unsupported IR version or
 language feature keeps that separate classification. Historical origins remain
 unknown unless an explicit start, retry or matching start receipt proves them.
 Signal delivery receipts do not establish how a run started. Historical step
-and task times are not invented, and older workers have an unknown registration
-time and empty identity until observed. Each run projection records when its
-coverage began.
+and task times are not invented, and worker instances registered before the
+upgrade keep an unknown registration time and no identity; a worker reports its
+identity when it next registers. Each run projection records when its coverage
+began.
 
 The new facts count toward ordinary storage usage. Active executions reserve
 additional capacity for bounded terminal fact updates, including allocation

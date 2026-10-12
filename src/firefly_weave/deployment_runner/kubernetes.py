@@ -25,13 +25,24 @@ from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from typing import Any
 
-from firefly_weave.contracts.deployments import ComponentSpec, DeploymentPlan, ObservationReport, ObservedResource
+from pydantic import ValidationError
+
+from firefly_weave.contracts.deployments import (
+    ComponentSpec,
+    DeploymentPlan,
+    ObservationReport,
+    ObservedMember,
+    ObservedResource,
+)
 from firefly_weave.deployment_runner.command import run_command
 from firefly_weave.deployment_runner.policy import ComponentBinding, DestinationPolicy
-from firefly_weave.deployment_runner.runtime import RunnerPolicyError
+from firefly_weave.deployment_runner.runtime import RunnerPolicyError, observed_time
 
 TARGET_LABEL = "firefly.weave/target"
 CONFIGURATION_ANNOTATION = "firefly.weave/configuration"
+# Kubernetes label syntax, so a selector built from a deployment is only ever `key=value` pairs.
+_LABEL_KEY = re.compile(r"(?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?")
+_LABEL_VALUE = re.compile(r"(?:[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?")
 
 
 def _quantity(value: Any) -> Decimal:
@@ -108,7 +119,88 @@ class KubernetesAdapter:
             raise RunnerPolicyError()
         return found[0]
 
-    def _fact(self, value: dict[str, Any], binding: ComponentBinding) -> ObservedResource:
+    def _selector(self, value: dict[str, Any]) -> dict[str, str]:
+        selector = value.get("spec", {}).get("selector")
+        labels = selector.get("matchLabels", {}) if isinstance(selector, dict) else None
+        if (
+            not isinstance(labels, dict)
+            or not (labels or selector.get("matchExpressions"))
+            or not all(
+                isinstance(key, str)
+                and isinstance(item, str)
+                and _LABEL_KEY.fullmatch(key)
+                and _LABEL_VALUE.fullmatch(item)
+                for key, item in labels.items()
+            )
+        ):
+            raise RunnerPolicyError()
+        return labels
+
+    def _member(
+        self, pod: Any, deployment: str, selector: dict[str, str], binding: ComponentBinding
+    ) -> ObservedMember | None:
+        """A pod of this deployment, or None for a pod that only shares its labels.
+
+        Pod data that does not have the shape Kubernetes reports refuses the observation.
+        """
+        try:
+            metadata = pod["metadata"]
+            labels = metadata.get("labels") or {}
+            owners = [item for item in metadata.get("ownerReferences") or [] if item.get("controller") is True]
+            template = labels.get("pod-template-hash")
+            # The deployment controller names each ReplicaSet `<deployment>-<pod-template-hash>`.
+            if (
+                metadata.get("namespace") != self.policy.boundary
+                or len(owners) != 1
+                or owners[0].get("apiVersion") != "apps/v1"
+                or owners[0].get("kind") != "ReplicaSet"
+                or not isinstance(template, str)
+                or owners[0].get("name") != f"{deployment}-{template}"
+                or any(labels.get(key) != item for key, item in selector.items())
+            ):
+                return None
+            status = pod.get("status") or {}
+            container: dict[str, Any] = next(
+                (item for item in status.get("containerStatuses") or [] if item.get("name") == binding.container), {}
+            )
+            phase = status.get("phase", "Unknown")
+            running = (container.get("state") or {}).get("running") or {}
+            return ObservedMember(
+                host=metadata.get("name"),
+                ordinal=None,
+                state="terminating"
+                if metadata.get("deletionTimestamp")
+                else (phase.lower() if isinstance(phase, str) else ""),
+                ready=any(
+                    item.get("type") == "Ready" and item.get("status") == "True"
+                    for item in status.get("conditions") or []
+                ),
+                started_at=observed_time(running.get("startedAt")),
+                restarts=container.get("restartCount", 0),
+                node=(pod.get("spec") or {}).get("nodeName"),
+            )
+        except (AttributeError, KeyError, TypeError, ValidationError):
+            raise RunnerPolicyError() from None
+
+    async def _members(self, value: dict[str, Any], binding: ComponentBinding) -> list[ObservedMember]:
+        """Pods the deployment owns, read through its own selector inside the pinned namespace."""
+        selector = self._selector(value)
+        arguments = ["get", "pods", "-o=json"]
+        if selector:
+            arguments.insert(2, "--selector=" + ",".join(f"{key}={item}" for key, item in sorted(selector.items())))
+        pods = (await self._json(*arguments)).get("items")
+        if not isinstance(pods, list):
+            raise RunnerPolicyError()
+        found = [self._member(pod, value["metadata"]["name"], selector, binding) for pod in pods]
+        members = [member for member in found if member is not None]
+        # The contract holds 100 members; refuse rather than report a truncated observation.
+        if len(members) > 100:
+            raise RunnerPolicyError()
+        return sorted(members, key=lambda member: member.host)
+
+    def _fact(
+        self, value: dict[str, Any], binding: ComponentBinding, members: list[ObservedMember] | None = None
+    ) -> ObservedResource:
         _, container = self._container(value, binding)
         metadata, spec, status = value["metadata"], value["spec"], value.get("status", {})
         desired = spec.get("replicas", 1)
@@ -138,6 +230,7 @@ class KubernetesAdapter:
             if metadata.get("labels", {}).get(TARGET_LABEL) == str(self.policy.target_id)
             else "imported",
             state=("stopped" if desired == 0 else "ready") if settled else "progressing",
+            members=members or [],
         )
 
     async def observe(self) -> ObservationReport:
@@ -146,7 +239,9 @@ class KubernetesAdapter:
         for binding in self.policy.components:
             value = await self._deployment(binding)
             if value:
-                resources.append(self._fact(value, binding))
+                # Placement only concerns workers; other components need no pod reads.
+                members = await self._members(value, binding) if binding.kind == "worker" else []
+                resources.append(self._fact(value, binding, members))
         return ObservationReport(
             resources=resources, complete=True, settled=all(item.state in {"ready", "stopped"} for item in resources)
         )

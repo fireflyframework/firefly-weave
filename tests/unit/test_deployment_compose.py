@@ -276,3 +276,188 @@ async def test_restart_preflight_does_not_wait_for_a_stopped_container(tmp_path)
     assert len(calls) == 2
     assert "--dry-run" in calls[0][0] and "--wait" not in calls[0][0]
     assert all(kwargs["timeout"] == 120 for _, kwargs in calls)
+
+
+def test_inspect_reads_only_whitelisted_metadata():
+    from firefly_weave.deployment_runner.compose import _INSPECT
+
+    fields = json.loads(
+        _INSPECT.replace("{{json .Id}}", '""')
+        .replace("{{json .Config.Image}}", '""')
+        .replace("{{json .State.Status}}", '""')
+        .replace("{{json .State.StartedAt}}", '""')
+        .replace("{{json .RestartCount}}", "0")
+        .replace('{{json (index .Config.Labels "com.docker.compose.project")}}', '""')
+        .replace('{{json (index .Config.Labels "com.docker.compose.service")}}', '""')
+        .replace('{{json (index .Config.Labels "com.docker.compose.container-number")}}', '""')
+        .replace('{{json (index .Config.Labels "firefly.weave.target")}}', '""')
+        .replace('{{with (index .State "Health")}}{{json .Status}}{{else}}""{{end}}', '""')
+    )
+    assert set(fields) == {
+        "id",
+        "image",
+        "state",
+        "started",
+        "restart",
+        "project",
+        "service",
+        "target",
+        "health",
+        "number",
+    }
+    for secret in ("Env", "Mounts", "Cmd", "Entrypoint", "Secrets", "HostConfig"):
+        assert secret not in _INSPECT
+
+
+def worker_project(config, containers):
+    """A Compose project whose worker service has the given containers, keyed by full ID."""
+
+    async def command(argv, **kwargs):
+        if "info" in argv:
+            return b'"daemon-id"'
+        if "config" in argv:
+            return json.dumps(
+                {
+                    "services": {
+                        "worker": {
+                            "image": "example.test/worker@sha256:" + "b" * 64,
+                            "labels": {"firefly.weave.target": str(config.target_id)},
+                            "deploy": {"replicas": len(containers)},
+                        }
+                    }
+                }
+            ).encode()
+        if "ps" in argv:
+            return json.dumps([{"ID": item["id"], "Service": "worker"} for item in containers]).encode()
+        assert "inspect" in argv, argv
+        return json.dumps(next(item for item in containers if item["id"] == argv[-1])).encode()
+
+    return command
+
+
+def container(identifier, number, **changes):
+    return {
+        "id": identifier,
+        "image": "example.test/worker@sha256:" + "b" * 64,
+        "state": "running",
+        "started": "2026-10-03T08:15:30.123456789Z",
+        "restart": 0,
+        "project": "weave-test",
+        "service": "worker",
+        "target": None,
+        "health": "healthy",
+        "number": number,
+        **changes,
+    }
+
+
+async def test_worker_members_report_hostname_number_and_state(tmp_path):
+    config = policy(tmp_path)
+    containers = [
+        container("b" * 64, "2", state="exited", started="0001-01-01T00:00:00Z", restart=3, health=""),
+        container("a" * 64, "1"),
+        container("c" * 64, "3", health="unhealthy", started="2026-10-03T09:00:00Z"),
+    ]
+    report = await ComposeAdapter(config, command=worker_project(config, containers)).observe()
+    members = [member.model_dump(mode="json") for member in report.resources[0].members]
+    assert members == [
+        {
+            "host": "a" * 12,
+            "ordinal": 1,
+            "state": "running",
+            "ready": True,
+            "started_at": "2026-10-03T08:15:30.123456Z",
+            "restarts": 0,
+            "node": None,
+        },
+        {
+            "host": "b" * 12,
+            "ordinal": 2,
+            "state": "exited",
+            "ready": False,
+            "started_at": None,
+            "restarts": 3,
+            "node": None,
+        },
+        {
+            "host": "c" * 12,
+            "ordinal": 3,
+            "state": "running",
+            "ready": False,
+            "started_at": "2026-10-03T09:00:00Z",
+            "restarts": 0,
+            "node": None,
+        },
+    ]
+    assert report.resources[0].ready_replicas == 1 and report.resources[0].replicas == 3
+
+
+async def test_member_number_does_not_change_the_reviewed_resource_version(tmp_path):
+    config = policy(tmp_path)
+    containers = [container("a" * 64, "1")]
+    report = await ComposeAdapter(config, command=worker_project(config, containers)).observe()
+    configuration = json.loads(await worker_project(config, containers)(["config"]))
+    before_members = [{key: value for key, value in containers[0].items() if key != "number"}]
+    assert report.resources[0].version == canonical_digest({"configuration": configuration, "members": before_members})
+
+
+async def test_container_without_a_compose_number_has_no_ordinal(tmp_path):
+    config = policy(tmp_path)
+    report = await ComposeAdapter(config, command=worker_project(config, [container("a" * 64, "")])).observe()
+    assert report.resources[0].members[0].ordinal is None
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"number": "1x"}, {"number": 1}, {"started": "yesterday"}, {"restart": -1}, {"state": "Running Now"}],
+)
+async def test_malformed_member_facts_refuse_the_observation(tmp_path, changes):
+    config = policy(tmp_path)
+    with pytest.raises(RunnerPolicyError):
+        await ComposeAdapter(
+            config, command=worker_project(config, [{**container("a" * 64, "1"), **changes}])
+        ).observe()
+
+
+async def test_more_than_one_hundred_worker_containers_refuse_instead_of_truncating(tmp_path):
+    config = policy(tmp_path)
+    containers = [container(f"{index:064x}", str(index + 1)) for index in range(101)]
+    with pytest.raises(RunnerPolicyError):
+        await ComposeAdapter(config, command=worker_project(config, containers)).observe()
+    report = await ComposeAdapter(config, command=worker_project(config, containers[:100])).observe()
+    assert len(report.resources[0].members) == 100
+
+
+async def test_only_worker_components_report_members(tmp_path):
+    source = tmp_path / "compose.yaml"
+    source.write_text("services: {}")
+    config = DestinationPolicy(
+        target_id=uuid4(),
+        adapter="docker-compose",
+        external_identity="daemon-id",
+        boundary="weave-test",
+        context="owned-test",
+        executable="/usr/bin/docker",
+        capabilities=["observe", "update"],
+        compose_file=str(source),
+        lock_file=str(tmp_path / "runner.lock"),
+        components=[{"name": "worker", "kind": "api", "configuration": "current"}],
+        image_repositories=["example.test/worker"],
+    )
+    report = await ComposeAdapter(config, command=worker_project(config, [container("a" * 64, "1")])).observe()
+    assert report.resources[0].members == []
+    assert "members" not in report.model_dump(mode="json")["resources"][0]
+
+
+async def test_member_observation_stays_read_only(tmp_path):
+    config = policy(tmp_path)
+    calls = []
+    command = worker_project(config, [container("a" * 64, "1")])
+
+    async def recorded(argv, **kwargs):
+        calls.append(argv)
+        return await command(argv, **kwargs)
+
+    await ComposeAdapter(config, command=recorded).observe()
+    verbs = [next(word for word in argv[3:] if word in {"info", "config", "ps", "inspect"}) for argv in calls]
+    assert verbs == ["info", "config", "ps", "inspect"]

@@ -684,6 +684,30 @@ incident for a direct link and sends its revision as the `ETag`, ready for
   `429` with `WV-PAGE-LIMIT`. Unknown query parameters are rejected, and a
   `limit` outside 1 to 100 answers `422` with `WV-VALIDATION`.
 
+**Worker identity.** `workers.create` accepts an optional `identity` describing
+where the worker runs: `host`, `runtime` (`embedded`, `container`, or
+`process`), `sdk_version`, `language_version`, `os`, `arch`, `platform_hint`
+(`kubernetes`, `docker`, or `none`), `namespace`, `node`, and up to 8
+`labels`. It is display metadata and never grants authority or placement.
+
+- `host`, `namespace`, and `node` are host or DNS names of at most 253
+  characters. Versions, `os`, and `arch` have at most 64 letters, digits, `.`,
+  `_`, `+`, or `-`.
+- Label keys have at most 64 characters and must not name a token, password,
+  secret, or authorization; values have at most 256 characters without control
+  characters. The whole identity is at most 4 KiB as stored JSON.
+- Unknown fields, a `placement` among them, are refused with `422`
+  `WV-VALIDATION`; placement is derived by the server, never reported.
+- The registration answer keeps its earlier shape and does not repeat the
+  identity. `workers.read`, `workers.list`, `workers.drain`, and
+  `workers.resume` return `identity` and `registered_at` (the database time of
+  registration) when they are known. Workers registered before the server
+  recorded them have neither.
+
+An older server refuses `identity` with `422` `WV-VALIDATION`. Current workers
+and the Python SDK then register exactly once more without it, using the same
+client and credentials; any other failure is not retried.
+
 **Answers that say "unavailable".** Cancellation and task completion can return
 an unavailable acknowledgment when the platform cannot classify the historical
 data or compare payloads; task completion then includes
@@ -932,6 +956,13 @@ and runner registrations belong to one environment. Child-resource reads check
 the target grant. Lists filter authorized target IDs before pagination; use
 `target_id` to select a target, and `deployment_id` to narrow plan history.
 An observation is a dated snapshot, not a promise of current health.
+A worker component's observed resource lists up to 100 `members`, one per
+container or pod: `host`, `ordinal`, `state`, `ready`, `started_at`,
+`restarts`, and `node`. Compose reports the container ID prefix, which is the
+container's default hostname, and its Compose number as `ordinal`; Kubernetes
+reports the pod name and node. A runner refuses to report a worker component
+with more than 100 members rather than truncate it. Resources without members
+leave the field out, so their observations keep their digests.
 
 The server creates an immutable plan from the desired revision and a fresh,
 complete observation. Approval records its exact digest. Applying checks the

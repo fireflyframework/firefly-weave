@@ -60,6 +60,24 @@ SPDX-License-Identifier: Apache-2.0
   does not match its incident facts is withheld as unavailable.
 - The Python SDK's `list_incidents` and `run_incidents` accept a typed `query`
   and reject one combined with keyword arguments.
+- Workers report where they run when they register: an optional, bounded
+  `identity` with host, runtime, versions, platform, Kubernetes namespace and
+  node, and up to 8 labels from `WEAVE_WORKER_LABELS`
+  (`WEAVE_WORKER_REPORT_HOST=false` leaves out the host). The Agentic and Files
+  workers, native executors and the SDK's `register_worker` send it, and retry
+  once without it when an older server answers `422 WV-VALIDATION`. New SDK
+  helpers: `worker_identity` and `register_worker_http`.
+- Worker reads, lists, and drain or resume answers add optional `identity` and
+  `registered_at`. Upgrade CLIs and SDKs with the server: earlier releases fail
+  with `502 WV-WIRE` on workers registered after the upgrade. The registration
+  answer and stored worker records keep their bytes, and a worker cannot report
+  a placement.
+- Deployment observations list up to 100 `members` of each worker component:
+  Compose containers and Kubernetes pods, with host, ordinal, state, readiness,
+  start time, restarts and node. Observations without members keep their bytes
+  and digests. Kubernetes runners need `list` on the namespace's pods to
+  observe worker components; a worker component with more than 100 members
+  fails the observation instead of being truncated.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.

@@ -410,3 +410,24 @@ def test_environment_configuration_carries_the_local_build(monkeypatch):
     monkeypatch.setenv("WEAVE_NATIVE_IMAGE_DIGEST", "sha256:" + "a" * 64)
     monkeypatch.setenv("WEAVE_NATIVE_EXECUTORS", json.dumps([_executor().model_dump(mode="json")]))
     assert Settings.from_env().native_executors[0].build == "local-development"
+
+
+async def test_native_executors_register_an_embedded_identity_once(admission, monkeypatch):
+    from firefly_weave.contracts.workers import WorkerIdentity
+
+    calls = []
+
+    def identity(*, runtime=None, environ=None):
+        calls.append(runtime)
+        return WorkerIdentity(host="api-1", runtime=runtime)
+
+    monkeypatch.setattr(dispatcher, "worker_identity", identity)
+    digest = "sha256:" + "e" * 64
+    service = _Service(_release(digest))
+    native = NativeDispatcher(service, (_executor(), _executor()), digest, 1)  # type: ignore[arg-type]
+    await native.open()
+    await native.close()
+    assert calls == ["embedded"]
+    assert [request.identity for request in service.registered] == [
+        WorkerIdentity(host="api-1", runtime="embedded")
+    ] * 2
