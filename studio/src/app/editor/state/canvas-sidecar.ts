@@ -119,6 +119,10 @@ export interface StoredCanvas {
 }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+/** A plain version, as Studio writes them for the actions a workflow owns: 1.0.1. */
+export const VERSION_CORE =
+  /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+const INPUT = /^[0-9a-f]{14}$/;
 const NOTE_ID = /^note-[0-9a-f]{8}$/;
 const TRIGGER_ID = /^trigger-[0-9a-f]{8}$/;
 const TOP_FIELDS = new Set([
@@ -368,7 +372,33 @@ function readRecipes(
       problem(`${at}/kind`, "use http or connector.");
       continue;
     }
-    kept.push([name, structuredClone(recipe) as ActionRecipe]);
+    let readable = true;
+    const version = recipe["version"];
+    if (
+      version !== undefined &&
+      (typeof version !== "string" || !VERSION_CORE.test(version))
+    ) {
+      problem(`${at}/version`, "use a version such as 1.0.1.");
+      readable = false;
+    }
+    const published = recipe["published"];
+    if (
+      published !== undefined &&
+      !(
+        isRecord(published) &&
+        typeof published["version"] === "string" &&
+        VERSION_CORE.test(published["version"]) &&
+        typeof published["input"] === "string" &&
+        INPUT.test(published["input"])
+      )
+    ) {
+      problem(
+        `${at}/published`,
+        "remove this field; Studio writes it when it publishes the action.",
+      );
+      readable = false;
+    }
+    if (readable) kept.push([name, structuredClone(recipe) as ActionRecipe]);
   }
   return Object.fromEntries(kept);
 }

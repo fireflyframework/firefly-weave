@@ -25,6 +25,7 @@ import {
   ownedActionsOf,
   withOwnedAction,
 } from "../src/app/editor/ndv/owned/owned-store";
+import { markPublished } from "../src/app/editor/ndv/owned/owned-versions";
 import {
   renameHint,
   renameTarget,
@@ -218,5 +219,20 @@ describe("renaming a step", () => {
     // No undo step was left behind: Undo goes back past the workflow rename.
     m.undo();
     expect(m.definition.metadata.name).toBe("untitled-workflow");
+  });
+  it("keeps the name of an action that was published", () => {
+    const m = model();
+    m.canvas = markPublished(m, "untitled-workflow.get-orders@1.0.0");
+    expect(renameWithExtras(m, "get-orders", "Fetch orders")).toEqual({
+      id: "fetch-orders",
+      references: 1,
+      uses: null,
+    });
+    expect(m.definition.spec.steps[0]["uses"]).toBe(
+      "untitled-workflow.get-orders@1.0.0",
+    );
+    expect(Object.keys(ownedActionsOf(m.canvas))).toEqual([
+      "untitled-workflow.get-orders@1.0.0",
+    ]);
   });
 });

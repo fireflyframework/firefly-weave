@@ -20,7 +20,9 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RETRY,
   connectorDocument,
+  currentVersion,
   httpBuildRequest,
+  isFrozen,
   isWriteMethod,
   nameOfUses,
   newConnectorRecipe,
@@ -31,6 +33,7 @@ import {
   recipeOf,
   sendsBody,
   sideEffectOf,
+  versionOfUses,
   withRetry,
   type HttpRecipe,
 } from "../src/app/editor/ndv/owned/owned-actions";
@@ -270,6 +273,42 @@ describe("workflow-owned actions", () => {
     expect(recipeOf(step(undefined), ctx)).toBeNull();
     expect(recipeOf(step("flow.get@1.0.0"), {} as KindContext)).toBeNull();
   });
+  it("builds documents at the recipe's version, 1.0.0 when it has none", () => {
+    expect(currentVersion({})).toBe("1.0.0");
+    expect(currentVersion({ version: "1.0.3" })).toBe("1.0.3");
+    expect(ownedUses("flow.get", "1.0.3")).toBe("flow.get@1.0.3");
+    expect(versionOfUses("flow.get@1.0.3")).toBe("1.0.3");
+    expect(versionOfUses("flow.get")).toBe("");
+    const recipe: HttpRecipe = {
+      ...newHttpRecipe(),
+      pathTemplate: "/orders",
+      version: "1.0.3",
+    };
+    expect(httpBuildRequest("flow.get", recipe, undefined)).toMatchObject({
+      version: "1.0.3",
+    });
+    const send = connectorDocument(
+      "flow.send",
+      { ...newConnectorRecipe("weave-email@1.0.0", "send"), version: "1.0.2" },
+      sendTemplate as never,
+    );
+    expect(send).toMatchObject({
+      metadata: { name: "flow.send", version: "1.0.2" },
+    });
+    expect(
+      isFrozen({
+        ...recipe,
+        published: { version: "1.0.3", input: "0123456789abcd" },
+      }),
+    ).toBe(true);
+    expect(
+      isFrozen({
+        ...recipe,
+        published: { version: "1.0.2", input: "0123456789abcd" },
+      }),
+    ).toBe(false);
+    expect(isFrozen(recipe)).toBe(false);
+  });
 });
 
 describe("the owned action store", () => {
@@ -330,13 +369,13 @@ describe("the owned action store", () => {
     expect(withOwnedAction(canvas, "flow.get@2.0.0", null)).toBe(canvas);
     expect(() =>
       withOwnedAction(canvas, "flow.get@2.0.0", newHttpRecipe()),
-    ).toThrow("Only an action at version 1.0.0 can belong to this workflow.");
+    ).toThrow("Only version 1.0.0 of flow.get belongs to this workflow.");
     expect(
       renameOwnedAction(canvas, "flow.get@2.0.0", "flow.fetch@2.0.0"),
     ).toBe(canvas);
     expect(() =>
       renameOwnedAction(canvas, "flow.get@1.0.0", "flow.fetch@2.0.0"),
-    ).toThrow("Only an action at version 1.0.0 can belong to this workflow.");
+    ).toThrow("A renamed action keeps its version.");
     expect(Object.keys(ownedActionsOf(canvas))).toEqual(["flow.get@1.0.0"]);
   });
 });

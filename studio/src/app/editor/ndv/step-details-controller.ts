@@ -34,8 +34,18 @@ import {
   triggerForm,
   workflowSettingsForm,
 } from "./kinds/forms/workflow-forms";
-import { ownedActionsOf, withOwnedAction } from "./owned/owned-store";
+import {
+  ownedActionsOf,
+  usesOwning,
+  withOwnedAction,
+} from "./owned/owned-store";
 import { moveFileStep, reservedActionNames } from "./owned/insert-owned";
+import {
+  forkEdited,
+  publishedVersionsOf,
+  versionMoveText,
+  type VersionMove,
+} from "./owned/owned-versions";
 import {
   CANVAS_TOO_BIG,
   canvasBytes,
@@ -45,7 +55,7 @@ import {
   type StepNote,
 } from "../state/canvas-sidecar";
 import { CANVAS_MAX_BYTES } from "../state/test-data";
-import type { OwnedRecipe } from "./owned/owned-actions";
+import { nameOfUses, type OwnedRecipe } from "./owned/owned-actions";
 import {
   formEnv,
   stepSubject,
@@ -483,6 +493,7 @@ export class StepDetailsController {
       burst.revision === model.revision;
     let outcome: CommitOutcome = { ok: false, removed: [] };
     let reasons: string[] = [];
+    let moves: VersionMove[] = [];
     this.host.perform(() => {
       const changes = changesOf();
       if (!changes.length) return;
@@ -517,7 +528,9 @@ export class StepDetailsController {
         afterEnv,
         new Set(),
       );
-      const apply = () => this.write(target, [...changes, ...hidden.changes]);
+      const apply = () => {
+        moves = this.write(target, [...changes, ...hidden.changes]);
+      };
       if (merge) model.continueEdit(burst!.revision, apply);
       else model.batch(apply);
       outcome = { ok: true, removed: hidden.labels };
@@ -525,6 +538,7 @@ export class StepDetailsController {
     });
     if (!outcome.ok) return outcome;
     this.burst = { key, revision: model.revision, at: this.now() };
+    if (moves.length) this.host.notify(versionMoveText(moves[0]));
     if (outcome.removed.length) {
       const revision = model.revision;
       const opened = model.opened;
@@ -606,10 +620,12 @@ export class StepDetailsController {
     this.syncSession();
     if (this.readOnlyReason()) return { ok: false, removed: [] };
     const model = this.host.model;
+    const before = String(this.step(target)?.["uses"] ?? "");
+    let moved = "";
     let ok = false;
     this.host.perform(() => {
       model.batch(() => {
-        moveFileStep(
+        moved = moveFileStep(
           model,
           target,
           slot,
@@ -618,6 +634,7 @@ export class StepDetailsController {
             this.host.actionVersions,
             model.canvas,
           ),
+          (name) => publishedVersionsOf(this.host.actionVersions, name),
         );
         // The recipes live in the canvas sidecar, which has a size cap.
         if (canvasBytes(model.canvas) > CANVAS_MAX_BYTES)
@@ -627,10 +644,12 @@ export class StepDetailsController {
     });
     // The next edit is an undo step of its own.
     if (ok) this.burst = null;
+    if (ok && moved !== before && nameOfUses(moved) === nameOfUses(before))
+      this.host.notify(versionMoveText({ from: before, to: moved }));
     return { ok, removed: [] };
   }
 
-  private write(target: string, changes: FormChange[]): void {
+  private write(target: string, changes: FormChange[]): VersionMove[] {
     const model = this.host.model;
     const stepEdits: Edit[] = [];
     const workflowEdits: Edit[] = [];
@@ -675,6 +694,14 @@ export class StepDetailsController {
       if (canvasBytes(next) > CANVAS_MAX_BYTES) throw new Error(CANVAS_TOO_BIG);
       model.canvas = next;
     }
+    // A published action never changes: the change starts its next version, for every step that calls it.
+    return uses && usesOwning(model.canvas, uses)
+      ? forkEdited(
+          model,
+          (name) => publishedVersionsOf(this.host.actionVersions, name),
+          new Set([uses]),
+        )
+      : [];
   }
 
   scopeOptions(): ScopeOptions {

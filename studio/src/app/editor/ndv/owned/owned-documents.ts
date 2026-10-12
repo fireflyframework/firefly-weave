@@ -30,12 +30,12 @@ import type {
 } from "../../../integrations/http-action-client";
 import type { StructuredCanvasAdapter } from "../../../model";
 import type { Json } from "../registry";
-import { findStep } from "../step-walk";
 import { ConnectorActions } from "./connector-actions";
 import { pruneOwned } from "./insert-owned";
 import {
   connectorDocument,
   httpBuildRequest,
+  httpSource,
   nameOfUses,
   withRetry,
   type ConnectorRecipe,
@@ -78,6 +78,8 @@ export class OwnedDocuments {
   private pending = new Set<Promise<void>>();
   /** The `uses` whose document this service put in the contract cache. */
   private cached = new Set<string>();
+  /** The document this service built for each `uses`. */
+  private documents = new Map<string, Record<string, unknown>>();
   /** The opening of the workflow whose unused owned actions were dropped. */
   private opened = -1;
 
@@ -114,18 +116,12 @@ export class OwnedDocuments {
       }
     for (const [uses, recipe] of Object.entries(owned)) {
       if (recipe.kind === "http") {
-        const step = findStep(
-          model.definition.spec.steps,
-          (candidate) => candidate["uses"] === uses,
-        );
         // Without a description of its own, the action says which step uses it.
-        const described =
-          recipe.description || !step
-            ? recipe
-            : {
-                ...recipe,
-                description: `Used by step ${step.id} of ${model.definition.metadata.name}`,
-              };
+        const { step, recipe: described } = httpSource(
+          model.definition,
+          uses,
+          recipe,
+        );
         const request = httpBuildRequest(
           nameOfUses(uses),
           described,
@@ -148,6 +144,10 @@ export class OwnedDocuments {
       }
     }
     if (dropped) this.host.refreshView();
+  }
+  /** The Action document Studio built for `uses`, or null while it has none. */
+  document(uses: string): Record<string, unknown> | null {
+    return this.documents.get(uses) ?? null;
   }
   /** Resolves once every build started so far has answered. */
   async settled(): Promise<void> {
@@ -229,11 +229,13 @@ export class OwnedDocuments {
     this.host.refreshView();
   }
   private store(uses: string, document: Record<string, unknown>) {
+    this.documents.set(uses, document);
     this.cached.add(uses);
     this.host.cacheContract(uses, document);
   }
   /** Takes back a document this service cached; false when it never did. */
   private dropDocument(uses: string): boolean {
+    this.documents.delete(uses);
     if (!this.cached.delete(uses)) return false;
     this.host.cacheContract(uses, null);
     return true;

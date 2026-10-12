@@ -23,6 +23,7 @@ import {
   ownedActionsOf,
   withOwnedAction,
 } from "../src/app/editor/ndv/owned/owned-store";
+import { markPublished } from "../src/app/editor/ndv/owned/owned-versions";
 import { fixed, writeParam } from "../src/app/editor/ndv/params/value-io";
 import {
   StepDetailsController,
@@ -346,6 +347,43 @@ describe("the step details controller", () => {
     controller.addOption("get", "headers");
     expect([...controller.added("get")]).toEqual(["headers"]);
     expect([...controller.added("pause")]).toEqual([]);
+  });
+  it("starts the next version of a published owned action on its first change, says so, and Undo goes back", () => {
+    const { model, controller, toasts, tick } = setup();
+    const url = (value: string) =>
+      controller.commit(
+        "get",
+        [{ scope: "action", path: ["pathTemplate"], value }],
+        "url",
+      );
+    const uses = () =>
+      model.definition.spec.steps.find((step) => step.id === "get")!["uses"];
+    url("/orders");
+    model.canvas = markPublished(model, "untitled-workflow.get@1.0.0");
+    tick(1000);
+    url("/orders/open");
+    expect(uses()).toBe("untitled-workflow.get@1.0.1");
+    expect(
+      ownedActionsOf(model.canvas)["untitled-workflow.get@1.0.1"],
+    ).toMatchObject({
+      pathTemplate: "/orders/open",
+      version: "1.0.1",
+      published: { version: "1.0.0" },
+    });
+    expect(toasts.at(-1)?.text).toBe(
+      "untitled-workflow.get 1.0.0 is published, so this change starts version 1.0.1.",
+    );
+    tick(100);
+    url("/orders/opened");
+    expect(uses()).toBe("untitled-workflow.get@1.0.1");
+    model.undo();
+    expect(uses()).toBe("untitled-workflow.get@1.0.0");
+    expect(
+      ownedActionsOf(model.canvas)["untitled-workflow.get@1.0.0"],
+    ).toMatchObject({
+      pathTemplate: "/orders",
+      published: { version: "1.0.0" },
+    });
   });
 });
 

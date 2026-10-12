@@ -219,6 +219,17 @@ describe("the Settings tab", () => {
     ]);
     expect(aboutRows(createStep("wait", "pause"), ctx())).toEqual([]);
   });
+  it("says when an owned action is published", () => {
+    expect(savedInText("flow.get@1.0.0", "http", 1, true)).toBe(
+      "Saved in the API action flow.get@1.0.0, which only this step uses. It's published, so your next change makes a new version.",
+    );
+    expect(savedInText("flow.send@1.0.0", "connector", 2, true)).toBe(
+      "Saved in the action flow.send@1.0.0, used by 2 steps. It's published, so your next change makes a new version.",
+    );
+    expect(savedInText("flow.get@1.0.0", "http", 1)).toBe(
+      "Saved in the API action flow.get@1.0.0, which only this step uses.",
+    );
+  });
 });
 
 describe("retry through the step form", () => {

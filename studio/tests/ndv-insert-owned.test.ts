@@ -31,6 +31,7 @@ import {
   reservedActionNames,
 } from "../src/app/editor/ndv/owned/insert-owned";
 import { newConnectorRecipe } from "../src/app/editor/ndv/owned/owned-actions";
+import { markPublished } from "../src/app/editor/ndv/owned/owned-versions";
 import {
   ownedActionsOf,
   withOwnedAction,
@@ -403,6 +404,42 @@ describe("moving a file step to another file server", () => {
       "Choose a slot on a file server.",
     );
     expect(JSON.stringify([model.definition, model.canvas])).toBe(before);
+  });
+  it("moves a file step off a published action to its next version, and a copy for one step starts unpublished", () => {
+    const model = twoServers();
+    insertOwnedStep(model, action("write-file"), "root", 0);
+    const uses = "order-intake.write-file@1.0.0";
+    model.update(
+      "write-file",
+      JSON.stringify({ ...steps(model)[0], connection: "files" }),
+    );
+    model.canvas = markPublished(model, uses);
+    const moved = model.batch(() => moveFileStep(model, "write-file", "docs"));
+    expect(moved).toBe("order-intake.write-file@1.0.1");
+    expect(steps(model)[0]).toMatchObject({ uses: moved, connection: "docs" });
+    expect(ownedActionsOf(model.canvas)[moved]).toMatchObject({
+      connector: "weave-google-drive@1.0.0",
+      version: "1.0.1",
+      published: { version: "1.0.0" },
+    });
+    const shared = twoServers();
+    shared.definition.spec["connections"] = {
+      files: { connector: "weave-sftp@1.0.0" },
+    };
+    insertOwnedStep(shared, action("write-file"), "root", 0);
+    insertOwnedStep(shared, action("write-file"), "root", 1);
+    shared.canvas = markPublished(shared, uses);
+    shared.definition.spec["connections"] = {
+      files: { connector: "weave-sftp@1.0.0" },
+      docs: { connector: "weave-google-drive@1.0.0" },
+    };
+    const copy = shared.batch(() =>
+      moveFileStep(shared, "write-file-2", "docs"),
+    );
+    expect(copy).not.toBe(uses);
+    expect(ownedActionsOf(shared.canvas)[copy]).not.toHaveProperty("published");
+    expect(ownedActionsOf(shared.canvas)[copy]).not.toHaveProperty("version");
+    expect(steps(shared)[0]["uses"]).toBe(uses);
   });
 });
 

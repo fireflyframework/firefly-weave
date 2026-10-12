@@ -22,9 +22,10 @@ SPDX-License-Identifier: Apache-2.0
 // and file actions copy a built-in connector action).
 import { decode, get } from "../../../forms/core/binding";
 import { getAt, isJsonObject } from "../../../forms/core/json";
-import type { Step } from "../../../model";
+import type { Step, Workflow } from "../../../model";
 import { uniqueIdentifier } from "../params/identifiers";
 import type { Json, KindContext } from "../registry";
+import { findStep } from "../step-walk";
 
 export const HTTP_CONNECTOR = "weave-http@2.0.0";
 export const EMAIL_CONNECTOR = "weave-email@1.0.0";
@@ -40,7 +41,20 @@ export const DEFAULT_RETRY: RetrySettings = {
   initialDelaySeconds: 1,
   maxDelaySeconds: 30,
 };
-export interface HttpRecipe {
+/** What Studio knows about an owned action's publication. */
+export interface Publication {
+  /** The version that is published. */
+  version: string;
+  /** A fingerprint of what that version's document was built from. */
+  input: string;
+}
+interface Versioned {
+  /** The version the workflow's steps call; 1.0.0 when absent. */
+  version?: string;
+  /** Set once a version of this action is published. */
+  published?: Publication;
+}
+export interface HttpRecipe extends Versioned {
   kind: "http";
   method: HttpMethod;
   /** The path after the connection's address, with {name} placeholders. */
@@ -51,7 +65,7 @@ export interface HttpRecipe {
   timeoutSeconds: number;
   retry?: RetrySettings;
 }
-export interface ConnectorRecipe {
+export interface ConnectorRecipe extends Versioned {
   kind: "connector";
   /** "weave-email@1.0.0", "weave-sftp@1.0.0". */
   connector: string;
@@ -90,11 +104,51 @@ export function ownedName(
     taken,
   );
 }
-export const ownedUses = (name: string): string => `${name}@${OWNED_VERSION}`;
+export const ownedUses = (
+  name: string,
+  version: string = OWNED_VERSION,
+): string => `${name}@${version}`;
 export const nameOfUses = (uses: string): string => {
   const at = uses.lastIndexOf("@");
   return at > 0 ? uses.slice(0, at) : uses;
 };
+export const versionOfUses = (uses: string): string => {
+  const at = uses.lastIndexOf("@");
+  return at > 0 ? uses.slice(at + 1) : "";
+};
+/** The version an owned action is at: its recipe's, 1.0.0 when it has none. */
+export const currentVersion = (recipe: { version?: unknown }): string =>
+  typeof recipe.version === "string" && recipe.version
+    ? recipe.version
+    : OWNED_VERSION;
+/** True while the version the steps call is the published one: a change must start the next. */
+export const isFrozen = (recipe: OwnedRecipe): boolean =>
+  !!recipe.published && recipe.published.version === currentVersion(recipe);
+/**
+ * An API action's recipe as its document is built: without a description of
+ * its own, it says which step uses it. Also returns that step, whose input
+ * keys name the query, header and body fields.
+ */
+export function httpSource(
+  definition: Workflow,
+  uses: string,
+  recipe: HttpRecipe,
+): { step: Step | null; recipe: HttpRecipe } {
+  const step = findStep(
+    definition.spec.steps,
+    (candidate) => candidate["uses"] === uses,
+  );
+  return {
+    step,
+    recipe:
+      recipe.description || !step
+        ? recipe
+        : {
+            ...recipe,
+            description: `Used by step ${step.id} of ${definition.metadata.name}`,
+          },
+  };
+}
 /** Changes data on the other side: anything but GET and HEAD. */
 export const isWriteMethod = (method: string): boolean =>
   method !== "GET" && method !== "HEAD";
@@ -148,7 +202,7 @@ export function httpBuildRequest(
   ];
   const request: Record<string, unknown> = {
     name,
-    version: OWNED_VERSION,
+    version: currentVersion(recipe),
     method: recipe.method,
     pathTemplate: path,
     parameters,
@@ -179,7 +233,7 @@ export function connectorDocument(
     metadata: Record<string, Json>;
     spec: Record<string, Json>;
   };
-  copy.metadata = { name, version: OWNED_VERSION };
+  copy.metadata = { name, version: currentVersion(recipe) };
   if (recipe.timeoutSeconds !== undefined)
     copy.spec["timeoutSeconds"] = recipe.timeoutSeconds;
   // Actions carry their description in the input schema, as the HTTP builder writes it.

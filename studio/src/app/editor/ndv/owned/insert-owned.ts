@@ -42,7 +42,8 @@ import {
   type ConnectorRecipe,
   type OwnedRecipe,
 } from "./owned-actions";
-import { ownedActionsOf, withOwnedAction } from "./owned-store";
+import { ownedActionsOf, unpublished, withOwnedAction } from "./owned-store";
+import { forkEdited } from "./owned-versions";
 
 /**
  * The canvas sidecar without the owned actions no step calls any more:
@@ -159,7 +160,9 @@ export function insertOwnedStep(
  * The step joins the workflow's owned action for that server and operation
  * when there is one; otherwise its action moves with it when no other step
  * calls it, and is copied for this step when others do, so they keep theirs.
- * Retry, timeout, description and the step's input go along. Throws, before
+ * Retry, timeout, description and the step's input go along. A published
+ * action that moves starts its next version (`versionsOf` names versions the
+ * workspace already has); a copy starts unpublished. Throws, before
  * changing anything, for an action the workflow doesn't own and for a slot
  * that isn't a file server's.
  */
@@ -168,6 +171,7 @@ export function moveFileStep(
   stepId: string,
   slotName: string,
   reserved: ReadonlySet<string> = new Set(),
+  versionsOf: (name: string) => readonly string[] = () => [],
 ): string {
   const step = findStep(model.definition.spec.steps, (s) => s.id === stepId);
   if (!step) throw Error("Select a placed step.");
@@ -200,12 +204,13 @@ export function moveFileStep(
           takenNames(model, reserved),
         ),
       );
-      model.canvas = withOwnedAction(model.canvas, next, moved);
+      model.canvas = withOwnedAction(model.canvas, next, unpublished(moved));
     }
   }
   model.update(
     stepId,
     JSON.stringify({ ...step, uses: next, connection: slotName }),
   );
-  return next;
+  // A published action moved to another server is a change: it starts its next version.
+  return forkEdited(model, versionsOf, new Set([next]))[0]?.to ?? next;
 }

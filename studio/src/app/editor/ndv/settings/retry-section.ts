@@ -32,7 +32,7 @@ import { stringify } from "yaml";
 import { Modal } from "../../../dialog";
 import { canonicalJson } from "../../../forms/core/json";
 import { Icon } from "../../../icon";
-import { recipeOf } from "../owned/owned-actions";
+import { isFrozen, recipeOf } from "../owned/owned-actions";
 import type { FieldEntry } from "../params/form-model";
 import type { FormSession } from "../params/form-session";
 import { ParamField } from "../params/param-field";
@@ -222,7 +222,7 @@ export class RetrySection {
     const users = allSteps(session.host.model.definition.spec.steps).filter(
       (other) => other.kind === "action" && other["uses"] === uses,
     ).length;
-    return savedInText(uses, recipe.kind, users);
+    return savedInText(uses, recipe.kind, users, isFrozen(recipe));
   }
   describedBy(): string {
     return [

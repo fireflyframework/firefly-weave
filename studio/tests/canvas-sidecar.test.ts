@@ -222,6 +222,36 @@ describe("the canvas sidecar", () => {
       "The canvas can hold 256 KB of notes and settings. Shorten or delete a note first.",
     );
   });
+  it("reads an owned action's version and publication, and refuses malformed ones", () => {
+    const base = { schemaVersion: 2, kind: CANVAS_KIND, ownedActions: ["a.b"] };
+    const good = {
+      kind: "http",
+      version: "1.0.1",
+      published: { version: "1.0.0", input: "0123456789abcd" },
+    };
+    expect(parseCanvas({ ...base, actionRecipes: { "a.b": good } })).toEqual({
+      ok: true,
+      canvas: { ...base, actionRecipes: { "a.b": good } },
+    });
+    expect(
+      parseCanvas({
+        ...base,
+        actionRecipes: {
+          "a.b": {
+            kind: "http",
+            version: "one",
+            published: { version: "1.0.0" },
+          },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      problems: [
+        "/actionRecipes/a.b/version: use a version such as 1.0.1.",
+        "/actionRecipes/a.b/published: remove this field; Studio writes it when it publishes the action.",
+      ],
+    });
+  });
 });
 
 const NAME_ERROR =

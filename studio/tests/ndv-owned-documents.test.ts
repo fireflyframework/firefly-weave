@@ -28,6 +28,7 @@ import {
 import {
   ownedActionsOf,
   withOwnedAction,
+  withOwnedVersion,
 } from "../src/app/editor/ndv/owned/owned-store";
 import { StructuredCanvasAdapter } from "../src/app/model";
 
@@ -218,6 +219,36 @@ describe("owned action documents", () => {
     reply(built());
     await documents.settled();
     expect(cached.has(USES)).toBe(true);
+  });
+  it("keeps the document it built for each action, builds the next version's, and forgets the old one", async () => {
+    const { documents, requests, reply, model } = fixture();
+    documents.sync();
+    reply(built());
+    await documents.settled();
+    expect(documents.document(USES)).toMatchObject({ kind: "Action" });
+    model.canvas = withOwnedVersion(
+      model.canvas,
+      "untitled-workflow.get",
+      "1.0.1",
+    );
+    model.update(
+      "ignored",
+      JSON.stringify({
+        ...model.nodes()[0].step,
+        uses: "untitled-workflow.get@1.0.1",
+      }),
+    );
+    documents.sync();
+    expect(requests.at(-1)).toMatchObject({
+      name: "untitled-workflow.get",
+      version: "1.0.1",
+    });
+    expect(documents.document(USES)).toBeNull();
+    reply(built());
+    await documents.settled();
+    expect(documents.document("untitled-workflow.get@1.0.1")).toMatchObject({
+      kind: "Action",
+    });
   });
 });
 

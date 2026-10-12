@@ -19,7 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 // text into an unused ID and renames the step, every reference to it, its
 // note and, for Call an API, the action it owns, as one undo step.
 import type { StructuredCanvasAdapter } from "../../model";
-import { nameOfUses, ownedName, ownedUses } from "./owned/owned-actions";
+import {
+  nameOfUses,
+  ownedName,
+  ownedUses,
+  versionOfUses,
+} from "./owned/owned-actions";
 import { takenNames } from "./owned/insert-owned";
 import { ownedActionsOf, renameOwnedAction } from "./owned/owned-store";
 import { normalizeIdentifier, uniqueIdentifier } from "./params/identifiers";
@@ -59,7 +64,8 @@ export function renameHint(
  * Renames a step, as one undo step. `model.renameStep` rewrites the
  * references and moves the step's note in the canvas sidecar; a Call an API
  * step that is the only one using its owned action also takes the action
- * along (`<workflow>.<step>`), so the two keep matching, under a name no
+ * along while it isn't published (`<workflow>.<step>`), so the two keep
+ * matching, under a name no
  * other step, document or `reserved` name has. When any part is
  * refused (a name the canvas can't hold, a step that is gone) nothing is
  * changed, and the error reaches the caller as it was thrown.
@@ -78,7 +84,12 @@ export function renameWithExtras(
     const fromUses = typeof step?.["uses"] === "string" ? step["uses"] : "";
     const owned = ownedActionsOf(model.canvas);
     let uses: RenameResult["uses"] = null;
-    if (step && owned[fromUses]?.kind === "http") {
+    // A published action keeps its name.
+    if (
+      step &&
+      owned[fromUses]?.kind === "http" &&
+      !owned[fromUses].published
+    ) {
       const sharedBy = [
         ...allSteps(model.definition.spec.steps),
         ...model.unplaced,
@@ -89,6 +100,7 @@ export function renameWithExtras(
         others.delete(nameOfUses(fromUses));
         const toUses = ownedUses(
           ownedName(model.definition.metadata.name, target, others),
+          versionOfUses(fromUses),
         );
         model.update(target, JSON.stringify({ ...step, uses: toUses }));
         // renameStep already moved the step's note in the canvas sidecar.

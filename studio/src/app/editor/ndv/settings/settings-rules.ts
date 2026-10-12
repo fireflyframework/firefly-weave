@@ -89,11 +89,16 @@ export function savedInText(
   uses: string,
   kind: "http" | "connector",
   users: number,
+  published = false,
 ): string {
   const action = kind === "http" ? "the API action" : "the action";
-  return users > 1
-    ? `Saved in ${action} ${uses}, used by ${users} steps.`
-    : `Saved in ${action} ${uses}, which only this step uses.`;
+  const where =
+    users > 1
+      ? `Saved in ${action} ${uses}, used by ${users} steps.`
+      : `Saved in ${action} ${uses}, which only this step uses.`;
+  return published
+    ? `${where} It's published, so your next change makes a new version.`
+    : where;
 }
 
 /** The Settings dot: a setting off its default, or a note. */
