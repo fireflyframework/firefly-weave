@@ -1533,8 +1533,9 @@ weave-param-field.is-conditions > .param > .param-line {
     }
   }
 }
-/* A narrow compared value names its field; the whole path is its tooltip. */
-@container condition-value (max-width: 299px) {
+/* A compared value names its field unless the box is wide; the whole path
+   is its tooltip. */
+@container condition-value (max-width: 379px) {
   .condition-editor.is-compact .condition-value-pill > :not(span:last-child) {
     display: none;
   }
