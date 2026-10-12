@@ -19,9 +19,12 @@
 import json
 import socket
 from datetime import UTC, datetime
+from typing import get_args
 from uuid import uuid4
 
 import pytest
+
+from firefly_weave.contracts.run_views import RunOrigin
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -126,6 +129,52 @@ def test_required_redaction_stops_at_prefix(worker_runtime_fixture, recorded_eve
     last = recorded_events[1].model_copy(update={"data": {"node_id": "work", "generation": 1}, "evidence": evidence})
     report = replay(worker_runtime_fixture["artifact"], (recorded_events[0], last))
     assert report.status == "incomplete" and report.last_verified_sequence == 1
+
+
+def recorded_start(artifact, recorded_events, origin):
+    from firefly_weave.operations.exports import transition_digest
+    from firefly_weave.runtime.kernel import transition
+    from firefly_weave.runtime.models import RunState
+
+    # The runtime records how a run started next to its admission policy.
+    started = recorded_events[0].model_copy(deep=True)
+    started.data["origin"] = origin
+    change = transition(RunState(input=3), started.model_copy(update={"evidence": None}), artifact)
+    started.evidence["expected_transition_digest"] = transition_digest(change)
+    return started
+
+
+@pytest.mark.parametrize("origin", sorted(get_args(RunOrigin.__value__)))
+def test_recorded_start_origin_is_disclosed_and_replays(worker_runtime_fixture, recorded_events, origin):
+    from firefly_weave.operations.exports import safe_event
+    from firefly_weave.operations.replay import replay
+
+    artifact = worker_runtime_fixture["artifact"]
+    events = (recorded_start(artifact, recorded_events, origin), recorded_events[1])
+    disclosed = tuple(safe_event(event, artifact) for event in events)
+    assert disclosed[0].data == {"admission_policy": "classified-v1", "origin": origin}
+    assert disclosed[0].evidence["omissions"] == []
+    for supplied in (events, disclosed):
+        report = replay(artifact, supplied)
+        assert (report.status, report.last_verified_sequence) == ("consistent", 2), report
+
+
+@pytest.mark.parametrize(
+    "origin", ["Manual", "private operator note", "", None, 1, True, ["manual"], {"origin": "manual"}]
+)
+def test_unrecognized_start_origin_stays_withheld(worker_runtime_fixture, recorded_events, origin):
+    from firefly_weave.operations.exports import safe_event
+    from firefly_weave.operations.replay import replay
+
+    artifact = worker_runtime_fixture["artifact"]
+    events = (recorded_start(artifact, recorded_events, origin), recorded_events[1])
+    withheld = safe_event(events[0], artifact)
+    assert withheld.data == {"admission_policy": "classified-v1"}
+    assert withheld.evidence["omissions"] == [{"path": "/data/*", "reason": "classification_unavailable"}]
+    for supplied in (events, (withheld, events[1])):
+        report = replay(artifact, supplied)
+        assert (report.status, report.last_verified_sequence) == ("incomplete", 0), report
+        assert [(d.code, d.sequence) for d in report.diagnostics] == [("WV-REPLAY-REDACTED", 1)]
 
 
 @pytest.mark.parametrize(

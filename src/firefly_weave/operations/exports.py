@@ -17,17 +17,20 @@
 """Pure safe evidence projection and stable comparison; no storage or executors."""
 
 import json
-from typing import cast
+from typing import Final, cast, get_args
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+from firefly_weave.contracts.run_views import RunOrigin
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import TaskError
 from firefly_weave.operations.redaction import Omission, project
 from firefly_weave.runtime.kernel import action_schemas, workflow
 from firefly_weave.runtime.models import RuntimeEvent, Transition
+
+RUN_ORIGINS: Final = frozenset(get_args(RunOrigin.__value__))
 
 
 def lock_digest(artifact: CompiledArtifact) -> str:
@@ -54,7 +57,7 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
     data = dict(event.data)
     omissions: list[Omission] = []
     fields = {
-        "started": {"admission_policy"},
+        "started": {"admission_policy", "origin"},
         "human_completed": {"node_id", "task_id", "actor_id", "output"},
         "paused": {"actor_id", "reason", "control_revision"},
         "resumed": {"actor_id", "reason", "control_revision"},
@@ -78,6 +81,13 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
         "wait_elapsed": {"node_id", "deadline", "wait_id"},
         "signal_received": {"node_id", "output", "accepted_at", "deadline"},
     }[event.type]
+    if (
+        event.type == "started"
+        and "origin" in data
+        and not (type(data["origin"]) is str and data["origin"] in RUN_ORIGINS)
+    ):
+        # Only the server-recorded closed set is disclosed; any other retained value stays withheld.
+        fields = fields - {"origin"}
     if any(key not in fields for key in data):
         data = {key: value for key, value in data.items() if key in fields}
         omissions.append(Omission(path="/data/*", reason="classification_unavailable"))

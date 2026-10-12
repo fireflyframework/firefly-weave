@@ -38,6 +38,9 @@ SPDX-License-Identifier: Apache-2.0
 - The Python SDK's `list_runs` rejects a `query` combined with keyword filters.
 - Request telemetry records authorized `501 WV-UNAVAILABLE` answers with the
   status `unavailable` instead of `failed`.
+- A new run's `started` history event records how the run started as `origin`,
+  the value run summaries report. History pages and exports include it, and
+  replay accepts it.
 - Serve incident lists from incident facts without loading runs, newest opened
   first. They filter by status, code, workflow, step, opening time, and test
   runs (left out unless `include_test=true`). Explicit `order=id` continues
