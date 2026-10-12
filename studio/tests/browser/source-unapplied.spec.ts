@@ -175,6 +175,25 @@ const paths: {
     },
   },
   {
+    name: "Connect to a platform",
+    leave: async (page) => {
+      await page
+        .getByRole("button", { name: "Platform: Local authoring" })
+        .click();
+      await page
+        .getByRole("button", { name: "Connect to a platform", exact: true })
+        .click();
+    },
+    left: async (page) => {
+      await expect(page.locator("#wizard-heading")).toHaveText(
+        "Connect to a platform",
+      );
+      await page.goBack();
+      await expect(page.locator(".editor-bar")).toBeVisible();
+      return appliedVersion(page);
+    },
+  },
+  {
     name: "the browser's Back",
     leave: (page) => page.evaluate(() => history.back()),
     left: async (page) => {

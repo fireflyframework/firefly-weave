@@ -1729,7 +1729,7 @@ export class App implements CanvasHost {
   /** Edits not yet kept anywhere: on this computer or on the platform. */
   get unsavedWork() {
     if (this.inspectorProblem) return true;
-    if (this.view === "designer" && this.sourcePending) return true;
+    if (this.sourcePending) return true;
     if (!this.dirty) return false;
     if (this.profile || this.draftRevision !== undefined || this.published)
       return true;
@@ -7224,6 +7224,13 @@ export class App implements CanvasHost {
     } = {},
   ) {
     this.platformMenuOpen = false;
+    // Text typed in Source asks before the designer goes, as at every exit.
+    if (this.view === "designer" && this.sourcePending) {
+      void this.ensureApplied().then(
+        (settled) => settled && this.openWizard(start, options),
+      );
+      return;
+    }
     // The wizard shows a waiting or failed sign-in itself.
     const kind = this.platformNotice?.kind;
     if (kind === "signing-in" || kind === "sign-in-failed")
