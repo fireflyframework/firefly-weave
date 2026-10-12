@@ -179,11 +179,11 @@ const paths: {
     name: "another page",
     leave: (page) =>
       page.getByRole("button", { name: "Home", exact: true }).click(),
-    left: async (page, choice) => {
-      // Applied text is an edit kept on this computer: leaving says so.
-      if (choice === "Apply changes")
-        await page.getByRole("button", { name: "Leave", exact: true }).click();
+    left: async (page) => {
+      // The question answered was the one about leaving: applied text is
+      // kept on this computer without a second question.
       await expect(page.getByLabel("Choose a workflow file")).toBeAttached();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
       await page.goBack();
       await expect(page.locator(".editor-bar")).toBeVisible();
       return appliedVersion(page);

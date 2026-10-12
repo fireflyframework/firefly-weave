@@ -1577,18 +1577,16 @@ export class App implements CanvasHost {
     return true;
   }
   async navigate(view: View) {
-    if (
-      this.view === "designer" &&
-      view !== "designer" &&
-      (!this.leaveInspector() || !(await this.settleSource()))
-    )
+    const leaving = this.view === "designer" && view !== "designer";
+    const typed = leaving && this.sourcePending;
+    const before = this.model.source;
+    if (leaving && (!this.leaveInspector() || !(await this.settleSource())))
       return;
     if (
-      this.view === "designer" &&
-      view !== "designer" &&
+      leaving &&
       this.dirty &&
       this.saveState === "Unsaved" &&
-      !(await this.confirmLeave())
+      !(await this.confirmLeave(typed && this.model.source !== before))
     )
       return;
     if (view !== "connect") this.releaseWizard();
@@ -1615,9 +1613,11 @@ export class App implements CanvasHost {
   }
   /**
    * Leaving a workflow with edits. A local one is kept on this computer, so
-   * the question says where to find it again.
+   * the question says where to find it again; after text typed in Source was
+   * applied on the way out, that question was the one about leaving, and
+   * none follows it.
    */
-  private async confirmLeave() {
+  private async confirmLeave(applied = false) {
     if (this.profile || this.draftRevision !== undefined || this.published)
       return this.dialogs.confirm({
         title: "Leave the designer?",
@@ -1627,6 +1627,7 @@ export class App implements CanvasHost {
         cancelLabel: "Keep editing",
       });
     this.flushLocalSave();
+    if (applied && !this.localDrafts.failed) return true;
     return this.dialogs.confirm({
       title: `Leave ${this.model.definition.metadata.name}?`,
       message: this.localDrafts.failed

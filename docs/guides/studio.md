@@ -1163,7 +1163,8 @@ a notification's **Undo**, Validate, Publish…, Simulate, Save to file) and a n
 
 - **Apply changes** applies the text as the button beside it does, then goes
   on. Text that isn't a valid definition keeps you in **Source**, with its
-  problem shown under it.
+  problem shown under it. Leaving a workflow you edit locally this way asks
+  nothing more: it's kept under **Workflows › On this computer**.
 - **Discard changes** returns **Source** to the workflow as it is, then goes on.
 - **Keep editing**, Escape or the dialog's close button stays in **Source**,
   with the caret where it was.
