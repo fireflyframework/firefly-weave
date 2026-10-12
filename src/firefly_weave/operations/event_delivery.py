@@ -117,6 +117,14 @@ class OutboxDispatcher:
             )
         return await self._dispatch(scope, limit, actor, context, None)
 
+    def operational(self) -> bool:
+        """Whether deliveries run now; while readiness is withdrawn every dispatch is refused."""
+        try:
+            self.subscriptions.bindings.connections.registry.require_operational()
+        except CatalogError:
+            return False
+        return True
+
     async def _dispatch_scheduled(self, authority: _SchedulerScope, limit: int = 10) -> DeliveryReport:
         if not isinstance(authority, _SchedulerScope):
             raise AccessDenied()

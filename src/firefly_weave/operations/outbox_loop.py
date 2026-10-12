@@ -68,6 +68,9 @@ class OutboxLoop:
             raise
 
     async def cycle(self) -> None:
+        # A turn started now would be refused, so wait for readiness without moving a cursor.
+        if not self.dispatcher.operational():
+            return
         count = reserve(1)
         if not count:
             return

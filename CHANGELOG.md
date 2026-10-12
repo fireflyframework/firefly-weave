@@ -93,6 +93,9 @@ SPDX-License-Identifier: Apache-2.0
   lost, scheduled deliveries and manual retries delivered nothing until the
   process restarted, and nothing reported it. A turn cancelled before it
   starts, as when the event loop shuts down, also gives its slot back now.
+- While the platform is not ready, the outbox waits for readiness instead of
+  starting a delivery turn every second that is refused and logged as
+  `Outbox turn failed` at ERROR.
 
 ## 0.1.0a15
 

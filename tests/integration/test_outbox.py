@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -835,14 +836,32 @@ async def _until(condition, seconds):
             await asyncio.sleep(0.05)
 
 
-async def test_turns_refused_before_the_platform_is_ready_leave_delivery_working(setup, scheduler_url, monkeypatch):
+def _turn_errors(caplog):
+    return [
+        record
+        for record in caplog.records
+        if record.name == "firefly_weave.operations.outbox_loop" and record.levelno >= logging.ERROR
+    ]
+
+
+def _start_turns(monkeypatch, s, turns):
+    """While readiness is withdrawn the outbox waits. With "refused", every traversal finds the
+    platform ready just before the withdrawal reaches its turn, so the dispatcher refuses each turn."""
+    if turns == "refused":
+        monkeypatch.setattr(s.dispatcher, "operational", lambda: True)
+
+
+@pytest.mark.parametrize("turns", ["wait", "refused"])
+async def test_delivery_resumes_once_the_platform_is_ready(setup, scheduler_url, monkeypatch, caplog, turns):
     from firefly_weave.operations import event_delivery
     from firefly_weave.operations.outbox_loop import OutboxLoop
 
+    caplog.set_level(logging.WARNING)
     s = setup
     # Slots are per process; count only this test's.
     monkeypatch.setattr(event_delivery, "_inflight", 0)
     assert s.dispatcher.subscriptions.bindings.connections.registry is s.registry
+    _start_turns(monkeypatch, s, turns)
     await s.append()
     ready = False
     # The platform opens the outbox before its other effects and reports ready once all of them are open.
@@ -854,6 +873,9 @@ async def test_turns_refused_before_the_platform_is_ready_leave_delivery_working
         # More traversal cycles than the process has delivery slots.
         await _until(lambda: cycles.count >= 5, 10)
         assert not s.remote.requests
+        if turns == "wait":
+            # The outbox waited for readiness instead of reporting a failed turn every cycle.
+            assert _turn_errors(caplog) == []
         ready = True
         await _until(lambda: s.remote.requests, 5)
     finally:
@@ -862,14 +884,19 @@ async def test_turns_refused_before_the_platform_is_ready_leave_delivery_working
     assert event_delivery.available() == 4
 
 
-async def test_turns_refused_while_readiness_is_withdrawn_leave_delivery_working(setup, scheduler_url, monkeypatch):
+@pytest.mark.parametrize("turns", ["wait", "refused"])
+async def test_delivery_resumes_after_readiness_is_withdrawn_while_native_work_drains(
+    setup, scheduler_url, monkeypatch, caplog, turns
+):
     from firefly_weave.connectors.dispatcher import NativeDispatcher
     from firefly_weave.operations import event_delivery
     from firefly_weave.operations.outbox_loop import OutboxLoop
 
+    caplog.set_level(logging.WARNING)
     s = setup
     monkeypatch.setattr(event_delivery, "_inflight", 0)
     assert s.dispatcher.subscriptions.bindings.connections.registry is s.registry
+    _start_turns(monkeypatch, s, turns)
     ready = True
     s.registry.set_operational_guard(lambda: ready)
     settings = _traversal_settings(s, scheduler_url)
@@ -894,6 +921,9 @@ async def test_turns_refused_while_readiness_is_withdrawn_leave_delivery_working
         assert cycles.count >= withdrawn + 5
         await loop.close()
         assert len(s.remote.requests) == 1
+        if turns == "wait":
+            # Only a turn that started before the withdrawal was seen can be refused.
+            assert len(_turn_errors(caplog)) <= 1
         # Readiness returns and the effects open again.
         ready = True
         loop = OutboxLoop(settings, s.dispatcher.uow, s.dispatcher)

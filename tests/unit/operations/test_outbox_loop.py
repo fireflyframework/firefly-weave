@@ -14,9 +14,10 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Every outbox delivery turn gives its delivery slot back exactly once, however it ends."""
+"""Every outbox delivery turn gives its delivery slot back exactly once, and none starts while restricted."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import uuid4
@@ -136,5 +137,39 @@ async def test_a_turn_that_runs_gives_back_its_slot_once(monkeypatch):
     await turn
 
     assert harness.opened == [harness.scope]
+    assert event_delivery.available() == 4
+    assert not harness.loop.turns
+
+
+async def test_a_restricted_platform_starts_no_turns_and_logs_no_errors(monkeypatch, caplog):
+    caplog.set_level(logging.WARNING)
+    harness = _Harness(monkeypatch)
+    harness.ready = False
+
+    # Every turn would be refused while readiness is withdrawn, so the traversal waits.
+    for _ in range(6):
+        await harness.loop.cycle()
+        await asyncio.gather(*harness.loop.turns)
+
+    assert [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING] == []
+    assert harness.traversed == 0 and harness.opened == []
+    assert event_delivery.available() == 4
+
+    harness.ready = True
+    await (await harness.turn())
+
+    assert harness.traversed == 1 and harness.opened == [harness.scope]
+    assert event_delivery.available() == 4
+
+
+async def test_a_turn_refused_after_the_traversal_found_the_platform_ready_gives_back_its_slot(monkeypatch):
+    harness = _Harness(monkeypatch)
+    turn = await harness.turn()
+
+    # Readiness is withdrawn between the traversal and the turn's first step.
+    harness.ready = False
+    await turn
+
+    assert harness.opened == []
     assert event_delivery.available() == 4
     assert not harness.loop.turns
