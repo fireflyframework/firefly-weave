@@ -2068,16 +2068,6 @@ export class App implements CanvasHost {
     return this.sourceQuestion;
   }
   private async askSource(): Promise<boolean> {
-    const box = document.querySelector<HTMLTextAreaElement>(
-      "textarea.source-editor",
-    );
-    const caret = box && {
-      start: box.selectionStart,
-      end: box.selectionEnd,
-      direction: box.selectionDirection,
-      top: box.scrollTop,
-      left: box.scrollLeft,
-    };
     const choice = await this.dialogs.choose({
       title: "Apply the changes typed in Source?",
       message:
@@ -2106,13 +2096,9 @@ export class App implements CanvasHost {
           const source = document.querySelector<HTMLTextAreaElement>(
             "textarea.source-editor",
           );
-          if (!source) return;
-          source.focus({ preventScroll: true });
-          if (caret) {
-            source.setSelectionRange(caret.start, caret.end, caret.direction);
-            source.scrollTop = caret.top;
-            source.scrollLeft = caret.left;
-          }
+          // The text keeps its selection and scroll while the question
+          // is open: focus brings the caret back where it was.
+          source?.focus({ preventScroll: true });
         }),
       { injector: this.injector },
     );

@@ -28,7 +28,11 @@ import { parse } from "yaml";
 import { command, sourceText } from "./support";
 
 const QUESTION = "Apply the changes typed in Source?";
+/** The text selected in Source, from its end back to its start. */
 const CARET = 42;
+const SELECTED_TO = 58;
+/** How far Source is scrolled down while the question is asked. */
+let scrolled = 0;
 
 /** The question asked on leaving Source with text that isn't applied. */
 const question = (page: Page): Locator =>
@@ -40,7 +44,8 @@ const viewTab = (page: Page, name: string): Locator =>
 
 /**
  * Types in Source without applying: the workflow's version becomes 9.9.9,
- * or the text stops parsing. The caret is left in the middle of the text.
+ * or the text stops parsing. A few characters in the middle of the text are
+ * left selected backward, and the text is scrolled down when it can be.
  */
 async function typeInSource(page: Page, parses = true) {
   await viewTab(page, "Source").click();
@@ -51,10 +56,18 @@ async function typeInSource(page: Page, parses = true) {
     : `${original}\n  broken: [`;
   expect(typed).not.toBe(original);
   await source.fill(typed);
-  await source.evaluate(
-    (element: HTMLTextAreaElement, at) => element.setSelectionRange(at, at),
-    CARET,
+  scrolled = await source.evaluate(
+    (element: HTMLTextAreaElement, [from, to]) => {
+      element.setSelectionRange(from, to, "backward");
+      element.scrollTop = Math.min(
+        40,
+        element.scrollHeight - element.clientHeight,
+      );
+      return element.scrollTop;
+    },
+    [CARET, SELECTED_TO],
   );
+  expect(scrolled, "Source scrolled down").toBeGreaterThan(0);
   return { source, original, typed };
 }
 
@@ -73,7 +86,7 @@ async function answer(page: Page, choice: Choice) {
   await expect(dialog).toHaveCount(0);
 }
 
-/** Still in Source, with the text as typed and the caret where it was. */
+/** Still in Source, with the text as typed, selected and scrolled as it was. */
 async function stillTyping(page: Page, typed: string) {
   await expect(viewTab(page, "Source")).toHaveAttribute(
     "aria-selected",
@@ -86,8 +99,10 @@ async function stillTyping(page: Page, typed: string) {
     await source.evaluate((element: HTMLTextAreaElement) => [
       element.selectionStart,
       element.selectionEnd,
+      element.selectionDirection,
+      element.scrollTop,
     ]),
-  ).toEqual([CARET, CARET]);
+  ).toEqual([CARET, SELECTED_TO, "backward", scrolled]);
 }
 
 type Choice = "Apply changes" | "Discard changes" | "Keep editing" | "Escape";
