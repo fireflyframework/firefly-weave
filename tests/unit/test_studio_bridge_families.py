@@ -91,6 +91,9 @@ def pair(browser):
         ("GET", f"{ENVIRONMENT}/ai/readiness"),
         ("POST", f"{ENVIRONMENT}/ai/setup/publish"),
         ("POST", f"{ENVIRONMENT}/ai/setup/grant"),
+        ("GET", f"{ENVIRONMENT}/operations/summary"),
+        ("GET", f"{PROJECT}/operations/telemetry"),
+        ("GET", f"{ENVIRONMENT}/worker-releases/{RESOURCE}/usage"),
     ],
 )
 def test_studio_journeys_are_bridged(tmp_path, method, path):
@@ -147,6 +150,15 @@ def test_studio_journeys_are_bridged(tmp_path, method, path):
         ("POST", f"{ENVIRONMENT}/ai/endpoints", 404),
         ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/models", 403),
         ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/endpoints", 403),
+        # The summary, the telemetry settings and release usage are reads of the paired scope only.
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/operations/summary", 403),
+        ("GET", f"{OTHER_PROJECT}/operations/telemetry", 403),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + f"/worker-releases/{RESOURCE}/usage", 403),
+        ("POST", f"{ENVIRONMENT}/operations/summary", 404),
+        ("PUT", f"{PROJECT}/operations/telemetry", 404),
+        ("POST", f"{ENVIRONMENT}/worker-releases/{RESOURCE}/usage", 404),
+        ("GET", f"{ENVIRONMENT}/worker-releases/not-a-uuid/usage", 404),
+        ("GET", f"{PROJECT}/operations/compatibility/summary", 404),
     ],
 )
 def test_bridge_boundaries_hold(tmp_path, method, path, status):
@@ -216,8 +228,8 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
     }
     assert {"releases.create", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
     # The AI setup operations add exactly these six, direct incident reads join the incidents
-    # family and stale-worker retirement joins the workers family; every earlier crossing stays
-    # as it was. Release usage stays outside until the releases allowlist names it.
+    # family, stale-worker retirement joins the workers family, and the environment summary,
+    # telemetry settings and release usage join as reads; every earlier crossing stays as it was.
     approved_additions = {
         "ai_endpoints.list",
         "ai_models.list",
@@ -227,6 +239,9 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "bindable_connections.list",
         "incidents.read",
         "workers.retire_stale",
+        "operations_summary.read",
+        "operations_telemetry.read",
+        "releases.usage",
     }
     assert approved_additions <= crossing
     preserved = crossing - approved_additions
@@ -235,9 +250,71 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "3ba280e1522358905e2cdb2e4bf66976fdc988018cdc08742c4956b87d1ab159"
     )
     assert {"workers.grant", "ai_connections.test"} <= preserved
-    assert {"releases.create", "tasks.credentials", "admin.grant", "admin.tenant", "releases.usage"}.isdisjoint(
-        crossing
+    assert {"releases.create", "tasks.credentials", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
+
+
+def test_releases_and_summary_reads_cross_by_this_literal_set(tmp_path):
+    from firefly_weave.contracts.surface import OPERATIONS
+    from firefly_weave.studio.service import STUDIO_FAMILIES, STUDIO_OPERATIONS
+
+    # Releases cross as three named reads, never as a family: registering an image stays an operator step.
+    assert {"releases.list", "releases.read", "releases.usage"} == STUDIO_OPERATIONS
+    assert "releases" not in STUDIO_FAMILIES and "tasks" not in STUDIO_FAMILIES
+    assert {"operations_summary", "operations_telemetry"} <= STUDIO_FAMILIES
+    with client(tmp_path) as browser:
+        studio = browser.app.state.studio
+        crossing = {
+            identifier
+            for identifier, operation in OPERATIONS.items()
+            if identifier.startswith(("releases.", "operations_"))
+            and studio.check_scope(
+                operation.canonical_path.format(
+                    tenant=TENANT, project=PROJECT_ID, environment=ENVIRONMENT_ID, identifier=RESOURCE
+                ),
+                operation.method,
+            )
+            == 200
+        }
+    assert crossing == {
+        "releases.list",
+        "releases.read",
+        "releases.usage",
+        "operations_summary.read",
+        "operations_telemetry.read",
+    }
+
+
+@pytest.mark.parametrize("upstream_status", [200, 403])
+def test_release_usage_and_summary_reads_keep_scope_method_and_upstream_authority(tmp_path, upstream_status):
+    seen = []
+
+    async def upstream(request):
+        seen.append((request.method, request.url.path, request.url.query.decode(), request.headers["authorization"]))
+        return httpx.Response(upstream_status, json={"code": "WV-FORBIDDEN"} if upstream_status == 403 else {})
+
+    paths = (
+        (f"{ENVIRONMENT}/worker-releases/{RESOURCE}/usage", "limit=10"),
+        (f"{ENVIRONMENT}/operations/summary", ""),
+        (f"{PROJECT}/operations/telemetry", ""),
     )
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        targets = [f"/studio/api{path}" + (f"?{query}" if query else "") for path, query in paths]
+        # Nothing crosses before pairing.
+        assert {browser.get(target, headers={"Origin": ORIGIN}).status_code for target in targets} == {401}
+        headers = pair(browser)
+        for (path, _), target in zip(paths, targets, strict=True):
+            assert browser.get(target, headers=headers).status_code == upstream_status
+            assert browser.post(f"/studio/api{path}", json={}, headers=headers).status_code == 404
+            assert browser.delete(f"/studio/api{path}", headers=headers).status_code == 404
+        assert (
+            browser.get(f"/studio/api{OTHER_ENVIRONMENT}/worker-releases/{RESOURCE}/usage", headers=headers).status_code
+            == 403
+        )
+        assert browser.get(f"/studio/api{OTHER_ENVIRONMENT}/operations/summary", headers=headers).status_code == 403
+        assert browser.get(f"/studio/api{OTHER_PROJECT}/operations/telemetry", headers=headers).status_code == 403
+        # Registering a release image still never crosses.
+        assert browser.post(f"/studio/api{ENVIRONMENT}/worker-releases", json={}, headers=headers).status_code == 404
+    assert seen == [("GET", path, query, "Bearer t") for path, query in paths]
 
 
 @pytest.mark.parametrize(

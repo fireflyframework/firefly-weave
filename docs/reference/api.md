@@ -779,6 +779,80 @@ answers `{workers, deployments, activations, next_cursor}`:
   readable targets.
 - A release of another environment answers `404 WV-NOT-FOUND`.
 
+**Environment summary.** `operations_summary.read`
+(`GET …/environments/{environment}/operations/summary`, `weave operations
+summary`) answers one environment's platform health in a single read. It needs
+`status.read` on both the token and the current principal, and reads every
+section in the same transaction that reloads those grants.
+
+- `observed_at` is the database time of the answer. `api` names the server
+  `version`, its image `build` digest when the server knows it, the `instance`
+  ID of the process that answered (new each time it starts), its
+  `uptime_seconds`, and `compatibility` (`mode` and the number of this
+  project's `findings`).
+- `health` lists `database` (with `latency_ms` of a bounded probe), each
+  background loop (`recovery_loop`, `schedules`, `outbox_loop`,
+  `provider_loop`, `kafka_loop`, `operations_loop`, `alert_evaluator`),
+  `native_executors`, and `telemetry`, each with a `state` of `ok`, `degraded`,
+  `down`, or `disabled`. Loops add `last_started_at` and `last_ok_at` when
+  known, `consecutive_failures`, and `recent_failures` (failed cycles among
+  the last 20). Health is measured by the process that answered; no exception
+  text is returned.
+- `load`: `runs_active` (test runs left out), `tasks_ready` and
+  `oldest_ready_seconds` (tasks due now; a retry joins when its next attempt is
+  due), `tasks_leased`, `waits_active`, `waits_overdue` and
+  `oldest_overdue_seconds`, `outbox_pending` and `outbox_oldest_seconds`,
+  `provider_pending`, and `sources_enabled`. Task and worker figures count test
+  runs' work too, because they measure shared capacity. An age is `null` when
+  nothing waits.
+- `workers` counts current workers as `workers.list` lists them by default:
+  `online` (seen in the last 60 seconds), `offline`, `draining`, the `capacity`
+  of online workers that are not draining, and the `active_leases` workers hold.
+- `targets` needs `deployment.read` and counts only the targets both the token
+  and the current principal may read: `total`, `runner_online`, `busy` (an
+  active job), `reconciliation_required`, and `awaiting_approval` (plans that
+  can still be approved: unexpired, on a fresh observation of the current
+  target and deployment revisions, and neither approved nor applied).
+- `incidents` needs `incident.read`: `active` and `opened_24h`, leaving out
+  incidents of test runs.
+- `attention` lists at most 20 items, `{kind, id, title}` plus `expires_at` for
+  approvals, in this order: jobs that need reconciliation, plans you may
+  approve (soonest expiry first), offline workers that still hold active
+  leases, active incidents, targets whose runners are all offline, a restricted
+  compatibility verdict (`id` is `compatibility`), and runs that failed in the
+  last hour. Within a kind, items come oldest first, then by ID. Each kind
+  needs the capability that reads its records: `deployment.read` on the target
+  for jobs and runners, `deployment.read` and `deployment.approve` on the same
+  target for approvals, `incident.read` for incidents, and `run.read` for
+  failed runs. Items you may not read are left out; test runs never appear.
+- A section you may not read is `{"state": "forbidden"}`. Each section has two
+  seconds of database time; one that runs out, or meets a transient database
+  failure, is `{"state": "unavailable"}` while the others are still served with
+  `200`. Neither state is ever reported as zero. The answer has no 24-hour run
+  figures yet.
+
+Loop states follow these rules. A loop is `disabled` when its setting turns it
+off (API-only replicas disable every scheduler loop) and `down` while its task
+is not running. It is `degraded` before its first successful cycle, after 3
+failed cycles in a row or 3 failed cycles among its last 20, and when its last
+success is older than three poll intervals. A cycle still running within its
+loop's budget is on time: 5 seconds for the outbox and broker traversals, 30
+seconds for recovery and schedules, and 60 seconds for provider and mailbox
+polling. A cycle that starts no work, such as an outbox cycle while the platform
+is not ready or while no delivery slot is free, is neither a success nor a
+failure, so a loop that keeps waiting turns `degraded` without counting
+failures. Ages use the process's monotonic clock; the times shown come from
+its wall clock.
+
+**Telemetry settings.** `operations_telemetry.read`
+(`GET …/projects/{project}/operations/telemetry`, `weave operations
+telemetry`) needs `status.read` for the project, on both the token and the
+current principal; an environment grant is not enough. It answers whether
+telemetry export is `enabled`, whether `traces` and `metrics` have a collector
+`configured` and its `host` name, the metrics `interval_seconds`, and how many
+telemetry items this process has `dropped`. It never returns endpoint paths,
+ports, queries, credentials, or headers.
+
 **Answers that say "unavailable".** Cancellation and task completion can return
 an unavailable acknowledgment when the platform cannot classify the historical
 data or compare payloads; task completion then includes
@@ -827,6 +901,8 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `lumi.status` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/lumi/status` | lumi.use |
 | `lumi.ask` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/lumi/ask` | lumi.use |
 | `compatibility.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility` | status.read |
+| `operations_summary.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/operations/summary` | status.read |
+| `operations_telemetry.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/telemetry` | status.read |
 | `compatibility.check` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility/check` | compatibility.check |
 | `retention.plan` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans` | retention.plan |
 | `retention.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans/{identifier}` | retention.plan |

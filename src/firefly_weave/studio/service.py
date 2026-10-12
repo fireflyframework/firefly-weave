@@ -92,6 +92,9 @@ STUDIO_FAMILIES = frozenset(
         "deployment_runners",
         "environments",
         "incidents",
+        # The environment summary and telemetry settings re-check each section's capability server-side.
+        "operations_summary",
+        "operations_telemetry",
         # Draft save/retire and Simulate are authorized server-side like every other family.
         "drafts",
         "debug",
@@ -99,7 +102,7 @@ STUDIO_FAMILIES = frozenset(
 )
 # Single read operations from families that otherwise stay operator-only: releases.create
 # registers image identities and remains a CLI/operator step.
-STUDIO_OPERATIONS = frozenset({"releases.list", "releases.read"})
+STUDIO_OPERATIONS = frozenset({"releases.list", "releases.read", "releases.usage"})
 CATALOG_COLLECTIONS = frozenset({"drafts", "workflows", "actions", "connectors", "decision-tables"})
 
 

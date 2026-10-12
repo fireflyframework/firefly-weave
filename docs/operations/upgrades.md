@@ -328,6 +328,32 @@ leases per command, and `releases.usage` (`weave workers releases usage`, SDK
 `release_usage`) reports where a release runs. Neither changes an existing
 answer. Earlier servers do not serve them and answer `404` or `405`.
 
+## Environment summary and telemetry settings
+
+Two reads are new, and neither changes an existing answer:
+
+- `operations_summary.read` (`weave operations summary`) answers an
+  environment's health, load, workers, targets, incidents and the items that
+  need attention. It needs `status.read`; each section beyond health, load and
+  workers needs its own capability, and a section you may not read answers
+  `{"state": "forbidden"}` instead of zeros. Run figures leave out test runs.
+- `operations_telemetry.read` (`weave operations telemetry`) answers whether
+  telemetry export is on and which collector hosts it uses. It needs
+  `status.read` granted for the project, not only for an environment, and
+  never returns endpoint paths, credentials or headers.
+
+Earlier servers do not serve them and answer `404` or `405`. Loop health is
+measured in each API process and starts again when the process restarts, so a
+freshly started process reads `degraded` until each loop completes a cycle. An
+answer from an API-only replica reports every scheduler loop as `disabled`; the
+summary's `instance` ID tells you which process answered. The reference explains
+how each state is decided; see
+[Discovery, debugging, and history](../reference/api.md#discovery-debugging-and-history).
+
+The Studio host bridge now forwards both reads and `releases.usage`. An earlier
+Studio host or desktop app refuses them with `404`, so upgrade Studio and the
+desktop app with the server before relying on the pages that use them.
+
 ## Operational fact storage
 
 The `0031_operations_facts` migration adds five scoped operational projections

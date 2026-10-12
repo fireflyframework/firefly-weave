@@ -132,6 +132,24 @@ SPDX-License-Identifier: Apache-2.0
   combined with keyword arguments.
 - Kubernetes runners no longer read a pod's free-text status reason, and a pod
   whose readiness is unknown is listed as a member that is not ready.
+- New operation `operations_summary.read` (`weave operations summary`) answers
+  an environment's health, load, workers, targets, incidents and up to 20 items
+  that need attention, in one read that reloads the caller's grants. Each
+  section and item needs its own capability; one the caller may not read is
+  `{"state": "forbidden"}`, and one that runs out of its two seconds of
+  database time is `{"state": "unavailable"}` while the rest are still served.
+  Run figures leave out test runs.
+- New operation `operations_telemetry.read` (`weave operations telemetry`)
+  answers whether telemetry export is on, the collector host names, the
+  metrics interval and how many items were dropped, never endpoint paths,
+  credentials or headers. It needs `status.read` for the project.
+- Background loop health, which the summary reports, ages successes with a
+  monotonic clock, counts a cycle still within its loop's budget as on time,
+  and reads degraded after 3 failed cycles in a row or among the last 20. An
+  outbox cycle that cannot start a delivery, because the platform is not ready
+  or no delivery slot is free, is neither a success nor a failure.
+- Studio's host bridge forwards the environment summary, the telemetry
+  settings and `releases.usage`.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.

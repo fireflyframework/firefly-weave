@@ -19,10 +19,11 @@
 import asyncio
 import logging
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pyfly.client.ports.outbound import BoundedHttpClientPort
 from pyfly.container.bean import bean
@@ -56,6 +57,7 @@ from firefly_weave.api.health import HealthController
 from firefly_weave.api.human_files import HumanFileController
 from firefly_weave.api.lumi import LumiController
 from firefly_weave.api.operations import OperationsController
+from firefly_weave.api.operations_summary import OperationsSummaryController
 from firefly_weave.api.providers import ProviderController
 from firefly_weave.api.run_views import RunViewController
 from firefly_weave.api.runs import RunController
@@ -108,6 +110,7 @@ from firefly_weave.operations.lumi import LumiService
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.operations.outbox_loop import OutboxLoop
 from firefly_weave.operations.run_views import RunViewService
+from firefly_weave.operations.summary import OperationsSummaryService
 from firefly_weave.operations.telemetry import TelemetryService
 from firefly_weave.persistence.resources import DatabaseResources
 from firefly_weave.persistence.uow import UnitOfWork
@@ -272,6 +275,8 @@ def make_app(
         health = LoopHealth()
         register_background_loops(health, settings)
         app.state.loop_health = health
+        # The summary names the process that answered and how long it has been up.
+        instance, started = uuid4(), time.monotonic()
         try:
             if settings.broker.enabled:
                 require_driver()
@@ -364,12 +369,24 @@ def make_app(
                 RunViewService,
                 RunViewController,
                 WorkerController,
+                OperationsSummaryController,
             ):
                 pyfly.context.get_bean(required)
             app.state.authentication = pyfly.context.get_bean(AuthenticationService)
             await resources.check_startup()
             compatibility = pyfly.context.get_bean(CompatibilityService)
             app.state.compatibility = compatibility
+            app.state.operations_summary = OperationsSummaryService(
+                pyfly.context.get_bean(UnitOfWork),
+                pyfly.context.get_bean(AuthorizationService),
+                settings,
+                health,
+                compatibility,
+                drops=telemetry_drops,
+                instance=instance,
+                started_monotonic=started,
+                native=lambda: getattr(app.state, "dispatcher", None),
+            )
             app.state.telemetry_service = pyfly.context.get_bean(TelemetryService)
             registry.set_operational_guard(lambda: compatibility.ready, retry_after=compatibility.retry_after_seconds)
 

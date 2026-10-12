@@ -178,6 +178,7 @@ def contract_models() -> dict[str, SchemaModel]:
         RecordedEvidence,
         ReplayReport,
     )
+    from firefly_weave.contracts.operations_summary import OperationsSummary, OperationsTelemetry
     from firefly_weave.contracts.providers import (
         ProviderEvent,
         ProviderIngressResponse,
@@ -413,6 +414,8 @@ def contract_models() -> dict[str, SchemaModel]:
         "retire-stale-result": RetireStaleResult,
         "release-usage-query": ReleaseUsageQuery,
         "release-usage": ReleaseUsage,
+        "operations-summary": OperationsSummary,
+        "operations-telemetry": OperationsTelemetry,
         "lease-proof": LeaseProof,
         "task-lease": TaskLease,
         "completion-receipt": CompletionReceipt,

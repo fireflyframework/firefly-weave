@@ -134,6 +134,7 @@ from firefly_weave.contracts.operations import (
     IncidentView,
     ReplayReport,
 )
+from firefly_weave.contracts.operations_summary import OperationsSummary, OperationsTelemetry
 from firefly_weave.contracts.providers import (
     ProviderIngressResponse,
     ProviderReceipt,
@@ -793,6 +794,12 @@ OPERATIONS = {
             "POST",
             CompatibilityReport,
             "compatibility.check",
+        ),
+        Operation(
+            "operations_summary.read", ENVIRONMENT + "/operations/summary", "GET", OperationsSummary, "status.read"
+        ),
+        Operation(
+            "operations_telemetry.read", PROJECT + "/operations/telemetry", "GET", OperationsTelemetry, "status.read"
         ),
         Operation(
             "retention.plan",
