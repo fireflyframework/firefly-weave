@@ -71,16 +71,24 @@ def _ordinal(number: object) -> int | None:
 _STOPPED = frozenset({"exited", "dead", "removing"})
 
 
+def _state(fact: dict[str, Any]) -> str:
+    """The container state as Docker writes it; anything but text makes the container unreadable."""
+    state = fact["state"]
+    if not isinstance(state, str):
+        raise RunnerPolicyError()
+    return state
+
+
 def _members(facts: list[dict[str, Any]]) -> list[ObservedMember] | None:
     """Live worker containers as members, or None when they cannot all be reported.
 
     Members are placement only, so they never fail an observation or an apply: more than 100 live
     containers or one unreadable container leaves them out (unknown) rather than reporting part of them.
     """
-    live = [fact for fact in facts if fact.get("state") not in _STOPPED]
-    if len(live) > 100:
-        return None
     try:
+        live = [fact for fact in facts if _state(fact) not in _STOPPED]
+        if len(live) > 100:
+            return None
         return [
             ObservedMember(
                 # Docker's default hostname, which the worker reports, is the ID prefix.

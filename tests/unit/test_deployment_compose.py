@@ -442,6 +442,15 @@ async def test_one_malformed_live_container_leaves_all_members_out(tmp_path, cha
     assert "members" not in report.model_dump(mode="json")["resources"][0]
 
 
+@pytest.mark.parametrize("state", [["running"], {"status": "running"}, 1, None])
+async def test_a_container_state_that_is_not_text_leaves_members_out(tmp_path, state):
+    config = policy(tmp_path)
+    containers = [container("a" * 64, "1"), container("b" * 64, "2", state=state)]
+    report = await ComposeAdapter(config, command=worker_project(config, containers)).observe()
+    assert report.complete and report.resources[0].members == []
+    assert report.resources[0].replicas == 2
+
+
 @pytest.mark.parametrize("number", ["\u00b2", "\u0661", "\uff11", "1x", "", "12345678"])
 def test_compose_numbers_are_ascii_digits(number):
     from firefly_weave.deployment_runner.compose import _ordinal

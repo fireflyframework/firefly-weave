@@ -254,12 +254,13 @@ selector: `matchLabels` become `key=value` and `matchExpressions` become
 set-based requirements (`key in (a,b)`, `key notin (a,b)`, `key`, `!key`). The
 runner reads only the few pod fields it needs. A pod counts only when its
 controlling ReplicaSet is named after the deployment and its pod template hash;
-terminating, finished, failed, and evicted pods are left out. Members are
-placement only and never fail an observation or an apply: with more than 100
-live pods, a selector kubectl cannot express exactly, a label that is not valid
-Kubernetes syntax, or a listing that fails, the observation leaves the members
-out (placement unknown) instead of reporting part of them, and it never lists
-the whole namespace.
+terminating, finished, failed, and evicted pods are left out. A pod whose
+readiness is unknown, for example on an unreachable node, is listed as not
+ready. Members are placement only and never fail an observation or an apply:
+with more than 100 live pods, a selector kubectl cannot express exactly, a label
+that is not valid Kubernetes syntax, or a listing that fails, the observation
+leaves the members out (placement unknown) instead of reporting part of them,
+and it never lists the whole namespace.
 
 ### Azure Container Apps
 

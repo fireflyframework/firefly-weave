@@ -41,7 +41,8 @@ CONFIGURATION_ANNOTATION = "firefly.weave/configuration"
 # Kubernetes label syntax, so a selector built from a deployment never carries selector operators of its own.
 _LABEL_KEY = re.compile(r"(?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?")
 _LABEL_VALUE = re.compile(r"(?:[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?")
-# The only pod fields read for members, so the listing stays small: about 250 bytes a pod.
+# The only pod fields read for members, so the listing stays small: about 250 bytes a pod. Free-text status
+# fields stay out, so no value can carry a line break into the listing; evicted pods always have phase Failed.
 _POD_FIELDS = (
     ".metadata.name",
     ".metadata.namespace",
@@ -51,7 +52,6 @@ _POD_FIELDS = (
     ".metadata.ownerReferences[?(@.controller==true)].kind",
     ".metadata.ownerReferences[?(@.controller==true)].name",
     ".status.phase",
-    ".status.reason",
     '.status.conditions[?(@.type=="Ready")].status',
     '.status.containerStatuses[?(@.name=="{container}")].restartCount',
     '.status.containerStatuses[?(@.name=="{container}")].state.running.startedAt',
@@ -215,7 +215,7 @@ class KubernetesAdapter:
         """A live pod of this deployment, None for any other pod, or an error for an unreadable one."""
         if len(fields) != len(_POD_FIELDS):
             raise ValueError("Unexpected pod fields")
-        name, namespace, deleting, template, api, kind, owner, phase, reason, ready, restarts, started, node = fields
+        name, namespace, deleting, template, api, kind, owner, phase, ready, restarts, started, node = fields
         # The deployment controller names each ReplicaSet `<deployment>-<pod-template-hash>`; exactly one
         # controller owner is listed, so several controllers never match.
         if namespace != self.policy.boundary or (api, kind) != ("apps/v1", "ReplicaSet") or not template:
@@ -223,9 +223,10 @@ class KubernetesAdapter:
         if owner != f"{deployment}-{template}":
             return None
         # Terminating, finished, failed and evicted pods run no worker that placement could describe.
-        if deleting or phase in {"Succeeded", "Failed"} or reason == "Evicted":
+        if deleting or phase in {"Succeeded", "Failed"}:
             return None
-        if ready not in {"", "True", "False"} or not re.fullmatch(r"[0-9]{0,10}", restarts):
+        # A Ready status of Unknown (for example on a lost node) is not ready.
+        if ready not in {"", "True", "False", "Unknown"} or not re.fullmatch(r"[0-9]{0,10}", restarts):
             raise ValueError("Unexpected pod status")
         return ObservedMember(
             host=name,

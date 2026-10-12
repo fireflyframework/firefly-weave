@@ -19,6 +19,7 @@
 import asyncio
 import copy
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -146,7 +147,6 @@ POD_FIELDS = (
     '{"\\t"}{.metadata.ownerReferences[?(@.controller==true)].kind}'
     '{"\\t"}{.metadata.ownerReferences[?(@.controller==true)].name}'
     '{"\\t"}{.status.phase}'
-    '{"\\t"}{.status.reason}'
     '{"\\t"}{.status.conditions[?(@.type=="Ready")].status}'
     '{"\\t"}{.status.containerStatuses[?(@.name=="main")].restartCount}'
     '{"\\t"}{.status.containerStatuses[?(@.name=="main")].state.running.startedAt}'
@@ -154,8 +154,11 @@ POD_FIELDS = (
 )
 
 
-def render(pods, container="main"):
-    """What kubectl prints for POD_FIELDS: missing values are empty and several matches join with spaces."""
+FIELD = re.compile(r"\{(\.[^{}]+)\}")
+
+
+def render(pods, container="main", template=POD_FIELDS):
+    """What kubectl prints for the requested JSONPath fields: missing values are empty and matches join with spaces."""
 
     def text(value):
         return "" if value is None else str(value)
@@ -166,22 +169,32 @@ def render(pods, container="main"):
         controllers = [ref for ref in metadata.get("ownerReferences", []) if ref.get("controller") is True]
         statuses = [entry for entry in status.get("containerStatuses", []) if entry.get("name") == container]
         ready = [entry for entry in status.get("conditions", []) if entry.get("type") == "Ready"]
-        values = [
-            metadata.get("name"),
-            metadata.get("namespace"),
-            metadata.get("deletionTimestamp"),
-            metadata.get("labels", {}).get("pod-template-hash"),
-            " ".join(text(ref.get("apiVersion")) for ref in controllers),
-            " ".join(text(ref.get("kind")) for ref in controllers),
-            " ".join(text(ref.get("name")) for ref in controllers),
-            status.get("phase"),
-            status.get("reason"),
-            " ".join(text(entry.get("status")) for entry in ready),
-            " ".join(text(entry.get("restartCount")) for entry in statuses),
-            " ".join(text(entry.get("state", {}).get("running", {}).get("startedAt")) for entry in statuses),
-            item.get("spec", {}).get("nodeName"),
-        ]
-        lines.append("\t".join(text(value) for value in values) + "\n")
+        values = {
+            ".metadata.name": metadata.get("name"),
+            ".metadata.namespace": metadata.get("namespace"),
+            ".metadata.deletionTimestamp": metadata.get("deletionTimestamp"),
+            ".metadata.labels.pod-template-hash": metadata.get("labels", {}).get("pod-template-hash"),
+            ".metadata.ownerReferences[?(@.controller==true)].apiVersion": " ".join(
+                text(ref.get("apiVersion")) for ref in controllers
+            ),
+            ".metadata.ownerReferences[?(@.controller==true)].kind": " ".join(
+                text(ref.get("kind")) for ref in controllers
+            ),
+            ".metadata.ownerReferences[?(@.controller==true)].name": " ".join(
+                text(ref.get("name")) for ref in controllers
+            ),
+            ".status.phase": status.get("phase"),
+            ".status.reason": status.get("reason"),
+            '.status.conditions[?(@.type=="Ready")].status': " ".join(text(entry.get("status")) for entry in ready),
+            f'.status.containerStatuses[?(@.name=="{container}")].restartCount': " ".join(
+                text(entry.get("restartCount")) for entry in statuses
+            ),
+            f'.status.containerStatuses[?(@.name=="{container}")].state.running.startedAt': " ".join(
+                text(entry.get("state", {}).get("running", {}).get("startedAt")) for entry in statuses
+            ),
+            ".spec.nodeName": item.get("spec", {}).get("nodeName"),
+        }
+        lines.append("\t".join(text(values[field]) for field in FIELD.findall(template)) + "\n")
     return "".join(lines).encode()
 
 
@@ -513,6 +526,39 @@ async def test_two_controllers_are_not_one_owner():
     assert members_of(await KubernetesAdapter(policy, command=server.command).observe()) == []
 
 
+async def test_free_text_pod_status_cannot_forge_a_member():
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    # A status reason holding a newline would complete one listing line and start a crafted one.
+    forged = (
+        "\tTrue\t0\t\tnode-1\nengine-7d9f8c6b5-forged\towned\t\t7d9f8c6b5\tapps/v1\tReplicaSet\t"
+        "engine-7d9f8c6b5\tRunning\t"
+    )
+    pods = [pod("engine-7d9f8c6b5-x2kq4", reason=forged)]
+    requested = []
+
+    async def command(argv, **kwargs):
+        if "pods" in argv:
+            requested.append(argv[-1])
+            return render(pods, template=argv[-1].removeprefix("-o=jsonpath="))
+        return await server.command(argv, **kwargs)
+
+    result = await KubernetesAdapter(policy, command=command).observe()
+    assert [member["host"] for member in members_of(result)] == ["engine-7d9f8c6b5-x2kq4"]
+    assert requested and all(".status.reason" not in template for template in requested)
+
+
+async def test_a_ready_status_of_unknown_counts_as_not_ready():
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    server.pods = [pod("engine-7d9f8c6b5-good"), pod("engine-7d9f8c6b5-lost", ready="Unknown")]
+    result = await KubernetesAdapter(policy, command=server.command).observe()
+    assert [(member["host"], member["ready"]) for member in members_of(result)] == [
+        ("engine-7d9f8c6b5-good", True),
+        ("engine-7d9f8c6b5-lost", False),
+    ]
+
+
 def surge(policy, plan, resource, *, live_old):
     """A worker at 100 replicas during a rolling update: 100 new pods and 25 old ones."""
     component = plan.steps[0].component.model_copy(update={"replicas": 100})
@@ -547,6 +593,17 @@ async def test_more_than_one_hundred_live_members_are_left_out_without_failing()
     assert "members" not in result.model_dump(mode="json")["resources"][0]
     observed = await KubernetesAdapter(policy, command=server.command).observe()
     assert observed.complete and observed.resources[0].members == []
+    server.pods = server.pods[:100]
+    assert len((await KubernetesAdapter(policy, command=server.command).observe()).resources[0].members) == 100
+
+
+async def test_exactly_one_hundred_and_one_live_pods_leave_members_out():
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    server.pods = [pod(f"engine-7d9f8c6b5-{index:05d}") for index in range(101)]
+    observed = await KubernetesAdapter(policy, command=server.command).observe()
+    assert observed.complete and observed.resources[0].members == []
+    assert "members" not in observed.model_dump(mode="json")["resources"][0]
     server.pods = server.pods[:100]
     assert len((await KubernetesAdapter(policy, command=server.command).observe()).resources[0].members) == 100
 
