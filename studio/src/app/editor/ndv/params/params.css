@@ -145,7 +145,9 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--muted);
   font: var(--type-caption);
 }
-:is(.step-details, .sd-form-scope) .param-mode button[role="radio"]::before {
+/* ::before is the face; ::after, the same box, carries the focus ring. */
+:is(.step-details, .sd-form-scope) .param-mode button[role="radio"]::before,
+:is(.step-details, .sd-form-scope) .param-mode button[role="radio"]::after {
   content: "";
   position: absolute;
   inset: calc(50% - var(--space-2)) 0;
@@ -173,8 +175,8 @@ SPDX-License-Identifier: Apache-2.0
 }
 :is(.step-details, .sd-form-scope)
   .param-mode
-  button[role="radio"]:focus-visible::before {
-  box-shadow: 0 0 0 2px var(--focus);
+  button[role="radio"]:focus-visible::after {
+  outline: 2px solid var(--focus);
 }
 [data-mode="fixed"] > .param:not(:hover, :focus-within) .param-mode,
 .param:not(:hover, :focus-within) .param-menu,
@@ -471,9 +473,9 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--muted);
   font: var(--type-label);
 }
-:is(.step-details, .sd-form-scope)
-  .param-segments
-  button[role="radio"]::before {
+/* ::before is the face; ::after, the same box, carries the focus ring. */
+:is(.step-details, .sd-form-scope) .param-segments button[role="radio"]::before,
+:is(.step-details, .sd-form-scope) .param-segments button[role="radio"]::after {
   content: "";
   position: absolute;
   inset: var(--space-1) 0;
@@ -503,8 +505,8 @@ SPDX-License-Identifier: Apache-2.0
 }
 :is(.step-details, .sd-form-scope)
   .param-segments
-  button[role="radio"]:focus-visible::before {
-  box-shadow: 0 0 0 2px var(--focus);
+  button[role="radio"]:focus-visible::after {
+  outline: 2px solid var(--focus);
 }
 /* The line under a control: a message, a preview or a hint. It wraps. */
 .param-line {

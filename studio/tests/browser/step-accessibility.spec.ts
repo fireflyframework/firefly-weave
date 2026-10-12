@@ -16,12 +16,42 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Step details for keyboard and assistive technology: every control has a
-// name, a visible focus ring and a 24 px target; toggles, Add option and
-// rows are named; drops are announced.
-import { expect, test } from "@playwright/test";
+// name, a visible focus ring and a 24 px target; a segmented choice rings
+// its face; toggles, Add option and rows are named; drops are announced.
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openStepFixture, sizes } from "./step-details-po";
 import { walkFocus } from "./step-focus";
-import { formScroller, visibleArea } from "./step-geometry";
+import { expectAligned, formScroller, visibleArea } from "./step-geometry";
+import { tokenColor } from "./support";
+
+/**
+ * A focused radio of a segmented choice draws its ring around its face: an
+ * outline in the focus color on ::after, whose box is the face's box
+ * (::before), so the ring hugs the face inside the larger target.
+ */
+async function expectRingOnFace(page: Page, radio: Locator) {
+  const focus = await tokenColor(page, "--focus");
+  const parts = await radio.evaluate((element) => {
+    const edges = (part: string) => {
+      const style = getComputedStyle(element, part);
+      return {
+        top: parseFloat(style.top),
+        right: parseFloat(style.right),
+        bottom: parseFloat(style.bottom),
+        left: parseFloat(style.left),
+        outline: style.outlineStyle,
+        width: parseFloat(style.outlineWidth),
+        color: style.outlineColor,
+      };
+    };
+    return { face: edges("::before"), ring: edges("::after") };
+  });
+  for (const edge of ["top", "right", "bottom", "left"] as const)
+    expectAligned([parts.ring[edge], parts.face[edge]], `ring ${edge} edge`);
+  expect(parts.ring.outline).toBe("solid");
+  expect(parts.ring.width).toBe(2);
+  expect(parts.ring.color).toBe(focus);
+}
 
 for (const size of sizes)
   test.describe(`step details accessibility at ${size.tag}`, () => {
@@ -83,6 +113,39 @@ for (const size of sizes)
       await expect(details.dialog.locator("[aria-live=polite]")).toHaveText(
         "Mapped Input › email to Fields",
       );
+    });
+
+    test("a focused segmented choice rings its face with an outline", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.open("route-by-value");
+      // Fixed | Mapped in a condition's value, and the Input pane's views.
+      const value = details
+        .field("cases")
+        .getByLabel("Condition 1 value", { exact: true });
+      await value.first().focus();
+      await page.keyboard.press("Tab");
+      const fixed = details.field("cases").getByRole("radio", {
+        name: "Fixed",
+      });
+      await expect(fixed.first()).toBeFocused();
+      await expectRingOnFace(page, fixed.first());
+      if (sheet)
+        await details.dialog
+          .getByRole("tablist", { name: "Step details panes" })
+          .getByRole("tab", { name: "Input" })
+          .click();
+      await details.dialog
+        .locator(".sd-input")
+        .getByRole("button", { name: "Search fields" })
+        .focus();
+      await page.keyboard.press("Shift+Tab");
+      const schema = details.dialog
+        .getByRole("radiogroup", { name: "Input view" })
+        .getByRole("radio", { name: "Schema" });
+      await expect(schema).toBeFocused();
+      await expectRingOnFace(page, schema);
     });
   });
 

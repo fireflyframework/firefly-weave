@@ -96,7 +96,9 @@ weave-test-event-pane {
     display: none;
   }
 }
-.step-details .pane-views button[role="radio"]::before {
+/* ::before is the face; ::after, the same box, carries the focus ring. */
+.step-details .pane-views button[role="radio"]::before,
+.step-details .pane-views button[role="radio"]::after {
   content: "";
   position: absolute;
   inset: calc(50% - var(--space-5) / 2) 0;
@@ -120,8 +122,8 @@ weave-test-event-pane {
 .step-details .pane-views button[role="radio"]:focus-visible {
   outline: none;
 }
-.step-details .pane-views button[role="radio"]:focus-visible::before {
-  box-shadow: 0 0 0 2px var(--focus);
+.step-details .pane-views button[role="radio"]:focus-visible::after {
+  outline: 2px solid var(--focus);
 }
 .step-details button.pane-search-toggle {
   flex: none;
