@@ -134,9 +134,14 @@ class OutboxDispatcher:
         *,
         reserved: int = 0,
     ) -> DeliveryReport:
-        self.subscriptions.bindings.connections.registry.require_operational()
-        if not 1 <= limit <= 10:
-            raise ValueError("One bounded outbox quantum required")
+        try:
+            self.subscriptions.bindings.connections.registry.require_operational()
+            if not 1 <= limit <= 10:
+                raise ValueError("One bounded outbox quantum required")
+        except BaseException:
+            # A traversal turn hands over the capacity it reserved; a refused turn gives it back.
+            release(reserved)
+            raise
         count = reserved or reserve(limit)
         if not count:
             return DeliveryReport()

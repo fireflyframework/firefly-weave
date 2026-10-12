@@ -801,3 +801,104 @@ async def test_capacity_refusal_before_send_leaves_the_lease_for_recovery(setup,
     assert (await s.dispatch()).delivered == 1
     assert len(s.remote.requests) == 1
     assert {attempt["outcome"] for attempt in await s.rows("delivery_attempts")} == {"ACK_UNKNOWN", "ACK"}
+
+
+def _traversal_settings(s, scheduler_url):
+    from pydantic import SecretStr
+
+    from firefly_weave.settings import Settings
+
+    return Settings(
+        database_url=SecretStr(s.access_db[3].render_as_string(hide_password=False)),
+        scheduler_enabled=True,
+        scheduler_database_url=SecretStr(scheduler_url),
+    )
+
+
+def _count_cycles(monkeypatch, loop):
+    counter = SimpleNamespace(count=0)
+    cycle = loop.cycle
+
+    async def counted():
+        try:
+            await cycle()
+        finally:
+            counter.count += 1
+
+    monkeypatch.setattr(loop, "cycle", counted)
+    return counter
+
+
+async def _until(condition, seconds):
+    async with asyncio.timeout(seconds):
+        while not condition():
+            await asyncio.sleep(0.05)
+
+
+async def test_turns_refused_before_the_platform_is_ready_leave_delivery_working(setup, scheduler_url, monkeypatch):
+    from firefly_weave.operations import event_delivery
+    from firefly_weave.operations.outbox_loop import OutboxLoop
+
+    s = setup
+    # Slots are per process; count only this test's.
+    monkeypatch.setattr(event_delivery, "_inflight", 0)
+    assert s.dispatcher.subscriptions.bindings.connections.registry is s.registry
+    await s.append()
+    ready = False
+    # The platform opens the outbox before its other effects and reports ready once all of them are open.
+    s.registry.set_operational_guard(lambda: ready)
+    loop = OutboxLoop(_traversal_settings(s, scheduler_url), s.dispatcher.uow, s.dispatcher)
+    cycles = _count_cycles(monkeypatch, loop)
+    try:
+        await loop.open()
+        # More traversal cycles than the process has delivery slots.
+        await _until(lambda: cycles.count >= 5, 10)
+        assert not s.remote.requests
+        ready = True
+        await _until(lambda: s.remote.requests, 5)
+    finally:
+        await loop.close()
+    assert len(s.remote.requests) == 1
+    assert event_delivery.available() == 4
+
+
+async def test_turns_refused_while_readiness_is_withdrawn_leave_delivery_working(setup, scheduler_url, monkeypatch):
+    from firefly_weave.connectors.dispatcher import NativeDispatcher
+    from firefly_weave.operations import event_delivery
+    from firefly_weave.operations.outbox_loop import OutboxLoop
+
+    s = setup
+    monkeypatch.setattr(event_delivery, "_inflight", 0)
+    assert s.dispatcher.subscriptions.bindings.connections.registry is s.registry
+    ready = True
+    s.registry.set_operational_guard(lambda: ready)
+    settings = _traversal_settings(s, scheduler_url)
+    loop = OutboxLoop(settings, s.dispatcher.uow, s.dispatcher)
+    cycles = _count_cycles(monkeypatch, loop)
+    native = NativeDispatcher(None, (), None, settings.shutdown_timeout_seconds)  # type: ignore[arg-type]
+    try:
+        await loop.open()
+        await s.append()
+        await _until(lambda: len(s.remote.requests) == 1, 5)
+        # Readiness is withdrawn before the effects close. They close in reverse opening order, so the
+        # outbox closes last, once the native dispatcher has drained the connector call in flight.
+        ready = False
+        await s.append()
+        withdrawn = cycles.count
+
+        async def connector_call():
+            await _until(lambda: cycles.count >= withdrawn + 5, settings.shutdown_timeout_seconds)
+
+        native.tasks.append(asyncio.create_task(connector_call()))
+        await native.close()
+        assert cycles.count >= withdrawn + 5
+        await loop.close()
+        assert len(s.remote.requests) == 1
+        # Readiness returns and the effects open again.
+        ready = True
+        loop = OutboxLoop(settings, s.dispatcher.uow, s.dispatcher)
+        await loop.open()
+        await _until(lambda: len(s.remote.requests) == 2, 5)
+    finally:
+        await loop.close()
+    assert event_delivery.available() == 4

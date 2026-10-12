@@ -83,6 +83,15 @@ SPDX-License-Identifier: Apache-2.0
   instead of the stored 201 answer.
 - AI connection tests are dated with the database clock, which readiness also
   uses, so a test that just passed reads as healthy on every API process.
+- Event delivery keeps working after the platform becomes ready or withdraws
+  readiness. Before, each delivery turn that the outbox started while the
+  platform was not ready kept one of the process's four delivery slots. That
+  happened while the platform opened its background work, at startup and when a
+  compatibility rescan restored readiness, and while it closed that work after
+  readiness was withdrawn, which can last up to the shutdown timeout (10 seconds
+  by default) while native connector calls finish. Once all four slots were
+  lost, scheduled deliveries and manual retries delivered nothing until the
+  process restarted, and nothing reported it.
 
 ## 0.1.0a15
 
