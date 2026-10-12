@@ -920,9 +920,9 @@ after; past six, a "+N" menu lists the rest.
   such as "Call an API · HTTP request". Select the name, or press F2 in the
   header, to rename the step: type any text, and Studio stores a valid ID, such
   as `get-customer-orders`, and updates everything that reads the step.
-  **Execute step** keeps its place for running one step; running a single step
-  isn't available yet, so it says so, and its menu offers **Simulate the
-  workflow**. The **More** menu holds **Rename**, **Duplicate**, **Copy as
+  **Execute step** (**Execute workflow** in the trigger's details) keeps its
+  place for running one step; running a single step isn't available yet, so it
+  says so, and its menu offers **Simulate the workflow**. The **More** menu holds **Rename**, **Duplicate**, **Copy as
   YAML**, **Edit as YAML** and **Delete**.
 - **Tabs.** **Parameters** and **Settings** sit under the header, with **Docs**,
   which opens the step's section of the
@@ -972,6 +972,12 @@ API** keeps its **URL** as a path, with a row under it for the value of each
 [schema designer](studio-step-reference.md#design-forms-and-payloads-with-the-schema-designer).
 The step reference lists
 [each step's fields in step details](studio-step-reference.md#fields-in-step-details).
+
+**Call an API, email and file steps.** With the new editor on, the step picker
+lists them under **Common actions**, and each one gets an action of its own,
+edited right in step details. A workflow with these steps can't be published,
+simulated on a platform or saved to a file with their settings yet; see
+[where Studio keeps their actions](studio-step-reference.md#email-and-file-steps).
 
 #### Settings, issues and entries that don't apply yet
 

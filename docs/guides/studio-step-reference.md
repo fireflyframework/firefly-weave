@@ -87,7 +87,9 @@ output; it does not need an artificial Transform just to be a workflow.
   as "Add a step here, after call-api"; in an empty workflow, select **Add your
   first step**. Type in **Search steps and actions**. The list has a **Steps**
   group and a **Published actions** group. Choosing a published action inserts a
-  **Call an action** step that already uses it. Escape closes the picker.
+  **Call an action** step that already uses it. With **Try the new editor** on,
+  a **Common actions** group also lists [Call an API](#call-an-api) and the
+  [email and file steps](#email-and-file-steps). Escape closes the picker.
 - **Into an empty branch.** A decision case or parallel branch with no steps
   shows a dashed card with the branch's label, such as "Condition not set",
   **Otherwise**, or `first`, and **Add a step**. Screen readers announce it as
@@ -197,7 +199,7 @@ details and **Assignment binding** in the inspector.
 | Read a file, Download a file, Delete a file | **Connection**, **Path** (**Item ID** on a drive) | | **Retry on fail**, **Timeout** |
 | Write a file | **Connection**, **File**, **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
 | Move a file | **Connection**, **Path** (**Item ID** on a drive), **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
-| Decision table | **Table**, then the table's required inputs | | |
+| Decision table | **Table**, then the table's required inputs | The table's optional inputs | |
 | AI task | **Model**, one of the workflow's AI profiles, and **Prompt** | **Context**, **AI action version**, **AI connection** | |
 | Transform | **Fields**, or **Text** for a text template | | |
 | Decision | Each path's **Runs when** and **Path result**, then **Otherwise** | | |
@@ -425,8 +427,16 @@ otherwise choose a slot, or **New slot**, in **Connection**.
 **Where Studio keeps these actions.** Studio keeps the actions of Call an API,
 email and file steps, and step notes, with the workflow you are editing: in this
 browser while you work locally, and until you close the workflow while you are
-connected. **Save to file** doesn't include them yet, and publishing a workflow
-doesn't publish them.
+connected. You can't publish or simulate a workflow with these steps on a
+platform yet. Checking it against the platform reports that the step's action
+isn't published ("This action isn't published in the project."), so **Publish…**
+and **Simulate** stop before anything is published or run, and nothing is
+published broken. The hint to publish the action first can't be followed yet:
+Studio has no way to publish these actions. **Save to file** doesn't include
+them either: opened again from the file, such a step comes back as **Call an
+action** with only **Action** and **Connection**, and its method, URL, response
+sample, accepted status codes, description, retry, timeout and note are gone. To
+publish now, call a published action with **Call an action**.
 
 ## Design forms and payloads with the schema designer
 
