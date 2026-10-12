@@ -57,6 +57,7 @@ happens on the platform and keeps running after you close Studio.
 | Open Studio as a native desktop app | A matching desktop build for your operating system | [Install desktop](desktop.md) |
 | Draw, import, or validate a workflow on your computer | Studio's local host; no account | [Install Studio](#install-the-alpha15-browser-application), then [work locally](#work-locally-without-signing-in) |
 | Learn the editor with a small example | Studio's local host | [Try it: draw your first workflow](#try-it-draw-your-first-workflow) |
+| Configure steps in the new editor's step details | Studio's local host | [Configure a step in step details](#configure-a-step-in-step-details) |
 | Save and run workflows on your laptop | Studio plus a separate local Weave platform | [Start the platform](local-platform.md), then [connect Studio](#connect-to-a-platform) |
 | Work with your team's platform | Studio on your computer and the server address from your administrator | [Connect to a platform](#connect-to-a-platform) |
 | Call a REST API from a workflow without writing a connector | Connected Studio; an operator has prepared the built-in HTTP connector | [Call a REST API from a step](#call-a-rest-api-from-a-step) |
@@ -872,6 +873,171 @@ other steps or the workflow output still read, and names them. Deleting a
 Decision or Parallel group with steps inside asks you to confirm first. After a
 deletion, a message at the bottom of the window offers **Undo**; **Undo** in the
 toolbar also reverses a rename or a deletion.
+
+### Configure a step in step details
+
+Step details are part of the new editor, which is off by default. Turn on **Try
+the new editor** in **Settings → Preferences**, then double-click a step on the
+canvas, or focus it and press Enter or Space, to open its details over the
+canvas. **Open** in a step's **More** menu, a step's problem badge, the location
+of a row in **Diagnostics** and Enter on a row of **Outline** open them too; a
+problem opens them on the field it concerns. Every step you add opens its
+details, on its first required field that is still empty. The **Trigger** opens
+its own details, and so does **End**, for the workflow result. With the new
+editor off, Studio keeps the inspector described above.
+
+Step details cover Studio below its header, and the rest of Studio waits until
+they close: nothing behind them takes clicks, keys or a screen reader's focus.
+Close them with **Close** or Escape, or, in a window 768 pixels wide or wider,
+by clicking the dimmed header above them. There is nothing to save: each change
+is in the workflow as you make it, and one **Undo** takes it back. Typing in one
+field counts as one change until you pause or move to another field. Focus
+returns to the step on the canvas, or to its row in **Outline**.
+
+#### Find your way in step details
+
+The strip at the top shows where the step sits, such as "Main sequence · step 2
+of 5", and **Previous step** and **Next step**, which move through the workflow
+in **Outline** order without closing. In a window 768 pixels wide or wider, the
+left and right edges hold a button for each step that runs right before or right
+after; past six, a "+N" menu lists the rest.
+
+- **Three panes.** **Input** lists the fields the step can read, from the
+  nearest earlier step; its list chooses another source, such as the workflow
+  input, and **Also available** names the others. The fields are there before
+  any run, so you can configure a step without data. **Parameters** holds the
+  step's fields, and **Output** shows the fields later steps can read from it.
+  **Schema**, **Table** and **JSON** choose how a data pane shows its data;
+  before any run, **Schema** lists the fields and the other two wait for data.
+- **Resize the panes.** Drag a separator, or focus it and use the arrow keys;
+  Home and End go to the limits. Double-click a separator to restore the widths.
+  Studio remembers them in this browser.
+- **Narrower windows.** From 768 to 1,099 pixels wide, **Parameters** sits
+  beside one data pane with **Input** and **Output** tabs. Below 768 pixels, step
+  details fill the screen with **Input**, **Parameters** and **Output** tabs, and
+  the step's header stays in place while the form scrolls.
+- **The header.** It shows the step's icon, its name, and what the step does,
+  such as "Call an API · HTTP request". Select the name, or press F2 in the
+  header, to rename the step: type any text, and Studio stores a valid ID, such
+  as `get-customer-orders`, and updates everything that reads the step.
+  **Execute step** keeps its place for running one step; running a single step
+  isn't available yet, so it says so, and its menu offers **Simulate the
+  workflow**. The **More** menu holds **Rename**, **Duplicate**, **Copy as
+  YAML**, **Edit as YAML** and **Delete**.
+- **Tabs.** **Parameters** and **Settings** sit under the header, with **Docs**,
+  which opens the step's section of the
+  [step reference](studio-step-reference.md#configure-each-step).
+
+The trigger's details show **Test event** in place of **Input**: **Generate
+sample** fills its form with an example, which stays while the workflow is open,
+and **Output** shows that example as the data the first step reads.
+
+#### Fill in a step's fields
+
+**Parameters** shows the fields a step needs, and a red asterisk marks the
+required ones. **Add option** lists the optional settings of that kind of step,
+each with a line about it, such as **Query parameters** for **Call an API**; an
+option that doesn't apply yet is listed with the reason, such as "Only for POST,
+PUT and PATCH". Each field's ⋯ menu offers **Reset to default** and **Copy
+value**, **Use data…** on fields that take data, and **Remove option** on an
+added option. When a field that applies only to some choices goes away, such as
+**Body** after you switch a request to GET, the message that says so offers
+**Undo**.
+
+Fields that take data have a **Fixed | Mapped** switch. It shows when you point
+at the field or focus it, and stays while the field is Mapped:
+
+- **Fixed** is a value you type.
+- **Mapped** reads data from earlier in the workflow and shows it as a pill.
+  Choose the data with **Use data…**, type `=` in an empty field, or drag a field
+  from **Input** onto the field.
+- Text fields such as a message can mix both: data you drop into the text is
+  kept where you dropped it, between the words you typed.
+
+**Drag to map.** Drag a field from **Input** onto any field that takes data; the
+fields it can go to are outlined while you drag, and holding it near the bottom
+of **Parameters** scrolls the form. Dropping onto a number replaces the number,
+and the message that says so offers **Undo**. Escape cancels a drag. To map
+without dragging, focus a field in **Input** and press Enter: **Map … to** lists
+the fields it can go to. Fields in **Input** that the step already uses show a
+check mark. Rows of names and values, such as a request's **Headers**, take a
+dropped object as one row per field, and **Add all fields** adds a row for each
+field of the nearest earlier step.
+
+**Conditions, API paths and fields.** A **Decision** shows each path as a card
+with its conditions and its **Path result**; **Otherwise** stays last. **Call an
+API** keeps its **URL** as a path, with a row under it for the value of each
+`{name}` placeholder. **Input fields**, **Payload fields**, **Form fields** and
+**Result schema** use the
+[schema designer](studio-step-reference.md#design-forms-and-payloads-with-the-schema-designer).
+The step reference lists
+[each step's fields in step details](studio-step-reference.md#fields-in-step-details).
+
+#### Settings, issues and entries that don't apply yet
+
+**Settings** holds, in this order, the step's own settings (**Retry on fail**
+and **Timeout** for steps that call actions, **Wait at most** for a **Wait for
+signal**, and the deadlines of a **Human task**), **On error**, **Notes** and
+**About this step**. **On error** reads **Stop the run** for now. **Show on
+canvas** puts a note's first line under the step on the canvas. **About this
+step** shows the step's ID, with **Copy step ID**, and where it sits; for an
+action, it also shows what runs it and what it does to data. A dot on the
+**Settings** tab means a setting differs from its default or the step has a
+note; a screen reader hears "Settings, changed".
+
+**Issues** show under the field they concern, with a button for the fix when
+Studio knows one, such as **Fix**, **Use data…** or **Choose a connection**.
+Beside the step's name, a pill such as "2 issues" lists them; choose one to go
+to its field, on **Settings** when that is where it is. A new step doesn't show
+"required" messages until you leave such a field empty or select **Execute
+step**; other problems show as soon as Studio finds them. While the source has
+an error, every field is read-only and says "Fix the source to edit this step."
+
+**Entries that don't apply yet.** Studio never blocks typing. A number outside
+its limits, or JSON or a text template that isn't finished, stays in its field,
+marked **Not applied**, while the workflow keeps the last value that applied.
+The entry stays while you close step details, move to other steps and come
+back, for as long as the workflow is open. Press Escape in the field to take it
+back. When step details close with such entries, a message names their fields
+and the steps they are in.
+
+#### Edit workflow settings with the gear
+
+With the new editor on, the gear next to the version (**Open workflow
+settings**) opens **Workflow settings** with the same fields as step details:
+**Name** and **Version**, and, under **Add option**, **Stop runs after** and
+**Callable by other workflows**. Below them, **Connection slots** lists each
+slot with the steps that use it; its ⋯ menu offers **Rename slot**, and
+**Remove slot** once no step uses it. **AI profiles** lists each profile, and
+its ⋯ menu opens the steps that use it.
+
+The gear first applies a pending inspector edit, as opening a step does. Text
+typed in **Source** that you haven't applied keeps the dialog closed, with
+"Apply or undo the changes typed in Source first.", except in **Source** while
+the workflow can be edited, where the gear applies it as **Apply changes**
+would. While a simulation runs, or while the source has an error, workflow
+settings open read-only and say why.
+
+#### Keys and accessibility in step details
+
+Step details are a dialog: Tab and Shift+Tab stay inside it, a dialog opened
+from it gives focus back when it closes, and screen readers hear what changes,
+such as a drop or a move to another step. Every control has a name and a visible
+focus ring. On a touch screen, and in a window narrower than 768 pixels,
+controls grow to touch size.
+
+| Keys | What they do |
+| --- | --- |
+| F6 and Shift+F6 | Move between the header, **Input**, **Parameters** and **Output** |
+| Ctrl+Alt+Shift+← and → (Command-Option-Shift on a Mac) | Open the previous or next step |
+| F2, in the header | Rename the step |
+| /, in **Input** or **Output** | Search the pane |
+| Enter, on a field in **Input** | Choose a field to map it to (**Map … to**) |
+| =, in an empty Fixed field | Switch the field to Mapped |
+| Alt+↑ and Alt+↓, on a row | Move the row up or down |
+| Ctrl+Enter or Command-Enter | Say why **Execute step** isn't available yet |
+| Ctrl+Z or Command-Z, with Shift to redo | Undo and redo |
+| Escape | One thing per press: cancel a drag or a rename, leave a text box, then close step details; an open list or menu takes Escape first |
 
 ### Choose where each value comes from
 

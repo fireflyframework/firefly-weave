@@ -45,6 +45,7 @@ browser bundle does not have them; to see the same screens,
 | --- | --- |
 | Pick the right step for a part of your process | [Start with the outcome you need](#start-with-the-outcome-you-need) |
 | Add, rename, move, or delete a step | [Add a step](#add-a-step) and [Edit a step in the inspector](#edit-a-step-in-the-inspector) |
+| Know each step's fields in the new editor's step details | [Fields in step details](#fields-in-step-details) |
 | Fill in one kind of step | [Configure each step](#configure-each-step) |
 | Describe a form, a signal payload, or the workflow input | [Design forms and payloads](#design-forms-and-payloads-with-the-schema-designer) |
 | Call another system | [Configure Call an action](#configure-call-an-action) |
@@ -108,6 +109,8 @@ such as "1 problem".
 ## Edit a step in the inspector
 
 Select a step to edit it. The inspector heading shows the kind's palette label.
+With **Try the new editor** on, a step opens in step details instead, described
+in [Configure a step in step details](studio.md#configure-a-step-in-step-details).
 
 - **Step name.** This is the step's ID: later steps read this step's output by
   it. Type a new name and press Enter, or move to another field. Studio checks
@@ -171,6 +174,49 @@ Every step also has a unique ID. References to earlier step results use that ID;
 moving steps can change what they may read. The compiler checks those
 relationships, and [What each step can read](#what-each-step-can-read) lists the
 rules.
+
+### Fields in step details
+
+With **Try the new editor** on, each step opens in
+[step details](studio.md#configure-a-step-in-step-details) with a short form.
+**Parameters** shows the fields a new step starts with, and **Add option** offers
+the rest. **Settings** holds **Notes** and **About this step** for every step
+and the trigger, and **On error** for every step except **Wait for time** and
+**Fail**; End has no **Settings** tab. Labels can
+differ from the inspector's: the same property may read **Assign to** in step
+details and **Assignment binding** in the inspector.
+
+| Step | Parameters | Add option | Also on Settings |
+| --- | --- | --- | --- |
+| Manual form trigger | **Input fields** | | |
+| Call an action, for a published action | **Action**, **Connection** when the action needs one, then the action's required inputs | The action's optional inputs | **Retry on fail** and **Timeout**, read-only: the action sets them |
+| Call an API | **Connection**, **Method**, **URL**, and **Body** for POST, PUT and PATCH | **Query parameters**, **Headers**, **Response sample**, **Accepted status codes**, **Description** | **Retry on fail**, **Timeout** |
+| Send email | **Connection**, **To**, **Subject**, **Message** | **Cc**, **Bcc**, **HTML version**, **Attachments** | **Retry on fail**, **Timeout** |
+| Reply to an email | **Connection**, **Reply to message**, **Conversation**, **Message** | **Reply to all**, **HTML version**, **Attachments** | **Retry on fail**, **Timeout** |
+| List files | **Connection**, **Folder** | **Page size**, **Continue from** | **Retry on fail**, **Timeout** |
+| Read a file, Download a file, Delete a file | **Connection**, **Path** (**Item ID** on a drive) | | **Retry on fail**, **Timeout** |
+| Write a file | **Connection**, **File**, **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
+| Move a file | **Connection**, **Path** (**Item ID** on a drive), **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
+| Decision table | **Table**, then the table's required inputs | | |
+| AI task | **Model**, one of the workflow's AI profiles, and **Prompt** | **Context**, **AI action version**, **AI connection** | |
+| Transform | **Fields**, or **Text** for a text template | | |
+| Decision | Each path's **Runs when** and **Path result**, then **Otherwise** | | |
+| Parallel | **Branches** | **Run at most**, **Branch results** | |
+| Wait for time | **Wait for** | | |
+| Wait for signal | **Signal name** | **Payload fields** | **Wait at most** |
+| Human task | **Assign to**, **Title**, **Answers** | **Details to show**, **Form fields** | **Due after**, **Expires after** |
+| Fail | **Error code**, **Message** | | |
+| End | **Result fields** | **Result schema** | |
+
+### Manual form trigger
+
+A workflow starts from its manual form, the **Trigger** that reads **Manual
+form** on the new canvas. In its step details,
+**Input fields** designs the form a person fills in, or a caller sends, to start
+a run; **Paste sample JSON** finds fields from an example. The **Test event**
+pane fills that form with a sample (**Generate sample**), and **Output** shows
+the sample as the data the first step reads while you test. The sample stays
+while the workflow is open.
 
 ### Decision table
 
@@ -266,6 +312,14 @@ runs. Human-task answer checks use titles such as **Approve** and **Reject**.
 Nested steps stay on the canvas. Move them out before removing a path; a
 Decision keeps at least one non-default path.
 
+In step details, each path is a card: **Runs when** holds the same condition
+rows, and **Path result** what later steps read when that path runs. A condition
+row that isn't finished stays on screen with "Finish this condition, or remove
+it." and changes nothing until it is complete. A comparison value can be Fixed
+or Mapped, and data dropped on a path, or mapped to it with Enter in **Input**,
+fills its first empty condition. A condition the rows can't show stays a
+formula; change it with **Edit as YAML** in the **More** menu.
+
 ### Parallel
 
 A new group has two branches, `first` and `second`, and reads **Run at most 2
@@ -327,10 +381,60 @@ claims, eligibility, and audit history.
 **Message** starts empty and must contain your failure reason. A Fail step ends its path, so no later step on
 that path runs and nothing after it can read data from that path.
 
+### Call an API
+
+**Call an API** sends one HTTP request through a connection. The connection
+supplies the address and sign-in; **URL** holds the path, such as
+`/customers/{customerId}`, where each `{name}` placeholder fills a whole part of
+the path. Each placeholder gets a row under the URL for its value, Fixed or
+Mapped, and data you drop into the URL becomes a placeholder where you drop it.
+**Method** says whether the request reads data (GET, HEAD) or changes it (POST,
+PUT, PATCH, DELETE); **Body**, the JSON fields the request sends, appears for
+POST, PUT and PATCH. **Add option** offers **Query parameters**, **Headers**,
+**Response sample** (so later steps can map the answer before the first call),
+**Accepted status codes** and **Description**.
+
+Studio keeps the request as an action this workflow owns, named after the
+workflow and the step, and renames it with the step. **Settings** has **Retry on
+fail**, which requests that change data never use, and **Timeout**, up to 30
+seconds; the line under them names the action that keeps them.
+
+### Email and file steps
+
+**Send email** takes **Connection**, **To**, **Subject** and **Message**;
+**Cc**, **Bcc**, an HTML version and attachments are options. **Reply to an
+email** takes the message and the conversation to reply in, then **Message**;
+**Reply to all** is an option. See [email](email.md) for the connection behind
+them.
+
+The file steps work on FTP, FTPS, SFTP, Microsoft drive (SharePoint and
+OneDrive) and Google Drive connections: **List files** reads a folder, **Read a
+file** and **Download a file** read one file, **Write a file** saves a file from
+an earlier step, such as a download's output, **Move a file** moves or renames
+one, and **Delete a file** removes one. On a drive, a file is named by its
+**Item ID**, or by pasting its link. [File connectors](file-connectors.md)
+describe each operation.
+
+Each of these steps calls an action the workflow owns. Steps that do the same
+operation on the same kind of server share that action, so they also share
+**Retry on fail** and **Timeout**, and **Settings** says how many steps use it.
+Choosing a slot on another kind of file server moves only that step. A new step
+uses the workflow's slot for its kind of connection when there is exactly one;
+otherwise choose a slot, or **New slot**, in **Connection**.
+
+**Where Studio keeps these actions.** Studio keeps the actions of Call an API,
+email and file steps, and step notes, with the workflow you are editing: in this
+browser while you work locally, and until you close the workflow while you are
+connected. **Save to file** doesn't include them yet, and publishing a workflow
+doesn't publish them.
+
 ## Design forms and payloads with the schema designer
 
 The schema designer edits **Input schema** and **Output schema** in the workflow
-settings, a signal's **Payload schema**, and a human task's **Form schema**.
+settings, a signal's **Payload schema**, and a human task's **Form schema**. In
+step details, it edits the trigger's **Input fields**, a signal's **Payload
+fields**, a human task's **Form fields** and End's **Result schema**, without
+the preview or **Show schema JSON**.
 
 1. Select **Add field**. Enter a **Field name**, choose a **Type** (**Text**,
    **Number**, **Whole number**, **Yes/No**, **Choice**, **Group**, **List**,
@@ -860,6 +964,9 @@ authoring calls behind the API action builder run the repository's own Python
 code. An opt-in browser test also ran the **New API action** builder against a
 [local platform](local-platform.md): the call it built ran to `succeeded`. The
 [Studio guide](studio.md#validate-a-source-contribution) describes that test.
+Step details, including Call an API, email and file steps, are covered by the
+same browser tests at desktop and narrow sizes, with keyboard and pointer, against
+a mocked platform API; no test runs them against a real platform yet.
 
 ## Next steps
 
