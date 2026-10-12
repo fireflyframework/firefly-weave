@@ -37,7 +37,7 @@ import {
 } from "./step-geometry";
 import { httpWorkflow, openHttpStep } from "./step-http";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
-import { tokenColor } from "./support";
+import { sourceText, tokenColor } from "./support";
 
 /** The sections of the visible Settings tab, in order. */
 const sections = (details: StepDetailsPage) =>
@@ -353,6 +353,53 @@ for (const size of sizes)
       ).toHaveValue("Check the ledger first");
     });
 
+    test("an emptied duration shows its saved value in its own unit once left", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.openWithKeyboard("wait-for-payment");
+      await details.tab("Settings").click();
+      const most = details
+        .field("timeout")
+        .getByRole("textbox", { name: "Wait at most" });
+      const mostUnit = details
+        .field("timeout")
+        .getByRole("combobox", { name: "Wait at most unit" });
+      await expect(most).toHaveValue("1");
+      await expect(mostUnit).toHaveValue("hours");
+      await most.focus();
+      await page.keyboard.press("ControlOrMeta+a");
+      await page.keyboard.press("Backspace");
+      await expect(most).toHaveValue("");
+      // The default it stands for, in the unit beside it.
+      await expect(most).toHaveAttribute("placeholder", "1");
+      await page.keyboard.press("Tab");
+      await expect(most).toHaveValue("1");
+      await expect(mostUnit).toHaveValue("hours");
+      await details.close();
+
+      await details.openWithKeyboard("wait-a-minute");
+      const wait = details
+        .field("duration")
+        .getByRole("textbox", { name: "Wait for" });
+      const waitUnit = details
+        .field("duration")
+        .getByRole("combobox", { name: "Wait for unit" });
+      await expect(wait).toHaveValue("1");
+      await expect(waitUnit).toHaveValue("minutes");
+      await wait.focus();
+      await page.keyboard.press("ControlOrMeta+a");
+      await page.keyboard.press("Backspace");
+      await expect(wait).toHaveAttribute("placeholder", "1");
+      await page.keyboard.press("Tab");
+      await expect(wait).toHaveValue("1");
+      await expect(waitUnit).toHaveValue("minutes");
+      await details.close();
+      const workflow = await sourceText(page);
+      expect(workflow).toContain("durationSeconds: 60");
+      expect(workflow).toContain("timeoutSeconds: 3600");
+    });
+
     test("a signal's timeout and a human task's deadlines are on Settings", async ({
       page,
     }) => {
@@ -539,6 +586,13 @@ test.describe("an owned API action's settings", () => {
         expect(await storedRetry(page)).toBe(
           '{"maxAttempts":5,"initialDelaySeconds":2,"maxDelaySeconds":30}',
         );
+        // Left unfinished, it stays an entry to finish, with its message.
+        await page.keyboard.press("Tab");
+        await expect(max).toHaveValue("1");
+        await expect(max).toHaveAttribute("aria-invalid", "true");
+        await expect(field).toContainText("Use a number from 2 to 10.");
+        await max.focus();
+        await page.keyboard.press("End");
         await page.keyboard.type("0");
         await stillOn();
         await expect(max).toBeFocused();
@@ -616,6 +670,12 @@ test.describe("an owned API action's settings", () => {
         await expect(timeout).toHaveValue("25");
         await expect(timeout).toBeFocused();
         await expect.poll(() => drafts(page)).toContain('"timeoutSeconds":25');
+        // Emptied and left, the box shows the default it saved.
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.press("Backspace");
+        await page.keyboard.press("Tab");
+        await expect(timeout).toHaveValue("30");
+        await expect.poll(() => drafts(page)).toContain('"timeoutSeconds":30');
       });
 
       test("switching a GET with retry on to POST turns retry off and disables it", async ({

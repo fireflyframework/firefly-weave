@@ -545,8 +545,25 @@ export class ParamField {
   }
 
   // ---------------------------------------------------------- writing
-  left() {
+  left(event?: FocusEvent) {
     this.session().touch(this.spec());
+    // An emptied box only waits for retyping while it has focus; left, it
+    // shows the value it saved. An unfinished entry stays, with its message.
+    if (this.numberText !== "") return;
+    this.numberText = null;
+    // Clearing a box over its default saves nothing new, so nothing redraws
+    // it: put the saved value back in the box that was left.
+    const box = event?.target;
+    if (
+      box instanceof HTMLInputElement &&
+      box.value === "" &&
+      box.closest(".param-control") &&
+      ["number", "duration"].includes(this.spec().type)
+    )
+      box.value =
+        this.spec().type === "duration"
+          ? this.durationParts().amount
+          : String(this.fixedValue() ?? "");
   }
   text(event: Event) {
     const value = (event.target as HTMLInputElement).value;
@@ -626,6 +643,14 @@ export class ParamField {
       amount.parentElement?.querySelector<HTMLSelectElement>(
         "select.param-unit",
       )?.value ?? this.units()[0]
+    );
+  }
+  /** The default, in the unit shown beside the amount. */
+  durationPlaceholder(unit: string): string {
+    const fallback = this.spec().default;
+    if (typeof fallback !== "number") return "";
+    return String(
+      Math.round((fallback / (UNIT_SECONDS[unit] ?? 1)) * 1000) / 1000,
     );
   }
   duration(amountText: string, unit: string) {

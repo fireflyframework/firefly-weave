@@ -27,7 +27,7 @@ SPDX-License-Identifier: Apache-2.0
   [class.is-option]="entry.option"
   [class.has-error]="line.kind === 'error' || !!local"
   [class.is-readonly]="!!reason"
-  (focusout)="left()"
+  (focusout)="left($event)"
 >
   <div class="param-label-row">
     <ng-content select=".param-card-head" />
@@ -232,9 +232,7 @@ SPDX-License-Identifier: Apache-2.0
                 only ? ids.control + '-unit ' + describedBy() : describedBy()
               "
               [readOnly]="!!reason"
-              [placeholder]="
-                spec.default !== undefined ? String(spec.default) : ''
-              "
+              [placeholder]="durationPlaceholder(parts.unit)"
               [value]="numberText ?? parts.amount"
               (input)="duration(amount.value, unitOf(amount))"
             />
