@@ -24,6 +24,7 @@ import {
   ownerLabel,
   renamedSteps,
   type Kind,
+  type Workflow,
 } from "../src/app/model";
 import {
   emptyCanvas,
@@ -127,6 +128,43 @@ describe("structured workflow authoring", () => {
     model.undo();
     expect(renamedSteps(removed, model.definition)).toEqual([]);
     expect(renamedSteps(model.definition, model.definition)).toEqual([]);
+  });
+  it("tells no rename for a move between two steps of the same kind, or a step of another kind in a step's place", () => {
+    for (const seconds of [60, 120]) {
+      const model = new StructuredCanvasAdapter();
+      const first = model.insert("wait");
+      const second = model.insert("wait");
+      model.update(
+        second.id,
+        JSON.stringify({ ...second, durationSeconds: seconds }),
+      );
+      const order = () => model.definition.spec.steps.map((step) => step.id);
+      expect(order()).toEqual([first.id, second.id]);
+      model.move(second.id, "root", 0);
+      const moved = model.definition;
+      expect(order()).toEqual([second.id, first.id]);
+      model.undo();
+      expect(renamedSteps(moved, model.definition)).toEqual([]);
+      const undone = model.definition;
+      model.redo();
+      expect(renamedSteps(undone, model.definition)).toEqual([]);
+    }
+    // A wait replaced by a fail with a new ID, in the same place.
+    const workflow = (step: Record<string, unknown>) =>
+      ({ spec: { steps: [step] } }) as unknown as Workflow;
+    expect(
+      renamedSteps(
+        workflow({ id: "pause", kind: "wait", durationSeconds: 60 }),
+        workflow({ id: "stop", kind: "fail", code: "x", message: "" }),
+      ),
+    ).toEqual([]);
+    // The same kind in the same place is a rename.
+    expect(
+      renamedSteps(
+        workflow({ id: "pause", kind: "wait", durationSeconds: 60 }),
+        workflow({ id: "hold", kind: "wait", durationSeconds: 60 }),
+      ),
+    ).toEqual([{ from: "pause", to: "hold" }]);
   });
   it("keeps the rendered node identity stable until rename teardown", () => {
     const model = new StructuredCanvasAdapter();

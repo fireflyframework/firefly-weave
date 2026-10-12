@@ -187,8 +187,10 @@ function branches(step: Step): [string, Branch][] {
 /**
  * The steps that changed only their ID between two versions of a workflow,
  * as an Undo or Redo of a rename leaves them: every step in the same place
- * with the same kind and the same branches. Anything else that changed shape
- * (a step added, removed or moved) means no rename is told.
+ * with the same kind and the same branches, and an ID gone after that wasn't
+ * there before. Anything else that changed shape (a step added, removed or
+ * moved) means no rename is told, and so does a move between two steps of
+ * the same kind: both IDs are still there, each on its own step.
  */
 export function renamedSteps(
   before: Workflow,
@@ -214,7 +216,17 @@ export function renamedSteps(
       );
     });
   };
-  return walk(before.spec?.steps, after.spec?.steps) ? renames : [];
+  if (!walk(before.spec?.steps, after.spec?.steps)) return [];
+  const was = new Set(stepIds(before.spec?.steps));
+  const is = new Set(stepIds(after.spec?.steps));
+  return renames.filter(({ from, to }) => !is.has(from) && !was.has(to));
+}
+/** Every step's ID, nested ones included. */
+function stepIds(steps: Step[] | undefined): string[] {
+  return (steps ?? []).flatMap((step) => [
+    step.id,
+    ...branches(step).flatMap(([, branch]) => stepIds(branch?.steps)),
+  ]);
 }
 function preserveYamlComments(old: unknown, replacement: unknown): void {
   if (!isNode(old) || !isNode(replacement)) return;

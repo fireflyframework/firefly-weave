@@ -1034,6 +1034,101 @@ const focusedField = (page: Page) =>
     ];
   });
 
+/** The fixture with a second signal step, wait-for-shipping, after wait-for-payment. */
+const twoSignals = (seconds: number) =>
+  yamlFile(
+    "two-signals.yaml",
+    readFileSync(stepFixture, "utf8").replace(
+      "    - id: reject-order",
+      `    - id: wait-for-shipping
+      kind: signal
+      name: shipping-ready
+      timeoutSeconds: ${seconds}
+      payloadSchema: {type: object}
+    - id: reject-order`,
+    ),
+  );
+/** The root steps, in the order the applied source lists them. */
+const rootSteps = async (page: Page) =>
+  [...(await sourceText(page)).matchAll(/^ {4}- id: (\S+)/gm)].map(
+    (match) => match[1],
+  );
+
+// A move between two steps of the same kind, then its Undo and Redo, change
+// no step's ID: each step keeps the entry typed in it, whether the two hold
+// different values or the same.
+test.describe("entries not applied yet through a move between twin steps", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const held = { "wait-for-payment": "abc", "wait-for-shipping": "xyz" };
+  for (const seconds of [7200, 3600])
+    for (const how of ["Move to", "a reorder in Source"] as const)
+      test(`by ${how}, with ${seconds === 3600 ? "equal" : "different"} values`, async ({
+        page,
+      }) => {
+        const details = await openStepFixture(page, twoSignals(seconds));
+        for (const [id, text] of Object.entries(held)) {
+          await details.openWithKeyboard(id);
+          await details.tab("Settings").click();
+          await details
+            .field("timeout")
+            .getByRole("textbox", { name: "Wait at most" })
+            .fill(text);
+          await page.keyboard.press("Tab");
+          await details.close();
+        }
+        const order = await rootSteps(page);
+        if (how === "Move to") {
+          await fitCanvas(page);
+          await page
+            .locator('.tile-node[data-tile="wait-for-shipping"] .tile-body')
+            .click({ button: "right" });
+          await page.getByRole("menuitem", { name: "Move to…" }).click();
+          await page
+            .getByRole("button", {
+              name: "Move wait-for-shipping between score and wait-for-payment",
+            })
+            .click();
+        } else {
+          await page.getByRole("tab", { name: "Source", exact: true }).click();
+          const source = page.getByRole("textbox", { name: "Workflow source" });
+          const text = await source.inputValue();
+          const payment = text.indexOf("    - id: wait-for-payment");
+          const shipping = text.indexOf("    - id: wait-for-shipping");
+          const end = text.indexOf("    - id: reject-order");
+          await source.fill(
+            text.slice(0, payment) +
+              text.slice(shipping, end) +
+              text.slice(payment, shipping) +
+              text.slice(end),
+          );
+          await page
+            .getByRole("button", { name: "Apply changes", exact: true })
+            .click();
+          await page
+            .getByRole("tab", { name: "Designer", exact: true })
+            .click();
+        }
+        expect(await rootSteps(page)).not.toEqual(order);
+        for (const move of ["Undo", "Redo"] as const) {
+          await command(page, move);
+          await fitCanvas(page);
+          for (const [id, text] of Object.entries(held)) {
+            await expect(tileIssue(page, id)).toHaveAccessibleName(
+              `Show issues for ${id}: Not applied yet: Wait at most`,
+            );
+            await details.openWithKeyboard(id);
+            await details.tab("Settings").click();
+            await expect(
+              details
+                .field("timeout")
+                .getByRole("textbox", { name: "Wait at most" }),
+            ).toHaveValue(text);
+            await details.close();
+          }
+        }
+      });
+});
+
 test.describe("entries not applied yet, on the canvas and after an Undo", () => {
   for (const size of sizes)
     test.describe(`at ${size.tag}`, () => {
