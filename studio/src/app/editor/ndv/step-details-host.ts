@@ -63,6 +63,11 @@ export interface StepDetailsHost {
   recordOwned(edit: () => void): boolean;
   undo(): void;
   redo(): void;
+  /**
+   * A toast's Undo: settles text typed in Source, then undoes only while
+   * `still` holds; "kept" when the person keeps editing Source.
+   */
+  undoIfUnchanged(still: () => boolean): Promise<"undone" | "changed" | "kept">;
   runCommand(command: "save" | "simulate" | "export"): Promise<unknown>;
   blocker(command: "simulate"): string;
   /** Settles unapplied inspector edits; false when they can't be applied. */

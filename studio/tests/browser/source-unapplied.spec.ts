@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openStepFixture } from "./step-details-po";
 import { box, boxes, clippedText, expectAligned } from "./step-geometry";
+import { parse } from "yaml";
 import { command, sourceText } from "./support";
 
 const QUESTION = "Apply the changes typed in Source?";
@@ -396,6 +397,53 @@ test.describe("leaving Source with text that isn't applied", () => {
       "They aren't in the workflow yet. Discard them to go back to the workflow as it is.",
     );
   });
+});
+
+// A toast's Undo pressed from Source with typed text asks the same
+// question, and says only what happened: Keep editing restores nothing and
+// says nothing, Discard restores the step, and Apply keeps the applied text
+// and says the step can't come back from there.
+test.describe("a toast's Undo from Source with typed text", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  for (const choice of [
+    "Keep editing",
+    "Discard changes",
+    "Apply changes",
+  ] as const)
+    test(`asks first: ${choice}`, async ({ page }) => {
+      const details = await openStepFixture(page);
+      await details.node("reject-order").focus();
+      await page.keyboard.press("Delete");
+      const toast = page.locator(".toast-region");
+      await expect(toast).toContainText("Deleted reject-order.");
+      const { typed } = await typeInSource(page);
+      await toast.getByRole("button", { name: "Undo", exact: true }).click();
+      await answer(page, choice);
+      const steps = async () => parse(await sourceText(page)).spec.steps;
+      const ids = async () =>
+        (await steps()).map((step: { id: string }) => step.id);
+      if (choice === "Keep editing") {
+        await stillTyping(page, typed);
+        await expect(toast).not.toContainText("Restored");
+        expect(await ids()).not.toContain("reject-order");
+        return;
+      }
+      if (choice === "Discard changes") {
+        await expect(toast).toContainText("Restored reject-order.");
+        expect(await ids()).toContain("reject-order");
+        expect(await appliedVersion(page)).toBe("1.0.0");
+        return;
+      }
+      // Applied: the typed text stays, the step stays deleted, and the
+      // toast says so.
+      await expect(toast).toContainText(
+        "reject-order can't come back from here: the workflow changed since. Use Undo in the toolbar.",
+      );
+      await expect(toast).not.toContainText("Restored");
+      expect(await appliedVersion(page)).toBe("9.9.9");
+      expect(await ids()).not.toContain("reject-order");
+    });
 });
 
 // Back pressed again while the question is open, the way a phone's back

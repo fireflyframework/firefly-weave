@@ -2640,14 +2640,15 @@ export class App implements CanvasHost {
     const revision = this.model.revision;
     this.notify(`Deleted ${what}.`, {
       label: "Undo",
-      run: () => {
-        if (this.model.revision !== revision || !this.model.canUndo) {
+      run: async () => {
+        const done = await this.undoIfUnchanged(
+          () => this.model.revision === revision && this.model.canUndo,
+        );
+        if (done === "changed")
           this.notify(
             `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
           );
-          return;
-        }
-        this.undo();
+        if (done !== "undone") return;
         this.notify(`Restored ${what}.`);
         if (one) this.focusStep(one);
       },
@@ -3312,6 +3313,20 @@ export class App implements CanvasHost {
     this.stepDetails.followRenames(renamedSteps(before, this.model.definition));
     this.dirty = true;
     this.changed();
+  }
+  /**
+   * A toast's Undo: settles text typed in Source first (its question), then
+   * undoes the toast's edit only while the workflow is as the toast left it.
+   * "kept" when the person keeps editing Source; "changed" when the workflow
+   * changed since, an Apply of the typed text included.
+   */
+  async undoIfUnchanged(
+    still: () => boolean,
+  ): Promise<"undone" | "changed" | "kept"> {
+    if (!(await this.settleSource())) return "kept";
+    if (this.editingLocked || !still()) return "changed";
+    this.undo();
+    return "undone";
   }
   redo() {
     if (this.editingLocked) return;
@@ -4579,9 +4594,11 @@ export class App implements CanvasHost {
     const revision = this.model.revision;
     this.notify(`Removed connection slot ${name}.`, {
       label: "Undo",
-      run: () => {
-        if (this.model.revision === revision) this.undo();
-        else
+      run: async () => {
+        const done = await this.undoIfUnchanged(
+          () => this.model.revision === revision,
+        );
+        if (done === "changed")
           this.notify("The workflow changed since. Use Undo in the toolbar.");
       },
     });
@@ -4900,13 +4917,13 @@ export class App implements CanvasHost {
     const changedRevision = this.model.revision;
     this.notify("Workflow result updated.", {
       label: "Undo",
-      run: () => {
-        if (
-          this.model.opened === opened &&
-          this.model.revision === changedRevision
-        )
-          this.undo();
-        else
+      run: async () => {
+        const done = await this.undoIfUnchanged(
+          () =>
+            this.model.opened === opened &&
+            this.model.revision === changedRevision,
+        );
+        if (done === "changed")
           this.notify("The workflow changed since. Use Undo in the toolbar.");
       },
     });
@@ -5106,13 +5123,13 @@ export class App implements CanvasHost {
     const revision = this.model.revision;
     this.notify(`Moved ${id}.`, {
       label: "Undo",
-      run: () => {
-        if (this.model.revision !== revision)
-          return this.notify(
-            "The workflow changed since. Use Undo in the toolbar.",
-          );
-        this.undo();
-        this.focusStep(id);
+      run: async () => {
+        const done = await this.undoIfUnchanged(
+          () => this.model.revision === revision,
+        );
+        if (done === "changed")
+          this.notify("The workflow changed since. Use Undo in the toolbar.");
+        if (done === "undone") this.focusStep(id);
       },
     });
     this.focusStep(id);

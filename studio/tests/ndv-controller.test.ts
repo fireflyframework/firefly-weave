@@ -70,6 +70,12 @@ function setup() {
     },
     notify: (text, action) => void toasts.push({ text, action }),
     undo: () => model.undo(),
+    // As Studio does with nothing typed in Source: undo while still unchanged.
+    undoIfUnchanged: async (still: () => boolean) => {
+      if (!still()) return "changed" as const;
+      model.undo();
+      return "undone" as const;
+    },
     catalogContracts: new Map(),
     decisionContracts: new Map(),
     actionVersions: [],

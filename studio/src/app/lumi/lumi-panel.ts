@@ -859,13 +859,13 @@ export class LumiPanel implements DoCheck {
     const opened = this.host.model.opened;
     this.host.notify("Applied the reviewed Weave AI draft.", {
       label: "Undo",
-      run: () => {
-        if (
-          this.host.model.revision === revision &&
-          this.host.model.opened === opened
-        )
-          this.host.undo();
-        else
+      run: async () => {
+        const done = await this.host.undoIfUnchanged(
+          () =>
+            this.host.model.revision === revision &&
+            this.host.model.opened === opened,
+        );
+        if (done === "changed")
           this.host.notify(
             "The workflow changed since. Use Undo in the toolbar.",
           );

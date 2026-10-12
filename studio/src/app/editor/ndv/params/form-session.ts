@@ -633,16 +633,15 @@ export class FormSession {
         `Replaced ${plan.replaced} with ${reference.breadcrumb}.`,
         {
           label: "Undo",
-          run: () => {
-            if (
-              this.host.model === this.model &&
-              this.model.opened === this.opened &&
-              this.model.revision === revision &&
-              this.profile === canonicalJson(this.host.profile) &&
-              this.account === this.host.stepDataScope
-            )
-              this.host.undo();
-          },
+          run: () =>
+            void this.host.undoIfUnchanged(
+              () =>
+                this.host.model === this.model &&
+                this.model.opened === this.opened &&
+                this.model.revision === revision &&
+                this.profile === canonicalJson(this.host.profile) &&
+                this.account === this.host.stepDataScope,
+            ),
         },
       );
     } else this.tipOnce();

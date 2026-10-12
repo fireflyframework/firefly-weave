@@ -99,6 +99,7 @@ export type ControllerHost = Pick<
   | "perform"
   | "notify"
   | "undo"
+  | "undoIfUnchanged"
   | "catalogContracts"
   | "decisionContracts"
   | "actionVersions"
@@ -546,14 +547,13 @@ export class StepDetailsController {
         `Removed ${outcome.removed.join(", ")}.${reasons.length ? ` ${reasons[0]}.` : ""}`,
         {
           label: "Undo",
-          run: () => {
-            if (
-              this.host.model === model &&
-              model.opened === opened &&
-              model.revision === revision
-            )
-              this.host.undo();
-          },
+          run: () =>
+            void this.host.undoIfUnchanged(
+              () =>
+                this.host.model === model &&
+                model.opened === opened &&
+                model.revision === revision,
+            ),
         },
       );
     }

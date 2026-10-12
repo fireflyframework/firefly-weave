@@ -923,9 +923,8 @@ export class StepDetails {
       `Renamed to ${renamed.id}.${count ? ` ${count === 1 ? "1 reference" : `${count} references`} updated.` : ""}`,
       {
         label: "Undo",
-        run: () => {
-          if (host.model.revision === revision) host.undo();
-        },
+        run: () =>
+          void host.undoIfUnchanged(() => host.model.revision === revision),
       },
     );
     this.details.open({
