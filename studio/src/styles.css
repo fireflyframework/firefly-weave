@@ -2454,7 +2454,9 @@ input[type="file"][hidden] {
   animation: toast-in var(--dur) var(--ease);
 }
 .toast button {
-  min-height: 28px;
+  /* An action's place in the toast's row. */
+  --toast-action: 28px;
+  min-height: var(--toast-action);
   padding: 0 8px;
   background: transparent;
   border: 0;
@@ -2472,11 +2474,17 @@ input[type="file"][hidden] {
   min-height: var(--target-min);
   padding: 0;
 }
+/* For touch, an action keeps its place in the row but is a 44 px tall
+   target, reaching into the toast's padding like the dismiss button. */
 @media (max-width: 767px), (pointer: coarse) {
   .toast button.toast-dismiss {
     min-width: var(--control-touch);
     min-height: var(--control-touch);
     margin: calc((var(--target-min) - var(--control-touch)) / 2);
+  }
+  .toast button:not(.toast-dismiss) {
+    min-height: var(--control-touch);
+    margin-block: calc((var(--toast-action) - var(--control-touch)) / 2);
   }
 }
 /* Over the focused control's place at the bottom: the toast shows on top,
@@ -2499,6 +2507,16 @@ input[type="file"][hidden] {
     right: var(--space-4);
     bottom: var(--space-4);
     max-width: none;
+  }
+}
+/* Step details cover the navigation: a toast lines up with their panes'
+   outer edge (24 px, 16 px below 1100 px), or a phone sheet's content. */
+body:has(.step-details) .toast-region {
+  left: var(--space-6);
+}
+@media (max-width: 1099px) {
+  body:has(.step-details) .toast-region {
+    left: var(--space-4);
   }
 }
 

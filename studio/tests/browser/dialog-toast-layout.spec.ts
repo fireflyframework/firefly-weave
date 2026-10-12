@@ -17,11 +17,15 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The shared dialog frame and toasts at every density: a dialog's heading
 // sits on its close button's center, a phone stacks a dialog's answers full
-// width, a toast's dismiss button is a full target without making the toast
-// taller, and Save to file delivers its files even when code loaded on
-// demand can't load.
+// width, a toast's dismiss button and action are full targets without making
+// the toast taller, a toast over step details lines up with them, and Save
+// to file delivers its files even when code loaded on demand can't load.
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { openStepFixture, settingsGear } from "./step-details-po";
+import {
+  addCommonStep,
+  openStepFixture,
+  settingsGear,
+} from "./step-details-po";
 import { box, boxes, density, expectAligned } from "./step-geometry";
 import { command } from "./support";
 
@@ -166,6 +170,60 @@ for (const size of sizes)
       );
       await dismiss.click();
       await expect(toast).toHaveCount(0);
+    });
+
+    test("over step details, a toast lines up with them, and its action is a full target", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await addCommonStep(page, "Call an API");
+      await expect(details.dialogFor("call-api")).toBeVisible();
+      // GET removes the Body typed for POST, with an Undo toast.
+      const method = details
+        .field("method")
+        .getByRole("combobox", { name: "Method" });
+      await method.click();
+      await page.getByRole("option", { name: /^POST/ }).click();
+      const row = details
+        .field("body")
+        .getByRole("textbox", { name: "Name of row 1" });
+      await row.fill("note");
+      await row.press("Tab");
+      await method.click();
+      await page.getByRole("option", { name: /^GET/ }).click();
+      const toast = page.locator(".toast-region .toast");
+      await expect(toast).toContainText("Removed Body.");
+      await expect
+        .poll(() => toast.evaluate((element) => element.getAnimations().length))
+        .toBe(0);
+      const shown = await box(toast);
+      // Step details cover the navigation: the toast starts at their panes'
+      // outer edge, or spans a phone sheet's content like its labels.
+      if (size.width < 768) {
+        const content = (
+          await box(details.field("method").locator(".param-label"))
+        ).x;
+        expectAligned([shown.x, content], "toast left edge");
+        expectAligned([size.width - shown.right, content], "toast right edge");
+      } else
+        expectAligned(
+          [shown.x, (await box(details.dialog.locator(".sd-panes"))).x],
+          "toast left edge",
+        );
+      // Undo keeps its 28 px place in the row; for touch it is a 44 px
+      // target reaching into the toast's padding, never past its edge.
+      const place = 28;
+      const action = await box(toast.getByRole("button", { name: "Undo" }));
+      const text = await box(toast.locator(".toast-text"));
+      const { touch, target } = await density(page);
+      expectAligned([action.height, touch ? target : place], "Undo height");
+      expectAligned([action.middle, text.middle], "Undo and text centers");
+      expect(action.y).toBeGreaterThanOrEqual(shown.y);
+      expect(action.bottom).toBeLessThanOrEqual(shown.bottom);
+      expectAligned(
+        [shown.height, Math.max(text.height, place) + 2 * 12 + 2],
+        "toast height",
+      );
     });
   });
 
