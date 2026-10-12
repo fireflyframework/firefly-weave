@@ -175,6 +175,40 @@ for (const size of [
           .toEqual(["Mapped"]);
       });
 
+    test("a field's hidden menu takes no tap until focus is in its field", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, fixture());
+      await details.openWithKeyboard("notify-sales");
+      await showParameters(page, details.dialog);
+      const host = details.field("title").locator(".param-menu");
+      const menu = host.getByRole("button", { name: "Field menu for Title" });
+      const state = () =>
+        host.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return [style.opacity, style.pointerEvents];
+        });
+      await menu.evaluate((element) =>
+        element.scrollIntoView({ block: "center" }),
+      );
+      expect(await state()).toEqual(["0", "none"]);
+      const at = await box(menu);
+      await page.touchscreen.tap(at.x + at.width / 2, at.middle);
+      // A menu would open a moment after the tap: let it.
+      await page.waitForTimeout(500);
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      // Focus in the field shows the menu, and then it takes a tap.
+      await details
+        .field("title")
+        .locator(".param-control .param-input")
+        .first()
+        .focus();
+      await expect.poll(state).toEqual(["1", "auto"]);
+      const shown = await box(menu);
+      await page.touchscreen.tap(shown.x + shown.width / 2, shown.middle);
+      await expect(page.getByRole("menu")).toBeVisible();
+    });
+
     test("tools shown at rest take a tap: a narrow row's toggle and a path's menu", async ({
       page,
     }) => {

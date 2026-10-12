@@ -782,8 +782,9 @@ for (const size of [
               rect.left + rect.width / 2,
               rect.top + rect.height / 2,
             );
-            // A tool hidden at rest takes no tap on a touch screen until
+            // On a touch screen a tool hidden at rest takes no tap until
             // focus in its field shows it (step-mode-touch checks that).
+            // With a mouse it still takes clicks, so it is checked as shown.
             let painted = 1;
             for (
               let node: Element | null = element;
@@ -791,10 +792,12 @@ for (const size of [
               node = node.parentElement
             )
               painted *= parseFloat(getComputedStyle(node).opacity);
-            return (
-              painted === 0 ||
-              (!!hit && (hit === element || element.contains(hit)))
-            );
+            if (
+              painted === 0 &&
+              matchMedia("(hover: none), (pointer: coarse)").matches
+            )
+              return getComputedStyle(element).pointerEvents === "none";
+            return !!hit && (hit === element || element.contains(hit));
           }),
         ).toBe(true);
       }
