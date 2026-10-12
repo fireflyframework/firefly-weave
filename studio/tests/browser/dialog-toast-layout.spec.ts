@@ -33,9 +33,12 @@ import {
   density,
   expectAligned,
   intersects,
+  showParameters,
   type Box,
 } from "./step-geometry";
-import { command } from "./support";
+import { command, connected } from "./support";
+import { hasPython, stopLocalAuthoring } from "./local-authoring";
+import { publishDialog, withOwnedSteps } from "./owned-actions";
 
 // Desktop with a fine pointer, then the touch density: a coarse pointer, or
 // a window under 768 px.
@@ -62,6 +65,54 @@ async function askAboutSource(page: Page): Promise<Locator> {
   });
   await expect(dialog).toBeVisible();
   return dialog;
+}
+
+/** How a dialog's footer sits in its panel, in CSS pixels. */
+interface Footer {
+  /** The footer's rule: width, style and color. */
+  rule: string;
+  /** The rule's color, as the --line token paints it. */
+  line: string;
+  /** From the panel's left, right and bottom edges to the footer's. */
+  left: number;
+  right: number;
+  bottom: number;
+  /** From the footer's top to its first answer, and from its last answer to its bottom. */
+  above: number;
+  below: number;
+  /** From the main answer's right edge to the panel's. */
+  inset: number;
+}
+
+/** Measures the footer of a dialog: its answers and the rule above them. */
+async function footerOf(dialog: Locator): Promise<Footer> {
+  const footer = dialog.locator(".dialog-actions, .dialog-footer").last();
+  const panel = await box(dialog);
+  const shown = await box(footer);
+  const answers = await boxes(footer.locator(":scope > button"));
+  expect(answers.length).toBeGreaterThan(0);
+  const { rule, line } = await footer.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const probe = document.createElement("span");
+    probe.style.color = "var(--line)";
+    element.append(probe);
+    const line = getComputedStyle(probe).color;
+    probe.remove();
+    return {
+      rule: `${style.borderTopWidth} ${style.borderTopStyle} ${style.borderTopColor}`,
+      line,
+    };
+  });
+  return {
+    rule,
+    line,
+    left: shown.x - panel.x,
+    right: panel.right - shown.right,
+    bottom: panel.bottom - shown.bottom,
+    above: Math.min(...answers.map((answer) => answer.y)) - shown.y,
+    below: shown.bottom - Math.max(...answers.map((answer) => answer.bottom)),
+    inset: panel.right - Math.max(...answers.map((answer) => answer.right)),
+  };
 }
 
 /**
@@ -117,6 +168,8 @@ async function expectHeadingOnClose(dialog: Locator, what: string) {
     `${what}: heading and close centers`,
   );
 }
+
+test.afterAll(() => stopLocalAuthoring());
 
 for (const size of sizes)
   test.describe(`dialogs and toasts at ${size.tag}`, () => {
@@ -184,6 +237,107 @@ for (const size of sizes)
       await expect(
         question.locator(".dialog-actions button").last(),
       ).toHaveText("Apply changes");
+    });
+
+    test("every dialog ends in one footer: a rule across the panel, flush with its bottom", async ({
+      page,
+    }) => {
+      const footers: [string, Footer][] = [];
+      const details = await openStepFixture(page);
+      // A question asked through the shared dialog.
+      const question = await askAboutSource(page);
+      footers.push(["Source question", await footerOf(question)]);
+      await question
+        .getByRole("button", { name: "Discard changes", exact: true })
+        .click();
+      await expect(question).toHaveCount(0);
+      // The canvas's keyboard shortcuts, a sheet taller than most windows.
+      await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+      await page.keyboard.press("?");
+      const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+      await expect(sheet).toBeVisible();
+      footers.push(["Keyboard shortcuts", await footerOf(sheet)]);
+      await sheet.getByRole("button", { name: "Done", exact: true }).click();
+      await expect(sheet).toHaveCount(0);
+      // An example for the trigger's input fields.
+      await details.trigger().dblclick();
+      await showParameters(page, details.dialog);
+      await details
+        .field("inputSchema")
+        .getByRole("button", { name: "Paste sample JSON" })
+        .click();
+      const example = page.getByRole("dialog", {
+        name: "Find fields from an example",
+      });
+      footers.push(["Example", await footerOf(example)]);
+      await example
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+      await expect(example).toHaveCount(0);
+      await details.close();
+      // A step's YAML, from step details.
+      await details.open("wait-for-payment");
+      await details.dialog
+        .getByRole("button", { name: "More actions for wait-for-payment" })
+        .click();
+      await page.getByRole("menuitem", { name: "Edit as YAML" }).click();
+      const yaml = page.getByRole("dialog", {
+        name: "Edit wait-for-payment as YAML",
+      });
+      footers.push(["Step YAML", await footerOf(yaml)]);
+      await yaml.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(yaml).toHaveCount(0);
+      await details.close();
+      // A new connection, on the Connections page.
+      await connected(page);
+      await page.route("**/projects/project/capabilities", (route) =>
+        route.fulfill({ json: { connectors: ["weave-http-v2"] } }),
+      );
+      await page
+        .getByRole("button", { name: "Connections", exact: true })
+        .click();
+      await page.getByRole("button", { name: "New connection" }).click();
+      const connection = page.getByRole("dialog", {
+        name: "New API connection",
+      });
+      await expect(
+        connection.getByLabel("Connection name", { exact: true }),
+      ).toBeVisible();
+      footers.push(["New connection", await footerOf(connection)]);
+      if (hasPython) {
+        // Publishing the workflow's own actions.
+        await withOwnedSteps(page);
+        await command(page, "Publish…");
+        const publish = publishDialog(page);
+        // Measured once both actions are checked and nothing is on its way.
+        await expect(publish.locator(".owned-state")).toHaveText([
+          "Ready",
+          "Ready",
+        ]);
+        footers.push(["Publish", await footerOf(publish)]);
+      }
+      const [first] = footers;
+      for (const [name, footer] of footers) {
+        expect(footer.rule, `${name}: the rule`).toBe(
+          `1px solid ${footer.line}`,
+        );
+        expectAligned(
+          [footer.left, footer.right, footer.bottom, 0],
+          `${name}: flush`,
+        );
+        expectAligned(
+          [footer.above, first[1].above, 1 + 12],
+          `${name}: above the answers`,
+        );
+        expectAligned(
+          [footer.below, first[1].below, 12],
+          `${name}: below the answers`,
+        );
+        expectAligned(
+          [footer.inset, first[1].inset],
+          `${name}: main answer's edge`,
+        );
+      }
     });
 
     test("a toast's dismiss button is a full target, and the toast keeps its height", async ({

@@ -1112,15 +1112,23 @@ dd {
 .modal-panel:focus {
   outline: none;
 }
-/* A dialog's footer stays at the bottom edge while its content scrolls. */
-.modal-panel .dialog-footer {
+/* Every dialog ends in one footer: its answers on a rule across the panel,
+   at the panel's bottom edge while its content scrolls (the panel's side
+   and bottom padding is 28 px). */
+.modal-panel :is(.dialog-actions, .dialog-footer) {
+  position: sticky;
   bottom: -28px;
-  margin: 20px -28px -28px;
-  padding: 12px 28px;
   z-index: 3;
+  display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin: var(--space-6) -28px -28px;
+  padding: var(--space-3) 28px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
 }
-.modal-panel:has(.dialog-footer) {
+.modal-panel:has(:is(.dialog-actions, .dialog-footer)) {
   scroll-padding-bottom: 80px;
 }
 /* Activation: one row per connection slot. */

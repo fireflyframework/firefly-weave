@@ -669,19 +669,6 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
       background: var(--sunken);
       font: var(--type-mono);
     }
-    /* The dialog's footer stays in view at the bottom of the scrolling
-       panel (whose padding is 28px). */
-    .connection-footer {
-      position: sticky;
-      bottom: -28px;
-      z-index: 2;
-      margin: 0 0 -28px;
-      padding: 12px 0 16px;
-      /* Paint over the panel's side padding without widening the panel. */
-      box-shadow:
-        -28px 0 0 var(--surface),
-        28px 0 0 var(--surface);
-    }
   `,
   template: `<section
     class="connection-form"
@@ -1182,7 +1169,7 @@ export type ConnectionPrefill = Partial<ConnectionDraft>;
         </section>
       </section>
     }
-    <div class="dialog-footer connection-footer">
+    <div class="dialog-footer">
       @if (done() && !editedSince() && phase() === "idle") {
         @if (fromWorkflow()) {
           <button type="button" (click)="back.emit()">
