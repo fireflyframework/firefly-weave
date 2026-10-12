@@ -453,7 +453,12 @@ SPDX-License-Identifier: Apache-2.0
   min-width: 0;
 }
 /* Not applied: what the field holds isn't in the workflow, the last value
-   that applied is. The pill sits on the message's first line. */
+   that applied is. The pill leads the message; where the message doesn't fit
+   beside it (a narrow column), the message takes the next line whole. */
+.param-line:has(> .param-status) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
 .param-line > .param-status {
   flex: none;
   height: 20px;

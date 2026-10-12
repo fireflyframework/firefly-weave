@@ -438,6 +438,15 @@ test.describe("entries that don't apply yet in an owned API action", () => {
         await tries.fill("1");
         await expect(lineOf(field)).toContainText("Not applied");
         await expect(lineOf(field)).toContainText("Use a number from 2 to 10.");
+        // In the narrow column the message moves under the pill, whole.
+        const status = await box(lineOf(field).locator(".param-status"));
+        const message = await box(lineOf(field).locator(".param-line-text"));
+        expect(intersects(status, message)).toBe(false);
+        expect(status.x).toBeCloseTo((await box(tries)).x, 0);
+        expect(message.height).toBeLessThanOrEqual(41);
+        expect(message.right).toBeLessThanOrEqual(
+          (await box(tries)).right + 0.5,
+        );
         // Parameters and back.
         await details.tab("Parameters").click();
         await details.tab("Settings").click();
