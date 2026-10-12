@@ -1026,6 +1026,12 @@ test.describe("layout", () => {
       );
       for (const line of lines)
         expect(Math.abs(line.label - line.details)).toBeLessThanOrEqual(1);
+      // Details buttons are full-size controls: 36 px with a mouse, 44 px narrow.
+      for (const box of await boxes(page.locator(".details-toggle"))) {
+        const side = viewport.width >= 768 ? 35.5 : 43.5;
+        expect(box.width).toBeGreaterThanOrEqual(side);
+        expect(box.height).toBeGreaterThanOrEqual(side);
+      }
       for (const line of lines.filter(
         (item) => Math.abs(item.top - lines[0].top) <= 1,
       )) {

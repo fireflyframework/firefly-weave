@@ -99,11 +99,13 @@ weave-operate-state {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* A standalone icon button, as tall as every other control; its negative
+   block margin keeps the tile header the height of its label. */
 .details-toggle {
   flex: none;
-  width: var(--row);
-  min-height: var(--row);
-  margin-block: calc(var(--inline-gap) * -1);
+  width: var(--target);
+  min-height: var(--target);
+  margin-block: calc((var(--target) - var(--row)) / -2 - var(--inline-gap));
   color: var(--muted);
 }
 .details-toggle[aria-expanded="true"] {
