@@ -50,7 +50,14 @@ SPDX-License-Identifier: Apache-2.0
   `read_incident`) serves direct incident links and sends the revision as `ETag`.
 - Incident views add optional `opened_at`, `opened_at_estimated`, `updated_at`,
   `workflow`, `run_status`, `test`, and `instance_key`; for a repeated step
-  instance, `node_id` is the static step ID. Earlier payloads keep their bytes.
+  instance, `node_id` is the static step ID. Upgrade CLIs and SDKs with the
+  server: earlier releases reject the new fields and fail with `502 WV-WIRE` on
+  incident lists. Resolution receipts, `incidents.resolve` answers, and the
+  earlier plain array of a run's incidents keep their bytes. A resolve answer is
+  the incident as stored, so read it again with `incidents.read`.
+- An incident on a switch or parallel branch output or a join keeps its
+  control-step `node_id` in incident lists and reads. An incident whose step
+  does not match its incident facts is withheld as unavailable.
 - The Python SDK's `list_incidents` and `run_incidents` accept a typed `query`
   and reject one combined with keyword arguments.
 

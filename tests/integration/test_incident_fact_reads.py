@@ -500,6 +500,9 @@ async def test_classification_comes_from_run_facts_and_policy_blocks(
     [
         # A malformed historical identity cannot be normalized into a static step.
         "UPDATE incident_facts SET node_id=NULL WHERE incident_id=:id",
+        # Facts that name another step or instance disagree with the incident's own step.
+        "UPDATE incident_facts SET node_id='other' WHERE incident_id=:id",
+        "UPDATE incident_facts SET instance_key='work[2]' WHERE incident_id=:id",
         # A missing projection does not mean the incident never existed.
         "DELETE FROM incident_facts WHERE incident_id=:id",
     ],
@@ -559,6 +562,121 @@ async def test_instance_keys_and_run_level_incidents_keep_their_identity(operati
     unknown = await service.read(case.actor, case.scope, UUID(found["loop"]["id"]), context=AuditContext())
     # An unknown opening time is never labeled estimated.
     assert isinstance(unknown, IncidentView) and unknown.opened_at is None and not unknown.opened_at_estimated
+
+
+async def start_branch_failure(case):
+    """A run whose parallel branch output reads a missing input field: the incident opens on a control step."""
+    import json
+
+    from firefly_weave.contracts.catalog import ActivationRequest
+    from firefly_weave.contracts.runtime import StartRunRequest
+
+    branch = {
+        "steps": [{"id": "copy", "kind": "transform", "value": {"literal": 3}}],
+        "output": {"ref": "/input/missing"},
+    }
+    document = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "branch-flow", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "steps": [{"id": "fork", "kind": "parallel", "concurrency": 1, "branches": {"one": branch}}],
+            "output": {"literal": None},
+        },
+    }
+    definitions = case.runtime.definitions
+    published = await definitions.publish(
+        case.actor, case.scope, "Workflow", json.dumps(document), "json", str(uuid4()), context=AuditContext()
+    )
+    activation = await definitions.activate(
+        case.actor,
+        case.scope,
+        ActivationRequest(scope=case.scope, version_id=published.id, artifact_digest=published.digest),
+        str(uuid4()),
+        context=AuditContext(),
+    )
+    return await case.runtime.start(
+        case.actor,
+        case.scope,
+        StartRunRequest(activation_id=activation.id, input={}),
+        str(uuid4()),
+        context=AuditContext(),
+    )
+
+
+async def test_control_step_incidents_are_listed_read_and_resolved(
+    operations_case, authenticated_client, access_db, provisioned
+):
+    from firefly_weave.access.models import Grant
+
+    case = operations_case
+    run = await start_branch_failure(case)
+    assert run.state.status == "suspended"
+    [incident] = await case.rows("SELECT * FROM incidents WHERE run_id=:run", run=run.id)
+    assert (incident["incident_key"], incident["node_id"], incident["code"]) == (
+        "@branch:fork:0:0",
+        "@branch:fork:0",
+        "WV-EXPR-MISSING",
+    )
+    # The projection never attributes a control step to an author step.
+    assert await case.rows(
+        "SELECT node_id,instance_key FROM incident_facts WHERE incident_id=:id", id=incident["id"]
+    ) == [{"node_id": None, "instance_key": ""}]
+    service = incidents(case)
+    for run_id in (None, run.id):
+        page = await service.list_all(
+            case.actor, case.scope, run_id=run_id, query=IncidentQuery(), position=None, context=AuditContext()
+        )
+        [item] = page["items"]
+        assert "unavailable" not in item, item
+        assert (item["id"], item["node_id"], item["code"], item["revision"], item["run_status"]) == (
+            str(incident["id"]),
+            "@branch:fork:0",
+            "WV-EXPR-MISSING",
+            incident["revision"],
+            "suspended",
+        )
+        assert "instance_key" not in item and item["workflow"] == {"name": "branch-flow", "version": "1.0.0"}
+    # The step filter takes static author step IDs, which a control-step incident does not have.
+    assert await walk(case, {"node_id": "fork"}) == []
+
+    client, tokens, scopes = authenticated_client
+    async with access_db[1]() as session:
+        subjects = {
+            row.subject: row.principal_id
+            for row in (await session.execute(text("SELECT subject,principal_id FROM identity_links"))).all()
+        }
+    await access_db[2].grant(provisioned[0], subjects["0"], Grant(role="operator", scope=scopes[0]))
+    headers = {"Authorization": "Bearer " + tokens[0]}
+    path = (
+        f"/api/v1/tenants/{case.scope.tenant_id}/projects/{case.scope.project_id}"
+        f"/environments/{case.scope.environment_id}/incidents/{incident['id']}"
+    )
+    read = await client.get(path, headers=headers)
+    assert read.status_code == 200, read.text
+    assert read.headers["ETag"] == f'"{incident["revision"]}"'
+    assert (read.json()["node_id"], read.json()["code"]) == ("@branch:fork:0", "WV-EXPR-MISSING")
+    assert "instance_key" not in read.json()
+
+    resolution = IncidentResolution(kind="terminate", receipt_id=uuid4(), reason="branch output cannot be mapped")
+    resolved = await client.post(
+        path + "/resolve",
+        content=resolution.model_dump_json(exclude_unset=True),
+        headers={**headers, "If-Match": read.headers["ETag"], "Content-Type": "application/json"},
+    )
+    assert resolved.status_code == 200, resolved.text
+    revision = resolved.json()["revision"]
+    assert resolved.json()["status"] == "resolved" and revision > incident["revision"]
+    after = await client.get(path, headers=headers)
+    assert after.status_code == 200 and after.headers["ETag"] == f'"{revision}"'
+    assert (after.json()["node_id"], after.json()["status"], after.json()["revision"]) == (
+        "@branch:fork:0",
+        "resolved",
+        revision,
+    )
+    assert after.json()["resolution"]["kind"] == "terminate" and after.json()["external_effects_may_continue"]
 
 
 @pytest.mark.parametrize("order", ["id", "opened_desc"])

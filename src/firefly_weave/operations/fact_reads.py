@@ -253,22 +253,36 @@ def _json(value: object) -> str:
     return value.isoformat() if isinstance(value, datetime) else str(value)
 
 
+def _step_identity(source: str | None, static: str | None, instance: str | None) -> tuple[str | None, str] | None:
+    """The served ``node_id`` and ``instance_key``, or None when the incident and its facts disagree."""
+    if source is None:
+        # A run-level incident has no step facts.
+        return (None, "") if static is None and not instance else None
+    if static is None:
+        # Facts never attribute a control step (a branch output or join) to an author step; it keeps its own ID.
+        return (source, "") if source.startswith("@") and not instance else None
+    # The facts normalized the incident's own key: its full instance key, or the static step ID for a plain step.
+    return (static, instance or "") if source == (instance or static) else None
+
+
 def incident_of(row: Mapping[str, Any]) -> IncidentView | UnavailableResource:
     """An incident from its own columns and its facts; withheld unless its run's metadata is available.
 
-    The facts carry the static step ID and full instance key normalized when they were written. An incident whose
-    facts are missing, or whose step identity could not be normalized, is unavailable rather than guessed.
+    The facts carry the static step ID and full instance key normalized when they were written; a control step keeps
+    the step ID stored on the incident. An incident whose facts are missing, or whose step identity disagrees with its
+    facts, is unavailable rather than guessed.
     """
     identifier = row["id"]
-    source = row["node_id"]
-    if not row["projected"] or not available(row) or (source is None) != (row["static_node_id"] is None):
+    identity = _step_identity(row["node_id"], row["static_node_id"], row["instance_key"])
+    if not row["projected"] or not available(row) or identity is None:
         return unavailable(identifier)
+    node_id, instance_key = identity
     resolution = row["resolution"]
     values = dict(
         id=identifier,
         run_id=row["run_id"],
         incident_key=row["incident_key"],
-        node_id=row["static_node_id"],
+        node_id=node_id,
         generation=row["generation"],
         origin_code=row["origin_code"],
         code=row["code"],
@@ -278,7 +292,7 @@ def incident_of(row: Mapping[str, Any]) -> IncidentView | UnavailableResource:
         resolved_at=row["resolved_at"],
         resolution=resolution,
         external_effects_may_continue=isinstance(resolution, dict) and resolution.get("kind") == "terminate",
-        instance_key=row["instance_key"],
+        instance_key=instance_key,
         opened_at=row["opened_at"],
         # A time is only estimated when it is known; an unknown opening time stays unknown.
         opened_at_estimated=row["opened_at_estimated"] is True and row["opened_at"] is not None,

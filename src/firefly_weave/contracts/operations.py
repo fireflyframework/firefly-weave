@@ -55,6 +55,7 @@ class IncidentWorkflow(ContractModel):
 class IncidentView(ContractModel):
     """An incident. Read from operational facts, `node_id` is the static step ID and `instance_key` the full key.
 
+    An incident on a control step (a branch output or a join) keeps its stored `@` step ID and has no instance key.
     The fields after `external_effects_may_continue` are additive: each is left out while it is unknown, false or
     empty, so earlier payloads keep their bytes. `opened_at_estimated` marks an opening time inferred from the run's
     last recorded event because the incident's own opening event was not retained.

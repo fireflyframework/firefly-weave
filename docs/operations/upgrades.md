@@ -45,7 +45,7 @@ the desktop app never migrates a platform.
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
-| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. |
+| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Upgrade CLIs and SDKs together with the server; see [incident list compatibility](#incident-list-compatibility). |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -214,14 +214,23 @@ The incident lists also change how they read requests:
   ID order. Upgrade servers before relying on them.
 
 Incident views gain optional fields that are left out while unknown, false, or
-empty, so earlier responses and stored resolution receipts keep their bytes.
+empty. **Upgrade CLIs and SDKs with the server.** Earlier releases reject the
+new fields: `weave runs incidents list` and `run-list`, and the Python SDK's
+`list_incidents` and `run_incidents`, fail with `502 WV-WIRE` on the first page
+that lists an available incident. Stored resolution receipts and
+`incidents.resolve` answers keep their bytes, and so does the earlier plain
+array of a run's incidents. A resolve answer is the incident as stored, so read
+it again with `incidents.read` to show it as the lists do.
+
 For an incident of a repeated step instance, `node_id` becomes the static step
-ID and `instance_key` carries the full key; other incidents keep the same
-`node_id`. Whether an incident is withheld now comes from its run's metadata
-and policy blocks, so a list never loads runs. The new `incidents.read`
-operation serves direct links and sends the revision as `ETag`. The Python
-SDK adds `read_incident`, and `list_incidents` and `run_incidents` take either
-a `query` or the keyword arguments; passing both raises `ValueError`.
+ID and `instance_key` carries the full key; other incidents, including those on
+a switch or parallel branch output or a join, keep the same `node_id`. Whether
+an incident is withheld now comes from its run's metadata, its policy blocks,
+and whether its step matches its incident facts, so a list never loads runs.
+The new `incidents.read` operation serves direct links and sends the revision
+as `ETag`. The Python SDK adds `read_incident`, and `list_incidents` and
+`run_incidents` take either a `query` or the keyword arguments; passing both
+raises `ValueError`.
 
 Historical opening times come from each incident's opening event. When that
 event was not retained, the upgrade used the run's last recorded event and

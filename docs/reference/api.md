@@ -485,9 +485,17 @@ incident for a direct link and sends its revision as the `ETag`, ready for
   opening time taken from the run's last recorded event because the incident's
   own opening event was not retained; an unknown opening time is never
   estimated.
-- An incident whose run metadata cannot be classified, or whose run has a
-  recorded policy block, is an unavailable placeholder. `incidents.read` then
-  sends no `ETag`.
+- An incident on a control step, a switch or parallel branch output
+  (`@branch:…`) or a join (`@join:…`), keeps that control-step ID as `node_id`
+  and has no `instance_key`. The `node_id` filter takes author step IDs, so it
+  does not select these incidents.
+- An incident whose run metadata cannot be classified, whose run has a recorded
+  policy block, or whose step does not match its incident facts is an
+  unavailable placeholder. `incidents.read` then sends no `ETag`.
+- `incidents.resolve` answers with the incident as stored, without the added
+  fields; for a repeated step instance, its `node_id` is the full instance key.
+  Read the incident again with `incidents.read` after resolving to show it as
+  the lists do.
 - A page is limited to 8 MiB of retained incident data; a larger page answers
   `429` with `WV-PAGE-LIMIT`. Unknown query parameters are rejected, and a
   `limit` outside 1 to 100 answers `422` with `WV-VALIDATION`.
