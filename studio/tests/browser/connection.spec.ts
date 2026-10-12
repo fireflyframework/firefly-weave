@@ -31,6 +31,7 @@ import {
   partnerOption,
   platformHost,
 } from "./platform-host";
+import { runSummary } from "./support";
 
 const heading = (page: Page) => page.locator("#wizard-heading");
 const wizard = (page: Page) => page.locator("weave-connection-wizard");
@@ -2300,7 +2301,7 @@ test("a platform call after the sign-in ended shows the calm expired notice", as
   );
   // The host could not renew the access token: the provider ended the session.
   await page.route(
-    (url) => url.pathname.endsWith("/runs"),
+    (url) => url.pathname.endsWith("/run-summaries"),
     (route) =>
       route.fulfill({
         status: 401,
@@ -2395,10 +2396,10 @@ test("after signing out, lists and Home ask to sign in instead of reporting an e
   );
   await expect(page.locator(".platform-banner")).toHaveCount(0);
   await expect(page.locator(".error-banner")).toHaveCount(0);
-  // A calm banner offers the sign-in; the filters wait for it.
-  await expect(page.getByLabel("Search by business key")).toBeDisabled();
+  // The page offers the sign-in; no filters wait on a list it can't read.
+  await expect(page.getByLabel("Business key", { exact: true })).toHaveCount(0);
   await page
-    .locator(".records-banner")
+    .locator("weave-runs-page")
     .getByRole("button", { name: "Sign in" })
     .click();
   await expect(heading(page)).toHaveText("Sign in to Acme");
@@ -2412,11 +2413,11 @@ test("a list shows only its own rows, labeled with the workspace's names", async
     /Signed in as jane@acme\.example/,
   );
   await page.route(
-    (url) => url.pathname.endsWith("/runs"),
+    (url) => url.pathname.endsWith("/run-summaries"),
     (route) =>
       route.fulfill({
         json: {
-          items: [{ id: "run-7", state: { status: "succeeded" } }],
+          items: [runSummary({ id: "run-7", state: { status: "succeeded" } })],
           next_cursor: null,
         },
       }),
@@ -2432,9 +2433,6 @@ test("a list shows only its own rows, labeled with the workspace's names", async
   );
   await page.getByRole("button", { name: "Runs", exact: true }).click();
   await expect(page.locator(".resource-row")).toContainText("run-7");
-  await expect(page.locator(".scope-label")).toHaveText(
-    "Acme · Payments / Production",
-  );
   // While Workflows loads, the run rows are gone, not shown under its heading.
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await expect(page.getByText("Loading workflows…")).toBeVisible();
@@ -2443,4 +2441,7 @@ test("a list shows only its own rows, labeled with the workspace's names", async
   await expect(
     page.getByRole("heading", { name: "No workflows yet" }),
   ).toBeVisible();
+  await expect(page.locator(".scope-label")).toHaveText(
+    "Acme · Payments / Production",
+  );
 });

@@ -1,0 +1,531 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Operate › Overview, in design tokens only. A fine pointer on a wide screen
+   gets 36 px controls, 32 px rows and 24/12/4 spacing; a narrow screen or a
+   touch pointer gets 44 px targets and 16/8 spacing. Every band shares the
+   page's left and right edges, and stacks into one column when narrow. */
+:host {
+  --section-gap: var(--space-6);
+  --group-gap: var(--space-3);
+  --inline-gap: var(--space-1);
+  --row: var(--control-sm);
+  --target: var(--control-md);
+  display: block;
+  min-width: 0;
+  container: overview / inline-size;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :host {
+    --section-gap: var(--space-4);
+    --group-gap: var(--space-2);
+    --row: var(--control-touch);
+    --target: var(--control-touch);
+  }
+}
+.overview {
+  display: grid;
+  gap: var(--section-gap);
+  min-width: 0;
+}
+weave-operate-state {
+  margin-bottom: var(--group-gap);
+}
+.band {
+  display: grid;
+  gap: var(--group-gap);
+  min-width: 0;
+  margin: 0;
+}
+.band > weave-operate-state {
+  margin: 0;
+}
+.band-title {
+  margin: 0;
+  font: var(--type-title-sm);
+}
+
+/* Health: one strip of six tiles. Their lines sit on shared rows, so labels,
+   states, figures and Details line up across the strip. */
+.health-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--group-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.health-tile {
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  align-items: center;
+  justify-items: start;
+  row-gap: var(--space-2);
+  min-width: 0;
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  justify-self: stretch;
+  min-width: 0;
+}
+.tile-label {
+  font: var(--type-label);
+  color: var(--text);
+}
+.tile-figure {
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.details-toggle {
+  flex: none;
+  width: var(--row);
+  min-height: var(--row);
+  margin-block: calc(var(--inline-gap) * -1);
+  color: var(--muted);
+}
+.details-toggle[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+/* Details: a popover under the tile's button, above the page. */
+.health-details {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+  color: var(--text);
+  overflow: auto;
+}
+.details-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--target);
+}
+.details-head h3 {
+  margin: 0;
+  font: var(--type-label);
+}
+.details-head .icon-button {
+  min-height: var(--target);
+  width: var(--target);
+}
+.detail-facts {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, calc(var(--space-12) * 4)), 1fr)
+  );
+  gap: var(--inline-gap) var(--group-gap);
+  margin: 0;
+}
+.detail-fact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--row);
+  min-width: 0;
+  border-bottom: thin solid var(--line);
+}
+.detail-fact dt {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.detail-fact dd {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.loop-table {
+  display: grid;
+  min-width: 0;
+  border: thin solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.loop-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--row);
+  padding: 0 var(--space-2);
+  border-bottom: thin solid var(--line);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.loop-row:last-child {
+  border-bottom: 0;
+}
+.loop-head {
+  font: var(--type-caption);
+  background: var(--sunken);
+}
+.loop-name {
+  color: var(--text);
+}
+.numeric-cell {
+  min-width: var(--space-10);
+  text-align: right;
+}
+.details-note {
+  margin: 0;
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Load: five figures side by side, or labelled rows when narrow. */
+.figures {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--group-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.figure {
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  row-gap: var(--inline-gap);
+  min-width: 0;
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.figure-label {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.figure-value {
+  font: var(--type-title-md);
+  color: var(--text);
+}
+.figure-detail {
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.band-empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--group-gap);
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.band-empty p,
+.band-note {
+  margin: 0;
+  color: var(--muted);
+}
+.band-empty button {
+  min-height: var(--target);
+}
+
+/* Workers and clusters: three panels of counts. */
+.panels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--group-gap);
+  min-width: 0;
+}
+.panel {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.panel h3 {
+  margin: 0;
+  font: var(--type-label);
+  line-height: var(--row);
+}
+.panel weave-operate-state {
+  margin: 0;
+}
+.counts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  margin: 0;
+}
+.count-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--row);
+  border-bottom: thin solid var(--line);
+}
+.count-row:last-child {
+  border-bottom: 0;
+}
+.count-row dt {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.count-row dd {
+  margin: 0;
+  font: var(--type-label);
+  color: var(--text);
+}
+.slots {
+  display: grid;
+  gap: var(--inline-gap);
+}
+.slots-label {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.slots .meter {
+  display: flex;
+}
+.slots .meter-track {
+  flex: 1 1 auto;
+  width: auto;
+}
+.section-access {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+
+/* Needs attention: one row per item, by priority. */
+.attention {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.attention-item {
+  display: grid;
+  grid-template-columns:
+    var(--space-4) calc(var(--space-12) * 2) minmax(0, 1fr)
+    auto;
+  align-items: center;
+  gap: var(--group-gap);
+  min-height: var(--row);
+  padding: 0 var(--group-gap);
+  border-bottom: thin solid var(--line);
+}
+.attention-item:last-child {
+  border-bottom: 0;
+}
+.attention-icon {
+  color: var(--muted);
+}
+.attention-item[data-kind="job"] .attention-icon,
+.attention-item[data-kind="approval"] .attention-icon {
+  color: var(--warning-ink);
+}
+.attention-item[data-kind="incident"] .attention-icon,
+.attention-item[data-kind="run"] .attention-icon {
+  color: var(--danger-ink);
+}
+.attention-kind {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.attention-title {
+  display: flex;
+  align-items: center;
+  min-height: var(--row);
+  min-width: 0;
+  font: var(--type-body);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+a.attention-title {
+  color: var(--link);
+}
+.attention-when {
+  font: var(--type-small);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Loading: blocks shaped like the bands, never shimmering. */
+.skeleton-line {
+  display: block;
+  width: calc(var(--space-12) * 2);
+  height: var(--space-4);
+  border-radius: var(--radius-xs);
+  background: var(--skeleton);
+}
+.skeleton-block {
+  display: block;
+  grid-row: auto;
+  height: calc(var(--control-touch) * 2);
+  border: 0;
+  background: var(--skeleton);
+}
+
+/* Narrower panes: three health tiles a row, figures and panels in fewer
+   columns. */
+@container overview (max-width: 1119px) {
+  .health-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .panels {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container overview (max-width: 959px) {
+  .figures {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+/* Narrow: every band is one column; figures and loops read as labelled
+   rows, value on the right. */
+@container overview (max-width: 719px) {
+  .health-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .figures {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    border: thin solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+  .figure {
+    grid-row: auto;
+    grid-template-rows: none;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "label value"
+      "detail value";
+    align-items: center;
+    column-gap: var(--space-2);
+    border: 0;
+    border-bottom: thin solid var(--line);
+    border-radius: 0;
+    background: transparent;
+  }
+  .figure:last-child {
+    border-bottom: 0;
+  }
+  .figure-label {
+    grid-area: label;
+    font: var(--type-small);
+    color: var(--text);
+  }
+  .figure-value {
+    grid-area: value;
+    font: var(--type-title-sm);
+  }
+  .figure-detail {
+    grid-area: detail;
+    font: var(--type-caption);
+  }
+  .attention-item {
+    grid-template-columns: var(--space-4) minmax(0, 1fr);
+    grid-template-areas:
+      "icon kind"
+      ". title"
+      ". when";
+    row-gap: 0;
+    padding-block: var(--space-2);
+  }
+  .attention-icon {
+    grid-area: icon;
+  }
+  .attention-kind {
+    grid-area: kind;
+  }
+  .attention-title {
+    grid-area: title;
+  }
+  .attention-when {
+    grid-area: when;
+    white-space: normal;
+  }
+}
+/* A phone: one tile a row, its name, state and Details on one line. */
+@container overview (max-width: 419px) {
+  .health-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .health-tile {
+    grid-row: auto;
+    grid-template-rows: none;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "label state details"
+      "figure figure figure";
+    column-gap: var(--space-2);
+    row-gap: 0;
+    padding-block: var(--space-1) var(--space-2);
+  }
+  .tile-head {
+    display: contents;
+  }
+  .tile-label {
+    grid-area: label;
+  }
+  .tile-state {
+    grid-area: state;
+  }
+  .details-toggle {
+    grid-area: details;
+    margin-block: 0;
+  }
+  .tile-figure {
+    grid-area: figure;
+  }
+}
+
+/* Counts and figures in tabular figures; after every font shorthand above,
+   which would reset them. */
+.numeric,
+.figure-value,
+.count-row dd,
+.attention-when {
+  font-variant-numeric: tabular-nums;
+}

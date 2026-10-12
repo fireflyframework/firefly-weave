@@ -15,10 +15,11 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The list pages (Workflows, Runs, My tasks, Email, Connections):
-// heading, filters, a table with per-view columns and the detail panel. The
-// shell (App) owns the state and the commands; this view renders them and
-// loads lazily (@defer), outside the initial bundle.
+// The list pages (Workflows, My tasks, Email, Connections): heading,
+// filters, a table with per-view columns and the detail panel. The shell
+// (App) owns the state and the commands; this view renders them and loads
+// lazily (@defer), outside the initial bundle. Runs has its own page under
+// Operate.
 import { ChangeDetectionStrategy, Component, input } from "@angular/core";
 import { NgTemplateOutlet } from "@angular/common";
 import type { App, View } from "../app";
@@ -32,7 +33,6 @@ import { ConnectionDetail } from "../integrations/connection-detail";
 import { NewMenu } from "../templates/new-menu";
 import { localKeepLabel, type LocalDraftEntry } from "../local-drafts";
 import { isDesktopShell } from "../export-file";
-import { OperateState } from "../operate/operate-state";
 import {
   dateWithRelative,
   isoTime,
@@ -46,7 +46,6 @@ import {
   toneAttribute,
   type Tone,
 } from "../status-labels";
-import { RunDetail } from "./run-detail";
 import {
   columns,
   contextFacts,
@@ -54,8 +53,6 @@ import {
   rowSecondary,
   rowStatus,
   rowTitle,
-  runDuration,
-  runStarted,
   when,
   type ListView,
   type Pill,
@@ -63,14 +60,12 @@ import {
 } from "./records-model";
 
 type Json = Record<string, unknown>;
+/** The lists this view shows; Runs has its own Operate page. */
+type ShownView = Exclude<ListView, "runs">;
 
 /** The page's title and one-line purpose. */
-const pages: Record<ListView, [string, string]> = {
+const pages: Record<ShownView, [string, string]> = {
   workflows: ["Workflows", "Design, publish, and activate your workflows."],
-  runs: [
-    "Runs",
-    "Follow every run in this workspace and step in when one needs you.",
-  ],
   tasks: ["My tasks", "Tasks waiting for a decision from you or your team."],
   email: [
     "Email",
@@ -79,11 +74,7 @@ const pages: Record<ListView, [string, string]> = {
   connections: ["Connections", ""],
 };
 /** Local mode: what each operations page needs a platform for. */
-const needPlatform: Partial<Record<ListView, [string, string]>> = {
-  runs: [
-    "Runs appear here once you connect",
-    "Runs happen on a platform. Connect one to start and follow runs.",
-  ],
+const needPlatform: Partial<Record<ShownView, [string, string]>> = {
   tasks: [
     "Your tasks appear here once you connect",
     "People get tasks when a run reaches a human task step.",
@@ -97,19 +88,12 @@ const needPlatform: Partial<Record<ListView, [string, string]>> = {
     "Connect to add the APIs and systems your workflows use.",
   ],
 };
-const icons: Record<ListView, string> = {
+const icons: Record<ShownView, string> = {
   workflows: "workflows",
-  runs: "runs",
   tasks: "humanTask",
   email: "email",
   connections: "connections",
 };
-const runStatusFilters: [string, string][] = [
-  ["", "All"],
-  ["waiting", "Waiting"],
-  ["failed", "Failed"],
-  ["succeeded", "Succeeded"],
-];
 
 @Component({
   selector: "weave-records-view",
@@ -123,9 +107,7 @@ const runStatusFilters: [string, string][] = [
     TaskForm,
     ConnectionDetail,
     NewMenu,
-    RunDetail,
     NgTemplateOutlet,
-    OperateState,
   ],
   styleUrl: "./records-view.css",
   template: `@let h = host();
@@ -168,10 +150,6 @@ const runStatusFilters: [string, string][] = [
                 New AI connection
               </button>
             }
-          } @else if (v === "runs" && h.can("run.start")) {
-            <button class="primary" (click)="h.startRun()">
-              <weave-icon name="plus" [size]="16" />Start run
-            </button>
           }
           <button
             type="button"
@@ -206,82 +184,6 @@ const runStatusFilters: [string, string][] = [
           </button>
         </div>
       }
-      @if (v === "runs") {
-        <div
-          class="run-filters"
-          role="search"
-          aria-label="Filter runs"
-          [class.open]="filtersOpen"
-        >
-          <button
-            type="button"
-            class="filters-toggle"
-            aria-controls="run-filter-body"
-            [attr.aria-expanded]="filtersOpen"
-            (click)="filtersOpen = !filtersOpen"
-          >
-            Filters ({{ h.runFilterCount }})
-          </button>
-          <div class="filter-body" id="run-filter-body">
-            <label class="search-field"
-              ><weave-icon name="search" [size]="16" /><input
-                aria-label="Search by business key"
-                placeholder="Search by business key"
-                [disabled]="h.signInToRead"
-                [value]="h.runFilters.business_key"
-                (input)="h.setRunFilter('business_key', h.value($event))"
-            /></label>
-            <div class="segmented" role="group" aria-label="Status">
-              @for (option of statusFilters; track option[0]) {
-                <button
-                  type="button"
-                  [attr.aria-pressed]="h.runFilters.status === option[0]"
-                  [disabled]="h.signInToRead"
-                  (click)="h.setRunFilter('status', option[0])"
-                >
-                  {{ option[1] }}
-                </button>
-              }
-            </div>
-            <button
-              type="button"
-              class="tertiary"
-              aria-controls="more-run-filters"
-              [attr.aria-expanded]="moreFilters"
-              [disabled]="h.signInToRead"
-              (click)="moreFilters = !moreFilters"
-            >
-              More filters<weave-icon
-                name="chevron"
-                [size]="16"
-                class="disclosure-chevron"
-                [class.open]="moreFilters"
-              />
-            </button>
-          </div>
-          @if (moreFilters) {
-            <div class="more-filters" id="more-run-filters">
-              <div class="field">
-                <label for="run-correlation">Correlation key</label>
-                <input
-                  id="run-correlation"
-                  class="w-key"
-                  [value]="h.runFilters.correlation_key"
-                  (input)="h.setRunFilter('correlation_key', h.value($event))"
-                />
-                <p class="field-help">Matches the exact key.</p>
-              </div>
-              <label class="checkbox-field"
-                ><input
-                  type="checkbox"
-                  [checked]="h.runIncludeArchived"
-                  (change)="h.toggleArchivedRuns()"
-                />Include archived runs</label
-              >
-            </div>
-          }
-        </div>
-      }
       @if (v === "workflows") {
         <div
           class="segmented library-toggle"
@@ -301,16 +203,14 @@ const runStatusFilters: [string, string][] = [
         </div>
       }
       <div class="list-toolbar">
-        @if (v !== "runs") {
-          <label class="search-field"
-            ><weave-icon name="search" [size]="16" /><input
-              [attr.aria-label]="'Search ' + noun()"
-              [placeholder]="'Search ' + noun()"
-              [disabled]="h.signInToRead"
-              [value]="h.search"
-              (input)="h.search = h.value($event)"
-          /></label>
-        }
+        <label class="search-field"
+          ><weave-icon name="search" [size]="16" /><input
+            [attr.aria-label]="'Search ' + noun()"
+            [placeholder]="'Search ' + noun()"
+            [disabled]="h.signInToRead"
+            [value]="h.search"
+            (input)="h.search = h.value($event)"
+        /></label>
         @if (v === "tasks") {
           <select
             aria-label="Task status filter"
@@ -329,9 +229,7 @@ const runStatusFilters: [string, string][] = [
           </select>
         }
         <span class="count" role="status">{{
-          (h.loading && !rowCount()) || refused()
-            ? ""
-            : countLabel(v, rowCount())
+          h.loading && !rowCount() ? "" : countLabel(v, rowCount())
         }}</span>
         @if (h.profile && h.workspaceText) {
           <span class="scope-label">{{ h.environmentLabel }}</span>
@@ -349,21 +247,12 @@ const runStatusFilters: [string, string][] = [
           </button>
         </p>
       }
-      @if (v === "runs" && h.runRefused && !h.runsRefused) {
-        <weave-operate-state
-          kind="access"
-          heading="You don't have access to this run"
-          capability="run.read"
-        />
-      }
       <!-- A reload keeps the rows it has: the table (and focus in it) stays. -->
       @if (h.loading && !localTab() && !rowCount()) {
         <div class="empty-state" role="status">
           <span class="loading-spinner"></span>
           <h2>Loading {{ noun() }}…</h2>
         </div>
-      } @else if (refused()) {
-        <weave-operate-state kind="access" capability="run.read" />
       } @else if (!h.profile && v === "workflows" && !localTab()) {
         <div class="empty-state">
           <h2>
@@ -416,7 +305,6 @@ const runStatusFilters: [string, string][] = [
         <div
           class="resource-layout"
           [class.has-detail]="!!h.selectedRecord && v !== 'workflows'"
-          [class.run-focus]="!!h.selectedRecord && v === 'runs'"
         >
           <div
             class="resource-table"
@@ -518,21 +406,6 @@ const runStatusFilters: [string, string][] = [
                           when(record["updated_at"] ?? record["created_at"])
                         }}</span>
                       }
-                      @case ("runs") {
-                        <span role="cell" class="cell-status">
-                          <ng-container
-                            *ngTemplateOutlet="
-                              pillTemplate;
-                              context: { $implicit: status }
-                            " /></span
-                        ><span role="cell"
-                          ><time
-                            [attr.datetime]="iso(started(record))"
-                            [attr.title]="absolute(started(record))"
-                            >{{ when(started(record)) }}</time
-                          ></span
-                        ><span role="cell">{{ duration(record) || "—" }}</span>
-                      }
                       @case ("tasks") {
                         <span role="cell" class="cell-status">
                           <ng-container
@@ -600,66 +473,62 @@ const runStatusFilters: [string, string][] = [
               sheetInitialFocus="#record-detail-title"
               (sheetDismiss)="h.closeRecord()"
             >
-              @if (v === "runs") {
-                <weave-run-detail [host]="h" />
-              } @else {
-                <header class="detail-header">
-                  <h2 id="record-detail-title" tabindex="-1">
-                    {{ rowTitle(v, record, context()) }}
-                  </h2>
-                  <button
-                    class="icon-button"
-                    aria-label="Close detail"
-                    (click)="h.closeRecord()"
+              <header class="detail-header">
+                <h2 id="record-detail-title" tabindex="-1">
+                  {{ rowTitle(v, record, context()) }}
+                </h2>
+                <button
+                  class="icon-button"
+                  aria-label="Close detail"
+                  (click)="h.closeRecord()"
+                >
+                  <weave-icon name="close" />
+                </button>
+              </header>
+              @if (pill(v, record); as status) {
+                <p class="detail-status">
+                  <span
+                    class="status-pill"
+                    [attr.data-tone]="tone(status.tone)"
+                    >{{ status.label }}</span
                   >
-                    <weave-icon name="close" />
+                </p>
+              }
+              @switch (v) {
+                @case ("tasks") {
+                  <ng-container *ngTemplateOutlet="taskDetail" />
+                }
+                @case ("email") {
+                  <ng-container *ngTemplateOutlet="emailDetail" />
+                }
+                @case ("connections") {
+                  @if (record["unavailable"]) {
+                    <p class="notice">
+                      Studio can't show this connection. Its connector may have
+                      been retired, or it was created by an older platform
+                      version.
+                    </p>
+                  } @else {
+                    <weave-connection-detail
+                      [api]="h.api"
+                      [connection]="record"
+                      [canCheck]="
+                        h.can('connection.manage', text(record['id']))
+                      "
+                    />
+                  }
+                }
+              }
+              @if (!record["unavailable"]) {
+                <div class="action-row detail-refresh">
+                  <button
+                    type="button"
+                    class="tertiary"
+                    (click)="h.readDetail()"
+                  >
+                    <weave-icon name="refresh" [size]="16" />Refresh
                   </button>
-                </header>
-                @if (pill(v, record); as status) {
-                  <p class="detail-status">
-                    <span
-                      class="status-pill"
-                      [attr.data-tone]="tone(status.tone)"
-                      >{{ status.label }}</span
-                    >
-                  </p>
-                }
-                @switch (v) {
-                  @case ("tasks") {
-                    <ng-container *ngTemplateOutlet="taskDetail" />
-                  }
-                  @case ("email") {
-                    <ng-container *ngTemplateOutlet="emailDetail" />
-                  }
-                  @case ("connections") {
-                    @if (record["unavailable"]) {
-                      <p class="notice">
-                        Studio can't show this connection. Its connector may
-                        have been retired, or it was created by an older
-                        platform version.
-                      </p>
-                    } @else {
-                      <weave-connection-detail
-                        [api]="h.api"
-                        [connection]="record"
-                        [canCheck]="
-                          h.can('connection.manage', text(record['id']))
-                        "
-                      />
-                    }
-                  }
-                }
-                @if (!record["unavailable"]) {
-                  <div class="action-row detail-refresh">
-                    <button
-                      type="button"
-                      class="tertiary"
-                      (click)="h.readDetail()"
-                    >
-                      <weave-icon name="refresh" [size]="16" />Refresh
-                    </button>
-                  </div>
-                }
+                </div>
               }
             </section>
           }
@@ -942,7 +811,6 @@ export class RecordsView {
   /** The editor shell, which owns every list and command. */
   host = input.required<App>();
   readonly sheetWhen = sheetWhen;
-  readonly statusFilters = runStatusFilters;
   readonly taskStatuses: [string, string][] = [
     ["ready", "Ready to claim"],
     ["claimed", "Claimed"],
@@ -970,20 +838,17 @@ export class RecordsView {
   readonly when = (value: unknown) => when(value);
   readonly shortId = shortId;
   readonly dateWithRelative = (value: unknown) => dateWithRelative(value);
-  /** Narrow windows fold the Runs filters behind "Filters (n)". */
-  filtersOpen = false;
-  moreFilters = false;
   private contextCache: { key: unknown[]; value: RowContext } = {
     key: [],
     value: {},
   };
 
-  listView(): ListView {
+  listView(): ShownView {
     const view = this.host().view as View;
-    return (
-      ["workflows", "runs", "tasks", "email", "connections"] as const
-    ).includes(view as ListView)
-      ? (view as ListView)
+    return (["workflows", "tasks", "email", "connections"] as const).includes(
+      view as ShownView,
+    )
+      ? (view as ShownView)
       : "workflows";
   }
   page() {
@@ -1002,10 +867,10 @@ export class RecordsView {
   noun() {
     return countLabel(this.listView(), 2).replace(/^2 /, "");
   }
-  columnsFor(view: ListView) {
+  columnsFor(view: ShownView) {
     return columns[view];
   }
-  icon(view: ListView) {
+  icon(view: ShownView) {
     return icons[view];
   }
   /** The person is signed out (not expired): a calm banner offers Sign in. */
@@ -1033,10 +898,6 @@ export class RecordsView {
       ? this.localRows().length
       : this.host().visibleRecords.length;
   }
-  /** Runs was refused (403): the page names run.read instead of its rows. */
-  refused() {
-    return this.listView() === "runs" && this.host().runsRefused;
-  }
   chooseLibrary(tab: "workflows" | "drafts" | "local") {
     const h = this.host();
     if (h.libraryCollection === tab) return;
@@ -1051,7 +912,6 @@ export class RecordsView {
     if (this.localTab()) return "Nothing on this computer yet";
     return {
       workflows: "No workflows yet",
-      runs: h.runFilterCount ? "No runs match these filters" : "No runs yet",
       tasks: "No tasks for you right now",
       email: "No email threads yet",
       connections: "No connections yet",
@@ -1066,9 +926,6 @@ export class RecordsView {
         : "Workflows you create here are kept in this browser until you publish them.";
     return {
       workflows: "Start from a blank canvas or a template.",
-      runs: h.runFilterCount
-        ? "Change or clear the filters to see more runs."
-        : "Activate a workflow version, then start a run to follow it here.",
       tasks:
         "People get tasks when a run reaches a human task step. They appear here when they're ready to claim.",
       email: "Threads appear when a workflow sends or receives email.",
@@ -1115,12 +972,6 @@ export class RecordsView {
   }
   connector(record: Json) {
     return rowSecondary("connections", record);
-  }
-  started(record: Json) {
-    return runStarted(record);
-  }
-  duration(record: Json) {
-    return runDuration(record);
   }
   lastMessage(record: Json) {
     return (

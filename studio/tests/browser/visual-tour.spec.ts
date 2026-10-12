@@ -39,9 +39,11 @@ import {
   connected,
   newWorkflow,
   offline,
+  runSummaries,
   workerAction,
   type CatalogEntry,
 } from "./support";
+import type { OperationsSummary } from "../../src/app/operate/overview/overview-model";
 import {
   HostOptions,
   PlatformHost,
@@ -1031,6 +1033,61 @@ async function runRoutes(page: Page) {
   );
   await page.route("**/environments/*/runs?*", (r) =>
     r.fulfill({ json: { items: runs, next_cursor: null } }),
+  );
+  // Operate › Runs lists run summaries; the open run reads its step facts.
+  await runSummaries(
+    page,
+    runs.map((run) => ({
+      ...run,
+      workflow_name: "expense-review",
+      started_at: new Date(Date.now() - 45 * 60_000).toISOString(),
+    })),
+  );
+  const at = (seconds: number) =>
+    new Date(Date.now() - 45 * 60_000 + seconds * 1000).toISOString();
+  await page.route("**/runs/*/steps?*", (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          {
+            node_id: "check",
+            instance_key: "",
+            iteration: [],
+            kind: "transform",
+            status: "succeeded",
+            scheduled_at: at(0),
+            started_at: at(1),
+            ended_at: at(2),
+            duration_ms: 1000,
+            queue_wait_ms: 1000,
+            attempts: 1,
+            worker_id: null,
+            error_code: null,
+            child_run_id: null,
+            log_entries: 0,
+          },
+          {
+            node_id: "review",
+            instance_key: "",
+            iteration: [],
+            kind: "humanTask",
+            status: "waiting",
+            scheduled_at: at(2),
+            started_at: at(2),
+            ended_at: null,
+            duration_ms: null,
+            queue_wait_ms: 0,
+            attempts: 1,
+            worker_id: null,
+            error_code: null,
+            child_run_id: null,
+            log_entries: 0,
+          },
+        ],
+        next_cursor: null,
+        complete: true,
+      },
+    }),
   );
   for (const run of runs) {
     await page.route(`**/environments/*/runs/${run.id}`, (r) =>
@@ -2658,6 +2715,9 @@ spec:
       "Workflow expense-review 1.0.0",
     );
     await expect(
+      page.getByRole("list", { name: "Step timeline" }).locator(".step-row"),
+    ).toHaveCount(2);
+    await expect(
       page.getByRole("button", { name: "Cancel run", exact: true }),
     ).toBeVisible();
     await shot("81-runs-detail", { end: ".record-detail, .page-content" });
@@ -2666,6 +2726,152 @@ spec:
       page.getByRole("dialog", { name: "Cancel this run?" }),
     ).toBeVisible();
     await shot("94-runs-cancel");
+  },
+
+  async overview({ page, shot }) {
+    await connected(page, {
+      capabilities: [
+        ...allCapabilities,
+        "status.read",
+        "incident.read",
+        "deployment.read",
+        "deployment.approve",
+      ],
+    });
+    const now = Date.now();
+    const ago = (seconds: number) =>
+      new Date(now - seconds * 1000).toISOString();
+    const id = (n: number) =>
+      `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const loop = (seconds: number) => ({
+      state: "ok" as const,
+      last_started_at: ago(seconds),
+      last_ok_at: ago(seconds),
+      consecutive_failures: 0,
+      recent_failures: 0,
+    });
+    const summary: OperationsSummary = {
+      observed_at: ago(0),
+      api: {
+        version: "0.1.0a15",
+        build: null,
+        instance: id(1),
+        uptime_seconds: 26_400,
+        compatibility: { mode: "ready", findings: 0 },
+      },
+      health: [
+        { component: "database", state: "ok", latency_ms: 3.8 },
+        { component: "recovery_loop", ...loop(2) },
+        { component: "schedules", ...loop(2) },
+        {
+          component: "outbox_loop",
+          state: "degraded",
+          last_started_at: ago(1),
+          last_ok_at: ago(75),
+          consecutive_failures: 4,
+          recent_failures: 4,
+        },
+        { component: "provider_loop", ...loop(1) },
+        {
+          component: "kafka_loop",
+          state: "disabled",
+          consecutive_failures: 0,
+          recent_failures: 0,
+        },
+        { component: "operations_loop", ...loop(20) },
+        {
+          component: "alert_evaluator",
+          state: "disabled",
+          consecutive_failures: 0,
+          recent_failures: 0,
+        },
+        { component: "native_executors", state: "ok" },
+        { component: "telemetry", state: "ok" },
+      ],
+      load: {
+        runs_active: 1_204,
+        tasks_ready: 14,
+        tasks_leased: 9,
+        oldest_ready_seconds: 41,
+        waits_active: 37,
+        waits_overdue: 2,
+        oldest_overdue_seconds: 95,
+        outbox_pending: 6,
+        outbox_oldest_seconds: 12,
+        provider_pending: 0,
+        sources_enabled: 4,
+      },
+      workers: {
+        online: 3,
+        offline: 1,
+        draining: 1,
+        capacity: 12,
+        active_leases: 9,
+      },
+      targets: {
+        total: 2,
+        runner_online: 1,
+        busy: 1,
+        reconciliation_required: 1,
+        awaiting_approval: 1,
+      },
+      incidents: { active: 2, opened_24h: 5 },
+      attention: [
+        {
+          kind: "job",
+          id: id(2),
+          title: "Deployment job on payments-cluster needs reconciliation",
+        },
+        {
+          kind: "approval",
+          id: id(3),
+          title: "Approve the plan to update on payments-cluster",
+          expires_at: new Date(now + 9 * 60_000).toISOString(),
+        },
+        {
+          kind: "worker",
+          id: id(4),
+          title: "Offline worker still holds 2 active leases",
+        },
+        {
+          kind: "incident",
+          id: id(5),
+          title: "Active incident in expense-review",
+        },
+        { kind: "run", id: id(6), title: "A run of expense-review failed" },
+      ],
+    };
+    await page.route(`${environment}/operations/summary`, (r) =>
+      r.fulfill({ json: summary }),
+    );
+    await open(page, "Overview");
+    await expect(page.locator("li.health-tile")).toHaveCount(6);
+    await shot("77-overview", { end: ".page-content" });
+    await page
+      .getByRole("button", { name: "Outbox details", exact: true })
+      .click();
+    await expect(
+      page.getByRole("dialog", { name: "Outbox details" }),
+    ).toBeVisible();
+    await shot("78-overview-details");
+    await page.keyboard.press("Escape");
+    // Sections the person may not read, and one the platform could not compute.
+    await page.unroute(`${environment}/operations/summary`);
+    await page.route(`${environment}/operations/summary`, (r) =>
+      r.fulfill({
+        json: {
+          ...summary,
+          targets: { state: "forbidden" },
+          incidents: { state: "forbidden" },
+          load: { state: "unavailable" },
+        },
+      }),
+    );
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(
+      page.getByText("This section could not be loaded.", { exact: true }),
+    ).toBeVisible();
+    await shot("79-overview-sections", { end: ".page-content" });
   },
 
   async "canvas-v2-empty"({ page, shot, size }) {

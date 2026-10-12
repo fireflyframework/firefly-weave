@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // checks every command; Studio leaves out the buttons it would refuse.
 import { readFileSync } from "node:fs";
 import { test, expect, Locator, Page, Route } from "@playwright/test";
-import { connected } from "./support";
+import { connected, runSummaries } from "./support";
 
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 const environment = `${project}/environments/development`;
@@ -99,6 +99,7 @@ async function runPage(
   await page.route(`${environment}/runs?*`, (r) =>
     r.fulfill({ json: { items: runs, next_cursor: null } }),
   );
+  await runSummaries(page, runs);
   for (const item of runs) {
     await page.route(`${environment}/runs/${item["id"]}`, (r) =>
       r.fulfill({ json: item }),

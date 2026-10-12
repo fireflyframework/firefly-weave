@@ -22,8 +22,9 @@ SPDX-License-Identifier: Apache-2.0
 import type { Routes } from "@angular/router";
 import { SETTINGS_TABS } from "../settings/settings-routes";
 
-/** The Operate pages, in navigation order. */
+/** The Operate pages, in navigation order; Overview is the default. */
 export const operatePages = [
+  "overview",
   "runs",
   "incidents",
   "workers",
@@ -44,6 +45,7 @@ export type ClusterTab = (typeof clusterTabs)[number];
 
 /** The capability each Operate page needs somewhere in the workspace. */
 export const operateCapabilities: Record<OperatePage, string> = {
+  overview: "status.read",
   runs: "run.read",
   incidents: "incident.read",
   workers: "status.read",
@@ -76,7 +78,7 @@ export function viewFromPath(pathname: string): ViewRoute | null {
   const parts = pathname.split("/").filter(Boolean);
   if (!parts.length) return null;
   if (parts[0] === "operate") {
-    const page = parts[1] ?? "runs";
+    const page = parts[1] ?? "overview";
     if (!isOperatePage(page)) return null;
     const detail =
       (page === "runs" || page === "workers") &&
@@ -156,7 +158,7 @@ export const operateRoutes: Routes = [
 
 /** Paths from before Operate, kept working as redirects. */
 export const legacyRedirects: Routes = [
-  { path: "operate", redirectTo: "operate/runs", pathMatch: "full" },
+  { path: "operate", redirectTo: "operate/overview", pathMatch: "full" },
   { path: "runs", redirectTo: "operate/runs", pathMatch: "full" },
   { path: "workers", redirectTo: "operate/workers", pathMatch: "full" },
   { path: "operations", redirectTo: "operate/clusters", pathMatch: "full" },

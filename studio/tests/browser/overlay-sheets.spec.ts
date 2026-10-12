@@ -22,7 +22,13 @@ SPDX-License-Identifier: Apache-2.0
 // inspector, the step palette popover and a list's detail panel; the
 // simulation panel is covered in designer-simulation.spec.ts.
 import { test, expect, Locator, Page } from "@playwright/test";
-import { connected, insertStep, newWorkflow, offline } from "./support";
+import {
+  connected,
+  insertStep,
+  newWorkflow,
+  offline,
+  runSummaries,
+} from "./support";
 import { DesignerPage } from "./designer-po";
 
 interface Size {
@@ -200,6 +206,7 @@ for (const size of sizes)
       await page.route("**/environments/development/runs?*", (r) =>
         r.fulfill({ json: { items: runs, next_cursor: null } }),
       );
+      await runSummaries(page, runs);
       for (const run of runs)
         await page.route(`**/environments/development/runs/${run.id}`, (r) =>
           r.fulfill({ json: run }),
@@ -221,10 +228,7 @@ for (const size of sizes)
         await expect(detail).toHaveAttribute("role", "dialog");
         await expect(detail).toHaveAttribute("aria-modal", "true");
         await expect(heading).toBeFocused();
-        await expect(page.locator(".resource-table")).toHaveAttribute(
-          "inert",
-          "",
-        );
+        await expect(page.locator(".runs-list")).toHaveAttribute("inert", "");
         expect(await reachableOutside(detail)).toEqual([]);
         expect(await tabStaysInside(page, detail, 10)).toEqual([]);
         await page.keyboard.press("Escape");

@@ -154,6 +154,20 @@ SPDX-License-Identifier: Apache-2.0
   or no delivery slot is free, is neither a success nor a failure.
 - Studio's host bridge forwards the environment summary, the telemetry
   settings and `releases.usage`.
+- Studio's Operate area opens on a new Overview page. It shows the health of
+  the API, the database, the scheduler, the outbox, compatibility and
+  telemetry export, each with its details; the current load; workers,
+  clusters and incidents; and up to 20 items that need attention, each opening
+  its record. It reads the summary every 15 seconds while visible. A section
+  you may not read names the permission it needs instead of showing zeros.
+- Operate › Runs reads run summaries, newest first, with time range, workflow,
+  version, origin, status, test, handled-error, incident, top-level and
+  archive filters. The address keeps every filter except the business and
+  correlation keys. Load more continues the same list, Auto-refresh reads the
+  first page every 10 seconds, and up to 50 selected runs can be cancelled or
+  retried together. A run's detail draws its steps with queue wait and run
+  time, groups loop iterations, links to called runs, shows a step's output
+  on request and follows a running run every 2 seconds.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.
