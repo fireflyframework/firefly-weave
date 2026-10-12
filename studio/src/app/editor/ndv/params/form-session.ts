@@ -117,7 +117,7 @@ import { resourceProblem } from "./resource";
 import { stepsAfter } from "../navigation";
 import type { StepDetailsController } from "../step-details-controller";
 import type { StepDetailsHost } from "../step-details-host";
-import type { StepDetailsRequest } from "../step-details-service";
+import { openRequest, type StepDetailsRequest } from "../step-details-service";
 
 export type FormName = "parameters" | "settings";
 export interface SessionHooks {
@@ -272,6 +272,8 @@ export class FormSession {
   }
   clear(spec: ParamSpec): void {
     if (!this.editable(spec)) return;
+    // Reset replaces what the field held that didn't apply.
+    this.release(spec);
     if (spec.type === "urlTemplate")
       return void this.typeUrl(spec, "", this.urlSnapshot(spec));
     const reason = this.resetReason(spec);
@@ -387,11 +389,16 @@ export class FormSession {
     if (!entry || this.readOnly(entry)) return;
     const current = this.read(spec);
     if (mode === "mapped") {
+      // Switching replaces what the box held: a number or JSON that didn't
+      // apply goes with the Fixed control it was typed in.
+      if (this.mode(spec) !== "mapped") this.release(spec);
       this.drafts.set(this.key(spec), spec.path);
       this.host.refreshView();
       return;
     }
     if (current.mode !== "mapped") {
+      // Back to the fixed value: template text that didn't apply goes.
+      this.release(spec);
       this.drafts.delete(this.key(spec));
       return this.host.refreshView();
     }
@@ -405,6 +412,7 @@ export class FormSession {
     if (!replace || !owns() || this.controller.readOnlyReason()) return;
     const live = this.resolve(spec);
     if (!live || this.readOnly(live)) return;
+    this.release(spec);
     this.drafts.delete(this.key(spec));
     this.commit(
       writeParam(
@@ -973,16 +981,13 @@ export class FormSession {
   }
   /**
    * The field's own problems as they show now (required ones wait on a new
-   * step). A read-only field isn't asked for a value: it shows why it can't
-   * change instead.
+   * step). A read-only field has none to show: its value is set elsewhere,
+   * and it says why it can't change instead.
    */
   problems(spec: ParamSpec, readOnly: string | null = null): RuleProblem[] {
+    if (readOnly) return [];
     const all = fieldRules(spec, this.read(spec), this.entries(spec));
-    return shownProblems(
-      spec.id,
-      readOnly ? all.filter((problem) => problem.code !== "required") : all,
-      this.timing(),
-    );
+    return shownProblems(spec.id, all, this.timing());
   }
   private timing() {
     return {
@@ -1356,22 +1361,52 @@ export class FormSession {
   }
 
   // ------------------------------------------- entries not applied yet
+  private listKey(path: Path, scope: ParamSpec["scope"]): string {
+    return `${scope ?? "step"}:${pointer(path)}`;
+  }
+  /**
+   * Entries other steps still hold, checked against their fields as each
+   * step's own form would show them: for the toast when step details close.
+   */
+  heldInOtherSteps(): { label: string; step: string }[] {
+    if (!this.isCurrent()) return [];
+    return this.controller
+      .heldTargets()
+      .filter((target) => target !== this.target)
+      .flatMap((target) =>
+        new FormSession(this.host, this.controller, openRequest(target), {
+          confirm: async () => false,
+          announce: () => undefined,
+        })
+          .heldLabels()
+          .map((label) => ({ label, step: target })),
+      );
+  }
   private pendingKey(spec: ParamSpec): string {
     return `${spec.scope ?? "step"}:${spec.id}:${pointer(spec.path)}`;
   }
   /** The field as described, the value under it and the rows around it. */
   private pendingOwner(spec: ParamSpec): PendingOwner {
-    const counts: [number, number][] = [];
+    // Each list on the way: its row count, and how often its rows changed.
+    const counts: [number, number, number][] = [];
     spec.path.forEach((segment, at) => {
       if (typeof segment !== "number" || at === 0) return;
+      const list = spec.path.slice(0, at);
       const entries = this.entries({
         id: "probe",
         type: "list",
         label: "",
-        path: spec.path.slice(0, at),
+        path: list,
         scope: spec.scope,
       });
-      counts.push([at, entries.kind === "array" ? entries.length : -1]);
+      counts.push([
+        at,
+        entries.kind === "array" ? entries.length : -1,
+        this.controller.rowGeneration(
+          this.target,
+          this.listKey(list, spec.scope),
+        ),
+      ]);
     });
     return {
       descriptor: canonicalJson(spec),
@@ -1963,6 +1998,7 @@ export class FormSession {
         child.default !== undefined &&
         isDefault(this.subject(), child) &&
         !this.expanded.has(key) &&
+        !this.drafts.has(this.key(child)) &&
         !this.controller.holds(this.target, this.pendingKey(child))
       )
         collapsed.push(child);
@@ -2123,6 +2159,7 @@ export class FormSession {
   private rowOperation = 0;
   private structureRevision = 0;
   private invalidateRows(spec: ParamSpec): void {
+    this.controller.bumpRows(this.target, this.listKey(spec.path, spec.scope));
     this.structureRevision++;
     this.clearRowState(spec);
     const owner = this.rowKeys.get(this.key(spec));

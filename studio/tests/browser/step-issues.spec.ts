@@ -44,7 +44,7 @@ import {
 } from "./step-geometry";
 import { httpWorkflow, openHttpStep } from "./step-http";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
-import { sourceText } from "./support";
+import { sourceText, tokenColor } from "./support";
 
 /** A diagnostic as live validation reports it. */
 interface Reported {
@@ -409,6 +409,160 @@ for (const size of sizes)
       await details.openWithKeyboard("route-by-value");
       await expect(json).toHaveValue('{"tier": ');
       await expect(lineOf(result)).toContainText("Not applied");
+      // Switching the field to Mapped replaces what the box held.
+      await result.getByRole("radio", { name: "Mapped", exact: true }).click();
+      await expect(json).toHaveCount(0);
+      await expect(lineOf(result)).not.toContainText("Not applied");
+      expect(
+        (await issueEntries(page, details)).filter((entry) =>
+          entry.includes("Not applied"),
+        ),
+      ).toEqual([]);
+    });
+
+    test("an entry left on another step is named when step details close", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      await details.openWithKeyboard("wait-a-minute");
+      await details
+        .field("duration")
+        .getByRole("textbox", { name: "Wait for" })
+        .fill("abc");
+      await expect(lineOf(details.field("duration"))).toContainText(
+        "Not applied",
+      );
+      await details.dialog
+        .getByRole("button", { name: "Next step", exact: true })
+        .click();
+      await expect(details.dialogFor("wait-a-minute")).toHaveCount(0);
+      await expect(details.dialog).toBeVisible();
+      // Said politely on the way: no toast covers the next step's fields.
+      await expect(
+        details.dialog.locator('.sr-only[aria-live="polite"]').first(),
+      ).toHaveText("wait-a-minute keeps 1 entry that isn't applied yet.");
+      await expect(page.getByText(/^Not applied yet/)).toHaveCount(0);
+      await details.close();
+      await expect(
+        page.getByText(
+          "Not applied yet: Wait for in wait-a-minute. What you typed is kept until you finish it.",
+        ),
+      ).toBeVisible();
+    });
+
+    test("Fix opens the data picker or the dropdown", async ({ page }) => {
+      const details = await openConnectedFixture(page);
+      await validateWith(page, [
+        {
+          code: "WV-COMP-UNAVAILABLE_REFERENCE",
+          severity: "error",
+          message: "Referenced step does not dominate this expression.",
+          path: "/spec/steps/1/with/object/parameters/object/customerId",
+        },
+      ]);
+      await details.open("lookup");
+      await showParameters(page, details.dialog);
+      const field = details.field("input.parameters.customerId");
+      await lineOf(field).getByRole("button", { name: "Use data…" }).click();
+      const picker = field.getByRole("combobox", { name: "Customer ID" });
+      await expect(picker).toBeFocused();
+      await expect(picker).toHaveAttribute("aria-expanded", "true");
+      await expect(field.getByRole("listbox")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await details.close();
+      // A new Call an API: its Connection entry opens the slot list.
+      await addCommonStep(page, "Call an API");
+      await expect(details.dialogFor("call-api")).toBeVisible();
+      await page.keyboard.press("Tab");
+      await issuesPill(details).click();
+      await page.getByRole("menuitem", { name: /^Connection/ }).click();
+      const slots = details
+        .field("connection")
+        .getByRole("combobox", { name: "Connection" });
+      await expect(slots).toBeFocused();
+      await expect(slots).toHaveAttribute("aria-expanded", "true");
+    });
+
+    test("an issue on a field with a choice of how to give it focuses the value", async ({
+      page,
+    }) => {
+      const details = await openConnectedFixture(page);
+      await validateWith(page, [
+        {
+          code: "WV-COMP-UNKNOWN_ACTION",
+          severity: "error",
+          message: "Unknown action",
+          path: "/spec/steps/1/uses",
+        },
+      ]);
+      const strip = page.getByRole("region", { name: "Compiler diagnostics" });
+      const toggle = strip.getByRole("button", { name: "Diagnostics" });
+      if ((await toggle.getAttribute("aria-expanded")) !== "true")
+        await toggle.click();
+      await strip.locator(".diagnostic-row .diagnostic-where").first().click();
+      await expect(details.dialogFor("lookup")).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(() => ({
+            param: document.activeElement
+              ?.closest("[data-param]")
+              ?.getAttribute("data-param"),
+            value: document.activeElement?.tagName,
+            mode: document.activeElement?.getAttribute("role") === "radio",
+          })),
+        )
+        .toEqual({ param: "action", value: "INPUT", mode: false });
+    });
+
+    test("a held template hides while the source has an error, and comes back after", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page, templateWorkflow());
+      await details.openWithKeyboard("summarize");
+      const prompt = details.field("prompt");
+      const text = prompt.getByRole("textbox", { name: "Prompt" });
+      await text.focus();
+      await text.press("ControlOrMeta+a");
+      await page.keyboard.type("Dear {{ input.customerId", { delay: 5 });
+      await expect(lineOf(prompt)).toContainText("Not applied");
+      await details.close();
+      const kept = page.getByText(/^Not applied yet/);
+      await expect(kept).toBeVisible();
+      await page
+        .getByRole("button", { name: "Dismiss notification" })
+        .first()
+        .click();
+      await expect(kept).toHaveCount(0);
+      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      const source = page.getByRole("textbox", { name: "Workflow source" });
+      const good = await source.inputValue();
+      await source.fill(`${good}\n  broken: [`);
+      await page
+        .getByRole("button", { name: "Apply changes", exact: true })
+        .click();
+      await page.getByRole("tab", { name: "Designer", exact: true }).click();
+      await details.openWithKeyboard("summarize");
+      // Read-only: the text that applied, nothing marked or listed.
+      await expect(text).toHaveValue("Hello {{ input.email }}");
+      await expect(text).toHaveAttribute("readonly", "");
+      await expect(prompt.locator(".param-status")).toHaveCount(0);
+      expect(
+        (await issueEntries(page, details)).filter((entry) =>
+          entry.startsWith("Prompt"),
+        ),
+      ).toEqual([]);
+      await details.close();
+      await expect(kept).toHaveCount(0);
+      await page.getByRole("tab", { name: "Source", exact: true }).click();
+      await source.fill(good);
+      await page
+        .getByRole("button", { name: "Apply changes", exact: true })
+        .click();
+      await page.getByRole("tab", { name: "Designer", exact: true }).click();
+      await details.openWithKeyboard("summarize");
+      await expect(text).toHaveValue("Dear {{ input.customerId");
+      await expect(lineOf(prompt)).toContainText("Not applied");
     });
   });
 
@@ -754,6 +908,12 @@ test.describe("issues layout", () => {
         );
         const fixBox = await box(fix);
         expect(fixBox.right).toBeCloseTo(formBox.right, 0);
+        // An in-form action: link color, underlined on hover and focus only.
+        await expect(fix).toHaveCSS("color", await tokenColor(page, "--link"));
+        await expect(fix).toHaveCSS("text-decoration-line", "none");
+        await fix.hover();
+        await expect(fix).toHaveCSS("text-decoration-line", "underline");
+        await page.mouse.move(0, 0);
         expect(fixBox.height).toBeGreaterThanOrEqual(d.touch ? 44 : 24);
         expectAligned(
           [

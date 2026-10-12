@@ -472,6 +472,12 @@ SPDX-License-Identifier: Apache-2.0
   padding: 0 0 0 var(--space-2);
   font: var(--type-small);
   font-weight: 600;
+  color: var(--link);
+  text-decoration: none;
+}
+/* Like the form's other actions: underlined on hover and focus only. */
+.step-details .param-line > button.param-fix:is(:hover, :focus-visible) {
+  text-decoration: underline;
 }
 .param-line:has(> .param-fix) > .param-line-text {
   padding-top: calc((var(--sd-label-row) - 20px) / 2);

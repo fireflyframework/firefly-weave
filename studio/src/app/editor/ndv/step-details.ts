@@ -133,6 +133,9 @@ const NAMES: Record<string, string> = {
   $trigger: "Manual form trigger",
   $end: "End",
 };
+/** What the live region says when step details move on from a step that keeps entries. */
+export const keptText = (name: string, count: number): string =>
+  `${name} keeps ${count} ${count === 1 ? "entry that isn't" : "entries that aren't"} applied yet.`;
 const isTyping = (element: Element | null): boolean =>
   !!element &&
   (element.matches(
@@ -464,6 +467,9 @@ export class StepDetails {
   go(id: string) {
     const region = this.currentRegion() ?? "parameters";
     const request = this.request();
+    // Entries this step keeps are said politely; a toast would cover fields.
+    const kept = this.session().heldLabels().length;
+    const name = this.name();
     void moveToStep(
       this.host(),
       id,
@@ -474,7 +480,16 @@ export class StepDetails {
         revealAll: false,
       },
       () => !this.lifetime.destroyed && this.details.request() === request,
-    );
+    ).then((moved) => {
+      if (moved && kept) this.say(keptText(name, kept));
+    });
+  }
+  /** A polite announcement in step details' live region. */
+  private say(text: string) {
+    this.announcement.set("");
+    setTimeout(() => {
+      if (!this.lifetime.destroyed) this.announcement.set(text);
+    });
   }
   move(delta: 1 | -1) {
     const id = delta > 0 ? this.next() : this.previous();
@@ -482,9 +497,15 @@ export class StepDetails {
   }
   close() {
     // What doesn't apply yet stays for the next time; with step details
-    // gone nothing else shows it, so a toast says so. Moving to another
-    // step needs none: the entries show again on the way back.
-    const kept = leavingText(this.session().heldLabels());
+    // gone nothing else shows it, so a toast names every entry still kept,
+    // on this step and on the steps it was left on.
+    const session = this.session();
+    const kept = leavingText([
+      ...session.heldLabels().map((label) => ({ label })),
+      ...session
+        .heldInOtherSteps()
+        .map(({ label, step }) => ({ label, step: NAMES[step] ?? step })),
+    ]);
     const host = this.host();
     // The opener gets focus back: the shell is usable again first.
     this.releaseShell();
@@ -664,24 +685,66 @@ export class StepDetails {
       ) ?? panel?.querySelector<HTMLElement>(`[data-param="${id}"]`);
     if (!panel || !host)
       return this.applyFocus({ kind: "region", region: "parameters" });
-    const control = [...host.querySelectorAll<HTMLElement>(".param-control")]
+    const controls = [...host.querySelectorAll<HTMLElement>(".param-control")]
       .flatMap((part) => [...part.querySelectorAll<HTMLElement>(CONTROL)])
-      .find(
+      .filter(
         (element) =>
           !element.closest(".param-label-row, .param-tools") &&
           visible(element),
       );
+    // The value, not a choice of how to give it (From list | By name).
+    const control =
+      controls.find((element) => !element.matches('[role="radio"]')) ??
+      controls[0];
     if (!control)
       return this.applyFocus({ kind: "region", region: "parameters" });
     control.focus({ preventScroll: true });
     revealTop(host);
     if (!inView(control))
       control.scrollIntoView({ block: "center", inline: "nearest" });
-    if (open) control.click();
+    if (open) this.openChoices(host, control);
+  }
+  /**
+   * Opens a field's list: a dropdown opens on a click; the data picker
+   * opens with ArrowDown, also when it replaces a pill pressed for it.
+   */
+  private openChoices(host: HTMLElement, control: HTMLElement) {
+    const picker = (element: HTMLElement | null) =>
+      element?.matches('weave-reference-combobox input[role="combobox"]')
+        ? element
+        : null;
+    const show = (input: HTMLElement) =>
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    if (picker(control)) return void show(control);
+    control.click();
+    afterNextRender(
+      () => {
+        const input = picker(
+          host.isConnected
+            ? host.querySelector<HTMLElement>(
+                '.param-control weave-reference-combobox input[role="combobox"]',
+              )
+            : null,
+        );
+        if (!input || input.getAttribute("aria-expanded") === "true") return;
+        input.focus({ preventScroll: true });
+        show(input);
+      },
+      { injector: this.injector },
+    );
   }
   /** An entry of the issues list: its field, else its fix, else the step's name. */
   goToIssue(issue: StepIssue): void {
-    if (issue.field) return this.focusField(issue.field);
+    const fix = issue.fix?.kind;
+    // The data picker or the dropdown opens, as the fix says.
+    if (issue.field && fix === "picker") return this.session().runFix(issue);
+    if (issue.field) return this.focusField(issue.field, fix === "connection");
     if (issue.fix) return this.session().runFix(issue);
     this.dialog().nativeElement.querySelector<HTMLElement>(".sd-name")?.focus();
   }

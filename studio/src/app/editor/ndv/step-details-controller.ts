@@ -418,9 +418,16 @@ export class StepDetailsController {
   release(target: string, key: string): void {
     this.pendingStore().release(target, key);
   }
-  /** The keys of the entries a step holds. */
-  heldKeys(target: string): string[] {
-    return this.pendingStore().keys(target);
+  /** The steps that hold entries (each still to be checked against its fields). */
+  heldTargets(): string[] {
+    return this.pendingStore().targets();
+  }
+  /** The rows of a list changed in step details: entries in its rows go. */
+  bumpRows(target: string, list: string): void {
+    this.pendingStore().bumpRows(target, list);
+  }
+  rowGeneration(target: string, list: string): number {
+    return this.pendingStore().rowGeneration(target, list);
   }
   /** A rename made in step details (or its Undo): the step's entries follow it. */
   renamePending(from: string, to: string): void {

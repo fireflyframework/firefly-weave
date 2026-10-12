@@ -56,6 +56,12 @@ const owns = (held: Held, owner: PendingOwner) =>
 
 export class PendingEntries {
   private readonly entries = new Map<string, Held>();
+  /**
+   * How many times the rows of each list were added, removed or moved in
+   * step details: with the row counts, it tells a row from an equal row
+   * that took its place.
+   */
+  private readonly rows = new Map<string, number>();
   /** Changes on every hold, release and drop, so views that list entries know. */
   version = 0;
 
@@ -85,11 +91,16 @@ export class PendingEntries {
   release(target: string, key: string): void {
     if (this.entries.delete(id(target, key))) this.version++;
   }
-  /** The keys held for a step. */
-  keys(target: string): string[] {
-    return [...this.entries.values()]
-      .filter((held) => held.target === target)
-      .map((held) => held.key);
+  /** The steps that hold entries. */
+  targets(): string[] {
+    return [...new Set([...this.entries.values()].map((held) => held.target))];
+  }
+  /** A list's rows changed (added, removed, moved). */
+  bumpRows(target: string, list: string): void {
+    this.rows.set(id(target, list), this.rowGeneration(target, list) + 1);
+  }
+  rowGeneration(target: string, list: string): number {
+    return this.rows.get(id(target, list)) ?? 0;
   }
   /** A rename made in step details: the step's entries follow it. */
   rename(from: string, to: string): void {
@@ -100,6 +111,11 @@ export class PendingEntries {
         this.entries.set(id(to, held.key), { ...held, target: to });
         this.version++;
       }
+    for (const [key, generation] of [...this.rows])
+      if (key.startsWith(`${from}\n`)) {
+        this.rows.delete(key);
+        this.rows.set(`${to}${key.slice(from.length)}`, generation);
+      }
   }
   /** Drops the entries of steps that are gone. */
   prune(keep: (target: string) => boolean): void {
@@ -107,6 +123,7 @@ export class PendingEntries {
       if (!keep(held.target)) this.release(held.target, held.key);
   }
   clear(): void {
+    this.rows.clear();
     if (!this.entries.size) return;
     this.entries.clear();
     this.version++;

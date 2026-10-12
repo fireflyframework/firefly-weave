@@ -115,8 +115,16 @@ export function firstIssueField(issues: StepIssue[]): PlacedSpec | null {
   );
 }
 
-/** What a toast says when step details close or move on while entries don't apply yet. */
-export function leavingText(labels: string[]): string {
-  if (!labels.length) return "";
-  return `${NOT_APPLIED} yet: ${labels.join(", ")}. What you typed is kept until you finish ${labels.length === 1 ? "it" : "them"}.`;
+/** An entry not applied yet, and the step that holds it when it isn't the open one. */
+export interface HeldLabel {
+  label: string;
+  step?: string;
+}
+/** What a toast says when step details close while entries don't apply yet, on any step. */
+export function leavingText(entries: HeldLabel[]): string {
+  if (!entries.length) return "";
+  const named = entries.map(({ label, step }) =>
+    step ? `${label} in ${step}` : label,
+  );
+  return `${NOT_APPLIED} yet: ${named.join(", ")}. What you typed is kept until you finish ${entries.length === 1 ? "it" : "them"}.`;
 }

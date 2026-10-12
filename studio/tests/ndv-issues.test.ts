@@ -51,6 +51,7 @@ import {
   type StepDetailsRequest,
 } from "../src/app/editor/ndv/step-details-service";
 import { StructuredCanvasAdapter } from "../src/app/model";
+import { lookupAction } from "./browser/support";
 
 vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
 afterAll(() => vi.unstubAllGlobals());
@@ -143,13 +144,18 @@ describe("issues in step details", () => {
     ).toBe("connection");
     expect(firstIssueField([issue("error")])).toBeNull();
   });
-  it("says what is kept when step details close or move on", () => {
+  it("says what is kept when step details close, naming the other steps", () => {
     expect(leavingText([])).toBe("");
-    expect(leavingText(["Max tries"])).toBe(
+    expect(leavingText([{ label: "Max tries" }])).toBe(
       "Not applied yet: Max tries. What you typed is kept until you finish it.",
     );
-    expect(leavingText(["Max tries", "Notes"])).toBe(
-      "Not applied yet: Max tries, Notes. What you typed is kept until you finish them.",
+    expect(
+      leavingText([
+        { label: "Max tries" },
+        { label: "Wait for", step: "wait-a-minute" },
+      ]),
+    ).toBe(
+      "Not applied yet: Max tries, Wait for in wait-a-minute. What you typed is kept until you finish them.",
     );
   });
 });
@@ -162,7 +168,7 @@ type MutableHost = {
 };
 function harness(
   recipe: Record<string, unknown> = {},
-  extra: { published?: boolean } = {},
+  extra: { lookupContract?: unknown; lookupWith?: unknown } = {},
 ) {
   const model = new StructuredCanvasAdapter();
   model.insert("action", "root", undefined, {
@@ -174,7 +180,8 @@ function harness(
   model.insert("action", "root", undefined, {
     id: "lookup",
     uses: "sql.lookup@1.0.0",
-    with: { literal: {} },
+    connection: "db",
+    with: extra.lookupWith ?? { literal: {} },
   });
   model.canvas = withOwnedAction(model.canvas, USES, {
     ...newHttpRecipe(),
@@ -188,7 +195,11 @@ function harness(
     editingLocked: false,
     profile: null,
     stepDataScope: "account-a",
-    catalogContracts: new Map(),
+    catalogContracts: new Map(
+      extra.lookupContract
+        ? [["sql.lookup@1.0.0", extra.lookupContract as never]]
+        : [],
+    ),
     decisionContracts: new Map(),
     actionVersions: [],
     diagnostics: null,
@@ -211,7 +222,6 @@ function harness(
       confirm: async () => true,
       announce: () => undefined,
     });
-  void extra;
   return { model, host, controller, open, notes };
 }
 const settingsSpec = (session: FormSession, id: string): ParamSpec => {
@@ -346,6 +356,80 @@ describe("issues of a step", () => {
   });
 });
 
+describe("issues of a step, as pinned", () => {
+  it("lists fields in the order they show: Parameters before Settings", () => {
+    const h = harness({ timeoutSeconds: 31 });
+    h.host.diagnostics = {
+      validationOk: false,
+      errorCount: 1,
+      partial: true,
+      diagnostics: [
+        {
+          code: "WV-COMP-TYPE_MISMATCH",
+          severity: "error",
+          message: "connection",
+          path: "/spec/steps/0/connection",
+        },
+      ],
+    } as never;
+    h.host.diagnosticsDefinition = h.model.definition;
+    // The Settings rule is found first; the Parameters message shows first.
+    expect(
+      h
+        .open()
+        .issues()
+        .map((issue) => `${issue.field?.tab}:${issue.field?.spec.id}`),
+    ).toEqual(["parameters:connection", "settings:timeout"]);
+  });
+  it("keeps a missing required input for later on a new step, like the field's own message", () => {
+    const lookupWith = {
+      object: {
+        parameters: { object: { customerId: { ref: "/input/customerId" } } },
+      },
+    };
+    const gap = {
+      stepId: "lookup",
+      field: "with" as const,
+      dataPath: ["parameters", "customerId"],
+      label: "Customer ID",
+    };
+    const fresh = harness({}, { lookupContract: lookupAction, lookupWith });
+    fresh.host.contractIssues = [gap];
+    const session = fresh.open("lookup", { fresh: true });
+    const id = "input.parameters.customerId";
+    expect(issueOf(session, id)).toEqual([]);
+    session.touch(settingsSpec(session, id));
+    expect(issueOf(session, id).map((issue) => issue.message)).toEqual([
+      "Enter a value or map one.",
+    ]);
+    const later = harness({}, { lookupContract: lookupAction, lookupWith });
+    later.host.contractIssues = [gap];
+    expect(issueOf(later.open("lookup"), id)).toHaveLength(1);
+  });
+  it("shows why a read-only field can't change instead of any rule message", () => {
+    const h = harness(
+      {},
+      {
+        lookupContract: {
+          ...lookupAction,
+          spec: { ...lookupAction.spec, timeoutSeconds: 0 },
+        },
+      },
+    );
+    const session = h.open("lookup");
+    const timeout = settingsSpec(session, "timeout");
+    expect(
+      session.line(timeout, {
+        spec: timeout,
+        option: false,
+        readOnly: "Set by sql.lookup@1.0.0.",
+        disabled: null,
+      }),
+    ).toEqual({ kind: "reason", text: "Set by sql.lookup@1.0.0." });
+    expect(issueOf(session, "timeout")).toEqual([]);
+  });
+});
+
 // ------------------------------------------------- entries not applied yet
 
 describe("entries not applied yet", () => {
@@ -464,6 +548,90 @@ describe("entries not applied yet", () => {
       .placedSpecs()
       .find((p) => p.spec.id === "status" && p.spec.path[1] === 1)!.spec;
     expect(after.held(moved)).toBeNull();
+  });
+  it("hides held entries while the workflow is read-only, and shows them again after", () => {
+    const h = harness({ responseSample: { id: 1 } });
+    const session = h.open();
+    const sample = settingsSpec(session, "responseSample");
+    session.hold(sample, "json", "{", "This isn't valid JSON.");
+    h.host.editingLocked = true;
+    expect(session.held(sample)).toBeNull();
+    expect(
+      h
+        .open()
+        .issues()
+        .filter((issue) => issue.status),
+    ).toEqual([]);
+    h.host.editingLocked = false;
+    expect(h.open().held(sample)?.text).toBe("{");
+  });
+  it("refuses to hold an entry while the workflow is read-only", () => {
+    const h = harness({ responseSample: { id: 1 } });
+    const session = h.open();
+    const sample = settingsSpec(session, "responseSample");
+    h.host.editingLocked = true;
+    session.hold(sample, "json", "{", "This isn't valid JSON.");
+    h.host.editingLocked = false;
+    expect(h.open().held(sample)).toBeNull();
+  });
+  it("tells a row's entry from an equal row's by the rows around it", () => {
+    const rowOf = (session: FormSession, at: number) =>
+      session
+        .placedSpecs()
+        .find((p) => p.spec.id === "status" && p.spec.path[1] === at)!.spec;
+    // Removed: the equal row now at its place doesn't get it.
+    const removed = harness({ statuses: [201, 201, 201] });
+    const first = removed.open();
+    first.hold(rowOf(first, 1), "number", "abc", "Enter a number.");
+    first.listRemove(settingsSpec(first, "statuses"), 0);
+    const left = removed.open();
+    expect(left.held(rowOf(left, 1))).toBeNull();
+    // Moved: same values, same count, and still another row.
+    const moved = harness({ statuses: [201, 201] });
+    const second = moved.open();
+    second.hold(rowOf(second, 1), "number", "abc", "Enter a number.");
+    second.listMove(settingsSpec(second, "statuses"), 0, 1);
+    const after = moved.open();
+    expect(ownedActionsOf(moved.model.canvas)[USES].statuses).toEqual([
+      201, 201,
+    ]);
+    expect(after.held(rowOf(after, 1))).toBeNull();
+  });
+  it("names the entries other steps still hold, once checked against their fields", () => {
+    const h = harness({ responseSample: { id: 1 } });
+    const get = h.open();
+    const sample = settingsSpec(get, "responseSample");
+    get.hold(sample, "json", "{", "This isn't valid JSON.");
+    expect(h.open("lookup").heldInOtherSteps()).toEqual([
+      { label: "Response sample", step: "get" },
+    ]);
+    expect(h.open("get").heldInOtherSteps()).toEqual([]);
+    // Its value changed since: the entry no longer belongs to it.
+    get.write(sample, fixed({ id: 2 }));
+    expect(h.open("lookup").heldInOtherSteps()).toEqual([]);
+  });
+  it("lets go of a held entry when the field switches between Fixed and Mapped", async () => {
+    const h = harness(
+      {},
+      {
+        lookupContract: lookupAction,
+        lookupWith: {
+          object: {
+            parameters: {
+              object: { customerId: { ref: "/input/customerId" } },
+            },
+            limit: { literal: 5 },
+          },
+        },
+      },
+    );
+    const session = h.open("lookup");
+    const limit = settingsSpec(session, "input.limit");
+    session.hold(limit, "number", "abc", "Enter a number.");
+    expect(session.held(limit)?.text).toBe("abc");
+    await session.setMode(limit, "mapped");
+    expect(session.held(limit)).toBeNull();
+    expect(session.issues().filter((issue) => issue.status)).toEqual([]);
   });
   it("drops a held entry when its field is described differently", () => {
     const h = harness({ responseSample: { id: 1 } });
