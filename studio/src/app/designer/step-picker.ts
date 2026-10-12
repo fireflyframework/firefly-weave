@@ -126,13 +126,20 @@ export function pickerOptions(
   hiddenActions: number;
 } {
   const terms = words(query);
+  // Everyday words a common action claims ("api" for Call an API) find that
+  // action, not a step kind that lists them too; names and descriptions still do.
+  const claimed = new Set(common.flatMap((item) => words(item.keywords)));
+  const keywordsOf = (kind: Kind) =>
+    words(stepKindKeywords[kind])
+      .filter((word) => !claimed.has(word))
+      .join(" ");
   const steps = kinds
     .filter((kind) =>
       matches(
         terms,
         stepKindLabels[kind],
         stepKindDescriptions[kind],
-        stepKindKeywords[kind],
+        keywordsOf(kind),
         kind,
       ),
     )

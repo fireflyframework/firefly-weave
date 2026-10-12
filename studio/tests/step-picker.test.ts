@@ -208,6 +208,23 @@ describe("common actions in the picker", () => {
       });
     }
   });
+  it("lets api, http, request and rest lead to Call an API, not a bare action, while common actions are offered", () => {
+    for (const query of ["api", "http", "request", "rest"]) {
+      const found = pickerOptions(query, kinds, [], 50, COMMON_ACTIONS);
+      const first = [...found.steps, ...found.common, ...found.actions][0];
+      expect(first, query).toMatchObject({ common: "call-api" });
+      expect(found.steps, query).toEqual([]);
+    }
+    // Without common actions the same words still find Call an action.
+    expect(pickerOptions("http", kinds, []).steps.map((o) => o.kind)).toEqual([
+      "action",
+    ]);
+    // A step's own name and description still find it: "message" names
+    // Wait for signal's description as well as Send email's words.
+    const message = pickerOptions("message", kinds, [], 50, COMMON_ACTIONS);
+    expect(message.steps.map((o) => o.kind)).toEqual(["signal"]);
+    expect(message.common.map((o) => o.common)).toEqual(["send-email"]);
+  });
   it("lists every common action once, with option identities apart from steps and actions", () => {
     const all = pickerOptions("", kinds, actions, 50, COMMON_ACTIONS);
     expect(all.common).toHaveLength(COMMON_ACTIONS.length);

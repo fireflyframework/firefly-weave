@@ -150,7 +150,7 @@ export class RefPill {
           [value]="currentRef()"
           [options]="session().scope(spec())"
           [target]="session().expected(spec())"
-          [focusOnMount]="true"
+          [focusOnMount]="picking()"
           [disabled]="!!readOnly()"
           [describedByIds]="describedBy()"
           (picked)="pick($event.ref)"
@@ -166,6 +166,11 @@ export class FormulaField {
   controlId = input.required<string>();
   describedBy = input("");
   readOnly = input<string | null>(null);
+  /**
+   * The person asked to choose data: switched the field to Mapped, or
+   * pressed its pill. Only then does the picker take focus when it shows; a
+   * field that is Mapped and empty when the form renders waits to be entered.
+   */
   readonly picking = signal(false);
   readonly editingText = signal<string | null>(null);
   readonly templateError = signal("");

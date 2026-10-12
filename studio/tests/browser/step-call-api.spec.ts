@@ -34,6 +34,7 @@ import {
   START_PLUS,
   StepDetailsPage,
   addCommonStep,
+  fitCanvas,
   openStepFixture,
   sizes,
   stepFixture,
@@ -97,6 +98,38 @@ const stepOf = async (page: Page, id: string) =>
 /** The labels of the visible tab's top-level fields. */
 const labels = (details: StepDetailsPage) =>
   details.topFields().locator(":scope > .param .param-label");
+
+/**
+ * Records every field that takes focus inside step details from now on, by
+ * its parameter ID ("connection", "file"), in order.
+ */
+async function recordFocus(page: Page): Promise<() => Promise<string[]>> {
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    (window as unknown as { fieldFocus: string[] }).fieldFocus = seen;
+    document.addEventListener(
+      "focusin",
+      (event) => {
+        const target = event.target as HTMLElement;
+        if (!target.closest("section.step-details")) return;
+        seen.push(
+          target.closest("[data-param]")?.getAttribute("data-param") ??
+            target.getAttribute("aria-label") ??
+            target.tagName,
+        );
+      },
+      true,
+    );
+  });
+  return () =>
+    page.evaluate(() => [
+      ...(window as unknown as { fieldFocus: string[] }).fieldFocus,
+    ]);
+}
+
+/** Fields of the visible tab that show a problem. */
+const fieldsWithProblems = (details: StepDetailsPage) =>
+  details.dialog.locator(".sd-tabpanel:not([hidden]) .param.has-error");
 
 /** The focused element sits in step details on the first field that still needs a value. */
 async function expectFirstRequiredEmptyFocused(details: StepDetailsPage) {
@@ -430,6 +463,93 @@ for (const size of sizes)
       await details.node("send-email").focus();
       await page.keyboard.press("ControlOrMeta+z");
       await expect(details.node("send-email")).toHaveCount(0);
+    });
+
+    test("a new Write a file step without a file server slot focuses only Connection, and File waits until it is left", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, stepFixture, authoring);
+      const focused = await recordFocus(page);
+      await addCommonStep(page, "Write a file");
+      await expect(details.dialogFor("write-file")).toBeVisible();
+      const connection = details
+        .field("connection")
+        .getByRole("combobox", { name: "Connection" });
+      await expect(connection).toBeFocused();
+      // Long enough for a late focus from a field's first render to show.
+      await page.waitForTimeout(500);
+      expect(await focused()).toEqual(["connection"]);
+      const file = details.field("file");
+      await expect(file).not.toContainText("Map a value.");
+      await expect(fieldsWithProblems(details)).toHaveCount(0);
+      // Entered and left empty, File asks for its value.
+      await file.getByRole("combobox", { name: "File" }).focus();
+      await page.keyboard.press("Tab");
+      await expect(file).toContainText("Map a value.");
+    });
+
+    test("every common action opens on its first required empty field, once, with no message showing", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, stepFixture, authoring);
+      const focused = await recordFocus(page);
+      for (const label of [
+        "Call an API",
+        "Send email",
+        "Reply to an email",
+        "List files",
+        "Read a file",
+        "Download a file",
+        "Write a file",
+        "Move a file",
+        "Delete a file",
+      ]) {
+        await page.evaluate(
+          () =>
+            ((window as unknown as { fieldFocus: string[] }).fieldFocus.length =
+              0),
+        );
+        await addCommonStep(page, label);
+        await expect(details.dialog).toBeVisible();
+        await expectFirstRequiredEmptyFocused(details);
+        await page.waitForTimeout(300);
+        expect(await focused(), label).toHaveLength(1);
+        await expect(fieldsWithProblems(details), label).toHaveCount(0);
+        await details.close();
+      }
+    });
+
+    test("api, http and request then Enter insert Call an API", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, stepFixture, authoring);
+      for (const [word, id] of [
+        ["api", "call-api"],
+        ["http", "call-api-2"],
+        ["request", "call-api-3"],
+      ]) {
+        await fitCanvas(page);
+        await page
+          .getByRole("button", { name: START_PLUS })
+          .filter({ visible: true })
+          .first()
+          .click();
+        const search = page.getByRole("combobox", {
+          name: "Search steps and actions",
+        });
+        await search.fill(word);
+        await search.press("Enter");
+        await expect(details.dialogFor(id)).toBeVisible();
+        await details.close();
+      }
+      const uses = (await stepsOf(page))
+        .filter((step) => String(step["id"]).startsWith("call-"))
+        .map((step) => step["uses"]);
+      expect(uses).toEqual([
+        "order-intake.call-api-3@1.0.0",
+        "order-intake.call-api-2@1.0.0",
+        "order-intake.call-api@1.0.0",
+      ]);
     });
 
     test("a file step moves to another file server without changing a step that shares its action", async ({
