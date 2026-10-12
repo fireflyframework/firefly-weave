@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -801,3 +802,133 @@ async def test_capacity_refusal_before_send_leaves_the_lease_for_recovery(setup,
     assert (await s.dispatch()).delivered == 1
     assert len(s.remote.requests) == 1
     assert {attempt["outcome"] for attempt in await s.rows("delivery_attempts")} == {"ACK_UNKNOWN", "ACK"}
+
+
+def _traversal_settings(s, scheduler_url):
+    from pydantic import SecretStr
+
+    from firefly_weave.settings import Settings
+
+    return Settings(
+        database_url=SecretStr(s.access_db[3].render_as_string(hide_password=False)),
+        scheduler_enabled=True,
+        scheduler_database_url=SecretStr(scheduler_url),
+    )
+
+
+def _count_cycles(monkeypatch, loop):
+    counter = SimpleNamespace(count=0)
+    cycle = loop.cycle
+
+    async def counted():
+        try:
+            await cycle()
+        finally:
+            counter.count += 1
+
+    monkeypatch.setattr(loop, "cycle", counted)
+    return counter
+
+
+async def _until(condition, seconds):
+    async with asyncio.timeout(seconds):
+        while not condition():
+            await asyncio.sleep(0.05)
+
+
+def _turn_errors(caplog):
+    return [
+        record
+        for record in caplog.records
+        if record.name == "firefly_weave.operations.outbox_loop" and record.levelno >= logging.ERROR
+    ]
+
+
+def _start_turns(monkeypatch, s, turns):
+    """While readiness is withdrawn the outbox waits. With "refused", every traversal finds the
+    platform ready just before the withdrawal reaches its turn, so the dispatcher refuses each turn."""
+    if turns == "refused":
+        monkeypatch.setattr(s.dispatcher, "operational", lambda: True)
+
+
+@pytest.mark.parametrize("turns", ["wait", "refused"])
+async def test_delivery_resumes_once_the_platform_is_ready(setup, scheduler_url, monkeypatch, caplog, turns):
+    from firefly_weave.operations import event_delivery
+    from firefly_weave.operations.outbox_loop import OutboxLoop
+
+    caplog.set_level(logging.WARNING)
+    s = setup
+    # Slots are per process; count only this test's.
+    monkeypatch.setattr(event_delivery, "_inflight", 0)
+    assert s.dispatcher.subscriptions.bindings.connections.registry is s.registry
+    _start_turns(monkeypatch, s, turns)
+    await s.append()
+    ready = False
+    # The platform opens the outbox before its other effects and reports ready once all of them are open.
+    s.registry.set_operational_guard(lambda: ready)
+    loop = OutboxLoop(_traversal_settings(s, scheduler_url), s.dispatcher.uow, s.dispatcher)
+    cycles = _count_cycles(monkeypatch, loop)
+    try:
+        await loop.open()
+        # More traversal cycles than the process has delivery slots.
+        await _until(lambda: cycles.count >= 5, 10)
+        assert not s.remote.requests
+        if turns == "wait":
+            # The outbox waited for readiness instead of reporting a failed turn every cycle.
+            assert _turn_errors(caplog) == []
+        ready = True
+        await _until(lambda: s.remote.requests, 5)
+    finally:
+        await loop.close()
+    assert len(s.remote.requests) == 1
+    assert event_delivery.available() == 4
+
+
+@pytest.mark.parametrize("turns", ["wait", "refused"])
+async def test_delivery_resumes_after_readiness_is_withdrawn_while_native_work_drains(
+    setup, scheduler_url, monkeypatch, caplog, turns
+):
+    from firefly_weave.connectors.dispatcher import NativeDispatcher
+    from firefly_weave.operations import event_delivery
+    from firefly_weave.operations.outbox_loop import OutboxLoop
+
+    caplog.set_level(logging.WARNING)
+    s = setup
+    monkeypatch.setattr(event_delivery, "_inflight", 0)
+    assert s.dispatcher.subscriptions.bindings.connections.registry is s.registry
+    _start_turns(monkeypatch, s, turns)
+    ready = True
+    s.registry.set_operational_guard(lambda: ready)
+    settings = _traversal_settings(s, scheduler_url)
+    loop = OutboxLoop(settings, s.dispatcher.uow, s.dispatcher)
+    cycles = _count_cycles(monkeypatch, loop)
+    native = NativeDispatcher(None, (), None, settings.shutdown_timeout_seconds)  # type: ignore[arg-type]
+    try:
+        await loop.open()
+        await s.append()
+        await _until(lambda: len(s.remote.requests) == 1, 5)
+        # Readiness is withdrawn before the effects close. They close in reverse opening order, so the
+        # outbox closes last, once the native dispatcher has drained the connector call in flight.
+        ready = False
+        await s.append()
+        withdrawn = cycles.count
+
+        async def connector_call():
+            await _until(lambda: cycles.count >= withdrawn + 5, settings.shutdown_timeout_seconds)
+
+        native.tasks.append(asyncio.create_task(connector_call()))
+        await native.close()
+        assert cycles.count >= withdrawn + 5
+        await loop.close()
+        assert len(s.remote.requests) == 1
+        if turns == "wait":
+            # Only a turn that started before the withdrawal was seen can be refused.
+            assert len(_turn_errors(caplog)) <= 1
+        # Readiness returns and the effects open again.
+        ready = True
+        loop = OutboxLoop(settings, s.dispatcher.uow, s.dispatcher)
+        await loop.open()
+        await _until(lambda: len(s.remote.requests) == 2, 5)
+    finally:
+        await loop.close()
+    assert event_delivery.available() == 4

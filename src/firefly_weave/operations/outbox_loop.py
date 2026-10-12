@@ -68,6 +68,9 @@ class OutboxLoop:
             raise
 
     async def cycle(self) -> None:
+        # A turn started now would be refused, so wait for readiness without moving a cursor.
+        if not self.dispatcher.operational():
+            return
         count = reserve(1)
         if not count:
             return
@@ -85,17 +88,28 @@ class OutboxLoop:
                 if authority is None:
                     return
 
+            started = False
+
             async def turn() -> None:
+                nonlocal started
+                # From here the dispatcher owns the slot: it gives it back however the turn ends.
+                started = True
                 try:
                     await self.dispatcher._dispatch(authority.scope, 1, None, AuditContext(), authority, reserved=count)
                 except Exception:
                     logging.getLogger(__name__).error("Outbox turn failed; durable lease recovery remains available")
 
+            def finished(task: asyncio.Task[None]) -> None:
+                self.turns.discard(task)
+                # A turn cancelled before its first step never reached the dispatcher.
+                if not started:
+                    release(count)
+
             from firefly_weave.access.audit import AuditContext
 
             task = asyncio.create_task(turn(), name="weave-outbox-delivery")
             self.turns.add(task)
-            task.add_done_callback(self.turns.discard)
+            task.add_done_callback(finished)
             owned = False
         finally:
             if owned:
