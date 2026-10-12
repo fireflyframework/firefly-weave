@@ -317,7 +317,6 @@ weave-operate-state {
 }
 .cell-key {
   grid-area: key;
-  overflow-wrap: anywhere;
 }
 .cell-run {
   grid-area: run;
@@ -360,6 +359,19 @@ weave-operate-state {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--inline-gap) var(--space-2);
+}
+/* On a wide pane every run stays one 32 px line: a long workflow name or
+   business key ends in an ellipsis, with the whole value in its title (and in
+   the run's detail). */
+.runs-table .resource-row .cell-workflow {
+  flex-wrap: nowrap;
+}
+.runs-table .resource-row .row-open,
+.runs-table .resource-row .cell-key {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .runs-table .row-text {
   font: var(--type-label);
@@ -471,6 +483,14 @@ weave-operate-state {
   }
   .meta-key {
     overflow-wrap: anywhere;
+  }
+  /* Two lines and more: long names wrap instead. */
+  .runs-table .resource-row .cell-workflow {
+    flex-wrap: wrap;
+  }
+  .runs-table .resource-row .row-open {
+    overflow: visible;
+    white-space: normal;
   }
 }
 /* With a run open beside it, the list is a column of names and statuses; a

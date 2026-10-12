@@ -775,6 +775,7 @@ interface BulkResult {
                           ><button
                             type="button"
                             class="row-open"
+                            [attr.title]="run.workflow.name"
                             [attr.aria-current]="
                               openRunId() === run.id ? 'true' : null
                             "
@@ -817,9 +818,11 @@ interface BulkResult {
                               >—</span
                             >
                           }</span
-                        ><span role="cell" class="cell-key">{{
-                          run.business_key ?? "—"
-                        }}</span
+                        ><span
+                          role="cell"
+                          class="cell-key"
+                          [attr.title]="run.business_key"
+                          >{{ run.business_key ?? "—" }}</span
                         ><span role="cell" class="cell-run"
                           ><code [attr.title]="run.id">{{ short(run.id) }}</code
                           ><button

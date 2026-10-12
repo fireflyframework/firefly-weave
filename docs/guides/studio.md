@@ -1280,7 +1280,9 @@ each run's status (a run that succeeded after handling errors reads "Succeeded
 with errors"), its workflow and version, how it started (**Retry of** and
 **Called by** open the run it came from), when it started, how long it ran
 (counting up while it runs), its active incidents, its business key and its
-short run ID with **Copy**.
+short run ID with **Copy**. On a wide screen each run is one line: a long
+workflow name or business key ends in "…", and pointing at it shows the whole
+value, as the run's detail does.
 
 - **Find runs** with the filters above the list: **Time range** (the last 15
   minutes, hour, 24 hours, 7 days or 30 days, or a custom range; the last 24

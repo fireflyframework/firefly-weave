@@ -1627,10 +1627,18 @@ async function expectNoClipping(page: Page) {
       if (
         node.scrollWidth > node.clientWidth + 1 &&
         style.overflowX !== "visible"
-      )
-        found.push(
-          `${node.tagName.toLowerCase()}.${node.className} is cut off`,
-        );
+      ) {
+        // A single-line value may end in an ellipsis only when its title
+        // holds the whole value.
+        const whole =
+          style.textOverflow === "ellipsis" &&
+          node.title !== "" &&
+          node.title === (node.textContent ?? "").trim();
+        if (!whole)
+          found.push(
+            `${node.tagName.toLowerCase()}.${node.className} is cut off`,
+          );
+      }
     }
     return found;
   });
@@ -1647,9 +1655,30 @@ test.describe("layout", () => {
       page,
     }) => {
       await page.setViewportSize(viewport);
-      await platform(page);
+      // The newest run has a 52-character workflow name and a 48-character
+      // business key: its row stays one line on a wide screen.
+      const fixture = data();
+      const workflow = "quarterly-supplier-invoice-approval-with-escalations";
+      const key = "INV-2026-Q4-SUPPLIER-0000418273-ESCALATION-LEVEL";
+      expect([workflow.length, key.length]).toEqual([52, 48]);
+      fixture.runs.push({
+        summary: started(uuid(990), "2026-10-07T11:59:00Z", {
+          workflow: {
+            ...runViewsFixture.runs[0].summary.workflow,
+            name: workflow,
+          },
+          business_key: key,
+        }),
+      });
+      await platform(page, operator, fixture);
       await openRuns(page);
-      await expect(rows(page)).toHaveCount(6);
+      await expect(rows(page)).toHaveCount(7);
+      const long = rows(page).first();
+      await expect(long.locator(".row-open")).toHaveAttribute(
+        "title",
+        workflow,
+      );
+      await expect(long.locator(".cell-key")).toHaveAttribute("title", key);
       // The filters and the table share the page's left and right edges.
       const [filters] = await boxes(page.locator(".run-filters"));
       const [list] = await boxes(table(page));
@@ -1740,7 +1769,7 @@ test.describe("layout", () => {
             })),
         );
       await shot(page, `runs-${viewport.width}x${viewport.height}-layout`);
-      await names(page).nth(3).click();
+      await names(page).nth(4).click();
       await expect(
         page.locator(".record-detail #record-detail-title"),
       ).toHaveText("invoice-approval");
