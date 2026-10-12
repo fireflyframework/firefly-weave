@@ -232,6 +232,14 @@ weave-step-details {
   color: var(--text);
   border-bottom-color: var(--accent);
 }
+/* Some settings differ from their defaults, or the step has a note. */
+.sd-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--info-ink);
+}
 .sd-docs {
   display: inline-flex;
   align-items: baseline;

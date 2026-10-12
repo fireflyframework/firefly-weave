@@ -471,16 +471,22 @@ export function actionForm(step: Step, ctx: KindContext): FormSpec {
   return publishedActionForm(step, ctx);
 }
 
+/**
+ * What an action does to data: an API action's from its method (GET and
+ * HEAD read), any other from its document ("" until that loads).
+ */
+export function actionSideEffect(step: Step, ctx: KindContext): string {
+  const recipe = recipeOf(step, ctx);
+  if (recipe?.kind === "http")
+    return isWriteMethod(recipe.method) ? "non_idempotent" : "read_only";
+  return sideEffectOf(ctx.actionContract(String(step["uses"] ?? "")));
+}
+
 export function actionSettings(step: Step, ctx: KindContext): FormSpec {
   const uses = String(step["uses"] ?? "");
   if (!uses) return { fields: [] };
   const recipe = recipeOf(step, ctx);
-  const sideEffect =
-    recipe?.kind === "http"
-      ? isWriteMethod(recipe.method)
-        ? "non_idempotent"
-        : "read_only"
-      : sideEffectOf(ctx.actionContract(uses));
+  const sideEffect = actionSideEffect(step, ctx);
   const setBy = recipe ? null : `Set by ${uses}.`;
   const retryReason =
     sideEffect === "non_idempotent"
@@ -505,6 +511,7 @@ export function actionSettings(step: Step, ctx: KindContext): FormSpec {
           "Tries again after temporary failures, such as timeouts or a dropped connection.",
         hint: "Waits double after each try, up to the longest wait.",
         readOnly: () => retryReason,
+        expandChildren: true,
         children: () => [
           {
             id: "retry.maxAttempts",

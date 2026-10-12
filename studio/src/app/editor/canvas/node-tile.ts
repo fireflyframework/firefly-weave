@@ -40,6 +40,8 @@ export interface TileView {
   icon: string;
   title: string;
   subtitle: string;
+  /** The first line of the step's note, shown under its subtitle ("Show on canvas"); "" for none. */
+  note: string;
   /** From the card's top to its label block. */
   labelTop: number;
   paintMargin: number;
@@ -121,6 +123,7 @@ export interface TileView {
     @if (v.title) {
       <div
         class="tile-label"
+        [class.has-note]="!!v.note"
         [style.top.px]="v.labelTop"
         [style.--label-scale]="labelScale()"
         [style.--label-width.px]="v.shape === 'end' ? null : labelWidth()"
@@ -129,6 +132,9 @@ export interface TileView {
         <strong [attr.title]="v.title">{{ v.title }}</strong>
         @if (v.subtitle) {
           <span [attr.title]="v.subtitle">{{ v.subtitle }}</span>
+        }
+        @if (v.note) {
+          <span class="tile-note" [attr.title]="v.note">{{ v.note }}</span>
         }
       </div>
     }`,

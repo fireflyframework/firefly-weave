@@ -77,6 +77,9 @@ import { mappedRefs, type DragRef } from "./params/drop";
 import { ndvRegistry, type ParamSpec } from "./registry";
 import { renameHint, renameWithExtras, type RenameResult } from "./rename";
 import { reservedActionNames } from "./owned/insert-owned";
+import { SettingsTab } from "./settings/settings-tab";
+import { retryOn, settingsChanged } from "./settings/settings-rules";
+import { stepNotesOf } from "../state/canvas-sidecar";
 import type { StepDetailsController } from "./step-details-controller";
 import type { StepDetailsHost } from "./step-details-host";
 import {
@@ -147,6 +150,7 @@ const visible = (element: HTMLElement): boolean =>
     InputPane,
     OutputPane,
     TestEventPane,
+    SettingsTab,
   ],
   templateUrl: "./step-details.html",
   styleUrls: ["./step-details.css", "./panes/panes.css"],
@@ -766,6 +770,29 @@ export class StepDetails {
   }
 
   // --------------------------------------------------------------- tabs
+  /**
+   * The Settings dot: a setting the step can change differs from its
+   * default (retry counts while it is on), or the step has a note. What a
+   * published action sets is not the step's change.
+   */
+  settingsChanged(): boolean {
+    const session = this.session();
+    return settingsChanged(
+      session
+        .state("settings")
+        .fields.filter((entry) => !session.readOnly(entry))
+        .map((entry) =>
+          entry.spec.id === "retry"
+            ? !retryOn(this.fixedValue(session, entry.spec))
+            : session.atDefault(entry.spec),
+        ),
+      stepNotesOf(this.host().model.canvas)[this.target()],
+    );
+  }
+  private fixedValue(session: FormSession, spec: ParamSpec): unknown {
+    const value = session.read(spec);
+    return value.mode === "fixed" ? value.value : undefined;
+  }
   selectTab(tab: StepDetailsTab) {
     this.tab.set(tab);
   }

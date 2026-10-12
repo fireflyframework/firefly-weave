@@ -593,6 +593,14 @@ export class ParamField {
       unit: usable,
     };
   }
+  /** The unit chosen beside a duration's amount; a duration in one unit has no choice. */
+  unitOf(amount: HTMLInputElement): string {
+    return (
+      amount.parentElement?.querySelector<HTMLSelectElement>(
+        "select.param-unit",
+      )?.value ?? this.units()[0]
+    );
+  }
   duration(amountText: string, unit: string) {
     if (!amountText.trim()) return this.session().clear(this.spec());
     const seconds = durationSeconds(amountText, UNIT_CODE[unit] ?? "s");

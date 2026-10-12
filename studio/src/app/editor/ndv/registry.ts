@@ -196,6 +196,11 @@ export interface ParamSpec {
   item?: ParamSpec;
   /** fields rows and nested groups; their paths are absolute. */
   children?(step: Step, ctx: KindContext): ParamSpec[];
+  /**
+   * fields only: every child shows, none waits behind its Add button while
+   * it holds its default (Retry on fail shows its tries and waits together).
+   */
+  expandChildren?: boolean;
   /** "Add recipient", "Add header". */
   addLabel?: string;
   /** list only: chips for short identifier lists such as answers. */

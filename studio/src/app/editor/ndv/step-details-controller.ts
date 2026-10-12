@@ -36,7 +36,14 @@ import {
 } from "./kinds/forms/workflow-forms";
 import { ownedActionsOf, withOwnedAction } from "./owned/owned-store";
 import { moveFileStep, reservedActionNames } from "./owned/insert-owned";
-import { CANVAS_TOO_BIG, canvasBytes } from "../state/canvas-sidecar";
+import {
+  CANVAS_TOO_BIG,
+  canvasBytes,
+  stepNotesOf,
+  withStepNote,
+  type CanvasSidecar,
+  type StepNote,
+} from "../state/canvas-sidecar";
 import { CANVAS_MAX_BYTES } from "../state/test-data";
 import type { OwnedRecipe } from "./owned/owned-actions";
 import {
@@ -414,6 +421,49 @@ export class StepDetailsController {
       );
     }
     return outcome;
+  }
+
+  /** The step's (or trigger's) note; an empty one when there is none. */
+  note(target: string): StepNote {
+    return stepNotesOf(this.host.model.canvas)[target] ?? { text: "" };
+  }
+  /**
+   * Writes a step's note (null or blank text removes it) as one undo step;
+   * typing in a burst stays one step, like a field. `field` keeps changes of
+   * different parts of the note (its text, Show on canvas) apart. A note the
+   * canvas has no room for is refused with a message above step details.
+   */
+  setNote(target: string, note: StepNote | null, field = "$note"): boolean {
+    this.syncSession();
+    if (this.readOnlyReason()) return false;
+    const model = this.host.model;
+    let next: CanvasSidecar;
+    try {
+      next = withStepNote(model.canvas, target, note);
+      if (canvasBytes(next) > CANVAS_MAX_BYTES) throw new Error(CANVAS_TOO_BIG);
+    } catch (error) {
+      this.host.notify((error as Error).message, undefined, "danger");
+      return false;
+    }
+    if (next === model.canvas) return true;
+    const key = `${target}:${field}`;
+    const burst = this.burst;
+    const merge =
+      !!burst &&
+      burst.key === key &&
+      this.now() - burst.at < BURST_MS &&
+      burst.revision === model.revision;
+    let ok = false;
+    this.host.perform(() => {
+      const apply = () => {
+        model.canvas = next;
+      };
+      if (merge) model.continueEdit(burst!.revision, apply);
+      else model.batch(apply);
+      ok = true;
+    });
+    if (ok) this.burst = { key, revision: model.revision, at: this.now() };
+    return ok;
   }
 
   /**

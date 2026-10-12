@@ -1483,6 +1483,7 @@ export class FormSession {
       if (child.showWhen && !child.showWhen(step, env.kind)) continue;
       const key = child.id + JSON.stringify(child.path);
       if (
+        !group.expandChildren &&
         !child.feature &&
         !child.readOnly?.(step, env.kind) &&
         !child.required &&

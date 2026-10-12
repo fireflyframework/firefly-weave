@@ -52,15 +52,22 @@ spec:
   output: {literal: {}}
 `;
 
+/** What else the stored canvas holds: more of the action's recipe (its retry), step notes. */
+export interface HttpCanvasExtras {
+  recipe?: Record<string, unknown>;
+  stepNotes?: Record<string, { text: string; showOnCanvas?: boolean }>;
+}
+
 /** Opens get-customer-orders, whose owned action calls `pathTemplate` with GET. */
 export async function openHttpStep(
   page: Page,
   pathTemplate = "/customers/{customerId}/orders",
   source = httpWorkflow,
+  extras: HttpCanvasExtras = {},
 ): Promise<StepDetailsPage> {
   await withNewEditor(page);
   await page.addInitScript(
-    ({ source, pathTemplate }) => {
+    ({ source, pathTemplate, extras }) => {
       const id = "2f6c1a40-0000-4000-8000-000000000001";
       const savedAt = "2026-10-11T10:04:00.000Z";
       // Only the first load stores the draft: a reload keeps Studio's own saves.
@@ -82,8 +89,10 @@ export async function openHttpStep(
                 pathTemplate,
                 statuses: [200],
                 timeoutSeconds: 30,
+                ...extras.recipe,
               },
             },
+            ...(extras.stepNotes ? { stepNotes: extras.stepNotes } : {}),
           },
           savedAt,
         }),
@@ -95,7 +104,7 @@ export async function openHttpStep(
         ]),
       );
     },
-    { source, pathTemplate },
+    { source, pathTemplate, extras },
   );
   await localAuthoring(page);
   await offline(page);

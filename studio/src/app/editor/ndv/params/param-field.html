@@ -187,6 +187,7 @@ SPDX-License-Identifier: Apache-2.0
           ></textarea>
         }
         @case ("number") {
+          @let unit = spec.units?.length === 1 ? spec.units[0] : null;
           <input
             class="param-input param-number"
             inputmode="decimal"
@@ -195,7 +196,9 @@ SPDX-License-Identifier: Apache-2.0
             [attr.aria-invalid]="
               line.kind === 'error' || !!numberProblem() || null
             "
-            [attr.aria-describedby]="describedBy()"
+            [attr.aria-describedby]="
+              unit ? ids.control + '-unit ' + describedBy() : describedBy()
+            "
             [attr.aria-readonly]="!!reason || null"
             [readOnly]="!!reason"
             [placeholder]="
@@ -207,9 +210,15 @@ SPDX-License-Identifier: Apache-2.0
             (input)="number($event)"
             (keydown)="controlKey($event)"
           />
+          @if (unit) {
+            <span class="param-unit-suffix" [id]="ids.control + '-unit'">{{
+              unit
+            }}</span>
+          }
         }
         @case ("duration") {
           @let parts = durationParts();
+          @let only = units().length === 1 ? units()[0] : null;
           <div class="param-duration">
             <input
               #amount
@@ -219,27 +228,35 @@ SPDX-License-Identifier: Apache-2.0
               [attr.aria-label]="spec.label"
               [attr.aria-required]="spec.required || null"
               [attr.aria-invalid]="line.kind === 'error' || null"
-              [attr.aria-describedby]="describedBy()"
+              [attr.aria-describedby]="
+                only ? ids.control + '-unit ' + describedBy() : describedBy()
+              "
               [readOnly]="!!reason"
               [placeholder]="
                 spec.default !== undefined ? String(spec.default) : ''
               "
               [value]="parts.amount"
-              (input)="duration(amount.value, unit.value)"
+              (input)="duration(amount.value, unitOf(amount))"
             />
-            <select
-              #unit
-              class="param-input param-unit"
-              [attr.aria-label]="spec.label + ' unit'"
-              [disabled]="!!reason"
-              (change)="duration(amount.value, unit.value)"
-            >
-              @for (option of units(); track option) {
-                <option [value]="option" [selected]="option === parts.unit">
-                  {{ option }}
-                </option>
-              }
-            </select>
+            @if (only) {
+              <!-- One unit: it names itself inside the box, like a number's. -->
+              <span class="param-unit-suffix" [id]="ids.control + '-unit'">{{
+                only
+              }}</span>
+            } @else {
+              <select
+                class="param-input param-unit"
+                [attr.aria-label]="spec.label + ' unit'"
+                [disabled]="!!reason"
+                (change)="duration(amount.value, unitOf(amount))"
+              >
+                @for (option of units(); track option) {
+                  <option [value]="option" [selected]="option === parts.unit">
+                    {{ option }}
+                  </option>
+                }
+              </select>
+            }
           </div>
         }
         @case ("boolean") {

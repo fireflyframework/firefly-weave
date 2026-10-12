@@ -258,9 +258,13 @@ SPDX-License-Identifier: Apache-2.0
             aria-controls="sd-panel-settings"
             [attr.aria-selected]="tab() === 'settings'"
             [attr.tabindex]="tab() === 'settings' ? 0 : -1"
+            [attr.aria-label]="settingsChanged() ? 'Settings, changed' : null"
             (click)="selectTab('settings')"
           >
             Settings
+            @if (settingsChanged()) {
+              <span class="sd-dot" aria-hidden="true"></span>
+            }
           </button>
         }
         <span class="sd-spacer"></span>
@@ -288,7 +292,11 @@ SPDX-License-Identifier: Apache-2.0
         id="sd-panel-settings"
         aria-labelledby="sd-tab-settings"
         [hidden]="tab() !== 'settings'"
-      ></div>
+      >
+        @if (tab() === "settings") {
+          <weave-settings-tab [session]="session()" />
+        }
+      </div>
     </section>
     @if (layout() === "three") {
       <div

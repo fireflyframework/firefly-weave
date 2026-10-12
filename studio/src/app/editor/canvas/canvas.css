@@ -319,6 +319,11 @@ weave-canvas-view,
   font: var(--type-caption);
   color: var(--muted);
 }
+/* A step note shown on the canvas is its label's third line: the name
+   keeps to one line so the block stays three lines high. */
+.canvas-v2 .tile-label.has-note strong {
+  -webkit-line-clamp: 1;
+}
 
 /* Handles: drawn 12 px, hit area 24 × 24 */
 .canvas-v2 .handle {

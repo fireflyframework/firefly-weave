@@ -305,6 +305,24 @@ SPDX-License-Identifier: Apache-2.0
 .param-unit {
   width: auto;
 }
+/* A number or a duration in one unit names it inside its box, at the end. */
+:is(.param-control, .param-duration):has(> .param-unit-suffix) {
+  position: relative;
+}
+:is(.param-control, .param-duration):has(> .param-unit-suffix) > .param-input {
+  flex: 1;
+  padding-inline-end: calc(var(--space-3) * 2 + 7ch);
+}
+.param-unit-suffix {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: var(--space-3);
+  display: flex;
+  align-items: center;
+  font: var(--type-small);
+  color: var(--muted);
+  pointer-events: none;
+}
 .param-suffix {
   font: var(--type-caption);
   color: var(--muted);
@@ -343,6 +361,14 @@ SPDX-License-Identifier: Apache-2.0
 .param-switch[aria-checked="true"] .param-switch-track::after {
   left: 16px;
   background: var(--on-accent);
+}
+/* A switch that can't change keeps its position, without the accent. */
+.param-switch:disabled .param-switch-track {
+  background: var(--disabled-bg);
+  border-color: var(--border);
+}
+.param-switch:disabled .param-switch-track::after {
+  background: var(--disabled-ink);
 }
 /* Segmented choices are form controls: the control height, a compact face. */
 .param-segments {

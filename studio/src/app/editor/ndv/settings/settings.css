@@ -1,0 +1,201 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The Settings tab: sections in one column on the form's edges, each closed
+   by a rule, with the field anatomy of the Parameters tab inside (label
+   row, control, line). What shows at rest ends on the right edge: the
+   switches, the last retry field and the note. Tokens only. */
+.settings-form {
+  container-type: inline-size;
+}
+.settings-form > .settings-section {
+  min-width: 0;
+}
+.settings-form > .settings-section:not(:last-child) {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+/* A section led by a switch: its label and description, the switch on
+   the right edge, centered on both lines. */
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--sd-label-row);
+}
+.settings-switch-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-description {
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.settings-retry {
+  gap: var(--space-2);
+}
+
+/* Max tries, Wait between tries and Longest wait side by side; one under
+   the other when the form is too narrow for three. */
+.settings-retry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sd-field-inner) var(--space-3);
+}
+.settings-retry-grid .param-label {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+/* The section says once why its fields can't change. */
+.settings-retry-grid .param-line[data-kind="reason"] {
+  display: none;
+}
+@container (max-width: 399px) {
+  .settings-retry-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--sd-field-gap);
+  }
+}
+
+/* A duration and its hint share a row while there is room. */
+.settings-form .param-duration {
+  width: 220px;
+  max-width: 100%;
+}
+.settings-form .param-duration > .param-input:first-child {
+  flex: 1;
+  min-width: 0;
+}
+@container (min-width: 480px) {
+  .settings-form > weave-param-field:has(.param-duration) > .param {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: var(--sd-field-inner) var(--space-3);
+  }
+  .settings-form
+    > weave-param-field:has(.param-duration)
+    > .param
+    > .param-label-row {
+    grid-column: 1 / -1;
+  }
+}
+
+/* On error: one choice, read-only until the platform offers others. */
+.settings-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.settings-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+}
+.settings-choice input[type="radio"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid var(--field-border);
+  border-radius: 50%;
+  background: var(--sunken);
+}
+.settings-choice input[type="radio"]:checked {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 3.5px, transparent 4px);
+}
+.settings-choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-choice-label {
+  font: var(--type-label);
+  color: var(--text);
+}
+.settings-choice-description {
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* Notes: Show on canvas beside its switch, on the label row's right. */
+.settings-notes .param-label-row {
+  gap: var(--space-2);
+}
+.step-details .settings-notes .param-multiline {
+  min-height: calc(2 * 20px + 2 * var(--space-3));
+}
+.settings-inline-label {
+  font: var(--type-small);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* About this step: terms in a column of their own, values on one edge. */
+.settings-about-list {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+  font: var(--type-small);
+}
+.settings-about-list dt {
+  color: var(--muted);
+}
+.settings-about-list dd {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.settings-about-list code {
+  min-width: 0;
+  font: var(--type-mono);
+}
+/* Copy keeps its target around its row's line on desktop; touch rows grow. */
+.step-details button.settings-copy {
+  flex: none;
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+  margin-block: calc((var(--space-5) - var(--sd-target)) / 2);
+  padding: 0;
+  color: var(--muted);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .step-details button.settings-copy {
+    margin-block: 0;
+  }
+}
+.settings-about h4 {
+  margin: 0;
+}

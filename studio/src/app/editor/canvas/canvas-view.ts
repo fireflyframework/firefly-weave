@@ -66,6 +66,7 @@ import {
   keyPlatform,
 } from "../state/canvas-commands";
 import { minimapPinned, setMinimapPinned } from "../state/canvas-preferences";
+import { stepNoteLine, type CanvasSidecar } from "../state/canvas-sidecar";
 import { CHOICE_NOT_KEPT } from "../state/editor-flag";
 import type { KeymapCommand } from "../state/keymap";
 import {
@@ -425,6 +426,7 @@ export class CanvasView implements OnInit, DoCheck {
       dirty: string,
       active: string,
       run: CanvasRun | null,
+      canvas: CanvasSidecar,
     ): TileView[] => {
       const ctx = this.host().kindContext();
       // A selected group shows every step inside it as selected.
@@ -437,6 +439,7 @@ export class CanvasView implements OnInit, DoCheck {
           active: tile.id === active,
           run: state,
           pulse: pulses(state, run),
+          note: tile.step ? stepNoteLine(canvas, tile.id) : "",
         });
       });
     },
@@ -450,6 +453,7 @@ export class CanvasView implements OnInit, DoCheck {
       h.dirtyStep,
       this.active(),
       h.canvasRun(),
+      h.model.canvas,
     );
   }
   private position(tile: LtrTile): Point {
@@ -470,6 +474,8 @@ export class CanvasView implements OnInit, DoCheck {
       active: boolean;
       run: TileRun;
       pulse: boolean;
+      /** The first line of the step's note when it shows on the canvas. */
+      note: string;
     },
   ): TileView {
     const h = this.host();
@@ -484,6 +490,7 @@ export class CanvasView implements OnInit, DoCheck {
       paintMargin: tilePaintMargin(tile),
       tabIndex: state.active ? (0 as const) : (-1 as const),
       pulse: state.pulse,
+      note: state.note,
     };
     if (!tile.step) {
       const trigger = tile.kind === "trigger";

@@ -245,6 +245,63 @@ describe("the step details controller", () => {
       ownedActionsOf(model.canvas)["untitled-workflow.get@1.0.0"],
     ).toMatchObject({ method: "POST" });
   });
+  it("keeps a step note as one undo step per burst of typing", () => {
+    const { model, controller, tick } = setup();
+    expect(controller.note("pause")).toEqual({ text: "" });
+    for (const text of ["C", "Ch", "Check"]) {
+      expect(controller.setNote("pause", { text })).toBe(true);
+      tick(200);
+    }
+    expect(controller.note("pause")).toEqual({ text: "Check" });
+    // Show on canvas is an undo step of its own.
+    expect(
+      controller.setNote(
+        "pause",
+        { text: "Check", showOnCanvas: true },
+        "$note-canvas",
+      ),
+    ).toBe(true);
+    expect(controller.note("pause")).toEqual({
+      text: "Check",
+      showOnCanvas: true,
+    });
+    model.undo();
+    expect(controller.note("pause")).toEqual({ text: "Check" });
+    model.undo();
+    expect(controller.note("pause")).toEqual({ text: "" });
+    // A blank note removes it, and the trigger keeps a note of its own.
+    tick(700);
+    controller.setNote("$trigger", { text: "Starts from the form" });
+    controller.setNote("pause", { text: "Later" });
+    tick(700);
+    controller.setNote("pause", { text: "  " });
+    expect(controller.note("pause")).toEqual({ text: "" });
+    expect(controller.note("$trigger")).toEqual({
+      text: "Starts from the form",
+    });
+  });
+  it("writes no note while the source has an error, and reports a canvas that is full", () => {
+    const { model, host, controller } = setup();
+    const toasts: [string, string | undefined][] = [];
+    host.notify = (text, _action, tone) => void toasts.push([text, tone]);
+    model.readonly = true;
+    expect(controller.setNote("pause", { text: "Check" })).toBe(false);
+    expect(controller.note("pause")).toEqual({ text: "" });
+    model.readonly = false;
+    model.canvas = {
+      ...model.canvas,
+      stepNotes: Object.fromEntries(
+        Array.from({ length: 140 }, (_, i) => [
+          `step-${i}`,
+          { text: "é".repeat(1000) },
+        ]),
+      ),
+    };
+    const canvas = model.canvas;
+    expect(controller.setNote("pause", { text: "é".repeat(1000) })).toBe(false);
+    expect(model.canvas).toBe(canvas);
+    expect(toasts).toEqual([[CANVAS_TOO_BIG, "danger"]]);
+  });
   it("writes nothing while the source has an error", () => {
     const { model, controller } = setup();
     model.readonly = true;

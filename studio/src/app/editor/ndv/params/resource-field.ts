@@ -46,7 +46,7 @@ import {
   standalone: true,
   host: { popover: "manual" },
 })
-class ResourceViewerLayer implements AfterViewInit {
+export class ResourceViewerLayer implements AfterViewInit {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   ngAfterViewInit(): void {
     this.element.nativeElement.showPopover();
