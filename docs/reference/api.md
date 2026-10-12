@@ -732,11 +732,13 @@ token and the current principal.
   `target_id`, `target_name`, `deployment_id`, and `component`. The server
   matches the worker's reported `host` against the members of the latest
   complete observation of each target, taken at the target's current revision
-  and not yet expired. A host listed by more than one target or component, a
-  native executor (`runtime: embedded`), and a worker without a reported host
-  have no placement. Only targets that both the token and the current principal
-  may read with `deployment.read` are considered, so other targets' names never
-  appear.
+  and not yet expired. Only targets that both the token and the current
+  principal may read with `deployment.read` are considered, so other targets'
+  names never appear. A host listed by more than one readable target or
+  component, a native executor (`runtime: embedded`), and a worker without a
+  reported host have no placement. Because uniqueness is decided among readable
+  targets, a reader restricted to some targets can see a placement for a host
+  that a reader of every target sees as ambiguous, and so without placement.
 - `drained_at` is the time the worker started draining. A repeated drain keeps
   it and resuming clears it; workers drained before the time was recorded show
   none. `workers.read` returns the same fields as the list, and `workers.drain`
@@ -759,7 +761,8 @@ answers `{workers, deployments, activations, next_cursor}`:
 - `workers` counts every instance of the release once: `revoked`, else
   `draining`, else `online` (seen in the last 60 seconds) or `offline`.
 - `activations` counts the activation revisions that pin the release and can
-  still start runs.
+  still start runs: neither they, the latest revision of their activation, nor
+  their workflow version is retired.
 - `deployments` lists, at most `limit` (1 to 100, default 100) at a time, the
   desired deployment components whose admitted release and image digest are
   this release: `target_id`, `target_name`, `deployment_id`, `deployment_name`,

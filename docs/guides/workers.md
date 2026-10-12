@@ -262,11 +262,12 @@ instead.
 ## 4. Observe one task through completion
 
 Start a workflow that calls the published Action. Inspect its run history and
-worker status through the API. In Studio, **Operate › Workers** lists the
-workers in the selected environment with their status (**Online**,
-**Offline** or **Not seen yet**, and **Draining**), their load against their
-task slots, and their last contact. **Show revoked workers** adds the
-**Revoked** ones. Open a worker to **Drain** or **Resume** it. Use the
+worker status through the API. In Studio, **Operate › Workers** lists every
+worker in the selected environment that is not revoked, newest registered
+first, including workers offline for a long time, with their status
+(**Online**, **Offline** or **Not seen yet**, and **Draining**), their load
+against their task slots, and their last contact. **Show revoked workers** adds
+the **Revoked** ones. Open a worker to **Drain** or **Resume** it. Use the
 [API playground](api-playground.md) to
 authenticate and select your environment, then the [full API reference](../reference/api-explorer.md)
 for worker registration and run/history reads. A worker token is for execution;

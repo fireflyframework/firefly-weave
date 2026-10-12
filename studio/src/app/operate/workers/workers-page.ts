@@ -66,6 +66,10 @@ import {
   type WorkerStatus,
 } from "./workers-model";
 
+// Every worker, revoked and long offline ones included, newest registered first:
+// the page filters on its own, and this order does not move rows between polls.
+const EVERY_WORKER = "state=all&order=registered_desc";
+
 @Component({
   selector: "weave-workers-page",
   standalone: true,
@@ -490,7 +494,9 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
         const { items, cursor } = await readPages<WorkerRecord>((query) => {
           if (generation !== this.generation)
             throw Error("List scope changed.");
-          return this.host.api.request(`${scope}/workers?${query}`);
+          return this.host.api.request(
+            `${scope}/workers?${query}&${EVERY_WORKER}`,
+          );
         }, this.pages);
         if (generation !== this.generation) return false;
         this.workers = items;
@@ -528,7 +534,8 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
       await this.listReads.run(async () => {
         if (generation !== this.generation || !this.canLoadMore) return;
         const page = await readPages<WorkerRecord>(
-          (query) => this.host.api.request(`${scope}/workers?${query}`),
+          (query) =>
+            this.host.api.request(`${scope}/workers?${query}&${EVERY_WORKER}`),
           1,
           this.nextCursor,
         );

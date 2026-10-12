@@ -352,6 +352,38 @@ def test_worker_operations_declare_queries_commands_and_capabilities():
     assert [item["name"] for item in parameters if item["in"] == "query"] == ["limit", "cursor"]
 
 
+@pytest.mark.parametrize(
+    "names",
+    [("cursor",), ("query", "cursor"), ("query", "limit"), ("releases", "query"), ("releases", "position")],
+)
+async def test_worker_lists_refuse_mixed_arguments_before_reading(names):
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.access.models import Principal
+    from firefly_weave.contracts.worker_queries import WorkerListQuery
+    from firefly_weave.operations.fact_positions import RunPosition
+    from firefly_weave.workers.service import WorkerService
+
+    class Unread:
+        def __getattr__(self, name):
+            raise AssertionError("read before the list arguments were checked")
+
+    values = {
+        "cursor": UUID(int=1),
+        "limit": 7,
+        "releases": True,
+        "query": WorkerListQuery(),
+        "position": RunPosition(None, UUID(int=2)),
+    }
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    with pytest.raises(ValueError):
+        await WorkerService(Unread(), Unread()).list(
+            Principal(id=uuid4(), kind="application"),
+            scope,
+            context=AuditContext(),
+            **{name: values[name] for name in names},
+        )
+
+
 def test_worker_query_schemas_are_exported():
     from firefly_weave.contracts.schema_export import export_schemas
 

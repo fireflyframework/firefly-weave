@@ -955,6 +955,31 @@ async def test_release_usage_activations_skip_retired_ones(operations_case):
     assert usage.activations == 0
 
 
+async def test_release_usage_activations_skip_retired_workflow_versions(operations_case):
+    case = operations_case
+    release = case.instances[0].release_id
+
+    async def activations():
+        usage = await case.workers.release_usage(
+            case.actor, case.scope, release, ReleaseUsageQuery(), context=AuditContext()
+        )
+        return usage.activations
+
+    assert await activations() == 1
+    # Runs cannot start from an activation whose workflow version is retired, so it no longer counts.
+    project = case.scope.model_copy(update={"environment_id": None})
+    await case.access.grant(case.admin, case.actor.id, Grant(role="deployer", scope=project))
+    await case.workers.definitions.retire(
+        await case.access.load_principal(case.actor.id),
+        case.scope,
+        case.activation.request.version_id,
+        "Workflow",
+        "retire-version",
+        context=AuditContext(),
+    )
+    assert await activations() == 0
+
+
 async def test_release_usage_is_scoped_and_authorized(monkeypatch, operations_case, provisioned):
     from firefly_weave.definitions.service import DefinitionService
 

@@ -287,7 +287,8 @@ class WorkerRepository:
     async def release_activations(self, identifier: UUID) -> int:
         """Activation revisions pinning the release that can still start runs.
 
-        A revision counts unless it, or the latest revision of the same activation, is retired.
+        A revision counts unless it, the latest revision of the same activation, or its workflow version is
+        retired, as the start check decides.
         """
         pinned = (
             "EXISTS(SELECT 1 FROM jsonb_each_text(coalesce(a.payload->'request'->'{key}','{{}}'::jsonb)) pin "
@@ -300,7 +301,9 @@ class WorkerRepository:
             "AND NOT coalesce((a.payload->>'retired')::boolean,false) "
             "AND NOT coalesce((SELECT (l.payload->>'retired')::boolean FROM activation_revisions l "
             "WHERE l.tenant_id=a.tenant_id AND l.project_id=a.project_id AND l.environment_id=a.environment_id "
-            "AND l.name=a.name ORDER BY l.revision DESC LIMIT 1),false)",
+            "AND l.name=a.name ORDER BY l.revision DESC LIMIT 1),false) "
+            "AND NOT EXISTS(SELECT 1 FROM definition_retirements r WHERE r.tenant_id=a.tenant_id "
+            "AND r.project_id=a.project_id AND r.version_id=a.version_id)",
             release=str(identifier),
         )
         return int(rows[0]["count"])

@@ -95,12 +95,19 @@ SPDX-License-Identifier: Apache-2.0
   `registered_desc`, unknown times last. Cursors issued before the upgrade are
   refused, unknown query parameters are rejected, and an out-of-range `limit`
   answers `WV-VALIDATION` instead of `WV-PAGE`. Pages stay limited to 8 MiB.
+- Studio's Workers page asks for every worker (`state=all`), newest registered
+  first, so it keeps listing revoked and long-offline workers and its rows no
+  longer move between refreshes. Earlier Studio hosts and desktop apps get the
+  reduced default list from an upgraded server, because the Studio bridge
+  forwards answers unchanged: their Workers page lists only current workers, and
+  **Show revoked workers** shows none. Upgrade Studio and the desktop app with
+  the server.
 - Worker reads and lists add optional `placement` (target, deployment and
   component), matched from the latest complete, unexpired observation of the
   targets the reader may read, and `drained_at`, when the worker started
   draining; drain and resume answers add `drained_at`. Upgrade CLIs and SDKs
-  with the server: earlier releases fail with `502 WV-WIRE` on placed or
-  draining workers.
+  with the server: earlier releases fail with `502 WV-WIRE` on placed workers
+  and on workers drained since the upgrade.
 - New operation `workers.retire_stale` (`weave workers retire-stale`, SDK
   `retire_stale_workers`) revokes up to 100 workers per command that hold no
   active lease and were last seen, or registered if never seen, longer ago than

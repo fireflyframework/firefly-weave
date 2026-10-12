@@ -306,13 +306,19 @@ default:
   `422 WV-VALIDATION` instead of `422 WV-PAGE`. An older server ignores the new
   filters and lists every worker in ID order, so upgrade servers before relying
   on them.
+- **Earlier Studio hosts and desktop apps.** The Studio bridge forwards answers
+  unchanged, so an earlier Studio host or desktop app gets this reduced default
+  list from an upgraded server. Its Workers page lists only current workers,
+  **Show revoked workers** shows none, and rows reorder as workers check in.
+  Upgrade Studio and the desktop app with the server. Until then, the Python
+  SDK's `list_workers(query=WorkerListQuery(state="all"))` lists every worker.
 
 Worker reads and lists add optional `placement` and `drained_at`, and drain and
 resume answers add `drained_at`. **Upgrade CLIs and SDKs with the server.**
 Earlier releases reject these fields: `weave workers list`, `read`, `drain`, and
 `resume`, and the Python SDK's `read_worker`, `list_workers`, `drain_worker`,
-and `resume_worker`, fail with `502 WV-WIRE` for a placed or draining worker. A
-drain or resume is still applied. Stored worker records and the registration
+and `resume_worker`, fail with `502 WV-WIRE` for a worker that is placed, or
+drained since the upgrade. A drain or resume is still applied. Stored worker records and the registration
 answer keep their bytes, and workers drained before the upgrade show no drain
 time.
 

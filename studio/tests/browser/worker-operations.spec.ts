@@ -70,16 +70,32 @@ async function workers(page: Page, capabilities: string[]) {
     worker(revoked, { revoked: true }),
   ];
   let lists = 0;
+  const queries: URLSearchParams[] = [];
   await page.route(`${environment}/workers?*`, (r) => {
     lists++;
-    return r.fulfill({ json: { items, next_cursor: null } });
+    const query = new URL(r.request().url()).searchParams;
+    queries.push(query);
+    // As the server does: without state=all only current workers, not revoked
+    // and seen (or registered) in the last hour.
+    const listed =
+      query.get("state") === "all" ? items : items.filter(isCurrent);
+    return r.fulfill({ json: { items: listed, next_cursor: null } });
   });
   for (const item of items)
     await page.route(`${environment}/workers/${item.id}`, (r) =>
       r.fulfill({ json: items.find((w) => w.id === item.id) }),
     );
-  return { items, lists: () => lists };
+  return { items, lists: () => lists, queries: () => queries };
 }
+const isCurrent = (item: Record<string, unknown>) => {
+  const contact = (item.last_seen_at ?? item.registered_at) as string | null;
+  return (
+    !item.revoked &&
+    contact !== null &&
+    contact !== undefined &&
+    Date.parse(contact) > Date.now() - 3600_000
+  );
+};
 const rows = (page: Page) =>
   page.getByRole("table", { name: "Workers" }).locator(".resource-row");
 
@@ -87,9 +103,12 @@ test("filtered workers can reach matching rows on a later page", async ({
   page,
 }) => {
   await workers(page, ["status.read"]);
-  await page.route(`${environment}/workers?*`, (r) =>
-    r.fulfill({
-      json: new URL(r.request().url()).searchParams.has("cursor")
+  const queries: URLSearchParams[] = [];
+  await page.route(`${environment}/workers?*`, (r) => {
+    const query = new URL(r.request().url()).searchParams;
+    queries.push(query);
+    return r.fulfill({
+      json: query.has("cursor")
         ? { items: [worker(stale, { presence: "stale" })], next_cursor: null }
         : {
             items: Array.from({ length: 50 }, (_, i) =>
@@ -97,8 +116,8 @@ test("filtered workers can reach matching rows on a later page", async ({
             ),
             next_cursor: "next",
           },
-    }),
-  );
+    });
+  });
   await page.goto("/operate/workers?presence=offline");
   const more = page.getByRole("button", { name: "Load more workers" });
   await expect(more).toBeVisible();
@@ -108,6 +127,12 @@ test("filtered workers can reach matching rows on a later page", async ({
   await more.click();
   await expect(rows(page)).toHaveCount(1);
   await expect(rows(page)).toContainText("Offline");
+  // Load more continues the same query, so its cursor stays valid.
+  expect(queries.some((query) => query.has("cursor"))).toBe(true);
+  for (const query of queries) {
+    expect(query.get("state")).toBe("all");
+    expect(query.get("order")).toBe("registered_desc");
+  }
 });
 
 test("workers coalesce repeated appends and refresh all loaded pages", async ({
@@ -270,7 +295,7 @@ for (const viewport of [
     test("lists presence, claims and load, and hides revoked workers", async ({
       page,
     }) => {
-      await workers(page, ["status.read"]);
+      const mocked = await workers(page, ["status.read"]);
       await page.getByRole("button", { name: "Workers", exact: true }).click();
       await expect(page).toHaveURL(/\/operate\/workers$/);
       await expect(rows(page)).toHaveCount(3);
@@ -283,6 +308,12 @@ for (const viewport of [
       await page.getByLabel("Show revoked workers").check();
       await expect(rows(page)).toHaveCount(4);
       await expect(rows(page).nth(3)).toContainText("Revoked");
+      // The page reads every worker in a stable order and filters them itself.
+      expect(mocked.queries().length).toBeGreaterThan(0);
+      for (const query of mocked.queries()) {
+        expect(query.get("state")).toBe("all");
+        expect(query.get("order")).toBe("registered_desc");
+      }
     });
 
     test("filters narrow the list and stay in the address", async ({
