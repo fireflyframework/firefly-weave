@@ -35,8 +35,9 @@ import {
   textBox,
   type Box,
 } from "./step-geometry";
-import { openHttpStep } from "./step-http";
+import { httpWorkflow, openHttpStep } from "./step-http";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
+import { tokenColor } from "./support";
 
 /** The sections of the visible Settings tab, in order. */
 const sections = (details: StepDetailsPage) =>
@@ -74,6 +75,17 @@ const drafts = (page: Page) =>
       .map((key) => localStorage.getItem(key) ?? "")
       .join(),
   );
+/** The retry the workflow-owned action keeps in the draft on this computer. */
+const storedRetry = async (page: Page) =>
+  /"retry":(\{[^}]*\})/.exec(await drafts(page))?.[1] ?? "";
+/** The note get-customer-orders keeps in the draft on this computer. */
+const storedNote = async (page: Page) =>
+  /"stepNotes":\{"get-customer-orders":\{"text":"([^"]*)"/.exec(
+    await drafts(page),
+  )?.[1] ?? "";
+/** An element's background color, as the browser computes it. */
+const backgroundOf = (locator: Locator) =>
+  locator.evaluate((element) => getComputedStyle(element).backgroundColor);
 
 for (const size of sizes)
   test.describe(`settings at ${size.tag}`, () => {
@@ -299,6 +311,26 @@ for (const size of sizes)
       await expect(details.tab("Settings")).toHaveAccessibleName("Settings");
     });
 
+    test("the trigger's note shows on its tile", async ({ page }) => {
+      const details = await openStepFixture(page);
+      await details.trigger().focus();
+      await page.keyboard.press("Enter");
+      await expect(details.dialogFor("Manual form trigger")).toBeVisible();
+      await details.tab("Settings").click();
+      await details
+        .field("notes")
+        .getByRole("textbox", { name: "Notes" })
+        .fill("Sent by the front desk\nTwice a day");
+      await details
+        .field("notes")
+        .getByRole("switch", { name: "Show on canvas" })
+        .click();
+      await details.close();
+      await expect(
+        page.locator('.tile-node[data-tile^="$trigger"] .tile-note'),
+      ).toHaveText("Sent by the front desk");
+    });
+
     test("a note survives closing and reopening the workflow", async ({
       page,
     }) => {
@@ -364,6 +396,10 @@ for (const size of sizes)
         .getByRole("switch", { name: "Retry on fail" });
       await expect(retry).toHaveAttribute("aria-checked", "true");
       await expect(retry).toBeDisabled();
+      // A switch that can't change keeps its position, without the accent.
+      expect(await backgroundOf(retry.locator(".param-switch-track"))).toBe(
+        await tokenColor(page, "--disabled-bg"),
+      );
       await expect(details.field("retry")).toContainText(
         "Set by sql.lookup@1.0.0.",
       );
@@ -415,6 +451,276 @@ for (const size of sizes)
       await expect(details.dialog.getByText("Copied lookup.")).toBeAttached();
     });
   });
+
+// ------------------------------------------------- an owned API action
+
+/** get-customer-orders and a second step that calls the same action. */
+const sharedAction = httpWorkflow.replace(
+  "  output: {literal: {}}",
+  `    - id: get-recent-orders
+      kind: action
+      uses: order-intake.get-customer-orders@1.0.0
+      connection: crm
+      with:
+        object:
+          path:
+            object:
+              customerId: {ref: /input/customerId}
+  output: {literal: {}}`,
+);
+
+test.describe("an owned API action's settings", () => {
+  test.skip(!hasPython, "Needs the repository's Python environment.");
+  test.afterAll(() => stopLocalAuthoring());
+
+  for (const size of sizes)
+    test.describe(`at ${size.tag}`, () => {
+      test.use({ viewport: { width: size.width, height: size.height } });
+
+      test("Max tries is edited without turning retry off or losing focus", async ({
+        page,
+      }) => {
+        const details = await openHttpStep(page, undefined, undefined, {
+          recipe: {
+            retry: {
+              maxAttempts: 4,
+              initialDelaySeconds: 2,
+              maxDelaySeconds: 30,
+            },
+          },
+        });
+        await details.tab("Settings").click();
+        const retry = details
+          .field("retry")
+          .getByRole("switch", { name: "Retry on fail" });
+        const field = details.field("retry.maxAttempts");
+        const max = field.getByRole("textbox", { name: "Max tries" });
+        const stillOn = async () => {
+          await expect(retry).toHaveAttribute("aria-checked", "true");
+          await expect(
+            details
+              .field("retry.initialDelaySeconds")
+              .getByRole("textbox", { name: "Wait between tries" }),
+          ).toBeVisible();
+        };
+
+        // Clearing the box to retype it: the default stands in until then.
+        await max.focus();
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.press("Backspace");
+        await stillOn();
+        await expect(max).toBeFocused();
+        await expect(max).toHaveValue("");
+        await expect
+          .poll(() => storedRetry(page))
+          .toBe(
+            '{"maxAttempts":3,"initialDelaySeconds":2,"maxDelaySeconds":30}',
+          );
+        await page.keyboard.type("5");
+        await stillOn();
+        await expect(max).toBeFocused();
+        await expect(max).toHaveValue("5");
+        await expect
+          .poll(() => storedRetry(page))
+          .toBe(
+            '{"maxAttempts":5,"initialDelaySeconds":2,"maxDelaySeconds":30}',
+          );
+
+        // Typing 10 over it: the 1 on the way is an entry to finish, not one try.
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.type("1");
+        await expect(field).toContainText("Use a number from 2 to 10.");
+        await expect(max).toHaveAttribute("aria-invalid", "true");
+        await stillOn();
+        await expect(max).toBeFocused();
+        await expect(max).toHaveValue("1");
+        // Nothing is saved for it (the draft is kept 800 ms after a change).
+        await page.waitForTimeout(1000);
+        expect(await storedRetry(page)).toBe(
+          '{"maxAttempts":5,"initialDelaySeconds":2,"maxDelaySeconds":30}',
+        );
+        await page.keyboard.type("0");
+        await stillOn();
+        await expect(max).toBeFocused();
+        await expect(max).toHaveValue("10");
+        await expect(field).not.toContainText("Use a number from 2 to 10.");
+        await expect
+          .poll(() => storedRetry(page))
+          .toBe(
+            '{"maxAttempts":10,"initialDelaySeconds":2,"maxDelaySeconds":30}',
+          );
+
+        // Reset to default, from the field's menu.
+        await field.hover();
+        await field
+          .getByRole("button", { name: "Field menu for Max tries" })
+          .click();
+        await page.getByRole("menuitem", { name: /Reset to default/ }).click();
+        await stillOn();
+        await expect(max).toHaveValue("3");
+        await expect
+          .poll(() => storedRetry(page))
+          .toBe(
+            '{"maxAttempts":3,"initialDelaySeconds":2,"maxDelaySeconds":30}',
+          );
+        expect(
+          await field.evaluate(
+            (element) =>
+              element.contains(document.activeElement) &&
+              document.activeElement !== document.body,
+          ),
+        ).toBe(true);
+      });
+
+      test("the tries and waits stay while focus is in them, and only the switch turns retry off", async ({
+        page,
+      }) => {
+        const details = await openHttpStep(page);
+        await details.tab("Settings").click();
+        const retry = details
+          .field("retry")
+          .getByRole("switch", { name: "Retry on fail" });
+        await retry.click();
+        await expect(retry).toHaveAttribute("aria-checked", "true");
+        const max = details
+          .field("retry.maxAttempts")
+          .getByRole("textbox", { name: "Max tries" });
+        await max.focus();
+        // Undo takes back the switch, but the fields don't vanish under focus.
+        await page.keyboard.press("ControlOrMeta+z");
+        await expect(retry).toHaveAttribute("aria-checked", "false");
+        await expect(max).toBeFocused();
+        await expect.poll(() => storedRetry(page)).toBe("");
+        // Once focus leaves them, they follow the switch.
+        await retry.focus();
+        await expect(max).toHaveCount(0);
+      });
+
+      test("Timeout is retyped from an empty box", async ({ page }) => {
+        const details = await openHttpStep(page, undefined, undefined, {
+          recipe: { timeoutSeconds: 20 },
+        });
+        await details.tab("Settings").click();
+        const timeout = details
+          .field("timeout")
+          .getByRole("textbox", { name: "Timeout" });
+        await expect(timeout).toHaveValue("20");
+        await timeout.focus();
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.press("Backspace");
+        await expect(timeout).toHaveValue("");
+        // Clearing writes the default, which waits behind the empty box.
+        await expect.poll(() => drafts(page)).toContain('"timeoutSeconds":30');
+        await expect(timeout).toHaveValue("");
+        await page.keyboard.type("25");
+        await expect(timeout).toHaveValue("25");
+        await expect(timeout).toBeFocused();
+        await expect.poll(() => drafts(page)).toContain('"timeoutSeconds":25');
+      });
+
+      test("switching a GET with retry on to POST turns retry off and disables it", async ({
+        page,
+      }) => {
+        const details = await openHttpStep(page, undefined, undefined, {
+          recipe: {
+            retry: {
+              maxAttempts: 3,
+              initialDelaySeconds: 2,
+              maxDelaySeconds: 30,
+            },
+          },
+        });
+        await details.tab("Settings").click();
+        const retry = details
+          .field("retry")
+          .getByRole("switch", { name: "Retry on fail" });
+        await expect(retry).toHaveAttribute("aria-checked", "true");
+        await details.tab("Parameters").click();
+        await details
+          .field("method")
+          .getByRole("combobox", { name: "Method" })
+          .click();
+        await page.getByRole("option", { name: /^POST/ }).click();
+        await details.tab("Settings").click();
+        await expect(retry).toHaveAttribute("aria-checked", "false");
+        await expect(retry).toBeDisabled();
+        await expect(details.field("retry.maxAttempts")).toHaveCount(0);
+        await expect(details.field("retry")).toContainText(
+          "Changes data, so Weave never retries it automatically.",
+        );
+      });
+
+      test("an action two steps call says so", async ({ page }) => {
+        const details = await openHttpStep(page, undefined, sharedAction);
+        await details.tab("Settings").click();
+        await expect(details.field("retry")).toContainText(
+          "Saved in the API action order-intake.get-customer-orders@1.0.0, used by 2 steps.",
+        );
+      });
+
+      test("a note the canvas has no room for stays on screen as not saved", async ({
+        page,
+      }) => {
+        // A response sample that leaves the canvas just under its 256 KB.
+        const details = await openHttpStep(page, undefined, undefined, {
+          recipe: { responseSample: "s".repeat(261_300) },
+        });
+        await details.tab("Settings").click();
+        const notes = details
+          .field("notes")
+          .getByRole("textbox", { name: "Notes" });
+        await notes.click();
+        await page.keyboard.type("abc");
+        await expect.poll(() => storedNote(page)).toBe("abc");
+        await page.keyboard.insertText("x".repeat(1500));
+        const problem = details.field("notes").getByRole("alert");
+        await expect(problem).toContainText("Not saved.");
+        await expect(notes).toHaveAttribute("aria-invalid", "true");
+        await expect(notes).toHaveValue(`abc${"x".repeat(1500)}`);
+        await notes.blur();
+        await expect(problem).toContainText("Not saved.");
+        expect(await storedNote(page)).toBe("abc");
+        // A note that fits is saved, and the message goes.
+        await notes.fill("abcd");
+        await expect(problem).toHaveCount(0);
+        await expect(notes).not.toHaveAttribute("aria-invalid", "true");
+        await expect.poll(() => storedNote(page)).toBe("abcd");
+      });
+
+      test("retry still marks Settings changed while the source has an error", async ({
+        page,
+      }) => {
+        const details = await openHttpStep(page, undefined, undefined, {
+          recipe: {
+            retry: {
+              maxAttempts: 3,
+              initialDelaySeconds: 2,
+              maxDelaySeconds: 30,
+            },
+          },
+        });
+        await expect(details.tab("Settings")).toHaveAccessibleName(
+          "Settings, changed",
+        );
+        await details.close();
+        await page.getByRole("tab", { name: "Source", exact: true }).click();
+        const source = page.getByRole("textbox", { name: "Workflow source" });
+        await source.fill(`${await source.inputValue()}\n  broken: [`);
+        await page
+          .getByRole("button", { name: "Apply changes", exact: true })
+          .click();
+        await page.getByRole("tab", { name: "Designer", exact: true }).click();
+        await details.openWithKeyboard("get-customer-orders");
+        await details.tab("Settings").click();
+        await expect(
+          details.field("retry").getByRole("switch", { name: "Retry on fail" }),
+        ).toBeDisabled();
+        await expect(details.tab("Settings")).toHaveAccessibleName(
+          "Settings, changed",
+        );
+      });
+    });
+});
 
 // ------------------------------------------------------------- geometry
 
@@ -594,8 +900,34 @@ test.describe("settings layout", () => {
           "About values",
         );
 
-        // Controls follow the density; switches and buttons stay usable.
+        // The timeout's hint sits beside its box while there is room.
         const timeout = form.locator('[data-param="timeout"]');
+        const timeoutBox = await box(timeout.locator(".param-duration"));
+        const timeoutHint = await textBox(timeout.locator(".param-line"));
+        if (edge.width >= 480) {
+          expect(timeoutHint.x).toBeGreaterThanOrEqual(timeoutBox.right + 8);
+          expectAligned(
+            [timeoutBox.middle, timeoutHint.middle],
+            "Timeout box and its hint",
+          );
+        } else expect(timeoutHint.y).toBeGreaterThanOrEqual(timeoutBox.bottom);
+        // The reference's rhythm where the density allows it.
+        await expect(retry.locator(".param-unit-suffix").first()).toHaveCSS(
+          "color",
+          await tokenColor(page, "--subtle"),
+        );
+        if (!d.touch) {
+          const description = await textBox(
+            retry.locator(".settings-description"),
+          );
+          const firstLabel = await textBox(
+            retry.locator(".settings-retry-grid .param-label").first(),
+          );
+          expect(firstLabel.y - description.bottom).toBeCloseTo(8, 0);
+          expect((await box(notes.locator("textarea"))).height).toBe(60);
+        }
+
+        // Controls follow the density; switches and buttons stay usable.
         for (const control of await shownBoxes(
           timeout,
           ".param-control :is(input, select)",

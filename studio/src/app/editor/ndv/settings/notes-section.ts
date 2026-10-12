@@ -18,25 +18,39 @@ SPDX-License-Identifier: Apache-2.0
 // Notes: a note for the people who read the workflow, kept with its canvas,
 // and "Show on canvas" to put its first line under the step's name. Typing
 // is one undo step per burst, like a field; a note that is only spaces is
-// no note.
+// no note. A note the canvas has no room for stays on screen, marked as not
+// saved, until it fits.
 import {
   ChangeDetectionStrategy,
   Component,
   input,
   signal,
 } from "@angular/core";
+import { Icon } from "../../../icon";
+import { MAX_STEP_NOTE_TEXT } from "../../state/canvas-sidecar";
 import type { FormSession } from "../params/form-session";
 
 let sequence = 0;
+
+/** What is on screen while it differs from the stored note, and why. */
+interface NoteDraft {
+  text: string;
+  /** The stored text it was typed over: a change from elsewhere replaces it. */
+  stored: string;
+  /** Why it isn't saved; none for a blank note, which is simply no note. */
+  refused?: string;
+}
 
 @Component({
   selector: "weave-notes-section",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
+  imports: [Icon],
   host: { "[attr.data-param]": "'notes'" },
   template: `@let note = this.note();
     @let locked = !!session().controller.readOnlyReason();
-    <div class="param settings-notes">
+    @let refused = this.refused();
+    <div class="param settings-notes" [class.has-error]="!!refused">
       <div class="param-label-row">
         <label class="param-label" [for]="id">Notes</label>
         <span class="param-spacer"></span>
@@ -58,53 +72,76 @@ let sequence = 0;
       <div class="param-control">
         <textarea
           class="param-input param-multiline"
-          rows="3"
-          maxlength="2000"
+          rows="2"
+          [attr.maxlength]="maxLength"
           [id]="id"
           [attr.aria-describedby]="id + '-line'"
+          [attr.aria-invalid]="refused ? 'true' : null"
+          [attr.aria-errormessage]="refused ? id + '-line' : null"
           [readOnly]="locked"
           placeholder="Add a note for people who read this workflow"
           [value]="text()"
           (input)="typed($event)"
-          (blur)="draft.set(null)"
+          (blur)="leave()"
         ></textarea>
       </div>
-      <p class="param-line" data-kind="hint" [id]="id + '-line'">
-        Notes don't change how the workflow runs.
-      </p>
+      @if (refused) {
+        <p
+          class="param-line"
+          data-kind="error"
+          role="alert"
+          [id]="id + '-line'"
+        >
+          <weave-icon name="warning" [size]="16" />Not saved. {{ refused }}
+        </p>
+      } @else {
+        <p class="param-line" data-kind="hint" [id]="id + '-line'">
+          Notes don't change how the workflow runs.
+        </p>
+      }
     </div>`,
 })
 export class NotesSection {
   session = input.required<FormSession>();
   readonly id = `sd-notes-${++sequence}`;
-  /**
-   * What the person is typing, while it differs from the stored note only
-   * by being blank (a note of spaces is removed, the spaces stay on screen).
-   */
-  readonly draft = signal<{ text: string; stored: string } | null>(null);
+  readonly maxLength = MAX_STEP_NOTE_TEXT;
+  readonly draft = signal<NoteDraft | null>(null);
 
   note() {
     const session = this.session();
     return session.controller.note(session.target);
   }
+  /** The draft, while the stored note is still the one it was typed over. */
+  private current(): NoteDraft | null {
+    const draft = this.draft();
+    return draft && draft.stored === this.note().text ? draft : null;
+  }
   /** The text on screen: the stored note, or what is being typed. */
   text(): string {
-    const stored = this.note().text;
-    const draft = this.draft();
-    return draft && draft.stored === stored ? draft.text : stored;
+    return this.current()?.text ?? this.note().text;
+  }
+  /** Why the note on screen isn't saved, if it isn't. */
+  refused(): string | null {
+    return this.current()?.refused ?? null;
   }
   typed(event: Event) {
     const session = this.session();
+    if (!session.isCurrent()) return;
     const text = (event.target as HTMLTextAreaElement).value;
     const note = this.note();
-    if (
-      session.isCurrent() &&
-      session.controller.setNote(
-        session.target,
-        text.trim() ? { ...note, text } : null,
-      )
-    )
-      this.draft.set({ text, stored: this.note().text });
+    const refused = session.controller.setNote(
+      session.target,
+      text.trim() ? { ...note, text } : null,
+    );
+    this.draft.set({
+      text,
+      stored: this.note().text,
+      ...(refused ? { refused } : {}),
+    });
+  }
+  /** Leaving keeps a refused note on screen; spaces typed into no note go. */
+  leave() {
+    if (!this.refused()) this.draft.set(null);
   }
   toggleCanvas() {
     const session = this.session();

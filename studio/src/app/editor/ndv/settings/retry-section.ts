@@ -17,7 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Retry on fail: a switch that lets the action run again after a temporary
 // failure, then its tries and waits. On asks for three tries and off for
-// one, keeping the waits. Retry belongs to the action: an action this
+// one, keeping the waits; only the switch turns retry off, and the fields
+// stay while focus is in them. Retry belongs to the action: an action this
 // workflow owns keeps it, a published one shows it read-only with Open
 // action to read it, and an action that changes data never retries.
 import {
@@ -25,6 +26,7 @@ import {
   Component,
   computed,
   input,
+  signal,
 } from "@angular/core";
 import { stringify } from "yaml";
 import { Modal } from "../../../dialog";
@@ -81,8 +83,12 @@ let sequence = 0;
           <span class="param-switch-track" aria-hidden="true"></span>
         </button>
       </div>
-      @if (on()) {
-        <div class="settings-retry-grid">
+      @if (fieldsShown()) {
+        <div
+          class="settings-retry-grid"
+          (focusin)="editing.set(session())"
+          (focusout)="left($event)"
+        >
           @for (child of children(); track child.spec.id) {
             <weave-param-field
               [session]="session()"
@@ -143,6 +149,8 @@ export class RetrySection {
   entry = input.required<FieldEntry>();
   readonly spec = computed(() => this.entry().spec);
   readonly id = `sd-retry-${++sequence}`;
+  /** The form whose tries and waits have focus: they stay until it leaves. */
+  readonly editing = signal<FormSession | null>(null);
   private view: {
     uses: string;
     yaml: string;
@@ -169,6 +177,15 @@ export class RetrySection {
         "non_idempotent" &&
       retryOn(this.value())
     );
+  }
+  /** The tries and waits: while retry is on, and while focus is in them. */
+  fieldsShown(): boolean {
+    return this.on() || this.editing() === this.session();
+  }
+  left(event: FocusEvent) {
+    const next = event.relatedTarget as Node | null;
+    if (!next || !(event.currentTarget as HTMLElement).contains(next))
+      this.editing.set(null);
   }
   toggle() {
     this.session().write(

@@ -773,14 +773,18 @@ export class StepDetails {
   /**
    * The Settings dot: a setting the step can change differs from its
    * default (retry counts while it is on), or the step has a note. What a
-   * published action sets is not the step's change.
+   * published action sets is not the step's change; a source error or a
+   * running simulation, which lock every field, don't hide a change.
    */
   settingsChanged(): boolean {
     const session = this.session();
+    const controller = this.controller();
+    const step = controller.step(this.target());
+    const kind = controller.kindContext();
     return settingsChanged(
       session
         .state("settings")
-        .fields.filter((entry) => !session.readOnly(entry))
+        .fields.filter((entry) => !(step && entry.spec.readOnly?.(step, kind)))
         .map((entry) =>
           entry.spec.id === "retry"
             ? !retryOn(this.fixedValue(session, entry.spec))

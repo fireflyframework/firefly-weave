@@ -174,6 +174,12 @@ export interface ParamSpec {
   choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);
   min?: number;
   max?: number;
+  /**
+   * number only: a value typed below `min` is an entry to finish. It stays
+   * in the box with its message and isn't saved (Max tries, where one try
+   * would mean Retry on fail is off).
+   */
+  holdBelowMin?: boolean;
   /** list only: fewest and most items. */
   minItems?: number;
   maxItems?: number;

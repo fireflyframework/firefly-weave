@@ -249,7 +249,7 @@ describe("the step details controller", () => {
     const { model, controller, tick } = setup();
     expect(controller.note("pause")).toEqual({ text: "" });
     for (const text of ["C", "Ch", "Check"]) {
-      expect(controller.setNote("pause", { text })).toBe(true);
+      expect(controller.setNote("pause", { text })).toBeNull();
       tick(200);
     }
     expect(controller.note("pause")).toEqual({ text: "Check" });
@@ -260,7 +260,7 @@ describe("the step details controller", () => {
         { text: "Check", showOnCanvas: true },
         "$note-canvas",
       ),
-    ).toBe(true);
+    ).toBeNull();
     expect(controller.note("pause")).toEqual({
       text: "Check",
       showOnCanvas: true,
@@ -285,7 +285,9 @@ describe("the step details controller", () => {
     const toasts: [string, string | undefined][] = [];
     host.notify = (text, _action, tone) => void toasts.push([text, tone]);
     model.readonly = true;
-    expect(controller.setNote("pause", { text: "Check" })).toBe(false);
+    expect(controller.setNote("pause", { text: "Check" })).toBe(
+      "Fix the source to edit this step.",
+    );
     expect(controller.note("pause")).toEqual({ text: "" });
     model.readonly = false;
     model.canvas = {
@@ -298,7 +300,9 @@ describe("the step details controller", () => {
       ),
     };
     const canvas = model.canvas;
-    expect(controller.setNote("pause", { text: "é".repeat(1000) })).toBe(false);
+    expect(controller.setNote("pause", { text: "é".repeat(1000) })).toBe(
+      CANVAS_TOO_BIG,
+    );
     expect(model.canvas).toBe(canvas);
     expect(toasts).toEqual([[CANVAS_TOO_BIG, "danger"]]);
   });

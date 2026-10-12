@@ -320,7 +320,7 @@ SPDX-License-Identifier: Apache-2.0
   display: flex;
   align-items: center;
   font: var(--type-small);
-  color: var(--muted);
+  color: var(--subtle);
   pointer-events: none;
 }
 .param-suffix {

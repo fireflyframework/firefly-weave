@@ -522,6 +522,10 @@ export function actionSettings(step: Step, ctx: KindContext): FormSpec {
             min: 2,
             max: 10,
             default: 3,
+            // Only the switch turns retry off: clearing or resetting the
+            // field writes 3, and a typed 1 waits to become 10.
+            whenRemoved: "default",
+            holdBelowMin: true,
           },
           {
             id: "retry.initialDelaySeconds",

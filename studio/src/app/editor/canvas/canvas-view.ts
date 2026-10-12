@@ -439,7 +439,12 @@ export class CanvasView implements OnInit, DoCheck {
           active: tile.id === active,
           run: state,
           pulse: pulses(state, run),
-          note: tile.step ? stepNoteLine(canvas, tile.id) : "",
+          // The trigger's note is the one its step details keep.
+          note: tile.step
+            ? stepNoteLine(canvas, tile.id)
+            : tile.kind === "trigger"
+              ? stepNoteLine(canvas, "$trigger")
+              : "",
         });
       });
     },

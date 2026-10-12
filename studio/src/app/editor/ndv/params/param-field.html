@@ -235,7 +235,7 @@ SPDX-License-Identifier: Apache-2.0
               [placeholder]="
                 spec.default !== undefined ? String(spec.default) : ''
               "
-              [value]="parts.amount"
+              [value]="numberText ?? parts.amount"
               (input)="duration(amount.value, unitOf(amount))"
             />
             @if (only) {

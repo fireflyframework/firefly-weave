@@ -63,6 +63,7 @@ import {
 } from "./drag-map";
 import { partsToText } from "./template-text";
 import { ABSENT } from "./value-io";
+import { fieldRules } from "./field-rules";
 
 let sequence = 0;
 const UNIT_SECONDS: Record<string, number> = {
@@ -160,12 +161,21 @@ export class ParamField {
   private choicesLoading = false;
   private choicesError = "";
   private pendingNumber: string | null = null;
-  private numberOwner: { session: FormSession; descriptor: string } | null =
-    null;
+  /**
+   * The field and stored value a typed entry belongs to. It stays on screen
+   * while both stay (an emptied box keeps empty while clearing writes the
+   * default); Undo, Redo or another change of the value shows the value.
+   */
+  private numberOwner: {
+    session: FormSession;
+    descriptor: string;
+    stored: string;
+  } | null = null;
   get numberText(): string | null {
     if (
       this.numberOwner?.session !== this.session() ||
-      this.numberOwner.descriptor !== canonicalJson(this.spec())
+      this.numberOwner.descriptor !== canonicalJson(this.spec()) ||
+      this.numberOwner.stored !== canonicalJson(this.value())
     )
       this.pendingNumber = null;
     return this.pendingNumber;
@@ -174,6 +184,7 @@ export class ParamField {
     this.numberOwner = {
       session: this.session(),
       descriptor: canonicalJson(this.spec()),
+      stored: canonicalJson(this.value()),
     };
     this.pendingNumber = value;
   }
@@ -560,19 +571,35 @@ export class ParamField {
   }
   number(event: Event) {
     const text = (event.target as HTMLInputElement).value.trim();
-    this.numberText = text || null;
-    if (!text) return this.session().clear(this.spec());
-    const value = Number(text);
-    if (Number.isFinite(value)) {
-      this.numberText = null;
-      this.session().write(this.spec(), { mode: "fixed", value });
+    if (!text) {
+      // The box stays empty while the person retypes, even where clearing
+      // writes the field's default.
+      this.session().clear(this.spec());
+      this.numberText = "";
+      return;
     }
+    this.numberText = text;
+    const value = Number(text);
+    if (!Number.isFinite(value) || this.heldBelowMin(value)) return;
+    this.numberText = null;
+    this.session().write(this.spec(), { mode: "fixed", value });
+  }
+  /** A value under the minimum of a field that can't hold one waits in the box. */
+  private heldBelowMin(value: number): boolean {
+    const spec = this.spec();
+    return !!spec.holdBelowMin && spec.min !== undefined && value < spec.min;
   }
   numberProblem(): string {
-    return this.numberText !== null &&
-      this.numberText !== "" &&
-      !Number.isFinite(Number(this.numberText))
-      ? "Enter a number."
+    const text = this.numberText;
+    if (text === null || text === "") return "";
+    const value = Number(text);
+    if (!Number.isFinite(value)) return "Enter a number.";
+    return this.heldBelowMin(value)
+      ? (fieldRules(
+          this.spec(),
+          { mode: "fixed", value },
+          { kind: "absent" },
+        )[0]?.message ?? "")
       : "";
   }
   units(): string[] {
@@ -602,7 +629,13 @@ export class ParamField {
     );
   }
   duration(amountText: string, unit: string) {
-    if (!amountText.trim()) return this.session().clear(this.spec());
+    if (!amountText.trim()) {
+      // Like a number's: the box stays empty while the person retypes.
+      this.session().clear(this.spec());
+      this.numberText = "";
+      return;
+    }
+    this.numberText = null;
     const seconds = durationSeconds(amountText, UNIT_CODE[unit] ?? "s");
     const value =
       seconds === undefined || Number.isNaN(seconds)

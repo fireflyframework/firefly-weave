@@ -288,6 +288,21 @@ describe("retry through the step form", () => {
       maxDelaySeconds: 60,
     });
   });
+  it("writes three tries when Max tries is cleared or reset, so only the switch turns retry off", () => {
+    const { session, children, stored } = setup({
+      maxAttempts: 5,
+      initialDelaySeconds: 2,
+      maxDelaySeconds: 30,
+    });
+    session.clear(children[0]);
+    expect(stored()).toEqual({
+      maxAttempts: 3,
+      initialDelaySeconds: 2,
+      maxDelaySeconds: 30,
+    });
+    // A typed value below two waits in the box instead of being saved.
+    expect(children[0].holdBelowMin).toBe(true);
+  });
   it("turns retry on and off as one undo step each, keeping the waits", () => {
     const { model, session, spec, stored, tick } = setup(undefined);
     expect(

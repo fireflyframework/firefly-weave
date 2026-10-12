@@ -432,20 +432,27 @@ export class StepDetailsController {
    * typing in a burst stays one step, like a field. `field` keeps changes of
    * different parts of the note (its text, Show on canvas) apart. A note the
    * canvas has no room for is refused with a message above step details.
+   * Null once the note is saved, otherwise why it wasn't.
    */
-  setNote(target: string, note: StepNote | null, field = "$note"): boolean {
+  setNote(
+    target: string,
+    note: StepNote | null,
+    field = "$note",
+  ): string | null {
     this.syncSession();
-    if (this.readOnlyReason()) return false;
+    const locked = this.readOnlyReason();
+    if (locked) return locked;
     const model = this.host.model;
     let next: CanvasSidecar;
     try {
       next = withStepNote(model.canvas, target, note);
       if (canvasBytes(next) > CANVAS_MAX_BYTES) throw new Error(CANVAS_TOO_BIG);
     } catch (error) {
-      this.host.notify((error as Error).message, undefined, "danger");
-      return false;
+      const reason = (error as Error).message;
+      this.host.notify(reason, undefined, "danger");
+      return reason;
     }
-    if (next === model.canvas) return true;
+    if (next === model.canvas) return null;
     const key = `${target}:${field}`;
     const burst = this.burst;
     const merge =
@@ -462,8 +469,9 @@ export class StepDetailsController {
       else model.batch(apply);
       ok = true;
     });
-    if (ok) this.burst = { key, revision: model.revision, at: this.now() };
-    return ok;
+    if (!ok) return "Studio couldn't save the note.";
+    this.burst = { key, revision: model.revision, at: this.now() };
+    return null;
   }
 
   /**
