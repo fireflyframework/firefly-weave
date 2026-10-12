@@ -63,9 +63,14 @@ async function usable(control: Locator) {
  * the decision tables the classic inspector loads for it. The canvas brings
  * the step into view itself; a click on a card outside the window would
  * scroll the canvas, which Studio turns into a pan in the middle of the click.
+ * The inspector loads tables once, when it opens, and only once Studio knows
+ * what the account may read: selecting waits for the sign-in.
  */
 async function selectScoreByKeyboard(details: StepDetailsPage) {
   const { page } = details;
+  await expect(
+    page.getByRole("button", { name: /^Platform: .* · Signed in\b/ }),
+  ).toBeVisible();
   await details.node("summarize").focus();
   await Promise.all([
     page.waitForResponse((response) =>
