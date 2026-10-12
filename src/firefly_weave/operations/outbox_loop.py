@@ -74,9 +74,16 @@ class OutboxLoop:
             await self.close()
             raise
 
-    async def cycle(self) -> bool:
-        """One bounded traversal turn; False when a delivery turn failed since the previous cycle."""
+    async def cycle(self) -> bool | None:
+        """One bounded traversal turn.
+
+        False when a delivery turn failed since the previous cycle. None while the platform is not ready: no turn
+        starts then, so the cycle is neither a success nor a failure, as for schedules.
+        """
         healthy, self.turn_failed = not self.turn_failed, False
+        # A turn started now would be refused, so wait for readiness without moving a cursor.
+        if not self.dispatcher.operational():
+            return None if healthy else False
         count = reserve(1)
         if not count:
             return healthy
@@ -94,18 +101,29 @@ class OutboxLoop:
                 if authority is None:
                     return healthy
 
+            started = False
+
             async def turn() -> None:
+                nonlocal started
+                # From here the dispatcher owns the slot: it gives it back however the turn ends.
+                started = True
                 try:
                     await self.dispatcher._dispatch(authority.scope, 1, None, AuditContext(), authority, reserved=count)
                 except Exception:
                     self.turn_failed = True
                     logging.getLogger(__name__).error("Outbox turn failed; durable lease recovery remains available")
 
+            def finished(task: asyncio.Task[None]) -> None:
+                self.turns.discard(task)
+                # A turn cancelled before its first step never reached the dispatcher.
+                if not started:
+                    release(count)
+
             from firefly_weave.access.audit import AuditContext
 
             task = asyncio.create_task(turn(), name="weave-outbox-delivery")
             self.turns.add(task)
-            task.add_done_callback(self.turns.discard)
+            task.add_done_callback(finished)
             owned = False
         finally:
             if owned:
@@ -120,9 +138,10 @@ class OutboxLoop:
             except Exception:
                 logging.getLogger(__name__).error("Outbox traversal failed; retrying bounded turn")
                 healthy = False
-            if healthy:
+            # While the platform is not ready the cycle proves nothing, so its last success keeps aging.
+            if healthy is True:
                 self.health.succeeded("outbox_loop")
-            else:
+            elif healthy is False:
                 self.health.failed("outbox_loop")
             await asyncio.sleep(TRAVERSAL_SECONDS)
 

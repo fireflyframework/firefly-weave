@@ -350,14 +350,18 @@ async def test_outbox_and_broker_turn_failures_fail_the_next_cycle(monkeypatch):
     monkeypatch.setattr(outbox_loop, "next_scope", next_scope)
     monkeypatch.setattr(outbox_loop, "reserve", lambda count: count)
     monkeypatch.setattr(outbox_loop, "release", lambda count: None)
-    outbox = OutboxLoop(SimpleNamespace(), None, SimpleNamespace(_dispatch=failing_dispatch))  # type: ignore[arg-type]
+    outbox = OutboxLoop(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+        SimpleNamespace(operational=lambda: True, _dispatch=failing_dispatch),  # type: ignore[arg-type]
+    )
     outbox.engine = Engine()  # type: ignore[assignment]
     assert await outbox.cycle() is True
     await asyncio.gather(*outbox.turns)
     assert await outbox.cycle() is False
     await asyncio.gather(*outbox.turns)
     # The failure was reported once; the next cycle starts clean.
-    outbox.dispatcher = SimpleNamespace(_dispatch=delivered)
+    outbox.dispatcher = SimpleNamespace(operational=lambda: True, _dispatch=delivered)  # type: ignore[assignment]
     assert await outbox.cycle() is False
     await asyncio.gather(*outbox.turns)
     assert await outbox.cycle() is True
@@ -387,6 +391,62 @@ async def test_outbox_and_broker_turn_failures_fail_the_next_cycle(monkeypatch):
     # A running consumer task is not a healthy source: the failed turn fails the next traversal.
     assert await broker.cycle() is False
     assert await broker.cycle() is True
+
+
+async def test_an_outbox_waiting_for_readiness_neither_succeeds_nor_fails(monkeypatch):
+    from firefly_weave.operations import outbox_loop
+    from firefly_weave.operations.outbox_loop import OutboxLoop
+
+    clock = Clock()
+    health = running(clock, interval=1)
+    reserved: list[int] = []
+    monkeypatch.setattr(outbox_loop, "reserve", lambda count: reserved.append(count) or 0)
+    monkeypatch.setattr(outbox_loop, "TRAVERSAL_SECONDS", 0)
+    ready = False
+    outbox = OutboxLoop(
+        SimpleNamespace(),  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+        SimpleNamespace(operational=lambda: ready),  # type: ignore[arg-type]
+        health=health,
+    )
+    health.succeeded("outbox_loop")
+    ok_at = health.snapshot("outbox_loop").last_ok_at
+
+    # Waiting reserves no slot and proves nothing.
+    assert await outbox.cycle() is None
+    assert reserved == []
+    # A turn that failed before readiness was withdrawn is still reported, once.
+    outbox.turn_failed = True
+    assert await outbox.cycle() is False
+    assert await outbox.cycle() is None
+
+    cycles = 0
+    cycle = outbox.cycle
+
+    async def counted():
+        nonlocal cycles
+        try:
+            return await cycle()
+        finally:
+            cycles += 1
+
+    monkeypatch.setattr(outbox, "cycle", counted)
+    task = asyncio.create_task(outbox.poll())
+    try:
+        async with asyncio.timeout(2):
+            while cycles < 5:
+                await asyncio.sleep(0)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    snapshot = health.snapshot("outbox_loop")
+    assert (snapshot.state, snapshot.consecutive_failures, snapshot.last_ok_at) == ("ok", 0, ok_at)
+    assert reserved == []
+    # Its last success keeps aging, so a platform that stays not ready leaves the outbox behind, not failing.
+    clock.now += timedelta(seconds=4)
+    assert health.snapshot("outbox_loop").state == "degraded"
+    assert health.snapshot("outbox_loop").consecutive_failures == 0
 
 
 async def test_provider_failures_fail_the_poll_cycle(monkeypatch):
