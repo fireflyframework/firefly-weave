@@ -284,9 +284,13 @@ export class StepDetails {
       this.host().tick();
       untracked(() => this.keepTarget());
     });
+    // The sheet's sticky pane tabs and step header change height as the
+    // name wraps or the pane changes: keep their height measured.
+    const sticky = new ResizeObserver(() => this.measureSticky());
     afterEveryRender(() => {
       this.coverShell();
       this.recoverLayoutFocus();
+      this.measureSticky(sticky);
       const menu = this.mapMenu();
       if (
         menu &&
@@ -313,8 +317,35 @@ export class StepDetails {
       this.releaseShell();
       this.dragEnd();
       observer.disconnect();
+      sticky.disconnect();
       this.clearMapping();
     });
+  }
+
+  /**
+   * How much of the sheet's top its sticky bars cover (the pane tabs, and
+   * the step header over Parameters), as --sd-sticky on the scroller: what
+   * scrolls into view, by Tab and Shift+Tab too, stops below them instead
+   * of under the header (WCAG 2.4.11).
+   */
+  private measureSticky(observer?: ResizeObserver) {
+    const panes = this.panes()?.nativeElement;
+    if (!panes) return;
+    let covered = 0;
+    if (this.layout() === "sheet") {
+      const top = panes.getBoundingClientRect().top;
+      for (const bar of panes.querySelectorAll<HTMLElement>(
+        ":scope > .sd-segments, :scope > .sd-main > .sd-head",
+      )) {
+        observer?.observe(bar);
+        // A bar in a hidden pane has no box, and covers nothing.
+        covered = Math.max(covered, bar.getBoundingClientRect().bottom - top);
+      }
+    }
+    const value = covered > 0 ? `${Math.ceil(covered)}px` : "";
+    if (panes.style.getPropertyValue("--sd-sticky") === value) return;
+    if (value) panes.style.setProperty("--sd-sticky", value);
+    else panes.style.removeProperty("--sd-sticky");
   }
 
   // ---------------------------------------------------------- modality

@@ -446,11 +446,15 @@ weave-step-details {
 .step-details[data-layout="sheet"] .sd-top {
   padding: 0 var(--space-2) 0 var(--space-4);
 }
-/* Whatever scrolls into view stops below the sticky pane tabs. */
+/* Whatever scrolls into view, by Tab and Shift+Tab too, stops below the
+   sticky pane tabs and step header (their height measured as --sd-sticky;
+   the tabs alone until it is), with room for the focus ring. */
 .step-details[data-layout="sheet"] .sd-panes {
   display: block;
   overflow: auto;
-  scroll-padding-top: calc(var(--control-touch) + 2 * 2px + 1px);
+  scroll-padding-top: calc(
+    var(--sd-sticky, var(--control-touch) + 2 * 2px + 1px) + var(--space-1)
+  );
 }
 .step-details[data-layout="sheet"] .sd-segments {
   position: sticky;

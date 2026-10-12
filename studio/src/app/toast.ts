@@ -213,10 +213,13 @@ export class ToastHost implements OnDestroy {
     if (!toast) return;
     const box = toast.getBoundingClientRect();
     const target = focused.getBoundingClientRect();
-    // The two places, 24 px from the edge (16 px on a phone); the top one
-    // sits under the top bar (see .toast-region.top).
-    const gap = window.innerWidth <= 767 ? 16 : 24;
-    const bottomEdge = window.innerHeight - this.bottom() - gap;
+    // The two places, as .toast-region places them: the bottom one 24 px
+    // above the diagnostics strip, or 16 px from the window's edge below
+    // 768 px, where the toast spans the width whatever the strip; the top
+    // one under the top bar (see .toast-region.top).
+    const narrow = window.innerWidth <= 767;
+    const gap = narrow ? 16 : 24;
+    const bottomEdge = window.innerHeight - (narrow ? 0 : this.bottom()) - gap;
     const topEdge = 72 + 16;
     const overlap = (from: number, to: number) =>
       target.right > box.left && target.left < box.right
