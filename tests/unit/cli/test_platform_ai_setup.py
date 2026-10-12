@@ -44,9 +44,9 @@ KEYCLOAK = "http://localhost:55202"
 class Client:
     """The public operations the AI setup uses, recorded."""
 
-    def __init__(self, connections=(), presence="recent", answer=None):
+    def __init__(self, connections=(), presence="recent", answer=None, workers=None):
         self.calls, self.connections, self.presence = [], list(connections), presence
-        self.worker_queries = []
+        self.worker_queries, self.workers = [], workers
         self.answer = answer or {
             "ok": True,
             "code": "ok",
@@ -72,6 +72,8 @@ class Client:
             return SimpleNamespace(id=REVISION)
         if operation == "workers.list":
             self.worker_queries.append(kwargs.get("query"))
+            if self.workers is not None:
+                return SimpleNamespace(items=self.workers, next_cursor=None)
             worker = SimpleNamespace(
                 id=uuid4(), release_id=RELEASE, presence=self.presence, revoked=False, last_seen_at=datetime.now(UTC)
             )
@@ -280,6 +282,17 @@ async def test_presence_reads_every_worker_of_the_release():
     found = await setup.presence(client, str(RELEASE))
     assert found["presence"] == "stale" and found["last_seen_at"] is not None
     assert client.worker_queries == [{"release_id": str(RELEASE), "state": "all", "limit": 100}]
+
+
+async def test_presence_ignores_workers_of_another_release():
+    # An older server ignores the release filter, so the answer can list other releases' workers first.
+    other = SimpleNamespace(
+        id=uuid4(), release_id=uuid4(), presence="recent", revoked=False, last_seen_at=datetime.now(UTC)
+    )
+    own = SimpleNamespace(id=uuid4(), release_id=RELEASE, presence="stale", revoked=False, last_seen_at=None)
+    found = await setup.presence(Client(workers=[other, own]), str(RELEASE))
+    assert found == {"presence": "stale", "last_seen_at": None, "worker_id": str(own.id)}
+    assert await setup.presence(Client(workers=[other]), str(RELEASE)) == {"presence": "unknown", "last_seen_at": None}
 
 
 async def test_the_connection_test_returns_its_result_with_a_timestamp():
