@@ -1142,6 +1142,7 @@ weave-url-field {
   color: var(--text);
 }
 .param-url-view .ref-pill {
+  margin-inline: var(--space-1);
   vertical-align: middle;
   font: var(--type-caption);
 }
@@ -1363,7 +1364,7 @@ weave-param-field.is-conditions > .param > .param-line {
   translate: 0 -50%;
   pointer-events: none;
 }
-/* A long source gives way before the field's own name. */
+/* A long source gives way; the field's own name stays whole. */
 .condition-editor.is-compact .condition-pill > span:not(.ref-sep) {
   flex: 0 1 auto;
   min-width: 0;
@@ -1371,7 +1372,7 @@ weave-param-field.is-conditions > .param > .param-line {
   text-overflow: ellipsis;
 }
 .condition-editor.is-compact .condition-pill > span:last-child {
-  flex-shrink: 0.1;
+  flex-shrink: 0;
 }
 .condition-editor.is-compact .condition-pill > :is(.ref-sep, weave-icon) {
   flex: none;
