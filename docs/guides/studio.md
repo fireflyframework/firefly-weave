@@ -1267,8 +1267,10 @@ longer, up to a minute.
 - **Needs attention** lists up to 20 items, most urgent first: jobs that need
   reconciliation, plans you may approve, offline workers that still hold work,
   active incidents, targets without an online runner, a restricted
-  compatibility verdict and runs that failed in the last hour. Each one opens
-  its record.
+  compatibility verdict and runs that failed in the last hour. A job, plan,
+  worker or failed run opens its record; an incident opens **Incidents**, a
+  target without a runner opens **Runners**, and the compatibility verdict has
+  no link.
 
 A section you may not read says which permission it needs, such as "You need
 `incident.read` in this environment.", instead of showing zeros; a section the

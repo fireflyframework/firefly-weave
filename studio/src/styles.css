@@ -1675,7 +1675,7 @@ dd {
 .checkbox-field input {
   width: 16px;
 }
-/* A checkbox beside its label is the same 16 px box on every page, centred on
+/* A checkbox beside its label is the same 16 px box on every page, centered on
    the label's line; this outranks the generic label > input[type="checkbox"]. */
 .checkbox-field > input[type="checkbox"] {
   flex: none;

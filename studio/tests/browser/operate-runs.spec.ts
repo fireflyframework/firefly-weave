@@ -1743,7 +1743,7 @@ test.describe("layout", () => {
           );
         expect(small).toEqual([]);
       }
-      // Filter checkboxes are the rows' 16 px box, centred on their label.
+      // Filter checkboxes are the rows' 16 px box, centered on their label.
       const folded = page.locator(".filters-toggle");
       if (viewport.width < 768) await folded.click();
       await expect(

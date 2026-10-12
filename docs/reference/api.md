@@ -841,7 +841,9 @@ Loop states follow these rules. A loop is `disabled` when its setting turns it
 off (API-only replicas disable every scheduler loop) and `down` while its task
 is not running. It is `degraded` before its first successful cycle, after 3
 failed cycles in a row or 3 failed cycles among its last 20, and when its last
-success is older than three poll intervals. A cycle still running within its
+success is older than three poll intervals. The window is those 20 cycles only:
+a failure that comes back fewer than 3 times in any 20 cycles, for example once
+every 10 cycles, leaves the loop `ok`, with only `recent_failures` showing it. A cycle still running within its
 loop's budget is on time: 5 seconds for the outbox and broker traversals, 30
 seconds for recovery and schedules, and 60 seconds for provider and mailbox
 polling. A cycle that starts no work, such as an outbox cycle while the platform

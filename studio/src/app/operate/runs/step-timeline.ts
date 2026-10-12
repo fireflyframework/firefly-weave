@@ -117,7 +117,7 @@ export interface RunStepsView {
   limited?: boolean;
   loading: boolean;
   error: PlainError | null;
-  /** The server's clock, for steps still running. */
+  /** This computer's clock, for steps still running. */
   now: Date;
   outputs: ReadonlyMap<string, StepOutputState>;
   loadMore(): void;
