@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AuthorizationService
+from firefly_weave.access.scheduler import _SchedulerScope
 from firefly_weave.contracts import language_features
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.run_views import RunStepQuery, RunSummaryQuery
@@ -818,13 +819,15 @@ async def test_each_quantum_lowers_its_database_timeouts_to_the_remaining_budget
     run = (await case.start()).id
     await record_rolled_back_decision(case, run)
     clock = {"now": 1000.0}
+    verify = _SchedulerScope.verify
 
-    def tick() -> float:
-        # Every reading advances the budget clock by an eighth of a second, exactly representable.
-        clock["now"] += 0.125
-        return clock["now"]
+    async def slow_verify(self, tx):
+        # Each authority check takes a quarter of the budget on the fake clock, which moves only here.
+        await verify(self, tx)
+        clock["now"] += 0.25
 
-    refresh.monotonic = tick
+    monkeypatch.setattr(_SchedulerScope, "verify", slow_verify)
+    refresh.monotonic = lambda: clock["now"]
     observed = []
     for name in ("revalidation_candidates", "advance_revalidation_cursor", "refresh_listing_metadata"):
         original = getattr(FactRepository, name)
@@ -843,11 +846,12 @@ async def test_each_quantum_lowers_its_database_timeouts_to_the_remaining_budget
 
         monkeypatch.setattr(FactRepository, name, observing(original, name))
     assert await refresh.cycle() is True
-    # The quantum starts with one second; each transaction gets what is left after it verified its authority.
+    # The quantum starts with one second; each transaction gets what is left after it verified its authority, so
+    # a timeout taken before the check would read 1000, 750 and 500 ms.
     assert observed == [
         ("revalidation_candidates", "750ms", "750ms"),
-        ("advance_revalidation_cursor", "375ms", "375ms"),
-        ("refresh_listing_metadata", "125ms", "125ms"),
+        ("advance_revalidation_cursor", "500ms", "500ms"),
+        ("refresh_listing_metadata", "250ms", "250ms"),
     ]
     assert (await cached(case, run))["classification_state"] == "available"
 
@@ -905,12 +909,10 @@ async def test_a_policy_change_never_upgrades_a_decision_the_upgrade_withheld(
     empty_settings, payload_reads, monkeypatch
 ):
     """Runs whose history the upgrade could not trust stay unavailable, whatever later policy re-checks the rest."""
-    import os
     import secrets
-    from datetime import UTC, datetime
-    from pathlib import Path
     from uuid import uuid4
 
+    from conftest import retain_resource
     from operations_support import seed_prior_head
     from sqlalchemy import make_url
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -927,11 +929,7 @@ async def test_a_policy_change_never_upgrades_a_decision_the_upgrade_withheld(
             name, password = f"{role}_{uuid4().hex}", secrets.token_urlsafe(32)
             await connection.execute(text(f"CREATE ROLE {name} LOGIN PASSWORD '{password}' IN ROLE {role}"))
             logins[role] = owner_url.set(username=name, password=password)
-            manifest = os.environ.get("WEAVE_TEST_RESOURCE_MANIFEST")
-            if manifest:
-                with Path(manifest).open("a") as handle:
-                    entry = {"kind": "role", "name": name, "observed_at": datetime.now(UTC).isoformat()}
-                    handle.write(json.dumps(entry) + "\n")
+            retain_resource("role", name)
     application = create_async_engine(logins["weave_app"], hide_parameters=True)
     withheld = [identifiers[name] for name in ("incoherent", "no_events")]
 
