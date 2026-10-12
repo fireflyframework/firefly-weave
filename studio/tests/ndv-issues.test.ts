@@ -373,6 +373,25 @@ describe("issues of a step", () => {
       label: "Choose a connection",
     });
   });
+  it("leaves the platform check's notes out of a step's issues, as the canvas does", () => {
+    const h = harness();
+    h.host.diagnostics = {
+      validationOk: true,
+      errorCount: 0,
+      partial: false,
+      diagnostics: [
+        {
+          code: "WV-STUDIO-OWNED_UNPUBLISHED",
+          severity: "info",
+          message:
+            "This step's action is published with the workflow: Publish… and Simulate publish it first.",
+          path: "/spec/steps/0/uses",
+        },
+      ],
+    } as never;
+    h.host.diagnosticsDefinition = h.model.definition;
+    expect(h.open().issues()).toEqual([]);
+  });
   it("keeps required messages for later on a new step, until the field is left or Execute step is pressed", () => {
     const h = harness({ pathTemplate: "" });
     const fresh = h.open("get", { fresh: true });

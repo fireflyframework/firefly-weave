@@ -16,8 +16,10 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // What step details show now: one open request at a time (a step, the
-// trigger or End), and whether the workflow settings dialog is open. The
-// shell, the canvas and the Add a step panel open step details here.
+// trigger or End), whether the workflow settings dialog is open, and the
+// dialog that publishes the workflow's own actions before Publish… or
+// Simulate goes on. The shell, the canvas and the Add a step panel open
+// step details here.
 import { Injectable, signal } from "@angular/core";
 import type { Path } from "./registry";
 
@@ -44,6 +46,26 @@ export interface StepDetailsRequest {
   revealAll: boolean;
 }
 
+export type OwnedPublishPurpose = "publish" | "simulate";
+/** Publish… or Simulate asks to publish the workflow's own actions first. */
+export interface OwnedPublishRequest {
+  purpose: OwnedPublishPurpose;
+  workflow: { name: string; version: string };
+}
+export interface OwnedPublishOutcome {
+  /** Nothing the workflow owns is left unpublished. */
+  done: boolean;
+  /** Actions published (or found published) by this dialog. */
+  published: number;
+  /** Why it stopped, for the banner, when it did. */
+  reason?: string;
+}
+/** The publish dialog's request, and the command waiting for its outcome. */
+export interface OwnedPublishOpen {
+  request: OwnedPublishRequest;
+  settle(outcome: OwnedPublishOutcome): void;
+}
+
 export const openRequest = (
   target: string,
   partial: Partial<StepDetailsRequest> = {},
@@ -62,6 +84,13 @@ export class StepDetailsService {
   /** Bumped on every open, so the dialog applies the focus rule again. */
   readonly opening = signal(0);
   readonly workflowSettings = signal(false);
+  /**
+   * The open "publish this workflow's actions" dialog, if any (opened by
+   * `publishOwned` in owned/owned-commands.ts, which loads with Publish…).
+   */
+  readonly ownedPublish = signal<OwnedPublishOpen | null>(null);
+  /** Designers on screen that can show it. */
+  mounted = 0;
 
   open(request: StepDetailsRequest): void {
     this.workflowSettings.set(false);

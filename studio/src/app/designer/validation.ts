@@ -45,6 +45,8 @@ export interface ValidationResult {
   partial?: boolean;
   ok?: boolean;
   artifact?: unknown;
+  /** Unknown actions that Publish… publishes first (the workflow's own); notes, not errors. */
+  ownedPending?: number;
 }
 
 export interface ValidationTransport {
@@ -222,7 +224,8 @@ export class ValidationService {
       return "Validate against the project catalog before publishing.";
     if (!result.validationOk || result.errorCount > 0)
       return "Fix the errors found against the project catalog before publishing.";
-    if (!result.ok || result.partial)
+    // The workflow's own actions, published right before it, may be the only reason the compile isn't complete.
+    if ((!result.ok && !result.ownedPending) || result.partial)
       return "Validate against the project catalog before publishing.";
     return "";
   }
@@ -475,7 +478,10 @@ export function summarize(
       passedProjectCatalog: complete,
       headline: complete
         ? found
-        : "No errors found, but the project catalog check didn't finish. Validate again.",
+        : result.ownedPending && !result.partial
+          ? // The workflow's own actions are all it misses; they publish first.
+            `${found} Publish… and Simulate publish the actions of Call an API, email and file steps first.`
+          : "No errors found, but the project catalog check didn't finish. Validate again.",
     };
   }
   const coverage =

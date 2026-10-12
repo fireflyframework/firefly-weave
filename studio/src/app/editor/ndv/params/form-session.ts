@@ -1223,6 +1223,8 @@ export class FormSession {
     );
     const definition = this.host.diagnosticsDefinition;
     this.controller.diagnostics(this.target).forEach((diagnostic, index) => {
+      // Notes aren't issues: the canvas doesn't count them either.
+      if (diagnostic.severity === "info") return;
       const field = fieldFor(diagnostic.at, scoped);
       if (
         /REQUIRED$/.test(diagnostic.code) &&

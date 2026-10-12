@@ -59,6 +59,8 @@ export interface StepDetailsHost {
   notify(text: string, action?: ToastAction, tone?: "neutral" | "danger"): void;
   /** Runs a model edit: marks the workflow changed, or shows the failure. */
   perform(edit: () => void): void;
+  /** Records what publishing learned (a version is published) in the last undo step, without unsaving the workflow; false when refused. */
+  recordOwned(edit: () => void): boolean;
   undo(): void;
   redo(): void;
   runCommand(command: "save" | "simulate" | "export"): Promise<unknown>;

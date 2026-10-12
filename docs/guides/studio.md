@@ -975,8 +975,8 @@ The step reference lists
 
 **Call an API, email and file steps.** With the new editor on, the step picker
 lists them under **Common actions**, and each one gets an action of its own,
-edited right in step details. A workflow with these steps can't be published,
-simulated on a platform or saved to a file with their settings yet; see
+edited right in step details. **Publish…** and **Simulate** publish those
+actions first, after you confirm; see
 [where Studio keeps their actions](studio-step-reference.md#email-and-file-steps).
 
 #### Settings, issues and entries that don't apply yet
@@ -1113,7 +1113,10 @@ on the canvas show the same problems as a red border and a chip such as
 ### Simulate a run
 
 **Simulate** runs the compiled workflow step by step without calling real
-systems. It needs a connected platform and permission to simulate. In **Simulate
+systems. It needs a connected platform and permission to simulate. When Call an
+API, email or file steps call actions that aren't published yet, Studio first
+asks to publish them (**Publish 2 actions and simulate**), which also needs
+permission to publish; the workflow itself isn't published. In **Simulate
 this workflow**, enter the **Workflow input** and, under **Action results**, the
 result each action should return, or select **Skip this action** to stop the
 simulation there. Select **Start simulation**.
@@ -1388,7 +1391,10 @@ with a button for the next step.
    draft** instead of overwriting theirs.
 2. **Publish a version.** Select **Publish…**. Studio checks the workflow first,
    against the project catalog when your account may compile, then asks you to
-   confirm with **Publish version**. The platform compiles the version again
+   confirm with **Publish version**. When Call an API, email or file steps call
+   actions that aren't published yet, the confirmation lists those actions
+   instead, and **Publish 2 actions and the workflow** publishes each one before
+   the workflow. The platform compiles the version again
    before it records it; any problems appear in **Diagnostics**. If that version
    number is already taken, Studio offers to publish as the next patch version
    instead, with a button such as "Publish as 1.0.1". Expected: "Published

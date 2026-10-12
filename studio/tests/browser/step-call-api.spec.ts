@@ -19,17 +19,15 @@ SPDX-License-Identifier: Apache-2.0
 // brings an action the workflow owns and opens the new step's details on
 // its first required empty field. The repository's own Python builds the
 // API actions and lists the built-in email and file actions.
-import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { parse, stringify } from "yaml";
 import {
+  builtinActions,
   hasPython,
   localAuthoring,
   stopLocalAuthoring,
 } from "./local-authoring";
-import { python, repository } from "../python-path";
 import {
   START_PLUS,
   StepDetailsPage,
@@ -47,27 +45,6 @@ import { connected, newWorkflow, offline, sourceText } from "./support";
 
 test.skip(!hasPython, "Needs the repository's Python environment.");
 test.afterAll(() => stopLocalAuthoring());
-
-let builtins: unknown = null;
-/** The Studio host's built-in email and file actions, as its route answers. */
-function builtinActions(): unknown {
-  if (builtins) return builtins;
-  const run = spawnSync(
-    python,
-    [
-      "-c",
-      "import json; from firefly_weave.contracts.connector_actions import builtin_connector_actions as b; print(json.dumps({'actions': b()}))",
-    ],
-    {
-      cwd: repository,
-      encoding: "utf8",
-      env: { ...process.env, PYTHONPATH: resolve(repository, "src") },
-    },
-  );
-  if (run.status !== 0) throw new Error(run.stderr);
-  builtins = JSON.parse(run.stdout);
-  return builtins;
-}
 
 /** Offline Studio whose host builds API actions and lists its built-in actions. */
 async function authoring(page: Page) {

@@ -16,9 +16,10 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Puts step details on screen for the designer: the dialog while a request
-// is open, workflow settings while they are open, one editing controller per
-// opened workflow, and the documents of the workflow's owned actions kept
-// current on every change.
+// is open, workflow settings while they are open, the dialog that publishes
+// the workflow's own actions while Publish… or Simulate asks for it, one
+// editing controller per opened workflow, and the documents of the
+// workflow's owned actions kept current on every change.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -33,10 +34,14 @@ import type { CanvasView } from "../canvas/canvas-view";
 import { HttpActionClient } from "../../integrations/http-action-client";
 import { ConnectorActions } from "./owned/connector-actions";
 import { OwnedDocuments } from "./owned/owned-documents";
+import { OwnedPublishDialog } from "./owned/owned-publish-dialog";
 import { StepDetails } from "./step-details";
 import { StepDetailsController } from "./step-details-controller";
 import type { StepDetailsHost } from "./step-details-host";
-import { StepDetailsService } from "./step-details-service";
+import {
+  StepDetailsService,
+  type OwnedPublishOutcome,
+} from "./step-details-service";
 import { loadKindRegistrations } from "./kinds";
 import { WorkflowSettingsDialog } from "./workflow-settings-dialog";
 
@@ -44,7 +49,7 @@ import { WorkflowSettingsDialog } from "./workflow-settings-dialog";
   selector: "weave-step-details-mount",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [StepDetails, WorkflowSettingsDialog],
+  imports: [StepDetails, WorkflowSettingsDialog, OwnedPublishDialog],
   template: `@if (ready() && details.request(); as request) {
       <weave-step-details
         [host]="host()"
@@ -59,6 +64,16 @@ import { WorkflowSettingsDialog } from "./workflow-settings-dialog";
         [controller]="controller()"
         (closed)="details.closeWorkflowSettings()"
       />
+    }
+    @if (ready() && details.ownedPublish(); as publishing) {
+      @defer (on immediate) {
+        <weave-owned-publish-dialog
+          [host]="host()"
+          [request]="publishing.request"
+          [documents]="documentsFor(host())"
+          (closed)="ownedClosed($event)"
+        />
+      }
     }`,
 })
 export class StepDetailsMount {
@@ -78,6 +93,12 @@ export class StepDetailsMount {
   } | null = null;
 
   constructor() {
+    this.details.mounted++;
+    this.lifetime.onDestroy(() => {
+      this.details.mounted--;
+      // A designer that goes away takes its dialog with it; the command stops.
+      this.ownedClosed({ done: false, published: 0 });
+    });
     void loadKindRegistrations().then(
       () => {
         if (this.lifetime.destroyed) return;
@@ -90,7 +111,7 @@ export class StepDetailsMount {
       const host = this.host();
       host.tick();
       untracked(() => {
-        this.ownedDocuments(host).sync();
+        this.documentsFor(host).sync();
         // Entries typed for a step that is gone never reach a step made
         // again with its name; the open step keeps its own while step
         // details follow a rename back.
@@ -122,12 +143,13 @@ export class StepDetailsMount {
     const opened = host.model.opened;
     if (!this.made || this.made.host !== host || this.made.opened !== opened) {
       const controller = new StepDetailsController(host);
-      controller.ownedProblems = () => this.ownedDocuments(host).problems();
+      controller.ownedProblems = () => this.documentsFor(host).problems();
       this.made = { host, opened, controller };
     }
     return this.made.controller;
   }
-  private ownedDocuments(host: StepDetailsHost): OwnedDocuments {
+  /** The documents of the workflow's own actions, kept for this host. */
+  documentsFor(host: StepDetailsHost): OwnedDocuments {
     if (this.documents?.host !== host) {
       const client = new HttpActionClient(host.api);
       this.documents = {
@@ -140,6 +162,12 @@ export class StepDetailsMount {
       };
     }
     return this.documents.documents;
+  }
+  /** The publish dialog closed: the command waiting for it goes on, or stops. */
+  ownedClosed(outcome: OwnedPublishOutcome) {
+    const open = this.details.ownedPublish();
+    this.details.ownedPublish.set(null);
+    open?.settle(outcome);
   }
   closed(target: string) {
     this.details.close();

@@ -2917,14 +2917,26 @@ export class App implements CanvasHost {
           this.whenFree(() => this.api.validate(source, format)).then(
             conditions(source, format),
           ),
-        compile: (source, format) =>
-          this.api
+        compile: (source, format) => {
+          // The steps whose own actions publish first, as they are now.
+          const canvas = this.model.canvas;
+          return this.api
             .request<Validation>(
               `${this.api.project}/compiler/compile`,
               "POST",
               { source, format },
             )
-            .then(conditions(source, format)),
+            .then(conditions(source, format))
+            .then(async (result) =>
+              (
+                await import("./editor/ndv/owned/owned-pending")
+              ).withOwnedPending(
+                result,
+                this.parseSource(source, format),
+                canvas,
+              ),
+            );
+        },
       },
       context: () => this.validationContext(),
       onChange: (snapshot) => this.validationChanged(snapshot),
@@ -5910,8 +5922,14 @@ export class App implements CanvasHost {
     // "Keep editing" must stop the publish, not only its validation.
     if (!(await this.ensureApplied())) return;
     if (this.model.readonly || this.model.unplaced.length) return;
-    if (!(await this.validate())) return;
+    // The actions of Call an API, email and file steps publish first, after
+    // validation; their dialog is the confirmation.
+    const owned = await this.publishOwnedFirst("publish", () =>
+      this.validate(),
+    );
+    if (owned === "stopped") return;
     if (
+      owned === "none" &&
       !(await this.dialogs.confirm({
         title: `Publish ${this.model.definition.metadata.name} ${this.model.definition.metadata.version}?`,
         message:
@@ -5980,7 +5998,10 @@ export class App implements CanvasHost {
           countLine: counts,
         };
         this.error =
-          "The platform found problems in this workflow. Review the diagnostics below.";
+          "The platform found problems in this workflow. Review the diagnostics below." +
+          (this.ownedPublishedNow
+            ? " Its actions were published; publishing again reuses them."
+            : "");
         this.errorCode = e.code;
         this.message = "";
       } else this.fail(e);
@@ -6250,6 +6271,8 @@ export class App implements CanvasHost {
    */
   async simulate() {
     if (!(await this.ensureApplied())) return;
+    // A simulation compiles against the project, so the workflow's own actions publish first.
+    if ((await this.publishOwnedFirst("simulate")) === "stopped") return;
     const source = this.model.source,
       format = this.model.format;
     this.busy = "simulate";
@@ -6542,6 +6565,42 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
     return true;
   }
+  /** Actions the last Publish… published before its workflow. */
+  private ownedPublishedNow = 0;
+  /**
+   * Publishes the actions of Call an API, email and file steps that aren't
+   * published yet, in step details' dialog, before Publish… or Simulate goes
+   * on, once `check` passes; published actions changed since (in Source)
+   * take their next version first. "none" when there were none, "stopped"
+   * when any is left unpublished (the dialog or the banner says why).
+   */
+  private async publishOwnedFirst(
+    purpose: "publish" | "simulate",
+    check = async () => true,
+  ): Promise<"none" | "published" | "stopped"> {
+    if (purpose === "publish") this.ownedPublishedNow = 0;
+    const { result, published } = await (
+      await import("./editor/ndv/owned/owned-commands")
+    ).publishOwnedFirst(this, purpose, check);
+    if (published) {
+      // The project catalog changed: compiles cached before it are stale.
+      this.validation?.invalidate();
+      this.ownedPublishedNow += published;
+    }
+    return result;
+  }
+  /** Joins what publishing learned to the last undo step, without unsaving the workflow. */
+  recordOwned(edit: () => void): boolean {
+    try {
+      this.model.continueEdit(this.model.revision, edit);
+    } catch (e) {
+      this.fail(e);
+      return false;
+    }
+    this.tick.update((n) => n + 1);
+    this.cdr.markForCheck();
+    return true;
+  }
   /** Where the simulated run is, for a node's accessible name. */
   simulationNote(id: string) {
     const nodes = this.simNodes;
@@ -6632,12 +6691,17 @@ export class App implements CanvasHost {
         ),
       },
     ];
+    const note = (await import("./editor/ndv/owned/owned-commands")).exportNote(
+      this.model,
+    );
     const deliveries = files.map((file) =>
       exportFile(file.name, file.mime, file.content),
     );
     // A download that could not start is offered as copies instead.
     if (deliveries.includes("unconfirmed")) this.exportFallback = files;
     else this.message = exportNotice(files.map((f) => f.name));
+    // Steps whose actions aren't published lose their settings in these files.
+    if (note) this.notify(note);
     this.cdr.markForCheck();
   }
   async copyExport(file: ExportedFile) {

@@ -380,6 +380,42 @@ describe("manual validation and the project compile", () => {
     // The compiled artifact still serves Simulate and the publish gate.
     expect(service.canPublish("v1", "yaml")).toBe(true);
   });
+  it("lets actions published first be the only gap in a project compile", async () => {
+    const { service, compile } = harness(project);
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: false,
+      diagnostics: [],
+      ownedPending: 2,
+    });
+    await service.validateNow("v1", "yaml");
+    expect(service.publishBlocker("v1", "yaml")).toBe("");
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 1,
+      ok: false,
+      partial: false,
+      diagnostics: [],
+      ownedPending: 1,
+    });
+    await service.validateNow("v2", "yaml");
+    expect(service.publishBlocker("v2", "yaml")).toBe(
+      "Fix the errors found against the project catalog before publishing.",
+    );
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: false,
+      diagnostics: [],
+    });
+    await service.validateNow("v3", "yaml");
+    expect(service.publishBlocker("v3", "yaml")).toBe(
+      "Validate against the project catalog before publishing.",
+    );
+  });
 });
 
 describe("cancelled checks", () => {
@@ -567,6 +603,27 @@ describe("banner copy", () => {
     expect(summarize(service.snapshot, ctx)).toMatchObject({
       tone: "failed",
       headline: "Studio couldn't check this workflow. Try again.",
+    });
+  });
+  it("says the workflow's own actions publish first when they are all the project check is missing", async () => {
+    const ctx = { connected: true, canCompile: true, scope: "p" };
+    const { service, compile } = harness(ctx);
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: false,
+      diagnostics: [
+        { code: "WV-STUDIO-OWNED_UNPUBLISHED", severity: "info", message: "x" },
+      ],
+      ownedPending: 1,
+    });
+    await service.validateNow("v1", "yaml");
+    expect(summarize(service.snapshot, ctx)).toMatchObject({
+      tone: "checked",
+      passedProjectCatalog: false,
+      headline:
+        "No problems found. Publish… and Simulate publish the actions of Call an API, email and file steps first.",
     });
   });
 });

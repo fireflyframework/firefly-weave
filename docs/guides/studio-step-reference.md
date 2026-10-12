@@ -397,7 +397,8 @@ POST, PUT and PATCH. **Add option** offers **Query parameters**, **Headers**,
 **Accepted status codes** and **Description**.
 
 Studio keeps the request as an action this workflow owns, named after the
-workflow and the step, and renames it with the step. **Settings** has **Retry on
+workflow and the step, and renames it with the step until the action is
+published. **Settings** has **Retry on
 fail**, which requests that change data never use, and **Timeout**, up to 30
 seconds; the line under them names the action that keeps them.
 
@@ -427,16 +428,36 @@ otherwise choose a slot, or **New slot**, in **Connection**.
 **Where Studio keeps these actions.** Studio keeps the actions of Call an API,
 email and file steps, and step notes, with the workflow you are editing: in this
 browser while you work locally, and until you close the workflow while you are
-connected. You can't publish or simulate a workflow with these steps on a
-platform yet. Checking it against the platform reports that the step's action
-isn't published ("This action isn't published in the project."), so **Publish…**
-and **Simulate** stop before anything is published or run, and nothing is
-published broken. The hint to publish the action first can't be followed yet:
-Studio has no way to publish these actions. **Save to file** doesn't include
-them either: opened again from the file, such a step comes back as **Call an
-action** with only **Action** and **Connection**, and its method, URL, response
-sample, accepted status codes, description, retry, timeout and note are gone. To
-publish now, call a published action with **Call an action**.
+connected. **Publish…** publishes these actions before the workflow. Studio
+lists the ones that aren't published yet, with the steps that use them, checks
+them against the platform and asks once, for example **Publish 2 actions and
+the workflow**. It then publishes each action, and the workflow last.
+**Simulate** asks the same way, with **Publish 2 actions and simulate**, and
+publishes only the actions. Publishing them needs the same permission as
+publishing workflows. Until then, checking the workflow against the platform
+notes each such step ("This step's action is published with the workflow")
+instead of reporting its action missing.
+
+A published version never changes. Your next change to a published action in
+step details starts its next version, such as 1.0.1, and every step that uses
+the action follows. Studio says so, and **Undo** returns to the published
+version. A change made elsewhere, such as a new query parameter name typed in
+Source, starts the next version when you select **Publish…** or **Simulate**.
+Renaming a step keeps its published action's name. If an action's name and
+version are already published with other content, Studio offers a free name or
+the next version, and publishes nothing under the taken one. If publishing
+stops partway, the actions already published stay as they are, the workflow
+isn't published, and **Try again** sends the same requests, so nothing is
+published twice. If the project lacks a connector an action needs, such as
+`weave-email@1.0.0`, Studio stops and names the connector to ask for.
+
+Once published, these actions are in the project's catalog like any published
+action, and other workflows can call them with **Call an action**. **Save to
+file** doesn't include the actions or their settings yet, and Studio says so
+when you save. Opened from the file, a step whose action is published comes
+back as **Call an action** with that version. A step whose action wasn't
+published reports that its action isn't published. Publish first to keep the
+actions in the project.
 
 ## Design forms and payloads with the schema designer
 
@@ -909,6 +930,11 @@ system. It needs a connected platform and the `simulate` permission; otherwise
 selecting it shows why under the toolbar. If the workflow does not compile
 completely, Studio shows the diagnostics and "Simulation needs a fully compiled
 workflow. Fix the problems in the diagnostics first."
+
+When Call an API, email or file steps call actions that aren't published yet,
+**Simulate** first lists them and asks to publish them, as described in
+[where Studio keeps these actions](#email-and-file-steps). The workflow itself
+isn't published.
 
 1. In **Simulate this workflow**, fill in **Workflow input**. When the workflow
    calls actions, an **Action results** tab, labeled with their count, lists each
