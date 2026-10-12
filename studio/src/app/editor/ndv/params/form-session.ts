@@ -1176,13 +1176,16 @@ export class FormSession {
   }
 
   // ------------------------------------------------------- structure
-  /** A list item's spec with an absolute path. */
+  /** A list item's spec with an absolute path, in its list's scope unless it names its own. */
   itemSpec(
     list: ParamSpec,
     index: number | string,
     item: ParamSpec,
   ): ParamSpec {
-    return this.relocate(item, [...list.path, index, ...item.path]);
+    return this.relocate(
+      item.scope || !list.scope ? item : { ...item, scope: list.scope },
+      [...list.path, index, ...item.path],
+    );
   }
   /** A child of a list item (relative paths) with an absolute path. */
   childSpec(child: ParamSpec, base: Path): ParamSpec {

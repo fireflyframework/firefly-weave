@@ -320,3 +320,49 @@ describe("retry through the step form", () => {
     expect(stored()).toBeUndefined();
   });
 });
+
+describe("accepted status codes through the step form", () => {
+  it("reads and writes each code in the API action, not in the step", () => {
+    const USES = "untitled-workflow.get@1.0.0";
+    const model = new StructuredCanvasAdapter();
+    model.insert("action", "root", undefined, {
+      id: "get",
+      uses: USES,
+      with: { literal: {} },
+    });
+    model.canvas = withOwnedAction(model.canvas, USES, {
+      ...newHttpRecipe(),
+      statuses: [200, 201],
+    } as never);
+    model.clearHistory();
+    const host = {
+      model,
+      editingLocked: false,
+      profile: null,
+      catalogContracts: new Map(),
+      decisionContracts: new Map(),
+      actionVersions: [],
+      diagnostics: null,
+      diagnosticsDefinition: null,
+      label: (kind: string) => kind,
+      can: () => true,
+      notify: () => undefined,
+      refreshView: () => undefined,
+      perform: (edit: () => void) => edit(),
+      api: { request: async () => ({ features: [] }) },
+    } as unknown as StepDetailsHost;
+    const controller = new StepDetailsController(host);
+    const session = new FormSession(host, controller, openRequest("get"), {
+      confirm: async () => true,
+      announce: () => undefined,
+    });
+    const list = session
+      .state("parameters")
+      .fields.find((entry) => entry.spec.id === "statuses")!.spec;
+    const second = session.itemSpec(list, 1, list.item!);
+    expect(session.read(second)).toEqual(fixed(201));
+    expect(session.write(second, fixed(202))).toBe(true);
+    expect(ownedActionsOf(model.canvas)[USES].statuses).toEqual([200, 202]);
+    expect(model.definition.spec.steps[0]).not.toHaveProperty("statuses");
+  });
+});
