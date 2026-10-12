@@ -23,6 +23,28 @@ SPDX-License-Identifier: Apache-2.0
    and 8 px. A label row's tools overflow it into the gaps around it without
    reaching the control below. What shows at rest ends on the right edge;
    tools that appear on hover sit inboard of it. */
+/* Density, for step details and for forms drawn outside it (workflow
+   settings). On desktop with a fine pointer the form follows the
+   reference's compact rhythm; below 768 px and for coarse pointers it keeps
+   44 px touch targets. */
+:is(.step-details, .sd-form-scope) {
+  --sd-control: var(--control-md); /* fields, selects and pickers */
+  --sd-row: var(--control-sm); /* key-value and data rows, menu rows */
+  --sd-target: var(--control-sm); /* icon buttons and small toggles */
+  --sd-label-row: var(--space-6);
+  --sd-field-gap: var(--space-3);
+  --sd-field-inner: var(--space-1);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :is(.step-details, .sd-form-scope) {
+    --sd-control: var(--control-touch);
+    --sd-row: var(--control-touch);
+    --sd-target: var(--control-touch);
+    --sd-label-row: var(--control-touch);
+    --sd-field-gap: var(--space-4);
+    --sd-field-inner: var(--space-2);
+  }
+}
 .param-form {
   display: flex;
   flex-direction: column;
@@ -69,16 +91,30 @@ SPDX-License-Identifier: Apache-2.0
   align-items: center;
   gap: var(--space-1);
 }
-.step-details .param-tools > weave-row-menu .row-menu-toggle,
-.step-details .param-tools > button.param-remove {
+:is(.step-details, .sd-form-scope)
+  .param-tools
+  > weave-row-menu
+  .row-menu-toggle,
+:is(.step-details, .sd-form-scope) .param-tools > button.param-remove {
   width: var(--sd-target);
   min-width: var(--sd-target);
   height: var(--sd-target);
   min-height: var(--sd-target);
 }
-.step-details .param-label-row > .param-tools > weave-row-menu .row-menu-toggle,
-.step-details .param-label-row > .param-tools > button.param-remove,
-.step-details .param-label-row > .param-tools .param-mode button[role="radio"] {
+:is(.step-details, .sd-form-scope)
+  .param-label-row
+  > .param-tools
+  > weave-row-menu
+  .row-menu-toggle,
+:is(.step-details, .sd-form-scope)
+  .param-label-row
+  > .param-tools
+  > button.param-remove,
+:is(.step-details, .sd-form-scope)
+  .param-label-row
+  > .param-tools
+  .param-mode
+  button[role="radio"] {
   margin-block: calc((var(--sd-label-row) - var(--sd-target)) / 2);
 }
 /* Fixed | Mapped: a 24 px face inside its targets. */
@@ -97,7 +133,7 @@ SPDX-License-Identifier: Apache-2.0
   border: 1px solid var(--border);
   border-radius: var(--radius-xs);
 }
-.step-details .param-mode button[role="radio"] {
+:is(.step-details, .sd-form-scope) .param-mode button[role="radio"] {
   position: relative;
   z-index: 0;
   min-width: var(--sd-target);
@@ -109,29 +145,35 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--muted);
   font: var(--type-caption);
 }
-.step-details .param-mode button[role="radio"]::before {
+:is(.step-details, .sd-form-scope) .param-mode button[role="radio"]::before {
   content: "";
   position: absolute;
   inset: calc(50% - var(--space-2)) 0;
   z-index: -1;
   border-radius: var(--radius-xs);
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-mode
   button[role="radio"]:is(:hover, [aria-checked="true"]) {
   color: var(--text);
 }
-.step-details .param-mode button[role="radio"]:disabled {
+:is(.step-details, .sd-form-scope) .param-mode button[role="radio"]:disabled {
   color: var(--disabled-ink);
 }
-.step-details .param-mode button[role="radio"][aria-checked="true"]::before {
+:is(.step-details, .sd-form-scope)
+  .param-mode
+  button[role="radio"][aria-checked="true"]::before {
   background: var(--hover);
   box-shadow: inset 0 0 0 1px var(--border-hover);
 }
-.step-details .param-mode button[role="radio"]:focus-visible {
+:is(.step-details, .sd-form-scope)
+  .param-mode
+  button[role="radio"]:focus-visible {
   outline: none;
 }
-.step-details .param-mode button[role="radio"]:focus-visible::before {
+:is(.step-details, .sd-form-scope)
+  .param-mode
+  button[role="radio"]:focus-visible::before {
   box-shadow: 0 0 0 2px var(--focus);
 }
 [data-mode="fixed"] > .param:not(:hover, :focus-within) .param-mode,
@@ -161,8 +203,8 @@ SPDX-License-Identifier: Apache-2.0
 .param-input::placeholder {
   color: var(--subtle);
 }
-.step-details .param-multiline,
-.step-details .param-json {
+:is(.step-details, .sd-form-scope) .param-multiline,
+:is(.step-details, .sd-form-scope) .param-json {
   padding: var(--space-3);
   resize: vertical;
   field-sizing: content;
@@ -182,25 +224,33 @@ SPDX-License-Identifier: Apache-2.0
   background: var(--sunken);
 }
 /* Selects and pickers look and size like inputs: one height, one text inset. */
-.step-details .param-control .choice-field {
+:is(.step-details, .sd-form-scope) .param-control .choice-field {
   min-height: var(--sd-control);
   background: var(--sunken);
 }
-.step-details .param-control .choice-field:hover {
+:is(.step-details, .sd-form-scope) .param-control .choice-field:hover {
   border-color: var(--field-border-hover);
 }
-.step-details .param-control .choice-field:focus-within {
+:is(.step-details, .sd-form-scope) .param-control .choice-field:focus-within {
   outline: none;
   border-color: var(--focus);
   box-shadow: 0 0 0 1px var(--focus);
 }
-.step-details .param-control weave-select .choice-field input {
+:is(.step-details, .sd-form-scope)
+  .param-control
+  weave-select
+  .choice-field
+  input {
   min-height: var(--sd-control);
   margin-block: -1px;
   padding: 0 var(--space-3);
   font: var(--type-body);
 }
-.step-details .param-control weave-select .choice-field button {
+:is(.step-details, .sd-form-scope)
+  .param-control
+  weave-select
+  .choice-field
+  button {
   flex: none;
   width: var(--sd-control);
   min-width: var(--sd-control);
@@ -209,41 +259,47 @@ SPDX-License-Identifier: Apache-2.0
   margin: -1px -1px -1px 0;
   color: var(--muted);
 }
-.step-details weave-select .choice-option {
+:is(.step-details, .sd-form-scope) weave-select .choice-option {
   min-width: var(--sd-target);
   min-height: var(--sd-row);
 }
 /* The data picker of a Mapped field is a field like the others: one box at
    the field height, the fields' text, and a toggle as wide as the box is tall.
    In a key-value row it is the row's height, inside the row's own box. */
-.step-details weave-formula-field .ref-combo-field {
+:is(.step-details, .sd-form-scope) weave-formula-field .ref-combo-field {
   grid-template-columns: minmax(0, 1fr) var(--sd-control);
   min-height: var(--sd-control);
   background: var(--sunken);
 }
-.step-details weave-formula-field .ref-combo-field:hover {
+:is(.step-details, .sd-form-scope) weave-formula-field .ref-combo-field:hover {
   border-color: var(--field-border-hover);
 }
-.step-details weave-formula-field .ref-combo-field:focus-within {
+:is(.step-details, .sd-form-scope)
+  weave-formula-field
+  .ref-combo-field:focus-within {
   outline: none;
   border-color: var(--focus);
   box-shadow: 0 0 0 1px var(--focus);
 }
-.step-details .param-control weave-formula-field .ref-combo-field input {
+:is(.step-details, .sd-form-scope)
+  .param-control
+  weave-formula-field
+  .ref-combo-field
+  input {
   min-height: var(--sd-control);
   margin-block: -1px;
   padding: 0 var(--space-3);
   font: var(--type-body);
   background: transparent;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-control
   weave-formula-field
   .ref-combo-field
   input::placeholder {
   color: var(--subtle);
 }
-.step-details weave-formula-field .ref-combo-toggle {
+:is(.step-details, .sd-form-scope) weave-formula-field .ref-combo-toggle {
   width: var(--sd-control);
   min-width: var(--sd-control);
   min-height: var(--sd-control);
@@ -252,7 +308,7 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--muted);
   background: transparent;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
@@ -264,7 +320,7 @@ SPDX-License-Identifier: Apache-2.0
   background: transparent;
   box-shadow: none;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
@@ -273,7 +329,7 @@ SPDX-License-Identifier: Apache-2.0
   input {
   min-height: var(--sd-row);
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
@@ -285,11 +341,14 @@ SPDX-License-Identifier: Apache-2.0
 }
 /* A choice made in place is as wide as its content. */
 @supports (field-sizing: content) {
-  .step-details weave-select.param-select {
+  :is(.step-details, .sd-form-scope) weave-select.param-select {
     width: fit-content;
     max-width: 100%;
   }
-  .step-details weave-select.param-select .choice-field input {
+  :is(.step-details, .sd-form-scope)
+    weave-select.param-select
+    .choice-field
+    input {
     flex: 0 1 auto;
     width: auto;
     min-width: 8ch;
@@ -302,7 +361,9 @@ SPDX-License-Identifier: Apache-2.0
   gap: var(--space-2);
   align-items: center;
 }
+/* The unit keeps its words whole; the number box gives way. */
 .param-unit {
+  flex: none;
   width: auto;
 }
 /* A number or a duration in one unit names it inside its box, at the end. */
@@ -327,7 +388,7 @@ SPDX-License-Identifier: Apache-2.0
   font: var(--type-caption);
   color: var(--muted);
 }
-.step-details button.param-switch {
+:is(.step-details, .sd-form-scope) button.param-switch {
   width: 32px;
   min-height: var(--sd-target);
   padding: 0;
@@ -387,7 +448,7 @@ SPDX-License-Identifier: Apache-2.0
   border-radius: var(--radius-sm);
   background: var(--sunken);
 }
-.step-details .param-segments button[role="radio"] {
+:is(.step-details, .sd-form-scope) .param-segments button[role="radio"] {
   position: relative;
   z-index: 0;
   min-width: var(--sd-target);
@@ -398,31 +459,39 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--muted);
   font: var(--type-label);
 }
-.step-details .param-segments button[role="radio"]::before {
+:is(.step-details, .sd-form-scope)
+  .param-segments
+  button[role="radio"]::before {
   content: "";
   position: absolute;
   inset: var(--space-1) 0;
   z-index: -1;
   border-radius: var(--radius-xs);
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-segments
   button[role="radio"]:is(:hover, [aria-checked="true"]) {
   color: var(--text);
 }
-.step-details .param-segments button[role="radio"]:disabled {
+:is(.step-details, .sd-form-scope)
+  .param-segments
+  button[role="radio"]:disabled {
   color: var(--disabled-ink);
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-segments
   button[role="radio"][aria-checked="true"]::before {
   background: var(--hover);
   box-shadow: inset 0 0 0 1px var(--border-hover);
 }
-.step-details .param-segments button[role="radio"]:focus-visible {
+:is(.step-details, .sd-form-scope)
+  .param-segments
+  button[role="radio"]:focus-visible {
   outline: none;
 }
-.step-details .param-segments button[role="radio"]:focus-visible::before {
+:is(.step-details, .sd-form-scope)
+  .param-segments
+  button[role="radio"]:focus-visible::before {
   box-shadow: 0 0 0 2px var(--focus);
 }
 /* The line under a control: a message, a preview or a hint. It wraps. */
@@ -466,7 +535,7 @@ SPDX-License-Identifier: Apache-2.0
 /* A fix Studio knows ends on the form's right edge, centered on the
    message's first line; its target follows the density, and the message
    moves down to its center instead of the fix reaching into the control. */
-.step-details .param-line > button.param-fix {
+:is(.step-details, .sd-form-scope) .param-line > button.param-fix {
   flex: none;
   min-height: var(--sd-label-row);
   padding: 0 0 0 var(--space-2);
@@ -476,7 +545,9 @@ SPDX-License-Identifier: Apache-2.0
   text-decoration: none;
 }
 /* Like the form's other actions: underlined on hover and focus only. */
-.step-details .param-line > button.param-fix:is(:hover, :focus-visible) {
+:is(.step-details, .sd-form-scope)
+  .param-line
+  > button.param-fix:is(:hover, :focus-visible) {
   text-decoration: underline;
 }
 .param-line:has(> .param-fix) > .param-line-text {
@@ -490,7 +561,7 @@ SPDX-License-Identifier: Apache-2.0
   display: inline-flex;
 }
 /* The help button keeps its target around its 24 px place. */
-.step-details button.toggletip-button {
+:is(.step-details, .sd-form-scope) button.toggletip-button {
   width: var(--sd-target);
   min-width: var(--sd-target);
   min-height: var(--sd-target);
@@ -535,7 +606,7 @@ SPDX-License-Identifier: Apache-2.0
 .ref-sep {
   color: var(--subtle);
 }
-.step-details button.ref-pill-button {
+:is(.step-details, .sd-form-scope) button.ref-pill-button {
   width: 100%;
   justify-content: flex-start;
   min-height: var(--sd-control);
@@ -558,23 +629,26 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--muted);
 }
 @media (max-width: 767px), (pointer: coarse) {
-  .step-details
+  :is(.step-details, .sd-form-scope)
     .param-label-row
     > .param-tools
     > weave-row-menu
     .row-menu-toggle,
-  .step-details .param-label-row > .param-tools > button.param-remove,
-  .step-details
+  :is(.step-details, .sd-form-scope)
+    .param-label-row
+    > .param-tools
+    > button.param-remove,
+  :is(.step-details, .sd-form-scope)
     .param-label-row
     > .param-tools
     .param-mode
     button[role="radio"] {
     margin-block: 0;
   }
-  .step-details button.toggletip-button {
+  :is(.step-details, .sd-form-scope) button.toggletip-button {
     margin: 0;
   }
-  .step-details button.param-switch {
+  :is(.step-details, .sd-form-scope) button.param-switch {
     min-width: var(--sd-target);
   }
 }
@@ -687,18 +761,18 @@ SPDX-License-Identifier: Apache-2.0
   grid-row: 2;
   grid-column: 1 / -1;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
   > :is(.param-input, weave-formula-field > .param-input),
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
   > weave-formula-field
   > button.ref-pill-button,
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
@@ -726,7 +800,10 @@ SPDX-License-Identifier: Apache-2.0
   .param-row-value > .param > .param-line {
     grid-row: 3;
   }
-  .step-details .param-row-value .param-tools :is(.param-mode, .param-menu) {
+  :is(.step-details, .sd-form-scope)
+    .param-row-value
+    .param-tools
+    :is(.param-mode, .param-menu) {
     opacity: 1;
   }
 }
@@ -762,7 +839,7 @@ SPDX-License-Identifier: Apache-2.0
   > .param-menu {
   opacity: 1;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row.is-card
   > weave-param-field
   > .param
@@ -898,7 +975,7 @@ SPDX-License-Identifier: Apache-2.0
   border-bottom: 1px dashed var(--field-border);
 }
 /* "Add …" actions: accent text with a plus, underlined on hover and focus only. */
-.step-details button.param-add {
+:is(.step-details, .sd-form-scope) button.param-add {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -910,12 +987,12 @@ SPDX-License-Identifier: Apache-2.0
   background: transparent;
   text-decoration: none;
 }
-.step-details button.param-add:is(:hover, :focus-visible) {
+:is(.step-details, .sd-form-scope) button.param-add:is(:hover, :focus-visible) {
   background: transparent;
   text-decoration: underline;
 }
-.step-details button.param-add.is-dashed,
-.step-details button.add-option-button {
+:is(.step-details, .sd-form-scope) button.param-add.is-dashed,
+:is(.step-details, .sd-form-scope) button.add-option-button {
   padding: 0 var(--space-3);
   font: var(--type-button);
   color: var(--text);
@@ -923,8 +1000,9 @@ SPDX-License-Identifier: Apache-2.0
   border: 1px dashed var(--field-border);
   border-radius: var(--radius-sm);
 }
-.step-details button.param-add.is-dashed:is(:hover, :focus-visible),
-.step-details button.add-option-button:hover {
+:is(.step-details, .sd-form-scope)
+  button.param-add.is-dashed:is(:hover, :focus-visible),
+:is(.step-details, .sd-form-scope) button.add-option-button:hover {
   text-decoration: none;
   background: var(--hover);
   border-color: var(--field-border-hover);
@@ -938,7 +1016,7 @@ SPDX-License-Identifier: Apache-2.0
   display: inline-block;
   align-self: flex-start;
 }
-.step-details button.add-option-button {
+:is(.step-details, .sd-form-scope) button.add-option-button {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -963,7 +1041,7 @@ SPDX-License-Identifier: Apache-2.0
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
 }
-.step-details button.add-option-item {
+:is(.step-details, .sd-form-scope) button.add-option-item {
   display: flex;
   justify-content: flex-start;
   align-items: baseline;
@@ -976,7 +1054,8 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--text);
   text-align: left;
 }
-.step-details button.add-option-item:is(:hover, :focus-visible) {
+:is(.step-details, .sd-form-scope)
+  button.add-option-item:is(:hover, :focus-visible) {
   background: var(--hover);
 }
 .add-option-item b {
@@ -1021,19 +1100,19 @@ SPDX-License-Identifier: Apache-2.0
 .param-kv-name,
 .param-row-value > .param > .param-control > .param-input,
 .param-row-value > .param > .param-control > weave-formula-field > .param-input,
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
   > weave-formula-field
   > button.ref-pill-button,
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
   > weave-select
   .choice-field,
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
@@ -1042,7 +1121,7 @@ SPDX-License-Identifier: Apache-2.0
   :is(input, button) {
   min-height: var(--sd-row);
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .param-row-value
   > .param
   > .param-control
@@ -1054,7 +1133,7 @@ SPDX-License-Identifier: Apache-2.0
   height: var(--sd-row);
 }
 @media (max-width: 600px) {
-  .step-details button.add-option-item {
+  :is(.step-details, .sd-form-scope) button.add-option-item {
     flex-direction: column;
     align-items: flex-start;
   }
@@ -1128,7 +1207,7 @@ weave-param-field[data-drop-hover]:is(
   flex: 1;
   min-width: 0;
 }
-.step-details button.param-open {
+:is(.step-details, .sd-form-scope) button.param-open {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -1137,10 +1216,11 @@ weave-param-field[data-drop-hover]:is(
   white-space: nowrap;
   text-decoration: none;
 }
-.step-details button.param-open:is(:hover, :focus-visible) {
+:is(.step-details, .sd-form-scope)
+  button.param-open:is(:hover, :focus-visible) {
   text-decoration: underline;
 }
-.step-details .param-resource-modes button[role="radio"] {
+:is(.step-details, .sd-form-scope) .param-resource-modes button[role="radio"] {
   min-height: var(--sd-control);
   min-width: var(--sd-target);
 }
@@ -1246,8 +1326,8 @@ weave-url-field {
   min-width: 0;
 }
 /* The text box fills the field box, border included, so it is a full target. */
-.step-details .param-url-input,
-.step-details .param-url-input:is(:hover, :focus-visible) {
+:is(.step-details, .sd-form-scope) .param-url-input,
+:is(.step-details, .sd-form-scope) .param-url-input:is(:hover, :focus-visible) {
   min-height: var(--sd-control);
   margin-block: -1px;
   padding: 0 var(--space-3) 0 var(--space-2);
@@ -1358,15 +1438,17 @@ weave-param-field.is-conditions > .param > .param-line {
   grid-row: 2;
   grid-column: 1 / -1;
 }
-.step-details .condition-editor.is-compact {
+:is(.step-details, .sd-form-scope) .condition-editor.is-compact {
   gap: var(--space-2);
 }
-.step-details .condition-editor.is-compact .condition-intro {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-intro {
   gap: var(--space-2);
   font: var(--type-small);
   color: var(--muted);
 }
-.step-details .condition-editor.is-compact .condition-row {
+:is(.step-details, .sd-form-scope) .condition-editor.is-compact .condition-row {
   grid-template-columns:
     minmax(0, calc(var(--sd-row) + 122px)) minmax(0, 1fr)
     var(--sd-target);
@@ -1379,13 +1461,18 @@ weave-param-field.is-conditions > .param > .param-line {
   border-radius: 0;
   background: transparent;
 }
-.step-details .condition-editor.is-compact .condition-row + .condition-row {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-row
+  + .condition-row {
   padding-top: var(--space-2);
   border-top: 1px solid var(--line);
 }
 /* Phone width: the test on a line of its own, then the value and trash. */
 @container (max-width: 399px) {
-  .step-details .condition-editor.is-compact .condition-row {
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    .condition-row {
     grid-template-columns: minmax(0, 1fr) var(--sd-target);
     grid-template-areas:
       "data data"
@@ -1394,20 +1481,27 @@ weave-param-field.is-conditions > .param > .param-line {
   }
 }
 @container (min-width: 480px) {
-  .step-details .condition-editor.is-compact .condition-row {
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    .condition-row {
     grid-template-columns:
       minmax(0, 1fr) minmax(0, calc(var(--space-6) + 122px))
       minmax(0, 0.65fr) var(--sd-target);
     grid-template-areas: "data test value remove";
   }
-  .step-details .condition-editor.is-compact .condition-row + .condition-row {
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    .condition-row
+    + .condition-row {
     padding-top: 0;
     border-top: 0;
   }
 }
 @media (max-width: 767px), (pointer: coarse) {
   @container (min-width: 480px) and (max-width: 679px) {
-    .step-details .condition-editor.is-compact .condition-row {
+    :is(.step-details, .sd-form-scope)
+      .condition-editor.is-compact
+      .condition-row {
       grid-template-columns:
         minmax(0, calc(var(--sd-row) + 122px)) minmax(0, 1fr)
         var(--sd-target);
@@ -1415,20 +1509,27 @@ weave-param-field.is-conditions > .param > .param-line {
         "data data data"
         "test value remove";
     }
-    .step-details .condition-editor.is-compact .condition-row + .condition-row {
+    :is(.step-details, .sd-form-scope)
+      .condition-editor.is-compact
+      .condition-row
+      + .condition-row {
       padding-top: var(--space-2);
       border-top: 1px solid var(--line);
     }
   }
   @container (min-width: 680px) {
-    .step-details .condition-editor.is-compact .condition-row {
+    :is(.step-details, .sd-form-scope)
+      .condition-editor.is-compact
+      .condition-row {
       grid-template-columns:
         minmax(0, 1fr) minmax(0, calc(var(--sd-row) + 122px))
         minmax(0, 0.65fr) var(--sd-target);
     }
   }
 }
-.step-details .condition-editor.is-compact .condition-remove {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-remove {
   width: var(--sd-target);
   min-width: var(--sd-target);
   height: var(--sd-target);
@@ -1437,7 +1538,7 @@ weave-param-field.is-conditions > .param > .param-line {
   color: var(--muted);
 }
 /* Every box in a row: the row height, the field look, one focus ring. */
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   :is(.ref-combo-field, .choice-field, .condition-value) {
   min-height: var(--sd-row);
@@ -1445,24 +1546,26 @@ weave-param-field.is-conditions > .param > .param-line {
   border: 1px solid var(--field-border);
   border-radius: var(--radius-sm);
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   :is(.ref-combo-field, .choice-field, .condition-value):hover {
   border-color: var(--field-border-hover);
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   :is(.ref-combo-field, .choice-field, .condition-value):focus-within {
   outline: none;
   border-color: var(--focus);
   box-shadow: 0 0 0 1px var(--focus);
 }
-.step-details .condition-editor.is-compact .condition-value {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-value {
   position: relative;
   display: flex;
   align-items: stretch;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   .condition-value
   :is(.ref-combo-field, .choice-field) {
@@ -1471,14 +1574,16 @@ weave-param-field.is-conditions > .param > .param-line {
   background: transparent;
   box-shadow: none;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   .condition-value
   > :is(weave-select, .condition-data) {
   flex: 1;
   min-width: 0;
 }
-.step-details .condition-editor.is-compact .condition-input {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-input {
   flex: 1;
   width: 0;
   min-width: 0;
@@ -1495,16 +1600,20 @@ weave-param-field.is-conditions > .param > .param-line {
      whole text, and while it has focus the text scrolls. */
   text-overflow: ellipsis;
 }
-.step-details .condition-editor.is-compact .condition-input::placeholder {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-input::placeholder {
   color: var(--subtle);
 }
 /* Text boxes and toggles fill their field box, border included, so each is
    a full row-height target. The test's toggle is narrower with a fine
    pointer, so its words fit. */
-.step-details .condition-editor.is-compact .ref-combo-field {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .ref-combo-field {
   grid-template-columns: minmax(0, 1fr) var(--sd-row);
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   :is(.ref-combo-field, .choice-field)
   input {
@@ -1515,7 +1624,7 @@ weave-param-field.is-conditions > .param > .param-line {
   font: var(--type-body);
   background: transparent;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   :is(.ref-combo-toggle, .choice-field button) {
   width: var(--sd-row);
@@ -1527,7 +1636,7 @@ weave-param-field.is-conditions > .param > .param-line {
   color: var(--muted);
   background: transparent;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   .condition-operator
   .choice-field
@@ -1536,7 +1645,7 @@ weave-param-field.is-conditions > .param > .param-line {
   min-width: var(--space-6);
 }
 @media (max-width: 767px), (pointer: coarse) {
-  .step-details
+  :is(.step-details, .sd-form-scope)
     .condition-editor.is-compact
     .condition-operator
     .choice-field
@@ -1553,10 +1662,16 @@ weave-param-field.is-conditions > .param > .param-line {
   grid-area: data;
   min-width: 0;
 }
-.step-details .condition-editor.is-compact .condition-data .ref-combo-field {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-data
+  .ref-combo-field {
   grid-template-columns: minmax(0, 1fr);
 }
-.step-details .condition-editor.is-compact .condition-data .ref-combo-toggle {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-data
+  .ref-combo-toggle {
   display: none;
 }
 .condition-editor.is-compact .condition-pill {
@@ -1592,7 +1707,7 @@ weave-param-field.is-conditions > .param > .param-line {
   cursor: pointer;
 }
 /* Only problems show under the data: the type is in the pill and the list. */
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   .ref-combo-hint:not(.warning, .error) {
   display: none;
@@ -1611,7 +1726,7 @@ weave-param-field.is-conditions > .param > .param-line {
   > .condition-mode {
   opacity: 0;
 }
-.step-details
+:is(.step-details, .sd-form-scope)
   .condition-editor.is-compact
   .condition-mode
   button[role="radio"] {
@@ -1630,7 +1745,7 @@ weave-param-field.is-conditions > .param > .param-line {
     margin-right: var(--space-1);
     padding: 0;
   }
-  .step-details
+  :is(.step-details, .sd-form-scope)
     .condition-editor.is-compact
     .condition-mode
     button[role="radio"] {
@@ -1653,7 +1768,7 @@ weave-param-field.is-conditions > .param > .param-line {
 }
 @media (max-width: 767px), (pointer: coarse) {
   @container condition-value (max-width: 219px) {
-    .step-details
+    :is(.step-details, .sd-form-scope)
       .condition-editor.is-compact
       .condition-mode
       button[role="radio"] {
@@ -1672,19 +1787,26 @@ weave-param-field.is-conditions > .param > .param-line {
     display: none;
   }
 }
-.step-details .condition-editor.is-compact .condition-join .choice-field {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-join
+  .choice-field {
   min-height: var(--sd-row);
 }
-.step-details .condition-editor.is-compact weave-select.condition-join {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  weave-select.condition-join {
   width: calc(var(--sd-row) + 160px);
   max-width: 100%;
 }
 @supports (field-sizing: content) {
-  .step-details .condition-editor.is-compact weave-select.condition-join {
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    weave-select.condition-join {
     width: fit-content;
     max-width: 100%;
   }
-  .step-details
+  :is(.step-details, .sd-form-scope)
     .condition-editor.is-compact
     weave-select.condition-join
     .choice-field
@@ -1694,26 +1816,33 @@ weave-param-field.is-conditions > .param > .param-line {
     field-sizing: content;
   }
 }
-.step-details .condition-editor.is-compact .condition-adapted {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-adapted {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
 }
-.step-details .condition-editor.is-compact .condition-adapted > weave-icon {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-adapted
+  > weave-icon {
   flex: none;
   margin-block: 2px;
 }
 /* Add condition and the path's own options share one line. */
-.step-details .condition-editor.is-compact .condition-tools {
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-tools {
   justify-content: flex-start;
   gap: 0 var(--space-4);
 }
 /* The schema designer under its field: the field names it, so its own
    heading is for assistive technology, and its tools start the block. */
-.step-details weave-schema-field .sd-header {
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-header {
   justify-content: flex-start;
 }
-.step-details weave-schema-field .sd-header h3 {
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-header h3 {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1723,33 +1852,114 @@ weave-param-field.is-conditions > .param > .param-line {
 }
 /* Its rows at the form's density: a field per line, the row height, the
    field menu on the row's inner edge. */
-.step-details weave-schema-field .sd,
-.step-details weave-schema-field .sd-rows {
+:is(.step-details, .sd-form-scope) weave-schema-field .sd,
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-rows {
   gap: var(--space-2);
 }
-.step-details weave-schema-field .sd-tools button {
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-tools button {
   min-height: var(--sd-row);
 }
-.step-details weave-schema-field .sd-row {
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-row {
   gap: var(--space-2);
   padding: 0 var(--space-1) 0 var(--space-3);
   border-color: var(--border);
   border-radius: var(--radius-sm);
 }
-.step-details weave-schema-field .sd-row:has(.sd-row-main) {
+:is(.step-details, .sd-form-scope)
+  weave-schema-field
+  .sd-row:has(.sd-row-main) {
   padding-bottom: var(--space-3);
 }
-.step-details weave-schema-field .sd-summary {
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-summary {
   min-height: var(--sd-row);
   padding: 0;
 }
-.step-details weave-schema-field .sd-row-heading .row-menu-toggle {
+:is(.step-details, .sd-form-scope)
+  weave-schema-field
+  .sd-row-heading
+  .row-menu-toggle {
   width: var(--sd-target);
   min-width: var(--sd-target);
   height: var(--sd-target);
   min-height: var(--sd-target);
 }
 /* The "Only allow these fields" box starts on the pane's left edge. */
-.step-details weave-schema-field .sd-root-options input[type="checkbox"] {
+:is(.step-details, .sd-form-scope)
+  weave-schema-field
+  .sd-root-options
+  input[type="checkbox"] {
   margin-inline-start: 0;
+}
+
+/* Workflow settings: the form, then the workflow's connection slots and AI
+   profiles, on the dialog's one left edge and one right edge. */
+.sd-form-scope {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+.wf-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sd-field-inner);
+  min-width: 0;
+}
+.wf-section h3 {
+  display: flex;
+  align-items: center;
+  min-height: var(--sd-label-row);
+  margin: 0;
+}
+.wf-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.wf-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+}
+.wf-row + .wf-row {
+  border-top: 1px solid var(--border);
+}
+.wf-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+/* A long line breaks between its parts (at " · "), never inside a name. */
+.wf-title {
+  font: var(--type-small);
+  color: var(--text);
+}
+.wf-part {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.wf-title code {
+  font: var(--type-mono);
+}
+.wf-meta {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.sd-form-scope .wf-row > weave-row-menu {
+  flex: none;
+}
+.sd-form-scope .wf-row > weave-row-menu .row-menu-toggle {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
 }

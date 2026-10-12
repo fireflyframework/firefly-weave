@@ -116,10 +116,16 @@ export async function contentEdges(
  * Visible text inside `scope` that its own box cuts off: leaf text, and the
  * text a person sees in a text box. Text may end in "…" only where a tooltip
  * with the whole text is reachable: an element with a title that takes the
- * pointer (a tooltip on a `pointer-events: none` layer never shows).
+ * pointer (a tooltip on a `pointer-events: none` layer never shows). Only
+ * text inside `within` counts: step details' shown panes unless another
+ * selector is given ("" for all of `scope`).
  */
-export async function clippedText(scope: Locator): Promise<string[]> {
-  return scope.evaluate((container) => {
+export async function clippedText(
+  scope: Locator,
+  within = ".sd-pane:not([hidden])",
+): Promise<string[]> {
+  return scope.evaluate((container, within) => {
+    const inside = within ? `${within} ` : "";
     const painted = (element: Element) => {
       const match = getComputedStyle(element).color.match(/rgba?\(([^)]*)\)/);
       const parts = match ? match[1].split(",").map(Number) : [];
@@ -133,7 +139,7 @@ export async function clippedText(scope: Locator): Promise<string[]> {
       element.getClientRects().length > 0 && !element.closest(".sr-only");
     const text = [
       ...container.querySelectorAll<HTMLElement>(
-        ".sd-pane:not([hidden]) :is(p, span, label, button, strong, b, h3, h4, small)",
+        `${inside}:is(p, span, label, button, strong, b, h2, h3, h4, small, code)`,
       ),
     ]
       .filter((element) => {
@@ -151,7 +157,7 @@ export async function clippedText(scope: Locator): Promise<string[]> {
       .map((element) => element.innerText.trim().slice(0, 80));
     const boxes = [
       ...container.querySelectorAll<HTMLInputElement>(
-        ".sd-pane:not([hidden]) input:not([type=checkbox], [type=radio], [type=hidden])",
+        `${inside}input:not([type=checkbox], [type=radio], [type=hidden])`,
       ),
     ]
       .filter(
@@ -170,7 +176,7 @@ export async function clippedText(scope: Locator): Promise<string[]> {
       )
       .map((input) => input.value.slice(0, 80));
     return [...text, ...boxes];
-  });
+  }, within);
 }
 
 /** Whether two boxes overlap by more than a hairline. */

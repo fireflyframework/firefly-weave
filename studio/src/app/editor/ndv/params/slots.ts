@@ -43,6 +43,13 @@ export function slotsOf(workflow: Workflow): Slot[] {
     required: !isObject(value) || value["required"] !== false,
   }));
 }
+/** Who uses a slot or a profile: "Used by lookup", "Used by 2 steps", "No step uses it". */
+export function usedBy(steps: readonly string[]): string {
+  if (!steps.length) return "No step uses it";
+  return steps.length === 1
+    ? `Used by ${steps[0]}`
+    : `Used by ${steps.length} steps`;
+}
 export function slotBase(connector: string): string {
   return connector.split("@")[0].replace(/^weave-/, "") || "connection";
 }

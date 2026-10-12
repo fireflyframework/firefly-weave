@@ -32,15 +32,8 @@ weave-step-details {
   background: var(--scrim);
 }
 .step-details {
-  /* Density. On desktop with a fine pointer step details follows the
-     reference's compact rhythm; below 768 px and for coarse pointers it
-     keeps 44 px touch targets. */
-  --sd-control: var(--control-md); /* fields, selects and pickers */
-  --sd-row: var(--control-sm); /* key-value and data rows, menu rows */
-  --sd-target: var(--control-sm); /* icon buttons and small toggles */
-  --sd-label-row: var(--space-6);
-  --sd-field-gap: var(--space-3);
-  --sd-field-inner: var(--space-1);
+  /* Density (--sd-control, --sd-row, --sd-target and the field rhythm) is
+     set in params/params.css, which forms outside step details share. */
   position: fixed;
   --sd-inset: var(--space-6);
   inset: var(--shell-header) 0 0;
@@ -304,14 +297,6 @@ weave-step-details {
   }
 }
 @media (max-width: 767px), (pointer: coarse) {
-  .step-details {
-    --sd-control: var(--control-touch);
-    --sd-row: var(--control-touch);
-    --sd-target: var(--control-touch);
-    --sd-label-row: var(--control-touch);
-    --sd-field-gap: var(--space-4);
-    --sd-field-inner: var(--space-2);
-  }
   .sd-top {
     min-height: var(--control-touch);
   }

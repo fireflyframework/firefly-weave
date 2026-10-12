@@ -88,6 +88,17 @@ import type { App } from "../app";
           <span class="tag version-badge">{{
             h.model.definition.metadata.version
           }}</span>
+          @if (h.stepDetailsOn()) {
+            <button
+              type="button"
+              class="icon-button workflow-settings-button"
+              aria-label="Workflow settings"
+              title="Workflow settings"
+              (click)="h.stepDetails.openWorkflowSettings()"
+            >
+              <weave-icon name="settings" [size]="16" />
+            </button>
+          }
           @if (h.statusChip; as chip) {
             <span
               class="pill status-chip"

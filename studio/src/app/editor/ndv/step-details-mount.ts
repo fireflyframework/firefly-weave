@@ -16,8 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Puts step details on screen for the designer: the dialog while a request
-// is open, one editing controller per opened workflow, and the documents of
-// the workflow's owned actions kept current on every change.
+// is open, workflow settings while they are open, one editing controller per
+// opened workflow, and the documents of the workflow's owned actions kept
+// current on every change.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -37,20 +38,28 @@ import { StepDetailsController } from "./step-details-controller";
 import type { StepDetailsHost } from "./step-details-host";
 import { StepDetailsService } from "./step-details-service";
 import { loadKindRegistrations } from "./kinds";
+import { WorkflowSettingsDialog } from "./workflow-settings-dialog";
 
 @Component({
   selector: "weave-step-details-mount",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [StepDetails],
+  imports: [StepDetails, WorkflowSettingsDialog],
   template: `@if (ready() && details.request(); as request) {
-    <weave-step-details
-      [host]="host()"
-      [request]="request"
-      [controller]="controller()"
-      (closed)="closed($event)"
-    />
-  }`,
+      <weave-step-details
+        [host]="host()"
+        [request]="request"
+        [controller]="controller()"
+        (closed)="closed($event)"
+      />
+    }
+    @if (ready() && details.workflowSettings()) {
+      <weave-workflow-settings-dialog
+        [host]="host()"
+        [controller]="controller()"
+        (closed)="details.closeWorkflowSettings()"
+      />
+    }`,
 })
 export class StepDetailsMount {
   host = input.required<StepDetailsHost>();
@@ -87,7 +96,11 @@ export class StepDetailsMount {
         // details follow a rename back.
         this.made?.controller.prunePending(this.details.request()?.target);
       });
-      if (!this.ready() || !this.details.request()) return;
+      if (
+        !this.ready() ||
+        (!this.details.request() && !this.details.workflowSettings())
+      )
+        return;
       const controller = this.controller();
       const model = host.model;
       const opened = model.opened;

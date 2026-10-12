@@ -1606,32 +1606,46 @@ export class FormSession {
     this.host.openConnectionDialog(name || undefined);
   }
   async renameSlot(spec: ParamSpec): Promise<void> {
-    if (
-      spec.type !== "connection" ||
-      !this.editable(spec) ||
-      !this.hooks.prompt
-    )
-      return;
+    if (spec.type !== "connection" || !this.editable(spec)) return;
     const value = this.read(spec);
     const from =
       value.mode === "fixed" && typeof value.value === "string"
         ? value.value
         : "";
+    const connector = this.connector(spec);
+    const owns = this.owns(spec);
+    await this.renameSlotFrom(
+      from,
+      () => owns() && this.editable(spec) && connector === this.connector(spec),
+    );
+  }
+  /** Renames a slot from workflow settings; every step that uses it follows. */
+  async renameWorkflowSlot(from: string): Promise<void> {
+    if (!this.isCurrent() || this.controller.readOnlyReason()) return;
+    await this.renameSlotFrom(
+      from,
+      () => this.isCurrent() && !this.controller.readOnlyReason(),
+    );
+  }
+  private async renameSlotFrom(
+    from: string,
+    valid: () => boolean,
+  ): Promise<void> {
     if (
+      !this.hooks.prompt ||
       !from ||
       !slotsOf(this.host.model.definition).some((slot) => slot.name === from)
     )
       return;
-    const original = canonicalJson(
-      (
-        this.host.model.definition.spec["connections"] as Record<
-          string,
-          unknown
-        >
-      )[from],
-    );
-    const connector = this.connector(spec);
-    const owns = this.owns(spec);
+    const declared = () =>
+      canonicalJson(
+        (
+          this.host.model.definition.spec["connections"] as
+            | Record<string, unknown>
+            | undefined
+        )?.[from],
+      );
+    const original = declared();
     const conflict = (text: string) => {
       const next = normalizeIdentifier(text);
       if (!next) return "Enter a name.";
@@ -1655,18 +1669,7 @@ export class FormSession {
     });
     const to = typed === null ? "" : normalizeIdentifier(typed);
     if (!to || to === from) return;
-    const current = () =>
-      owns() &&
-      this.editable(spec) &&
-      connector === this.connector(spec) &&
-      !conflict(to) &&
-      canonicalJson(
-        (
-          this.host.model.definition.spec["connections"] as
-            | Record<string, unknown>
-            | undefined
-        )?.[from],
-      ) === original;
+    const current = () => valid() && !conflict(to) && declared() === original;
     if (!current()) return;
     let accepted = false;
     this.host.perform(() => {
@@ -1689,6 +1692,40 @@ export class FormSession {
       accepted = true;
     });
     if (accepted) this.announce(`Renamed the slot to ${to}.`);
+  }
+  /** The steps that use a slot of the workflow, in the order they are written. */
+  slotUsers(name: string): string[] {
+    return allSteps(this.host.model.definition)
+      .filter((step) => step["connection"] === name)
+      .map((step) => step.id);
+  }
+  /** Removes a slot no step uses, as one undo step. */
+  removeWorkflowSlot(name: string): void {
+    if (
+      !this.isCurrent() ||
+      this.controller.readOnlyReason() ||
+      this.slotUsers(name).length
+    )
+      return;
+    const connections = this.host.model.definition.spec["connections"];
+    if (
+      !connections ||
+      typeof connections !== "object" ||
+      Array.isArray(connections) ||
+      !Object.hasOwn(connections, name)
+    )
+      return;
+    let accepted = false;
+    this.host.perform(() => {
+      const document = structuredClone(this.host.model.definition);
+      const rest = { ...(connections as Record<string, unknown>) };
+      delete rest[name];
+      if (Object.keys(rest).length) document.spec["connections"] = rest;
+      else delete document.spec["connections"];
+      this.host.model.updateWorkflow(document);
+      accepted = true;
+    });
+    if (accepted) this.announce(`Removed the slot ${name}.`);
   }
 
   // ---------------------------------------------------------- options

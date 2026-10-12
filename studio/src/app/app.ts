@@ -6504,6 +6504,10 @@ export class App implements CanvasHost {
     this.message = `Inserted ${inserted}, ${action.label}.`;
     return inserted;
   }
+  /** True while step details replace the inspector ("Try the new editor"). */
+  stepDetailsOn(): boolean {
+    return stepDetailsEnabled(this as StepDetailsHost);
+  }
   /** Where the simulated run is, for a node's accessible name. */
   simulationNote(id: string) {
     const nodes = this.simNodes;

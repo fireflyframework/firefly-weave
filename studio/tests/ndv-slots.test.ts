@@ -43,6 +43,7 @@ import {
   renamedConnections,
   slotBase,
   slotsOf,
+  usedBy,
 } from "../src/app/editor/ndv/params/slots";
 
 const fixture = parse(
@@ -428,5 +429,112 @@ describe("resource choice ownership", () => {
         { value: "replacement@2.0.0", label: "Replacement" },
       ]);
     }
+  });
+});
+
+describe("slots in workflow settings", () => {
+  const settings = (f: ReturnType<typeof setup>) => {
+    const announcements: string[] = [];
+    let answer!: (value: string | null) => void;
+    const session = new FormSession(
+      f.host,
+      f.controller,
+      openRequest("$workflow"),
+      {
+        confirm: async () => true,
+        announce: (text) => announcements.push(text),
+        prompt: () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      },
+    );
+    return {
+      session,
+      announcements,
+      answer: (value: string | null) => answer(value),
+    };
+  };
+  const declare = (f: ReturnType<typeof setup>, name: string) => {
+    const document = structuredClone(f.model.definition);
+    document.spec["connections"] = {
+      ...(document.spec["connections"] as Record<string, unknown>),
+      [name]: { connector: "weave-http@2.0.0", required: false },
+    };
+    f.model.updateWorkflow(document);
+  };
+  it("says who uses each slot", () => {
+    const f = setup();
+    const w = settings(f);
+    expect(w.session.slotUsers("ledger-db")).toEqual(["lookup"]);
+    expect(w.session.slotUsers("ai")).toEqual(["summarize"]);
+    expect(w.session.slotUsers("nobody")).toEqual([]);
+    expect(usedBy([])).toBe("No step uses it");
+    expect(usedBy(["lookup"])).toBe("Used by lookup");
+    expect(usedBy(["lookup", "notify"])).toBe("Used by 2 steps");
+  });
+  it("removes a slot no step uses, as one undo step, and keeps one in use", () => {
+    const f = setup();
+    declare(f, "spare");
+    const w = settings(f);
+    const before = f.model.source;
+    w.session.removeWorkflowSlot("ledger-db");
+    expect(f.model.source).toBe(before);
+    w.session.removeWorkflowSlot("spare");
+    expect(slotsOf(f.model.definition).map((slot) => slot.name)).toEqual([
+      "ledger-db",
+    ]);
+    expect(f.model.source).not.toContain("spare");
+    expect(w.announcements).toEqual(["Removed the slot spare."]);
+    f.model.undo();
+    expect(f.model.source).toBe(before);
+  });
+  it("removes the last slot with its connections", () => {
+    const f = setup();
+    const document = structuredClone(f.model.definition);
+    document.spec["connections"] = { spare: { connector: "weave-http@2.0.0" } };
+    f.model.updateWorkflow(document);
+    settings(f).session.removeWorkflowSlot("spare");
+    expect(f.model.definition.spec["connections"]).toBeUndefined();
+    expect(f.model.source).not.toMatch(/^\s*connections:/m);
+  });
+  it("never removes or renames a slot while the workflow can't change", async () => {
+    const f = setup();
+    declare(f, "spare");
+    f.host.editingLocked = true;
+    const w = settings(f);
+    const before = f.model.source;
+    w.session.removeWorkflowSlot("spare");
+    await w.session.renameWorkflowSlot("ledger-db");
+    expect(f.model.source).toBe(before);
+    expect(w.announcements).toEqual([]);
+  });
+  it("renames a slot from workflow settings, and the steps that use it follow", async () => {
+    const f = setup();
+    const w = settings(f);
+    const before = f.model.source;
+    const pending = w.session.renameWorkflowSlot("ledger-db");
+    w.answer("Orders DB");
+    await pending;
+    expect(slotsOf(f.model.definition).map((slot) => slot.name)).toEqual([
+      "orders-db",
+    ]);
+    expect(w.session.slotUsers("orders-db")).toEqual(["lookup"]);
+    expect(w.announcements).toEqual(["Renamed the slot to orders-db."]);
+    f.model.undo();
+    expect(f.model.source).toBe(before);
+  });
+  it("drops a rename whose slot changed while the name was asked", async () => {
+    const f = setup();
+    const w = settings(f);
+    const pending = w.session.renameWorkflowSlot("ledger-db");
+    (f.model.definition.spec["connections"] as Record<string, unknown>)[
+      "ledger-db"
+    ] = { connector: "weave-http@1.0.0" };
+    const before = JSON.stringify(f.model.definition);
+    w.answer("orders-db");
+    await pending;
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(w.announcements).toEqual([]);
   });
 });

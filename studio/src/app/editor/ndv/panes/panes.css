@@ -349,10 +349,14 @@ weave-input-pane .pane-count {
   min-height: var(--sd-target);
   min-width: var(--sd-target);
 }
+/* A choice is as tall as a text box: its input and arrow sit on the field's
+   border, as in the parameter form. */
 .step-details .sd-input weave-test-event-pane .choice-field button {
   min-width: var(--sd-control);
   width: var(--sd-control);
+  margin-block: -1px;
 }
 .step-details .sd-input weave-test-event-pane .choice-field input {
   padding-right: calc(var(--sd-control) + var(--space-2));
+  margin-block: -1px;
 }
