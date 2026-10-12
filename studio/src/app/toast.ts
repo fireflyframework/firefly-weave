@@ -44,6 +44,9 @@ export interface Toast extends Required<Omit<ToastOptions, "action">> {
   action?: ToastAction;
 }
 
+/** Step details' bars that stay at its top (see ToastHost.measure). */
+const STEP_DETAILS_BARS =
+  ".step-details .sd-top, .step-details .sd-panes > .sd-segments, .step-details .sd-panes > .sd-main > .sd-head";
 /** How long a toast stays at least when nobody hovers or focuses it. */
 export const toastDuration = 6000;
 /**
@@ -122,6 +125,7 @@ export class ToastService {
     "[class.top]": "top()",
     "[style.--shell-left.px]": "left()",
     "[style.--toast-bottom.px]": "bottom()",
+    "[style.--toast-clear.px]": "clear() || null",
     "(window:resize)": "measure()",
     "(document:focusin)": "focusMoved()",
     "(document:scroll)": "avoidFocus()",
@@ -171,6 +175,8 @@ export class ToastHost implements OnDestroy {
   toasts = inject(ToastService);
   left = signal(224);
   bottom = signal(0);
+  /** The bottom of step details' own top bars while they are open, else 0. */
+  clear = signal(0);
   /** The toast moves to the top while it would cover the focused control. */
   top = signal(false);
   private host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -190,6 +196,8 @@ export class ToastHost implements OnDestroy {
   }
   /** Checks again once the browser has scrolled the control into view. */
   focusMoved() {
+    // Step details may have opened or closed meanwhile.
+    if (this.toasts.current()) this.measure();
     this.avoidFocus();
     requestAnimationFrame(() => this.avoidFocus());
   }
@@ -216,11 +224,12 @@ export class ToastHost implements OnDestroy {
     // The two places, as .toast-region places them: the bottom one 24 px
     // above the diagnostics strip, or 16 px from the window's edge below
     // 768 px, where the toast spans the width whatever the strip; the top
-    // one under the top bar (see .toast-region.top).
+    // one under the top bar, or under step details' own top bars (see
+    // .toast-region.top).
     const narrow = window.innerWidth <= 767;
     const gap = narrow ? 16 : 24;
     const bottomEdge = window.innerHeight - (narrow ? 0 : this.bottom()) - gap;
-    const topEdge = 72 + 16;
+    const topEdge = (this.clear() || 72) + 16;
     const overlap = (from: number, to: number) =>
       target.right > box.left && target.left < box.right
         ? Math.max(0, Math.min(to, target.bottom) - Math.max(from, target.top))
@@ -234,12 +243,22 @@ export class ToastHost implements OnDestroy {
     this.top.set(top);
     this.host.nativeElement.classList.toggle("top", top);
   }
-  /** The sidebar's width and the designer's diagnostics strip height. */
+  /**
+   * The sidebar's width, the designer's diagnostics strip height, and while
+   * step details are open, the bottom of the bars that stay at their top
+   * (the strip with Close, the panes' tabs and the step's header): a toast
+   * at the top goes under them, never over the step's name.
+   */
   measure() {
     const sidebar = document.querySelector(".sidebar");
     const strip = document.querySelector(".diagnostics");
     this.left.set(sidebar?.getBoundingClientRect().width ?? 0);
     this.bottom.set(strip?.getBoundingClientRect().height ?? 0);
+    let clear = 0;
+    for (const bar of document.querySelectorAll(STEP_DETAILS_BARS))
+      if (bar.getClientRects().length)
+        clear = Math.max(clear, bar.getBoundingClientRect().bottom);
+    this.clear.set(Math.round(clear));
   }
   ngOnDestroy() {
     this.toasts.dismiss();

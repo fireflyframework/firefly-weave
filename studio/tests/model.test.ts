@@ -80,6 +80,31 @@ describe("structured workflow authoring", () => {
     expect(model.definition.spec.steps).toHaveLength(2);
     expect(model.definition.spec.steps[0]["connection"]).toBe("primary");
   });
+  it("records into the last undo step, and with no undo step makes none", () => {
+    const model = new StructuredCanvasAdapter();
+    const wait = model.insert("wait");
+    const seconds = () =>
+      model.nodes().map((node) => node.step["durationSeconds"]);
+    const record = (value: number) =>
+      model.amend(() =>
+        model.update(
+          wait.id,
+          JSON.stringify({ ...wait, durationSeconds: value }),
+        ),
+      );
+    model.clearHistory();
+    record(99);
+    // Nothing to undo: the record is part of the workflow as it was opened.
+    expect(model.canUndo).toBe(false);
+    expect(seconds()).toEqual([99]);
+    // With an undo step, the record joins it and goes with it.
+    model.insert("wait");
+    record(5);
+    expect(seconds()).toEqual([5, 60]);
+    model.undo();
+    expect(model.canUndo).toBe(false);
+    expect(seconds()).toEqual([99]);
+  });
   it("keeps the rendered node identity stable until rename teardown", () => {
     const model = new StructuredCanvasAdapter();
     const step = model.insert("wait");

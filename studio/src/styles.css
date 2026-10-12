@@ -175,6 +175,7 @@ SPDX-License-Identifier: Apache-2.0
   --control-sm: 32px;
   --control-md: 36px;
   --control-touch: 44px;
+  --target-min: 24px; /* the smallest pointer target, for a fine pointer */
   /* motion (brand motion tokens) */
   --ease: cubic-bezier(0.22, 1, 0.36, 1); /* enter, the default */
   --ease-move: cubic-bezier(0.65, 0, 0.35, 1);
@@ -1136,8 +1137,11 @@ dd {
   margin: 4px 0 0;
 }
 /* The title and close button stay in view while a long dialog scrolls.
-   Sticky offsets count from inside the panel's 24px top padding. */
+   Sticky offsets count from inside the panel's 24px top padding. The
+   heading's first line sits on the close button's center at every density,
+   and a heading that wraps goes on below it. */
 .modal-header {
+  --modal-close: var(--control-md);
   position: sticky;
   top: -24px;
   z-index: 3;
@@ -1149,8 +1153,18 @@ dd {
   padding: 24px 28px 8px;
   background: var(--surface);
 }
+@media (max-width: 767px), (pointer: coarse) {
+  .modal-header {
+    --modal-close: var(--control-touch);
+  }
+}
+.modal-header > button.icon-button {
+  flex: none;
+  width: var(--modal-close);
+  min-height: var(--modal-close);
+}
 .modal-header h2 {
-  margin: 6px 0 0;
+  margin: calc((var(--modal-close) - 1lh) / 2) 0 0;
   overflow-wrap: anywhere;
 }
 .dialog-message {
@@ -1172,8 +1186,20 @@ dd {
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 24px;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+/* On a phone a dialog's buttons stack: full width and of equal height, in
+   reading order, so the main one comes last, as it does in a row. */
+@media (max-width: 480px) {
+  .modal-panel :is(.dialog-actions, .dialog-footer) {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+  }
+  .modal-panel :is(.dialog-actions, .dialog-footer) > button {
+    margin-inline: 0;
+  }
 }
 /* Notices: warning by default; data-tone="success" | "danger" | "info" |
    "neutral". .error-notice is the danger tone under its old name. */
@@ -2438,9 +2464,26 @@ input[type="file"][hidden] {
 .toast button:hover {
   background: var(--hover);
 }
-/* Over the focused control's place at the bottom: the toast shows on top. */
+/* Dismiss: a 24 px target with a fine pointer. For touch it is a 44 px
+   target that reaches into the toast's padding, so the toast keeps its
+   height and the × stays where it is. */
+.toast button.toast-dismiss {
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+  padding: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .toast button.toast-dismiss {
+    min-width: var(--control-touch);
+    min-height: var(--control-touch);
+    margin: calc((var(--target-min) - var(--control-touch)) / 2);
+  }
+}
+/* Over the focused control's place at the bottom: the toast shows on top,
+   under the top bar, or under step details' own top bars while they are
+   open (--toast-clear, measured by the toast host). */
 .toast-region.top {
-  top: calc(72px + var(--space-4));
+  top: calc(var(--toast-clear, 72px) + var(--space-4));
   bottom: auto;
 }
 @keyframes toast-in {

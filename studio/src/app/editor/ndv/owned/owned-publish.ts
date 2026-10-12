@@ -109,6 +109,19 @@ export interface OwnedPublishPorts {
 }
 
 const count = (n: number): string => `${n} ${n === 1 ? "action" : "actions"}`;
+/**
+ * The main button's words while it asks to publish: "Publish 2 actions and
+ * the workflow". It counts what is left, never an action published already.
+ */
+export function publishLabel(
+  purpose: OwnedPublishPurpose,
+  rows: readonly OwnedRow[],
+): string {
+  const left = count(rows.filter((row) => row.state !== "published").length);
+  return purpose === "publish"
+    ? `Publish ${left} and the workflow`
+    : `Publish ${left} and simulate`;
+}
 const callers = (model: StructuredCanvasAdapter, uses: string): string[] =>
   allSteps(model.definition)
     .filter((step) => step["uses"] === uses)
@@ -171,6 +184,11 @@ export class OwnedPublisher {
   readonly rows = signal<OwnedRow[]>([]);
   readonly phase = signal<OwnedPublishPhase>("preparing");
   readonly summary = signal("");
+  /**
+   * What taken actions are published as, for screen readers: the rows say
+   * it on screen, but a row's note isn't announced when it changes.
+   */
+  readonly proposals = signal("");
   private published = 0;
   /** A fresh key for a row whose content-derived key the platform saw with other content. */
   private readonly keys = new Map<string, string>();
@@ -276,6 +294,7 @@ export class OwnedPublisher {
           for (const row of moving) moveOwned(model, row.uses, row.proposal!);
         }),
       );
+      if (moved) this.proposals.set("");
       if (!moved) {
         // The shell says why; the rows stay as they were.
         this.phase.set(before);
@@ -406,6 +425,12 @@ export class OwnedPublisher {
         ? `Version ${row.version} is already published with different content. Studio publishes this one as version ${versionOfUses(proposal)}.`
         : `Version ${row.version} of ${row.name} is already published with different content. Studio publishes this one as ${nameOfUses(proposal)} ${versionOfUses(proposal)}.`;
     this.set(row.uses, { state: "conflict", proposal, message });
+    this.proposals.set(
+      this.rows()
+        .filter((item) => item.proposal)
+        .map((item) => item.message)
+        .join(" "),
+    );
   }
   private failed(row: OwnedRow, key: string, error: unknown): void {
     const failure = classifyPublishError(error);

@@ -44,6 +44,7 @@ import { reservedActionNames } from "./insert-owned";
 import type { OwnedDocuments } from "./owned-documents";
 import {
   OwnedPublisher,
+  publishLabel,
   type OwnedRow,
   type OwnedRowState,
 } from "./owned-publish";
@@ -106,6 +107,7 @@ let sequence = 0;
         </ul>
       }
       <p class="owned-summary" role="status">{{ publisher.summary() }}</p>
+      <p class="sr-only" aria-live="polite">{{ publisher.proposals() }}</p>
       <!-- One main button through every phase, so focus stays on it while
            the dialog is busy. -->
       <div class="dialog-footer">
@@ -195,13 +197,14 @@ export class OwnedPublishDialog implements OnInit, OnDestroy {
       : "Actions to publish before the simulation";
   }
   confirmLabel(): string {
-    const n = this.publisher.rows().length;
-    const actions = `${n} ${n === 1 ? "action" : "actions"}`;
-    return this.request().purpose === "publish"
-      ? `Publish ${actions} and the workflow`
-      : `Publish ${actions} and simulate`;
+    return publishLabel(this.request().purpose, this.publisher.rows());
   }
-  /** Checking or publishing: the main button waits, and so do Escape and Close. */
+  /**
+   * Checking or publishing: the main button waits. Escape and Close wait
+   * only while publishing (see dismiss); during the first "Checking…" they
+   * still close the dialog, which is harmless: a check changes nothing, and
+   * closing abandons the rest of it.
+   */
   waiting(): boolean {
     const phase = this.publisher.phase();
     return phase === "preparing" || phase === "publishing" || phase === "done";

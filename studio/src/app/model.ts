@@ -401,6 +401,26 @@ export class StructuredCanvasAdapter {
     }
   }
   /**
+   * Records what Studio learned (an action is published) into the last undo
+   * step, so it goes with that step. With no undo step, it changes the
+   * workflow as it was opened: an undo step of its own would change nothing
+   * a person sees. When an edit fails, the workflow is left as it was.
+   */
+  amend<T>(edits: () => T): T {
+    if (this.past.length) return this.continueEdit(this.revision, edits);
+    const before = this.snapshot();
+    const batching = this.batching;
+    this.batching = true;
+    try {
+      return edits();
+    } catch (error) {
+      this.restore(before);
+      throw error;
+    } finally {
+      this.batching = batching;
+    }
+  }
+  /**
    * Counts the workflows opened in this editor. Work that started for one
    * (for example an insert waiting for an action's details) checks it before
    * it changes the workflow open now.

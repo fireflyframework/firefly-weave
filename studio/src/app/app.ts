@@ -6695,10 +6695,13 @@ export class App implements CanvasHost {
     }
     return result;
   }
-  /** Joins what publishing learned to the last undo step, without unsaving the workflow. */
+  /**
+   * Joins what publishing learned to the last undo step (with none, to the
+   * workflow as it was opened), without unsaving the workflow.
+   */
   recordOwned(edit: () => void): boolean {
     try {
-      this.model.continueEdit(this.model.revision, edit);
+      this.model.amend(edit);
     } catch (e) {
       this.fail(e);
       return false;
@@ -6797,17 +6800,25 @@ export class App implements CanvasHost {
         ),
       },
     ];
-    const note = (await import("./editor/ndv/owned/owned-commands")).exportNote(
-      this.model,
-    );
+    const model = this.model;
     const deliveries = files.map((file) =>
       exportFile(file.name, file.mime, file.content),
     );
     // A download that could not start is offered as copies instead.
     if (deliveries.includes("unconfirmed")) this.exportFallback = files;
     else this.message = exportNotice(files.map((f) => f.name));
-    // Steps whose actions aren't published lose their settings in these files.
-    if (note) this.notify(note);
+    this.cdr.markForCheck();
+    // Steps whose actions aren't published lose their settings in these
+    // files. The note's code loads on demand, after the files are on their
+    // way: when it can't load, the files are delivered without the note.
+    try {
+      const note = (
+        await import("./editor/ndv/owned/owned-commands")
+      ).exportNote(model);
+      if (note) this.notify(note);
+    } catch (error) {
+      console.error("Studio couldn't load the note for Save to file", error);
+    }
     this.cdr.markForCheck();
   }
   async copyExport(file: ExportedFile) {

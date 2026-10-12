@@ -33,6 +33,7 @@ import {
   openStepFixture,
   sizes,
   yamlFile,
+  type StepDetailsPage,
 } from "./step-details-po";
 import {
   box,
@@ -40,12 +41,16 @@ import {
   clippedText,
   density,
   expectAligned,
+  intersects,
+  showParameters,
 } from "./step-geometry";
 import {
   allCapabilities,
+  canUndo,
   closeSheet,
   command,
   connected,
+  offline,
   sourceText,
   tokenColor,
 } from "./support";
@@ -258,6 +263,15 @@ async function withOwnedSteps(page: Page, options: PlatformOptions = {}) {
       platform = await ownedPlatform(p, options);
     },
   );
+  await addOwnedSteps(page, details, options);
+  return { details, platform };
+}
+/** Inserts Send email and Call an API from the step picker, and the email's fields from Source. */
+async function addOwnedSteps(
+  page: Page,
+  details: StepDetailsPage,
+  options: PlatformOptions = {},
+) {
   await addCommonStep(page, "Send email");
   await expect(details.dialogFor("send-email")).toBeVisible();
   await details.close();
@@ -281,7 +295,6 @@ async function withOwnedSteps(page: Page, options: PlatformOptions = {}) {
     },
   };
   await applySource(page, stringify(document));
-  return { details, platform };
 }
 const publishDialog = (page: Page) =>
   page.getByRole("dialog", { name: "Publish order-intake 1.0.0?" });
@@ -340,6 +353,33 @@ async function expectTidy(page: Page, dialog: Locator, height: number) {
     );
     expect(texts[index].right).toBeLessThanOrEqual(states[index].x + 0.5);
   });
+  // The footer's buttons: in a row on the right edge, or stacked full width
+  // on a phone, the main one last.
+  const footer = await boxes(dialog.locator(".dialog-footer button"));
+  expectAligned(
+    [...footer.map((button) => button.height), rhythm.control],
+    "footer button heights",
+  );
+  if ((page.viewportSize()?.width ?? 1440) <= 480) {
+    expectAligned(
+      [list.x, ...footer.map((button) => button.x)],
+      "stacked footer left edge",
+    );
+    expectAligned(
+      [list.right, ...footer.map((button) => button.right)],
+      "stacked footer right edge",
+    );
+    for (let i = 1; i < footer.length; i++)
+      expectAligned(
+        [footer[i].y - footer[i - 1].bottom, 8],
+        "stacked footer gap",
+      );
+  } else
+    expectAligned(
+      footer.map((button) => button.middle),
+      "footer buttons on one row",
+    );
+  expect(footer.at(-1)).toEqual(primary);
   expect(await clippedText(dialog, "")).toEqual([]);
   expect(primary.y).toBeGreaterThanOrEqual(0);
   expect(primary.bottom).toBeLessThanOrEqual(height);
@@ -359,6 +399,34 @@ async function workflowPublished(page: Page) {
   const toast = page.locator(".toast-region");
   await expect(toast).toContainText("Published order-intake 1.0.0.");
   await toast.getByRole("button", { name: "Dismiss notification" }).click();
+}
+/** Send email's action as someone else published it, with other content. */
+function takenEmail(): Definition {
+  const send = (
+    builtinActions() as {
+      actions: {
+        connector: string;
+        action: string;
+        document: Definition;
+      }[];
+    }
+  ).actions.find(
+    (entry) =>
+      entry.connector === "weave-email@1.0.0" && entry.action === "send",
+  )!.document;
+  const taken = {
+    ...structuredClone(send),
+    metadata: { name: "order-intake.send-email", version: "1.0.0" },
+  };
+  (taken["spec"] as Record<string, unknown>)["timeoutSeconds"] = 10;
+  return taken;
+}
+/** Whether a compile request checks an action (not the workflow). */
+function checksAction(body: { source?: unknown }): boolean {
+  const source = body.source;
+  return typeof source === "string"
+    ? /^kind: Action$/m.test(source)
+    : (source as { kind?: string } | null)?.kind === "Action";
 }
 const posted = (calls: PlatformCall[]) =>
   calls.map((call) =>
@@ -504,24 +572,9 @@ for (const size of sizes)
     test("an action name taken by other content is published under a free name", async ({
       page,
     }) => {
-      const send = (
-        builtinActions() as {
-          actions: {
-            connector: string;
-            action: string;
-            document: Definition;
-          }[];
-        }
-      ).actions.find(
-        (entry) =>
-          entry.connector === "weave-email@1.0.0" && entry.action === "send",
-      )!.document;
-      const taken = {
-        ...structuredClone(send),
-        metadata: { name: "order-intake.send-email", version: "1.0.0" },
-      };
-      (taken["spec"] as Record<string, unknown>)["timeoutSeconds"] = 10;
-      const { platform } = await withOwnedSteps(page, { taken: [taken] });
+      const { platform } = await withOwnedSteps(page, {
+        taken: [takenEmail()],
+      });
       await command(page, "Publish…");
       const dialog = publishDialog(page);
       const row = dialog.locator(".owned-row", {
@@ -676,27 +729,92 @@ for (const size of sizes)
       expect(await sourceText(page)).toContain("edited: last");
     });
 
+    test("a taken action's new name is announced", async ({ page }) => {
+      await withOwnedSteps(page, { taken: [takenEmail()] });
+      await command(page, "Publish…");
+      const dialog = publishDialog(page);
+      await expect(
+        dialog
+          .locator(".owned-row", { hasText: "order-intake.send-email" })
+          .locator(".owned-state"),
+      ).toHaveText("Taken");
+      await expect(dialog.locator('.sr-only[aria-live="polite"]')).toHaveText(
+        "Version 1.0.0 of order-intake.send-email is already published with different content. Studio publishes this one as order-intake.send-email-2 1.0.0.",
+      );
+    });
+
+    test("closing the dialog while the actions are checked sends nothing more", async ({
+      page,
+    }) => {
+      const { platform } = await withOwnedSteps(page);
+      let checks = 0;
+      let release = () => undefined as void;
+      const held = new Promise<void>((done) => (release = done));
+      await page.route(`${project}/compiler/compile`, async (route) => {
+        if (checksAction(route.request().postDataJSON())) {
+          checks++;
+          await held;
+        }
+        await route.fallback();
+      });
+      await command(page, "Publish…");
+      const dialog = publishDialog(page);
+      await expect(dialog.locator(".dialog-footer .primary")).toHaveText(
+        "Checking…",
+      );
+      await expect.poll(() => checks).toBe(1);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      const answered = page.waitForResponse(/\/compiler\/compile$/);
+      release();
+      await answered;
+      // The second action would be checked right after: nothing goes out.
+      await page.waitForTimeout(1000);
+      expect(checks).toBe(1);
+      expect(platform.calls).toEqual([]);
+    });
+
+    test("the designer going away while a suggested name is checked sends nothing", async ({
+      page,
+    }) => {
+      const { platform } = await withOwnedSteps(page, {
+        taken: [takenEmail()],
+      });
+      await command(page, "Publish…");
+      const dialog = publishDialog(page);
+      await expect(
+        dialog
+          .locator(".owned-row", { hasText: "order-intake.send-email" })
+          .locator(".owned-state"),
+      ).toHaveText("Taken");
+      let release = () => undefined as void;
+      const held = new Promise<void>((done) => (release = done));
+      await page.route(`${project}/compiler/compile`, async (route) => {
+        await held;
+        await route.fallback();
+      });
+      await dialog.locator(".dialog-footer .primary").click();
+      await expect(dialog.getByRole("status")).toHaveText(
+        "Checking the suggested names…",
+      );
+      // The browser's Back leaves the designer, and the dialog with it.
+      await page.evaluate(() => history.back());
+      await expect(page.locator(".editor-bar")).toHaveCount(0);
+      await expect(dialog).toHaveCount(0);
+      const answered = page.waitForResponse(/\/compiler\/compile$/);
+      release();
+      await answered;
+      // Publishing would go on right after the check: nothing goes out.
+      await page.waitForTimeout(1000);
+      expect(platform.calls).toEqual([]);
+    });
+
     test("while a suggested name is checked, the dialog can't be left or started again", async ({
       page,
     }) => {
-      const send = (
-        builtinActions() as {
-          actions: {
-            connector: string;
-            action: string;
-            document: Definition;
-          }[];
-        }
-      ).actions.find(
-        (entry) =>
-          entry.connector === "weave-email@1.0.0" && entry.action === "send",
-      )!.document;
-      const taken = {
-        ...structuredClone(send),
-        metadata: { name: "order-intake.send-email", version: "1.0.0" },
-      };
-      (taken["spec"] as Record<string, unknown>)["timeoutSeconds"] = 10;
-      const { platform } = await withOwnedSteps(page, { taken: [taken] });
+      const { platform } = await withOwnedSteps(page, {
+        taken: [takenEmail()],
+      });
       await command(page, "Publish…");
       const dialog = publishDialog(page);
       await expect(
@@ -828,4 +946,73 @@ for (const size of [
       ).toBeFocused();
       await expectTidy(page, dialog, size.height);
     });
+
+    test("the version toast clears step details' sticky header and the focused control", async ({
+      page,
+    }) => {
+      const { details } = await withOwnedSteps(page);
+      await command(page, "Publish…");
+      await publishDialog(page)
+        .getByRole("button", { name: "Publish 2 actions and the workflow" })
+        .click();
+      await expect(publishDialog(page)).toHaveCount(0);
+      await workflowPublished(page);
+      await details.openWithKeyboard("call-api");
+      await showParameters(page, details.dialog);
+      await details
+        .field("method")
+        .getByRole("combobox", { name: "Method" })
+        .click();
+      await page.getByRole("option", { name: /^POST/ }).click();
+      const toast = page.locator(".toast-region .toast");
+      await expect(toast).toContainText(
+        "order-intake.call-api 1.0.0 is published, so this change starts version 1.0.1.",
+      );
+      const shown = await box(toast);
+      const bars = await boxes(
+        details.dialog.locator(
+          ".sd-panes > .sd-segments, .sd-panes > .sd-main > .sd-head",
+        ),
+      );
+      expect(bars.length).toBeGreaterThan(0);
+      for (const bar of bars) expect(intersects(shown, bar)).toBe(false);
+      expect(intersects(shown, await box(page.locator(":focus")))).toBe(false);
+      expect(shown.bottom).toBeLessThanOrEqual(size.height);
+    });
   });
+
+// Publishing records into the last undo step. A workflow opened again has
+// none: the record then adds no undo step of its own, which would change
+// nothing a person sees.
+test.describe("a workflow kept on this computer, opened again once connected", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("publishing its actions adds no undo step", async ({ page }) => {
+    const details = await openStepFixture(
+      page,
+      yamlFile("order-intake.yaml", base),
+      async (p) => {
+        await localAuthoring(p);
+        await p.route("**/studio/contracts/connector-actions", (route) =>
+          route.fulfill({ json: builtinActions() }),
+        );
+        await offline(p);
+      },
+    );
+    await addOwnedSteps(page, details);
+    const designer = page.url();
+    // Connected now; the workflow comes back from this computer.
+    const platform = await ownedPlatform(page, {});
+    await page.goto(designer);
+    await expect(page.locator(".editor-bar")).toBeVisible();
+    expect(await canUndo(page)).toBe(false);
+    await command(page, "Publish…");
+    await publishDialog(page)
+      .getByRole("button", { name: "Publish 2 actions and the workflow" })
+      .click();
+    await expect(publishDialog(page)).toHaveCount(0);
+    await workflowPublished(page);
+    expect(posted(platform.calls)).toEqual([API, EMAIL, "workflows"]);
+    expect(await canUndo(page)).toBe(false);
+  });
+});

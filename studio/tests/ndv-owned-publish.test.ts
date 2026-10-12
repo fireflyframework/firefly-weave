@@ -32,6 +32,7 @@ import {
 } from "../src/app/editor/ndv/owned/owned-actions";
 import {
   OwnedPublisher,
+  publishLabel,
   type OwnedPublishPorts,
 } from "../src/app/editor/ndv/owned/owned-publish";
 import {
@@ -133,7 +134,7 @@ function setup(
       }
     },
     record: (edit) => {
-      model.continueEdit(model.revision, edit);
+      model.amend(edit);
       return true;
     },
     ...change({ model, sent }),
@@ -175,6 +176,8 @@ describe("publishing the actions a workflow owns", () => {
   });
   it("publishes in step order with keys from the content, records each, and an Undo past it forgets only Studio's record", async () => {
     const { publisher, sent, model } = setup();
+    // One edit before publishing, for the record to join.
+    model.batch(() => model.insert("wait"));
     await publisher.prepare();
     expect(await publisher.publish()).toBe(true);
     expect(publisher.phase()).toBe("done");
@@ -193,6 +196,14 @@ describe("publishing the actions a workflow owns", () => {
     expect(pendingOwned(model)).toEqual([]);
     model.undo();
     expect(pendingOwned(model)).toEqual([API, EMAIL]);
+  });
+  it("on a workflow opened with no undo history, publishing adds no undo step", async () => {
+    const { publisher, model } = setup();
+    expect(model.canUndo).toBe(false);
+    await publisher.prepare();
+    expect(await publisher.publish()).toBe(true);
+    expect(pendingOwned(model)).toEqual([]);
+    expect(model.canUndo).toBe(false);
   });
   it("stops at a failure, keeps what was published, and Try again sends the same request", async () => {
     let failures = 1;
@@ -518,5 +529,74 @@ describe("publishing the actions a workflow owns", () => {
     expect(keys[2].startsWith(keys[1].slice(0, 186))).toBe(true);
     expect(keys[2].length).toBeLessThanOrEqual(200);
     expect(nameIn(sent[2].yaml)).toBe("order-intake.send-email");
+  });
+  it("tells screen readers what a taken action is published as, and stops once the names move", async () => {
+    let release = () => undefined as void;
+    const slow = new Promise<void>((done) => (release = done));
+    let checks = 0;
+    const { publisher } = setup(() => ({
+      compile: async (document) => {
+        const { name, version: at } = document["metadata"] as {
+          name: string;
+          version: string;
+        };
+        if (checks++ >= 2) await slow;
+        return `${name}@${at}` === EMAIL ? taken : ok;
+      },
+    }));
+    expect(publisher.proposals()).toBe("");
+    await publisher.prepare();
+    expect(publisher.proposals()).toBe(
+      "Version 1.0.0 of order-intake.send-email is already published with different content. Studio publishes this one as order-intake.send-email-2 1.0.0.",
+    );
+    const going = publisher.publish();
+    // The names moved: nothing is proposed while the new one is checked.
+    expect(publisher.proposals()).toBe("");
+    release();
+    expect(await going).toBe(true);
+  });
+  it("after Publish as suggested finds another taken name, asks to publish only what remains", async () => {
+    const takenToo = ["order-intake.send-email-2@1.0.0"];
+    const { publisher, sent } = setup(({ sent }) => ({
+      compile: async (document) => {
+        const { name, version: at } = document["metadata"] as {
+          name: string;
+          version: string;
+        };
+        return takenToo.includes(`${name}@${at}`) ? taken : ok;
+      },
+      // The email's version is taken between the check and the publish.
+      publish: async (yaml, key) => {
+        sent.push({ yaml, key });
+        if (nameIn(yaml) === "order-intake.send-email")
+          throw new ApiError(409, {
+            code: "WV-VERSION-CONFLICT",
+            message: "An immutable version already has different content",
+          });
+        return version(`${nameIn(yaml)}@1.0.0`);
+      },
+    }));
+    await publisher.prepare();
+    expect(publishLabel("publish", publisher.rows())).toBe(
+      "Publish 2 actions and the workflow",
+    );
+    expect(await publisher.publish()).toBe(false);
+    expect(publisher.phase()).toBe("partial");
+    // Publish as suggested: the suggested name is taken too, so it asks again.
+    expect(await publisher.publish()).toBe(false);
+    expect(publisher.phase()).toBe("confirm");
+    expect(publisher.rows().map((row) => row.state)).toEqual([
+      "published",
+      "conflict",
+    ]);
+    expect(publishLabel("publish", publisher.rows())).toBe(
+      "Publish 1 action and the workflow",
+    );
+    expect(publishLabel("simulate", publisher.rows())).toBe(
+      "Publish 1 action and simulate",
+    );
+    expect(publisher.proposals()).toContain(
+      "Studio publishes this one as order-intake.send-email-2-2 1.0.0.",
+    );
   });
 });
