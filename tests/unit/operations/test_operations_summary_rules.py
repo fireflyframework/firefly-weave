@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -25,12 +26,14 @@ from uuid import UUID, uuid4
 
 import pytest
 from pydantic import SecretStr
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied, AuthorizationService
 from firefly_weave.access.models import Grant, Principal
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.compatibility import CompatibilityFinding, CompatibilityReport
 from firefly_weave.contracts.operations_summary import UnavailableSection
 from firefly_weave.contracts.telemetry import TelemetryOptions
 from firefly_weave.observability import TelemetryDrops
@@ -44,6 +47,7 @@ from firefly_weave.operations.summary import (
     native_state,
     read_section,
     telemetry_host,
+    telemetry_state,
 )
 from firefly_weave.settings import Settings
 
@@ -65,12 +69,20 @@ def failure(sqlstate: str, *, invalidated: bool = False) -> DBAPIError:
 
 
 class Session:
-    """Records statements and savepoints; the section timeout in force is what the last set_config chose."""
+    """Records statements and savepoints; the section timeout in force is what the last set_config chose.
 
-    def __init__(self, prior: str = "0", prior_ms: int = 0) -> None:
-        self.prior, self.prior_ms = prior, prior_ms
+    Each other statement takes `cost` seconds of the fake monotonic clock and records the timeout it ran under.
+    """
+
+    def __init__(self, prior: str = "0", prior_ms: int = 0, cost: float = 0.0) -> None:
+        self.prior, self.prior_ms, self.cost = prior, prior_ms, cost
         self.timeout = prior
         self.savepoints: list[str] = []
+        self.elapsed = 100.0
+        self.ran_under: list[str] = []
+
+    def monotonic(self) -> float:
+        return self.elapsed
 
     async def execute(self, statement, values=None):
         sql = str(statement)
@@ -78,6 +90,9 @@ class Session:
             return SimpleNamespace(one=lambda: SimpleNamespace(prior=self.prior, prior_ms=self.prior_ms))
         if "set_config" in sql:
             self.timeout = values["value"]
+            return None
+        self.ran_under.append(self.timeout)
+        self.elapsed += self.cost
         return None
 
     @asynccontextmanager
@@ -106,32 +121,71 @@ def test_only_the_collector_host_is_kept():
     assert telemetry_host("http://[::1]:4318/v1/metrics") == "::1"
 
 
+async def section(session: Session, read):
+    return await read_section(transaction(session), read, monotonic=session.monotonic)
+
+
 async def test_a_section_runs_under_two_seconds_and_restores_the_timeout_in_force():
     session = Session(prior="30s", prior_ms=30000)
     seen = []
 
-    async def read():
+    async def read(budget):
         seen.append(session.timeout)
+        await budget.execute(text("SELECT 1"))
         return 7
 
-    assert await read_section(transaction(session), read) == 7
-    assert (seen, session.timeout, session.savepoints) == (["2000ms"], "30s", ["released"])
+    assert await section(session, read) == 7
+    assert (seen, session.ran_under, session.timeout, session.savepoints) == (
+        ["2000ms"],
+        ["2000ms"],
+        "30s",
+        ["released"],
+    )
     # A stricter timeout already in force is kept, and no timeout at all becomes the section budget.
     for prior, prior_ms, expected in (("500ms", 500, "500ms"), ("0", 0, "2000ms")):
         session = Session(prior=prior, prior_ms=prior_ms)
         seen.clear()
-        assert await read_section(transaction(session), read) == 7
-        assert seen == [expected] and session.timeout == prior
+        assert await section(session, read) == 7
+        assert seen == [expected] == session.ran_under and session.timeout == prior
+
+
+async def test_the_statements_of_a_section_share_one_budget():
+    # Each statement takes 0.75 s: the next one gets what is left, and the fourth finds nothing left.
+    session = Session(prior="30s", prior_ms=30000, cost=0.75)
+
+    async def read(budget):
+        for _ in range(4):
+            await budget.execute(text("SELECT 1"))
+        return 7
+
+    assert await section(session, read) == UnavailableSection(state="unavailable")
+    assert session.ran_under == ["2000ms", "1250ms", "500ms"]
+    assert (session.timeout, session.savepoints) == ("30s", ["rolled back"])
+    # Three statements fit: the section is served and the earlier timeout comes back.
+    session = Session(prior="30s", prior_ms=30000, cost=0.5)
+
+    async def three(budget):
+        for _ in range(3):
+            await budget.execute(text("SELECT 1"))
+        return 3
+
+    assert await section(session, three) == 3
+    assert session.ran_under == ["2000ms", "1500ms", "1000ms"]
+    assert (session.timeout, session.savepoints) == ("30s", ["released"])
+    # A stricter timeout in force is the whole section's budget.
+    session = Session(prior="500ms", prior_ms=500, cost=0.25)
+    assert await section(session, three) == UnavailableSection(state="unavailable")
+    assert session.ran_under == ["500ms", "250ms"]
 
 
 @pytest.mark.parametrize("sqlstate", ["57014", "55P03", "40001", "40P01", "53200"])
 async def test_a_timed_out_or_transient_section_is_unavailable_and_rolled_back(sqlstate):
     session = Session(prior="30s", prior_ms=30000)
 
-    async def read():
+    async def read(budget):
         raise failure(sqlstate)
 
-    assert await read_section(transaction(session), read) == UnavailableSection(state="unavailable")
+    assert await section(session, read) == UnavailableSection(state="unavailable")
     assert session.savepoints == ["rolled back"] and session.timeout == "30s"
 
 
@@ -150,11 +204,11 @@ async def test_a_timed_out_or_transient_section_is_unavailable_and_rolled_back(s
 async def test_a_lost_connection_cancellation_denial_or_programming_error_is_never_unavailable(error):
     session = Session()
 
-    async def read():
+    async def read(budget):
         raise error
 
     with pytest.raises(type(error)):
-        await read_section(transaction(session), read)
+        await section(session, read)
     assert session.savepoints == ["rolled back"]
 
 
@@ -223,7 +277,7 @@ def test_health_lists_the_database_each_loop_native_executors_and_telemetry_with
             snapshot("alert_evaluator", "disabled"),
         ),
         native="down",
-        telemetry_enabled=False,
+        telemetry="disabled",
     )
     assert [component.model_dump(mode="json") for component in components] == [
         {"component": "database", "state": "ok", "latency_ms": 4.25},
@@ -240,8 +294,32 @@ def test_health_lists_the_database_each_loop_native_executors_and_telemetry_with
         {"component": "telemetry", "state": "disabled"},
     ]
     # A database probe that timed out is degraded, never a zero latency.
-    [database, *_] = health_components(UnavailableSection(state="unavailable"), (), native="ok", telemetry_enabled=True)
+    [database, *_] = health_components(UnavailableSection(state="unavailable"), (), native="ok", telemetry="ok")
     assert database.model_dump(mode="json") == {"component": "database", "state": "degraded"}
+
+
+def test_telemetry_health_follows_recent_drops_never_the_configuration_alone():
+    elapsed = [1000.0]
+    drops = TelemetryDrops(monotonic=lambda: elapsed[0])
+    exporting = TelemetryOptions(enabled=True, metrics_endpoint="https://collector.example/v1/metrics")
+    assert telemetry_state(TelemetryOptions(), drops) == "disabled"
+    assert telemetry_state(exporting, drops) == "ok"
+    # A failed export makes it degraded for three metric intervals (90 s by default), then it is ok again.
+    drops.add(2)
+    assert telemetry_state(exporting, drops) == "degraded"
+    elapsed[0] += 90
+    assert telemetry_state(exporting, drops) == "degraded"
+    elapsed[0] += 0.5
+    assert telemetry_state(exporting, drops) == "ok"
+    slower = exporting.model_copy(update={"metrics_interval_seconds": 60.0})
+    drops.add(1)
+    elapsed[0] += 179
+    assert telemetry_state(slower, drops) == "degraded"
+    elapsed[0] += 2
+    assert telemetry_state(slower, drops) == "ok"
+    # Drops while export is off do not make it a health claim.
+    drops.add(1)
+    assert telemetry_state(TelemetryOptions(), drops) == "disabled"
 
 
 def test_native_executors_follow_their_existing_readiness():
@@ -341,3 +419,37 @@ async def test_both_reads_check_the_token_before_opening_and_the_stored_principa
         await service(monkeypatch, Units(reader)).telemetry(
             reader, Scope(tenant_id=PROJECT.tenant_id), context=AuditContext()
         )
+
+
+def test_compatibility_findings_are_counted_for_this_project_only(monkeypatch):
+    other_project = Scope(tenant_id=SCOPE.tenant_id, project_id=uuid4())
+    other_tenant = Scope(tenant_id=uuid4(), project_id=uuid4())
+    sibling = Scope(tenant_id=SCOPE.tenant_id, project_id=SCOPE.project_id, environment_id=uuid4())
+    report = CompatibilityReport(
+        mode="restricted",
+        findings=[
+            CompatibilityFinding(kind="inventory", code="inventory_incomplete"),
+            CompatibilityFinding(kind="run", code="ir_unsupported", scope=SCOPE),
+            CompatibilityFinding(kind="activation", code="policy_mismatch", scope=sibling),
+            CompatibilityFinding(kind="run", code="ir_unsupported", scope=other_project),
+            CompatibilityFinding(kind="worker", code="worker_protocol_unsupported", scope=other_tenant),
+        ],
+    )
+    reader = service(monkeypatch, Units(principal()))
+    reader.compatibility = SimpleNamespace(report=report, ready=False)  # type: ignore[assignment]
+    # The platform-wide finding and this project's own two, never another project's or tenant's.
+    assert reader._api(SCOPE).compatibility.model_dump() == {"mode": "restricted", "findings": 3}
+
+
+def test_section_probes_never_write_deny_records(monkeypatch, caplog):
+    viewer = principal(Grant(role="viewer", scope=PROJECT))
+    reader = service(monkeypatch, Units(viewer))
+    caplog.set_level(logging.INFO, logger="weave.authorization")
+    reach = reader._reach(viewer, viewer, SCOPE, AuditContext())
+    assert (reach.incidents, reach.runs, reach.targets, reach.approvals) == (False, True, (), ())
+    records = [json.loads(record.getMessage()) for record in caplog.records if record.name == "weave.authorization"]
+    # Reading runs is recorded as allowed for both principals; the capabilities the viewer lacks are not attempts.
+    assert [(record["capability"], record["outcome"]) for record in records] == [
+        ("run.read", "allow"),
+        ("run.read", "allow"),
+    ]

@@ -40,6 +40,22 @@ def contains(parent: Scope | None, child: Scope | None) -> bool:
 
 @service
 class AuthorizationService:
+    def allows(
+        self, principal: Principal, scope: Scope | None, capability: str, *, resource: str | None = None
+    ) -> bool:
+        """Whether `require` would allow this, without recording anything.
+
+        For reads that only shape what they return, such as which sections of a summary to fill; the access itself
+        is still checked with `require`.
+        """
+        allowed = principal.active and any(
+            capability in ROLE_CAPABILITIES[grant.role]
+            and contains(grant.scope, scope)
+            and (not grant.resources or resource in grant.resources)
+            for grant in principal.grants
+        )
+        return allowed and not (principal.kind == "worker" and capability not in ROLE_CAPABILITIES["worker"])
+
     def require(
         self,
         principal: Principal,
@@ -49,14 +65,7 @@ class AuthorizationService:
         resource: str | None = None,
         context: AuditContext | None = None,
     ) -> None:
-        allowed = principal.active and any(
-            capability in ROLE_CAPABILITIES[grant.role]
-            and contains(grant.scope, scope)
-            and (not grant.resources or resource in grant.resources)
-            for grant in principal.grants
-        )
-        if principal.kind == "worker" and capability not in ROLE_CAPABILITIES["worker"]:
-            allowed = False
+        allowed = self.allows(principal, scope, capability, resource=resource)
         emit(event(principal, scope, capability, "allow" if allowed else "deny", context or AuditContext()))
         if not allowed:
             raise AccessDenied()

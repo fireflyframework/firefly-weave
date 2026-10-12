@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -112,7 +113,9 @@ async def owner_execute(case, sql: str, **values) -> None:
         )
 
 
-async def add_incident(case, run: UUID, key: str, *, opened=None, test=False, status="active", facts=True) -> UUID:
+async def add_incident(
+    case, run: UUID, key: str, *, opened=None, test=False, status="active", facts=True, estimated=False
+) -> UUID:
     identifier = uuid4()
     await owner_execute(
         case,
@@ -130,11 +133,12 @@ async def add_incident(case, run: UUID, key: str, *, opened=None, test=False, st
             "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,"
             "opened_at,updated_at,workflow_name,workflow_version,test,opened_at_estimated) SELECT :tenant,:project,"
             ":environment,:id,'work','',cast(:opened AS timestamptz),cast(:opened AS timestamptz),workflow_name,"
-            "workflow_version,:test,false FROM run_facts WHERE run_id=:run",
+            "workflow_version,:test,:estimated FROM run_facts WHERE run_id=:run",
             id=identifier,
             run=run,
             opened=opened,
             test=test,
+            estimated=estimated,
         )
     return identifier
 
@@ -685,6 +689,106 @@ async def test_a_lost_connection_or_a_cancelled_read_is_never_an_unavailable_sec
     # The pool still serves a complete answer afterwards.
     monkeypatch.undo()
     assert "state" not in (await summarize(case, reader))["workers"]
+
+
+async def test_the_statements_of_a_section_share_its_two_seconds(operations_case, monkeypatch):
+    case = operations_case
+    await case.start()
+    workers = OperationsSummaryService._workers
+    slept = []
+
+    async def two_slow_statements(self, reader):
+        # Each statement alone is well within two seconds; together they are not.
+        for _ in range(2):
+            slept.append(await reader.row("SELECT pg_sleep(1.2) IS NULL AS slept"))
+        return await workers(self, reader)
+
+    monkeypatch.setattr(OperationsSummaryService, "_workers", two_slow_statements)
+    reader = await principal_with(case, Grant(role="viewer", scope=case.scope))
+    started = time.monotonic()
+    body = await summarize(case, reader)
+    elapsed = time.monotonic() - started
+    # The second statement got what was left of the section's budget and was cancelled when it ran out.
+    assert body["workers"] == {"state": "unavailable"} and len(slept) == 1
+    assert elapsed < 6
+    assert body["load"]["runs_active"] == 1 and isinstance(body["attention"], list)
+
+
+async def test_a_forbidden_section_runs_no_statement_and_records_no_denial(operations_case, caplog):
+    case = operations_case
+    await add_incident(case, (await case.start()).id, "hidden", opened=await clock(case))
+    target, deployment, observation = await capable_target(case, "alpha")
+    await add_job(case, target, "reconciliation_required")
+    await add_plan(case, target, deployment, observation, expires=await clock(case) + timedelta(minutes=5))
+    await add_runner(case, target, expires=await clock(case) - timedelta(seconds=1))
+    await fail_run(case, (await case.start("failed")).id, minutes_ago=5)
+    worker_operator = await principal_with(case, Grant(role="worker_operator", scope=case.scope))
+    statements: list[str] = []
+    engine = case.sessions.kw["bind"].sync_engine
+
+    def record(connection, cursor, statement, parameters, context, executemany):
+        statements.append(" ".join(statement.lower().split()))
+
+    caplog.set_level(logging.INFO, logger="weave.authorization")
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        body = await summarize(case, worker_operator)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert body["targets"] == body["incidents"] == {"state": "forbidden"}
+    assert kinds(body) <= {"worker", "compatibility"}
+    # Sections and attention kinds the caller may not read are never queried, not queried and discarded.
+    assert statements and not [
+        statement
+        for statement in statements
+        if "deployment_" in statement or "incident" in statement or "status='failed'" in statement
+    ]
+    # Finding out which sections to leave out is not an access attempt: the summary records no denial.
+    records = [json.loads(item.getMessage()) for item in caplog.records if item.name == "weave.authorization"]
+    assert records and {record["outcome"] for record in records} == {"allow"}
+    assert {record["capability"] for record in records} == {"status.read"}
+
+
+async def test_failed_run_items_need_run_read_not_incident_read(operations_case):
+    case = operations_case
+    failed = await case.start("failed")
+    await fail_run(case, failed.id, minutes_ago=5)
+    incidents_only = await principal_with(
+        case, Grant(role="worker_operator", scope=case.scope), Grant(role="operator", scope=case.scope)
+    )
+    runs_only = await principal_with(case, Grant(role="viewer", scope=case.scope))
+    incident_body = await summarize(case, incidents_only)
+    run_body = await summarize(case, runs_only)
+    assert "state" not in incident_body["incidents"] and "run" not in kinds(incident_body)
+    assert run_body["incidents"] == {"state": "forbidden"}
+    assert [item["id"] for item in run_body["attention"] if item["kind"] == "run"] == [str(failed.id)]
+
+
+async def test_estimated_opening_times_and_finished_test_runs_are_not_counted(operations_case):
+    case = operations_case
+    real, finished = await case.start("real"), await case.start("finished-test")
+    async with case.tx() as tx:
+        await case.runtime.cancel(
+            tx, finished.id, "operator_cancelled", actor=case.actor, scope=case.scope, context=AuditContext()
+        )
+    # An upgraded test run whose history lacked its end: finished by status, with no end time recorded.
+    await owner_execute(
+        case, "UPDATE run_facts SET test=true,origin='test',ended_at=NULL WHERE run_id=:run", run=finished.id
+    )
+    now = await clock(case)
+    await add_incident(case, real.id, "known", opened=now)
+    # The upgrade estimated this opening time from the run's last event: it is at or after the real one.
+    await add_incident(case, real.id, "estimated", opened=now, estimated=True)
+    reader = await principal_with(
+        case, Grant(role="viewer", scope=case.scope), Grant(role="operator", scope=case.scope)
+    )
+    body = await summarize(case, reader)
+    [usage] = await case.rows(
+        "SELECT value FROM operation_usage WHERE environment_id=:environment AND metric='runs_active'"
+    )
+    # The usage counter counts runs by status, and so does the summary: the finished test run was never counted.
+    assert usage["value"] == 1 and body["load"]["runs_active"] == 1
+    assert body["incidents"] == {"active": 2, "opened_24h": 1}
 
 
 async def test_the_principal_and_every_section_share_one_read_transaction(operations_case):

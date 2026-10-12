@@ -839,7 +839,10 @@ async def test_fact_query_indexes_cover_scope_and_ordering(migration_db):
             assert "(" + scope + ", " + suffix + ")" in definitions["run_facts_" + name]
         for name in ("business_key", "correlation_key", "caller", "retry", "ended", "active_test"):
             assert scope in definitions["run_facts_" + name]
-        assert "WHERE (test AND (ended_at IS NULL))" in definitions["run_facts_active_test"]
+        assert definitions["run_facts_active_test"].endswith(
+            "WHERE (test AND ((status IS NULL) OR (status <> ALL (ARRAY['succeeded'::text, 'failed'::text, "
+            "'cancelled'::text, 'timed_out'::text]))))"
+        )
         for name in (
             "step_facts_ended",
             "task_facts_ready",

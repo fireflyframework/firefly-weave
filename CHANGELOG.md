@@ -136,13 +136,17 @@ SPDX-License-Identifier: Apache-2.0
   an environment's health, load, workers, targets, incidents and up to 20 items
   that need attention, in one read that reloads the caller's grants. Each
   section and item needs its own capability; one the caller may not read is
-  `{"state": "forbidden"}`, and one that runs out of its two seconds of
-  database time is `{"state": "unavailable"}` while the rest are still served.
-  Run figures leave out test runs.
+  `{"state": "forbidden"}` without running its queries or recording a denial,
+  and one whose queries use up its two seconds of database time between them
+  is `{"state": "unavailable"}` while the rest are still served. Run figures
+  leave out test runs, and opening times the upgrade estimated are not counted.
+  Telemetry export health is degraded while exports are being dropped.
 - New operation `operations_telemetry.read` (`weave operations telemetry`)
   answers whether telemetry export is on, the collector host names, the
   metrics interval and how many items were dropped, never endpoint paths,
   credentials or headers. It needs `status.read` for the project.
+  `WEAVE_TELEMETRY` now refuses a collector host name longer than 253
+  characters.
 - Background loop health, which the summary reports, ages successes with a
   monotonic clock, counts a cycle still within its loop's budget as on time,
   and reads degraded after 3 failed cycles in a row or among the last 20. An

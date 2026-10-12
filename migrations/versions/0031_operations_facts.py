@@ -179,7 +179,12 @@ def indexes() -> None:
         ("caller", "caller_run_id", "WHERE caller_run_id IS NOT NULL"),
         ("retry", "retried_from_run_id", "WHERE retried_from_run_id IS NOT NULL"),
         ("ended", "ended_at", "WHERE ended_at IS NOT NULL"),
-        ("active_test", "", "WHERE test AND ended_at IS NULL"),
+        # Active test runs as the run usage counter counts runs: by status, never by a missing end time.
+        (
+            "active_test",
+            "",
+            "WHERE test AND (status IS NULL OR status NOT IN ('succeeded','failed','cancelled','timed_out'))",
+        ),
         # Rows a listing-metadata refresh can need: another policy's decisions and transient unsupported ones.
         (
             "revalidation",

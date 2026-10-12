@@ -108,6 +108,23 @@ def test_exactly_three_consecutive_failures_degrade_and_a_success_clears_the_cou
     assert (snapshot.state, snapshot.recent_failures) == ("ok", 2)
 
 
+def test_failures_are_counted_over_the_last_twenty_cycles():
+    clock = Clock()
+    health = running(clock)
+    health.succeeded("outbox_loop")
+    for _ in range(3):
+        health.failed("outbox_loop")
+    # The documented window is twenty cycles: the third failure ages out after seventeen successes, no sooner.
+    for _ in range(17):
+        assert health.snapshot("outbox_loop").state == "degraded"
+        health.succeeded("outbox_loop")
+    snapshot = health.snapshot("outbox_loop")
+    assert (snapshot.state, snapshot.recent_failures) == ("degraded", 3)
+    health.succeeded("outbox_loop")
+    snapshot = health.snapshot("outbox_loop")
+    assert (snapshot.state, snapshot.recent_failures) == ("ok", 2)
+
+
 def test_failures_that_alternate_with_successes_degrade_the_loop():
     clock = Clock()
     health = running(clock, "operations_loop", 60)
@@ -484,6 +501,32 @@ async def test_outbox_and_broker_turn_failures_fail_the_next_cycle(monkeypatch):
     assert await broker.cycle() is True
 
 
+async def poll_cycles(monkeypatch, outbox, clock: Clock, count: int) -> None:
+    """Drive the real `poll` for `count` cycles that each take one second, then stop it."""
+    cycles = 0
+    cycle = outbox.cycle
+
+    async def timed():
+        nonlocal cycles
+        try:
+            clock.advance(1)
+            return await cycle()
+        finally:
+            cycles += 1
+
+    monkeypatch.setattr(outbox, "cycle", timed)
+    task = asyncio.create_task(outbox.poll())
+    try:
+        async with asyncio.timeout(2):
+            while cycles < count:
+                await asyncio.sleep(0)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        monkeypatch.setattr(outbox, "cycle", cycle)
+
+
 async def test_an_outbox_waiting_for_readiness_neither_succeeds_nor_fails(monkeypatch):
     from firefly_weave.operations import outbox_loop
     from firefly_weave.operations.outbox_loop import OutboxLoop
@@ -538,6 +581,10 @@ async def test_an_outbox_waiting_for_readiness_neither_succeeds_nor_fails(monkey
     clock.advance(4)
     assert health.snapshot("outbox_loop").state == "degraded"
     assert health.snapshot("outbox_loop").consecutive_failures == 0
+    # Waiting cycles that take time never count as successes: the poll records none of them.
+    await poll_cycles(monkeypatch, outbox, clock, 5)
+    snapshot = health.snapshot("outbox_loop")
+    assert (snapshot.state, snapshot.consecutive_failures, snapshot.last_ok_at) == ("degraded", 0, ok_at)
 
 
 async def test_an_outbox_without_a_free_delivery_slot_is_behind_not_healthy(monkeypatch):
@@ -585,27 +632,42 @@ async def test_an_outbox_without_a_free_delivery_slot_is_behind_not_healthy(monk
     snapshot = health.snapshot("outbox_loop")
     # Without a free slot for more than three intervals the outbox reads degraded, with no failure invented.
     assert (snapshot.state, snapshot.consecutive_failures) == ("degraded", 0)
+    # Cycles that take time without a free slot never count as successes: the poll records none of them.
+    ok_at = snapshot.last_ok_at
+    await poll_cycles(monkeypatch, outbox, clock, 5)
+    snapshot = health.snapshot("outbox_loop")
+    assert (snapshot.state, snapshot.consecutive_failures, snapshot.last_ok_at) == ("degraded", 0, ok_at)
 
 
 def test_each_background_loop_judges_a_cycle_in_flight_by_its_own_budget():
     clock = Clock()
     health = LoopHealth(clock, monotonic=clock.monotonic)
-    register_background_loops(health, Settings(database_url=DATABASE, scheduler_database_url=SCHEDULER))
+    register_background_loops(
+        health,
+        Settings(
+            database_url=DATABASE,
+            scheduler_database_url=SCHEDULER,
+            broker=BrokerPolicy(enabled=True, max_clients=2),
+            kafka_consumer_enabled=True,
+        ),
+    )
+    loops = ("recovery_loop", "schedules", "outbox_loop", "provider_loop", "kafka_loop", "operations_loop")
     budgets = {}
-    for name in ("recovery_loop", "schedules", "outbox_loop", "provider_loop", "operations_loop"):
+    for name in loops:
         health.running(name, True)
         health.succeeded(name)
     start = clock.elapsed
-    for name in ("recovery_loop", "schedules", "outbox_loop", "provider_loop", "operations_loop"):
+    for name in loops:
         health.started(name)
     for seconds in (4.9, 5.1, 29.9, 30.1, 59.9, 60.1, 179.9, 180.1):
         clock.elapsed = start + seconds
-        for name in ("recovery_loop", "schedules", "outbox_loop", "provider_loop", "operations_loop"):
+        for name in loops:
             if health.snapshot(name).state == "ok":
                 budgets[name] = seconds
-    # The traversal timeout bounds outbox cycles; tenant scans and mailbox polls take longer.
+    # The traversal timeout bounds outbox and broker cycles; tenant scans and mailbox polls take longer.
     assert budgets == {
         "outbox_loop": 4.9,
+        "kafka_loop": 4.9,
         "recovery_loop": 29.9,
         "schedules": 29.9,
         "provider_loop": 59.9,

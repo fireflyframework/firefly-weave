@@ -342,7 +342,11 @@ Two reads are new, and neither changes an existing answer:
   `status.read` granted for the project, not only for an environment, and
   never returns endpoint paths, credentials or headers.
 
-Earlier servers do not serve them and answer `404` or `405`. Loop health is
+Earlier servers do not serve them and answer `404` or `405`. For the first 24
+hours after the upgrade, `opened_24h` leaves out incidents whose opening time
+the upgrade could only estimate. A `WEAVE_TELEMETRY` collector URL whose host
+name is longer than 253 characters, which no DNS name is, now stops startup with
+`Invalid WEAVE_TELEMETRY configuration`. Loop health is
 measured in each API process and starts again when the process restarts, so a
 freshly started process reads `degraded` until each loop completes a cycle. An
 answer from an API-only replica reports every scheduler loop as `disabled`; the

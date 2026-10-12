@@ -18,9 +18,11 @@
 
 The summary is read in one transaction that also reloads the caller's grants. Beyond `status.read`, each section
 and attention item needs its own capability on both the token and the principal stored now; a section the caller
-may not read is forbidden before any of its statements run. Each section runs in a savepoint under a two-second
-statement timeout, and one that times out is unavailable while the others are still served. Run figures leave out
-test runs; queue and worker figures measure shared capacity and count every task.
+may not read is forbidden before any of its statements run, and finding that out records nothing. Each section runs
+in a savepoint with two seconds of database time in all: every statement runs under what is left of it, and a
+section that runs out is unavailable while the others are still served. Run figures leave out test runs, and times
+the platform only estimated are never counted as known; queue and worker figures measure shared capacity and count
+every task.
 """
 
 import time
@@ -32,8 +34,10 @@ from typing import Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import Result, text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Executable
 
 from firefly_weave import __version__
 from firefly_weave.access.audit import AuditContext
@@ -62,6 +66,7 @@ from firefly_weave.contracts.operations_summary import (
     UnavailableSection,
     WorkersSection,
 )
+from firefly_weave.contracts.telemetry import TelemetryOptions
 from firefly_weave.observability import TelemetryDrops
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.fact_reads import available
@@ -72,6 +77,8 @@ from firefly_weave.settings import Settings
 
 # Each section's statements share this budget; a stricter timeout already in force is kept.
 SECTION_TIMEOUT_MS = 2000
+# Telemetry export is degraded while anything was dropped within this many metric export intervals.
+TELEMETRY_INTERVALS_RECENT = 3
 # Query failures a section reports as unavailable: a cancelled or timed-out statement, a lock timeout, a
 # serialization conflict, a deadlock and exhausted database resources. Every other error propagates.
 _TRANSIENT = ("57014", "55P03", "40001", "40P01", "53")
@@ -122,6 +129,13 @@ _LIVE_LEASES = (
 _RECENT = f"w.last_seen_at>{NOW}-interval '60 seconds'"
 _CURRENT = f"NOT w.revoked AND coalesce(w.last_seen_at,f.registered_at)>{NOW}-interval '1 hour'"
 _WORKER_FACTS = f"LEFT JOIN worker_facts f ON {_SAME_SCOPE.format(a='f', b='w')} AND f.worker_id=w.id"
+# Active test runs, exactly as the run usage counter counts runs: by status, so a finished run without a recorded end
+# is not active. The partial index run_facts_active_test has this predicate.
+_ACTIVE_TEST = "test AND (status IS NULL OR status NOT IN ('succeeded','failed','cancelled','timed_out'))"
+_READY_COUNTS = (
+    "SELECT count(*) AS ready,extract(epoch FROM (cast(:now AS timestamptz)-min(ready_since))) AS oldest "
+    f"FROM task_facts WHERE {_SCOPE.format(alias='')} AND status='ready' AND ready_since<=cast(:now AS timestamptz)"
+)
 _RUN_CLASSIFICATION = (
     "r.classification_state,r.classification_policy,r.pinned_ir_version,r.pinned_features,"
     f"EXISTS(SELECT 1 FROM run_policy_blocks b WHERE {_SAME_SCOPE.format(a='b', b='r')} AND b.run_id=r.run_id) "
@@ -143,12 +157,40 @@ def _transient(error: DBAPIError) -> bool:
     return isinstance(state, str) and state.startswith(_TRANSIENT)
 
 
-async def read_section[T](tx: Transaction, read: Callable[[], Awaitable[T]]) -> T | UnavailableSection:
-    """Run one section's statements in a savepoint under the section timeout.
+class SectionTimedOut(Exception):
+    """A section used up its database time before its next statement."""
 
-    A timed-out or otherwise transient query failure rolls the savepoint back, which restores the earlier local
-    timeout, and the section is unavailable. A lost connection, cancellation, an authorization failure and any other
-    error propagate, so a broken transaction never answers later sections.
+
+class Budget:
+    """One section's database time, shared by its statements: each runs under what is left of it."""
+
+    def __init__(self, session: AsyncSession, limit_ms: int, monotonic: Callable[[], float]) -> None:
+        self.session, self.monotonic = session, monotonic
+        self.deadline = monotonic() + limit_ms / 1000
+
+    async def limit(self) -> None:
+        """Bound the next statement by what is left; nothing left means the section ran out."""
+        remaining = int((self.deadline - self.monotonic()) * 1000)
+        if remaining <= 0:
+            raise SectionTimedOut()
+        await self.session.execute(
+            text("SELECT set_config('statement_timeout',:value,true)"), {"value": f"{remaining}ms"}
+        )
+
+    async def execute(self, statement: Executable, values: dict[str, Any] | None = None) -> Result[Any]:
+        await self.limit()
+        return await self.session.execute(statement, values)
+
+
+async def read_section[T](
+    tx: Transaction, read: Callable[[Budget], Awaitable[T]], *, monotonic: Callable[[], float] = time.monotonic
+) -> T | UnavailableSection:
+    """Run one section's statements in a savepoint, sharing one section budget.
+
+    The budget is two seconds, or a stricter timeout already in force. A section that runs out of it, or meets a
+    transient query failure, rolls the savepoint back, which restores the earlier local timeout, and is unavailable.
+    A lost connection, cancellation, an authorization failure and any other error propagate, so a broken transaction
+    never answers later sections.
     """
     session = tx.session
     row = (
@@ -162,14 +204,21 @@ async def read_section[T](tx: Transaction, read: Callable[[], Awaitable[T]]) -> 
     bound = min(row.prior_ms, SECTION_TIMEOUT_MS) if row.prior_ms else SECTION_TIMEOUT_MS
     try:
         async with session.begin_nested():
+            # Every statement of the section is bounded by the whole budget, and lowered to what is left of it.
             await session.execute(text("SELECT set_config('statement_timeout',:value,true)"), {"value": f"{bound}ms"})
-            value = await read()
+            value = await read(Budget(session, bound, monotonic))
             await session.execute(text("SELECT set_config('statement_timeout',:value,true)"), {"value": row.prior})
             return value
+    except SectionTimedOut:
+        return UnavailableSection(state="unavailable")
     except DBAPIError as error:
         if error.connection_invalidated or not _transient(error):
             raise
         return UnavailableSection(state="unavailable")
+
+
+def _ready(row: Any) -> tuple[int, float | None]:
+    return int(row["ready"]), _seconds(row["oldest"])
 
 
 async def read_ready_counts(tx: Transaction, observed_at: datetime) -> tuple[int, float | None]:
@@ -178,21 +227,8 @@ async def read_ready_counts(tx: Transaction, observed_at: datetime) -> tuple[int
     A retry whose next attempt is still in the future is stored as ready from that instant, so it joins the count
     exactly when it becomes due; nothing is written to make it so. Claims stay the authority on what runs.
     """
-    row = (
-        (
-            await tx.session.execute(
-                text(
-                    "SELECT count(*) AS ready,extract(epoch FROM (cast(:now AS timestamptz)-min(ready_since))) "
-                    f"AS oldest FROM task_facts WHERE {_SCOPE.format(alias='')} AND status='ready' "
-                    "AND ready_since<=cast(:now AS timestamptz)"
-                ),
-                {**_bound(tx), "now": observed_at},
-            )
-        )
-        .mappings()
-        .one()
-    )
-    return int(row["ready"]), _seconds(row["oldest"])
+    result = await tx.session.execute(text(_READY_COUNTS), {**_bound(tx), "now": observed_at})
+    return _ready(result.mappings().one())
 
 
 def _bound(tx: Transaction) -> dict[str, Any]:
@@ -224,12 +260,23 @@ def native_state(settings: Settings, dispatcher: NativeExecutors | None) -> Heal
     return "ok" if dispatcher.healthy() else "degraded"
 
 
+def telemetry_state(options: TelemetryOptions, drops: TelemetryDrops) -> HealthState:
+    """Off unless export is on; degraded while this process dropped telemetry within the last three metric intervals.
+
+    Configuration alone proves nothing: export is healthy only while nothing is being dropped.
+    """
+    if not options.enabled:
+        return "disabled"
+    recent = TELEMETRY_INTERVALS_RECENT * options.metrics_interval_seconds
+    return "degraded" if drops.dropped_within(recent) else "ok"
+
+
 def health_components(
     latency: float | UnavailableSection,
     snapshots: Iterable[LoopSnapshot],
     *,
     native: HealthState,
-    telemetry_enabled: bool,
+    telemetry: HealthState,
 ) -> list[HealthComponent]:
     """The database, each registered loop, native executors and telemetry export; states and counts, never messages."""
     database = (
@@ -253,7 +300,7 @@ def health_components(
         database,
         *loops,
         HealthComponent(component="native_executors", state=native),
-        HealthComponent(component="telemetry", state="ok" if telemetry_enabled else "disabled"),
+        HealthComponent(component="telemetry", state=telemetry),
     ]
 
 
@@ -303,12 +350,14 @@ def _intersect(left: tuple[UUID, ...] | None, right: tuple[UUID, ...] | None) ->
 
 
 class _Reader:
-    def __init__(self, tx: Transaction, observed_at: datetime) -> None:
-        self.tx = tx
+    """One section's statements, each under what is left of the section's budget."""
+
+    def __init__(self, tx: Transaction, observed_at: datetime, budget: Budget) -> None:
+        self.tx, self.budget = tx, budget
         self.bound = {**_bound(tx), "now": observed_at}
 
     async def rows(self, sql: str, **values: Any) -> list[dict[str, Any]]:
-        result = await self.tx.session.execute(text(sql), {**self.bound, **values})
+        result = await self.budget.execute(text(sql), {**self.bound, **values})
         return [dict(row) for row in result.mappings()]
 
     async def row(self, sql: str, **values: Any) -> dict[str, Any]:
@@ -351,21 +400,24 @@ class OperationsSummaryService:
             reach = self._reach(actor, current, scope, context)
             observed_at = await tx.session.scalar(text("SELECT clock_timestamp()"))
             assert isinstance(observed_at, datetime)
-            reader = _Reader(tx, observed_at)
-            latency = await read_section(tx, lambda: self._latency(tx))
-            load = await read_section(tx, lambda: self._load(reader))
-            workers = await read_section(tx, lambda: self._workers(reader))
+
+            async def section[T](read: Callable[[_Reader], Awaitable[T]]) -> T | UnavailableSection:
+                return await read_section(
+                    tx, lambda budget: read(_Reader(tx, observed_at, budget)), monotonic=self.monotonic
+                )
+
+            latency = await read_section(tx, self._latency, monotonic=self.monotonic)
+            load = await section(self._load)
+            workers = await section(self._workers)
             targets: TargetsSection | ForbiddenSection | UnavailableSection = (
                 ForbiddenSection(state="forbidden")
                 if reach.targets == ()
-                else await read_section(tx, lambda: self._targets(reader, reach.targets))
+                else await section(lambda reader: self._targets(reader, reach.targets))
             )
             incidents: IncidentsSection | ForbiddenSection | UnavailableSection = (
-                await read_section(tx, lambda: self._incidents(reader))
-                if reach.incidents
-                else ForbiddenSection(state="forbidden")
+                await section(self._incidents) if reach.incidents else ForbiddenSection(state="forbidden")
             )
-            attention = await read_section(tx, lambda: self._attention(reader, reach))
+            attention = await section(lambda reader: self._attention(reader, reach))
         return OperationsSummary(
             observed_at=observed_at,
             api=self._api(scope),
@@ -400,12 +452,16 @@ class OperationsSummaryService:
         )
 
     def _reach(self, actor: Principal, current: Principal, scope: Scope, context: AuditContext) -> _Reach:
+        """Which sections to fill. A capability the caller lacks is not an attempt to use it, so it records nothing;
+        reading a section the caller may read is recorded as allowed, as target-restricted reads are.
+        """
+
         def permitted(capability: str) -> bool:
-            try:
-                for principal in (actor, current):
-                    self.authorization.require(principal, scope, capability, context=context)
-            except AccessDenied:
+            principals = (actor, current)
+            if not all(self.authorization.allows(principal, scope, capability) for principal in principals):
                 return False
+            for principal in principals:
+                self.authorization.require(principal, scope, capability, context=context)
             return True
 
         readable = target_permissions(self.authorization, actor, current, scope, "deployment.read", context)
@@ -441,12 +497,13 @@ class OperationsSummaryService:
             latency,
             self.health.snapshots(),
             native=native_state(self.settings, self.native()),
-            telemetry_enabled=self.settings.telemetry.enabled,
+            telemetry=telemetry_state(self.settings.telemetry, self.drops),
         )
 
-    async def _latency(self, tx: Transaction) -> float:
+    async def _latency(self, budget: Budget) -> float:
+        await budget.limit()
         started = self.monotonic()
-        await tx.session.execute(text("SELECT 1"))
+        await budget.session.execute(text("SELECT 1"))
         return round(max(0.0, self.monotonic() - started) * 1000, 3)
 
     async def _load(self, reader: _Reader) -> LoadSection:
@@ -459,9 +516,9 @@ class OperationsSummaryService:
             )
         }
         tests = await reader.row(
-            f"SELECT count(*) AS active FROM run_facts WHERE {_SCOPE.format(alias='')} AND test AND ended_at IS NULL"
+            f"SELECT count(*) AS active FROM run_facts WHERE {_SCOPE.format(alias='')} AND {_ACTIVE_TEST}"
         )
-        ready, oldest_ready = await read_ready_counts(reader.tx, reader.bound["now"])
+        ready, oldest_ready = _ready(await reader.row(_READY_COUNTS))
         leased = await reader.row(
             "SELECT count(DISTINCT l.task_id) AS leased FROM task_leases l JOIN task_intents i "
             f"ON {_SAME_SCOPE.format(a='i', b='l')} AND i.id=l.task_id WHERE {_SCOPE.format(alias='l.')} "
@@ -523,7 +580,10 @@ class OperationsSummaryService:
         )
 
     async def _incidents(self, reader: _Reader) -> IncidentsSection:
-        """Incidents of test runs are left out; an incident without facts predates test runs and counts."""
+        """Incidents of test runs are left out; an incident without facts predates test runs and counts.
+
+        Only known opening times count as opened in the last 24 hours: one the upgrade estimated is never counted.
+        """
         active = await reader.row(
             "SELECT count(*) AS active FROM incidents i LEFT JOIN incident_facts f ON "
             f"{_SAME_SCOPE.format(a='f', b='i')} AND f.incident_id=i.id "
@@ -531,7 +591,7 @@ class OperationsSummaryService:
         )
         opened = await reader.row(
             f"SELECT count(*) AS opened FROM incident_facts WHERE {_SCOPE.format(alias='')} AND NOT test "
-            f"AND opened_at>{NOW}-interval '24 hours'"
+            f"AND NOT opened_at_estimated AND opened_at>{NOW}-interval '24 hours'"
         )
         return IncidentsSection(active=int(active["active"]), opened_24h=int(opened["opened"]))
 

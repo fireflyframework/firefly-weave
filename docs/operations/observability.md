@@ -142,7 +142,7 @@ Export failure never changes workflow state or grants execution authority.
 | Field | Default | Rule |
 | --- | --- | --- |
 | `enabled` | `false` | JSON `true` or `false`; at least one endpoint is required when `true` |
-| `traces_endpoint`, `metrics_endpoint` | Absent | Exact `http` or `https` URL, at most 2048 characters; `http` only for `localhost`, `127.0.0.1`, or `::1`; no user name, password, query, or fragment. Either may be omitted |
+| `traces_endpoint`, `metrics_endpoint` | Absent | Exact `http` or `https` URL, at most 2048 characters, whose host name has at most 253 characters; `http` only for `localhost`, `127.0.0.1`, or `::1`; no user name, password, query, or fragment. Either may be omitted |
 | `authorization` | Absent | The complete `Authorization` header value the collector expects, 1 to 4096 printable ASCII characters |
 | `timeout_seconds` | `5` | Greater than 0 and at most 5 |
 | `metrics_interval_seconds` | `30` | From 5 to 300 |
@@ -219,7 +219,7 @@ volume needs to be deleted.
 | What you see | Why | What to do |
 | --- | --- | --- |
 | No export traffic at all | The API process never received `WEAVE_TELEMETRY` with `"enabled": true`, or it runs under `weave platform start` | Restart or redeploy the API with the explicit value; `OTEL_*` variables are not enough |
-| The API stops with `Invalid WEAVE_TELEMETRY configuration` | The JSON is malformed, has an unknown field, an `http` URL to a non-loopback host, a URL with credentials or a query, or a value out of range | Compare each field with the table above |
+| The API stops with `Invalid WEAVE_TELEMETRY configuration` | The JSON is malformed, has an unknown field, an `http` URL to a non-loopback host, a URL with credentials or a query, a host name longer than 253 characters, or a value out of range | Compare each field with the table above |
 | Connection refused | The collector is not listening where the API looks | A loopback URL works only for an API on the same host; use a reachable trusted URL for a container API |
 | The collector rejects requests | Receiver type, exact `/v1/traces` or `/v1/metrics` path, TLS, or authorization | Correct the receiver or the configuration; never put credentials in the URL |
 | Metrics look doubled | Several replicas report the same global inventory | Use max for duplicate inventory observations and check freshness |

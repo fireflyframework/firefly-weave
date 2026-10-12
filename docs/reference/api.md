@@ -796,9 +796,12 @@ section in the same transaction that reloads those grants.
   `native_executors`, and `telemetry`, each with a `state` of `ok`, `degraded`,
   `down`, or `disabled`. Loops add `last_started_at` and `last_ok_at` when
   known, `consecutive_failures`, and `recent_failures` (failed cycles among
-  the last 20). Health is measured by the process that answered; no exception
-  text is returned.
-- `load`: `runs_active` (test runs left out), `tasks_ready` and
+  the last 20). `telemetry` is `disabled` while export is off, `degraded` when
+  the process dropped telemetry within the last three metrics export intervals
+  (90 seconds by default), and `ok` otherwise. Health is measured by the
+  process that answered; no exception text is returned.
+- `load`: `runs_active` (active by status, as the run usage counter counts
+  them, with test runs left out), `tasks_ready` and
   `oldest_ready_seconds` (tasks due now; a retry joins when its next attempt is
   due), `tasks_leased`, `waits_active`, `waits_overdue` and
   `oldest_overdue_seconds`, `outbox_pending` and `outbox_oldest_seconds`,
@@ -814,7 +817,8 @@ section in the same transaction that reloads those grants.
   can still be approved: unexpired, on a fresh observation of the current
   target and deployment revisions, and neither approved nor applied).
 - `incidents` needs `incident.read`: `active` and `opened_24h`, leaving out
-  incidents of test runs.
+  incidents of test runs. `opened_24h` counts only known opening times: an
+  incident whose opening time the upgrade estimated is never counted.
 - `attention` lists at most 20 items, `{kind, id, title}` plus `expires_at` for
   approvals, in this order: jobs that need reconciliation, plans you may
   approve (soonest expiry first), offline workers that still hold active
@@ -825,11 +829,13 @@ section in the same transaction that reloads those grants.
   for jobs and runners, `deployment.read` and `deployment.approve` on the same
   target for approvals, `incident.read` for incidents, and `run.read` for
   failed runs. Items you may not read are left out; test runs never appear.
-- A section you may not read is `{"state": "forbidden"}`. Each section has two
-  seconds of database time; one that runs out, or meets a transient database
-  failure, is `{"state": "unavailable"}` while the others are still served with
-  `200`. Neither state is ever reported as zero. The answer has no 24-hour run
-  figures yet.
+- A section you may not read is `{"state": "forbidden"}`; none of its queries
+  run, and leaving it out records no authorization denial. Each section has two
+  seconds of database time in all (or a stricter statement timeout already in
+  force), shared by its queries: each runs under what is left. One that runs
+  out, or meets a transient database failure, is `{"state": "unavailable"}`
+  while the others are still served with `200`. Neither state is ever reported
+  as zero. The answer has no 24-hour run figures yet.
 
 Loop states follow these rules. A loop is `disabled` when its setting turns it
 off (API-only replicas disable every scheduler loop) and `down` while its task
