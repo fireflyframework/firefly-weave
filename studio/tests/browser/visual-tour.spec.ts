@@ -51,6 +51,15 @@ import {
   globexPlatform,
 } from "./platform-host";
 import { DesignerPage, StepKind, stepLabels } from "./designer-po";
+import { publishDialog, withOwnedSteps } from "./owned-actions";
+import {
+  addCommonStep,
+  openStepFixture,
+  settingsGear,
+  stepFixture,
+  yamlFile,
+} from "./step-details-po";
+import { showParameters } from "./step-geometry";
 import { CanvasPage, openWorkflow, useNewEditor } from "./canvas-po";
 import {
   debugSession,
@@ -64,6 +73,7 @@ import {
   openYaml,
 } from "./integrations-po";
 import {
+  builtinActions,
   hasPython,
   localAuthoring,
   python,
@@ -1377,6 +1387,21 @@ spec:
   output: {literal: {}}
 `;
 
+/**
+ * Offline Studio whose host builds Call an API's action with the
+ * repository's Python, as `weave studio` does. Without that environment
+ * (the Linux font check), the action can't be built and its URL says so.
+ */
+async function apiAuthoring(page: Page) {
+  if (hasPython) {
+    await localAuthoring(page);
+    await page.route("**/studio/contracts/connector-actions", (route) =>
+      route.fulfill({ json: builtinActions() }),
+    );
+  }
+  await offline(page);
+}
+
 type Scene = (tour: Tour) => Promise<void>;
 const scenes: Record<string, Scene> = {
   async lumi({ page, shot }) {
@@ -1449,6 +1474,210 @@ const scenes: Record<string, Scene> = {
       .click();
     await expect(panel.getByLabel("Model", { exact: true })).toBeVisible();
     await shot("lumi-settings", { end: ".modal-panel" });
+  },
+  // ------------------------------------------------------- step details
+  async "step-details-api"({ page, shot, size }) {
+    const details = await openStepFixture(page, stepFixture, apiAuthoring);
+    await addCommonStep(page, "Call an API");
+    await details
+      .field("connection")
+      .getByRole("combobox", { name: "Connection" })
+      .click();
+    await page.getByRole("option", { name: /^New slot/ }).click();
+    await details
+      .field("method")
+      .getByRole("combobox", { name: "Method" })
+      .click();
+    await page.getByRole("option", { name: /^POST/ }).click();
+    await details
+      .field("url")
+      .getByRole("textbox", { name: "URL" })
+      .fill("/customers/");
+    // Map customerId into the path, so the URL shows its pill and Input its check mark.
+    if (size.width < 768)
+      await details.dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Input" })
+        .click();
+    await details.dialog
+      .locator(".sd-input")
+      .getByRole("listitem", { name: /^customerId, / })
+      .focus();
+    await page.keyboard.press("Enter");
+    await page
+      .getByRole("menu", { name: "Map customerId to" })
+      .getByRole("menuitem", { name: "URL", exact: true })
+      .click();
+    await showParameters(page, details.dialog);
+    await details.dialog.getByRole("button", { name: "Add option" }).click();
+    await page.getByRole("menuitem", { name: /^Query parameters/ }).click();
+    await shot("90-step-details-api", {
+      end: ".sd-tabpanel:not([hidden])",
+      tabs: 4,
+    });
+    await details.dialog.getByRole("button", { name: "Add option" }).click();
+    await expect(page.getByRole("menu", { name: "Add option" })).toBeVisible();
+    await shot("91-step-details-add-option", { tabs: 0 });
+  },
+  async "step-details-decision"({ page, shot }) {
+    const details = await openStepFixture(page);
+    await details.open("route-by-value");
+    await expect(details.field("cases")).toBeVisible();
+    await shot("92-step-details-decision", {
+      end: ".sd-tabpanel:not([hidden])",
+      tabs: 3,
+    });
+  },
+  async "step-details-settings"({ page, shot }) {
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    await details.tab("Settings").click();
+    await details
+      .field("notes")
+      .getByRole("textbox", { name: "Notes" })
+      .fill(
+        "Uses the ledger replica.\nAsk the finance team before changing it.",
+      );
+    await details
+      .field("notes")
+      .getByRole("switch", { name: "Show on canvas" })
+      .click();
+    await shot("93-step-details-settings", {
+      end: ".sd-tabpanel:not([hidden])",
+      tabs: 3,
+    });
+  },
+  async "step-details-mapping"({ page, shot, size }) {
+    const details = await openStepFixture(page);
+    await details.open("check-customer");
+    if (size.width < 768)
+      await details.dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Input" })
+        .click();
+    await details.dialog
+      .locator(".sd-input")
+      .getByRole("listitem", { name: /^email, / })
+      .focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("menu", { name: "Map email to" }),
+    ).toBeVisible();
+    await shot("94-step-details-map-to", { tabs: 0 });
+  },
+  async "step-details-issues"({ page, shot }) {
+    const details = await openStepFixture(page);
+    await addCommonStep(page, "Call an API");
+    // Execute step can't run offline (its button says why), but its
+    // shortcut still shows every message once focus leaves Connection.
+    await expect(
+      details.dialog.getByRole("combobox", { name: "Connection" }),
+    ).toBeFocused();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("ControlOrMeta+Enter");
+    await details.dialog.getByRole("button", { name: /^\d+ issues?$/ }).click();
+    await expect(page.getByRole("menu", { name: /issues?$/ })).toBeVisible();
+    await shot("95-step-details-issues", { tabs: 0 });
+  },
+  async "step-details-trigger"({ page, shot, size }) {
+    const details = await openStepFixture(page);
+    await details.trigger().dblclick();
+    if (size.width < 768)
+      await details.dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Test event" })
+        .click();
+    await details.dialog
+      .getByRole("button", { name: "Generate sample" })
+      .click();
+    await shot("96-step-details-trigger", {
+      end: ".sd-input .sd-pane-body",
+      tabs: 3,
+    });
+  },
+  async "step-details-narrow"({ page, shot }) {
+    const long = "route-every-incoming-order-by-amount-and-customer-tier-check";
+    const paths = Array.from(
+      { length: 7 },
+      (
+        _,
+        i,
+      ) => `        - when: {op: {name: gt, args: [{ref: /input/amount}, {literal: ${i}}]}}
+          steps: [{id: path-${i + 1}, kind: wait, durationSeconds: 60}]
+          output: {literal: {}}`,
+    ).join("\n");
+    const details = await openStepFixture(
+      page,
+      yamlFile(
+        "many-paths.yaml",
+        `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: many-paths, version: 1.0.0}
+spec:
+  inputSchema: {type: object, properties: {amount: {type: number}}}
+  outputSchema: {type: object}
+  steps:
+    - {id: start-here, kind: wait, durationSeconds: 60}
+    - id: ${long}
+      kind: switch
+      cases:
+${paths}
+      default: {steps: [], output: {literal: {}}}
+  output: {literal: {}}
+`,
+      ),
+    );
+    await details.open(long);
+    await shot("97-step-details-narrow", { tabs: 2 });
+  },
+  async "step-details-workflow-settings"({ page, shot }) {
+    await openStepFixture(page);
+    await settingsGear(page).click();
+    await expect(
+      page.getByRole("dialog", { name: "Workflow settings" }),
+    ).toBeVisible();
+    await shot("98-workflow-settings", { end: ".modal-panel", tabs: 3 });
+  },
+  async "step-details-owned-publish"({ page, shot }) {
+    test.skip(!hasPython, "Needs the repository's Python environment.");
+    await withOwnedSteps(page);
+    await command(page, "Publish…");
+    const dialog = publishDialog(page);
+    await expect(dialog.locator(".owned-state")).toHaveText(["Ready", "Ready"]);
+    await shot("99-owned-publish", { end: ".modal-panel", tabs: 3 });
+  },
+  async "source-unapplied"({ page, shot }) {
+    await openStepFixture(page);
+    await page.getByRole("tab", { name: "Source", exact: true }).click();
+    const source = page.getByRole("textbox", { name: "Workflow source" });
+    await source.fill(
+      (await source.inputValue()).replace("version: 1.0.0", "version: 1.0.1"),
+    );
+    await page.getByRole("tab", { name: "Designer", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Apply the changes typed in Source?" }),
+    ).toBeVisible();
+    await shot("100-source-unapplied", { tabs: 3 });
+  },
+  async "toast-layout"({ page, shot }) {
+    const details = await openStepFixture(page);
+    await addCommonStep(page, "Call an API");
+    const method = details
+      .field("method")
+      .getByRole("combobox", { name: "Method" });
+    await method.click();
+    await page.getByRole("option", { name: /^POST/ }).click();
+    const row = details
+      .field("body")
+      .getByRole("textbox", { name: "Name of row 1" });
+    await row.fill("note");
+    await row.press("Tab");
+    await method.click();
+    await page.getByRole("option", { name: /^GET/ }).click();
+    await expect(page.locator(".toast-region .toast")).toContainText(
+      "Removed Body. Only for POST, PUT and PATCH.",
+    );
+    await shot("101-toast", { tabs: 2 });
   },
   async pairing({ page, shot }) {
     await page.route("**/studio/session", (r) =>

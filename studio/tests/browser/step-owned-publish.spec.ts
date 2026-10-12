@@ -25,16 +25,19 @@ import {
   builtinActions,
   hasPython,
   localAuthoring,
-  platformCompile,
   stopLocalAuthoring,
 } from "./local-authoring";
 import {
-  addCommonStep,
-  openStepFixture,
-  sizes,
-  yamlFile,
-  type StepDetailsPage,
-} from "./step-details-po";
+  addOwnedSteps,
+  applySource,
+  ownedPlatform,
+  ownedWorkflow,
+  publishDialog,
+  withOwnedSteps,
+  type Definition,
+  type PlatformCall,
+} from "./owned-actions";
+import { openStepFixture, sizes, yamlFile } from "./step-details-po";
 import {
   box,
   boxes,
@@ -47,9 +50,7 @@ import {
 import {
   allCapabilities,
   canUndo,
-  closeSheet,
   command,
-  connected,
   offline,
   sourceText,
   tokenColor,
@@ -61,243 +62,10 @@ test.afterAll(() => stopLocalAuthoring());
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 const API = "order-intake.call-api@1.0.0";
 const EMAIL = "order-intake.send-email@1.0.0";
-const base = `apiVersion: weave/v1alpha1
-kind: Workflow
-metadata: {name: order-intake, version: 1.0.0}
-spec:
-  inputSchema:
-    type: object
-    properties:
-      customerId: {type: string, title: Customer ID}
-  outputSchema: {type: object}
-  connections:
-    crm: {connector: weave-http@2.0.0, required: true}
-    mail: {connector: weave-email@1.0.0, required: true}
-  steps:
-    - id: summary
-      kind: transform
-      value: {literal: {done: true}}
-  output: {literal: {}}
-`;
-
-type Definition = Record<string, unknown> & {
-  metadata: { name: string; version: string };
-};
-interface PlatformCall {
-  path: "actions" | "workflows";
-  name: string;
-  version: string;
-  key: string;
-  /** What a workflow publish sent. */
-  source?: string;
-}
-interface PlatformOptions {
-  capabilities?: string[];
-  /** Versions already published by someone else. */
-  taken?: Definition[];
-  /** An action name whose first publish answers 503. */
-  failOnce?: string;
-  /** The URL typed into Call an API ("" leaves it empty). */
-  url?: string;
-  /** Holds every action publish until the test releases it. */
-  hold?: boolean;
-}
-
-/** JSON with sorted keys: two documents with the same content read the same. */
-const canonical = (value: unknown): string =>
-  JSON.stringify(value, (_key, item: unknown) =>
-    item && typeof item === "object" && !Array.isArray(item)
-      ? Object.fromEntries(
-          Object.entries(item as Record<string, unknown>).sort(([a], [b]) =>
-            a < b ? -1 : a > b ? 1 : 0,
-          ),
-        )
-      : item,
-  );
-
-/**
- * A connected platform with a catalog in memory. Compiles go to the
- * repository's compiler with what was published; a publish keeps the
- * version, answers the same content with the version it has, and refuses
- * other content under a taken version, as the platform does.
- */
-async function ownedPlatform(page: Page, options: PlatformOptions) {
-  const catalog = new Map<string, Definition>(
-    (options.taken ?? []).map((definition) => [
-      `${definition.metadata.name}@${definition.metadata.version}`,
-      definition,
-    ]),
-  );
-  const calls: PlatformCall[] = [];
-  let failed = false;
-  let release = () => undefined as void;
-  const held = options.hold
-    ? new Promise<void>((done) => (release = done))
-    : null;
-  await localAuthoring(page);
-  await page.route("**/studio/contracts/connector-actions", (route) =>
-    route.fulfill({ json: builtinActions() }),
-  );
-  await connected(page, {
-    capabilities: options.capabilities ?? [...allCapabilities, "compile"],
-    catalog: [],
-  });
-  const compile = (source: unknown, format: string) =>
-    platformCompile({ source, format, definitions: [...catalog.values()] });
-  await page.route(`${project}/compiler/compile`, async (route) => {
-    const body = route.request().postDataJSON() as {
-      source: unknown;
-      format: string;
-    };
-    await route.fulfill({ json: await compile(body.source, body.format) });
-  });
-  await page.route(`${project}/actions`, async (route) => {
-    if (route.request().method() !== "POST") return route.fallback();
-    const definition = parse(
-      (route.request().postDataJSON() as { source: string }).source,
-    ) as Definition;
-    const { name, version } = definition.metadata;
-    calls.push({
-      path: "actions",
-      name,
-      version,
-      key: route.request().headers()["idempotency-key"] ?? "",
-    });
-    if (held) await held;
-    if (options.failOnce === name && !failed) {
-      failed = true;
-      return route.fulfill({
-        status: 503,
-        json: { code: "WV-UNAVAILABLE", message: "The platform is busy." },
-      });
-    }
-    const existing = catalog.get(`${name}@${version}`);
-    if (existing && canonical(existing) !== canonical(definition))
-      return route.fulfill({
-        status: 409,
-        json: {
-          code: "WV-VERSION-CONFLICT",
-          message: "An immutable version already has different content",
-        },
-      });
-    const result = (await compile(definition, "object")) as { ok: boolean };
-    if (!result.ok)
-      return route.fulfill({
-        status: 422,
-        json: {
-          code: "WV-COMPILE",
-          message: "Definition compilation failed",
-          result,
-        },
-      });
-    catalog.set(`${name}@${version}`, existing ?? definition);
-    await route.fulfill({
-      status: 201,
-      json: { id: `action-${catalog.size}`, kind: "Action", name, version },
-    });
-  });
-  await page.route(`${project}/workflows`, async (route) => {
-    if (route.request().method() !== "POST") return route.fallback();
-    const body = route.request().postDataJSON() as {
-      source: string;
-      format: string;
-    };
-    const { name, version } = (parse(body.source) as Definition).metadata;
-    calls.push({
-      path: "workflows",
-      name,
-      version,
-      key: route.request().headers()["idempotency-key"] ?? "",
-      source: body.source,
-    });
-    const result = (await compile(body.source, body.format)) as { ok: boolean };
-    if (!result.ok)
-      return route.fulfill({
-        status: 422,
-        json: {
-          code: "WV-COMPILE",
-          message: "Definition compilation failed",
-          result,
-        },
-      });
-    await route.fulfill({
-      status: 201,
-      json: {
-        id: "11111111-1111-4111-8111-111111111111",
-        kind: "Workflow",
-        name,
-        version,
-        digest: "0".repeat(64),
-      },
-    });
-  });
-  return { calls, catalog, release: () => release() };
-}
-
-/** Replaces the workflow source in Source and applies it. */
-async function applySource(page: Page, text: string) {
-  await closeSheet(page);
-  await page.getByRole("tab", { name: "Source", exact: true }).click();
-  await page.getByRole("textbox", { name: "Workflow source" }).fill(text);
-  await page
-    .getByRole("button", { name: "Apply changes", exact: true })
-    .click();
-  await page.getByRole("tab", { name: "Designer", exact: true }).click();
-}
 const stepOf = async (page: Page, id: string) =>
   (parse(await sourceText(page)).spec.steps as Record<string, unknown>[]).find(
     (step) => step["id"] === id,
   )!;
-
-/**
- * order-intake with Send email and Call an API (GET /orders) inserted from
- * the step picker, so the workflow owns both actions; the email's fields
- * come from Source.
- */
-async function withOwnedSteps(page: Page, options: PlatformOptions = {}) {
-  let platform!: Awaited<ReturnType<typeof ownedPlatform>>;
-  const details = await openStepFixture(
-    page,
-    yamlFile("order-intake.yaml", base),
-    async (p) => {
-      platform = await ownedPlatform(p, options);
-    },
-  );
-  await addOwnedSteps(page, details, options);
-  return { details, platform };
-}
-/** Inserts Send email and Call an API from the step picker, and the email's fields from Source. */
-async function addOwnedSteps(
-  page: Page,
-  details: StepDetailsPage,
-  options: PlatformOptions = {},
-) {
-  await addCommonStep(page, "Send email");
-  await expect(details.dialogFor("send-email")).toBeVisible();
-  await details.close();
-  await addCommonStep(page, "Call an API");
-  await expect(details.dialogFor("call-api")).toBeVisible();
-  if (options.url !== "") {
-    const url = details.field("url").getByRole("textbox", { name: "URL" });
-    await url.fill(options.url ?? "/orders");
-    await url.press("Tab");
-  }
-  await details.close();
-  const document = parse(await sourceText(page));
-  const email = (document.spec.steps as Record<string, unknown>[]).find(
-    (step) => step["id"] === "send-email",
-  )!;
-  email["with"] = {
-    literal: {
-      to: ["ana@example.com"],
-      subject: "Your order",
-      text: "Thanks for your order.",
-    },
-  };
-  await applySource(page, stringify(document));
-}
-const publishDialog = (page: Page) =>
-  page.getByRole("dialog", { name: "Publish order-intake 1.0.0?" });
 
 /**
  * The publish dialog's design: one left and one right edge for its content
@@ -990,7 +758,7 @@ test.describe("a workflow kept on this computer, opened again once connected", (
   test("publishing its actions adds no undo step", async ({ page }) => {
     const details = await openStepFixture(
       page,
-      yamlFile("order-intake.yaml", base),
+      yamlFile("order-intake.yaml", ownedWorkflow),
       async (p) => {
         await localAuthoring(p);
         await p.route("**/studio/contracts/connector-actions", (route) =>
