@@ -311,7 +311,7 @@ def test_optional_empty_request_bodies_retain_schema_without_requiring_presence(
     from firefly_weave.contracts.openapi import export_openapi
 
     spec = export_openapi()
-    optional = {"connections.test", "definitions.retire", "activations.retire"}
+    optional = {"connections.test", "definitions.retire", "activations.retire", "ai_setup.publish"}
     found = set()
     for path in spec["paths"].values():
         for method, operation in path.items():

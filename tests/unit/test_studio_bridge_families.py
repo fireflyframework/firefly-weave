@@ -16,6 +16,8 @@
 
 """The Studio host bridge admits drafts, Simulate, release reads and connector discovery only."""
 
+import hashlib
+import json
 from pathlib import Path
 
 import httpx
@@ -79,10 +81,16 @@ def pair(browser):
         ("GET", f"{PROJECT}/drafts"),
         ("GET", f"{PROJECT}/workflows/{RESOURCE}"),
         ("GET", f"{PROJECT}/language"),
+        ("GET", f"{ENVIRONMENT}/bindable-connections"),
         ("GET", f"{ENVIRONMENT}/run-summaries"),
         ("GET", f"{ENVIRONMENT}/runs/{RESOURCE}/steps"),
         ("GET", f"{ENVIRONMENT}/runs/{RESOURCE}/logs"),
         ("POST", f"{ENVIRONMENT}/ai/connections/{RESOURCE}/test"),
+        ("GET", f"{ENVIRONMENT}/ai/endpoints"),
+        ("GET", f"{ENVIRONMENT}/ai/models"),
+        ("GET", f"{ENVIRONMENT}/ai/readiness"),
+        ("POST", f"{ENVIRONMENT}/ai/setup/publish"),
+        ("POST", f"{ENVIRONMENT}/ai/setup/grant"),
     ],
 )
 def test_studio_journeys_are_bridged(tmp_path, method, path):
@@ -119,9 +127,26 @@ def test_studio_journeys_are_bridged(tmp_path, method, path):
         ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/run-summaries", 403),
         ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + f"/runs/{RESOURCE}/steps", 403),
         ("POST", f"{ENVIRONMENT}/run-summaries", 404),
+        ("POST", f"{ENVIRONMENT}/bindable-connections", 404),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/bindable-connections", 403),
+        ("GET", f"{OTHER_PROJECT}/environments/{ENVIRONMENT_ID}/bindable-connections", 403),
         ("GET", f"{ENVIRONMENT}/runs/not-a-uuid/logs", 404),
         ("POST", ENVIRONMENT.replace("000000000003", "000000000009") + f"/ai/connections/{RESOURCE}/test", 403),
         ("GET", f"{ENVIRONMENT}/ai/connections/{RESOURCE}/test", 404),
+        ("POST", f"{ENVIRONMENT}/ai/models", 404),
+        ("POST", f"{ENVIRONMENT}/ai/readiness", 404),
+        ("GET", f"{ENVIRONMENT}/ai/setup/publish", 404),
+        ("GET", f"{ENVIRONMENT}/ai/setup/grant", 404),
+        ("POST", f"{ENVIRONMENT}/ai/setup/publish/extra", 404),
+        ("POST", f"{ENVIRONMENT}/ai/setup/grant/extra", 404),
+        ("POST", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/setup/grant", 403),
+        ("POST", f"{OTHER_PROJECT}/environments/{ENVIRONMENT_ID}/ai/setup/publish", 403),
+        ("POST", f"{ENVIRONMENT}/workers/grants", 404),
+        ("GET", f"{ENVIRONMENT}/ai/readiness/extra", 404),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/readiness", 403),
+        ("POST", f"{ENVIRONMENT}/ai/endpoints", 404),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/models", 403),
+        ("GET", ENVIRONMENT.replace("000000000003", "000000000009") + "/ai/endpoints", 403),
     ],
 )
 def test_bridge_boundaries_hold(tmp_path, method, path, status):
@@ -190,6 +215,25 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         if identifier.split(".")[0] in STUDIO_FAMILIES or identifier in STUDIO_OPERATIONS
     }
     assert {"releases.create", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
+    # The AI setup operations add exactly these six, and direct incident reads join the
+    # incidents family; every earlier crossing stays as it was.
+    approved_additions = {
+        "ai_endpoints.list",
+        "ai_models.list",
+        "ai_readiness.read",
+        "ai_setup.publish",
+        "ai_setup.grant",
+        "bindable_connections.list",
+        "incidents.read",
+    }
+    assert approved_additions <= crossing
+    preserved = crossing - approved_additions
+    assert len(preserved) == 131
+    assert hashlib.sha256("\n".join(sorted(preserved)).encode()).hexdigest() == (
+        "3ba280e1522358905e2cdb2e4bf66976fdc988018cdc08742c4956b87d1ab159"
+    )
+    assert {"workers.grant", "ai_connections.test"} <= preserved
+    assert {"releases.create", "tasks.credentials", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
 
 
 @pytest.mark.parametrize(
@@ -222,3 +266,110 @@ def test_lumi_operations_keep_host_scope_csrf_and_upstream_authorization(tmp_pat
         assert browser.delete(f"/studio/api{path}", headers=headers).status_code == 404
         assert browser.post(f"/studio/api{ENVIRONMENT}/lumi/arbitrary-provider", headers=headers).status_code == 404
     assert seen == [(method, path, "Bearer t", '"3"')]
+
+
+@pytest.mark.parametrize("action", ["publish", "grant"])
+@pytest.mark.parametrize("upstream_status", [200, 403])
+def test_setup_bridge_preserves_csrf_scope_and_upstream_authority(tmp_path, action, upstream_status):
+    seen = []
+    body = {} if action == "publish" else {"connection_revision_id": RESOURCE}
+
+    async def upstream(request):
+        seen.append((request.method, request.url.path, request.headers["authorization"], request.content))
+        return httpx.Response(upstream_status, json={"ok": upstream_status == 200})
+
+    path = f"{ENVIRONMENT}/ai/setup/{action}"
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        assert browser.post(f"/studio/api{path}", json=body, headers={"Origin": ORIGIN}).status_code == 401
+        headers = pair(browser)
+        assert browser.post(f"/studio/api{path}", json=body, headers={"Origin": ORIGIN}).status_code == 403
+        response = browser.post(f"/studio/api{path}", json=body, headers=headers)
+        assert response.status_code == upstream_status
+        assert (
+            browser.post(f"/studio/api{path.replace(ENVIRONMENT_ID, RESOURCE)}", json=body, headers=headers).status_code
+            == 403
+        )
+    assert len(seen) == 1 and seen[0][:3] == ("POST", path, "Bearer t")
+    assert json.loads(seen[0][3]) == body
+
+
+OTHER_ENVIRONMENT = ENVIRONMENT.replace(ENVIRONMENT_ID, RESOURCE)
+
+
+@pytest.mark.parametrize(
+    "suffix,query",
+    [
+        ("ai/endpoints", ""),
+        ("ai/models", f"connection={RESOURCE}&refresh=true"),
+        ("ai/readiness", ""),
+        ("bindable-connections", "connector=weave-agentic-provider%401.0.0&limit=50"),
+    ],
+)
+@pytest.mark.parametrize("upstream_status", [200, 403])
+def test_ai_reads_keep_pairing_scope_method_and_upstream_authority(tmp_path, suffix, query, upstream_status):
+    seen = []
+
+    async def upstream(request):
+        seen.append((request.method, request.url.path, request.url.query.decode(), request.headers["authorization"]))
+        return httpx.Response(upstream_status, json={"code": "WV-FORBIDDEN"} if upstream_status == 403 else {})
+
+    path = f"{ENVIRONMENT}/{suffix}"
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        target = f"/studio/api{path}" + (f"?{query}" if query else "")
+        assert browser.get(target, headers={"Origin": ORIGIN}).status_code == 401
+        headers = pair(browser)
+        response = browser.get(target, headers=headers)
+        assert response.status_code == upstream_status
+        assert browser.get(f"/studio/api{OTHER_ENVIRONMENT}/{suffix}", headers=headers).status_code == 403
+        assert (
+            browser.get(
+                f"/studio/api{OTHER_PROJECT}/environments/{ENVIRONMENT_ID}/{suffix}", headers=headers
+            ).status_code
+            == 403
+        )
+        assert browser.delete(f"/studio/api{path}", headers=headers).status_code == 404
+        assert browser.post(f"/studio/api{path}", json={}, headers=headers).status_code == 404
+    assert seen == [("GET", path, query, "Bearer t")]
+
+
+@pytest.mark.parametrize("upstream_status", [201, 403])
+def test_worker_grants_still_cross_and_the_server_keeps_its_management_check(tmp_path, upstream_status):
+    seen = []
+    body = {"release_id": RESOURCE, "connection_revision_id": RESOURCE, "capability": "weave-agentic.generate@1.0.0"}
+
+    async def upstream(request):
+        seen.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(upstream_status, json={"code": "WV-FORBIDDEN"} if upstream_status == 403 else {})
+
+    path = f"{ENVIRONMENT}/worker-connection-grants"
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        assert browser.post(f"/studio/api{path}", json=body, headers={"Origin": ORIGIN}).status_code == 401
+        headers = pair(browser)
+        assert browser.post(f"/studio/api{path}", json=body, headers={"Origin": ORIGIN}).status_code == 403
+        assert browser.post(f"/studio/api{path}", json=body, headers=headers).status_code == upstream_status
+        assert (
+            browser.post(
+                f"/studio/api{OTHER_ENVIRONMENT}/worker-connection-grants", json=body, headers=headers
+            ).status_code
+            == 403
+        )
+    assert seen == [("POST", path, body)]
+
+
+@pytest.mark.parametrize("operation", ["releases.create", "tasks.credentials", "admin.grant", "admin.tenant"])
+def test_operator_and_credential_operations_never_reach_the_platform(tmp_path, operation):
+    from firefly_weave.contracts.surface import OPERATIONS
+
+    seen = []
+
+    async def upstream(request):
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    row = OPERATIONS[operation]
+    path = row.canonical_path.format(tenant=TENANT, project=PROJECT_ID, environment=ENVIRONMENT_ID)
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        headers = pair(browser)
+        assert browser.app.state.studio.check_scope(path, row.method) == 404
+        assert browser.request(row.method, f"/studio/api{path}", json={}, headers=headers).status_code == 404
+    assert seen == []

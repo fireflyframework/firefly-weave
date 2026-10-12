@@ -89,6 +89,41 @@ SPDX-License-Identifier: Apache-2.0
   over plain HTTP only through `worker-auth` and `platform-api` private-origin entries.
 - The worker and the AI gateway read version 2 AI policies; version 1 files keep
   working with a warning to migrate.
+- New AI operations, each in one environment and rechecking the caller's current
+  grants: `ai_endpoints.list` and `ai_models.list` (`catalog.read`) return the
+  approved endpoints and cached model metadata, with tool support as Ollama
+  reports it; `refresh=true` asks the AI gateway again and needs
+  `connection.manage`. `ai_readiness.read` returns eight ordered setup checks from
+  stored records, without calling a provider. `ai_setup.publish` publishes the
+  built-in AI Connector and Action (`definition.publish`), and `ai_setup.grant`
+  authorizes admitted Agentic releases for a connection (`connection.manage`);
+  repeating either changes nothing. `bindable_connections.list`
+  (`connection.bind`) lists only the connection revisions the caller may bind,
+  without configuration or secret handles. Discovery never pulls a model.
+- With an AI policy mounted on the API (`WEAVE_AI_POLICY_FILE`), new activations
+  of workflows with AI task (`llm`) steps answer 422 `WV-ACTIVATION-AI-PROVIDER`
+  when a step's provider differs from its connection's, and 422
+  `WV-ACTIVATION-AI-MODEL` when the policy does not approve the model for the
+  connection's endpoint. An unreadable policy answers 503 `WV-AI-POLICY` for
+  activations with AI task steps only. Without a policy, activation is unchanged.
+- Saving an AI connection now refreshes its model list before `connections.create`
+  answers, which can take up to about 20 seconds. When the policy approves the
+  connection's endpoint and the AI gateway is configured, the refresh contacts the
+  provider through the gateway and spends one of the six AI test admissions per
+  person per minute; a refresh that cannot call the gateway spends none.
+- `ai_connections.test` and `connections.test` of an AI connection refresh the
+  model list after the test, within the test's admission, so they answer later.
+- `connections.test` is cancelled when its client disconnects, for every connector
+  type: the result and the `connection.test.completed` audit are not written.
+- A new activation checks `connection.bind` for each bound connection revision on
+  both the request's token and the caller's stored grants. A token whose stored
+  grant was removed gets 403, and grants limited to specific revisions now bind
+  exactly those revisions.
+- Replaying an activation `Idempotency-Key` now requires the caller's current
+  `release.activate` grant: a caller whose grant was revoked gets 403 (or 401)
+  instead of the stored 201 answer.
+- AI connection tests are dated with the database clock, which readiness also
+  uses, so a test that just passed reads as healthy on every API process.
 
 ## 0.1.0a15
 

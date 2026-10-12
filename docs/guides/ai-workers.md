@@ -282,6 +282,14 @@ same fields in a single form.
    provider connectivity. Complete worker release and credential grants before
    binding it to an executable workflow.
 
+The API also publishes the canonical provider Connector and the AI task Action for
+you: `ai_setup.publish` (`definition.publish` at project scope) publishes the
+exact built-in versions, and repeating it returns the same version IDs. It needs
+an admitted Agentic worker release in the project first. After the connection
+exists, `ai_setup.grant` (`connection.manage`) authorizes each admitted Agentic
+release in the environment that declares the credential capability to use its
+credential, skipping pairs that already exist. See [AI discovery, readiness and setup](../reference/api.md#ai-discovery-readiness-and-setup).
+
 For API clients, create a connection for the published provider Connector with
 this configuration:
 
@@ -318,12 +326,30 @@ private-origin policy approves for model calls with no credentials, such as a
 local Ollama. Such a connection sets `secretRef.apiKey` to the reserved handle
 `no-credential`, which is never resolved, leased, logged or sent.
 
+To choose a connection for an AI task slot, list
+`bindable_connections.list?connector=weave-agentic-provider%401.0.0`. It needs
+`connection.bind`, not `connection.manage`, and returns only the revisions you
+may bind, with their provider and endpoint origin but no configuration or
+secret handles.
+
 ## Apply the worker's model and endpoint policy
 
 Mount an AI policy file owned by the operator. The worker reads it from
 `WEAVE_AGENTIC_POLICY_FILE` and the AI gateway from `WEAVE_LUMI_POLICY_FILE`; both
 read it again when it changes, so edits need no restart. A file that becomes
 invalid stops every model call with `LLM_POLICY` until it is fixed.
+
+Mount the same file on the API with `WEAVE_AI_POLICY_FILE` (an absolute path) so
+that clients can list the approved endpoints and models, and so that a new
+activation of a workflow with AI task (`llm`) steps is checked before it is
+created: a step whose `provider` differs from its connection's provider answers
+422 `WV-ACTIVATION-AI-PROVIDER`, and a model the policy does not approve for the
+connection's exact endpoint answers 422 `WV-ACTIVATION-AI-MODEL`. While the
+mounted file cannot be read, activations with AI task steps answer 503
+`WV-AI-POLICY`; other activations are not affected. Without the setting,
+activation does not check AI steps and the worker remains the only judge.
+Activations created before a policy change keep running, and the worker still
+refuses their calls with `LLM_POLICY` when the model is no longer approved.
 
 ```json
 {
@@ -529,6 +555,8 @@ models, environments, or interactive Entra sign-in for people.
 | Activation cannot bind a worker or connection | Check the admitted release, task capability, worker authority, and exact connection-revision grant. |
 | The task waits without being claimed | Check that the independently deployed worker is running, authenticated, and has capacity for its admitted release. |
 | The call fails with a safe LLM error | Check the allowed model/endpoint, provider access, output contract, and configured budgets. A connection test calls the model through the AI gateway. |
+| Activation answers `WV-ACTIVATION-AI-PROVIDER` or `WV-ACTIVATION-AI-MODEL` | Match the step's `provider` to the connection, or ask the operator to approve the model for that exact endpoint in the API's policy. |
+| You are not sure which layer is missing | Read `ai_readiness.read`: eight ordered checks from the admitted worker release to the last AI test, each with a safe detail code and, when you may run it, the operation that fixes it. |
 
 To pass results between AI steps in one workflow execution, follow
 [Share context between AI steps](shared-ai-context.md). Context is explicit

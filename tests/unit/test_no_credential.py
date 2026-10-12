@@ -99,7 +99,7 @@ class Definitions:
     async def transaction(self, scope, supplied, *, mutation=True):
         yield SimpleNamespace(session=self.session, scope=scope)
 
-    async def connector_contract(self, actor, scope, identifier, *, capability, context, tx):
+    async def connector_contract(self, actor, scope, identifier, *, capability, context, tx, resource=None):
         manifest = AGENTIC_DESCRIPTOR.manifest.value
         return {
             "kind": "Connector",

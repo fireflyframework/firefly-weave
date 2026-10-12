@@ -273,7 +273,9 @@ async def test_the_worker_must_come_online_in_time():
 
 
 async def test_the_connection_test_returns_its_result_with_a_timestamp():
-    result = await setup.test_connection(Client(), str(REVISION), "qwen2.5:1.5b")
+    client = Client()
+    result = await setup.test_connection(client, str(REVISION), "qwen2.5:1.5b")
+    assert client.operations() == ["ai_connections.test"]
     assert result["ok"] is True and result["tool_calling"] == "supported" and "tested_at" in result
 
 

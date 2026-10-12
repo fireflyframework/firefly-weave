@@ -479,6 +479,64 @@ changes before you reopen traffic:
   0.1.0a15. A local platform still has [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade):
   set up alpha15 from its own checkout in a new directory.
 
+## What changes after alpha15
+
+These changes are not yet in a release. They add no schema migration (the head
+stays `0030_worker_presence`), no role, and no change to definition schemas or
+the stored digests of the built-in AI Connector, Action and task. Check them
+before you reopen traffic on a server that includes them:
+
+- **New AI operations are additive.** `ai_endpoints.list`, `ai_models.list`,
+  `ai_readiness.read`, `ai_setup.publish`, `ai_setup.grant` and
+  `bindable_connections.list` are new; see
+  [AI discovery, readiness and setup](../reference/api.md#ai-discovery-readiness-and-setup).
+  Omitted optional fields keep their defaults (`refresh=false`, `limit=50`,
+  `probe_tools=true`). Studio reaches them through its host bridge; the server
+  still checks each caller's grants. Existing operations also change in the four
+  ways described next, so clients that never call the new operations can still
+  see different answers.
+- **Saving an AI connection runs discovery before it answers.** After an AI
+  connection is saved, `connections.create` refreshes its model list and answers
+  only then, so the 201 can take up to about 20 seconds. When the policy approves
+  the connection's endpoint and the AI gateway is configured, the refresh uses the
+  connection's credential, if it has one, contacts the provider through the
+  gateway and spends one of the six AI test admissions per person per minute.
+  Replaying the save with its `Idempotency-Key` spends another, and a refresh
+  that cannot call the gateway spends none. A script that saves several AI
+  connections and then tests them within a minute can get 429
+  `WV-AI-RATE-LIMITED`. A failed refresh never undoes the save.
+- **AI connection tests run discovery afterwards.** `ai_connections.test` and
+  `connections.test` of an AI connection refresh the model list after the test,
+  within the test's admission. Both answer later and send one more request
+  through the AI gateway, still within their bounds of 130 seconds for
+  `ai_connections.test` and 30 seconds for `connections.test`.
+- **`connections.test` stops when the client disconnects.** For every connector
+  type, a test whose client disconnects is cancelled. Its
+  `connection.test.requested` audit remains, but no result is stored and no
+  `connection.test.completed` audit is written. Before, the test always ran to
+  completion.
+- **Activation bindings check `connection.bind` for each revision.** A new
+  activation requires `connection.bind` for each bound connection revision, on
+  both the request's token and the caller's stored grants. A token whose stored
+  grant was removed gets 403, and a `connection.bind` grant limited to specific
+  revisions now binds exactly those revisions, where before it bound none.
+- **Mount the AI policy on the API to check AI activations.** With
+  `WEAVE_AI_POLICY_FILE` set, a new activation of a workflow with AI task (`llm`)
+  steps answers 422 `WV-ACTIVATION-AI-PROVIDER` or `WV-ACTIVATION-AI-MODEL`
+  instead of creating an activation whose runs would fail with `LLM_CONNECTION`
+  or `LLM_POLICY`. While the mounted file cannot be read, activations with AI task
+  steps answer 503 `WV-AI-POLICY`; other activations are not affected. Without the
+  setting, activation behaves as before. Activations that already exist are not
+  checked again.
+- **Activation replays need current authority.** Replaying an activation
+  `Idempotency-Key` now requires the caller's current `release.activate` grant.
+  A caller whose grant was revoked gets 403 (or 401) instead of the stored 201
+  answer. Scripts that retry activations with a token whose grant was removed
+  must get the grant back first.
+- **AI test times use the database clock.** A recorded AI connection test is
+  dated with the database's clock, the same clock readiness uses to measure its
+  age. Tests recorded by an earlier server keep their API-host timestamps.
+
 ## After the upgrade: clients and sign-in
 
 Saved platforms, `weave auth setup`, and published sign-in settings arrived in
