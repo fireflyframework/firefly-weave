@@ -1017,12 +1017,11 @@ slot with the steps that use it; its ⋯ menu offers **Rename slot**, and
 **Remove slot** once no step uses it. **AI profiles** lists each profile, and
 its ⋯ menu opens the steps that use it.
 
-The gear first applies a pending inspector edit, as opening a step does. Text
-typed in **Source** that you haven't applied keeps the dialog closed, with
-"Apply or undo the changes typed in Source first.", except in **Source** while
-the workflow can be edited, where the gear applies it as **Apply changes**
-would. While a simulation runs, or while the source has an error, workflow
-settings open read-only and say why.
+The gear first applies a pending inspector edit, as opening a step does. In
+**Source**, it applies text you typed but haven't applied as **Apply changes**
+would, except while the source has an error: then the dialog stays closed, with
+"Apply or discard the changes typed in Source first.". While a simulation runs,
+or while the source has an error, workflow settings open read-only and say why.
 
 #### Keys and accessibility in step details
 
@@ -1145,6 +1144,22 @@ typed, shows the problem, and makes the graph read-only until you repair it
 ("Read-only until the source is fixed"). YAML comments survive the edits you
 make on the canvas. Switching to JSON asks
 first, because JSON cannot keep comments (**Convert and remove comments**).
+
+Text you typed in **Source** but haven't applied is never lost or edited
+around. Leaving **Source** with it, by another view, a step's details, another
+page or the browser's Back, asks "Apply the changes typed in Source?", and so do
+an edit or a command started from **Source** (Undo, Validate, Publish…,
+Simulate, Save to file) and a new **Source format**:
+
+- **Apply changes** applies the text as the button beside it does, then goes
+  on. Text that isn't a valid definition keeps you in **Source**, with its
+  problem shown under it.
+- **Discard changes** returns **Source** to the workflow as it is, then goes on.
+- **Keep editing**, Escape or the dialog's close button stays in **Source**,
+  with the caret where it was.
+
+Closing or reloading the window with such text asks first, as with any edit that
+isn't kept.
 **Outline** lists the steps as an indented tree with branch labels.
 
 **Undo and redo cover your editing only.** They undo changes to the workflow

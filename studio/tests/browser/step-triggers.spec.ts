@@ -494,49 +494,40 @@ test.describe("the gear and unapplied edits", () => {
 
   for (const size of sizes)
     for (const view of ["Designer", "Outline"] as const)
-      for (const parses of [true, false])
-        test(`from ${view}, text typed in Source ${parses ? "that parses" : "that doesn't parse"} is neither applied nor lost at ${size.tag}`, async ({
-          page,
-        }) => {
-          await page.setViewportSize({
-            width: size.width,
-            height: size.height,
-          });
-          await openStepFixture(page);
-          await page.getByRole("tab", { name: "Source", exact: true }).click();
-          const source = page.getByRole("textbox", { name: "Workflow source" });
-          const original = await source.inputValue();
-          const typed = parses
-            ? original.replace("id: check-customer", "id: check-client")
-            : `${original}\n  broken: [`;
-          await source.fill(typed);
-          await page.getByRole("tab", { name: view, exact: true }).click();
-          await settingsGear(page).click();
-          // The reason shows where the person is, and nothing opens.
-          await expect(
-            page.getByText("Apply or undo the changes typed in Source first.", {
-              exact: true,
-            }),
-          ).toBeVisible();
-          await expect(
-            page.getByRole("dialog", { name: "Workflow settings" }),
-          ).toHaveCount(0);
-          // Nothing was applied: the step keeps its name and the editor
-          // isn't read-only.
-          if (view === "Outline")
-            await expect(
-              page.locator('[data-outline="check-customer"]'),
-            ).toHaveCount(1);
-          else
-            await expect(
-              page.locator(
-                '[data-step="check-customer"], .tile-node[data-tile="check-customer"]',
-              ),
-            ).not.toHaveCount(0);
-          await page.getByRole("tab", { name: "Source", exact: true }).click();
-          await expect(source).toHaveValue(typed);
-          await expect(page.locator(".source-error")).toHaveCount(0);
+      test(`leaving Source for ${view} asks about typed text first, so the gear never meets it at ${size.tag}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({
+          width: size.width,
+          height: size.height,
         });
+        await openStepFixture(page);
+        await page.getByRole("tab", { name: "Source", exact: true }).click();
+        const source = page.getByRole("textbox", { name: "Workflow source" });
+        const original = await source.inputValue();
+        await source.fill(
+          original.replace("id: check-customer", "id: check-client"),
+        );
+        await page.getByRole("tab", { name: view, exact: true }).click();
+        const question = page.getByRole("dialog", {
+          name: "Apply the changes typed in Source?",
+        });
+        await question
+          .getByRole("button", { name: "Discard changes", exact: true })
+          .click();
+        await expect(question).toHaveCount(0);
+        // Nothing typed is left: the gear opens on the workflow as it is.
+        await settingsGear(page).click();
+        const dialog = page.getByRole("dialog", { name: "Workflow settings" });
+        await expect(dialog).toBeVisible();
+        await dialog
+          .getByRole("button", { name: "Close", exact: true })
+          .click();
+        await expect(dialog).toHaveCount(0);
+        await page.getByRole("tab", { name: "Source", exact: true }).click();
+        await expect(source).toHaveValue(original);
+        await expect(page.locator(".source-error")).toHaveCount(0);
+      });
 
   for (const size of sizes)
     test(`while the source has an error, the gear opens read-only, and refuses over a fix typed in Source at ${size.tag}`, async ({
@@ -571,7 +562,7 @@ test.describe("the gear and unapplied edits", () => {
       await source.fill(original);
       await settingsGear(page).click();
       await expect(
-        page.getByText("Apply or undo the changes typed in Source first.", {
+        page.getByText("Apply or discard the changes typed in Source first.", {
           exact: true,
         }),
       ).toBeVisible();

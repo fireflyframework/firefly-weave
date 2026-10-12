@@ -182,14 +182,24 @@ export interface DialogOptions {
   message: string;
   confirmLabel: string;
   cancelLabel?: string;
+  /**
+   * A destructive second answer beside the main one ("Discard changes").
+   * The dialog then starts on Cancel, as a destructive confirmation does.
+   */
+  alternateLabel?: string;
   danger?: boolean;
   fields?: DialogField[];
 }
+/** The main answer, or the alternate one. */
+export type DialogChoice = "confirm" | "alternate";
 export interface DialogRequest {
   options: DialogOptions;
   values: Record<string, string>;
   touched: boolean;
-  resolve: (values: Record<string, string> | null) => void;
+  resolve: (
+    values: Record<string, string> | null,
+    choice: DialogChoice,
+  ) => void;
 }
 
 /** Queues confirmation and input dialogs; one is shown at a time. */
@@ -202,12 +212,26 @@ export class DialogService {
       const values = Object.fromEntries(
         (options.fields ?? []).map((field) => [field.name, field.value ?? ""]),
       );
-      this.queue.push({ options, values, touched: false, resolve });
-      if (!this.current()) this.current.set(this.queue.shift()!);
+      this.enqueue({ options, values, touched: false, resolve });
     });
   }
   async confirm(options: DialogOptions): Promise<boolean> {
     return (await this.form({ ...options, fields: [] })) !== null;
+  }
+  /** Asks with three answers: the main one, the alternate one, or null for Cancel and Escape. */
+  choose(options: DialogOptions): Promise<DialogChoice | null> {
+    return new Promise((resolve) =>
+      this.enqueue({
+        options: { ...options, fields: [] },
+        values: {},
+        touched: false,
+        resolve: (values, choice) => resolve(values ? choice : null),
+      }),
+    );
+  }
+  private enqueue(request: DialogRequest) {
+    this.queue.push(request);
+    if (!this.current()) this.current.set(this.queue.shift()!);
   }
   async prompt(
     options: DialogOptions & { field: DialogField },
@@ -215,11 +239,14 @@ export class DialogService {
     const values = await this.form({ ...options, fields: [options.field] });
     return values ? values[options.field.name] : null;
   }
-  settle(values: Record<string, string> | null) {
+  settle(
+    values: Record<string, string> | null,
+    choice: DialogChoice = "confirm",
+  ) {
     const request = this.current();
     if (!request) return;
     this.current.set(this.queue.shift() ?? null);
-    request.resolve(values);
+    request.resolve(values, choice);
   }
 }
 
@@ -275,22 +302,27 @@ export class DialogService {
           <div class="dialog-actions">
             <button
               type="button"
-              [attr.data-initial-focus]="
-                !request.options.fields?.length && request.options.danger
-                  ? ''
-                  : null
-              "
+              [attr.data-initial-focus]="startsOnCancel(request) ? '' : null"
               (click)="dialogs.settle(null)"
             >
               {{ request.options.cancelLabel ?? "Cancel" }}
             </button>
+            @if (request.options.alternateLabel; as alternate) {
+              <button
+                type="button"
+                class="danger"
+                (click)="dialogs.settle({}, 'alternate')"
+              >
+                {{ alternate }}
+              </button>
+            }
             <!-- Destructive confirmations start on Cancel; others on the action. -->
             <button
               type="submit"
               [class.primary]="!request.options.danger"
               [class.danger-solid]="request.options.danger"
               [attr.data-initial-focus]="
-                request.options.fields?.length || request.options.danger
+                request.options.fields?.length || startsOnCancel(request)
                   ? null
                   : ''
               "
@@ -310,6 +342,11 @@ export class DialogHost {
   edit(request: DialogRequest, field: DialogField, event: Event) {
     request.touched = true;
     request.values[field.name] = (event.target as HTMLInputElement).value;
+  }
+  /** A destructive answer anywhere in a question without fields: start on Cancel. */
+  startsOnCancel(request: DialogRequest) {
+    const { fields, danger, alternateLabel } = request.options;
+    return !fields?.length && (!!danger || !!alternateLabel);
   }
   hintId(field: DialogField) {
     return `${this.messageId}-${field.name}-hint`;

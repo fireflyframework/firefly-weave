@@ -1575,7 +1575,7 @@ export class App implements CanvasHost {
     if (
       this.view === "designer" &&
       view !== "designer" &&
-      !this.leaveInspector()
+      (!this.leaveInspector() || !(await this.settleSource()))
     )
       return;
     if (
@@ -1724,6 +1724,7 @@ export class App implements CanvasHost {
   /** Edits not yet kept anywhere: on this computer or on the platform. */
   get unsavedWork() {
     if (this.inspectorProblem) return true;
+    if (this.view === "designer" && this.sourcePending) return true;
     if (!this.dirty) return false;
     if (this.profile || this.draftRevision !== undefined || this.published)
       return true;
@@ -2030,8 +2031,87 @@ export class App implements CanvasHost {
   /** A specialized inspector may own an explicit Apply/Cancel draft. */
   inspectorDraftGuard: (() => string) | null = null;
   private invalidInspectorFields = new Set<string>();
+  /**
+   * Settles what isn't applied before an edit or a command goes on: the
+   * inspector's pending edit, then text typed in Source (see settleSource).
+   */
   async ensureApplied(): Promise<boolean> {
-    return this.leaveInspector();
+    return this.leaveInspector() && (await this.settleSource());
+  }
+  /** Text typed in Source that isn't applied to the workflow yet. */
+  get sourcePending(): boolean {
+    return this.sourceBuffer !== this.model.source;
+  }
+  private sourceQuestion: Promise<boolean> | null = null;
+  /**
+   * Text typed in Source never meets another edit and never leaves unseen:
+   * leaving Source (another view, a step's details, another page, the
+   * browser's Back) and every edit or command asks first. Apply changes
+   * applies it as the button beside it does, and stays in Source with the
+   * problem when it doesn't apply; Discard changes goes back to the applied
+   * source; Keep editing, Escape and Close stay with the caret where it was.
+   * True once nothing typed is left unapplied. Asked once for overlapping
+   * requests. Simulate asks before it starts, and Source is read-only while
+   * a simulation runs, so typed text is never applied while editing is
+   * paused.
+   */
+  settleSource(): Promise<boolean> {
+    if (!this.sourcePending) return Promise.resolve(true);
+    this.sourceQuestion ??= this.askSource().finally(
+      () => (this.sourceQuestion = null),
+    );
+    return this.sourceQuestion;
+  }
+  private async askSource(): Promise<boolean> {
+    const box = document.querySelector<HTMLTextAreaElement>(
+      "textarea.source-editor",
+    );
+    const caret = box && {
+      start: box.selectionStart,
+      end: box.selectionEnd,
+      direction: box.selectionDirection,
+      top: box.scrollTop,
+      left: box.scrollLeft,
+    };
+    const choice = await this.dialogs.choose({
+      title: "Apply the changes typed in Source?",
+      message:
+        "They aren't in the workflow yet. Discard them to go back to the workflow as it is.",
+      confirmLabel: "Apply changes",
+      alternateLabel: "Discard changes",
+      cancelLabel: "Keep editing",
+    });
+    if (choice === "alternate") {
+      this.sourceBuffer = this.model.source;
+      // The live check goes back to the applied source.
+      this.checkLater();
+      this.cdr.markForCheck();
+      return true;
+    }
+    if (choice === "confirm") {
+      this.updateSource();
+      if (!this.error && !this.model.error) return true;
+    }
+    // Back to the text, its problem shown under it when it didn't apply.
+    this.tab = "Source";
+    this.cdr.markForCheck();
+    afterNextRender(
+      () =>
+        setTimeout(() => {
+          const source = document.querySelector<HTMLTextAreaElement>(
+            "textarea.source-editor",
+          );
+          if (!source) return;
+          source.focus({ preventScroll: true });
+          if (caret) {
+            source.setSelectionRange(caret.start, caret.end, caret.direction);
+            source.scrollTop = caret.top;
+            source.scrollLeft = caret.left;
+          }
+        }),
+      { injector: this.injector },
+    );
+    return false;
   }
   private cancelInspectorCommit() {
     if (this.inspectorTimer) clearTimeout(this.inspectorTimer);
@@ -3045,7 +3125,7 @@ export class App implements CanvasHost {
       });
       return;
     }
-    if (this.tab !== "Designer") this.selectTab("Designer");
+    if (this.tab !== "Designer" && !(await this.selectTab("Designer"))) return;
     if (location.stepId === "$workflow") {
       if (!(await this.deselect())) return;
     } else {
@@ -3097,7 +3177,8 @@ export class App implements CanvasHost {
    * the edits made since.
    */
   async applySuggestion(change: SuggestedChange) {
-    if (!(await this.ensureApplied())) return;
+    // Typed Source text is this suggestion's own business: it applies first.
+    if (!this.leaveInspector()) return;
     const typed = this.sourceBuffer !== this.model.source;
     let current: unknown = this.model.definition;
     if (typed)
@@ -3209,6 +3290,11 @@ export class App implements CanvasHost {
   }
   undo() {
     if (this.editingLocked) return;
+    // Text typed in Source is settled first; then Undo goes on.
+    if (this.sourcePending) {
+      void this.settleSource().then((settled) => settled && this.undo());
+      return;
+    }
     this.flushInspector();
     this.model.undo();
     this.dirty = true;
@@ -3216,6 +3302,10 @@ export class App implements CanvasHost {
   }
   redo() {
     if (this.editingLocked) return;
+    if (this.sourcePending) {
+      void this.settleSource().then((settled) => settled && this.redo());
+      return;
+    }
     this.cancelInspectorCommit();
     this.model.redo();
     this.dirty = true;
@@ -3407,12 +3497,18 @@ export class App implements CanvasHost {
     void this.runCommand(this.profile ? "save" : "export");
   }
   readonly editorViews = ["Designer", "Source", "Outline"];
-  selectTab(tab: string) {
-    if (tab !== this.tab && !this.leaveInspector()) return;
+  /** Shows another view; leaving Source asks about text typed there. False when it stays. */
+  async selectTab(tab: string): Promise<boolean> {
+    if (tab !== this.tab) {
+      if (!this.leaveInspector()) return false;
+      if (this.tab === "Source" && !(await this.settleSource())) return false;
+    }
     this.tab = tab;
     if (tab === "Designer") this.outlineNotice = false;
     if (tab !== "Designer" && window.innerWidth <= 1280)
       this.showInspector = false;
+    this.cdr.markForCheck();
+    return true;
   }
   /** Designer | Source | Outline: arrow keys, Home and End move between them. */
   viewKey(event: KeyboardEvent) {
@@ -3430,10 +3526,12 @@ export class App implements CanvasHost {
               : -1;
     if (next < 0) return;
     event.preventDefault();
-    this.selectTab(views[next]);
-    this.focusLater(() =>
-      document.getElementById(`view-tab-${views[next].toLowerCase()}`),
-    );
+    void this.selectTab(views[next]).then((shown) => {
+      if (shown)
+        this.focusLater(() =>
+          document.getElementById(`view-tab-${views[next].toLowerCase()}`),
+        );
+    });
   }
   /**
    * A workflow opens on the canvas; below 600 px on the outline, with a
@@ -3503,6 +3601,11 @@ export class App implements CanvasHost {
   async changeFormat(event: Event) {
     const select = event.target as HTMLSelectElement;
     const format = select.value as "yaml" | "json";
+    // The format converts the applied workflow: typed text is settled first.
+    if (!(await this.settleSource())) {
+      select.value = this.model.format;
+      return;
+    }
     if (this.model.error) {
       select.value = this.model.format;
       return;
@@ -6535,9 +6638,11 @@ export class App implements CanvasHost {
   /**
    * Opens workflow settings (the editor bar's gear) the way step details
    * open: the inspector's pending edits apply first. Text typed in Source
-   * applies only as Apply changes would, from Source with editing allowed;
-   * anywhere else, or while editing is paused, nothing is applied, the
-   * dialog stays closed and a toast says why. The edits are kept.
+   * applies as Apply changes would, from Source with editing allowed,
+   * without asking; while the source has an error, or while editing is
+   * paused, nothing is applied, the dialog stays closed and a toast says
+   * why. The text is kept. (Leaving Source asks about typed text, so
+   * elsewhere none is left.)
    */
   async openSettingsDialog(): Promise<boolean> {
     if (
@@ -6545,12 +6650,12 @@ export class App implements CanvasHost {
       this.view !== "designer"
     )
       return false;
-    if (!(await this.ensureApplied())) return false;
+    if (!this.leaveInspector()) return false;
     if (this.sourceBuffer !== this.model.source) {
       const refused = this.editingLocked
         ? "Editing is paused while the simulation runs."
         : this.tab !== "Source" || this.model.readonly
-          ? "Apply or undo the changes typed in Source first."
+          ? "Apply or discard the changes typed in Source first."
           : "";
       if (refused) {
         this.notify(refused);
@@ -8172,6 +8277,31 @@ export class App implements CanvasHost {
   runNodes() {
     return this.runCanvas?.nodes() ?? [];
   }
+  /**
+   * Takes back a Back or Forward that would leave the designer, and returns
+   * how to make the same move again.
+   */
+  private stayInHistory(position: unknown): () => void {
+    if (Number.isInteger(position) && position !== this.historyPosition) {
+      const to = position as number;
+      // Return to the existing entry: replacing the URL would erase the
+      // destination, and pushing a replacement would discard Forward entries.
+      this.restoringHistory = true;
+      history.go(this.historyPosition - to);
+      return () => history.go(to - this.historyPosition);
+    }
+    // Entries from an older Studio have no position. Keep that destination
+    // available through Back while restoring the current draft's URL.
+    history.pushState(
+      { weavePosition: this.historyPosition },
+      "",
+      this.historyUrl,
+    );
+    void this.router.navigateByUrl(new URL(this.historyUrl).pathname, {
+      replaceUrl: true,
+    });
+    return () => history.back();
+  }
   @HostListener("window:popstate", ["$event"]) popstate(event: PopStateEvent) {
     const closing = this.closingRun;
     this.closingRun = false;
@@ -8180,25 +8310,16 @@ export class App implements CanvasHost {
       this.restoringHistory = false;
       return;
     }
-    if (this.view === "designer" && !this.leaveInspector()) {
-      if (Number.isInteger(position) && position !== this.historyPosition) {
-        // Return to the existing entry: replacing the URL would erase the
-        // destination, and pushing a replacement would discard Forward entries.
-        this.restoringHistory = true;
-        history.go(this.historyPosition - position);
-      } else {
-        // Entries from an older Studio have no position. Keep that destination
-        // available through Back while restoring the current draft's URL.
-        history.pushState(
-          { weavePosition: this.historyPosition },
-          "",
-          this.historyUrl,
-        );
-        void this.router.navigateByUrl(new URL(this.historyUrl).pathname, {
-          replaceUrl: true,
-        });
+    if (this.view === "designer") {
+      const refused = !this.leaveInspector();
+      // Text typed in Source asks first; the same way goes on once it's settled.
+      const asks = !refused && this.sourcePending;
+      if (refused || asks) {
+        const again = this.stayInHistory(position);
+        if (asks)
+          void this.settleSource().then((settled) => settled && again());
+        return;
       }
-      return;
     }
     this.historyPosition = Number.isInteger(position) ? position : 0;
     this.historyUrl = location.href;
