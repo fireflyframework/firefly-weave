@@ -139,6 +139,80 @@ for (const size of sizes)
           .getByRole("button", { name: /reference Input Email/ }),
       ).toBeVisible();
     });
+
+    test("choosing data with Enter gives focus to the new pill", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page);
+      await details.openWithKeyboard("summarize");
+      const prompt = details.field("prompt");
+      const data = prompt.getByRole("combobox", { name: "Prompt" });
+      await prompt
+        .getByRole("button", { name: "Field menu for Prompt" })
+        .click();
+      await page.getByRole("menuitem", { name: /Use data…/ }).click();
+      await expect(data).toBeFocused();
+      // A suggestion chosen from the list with the keyboard.
+      await data.fill("amount");
+      await data.press("ArrowDown");
+      await expect(
+        page.getByRole("option", { name: /amount/i }).first(),
+      ).toHaveAttribute("aria-selected", "true");
+      await data.press("Enter");
+      const amount = prompt.getByRole("button", {
+        name: /reference Input Amount/,
+      });
+      await expect(amount).toBeFocused();
+      await expect(data).toHaveCount(0);
+      // A pointer typed by hand, from the pill, also gives focus to its pill.
+      await amount.press("Enter");
+      await expect(data).toBeFocused();
+      await data.fill("/input/email");
+      await data.press("Enter");
+      const email = prompt.getByRole("button", {
+        name: /reference Input Email/,
+      });
+      await expect(email).toBeFocused();
+      await expect(data).toHaveCount(0);
+      await details.close();
+      expect(await sourceText(page)).toContain("ref: /input/email");
+    });
+
+    test("leaving the data picker with Tab, without choosing, shows the pill again", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(
+        page,
+        mappedWorkflow({ ref: "/input/email" }),
+      );
+      await details.openWithKeyboard("summarize");
+      const prompt = details.field("prompt");
+      const data = prompt.getByRole("combobox", { name: "Prompt" });
+      const email = prompt.getByRole("button", {
+        name: /reference Input Email/,
+      });
+      const focusInDialog = () =>
+        page.evaluate(() => {
+          const active = document.activeElement;
+          return (
+            !!active &&
+            active !== document.body &&
+            !!active.closest('[role="dialog"]')
+          );
+        });
+      for (const key of ["Tab", "Shift+Tab"]) {
+        await email.press("Enter");
+        await expect(data).toBeFocused();
+        await data.press(key);
+        await expect(data).toHaveCount(0);
+        await expect(email).toBeVisible();
+        expect(await focusInDialog()).toBe(true);
+      }
+      await details.close();
+      expect(await sourceText(page)).toContain("ref: /input/email");
+    });
   });
 
 function mappedWorkflow(expression: unknown) {

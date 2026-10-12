@@ -23,6 +23,9 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
+  Injector,
+  afterNextRender,
   computed,
   inject,
   input,
@@ -142,7 +145,7 @@ export class RefPill {
       <div
         class="param-picker"
         (keydown.enter)="commitTyped()"
-        (focusout)="commitTyped()"
+        (focusout)="leavePicker($event)"
       >
         <weave-reference-combobox
           [inputId]="controlId()"
@@ -176,6 +179,8 @@ export class FormulaField {
   readonly templateError = signal("");
   readonly words = words;
   private readonly lifetime = inject(DestroyRef);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
   private pendingRef = "";
   private localOwner: {
     session: FormSession;
@@ -378,16 +383,52 @@ export class FormulaField {
       !/^\/(input|steps)(\/|$)/.test(ref)
     )
       return;
+    // Choosing from the picker (Enter, or a press in its list) keeps focus in
+    // the field: the pill that replaces the picker takes it.
+    const focused = this.host.nativeElement.contains(document.activeElement);
     this.pendingRef = "";
     this.pickerOwner = null;
     this.picking.set(false);
     this.session().write(this.spec(), { mode: "mapped", expression: { ref } });
+    if (focused) this.focusControlAfterRender();
   }
   /** A pointer typed by hand counts once Enter is pressed or focus leaves. */
   commitTyped() {
     this.syncIdentity();
     const ref = this.typedRef.trim();
     if (ref && ref !== this.currentRef()) this.pick(ref);
+  }
+  /**
+   * Focus left the picker. A typed pointer counts; with nothing new typed,
+   * the field shows its pill again. Unfinished text stays in the picker with
+   * its hint, so nothing typed is lost.
+   */
+  leavePicker(event: FocusEvent) {
+    const next = event.relatedTarget as Node | null;
+    if (next && (event.currentTarget as HTMLElement).contains(next)) return;
+    // Another window took focus: the picker is still there on return.
+    if (!next && !document.hasFocus()) return;
+    this.commitTyped();
+    const typed = this.typedRef.trim();
+    if (typed && typed !== this.currentRef()) return;
+    this.pendingRef = "";
+    this.picking.set(false);
+  }
+  /** Focuses the field's control once it renders, unless focus moved on meanwhile. */
+  private focusControlAfterRender() {
+    afterNextRender(
+      () => {
+        if (this.lifetime.destroyed) return;
+        const host = this.host.nativeElement;
+        const active = document.activeElement;
+        if (active && active !== document.body && !host.contains(active))
+          return;
+        host
+          .querySelector<HTMLElement>(`#${CSS.escape(this.controlId())}`)
+          ?.focus();
+      },
+      { injector: this.injector },
+    );
   }
   pillKey(event: KeyboardEvent) {
     if (

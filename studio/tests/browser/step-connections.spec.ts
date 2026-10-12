@@ -58,6 +58,25 @@ async function usable(control: Locator) {
   expect(geometry.height).toBeGreaterThanOrEqual(geometry.minimum);
 }
 
+/**
+ * Selects `score` with the keyboard, from the step before it, and waits for
+ * the decision tables the classic inspector loads for it. The canvas brings
+ * the step into view itself; a click on a card outside the window would
+ * scroll the canvas, which Studio turns into a pan in the middle of the click.
+ */
+async function selectScoreByKeyboard(details: StepDetailsPage) {
+  const { page } = details;
+  await details.node("summarize").focus();
+  await Promise.all([
+    page.waitForResponse((response) =>
+      response.url().includes("/decision-tables?"),
+    ),
+    page.keyboard.press("ArrowRight"),
+  ]);
+  await expect(details.node("score")).toBeFocused();
+  await expect(details.node("score")).toBeInViewport({ ratio: 1 });
+}
+
 for (const size of [
   ...sizes,
   { tag: "360x640", width: 360, height: 640 },
@@ -71,12 +90,7 @@ for (const size of [
         page,
       }) => {
         const details = await openConnectedFixture(page);
-        await Promise.all([
-          page.waitForResponse((response) =>
-            response.url().includes("/decision-tables?"),
-          ),
-          details.node("score").click(),
-        ]);
+        await selectScoreByKeyboard(details);
         let release!: () => void;
         const blocked = new Promise<void>((resolve) => {
           release = resolve;
@@ -401,12 +415,7 @@ for (const size of sizes)
       });
       if (await canvas.isVisible()) await canvas.click();
       // Selecting the card loads the classic inspector before step details opens.
-      await Promise.all([
-        page.waitForResponse((response) =>
-          response.url().includes("/decision-tables?"),
-        ),
-        details.node("score").click(),
-      ]);
+      await selectScoreByKeyboard(details);
       let requests = 0;
       let release!: () => void;
       const blocked = new Promise<void>((resolve) => {
