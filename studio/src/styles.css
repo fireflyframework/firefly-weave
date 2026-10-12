@@ -2431,14 +2431,19 @@ input[type="file"][hidden] {
 }
 /* Toasts: one region, bottom-left of the content area. It sits above side
    sheets but under popovers (the step picker, row menus) and a modal
-   dialog's backdrop, so nothing that is open is topped by a toast. */
+   dialog's backdrop, so nothing that is open is topped by a toast. The
+   toast host measures what is beside and under it (--shell-left,
+   --toast-bottom) and, over step details, the pane it may cover
+   (--toast-pane). */
 .toast-region {
+  /* How far it stays from the content area's left and bottom edges. */
+  --toast-gap: var(--space-6);
   position: fixed;
   z-index: 18;
-  left: calc(var(--shell-left, 224px) + var(--space-6));
-  bottom: calc(var(--toast-bottom, 0px) + var(--space-6));
+  left: calc(var(--shell-left, 224px) + var(--toast-gap));
+  bottom: calc(var(--toast-bottom, 0px) + var(--toast-gap));
   display: grid;
-  max-width: 420px;
+  max-width: min(420px, var(--toast-pane, 420px));
   pointer-events: none;
 }
 .toast {
@@ -2511,14 +2516,13 @@ input[type="file"][hidden] {
     max-width: none;
   }
 }
-/* Step details cover the navigation: a toast lines up with their panes'
-   outer edge (24 px, 16 px below 1100 px), or a phone sheet's content. */
-body:has(.step-details) .toast-region {
-  left: var(--space-6);
-}
+/* Step details cover the navigation and the diagnostics strip: a toast's
+   corner is their panes' bottom-left corner (24 px from the window, 16 px
+   below 1100 px), and it is never wider than the pane under that corner, so
+   it never crosses a pane's edge. A phone sheet keeps its content edges. */
 @media (max-width: 1099px) {
   body:has(.step-details) .toast-region {
-    left: var(--space-4);
+    --toast-gap: var(--space-4);
   }
 }
 

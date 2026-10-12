@@ -18,15 +18,23 @@ SPDX-License-Identifier: Apache-2.0
 // The shared dialog frame and toasts at every density: a dialog's heading
 // sits on its close button's center, a phone stacks a dialog's answers full
 // width, a toast's dismiss button and action are full targets without making
-// the toast taller, a toast over step details lines up with them, and Save
-// to file delivers its files even when code loaded on demand can't load.
+// the toast taller, a toast over step details sits in their panes' corner
+// inside one pane and off the focused control, and Save to file delivers its
+// files even when code loaded on demand can't load.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   addCommonStep,
   openStepFixture,
   settingsGear,
 } from "./step-details-po";
-import { box, boxes, density, expectAligned } from "./step-geometry";
+import {
+  box,
+  boxes,
+  density,
+  expectAligned,
+  intersects,
+  type Box,
+} from "./step-geometry";
 import { command } from "./support";
 
 // Desktop with a fine pointer, then the touch density: a coarse pointer, or
@@ -38,6 +46,7 @@ const sizes = [
   { tag: "600x500", width: 600, height: 500, touch: false },
   { tag: "640x360", width: 640, height: 360, touch: true },
   { tag: "360x640", width: 360, height: 640, touch: true },
+  { tag: "360x740", width: 360, height: 740, touch: true },
 ];
 
 /** The question Studio asks on leaving Source with typed text. */
@@ -53,6 +62,45 @@ async function askAboutSource(page: Page): Promise<Locator> {
   });
   await expect(dialog).toBeVisible();
   return dialog;
+}
+
+/**
+ * Step details for a new Call an API step, with the Undo toast GET shows on
+ * removing the Body typed for POST, once it has slid into place.
+ */
+async function removedBodyToast(page: Page) {
+  const details = await openStepFixture(page);
+  await addCommonStep(page, "Call an API");
+  await expect(details.dialogFor("call-api")).toBeVisible();
+  const method = details
+    .field("method")
+    .getByRole("combobox", { name: "Method" });
+  await method.click();
+  await page.getByRole("option", { name: /^POST/ }).click();
+  const row = details
+    .field("body")
+    .getByRole("textbox", { name: "Name of row 1" });
+  await row.fill("note");
+  await row.press("Tab");
+  await method.click();
+  await page.getByRole("option", { name: /^GET/ }).click();
+  const toast = page.locator(".toast-region .toast");
+  await expect(toast).toContainText("Removed Body.");
+  await settled(toast);
+  return { details, toast };
+}
+
+/** Waits until the toast has slid in and no longer moves. */
+async function settled(toast: Locator) {
+  await expect
+    .poll(() => toast.evaluate((element) => element.getAnimations().length))
+    .toBe(0);
+}
+
+/** The shown pane under the panes' bottom-left corner. */
+async function cornerPane(dialog: Locator): Promise<Box> {
+  const panes = await boxes(dialog.locator(".sd-panes > .sd-pane"));
+  return panes.reduce((left, pane) => (pane.x < left.x ? pane : left));
 }
 
 /** A dialog's heading and close button share one vertical center. */
@@ -172,44 +220,41 @@ for (const size of sizes)
       await expect(toast).toHaveCount(0);
     });
 
-    test("over step details, a toast lines up with them, and its action is a full target", async ({
+    test("over step details, a toast sits in their panes' corner inside one pane, and its action is a full target", async ({
       page,
     }) => {
-      const details = await openStepFixture(page);
-      await addCommonStep(page, "Call an API");
-      await expect(details.dialogFor("call-api")).toBeVisible();
-      // GET removes the Body typed for POST, with an Undo toast.
-      const method = details
-        .field("method")
-        .getByRole("combobox", { name: "Method" });
-      await method.click();
-      await page.getByRole("option", { name: /^POST/ }).click();
-      const row = details
-        .field("body")
-        .getByRole("textbox", { name: "Name of row 1" });
-      await row.fill("note");
-      await row.press("Tab");
-      await method.click();
-      await page.getByRole("option", { name: /^GET/ }).click();
-      const toast = page.locator(".toast-region .toast");
-      await expect(toast).toContainText("Removed Body.");
-      await expect
-        .poll(() => toast.evaluate((element) => element.getAnimations().length))
-        .toBe(0);
+      const { details, toast } = await removedBodyToast(page);
+      // Its place while focus is far from it, on Close in the top strip.
+      await details.dialog
+        .getByRole("button", { name: "Close", exact: true })
+        .focus();
+      await expect(page.locator(".toast-region")).not.toHaveClass(/\btop\b/);
+      await settled(toast);
       const shown = await box(toast);
-      // Step details cover the navigation: the toast starts at their panes'
-      // outer edge, or spans a phone sheet's content like its labels.
       if (size.width < 768) {
+        // A phone sheet: the toast spans the sheet's content like its
+        // labels, that far above the window's bottom.
         const content = (
           await box(details.field("method").locator(".param-label"))
         ).x;
         expectAligned([shown.x, content], "toast left edge");
         expectAligned([size.width - shown.right, content], "toast right edge");
-      } else
         expectAligned(
-          [shown.x, (await box(details.dialog.locator(".sd-panes"))).x],
-          "toast left edge",
+          [size.height - shown.bottom, content],
+          "toast bottom edge",
         );
+      } else {
+        // Step details cover the navigation and the diagnostics strip: the
+        // toast's corner is the panes' bottom-left corner, and it never
+        // reaches past the pane under that corner.
+        const panes = await box(details.dialog.locator(".sd-panes"));
+        const pane = await cornerPane(details.dialog);
+        expectAligned([shown.x, panes.x, pane.x], "toast left edge");
+        expectAligned([shown.bottom, panes.bottom], "toast bottom edge");
+        expect(shown.right, "toast inside its pane").toBeLessThanOrEqual(
+          pane.right + 0.5,
+        );
+      }
       // Undo keeps its 28 px place in the row; for touch it is a 44 px
       // target reaching into the toast's padding, never past its edge.
       const place = 28;
@@ -217,6 +262,7 @@ for (const size of sizes)
       const text = await box(toast.locator(".toast-text"));
       const { touch, target } = await density(page);
       expectAligned([action.height, touch ? target : place], "Undo height");
+      expect(action.width).toBeGreaterThanOrEqual(touch ? target : 24);
       expectAligned([action.middle, text.middle], "Undo and text centers");
       expect(action.y).toBeGreaterThanOrEqual(shown.y);
       expect(action.bottom).toBeLessThanOrEqual(shown.bottom);
@@ -224,6 +270,45 @@ for (const size of sizes)
         [shown.height, Math.max(text.height, place) + 2 * 12 + 2],
         "toast height",
       );
+    });
+
+    test("over step details, a toast leaves its corner only while it would cover the focused control", async ({
+      page,
+    }) => {
+      test.skip(size.width < 768, "A phone sheet has its own check.");
+      const { details, toast } = await removedBodyToast(page);
+      // Where the toast sits while focus is elsewhere: the panes' corner.
+      const corner = await box(toast);
+      // Every control in the toast's pane: Input's rows beside Parameters,
+      // or Parameters' own controls where Parameters is the corner's pane.
+      const pane = await cornerPane(details.dialog);
+      const controls = details.dialog.locator(
+        pane.x === (await box(details.dialog.locator(".sd-input"))).x
+          ? ".sd-input .data-row"
+          : ".sd-tabpanel:not([hidden]) :is(input, button, [role=combobox])",
+      );
+      const count = await controls.count();
+      expect(count).toBeGreaterThan(0);
+      for (let i = 0; i < count; i++) {
+        const control = controls.nth(i);
+        if (!(await control.isVisible())) continue;
+        await control.focus();
+        await page.evaluate(
+          () =>
+            new Promise((done) =>
+              requestAnimationFrame(() => requestAnimationFrame(done)),
+            ),
+        );
+        const focused = await box(control);
+        const now = await box(toast);
+        expect(
+          intersects(now, focused),
+          `toast ${Math.round(now.y)}–${Math.round(now.bottom)} over control ${i} at ${Math.round(focused.y)}–${Math.round(focused.bottom)}`,
+        ).toBe(false);
+        // It stays in the corner unless the corner would cover the control.
+        if (!intersects(corner, focused))
+          expectAligned([now.bottom, corner.bottom], `toast for control ${i}`);
+      }
     });
   });
 
