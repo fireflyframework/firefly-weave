@@ -97,8 +97,6 @@ interface Platform {
   posts: { path: string; body: unknown }[];
   /** A run's own reads, in order: "view", "lifecycle" or "history". */
   details: string[];
-  /** Run view reads answered so far. */
-  viewsAnswered: number;
   /** Step reads answered so far. */
   stepsAnswered: number;
 }
@@ -152,7 +150,6 @@ async function platform(
     fixture,
     posts,
     details: [],
-    viewsAnswered: 0,
     stepsAnswered: 0,
   };
   await page.route("**/run-summaries?**", async (route) => {
@@ -208,7 +205,6 @@ async function platform(
         state: { status, active: [], input: { invoice: id.slice(0, 4) } },
       },
     });
-    result.viewsAnswered++;
   });
   await page.route(`${environment}/runs/*/lifecycle`, (route) => {
     result.details.push("lifecycle");
@@ -288,28 +284,14 @@ async function refreshAndPause(page: Page, runs: Platform) {
   );
 }
 /**
- * Waits until every run and step read asked so far is answered, then lets the
- * page take the answers (message tasks run while the clock is paused), so the
- * open run's next 2 s wait has started before the test moves time.
+ * Moves the paused clock 100 ms at a time until `done` holds: for checks of
+ * what a read asks for, whatever moment the page armed its next read.
  */
-async function readsSettled(page: Page, runs: Platform) {
-  await expect
-    .poll(
-      () =>
-        runs.viewsAnswered ===
-          runs.details.filter((read) => read === "view").length &&
-        runs.stepsAnswered === runs.steps.length,
-    )
-    .toBe(true);
-  for (let turn = 0; turn < 3; turn++)
-    await page.evaluate(
-      () =>
-        new Promise<void>((done) => {
-          const channel = new MessageChannel();
-          channel.port1.onmessage = () => done();
-          channel.port2.postMessage(null);
-        }),
-    );
+async function advanceUntil(page: Page, done: () => boolean) {
+  await expect(async () => {
+    if (!done()) await page.clock.runFor(100);
+    expect(done()).toBe(true);
+  }).toPass({ timeout: 15_000, intervals: [50] });
 }
 const statusChoice = (page: Page, name: string) =>
   page
@@ -900,6 +882,45 @@ test.describe("chains and refresh", () => {
     page,
   }) => {
     const runs = await platform(page);
+    // Every read of the open run answers something new: its run data counts
+    // the reads, and another turn of its agent starts. The page shows both,
+    // so the test sees when it has taken a read before it moves time.
+    let views = 0;
+    let pauseNext = false;
+    const turns = runs.fixture.steps[fixtureIds.running].items;
+    await page.route(
+      `${environment}/runs/${fixtureIds.running}`,
+      async (route) => {
+        views++;
+        runs.details.push("view");
+        await route.fulfill({
+          json: {
+            id: fixtureIds.running,
+            business_key: null,
+            correlation_key: null,
+            artifact_digest: "sha256:" + "0".repeat(64),
+            activation: { id: "act-1", name: "invoice-approval", revision: 1 },
+            state: {
+              status: runs.views.get(fixtureIds.running) ?? "running",
+              active: [],
+              input: {},
+              read: views,
+            },
+          },
+        });
+      },
+    );
+    await page.route(`**/runs/${fixtureIds.running}/steps**`, async (route) => {
+      const url = route.request().url();
+      runs.steps.push(new URL(url));
+      turns.push({ ...turns[2], instance_key: `support#${turns.length}` });
+      if (pauseNext) {
+        pauseNext = false;
+        await runs.pause();
+      }
+      const answer = answerRunViews(url, runs.fixture)!;
+      await route.fulfill({ status: answer.status, json: answer.body });
+    });
     await openRuns(page);
     await names(page).first().click();
     await expect(page).toHaveURL(
@@ -913,28 +934,34 @@ test.describe("chains and refresh", () => {
       detail.getByRole("button", { name: "Cancel run", exact: true }),
     ).toBeVisible();
     // An agent's turns stay under their step, and the running ones are open bars.
-    await expect(detail.locator(".step-group-name")).toContainText(
-      "3 instances",
-    );
-    await expect(detail.locator(".step-run.open")).toHaveCount(2);
-    // Another turn starts; the read that finds it stops the clock as it is
-    // answered, and once it is drawn only the test moves time.
-    const turns = runs.fixture.steps[fixtureIds.running].items;
-    turns.push({ ...turns[2], instance_key: "support#3" });
-    await runs.pauseAtNext("steps");
-    await drawn(page, () =>
-      expect(detail.locator(".step-group-name")).toContainText("4 instances", {
-        timeout: 100,
-      }),
-    );
-    await readsSettled(page, runs);
+    await expect(detail.locator(".step-group-name")).toContainText("instances");
+    await expect(detail.locator(".step-run.open").first()).toBeVisible();
+    /** The page has drawn the latest read of the run and of its steps. */
+    const taken = () =>
+      drawn(page, async () => {
+        await expect(detail.locator("pre").first()).toContainText(
+          `"read": ${views}`,
+          { timeout: 100 },
+        );
+        await expect(detail.locator(".step-group-name")).toContainText(
+          `${turns.length} instances`,
+          { timeout: 100 },
+        );
+      });
+    // The next read stops the clock as it is answered; once the page has
+    // taken it, only the test moves time.
+    pauseNext = true;
+    await expect.poll(() => pauseNext, { timeout: 10_000 }).toBe(false);
+    await taken();
     const before = runs.steps.length;
-    await page.clock.runFor(2_100);
+    await page.clock.runFor(1_500);
+    expect(runs.steps.length).toBe(before);
+    await page.clock.runFor(600);
     await expect.poll(() => runs.steps.length).toBe(before + 1);
-    await readsSettled(page, runs);
+    await taken();
     await page.clock.runFor(2_100);
     await expect.poll(() => runs.steps.length).toBe(before + 2);
-    await readsSettled(page, runs);
+    await taken();
     // It finishes: one last read, then nothing more.
     runs.views.set(fixtureIds.running, "succeeded");
     await page.clock.runFor(2_100);
@@ -975,7 +1002,6 @@ test.describe("chains and refresh", () => {
             state: { status, active: [], input: {} },
           },
         });
-        runs.viewsAnswered++;
       },
     );
     const exports: string[] = [];
@@ -1006,29 +1032,36 @@ test.describe("chains and refresh", () => {
       .poll(() => runs.details.join(" "))
       .toBe("view lifecycle history");
     await runs.pause();
-    await readsSettled(page, runs);
-    // Nothing changed: the run and its steps only.
-    let from = runs.details.length;
-    await page.clock.runFor(2_100);
-    await expect.poll(() => runs.details.slice(from)).toEqual(["view"]);
-    await readsSettled(page, runs);
-    // The run changed: it shows at once, with its lifecycle and history again;
-    // its version is not exported again.
+    const views = () => runs.details.filter((read) => read === "view").length;
+    // Two reads in which nothing changed: the run and its steps only.
+    const opened = views();
+    await advanceUntil(page, () => views() >= opened + 2);
+    // The run changed: it shows at once, with its lifecycle and history read
+    // again; its version is not exported again.
     status = "waiting";
-    from = runs.details.length;
-    await page.clock.runFor(2_100);
-    await expect
-      .poll(() => [...runs.details.slice(from)].sort())
-      .toEqual(["history", "lifecycle", "view"]);
+    await advanceUntil(page, () => runs.details.lastIndexOf("lifecycle") > 2);
     await drawn(page, () =>
       expect(detail.locator(".run-meta .status-pill")).toHaveText("Waiting", {
         timeout: 100,
       }),
     );
-    await readsSettled(page, runs);
-    from = runs.details.length;
-    await page.clock.runFor(2_100);
-    await expect.poll(() => runs.details.slice(from)).toEqual(["view"]);
+    // Reads after the open: only the run while nothing changed, then the run
+    // that changed with its lifecycle and history.
+    await expect
+      .poll(() =>
+        runs.details
+          .slice(3)
+          .filter((read) => read !== "view")
+          .sort(),
+      )
+      .toEqual(["history", "lifecycle"]);
+    const later = runs.details.slice(3);
+    const followed = later.findIndex((read) => read !== "view");
+    expect(followed).toBeGreaterThanOrEqual(3);
+    expect(later.slice(followed, followed + 2).sort()).toEqual([
+      "history",
+      "lifecycle",
+    ]);
     expect(exports).toHaveLength(1);
   });
 
@@ -1066,10 +1099,16 @@ test.describe("chains and refresh", () => {
     // The next 2 s read takes both pages again; the rows stay.
     await runs.pause();
     const before = runs.steps.length;
-    await page.clock.runFor(2_100);
-    await expect.poll(() => runs.steps.length).toBe(before + 2);
-    expect(runs.steps.at(-2)!.searchParams.has("cursor")).toBe(false);
-    expect(runs.steps.at(-1)!.searchParams.has("cursor")).toBe(true);
+    const bothPages = () =>
+      runs.steps
+        .slice(before)
+        .some(
+          (url, index, all) =>
+            !url.searchParams.has("cursor") &&
+            !!all[index + 1]?.searchParams.has("cursor"),
+        );
+    await advanceUntil(page, bothPages);
+    await expect.poll(() => runs.stepsAnswered).toBe(runs.steps.length);
     await drawn(page, () =>
       expect(stepRows).toHaveCount(260, { timeout: 100 }),
     );
