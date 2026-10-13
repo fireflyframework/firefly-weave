@@ -2016,3 +2016,67 @@ weave-param-field.is-conditions > .param > .param-line {
   height: var(--sd-target);
   min-height: var(--sd-target);
 }
+
+/* The formula editor: one box like the other inputs (36 px on desktop,
+   44 px on touch), the mono font for formulas, the body font for templates,
+   and room on the right for Edit formula. */
+.formula-control {
+  position: relative;
+  min-width: 0;
+}
+.formula-box {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--sd-control);
+  padding-block: 0;
+  padding-inline: var(--space-3) calc(var(--space-3) + var(--sd-target));
+  font: var(--type-mono);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.formula-box.is-template {
+  font: var(--type-body);
+}
+.formula-box:hover {
+  border-color: var(--field-border-hover);
+}
+.formula-box:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.formula-box.is-invalid,
+.param.has-error .formula-box {
+  border-color: var(--danger);
+}
+.formula-box.is-readonly {
+  border-color: transparent;
+}
+.formula-box.is-multiline {
+  align-items: stretch;
+  padding-block: var(--space-3);
+  min-height: calc(3 * 20px + 2 * var(--space-3));
+  max-height: calc(12 * 20px + 2 * var(--space-3));
+  overflow-y: auto;
+}
+.formula-box .cm-formula-pill {
+  height: 20px;
+  vertical-align: middle;
+  font: var(--type-caption);
+  cursor: default;
+}
+.formula-expand {
+  position: absolute;
+  inset-inline-end: 2px;
+  top: calc((var(--sd-control) - var(--sd-target)) / 2);
+  width: var(--sd-target);
+  height: var(--sd-target);
+}
+.param-formula-loading {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
