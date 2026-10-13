@@ -362,6 +362,15 @@ JavaScript (with the `u` flag) and JSON Schema `pattern` use the anchored form
 `^(?:...)$`. API models declare key fields as `InstanceKeyText` (or
 `InstanceKeyTextOrEmpty` where `""` is allowed).
 
+At run time the run state, history events, step results, tasks, deadlines, and
+incidents name each run of a step by its instance key. Outside loops and repeated
+activations that key is the step ID, so existing workflows store exactly what they
+stored before. A connector's idempotency key is `{run_id}:{instance key}`: retries
+of one run of a step share it, and two runs of a step never do. Expressions still
+read a step's output as `/steps/<step ID>`. A branch frame is keyed by its owner
+step, its block name, and the loop indexes of the steps it holds: `checks/credit`
+outside loops, `checks/credit[3]` in iteration 3.
+
 ## Import an artifact
 
 `import_artifact(bytes_or_text_or_object, *, limits=ArtifactLimits(), features=None)`

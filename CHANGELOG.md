@@ -20,6 +20,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Run state, history, tasks, deadlines, and incidents name each run of a step by
+  its instance key, which equals the step ID outside loops, so existing workflows
+  keep byte-identical transitions and history. Deadline scans, incident
+  resolution, replay, exported history, and debug sessions find the step behind
+  any instance key.
+- Human task views add `instance_key` and `iteration` for tasks created inside a
+  loop iteration; both are omitted for every other task.
+- The capacity check of one event's work runs at its end and after every 64
+  steps or 1 MiB of new step output, instead of after every step. Work over
+  capacity is still refused; only the step at which the refusal happens can move.
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.
 - Update Studio's YAML parser to 2.8.3 so deeply nested documents produce a
