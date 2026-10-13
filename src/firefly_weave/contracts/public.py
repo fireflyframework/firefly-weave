@@ -211,6 +211,8 @@ class RuntimeCapabilities(ContractModel):
     transition_bytes: int = Field(gt=0)
     reductions_per_turn: int = Field(gt=0)
     intents_per_turn: int = Field(gt=0)
+    # Loop work one event starts before the loop yields; an older platform omits it.
+    loop_units_per_turn: int | None = Field(default=None, gt=0, exclude_if=lambda value: value is None)
 
 
 class ProcessCapabilities(ContractModel):

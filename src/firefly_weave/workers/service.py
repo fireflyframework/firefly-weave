@@ -281,6 +281,7 @@ class WorkerService(WorkerAdmissionPort):
             "wait",
             "switch",
             "parallel",
+            "forEach",
             "branch-output",
             "join",
             "fail",

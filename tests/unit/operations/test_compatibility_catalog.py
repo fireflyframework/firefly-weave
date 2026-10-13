@@ -409,7 +409,7 @@ def test_an_unknown_feature_name_is_ir_unsupported_even_with_a_valid_digest(text
 def test_the_platform_classifies_against_the_features_it_advertises(text):
     assert classify_requirement("activation", text, ConnectorRegistry()) is None
     executable = text["artifact"]["executable"]
-    executable["features"] = ["flow.forEach"]
+    executable["features"] = ["flow.callWorkflow"]
     text["artifact"]["digest"] = canonical_digest(executable)
     text["activation"]["request"]["artifact_digest"] = text["artifact"]["digest"]
     assert classify_requirement("activation", text, ConnectorRegistry()) == "ir_unsupported"
