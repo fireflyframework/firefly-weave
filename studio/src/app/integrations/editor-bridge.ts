@@ -136,6 +136,8 @@ export async function insertCatalogAction(
   choice: { uses: string; id?: string },
   target?: Target,
   settled = false,
+  /** Add a step's check that its place is still there once the contract arrives. */
+  still: () => boolean = () => true,
 ): Promise<string> {
   host.showPalette = false;
   // The step belongs to the workflow it was asked for: the person may open
@@ -154,7 +156,7 @@ export async function insertCatalogAction(
       ? selected.index + 1
       : undefined;
   const contract = await contractFor(host, choice.uses, choice.id);
-  if (moved()) return "";
+  if (moved() || !still()) return "";
   const requirement = requirementOf(contract);
   const plan = contract ? planSlot(requirement, host.workflowSlots) : {};
   const id = insertActionStep(

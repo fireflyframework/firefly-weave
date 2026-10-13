@@ -774,22 +774,64 @@ choice in this browser, and you can turn it off at any time. **Outline** and
   appears when you point at an edge or move focus to it (it inserts between two
   steps), or the dashed box of an empty path, which has **Add a step** under
   it. You can also drag from a step's output handle to an empty part of the
-  canvas: the step picker opens there, and the new step goes where that output
+  canvas: **Add a step** opens there, and the new step goes where that output
   leads, which is right after the step, or first in the path for a Decision or
   Parallel output. Dropping on a step or near one does nothing, because steps
   run in the order of their path: Studio says "Steps run in order. Use + to
   insert."
+- **Add a step.** Every **+**, the dashed boxes, a handle dragged to an empty
+  part of the canvas, N or / and **Add a step** in the toolbar open the **Add a
+  step** panel on the right (the whole window on narrow screens). On an empty
+  workflow it asks **What triggers this workflow?** and lists the seven
+  triggers first; after that it asks **What happens next?** with **AI**,
+  **Action in an app**, **Data transformation**, **Flow**, **Wait**, **Human
+  review** and **Add another trigger**. Type to search: everyday words work, so
+  "http" finds **Call an API**, and when nothing matches the panel offers
+  **Make a custom API call**. **Action in an app** starts with **Call an API**,
+  **Call an action**, and the email and file apps; a file app opens on its
+  servers' actions. An app opens on its actions and its triggers. Something
+  your platform can't run yet stays in the list, dimmed, with the reason. You
+  can also drag a step from the panel onto a **+**.
+- **Triggers.** A trigger you choose appears at the start of the workflow and
+  reads **Set up at activation**: Studio keeps the choice, and you set the
+  trigger up when you activate the workflow. To remove one, point at it and
+  select **Remove the Webhook trigger** (or the trigger's own name), or press
+  Delete on it; removing **Called by a workflow** asks first.
+- **Copy and paste.** Ctrl+C, Ctrl+X and Ctrl+V (Command on a Mac) copy, cut
+  and paste a run of steps next to each other in one path, also from one
+  workflow to another. Studio copies them as YAML, so you can also paste them
+  into a text file. Pasted steps whose IDs are taken get new ones, references
+  between them follow, and Studio asks before it adds the connection slots and
+  AI profiles they use. A reference the new place can't read shows **Setup
+  needed** until you fix it.
+- **Sticky notes.** Press Shift+S or select **Add a sticky note** in the canvas
+  tools. Double-click a note to write in it; notes understand headings, bold,
+  italics, lists, code and links, and hold up to 4,000 characters. A note has
+  six colors and three sizes, and you can drag it, resize it from its edges,
+  move it with the arrow keys or with **Move…**. A note added while a step is
+  selected starts in the nearest free spot under or beside that step and
+  follows it; a note added with nothing selected starts in the middle of the
+  view, clear of other notes. Studio keeps notes and trigger choices with the
+  workflow: for a draft on a platform, in this browser for your account, so
+  they come back when you open the draft again here.
+- **Tidy layout.** Shift+Alt+T or **Tidy layout** in the canvas tools moves
+  notes that cover a step out of the way and fits the view; a note that
+  follows a step stays with it. Undo puts them back.
+- **Files.** With the new editor, **Save to file** writes the workflow and a
+  `.canvas.json` file with its notes and trigger choices. To open both, choose
+  the two files together in **Import workflow**.
 - **Move, duplicate and delete.** Point at a step, or move focus to it, to show
-  its toolbar with **Delete** and **More**; right-click a step for the same
-  menu. **More** holds **Open**, **Rename**, **Duplicate**, **Move to…** and
+  its toolbar with **Delete** and **More** above the step; right-click a step
+  for the same menu. **More** holds **Open**, **Rename**, **Duplicate**, **Move to…** and
   **Delete**, and **Add paths for answers** on a Human task. Drag a step onto a
   highlighted **+** to move it, or choose **Move to…** and then a **+**.
 - **Select several steps.** Shift-click or Ctrl-click (Command-click on a Mac)
   adds or removes a step, and dragging on an empty part of the canvas draws a
   selection box. Selecting a Decision or Parallel step selects every step inside
   it, and the group counts as one step. With two or more steps selected, a
-  toolbar shows how many, **Duplicate** (for steps next to each other in one
-  path) and **Delete**.
+  toolbar shows how many, **Copy** and **Duplicate** (for steps next to each
+  other in one path) and **Delete**; in a window narrower than 480 pixels,
+  **Copy** and **Duplicate** are under its **More** button (⋯).
 - **Find your way.** Scroll to pan (hold Shift to pan sideways), and hold Ctrl
   or Command while you scroll to zoom, from 25 to 200 percent. Space, Ctrl or
   Command with a drag, or the middle mouse button, also pans. The canvas tools
@@ -824,9 +866,12 @@ describes the current one.
 | Shift+→ and Shift+← | Add the next or previous step to the selection |
 | Enter | Open the step details; on **Trigger** or **End**, open the workflow inputs or result |
 | F2 | Rename the step |
-| N or / | Open the step picker after the focused step |
+| N or / | Open **Add a step** after the focused step |
 | Ctrl+A or Command-A | Select every step |
 | Ctrl+D or Command-D | Duplicate the selected steps |
+| Ctrl+C, Ctrl+X, Ctrl+V (Command on a Mac) | Copy, cut and paste steps |
+| Shift+S | Add a sticky note |
+| Shift+Alt+T | Tidy layout |
 | Delete or Backspace | Delete the selected steps |
 | Ctrl+Z or Command-Z | Undo |
 | Ctrl+Shift+Z or Command-Shift-Z; Ctrl+Y on Windows and Linux | Redo |
@@ -836,6 +881,10 @@ describes the current one.
 | 1 | Fit view |
 | ? | Show the keyboard shortcuts |
 | Escape | One step per press: end a drag or **Move to…**, otherwise hide the toolbar shown over a step, otherwise clear the selection. An open picker, menu or dialog takes Escape first |
+
+On a focused note, Enter edits it, Delete removes it and the arrow keys move it
+(with Shift, farther); Escape ends editing. In **Add a step**, ↑ and ↓ move,
+Enter adds, → opens a category or app, ← goes back and Escape closes.
 
 ### Edit workflow settings and step properties
 
@@ -985,8 +1034,8 @@ API** keeps its **URL** as a path, with a row under it for the value of each
 The step reference lists
 [each step's fields in step details](studio-step-reference.md#fields-in-step-details).
 
-**Call an API, email and file steps.** With the new editor on, the step picker
-lists them under **Common actions**, and each one gets an action of its own,
+**Call an API, email and file steps.** With the new editor on, **Add a step**
+lists them under **Action in an app**, and each one gets an action of its own,
 edited right in step details. **Publish…** and **Simulate** publish those
 actions first, after you confirm; see
 [where Studio keeps their actions](studio-step-reference.md#email-and-file-steps).
@@ -1210,6 +1259,12 @@ never part of what runs. The browser downloads both files; the desktop app saves
 them to your Downloads folder. Working locally, **Save to file** is the
 designer's main button; while you are connected, it is in the toolbar's **More**
 menu (⋯).
+
+With the new editor on, **Save to file** writes a `.canvas.json` file instead
+of the layout file. It keeps the notes, trigger choices, step notes and the
+settings of the actions the workflow owns, so the two files together hold
+everything Studio shows. Choose both files in **Import workflow** to open them
+together.
 
 **Studio is designed for a desktop-size screen.** In the designer, the
 navigation opens in full, with the names, in a window 1440 pixels wide or wider,

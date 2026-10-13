@@ -372,7 +372,9 @@ export interface RequestBuild {
   map: RowMap;
 }
 
-const SAMPLE_LIMIT = 256 * 1024;
+/** A pasted sample's limit in UTF-8 bytes: the host's request cap counts bytes, not characters. */
+const SAMPLE_LIMIT_BYTES = 256 * 1024;
+const encoder = new TextEncoder();
 /** Most parameters one action can declare (the host's HttpActionRequest bound). */
 export const PARAMETER_LIMIT = 64;
 
@@ -381,7 +383,10 @@ export function parseSample(
   text: string,
 ): { value: unknown } | { error: string } {
   if (!text.trim()) return { error: "Paste a JSON or YAML value." };
-  if (text.length > SAMPLE_LIMIT)
+  if (
+    text.length > SAMPLE_LIMIT_BYTES / 4 &&
+    encoder.encode(text).length > SAMPLE_LIMIT_BYTES
+  )
     return {
       error: "This is larger than 256 KB. Paste a shorter example.",
     };

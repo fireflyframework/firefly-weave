@@ -69,11 +69,33 @@ SPDX-License-Identifier: Apache-2.0
   **Output** panes, **Fixed | Mapped** fields, drag to map, **Settings** with
   retries, timeouts and notes, and issues under the field they concern. The
   trigger and End open their own details, and the gear opens **Workflow
-  settings**. The step picker lists **Call an API**, email and file steps under
-  **Common actions**; each gets an action of its own, which **Publish…** and
+  settings**. **Add a step** lists **Call an API**, email and file steps under
+  **Action in an app**; each gets an action of its own, which **Publish…** and
   **Simulate** publish first, after you confirm. A draft saved on a platform
-  keeps those actions' settings and step notes only while it is open, and
-  **Save draft** says so. With the new editor off, Studio keeps the inspector.
+  keeps those actions' settings and step notes in this browser for your
+  account, and **Save draft** says so. With the new editor off, Studio keeps
+  the inspector.
+- Add **Add a step** to Studio's new editor: a panel on the right (the whole
+  window below 768 pixels) that every **+**, a dragged handle, N, / and the
+  toolbar open at that place. It starts with **What triggers this workflow?**
+  on an empty workflow and **What happens next?** afterwards, searches by
+  everyday words, opens apps on their actions and triggers, and keeps entries
+  the platform can't run visible with the reason. The new canvas also gets
+  trigger choices that are set up when you activate the workflow, copy and
+  paste of steps as YAML between workflows, sticky notes with Markdown, **Tidy
+  layout**, a step toolbar above the step, and a `.canvas.json` file that
+  **Save to file** writes and **Import workflow** reads. A draft on a platform
+  keeps its notes and trigger choices in this browser for your account.
+- With the new editor on or off, **Import workflow** starts a fresh Undo history
+  (opening a file is no longer a step you can undo, which emptied the canvas),
+  and a `.canvas.json` file chosen on its own is refused with a sentence that
+  asks for the workflow file too.
+- Studio's API builder measures pasted samples in bytes, so a large sample in a
+  script that takes several bytes per character gets the size message instead
+  of a request error.
+- Going Back to a workflow that was opened from a file and left unchanged now
+  says that Studio didn't keep a copy and how to open the file again, instead
+  of saying that the workflow may have been deleted.
 - Leaving **Source** with text you typed but haven't applied now asks **Apply
   changes**, **Discard changes** or **Keep editing**, with the new editor on or
   off: switching tabs, opening a step, running a command, going to another page,

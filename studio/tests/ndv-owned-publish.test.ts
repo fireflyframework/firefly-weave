@@ -40,6 +40,7 @@ import {
   withOwnedAction,
 } from "../src/app/editor/ndv/owned/owned-store";
 import {
+  driftedOwned,
   markPublished,
   moveOwned,
   pendingOwned,
@@ -392,6 +393,24 @@ describe("publishing the actions a workflow owns", () => {
       message: "Changed after version 1.0.0 was published.",
     });
     expect(model.nodes()[0].step["uses"]).toBe("order-intake.call-api@1.0.1");
+  });
+  it("a change Redo brings back after a publish reads as changed since the version that was sent", async () => {
+    const { publisher, model } = setup();
+    // One edit for the record to join, then a header that Undo takes back.
+    model.batch(() => model.insert("wait"));
+    headers(model);
+    model.undo();
+    await publisher.prepare();
+    expect(await publisher.publish()).toBe(true);
+    expect(driftedOwned(model)).toEqual([]);
+    model.redo();
+    expect(driftedOwned(model)).toEqual([API]);
+    await publisher.prepare();
+    expect(publisher.rows()[0]).toMatchObject({
+      uses: "order-intake.call-api@1.0.1",
+      state: "ready",
+      message: "Changed after version 1.0.0 was published.",
+    });
   });
   it("needs an editable workflow to move actions, and a readable source", async () => {
     const locked = setup(() => ({ editingLocked: () => true }));

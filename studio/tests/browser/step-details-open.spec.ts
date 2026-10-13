@@ -24,9 +24,11 @@ import {
   offline,
   sourceText,
 } from "./support";
+import { openStoredWorkflow } from "./canvas-po";
 import {
   openStepFixture,
   sizes,
+  StepDetailsPage,
   stepFixture,
   yamlFile,
 } from "./step-details-po";
@@ -283,6 +285,51 @@ test.describe("step details and another workflow", () => {
     await expect(page.locator("[data-step]").first()).toBeVisible();
     await expect(details.dialog).toHaveCount(0);
     await expect(page.locator("weave-step-details-mount")).toHaveCount(0);
+  });
+
+  test("Back from one workflow's step details to another workflow closes them and doesn't open them there", async ({
+    page,
+  }) => {
+    // The first workflow is kept on this computer, so Back can bring it back.
+    await openStoredWorkflow(page, {
+      id: "kept-order-intake",
+      source: readFileSync(stepFixture, "utf8"),
+    });
+    const details = new StepDetailsPage(page);
+    await expect(
+      page.getByRole("heading", {
+        name: "order-intake",
+        exact: true,
+        level: 1,
+      }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await page.getByLabel("Choose a workflow file").setInputFiles(other());
+    await expect(
+      page.getByRole("heading", {
+        name: "other-workflow",
+        exact: true,
+        level: 1,
+      }),
+    ).toBeVisible();
+    await details.open("lookup");
+    await expect(details.dialogFor("lookup")).toBeVisible();
+    // Two entries back: past Home, straight into the first workflow's designer.
+    await page.evaluate(() => history.go(-2));
+    await expect(
+      page.getByRole("heading", {
+        name: "order-intake",
+        exact: true,
+        level: 1,
+      }),
+    ).toBeVisible();
+    await expect(details.node("lookup")).toBeVisible();
+    await expect(details.dialog).toHaveCount(0);
+    await page.waitForTimeout(300);
+    await expect(details.dialog).toHaveCount(0);
+    // Step details still open on request, for this workflow's step.
+    await details.open("lookup");
+    await expect(details.dialogFor("lookup")).toBeVisible();
   });
 });
 

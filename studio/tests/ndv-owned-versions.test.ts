@@ -33,6 +33,7 @@ import {
   withOwnedVersion,
 } from "../src/app/editor/ndv/owned/owned-store";
 import {
+  canvasExtras,
   driftedOwned,
   forkEdited,
   inputHash,
@@ -258,16 +259,49 @@ describe("versions of a workflow's own actions", () => {
     ).toBeLessThanOrEqual(200);
   });
   it("says what a platform draft keeps only while it is open", () => {
-    expect(ownedDraftNote(0, false)).toBe("");
-    expect(ownedDraftNote(1, false)).toBe(
+    expect(ownedDraftNote(0, "")).toBe("");
+    expect(ownedDraftNote(1, "")).toBe(
       "This draft keeps the settings of 1 action of this workflow's Call an API, email or file steps only while it's open. Publish the workflow to keep it in the project.",
     );
-    expect(ownedDraftNote(2, true)).toBe(
+    expect(ownedDraftNote(2, "step notes")).toBe(
       "This draft keeps the settings of 2 actions of this workflow's Call an API, email or file steps only while it's open. Publish the workflow to keep them in the project. Its step notes also stay only while it's open.",
     );
-    expect(ownedDraftNote(0, true)).toBe(
+    expect(ownedDraftNote(0, "step notes")).toBe(
       "This draft keeps its step notes only while it's open.",
     );
+  });
+  it("says a platform draft keeps them on this computer when Studio could keep them there", () => {
+    expect(ownedDraftNote(2, "notes and trigger choices", "computer")).toBe(
+      "This draft keeps the settings of 2 actions of this workflow's Call an API, email or file steps on this computer only. Publish the workflow to keep them in the project. Its notes and trigger choices also stay on this computer only.",
+    );
+    expect(ownedDraftNote(0, "notes", "computer")).toBe(
+      "This draft keeps its notes on this computer only.",
+    );
+    expect(ownedDraftNote(0, "", "computer")).toBe("");
+  });
+  it("names what a canvas holds besides the workflow", () => {
+    expect(canvasExtras(emptyCanvas())).toBe("");
+    expect(
+      canvasExtras({ ...emptyCanvas(), stepNotes: { a: { text: "x" } } }),
+    ).toBe("step notes");
+    expect(
+      canvasExtras({
+        ...emptyCanvas(),
+        stepNotes: { a: { text: "x" } },
+        notes: [
+          {
+            id: "note-00000001",
+            text: "",
+            color: "yellow",
+            x: 0,
+            y: 0,
+            width: 240,
+            height: 120,
+          },
+        ],
+        triggers: [{ id: "trigger-00000001", kind: "webhook" }],
+      }),
+    ).toBe("notes and trigger choices");
   });
   it("says what Save to file leaves out", () => {
     expect(ownedExportNote(0)).toBe("");

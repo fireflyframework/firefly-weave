@@ -23,7 +23,8 @@ SPDX-License-Identifier: Apache-2.0
 // version never changes.
 import { nextPatchVersion } from "../../../integrations/http-action-model";
 import type { StructuredCanvasAdapter, Workflow } from "../../../model";
-import type { CanvasSidecar } from "../../state/canvas-sidecar";
+import { stepNotesOf, type CanvasSidecar } from "../../state/canvas-sidecar";
+import type { KeptWhere } from "../../state/draft-canvas";
 import { allSteps } from "../params/slots";
 import {
   currentVersion,
@@ -33,6 +34,7 @@ import {
   nameOfUses,
   versionOfUses,
   type OwnedRecipe,
+  type Publication,
 } from "./owned-actions";
 import {
   ownedActionsOf,
@@ -185,25 +187,66 @@ export function forkEdited(
 }
 
 /**
- * The canvas recording that `uses` is published. An API action without a
- * description of its own keeps the one it was published with, so renaming
- * its step changes nothing that was published.
+ * What publishing `uses` records, computed once from the workflow the
+ * document was built from: the version, the fingerprint of its input and,
+ * for an API action without a description of its own, the description it
+ * was published with (so renaming its step changes nothing published).
+ * Null when the workflow doesn't own `uses`.
  */
-export function markPublished(model: OwnedModel, uses: string): CanvasSidecar {
+export interface PublicationRecord extends Publication {
+  description?: string;
+}
+export function publicationOf(
+  model: OwnedModel,
+  uses: string,
+): PublicationRecord | null {
   const recipe = ownedActionsOf(model.canvas)[uses];
-  if (!recipe) return model.canvas;
+  if (!recipe) return null;
   const description =
     recipe.kind === "http" && !recipe.description
       ? httpSource(model.definition, uses, recipe).recipe.description
       : undefined;
   const kept: OwnedRecipe = description ? { ...recipe, description } : recipe;
-  return withOwnedAction(model.canvas, uses, {
+  return {
+    version: versionOfUses(uses),
+    input: inputHash(ownedInput(model.definition, uses, kept)),
+    ...(description ? { description } : {}),
+  };
+}
+
+/**
+ * The canvas with a publication recorded on the recipe for `uses`, as it was
+ * computed when the document was sent; the same canvas back when the
+ * workflow doesn't own `uses` or already holds this record. Undo and Redo
+ * states get the same value, so a state whose input differs reads as changed.
+ */
+export function withPublication(
+  canvas: CanvasSidecar,
+  uses: string,
+  record: PublicationRecord,
+): CanvasSidecar {
+  const recipe = ownedActionsOf(canvas)[uses];
+  if (!recipe) return canvas;
+  const kept: OwnedRecipe =
+    record.description && recipe.kind === "http" && !recipe.description
+      ? { ...recipe, description: record.description }
+      : recipe;
+  if (
+    kept === recipe &&
+    recipe.published?.version === record.version &&
+    recipe.published.input === record.input
+  )
+    return canvas;
+  return withOwnedAction(canvas, uses, {
     ...kept,
-    published: {
-      version: versionOfUses(uses),
-      input: inputHash(ownedInput(model.definition, uses, kept)),
-    },
+    published: { version: record.version, input: record.input },
   });
+}
+
+/** The canvas recording that `uses` is published, from the workflow open now. */
+export function markPublished(model: OwnedModel, uses: string): CanvasSidecar {
+  const record = publicationOf(model, uses);
+  return record ? withPublication(model.canvas, uses, record) : model.canvas;
 }
 
 /** One action's publish key: the same document always sends the same key. */
@@ -235,17 +278,34 @@ export const ownedExportNote = (count: number): string =>
     ? `These files don't keep the settings of ${count} ${count === 1 ? "action" : "actions"} of this workflow's Call an API, email or file steps yet. Publish the workflow to keep ${count === 1 ? "it" : "them"} in the project.`
     : "";
 
+/** What a canvas holds besides the workflow, for a sentence: "notes and trigger choices". */
+export function canvasExtras(canvas: CanvasSidecar): string {
+  const sticky = (canvas.notes?.length ?? 0) > 0;
+  const stepNotes = Object.keys(stepNotesOf(canvas)).length > 0;
+  const triggers = (canvas.triggers?.length ?? 0) > 0;
+  return [
+    ...(sticky ? ["notes"] : stepNotes ? ["step notes"] : []),
+    ...(triggers ? ["trigger choices"] : []),
+  ].join(" and ");
+}
+
 /**
  * What Save draft adds on a platform, whose draft holds the workflow only:
- * the settings of actions that aren't published yet, and step notes, stay
- * while the draft is open.
+ * the settings of actions that aren't published yet, and the canvas's
+ * notes and trigger choices, stay on this computer or while it is open.
  */
-export function ownedDraftNote(actions: number, notes: boolean): string {
+export function ownedDraftNote(
+  actions: number,
+  extras: string,
+  where: KeptWhere = "memory",
+): string {
+  const stay =
+    where === "computer" ? "on this computer only" : "only while it's open";
   const kept = actions
-    ? `This draft keeps the settings of ${actions} ${actions === 1 ? "action" : "actions"} of this workflow's Call an API, email or file steps only while it's open. Publish the workflow to keep ${actions === 1 ? "it" : "them"} in the project.`
+    ? `This draft keeps the settings of ${actions} ${actions === 1 ? "action" : "actions"} of this workflow's Call an API, email or file steps ${stay}. Publish the workflow to keep ${actions === 1 ? "it" : "them"} in the project.`
     : "";
-  if (!notes) return kept;
+  if (!extras) return kept;
   return kept
-    ? `${kept} Its step notes also stay only while it's open.`
-    : "This draft keeps its step notes only while it's open.";
+    ? `${kept} Its ${extras} also stay ${stay}.`
+    : `This draft keeps its ${extras} ${stay}.`;
 }

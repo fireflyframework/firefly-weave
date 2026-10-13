@@ -51,10 +51,11 @@ import { ownedActionsOf } from "./owned-store";
 import {
   driftedOwned,
   forkEdited,
-  markPublished,
   moveOwned,
   pendingOwned,
+  publicationOf,
   publishKey,
+  withPublication,
 } from "./owned-versions";
 
 export type OwnedRowState =
@@ -343,6 +344,8 @@ export class OwnedPublisher {
         });
         return this.stopped();
       }
+      // What is recorded is what this document was built from, whatever changes meanwhile.
+      const record = publicationOf(model, row.uses);
       const yaml = stringify(document);
       const key = this.keys.get(row.uses) ?? publishKey(row.uses, yaml);
       this.set(row.uses, { state: "publishing", message: "" });
@@ -357,9 +360,10 @@ export class OwnedPublisher {
       }
       // Gone meanwhile: the platform keeps the version, and a later publish reuses it.
       if (this.abandoned) return false;
-      this.ports.record(() => {
-        model.canvas = markPublished(model, row.uses);
-      });
+      if (record)
+        this.ports.record(() => {
+          model.canvas = withPublication(model.canvas, row.uses, record);
+        });
       this.published++;
       this.set(row.uses, { state: "published" });
     }

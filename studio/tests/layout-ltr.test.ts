@@ -1086,3 +1086,27 @@ describe("the left-to-right layout", () => {
     });
   });
 });
+
+describe("several triggers", () => {
+  const triggers = [
+    { id: "a", kind: "manual" as const },
+    { id: "b", kind: "webhook" as const },
+    { id: "c", kind: "email" as const },
+  ];
+
+  it("offer one + at the start however many there are", () => {
+    const empty = layoutLtr(freshWorkflow(), options({ triggers }));
+    expect(
+      empty.handles.filter((item) => item.plus).map((item) => item.key),
+    ).toEqual(["$trigger:a>out"]);
+    const one = layoutLtr(
+      workflowOf([createStep("transform", "check")]),
+      options({ triggers }),
+    );
+    const into = one.edges.filter((item) => item.enters === "check");
+    expect(into).toHaveLength(3);
+    expect(into.filter((item) => item.insert).map((item) => item.key)).toEqual([
+      "$trigger:a>check",
+    ]);
+  });
+});
