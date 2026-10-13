@@ -1679,6 +1679,23 @@ ${paths}
     );
     await shot("101-toast", { tabs: 2 });
   },
+  async "step-details-from-canvas"({ page, shot }) {
+    const details = await openStepFixture(page);
+    const canvas = new CanvasPage(page);
+    await canvas.ready();
+    await canvas.closeInspector();
+    // One click selects the step; its second click opens step details.
+    await canvas.tileBody("lookup").click();
+    await expect(canvas.tileBody("lookup")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(details.dialog).toHaveCount(0);
+    await shot("102-canvas-step-selected", { tabs: 0 });
+    await canvas.tileBody("lookup").dblclick();
+    await expect(details.dialogFor("lookup")).toBeVisible();
+    await shot("103-canvas-step-details", { tabs: 2 });
+  },
   async pairing({ page, shot }) {
     await page.route("**/studio/session", (r) =>
       r.fulfill({
