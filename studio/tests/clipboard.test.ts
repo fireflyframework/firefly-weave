@@ -598,3 +598,137 @@ describe("what copying puts on the clipboard", () => {
     );
   });
 });
+
+describe("pasting at the limits", () => {
+  it("refuses more than 500 steps at a time, nested ones counted, with one sentence", () => {
+    const wait = (i: number) => ({
+      id: `w${i}`,
+      kind: "wait",
+      durationSeconds: 1,
+    });
+    expect(
+      readClipboard(stringify(Array.from({ length: 500 }, (_, i) => wait(i))))
+        .ok,
+    ).toBe(true);
+    expect(
+      readClipboard(stringify(Array.from({ length: 501 }, (_, i) => wait(i)))),
+    ).toEqual({
+      ok: false,
+      reason: "Studio pastes at most 500 steps at a time. Copy fewer steps.",
+    });
+    const nested = {
+      id: "s",
+      kind: "switch",
+      cases: [
+        {
+          when: { literal: true },
+          steps: Array.from({ length: 500 }, (_, i) => wait(i)),
+          output: { literal: {} },
+        },
+      ],
+      default: { steps: [], output: { literal: {} } },
+    };
+    expect(readClipboard(stringify([nested]))).toEqual({
+      ok: false,
+      reason: "Studio pastes at most 500 steps at a time. Copy fewer steps.",
+    });
+  });
+
+  it("numbers 500 steps that share an ID in linear time", () => {
+    const content = read(
+      stringify(
+        Array.from({ length: 500 }, () => ({
+          id: "a",
+          kind: "wait",
+          durationSeconds: 1,
+        })),
+      ),
+    );
+    const taken = new Set(Array.from({ length: 5000 }, (_, i) => `a-${i + 1}`));
+    const started = performance.now();
+    const planned = plan(
+      freshWorkflow(),
+      content,
+      { owner: "root", index: 0 },
+      taken,
+    );
+    expect(performance.now() - started).toBeLessThan(150);
+    expect(planned.ids.slice(0, 3)).toEqual(["a", "a-5001", "a-5002"]);
+    expect(new Set(planned.ids).size).toBe(500);
+  });
+
+  it("gives a step ID longer than 128 characters a new one, as for any ID the language can't read", () => {
+    const content = read(
+      stringify([{ id: "a".repeat(129), kind: "wait", durationSeconds: 1 }]),
+    );
+    expect(
+      plan(freshWorkflow(), content, { owner: "root", index: 0 }, new Set())
+        .ids,
+    ).toEqual(["wait-1"]);
+    const fits = read(
+      stringify([{ id: "a".repeat(128), kind: "wait", durationSeconds: 1 }]),
+    );
+    expect(
+      plan(freshWorkflow(), fits, { owner: "root", index: 0 }, new Set()).ids,
+    ).toEqual(["a".repeat(128)]);
+  });
+
+  it("never echoes more than 60 characters of what it refuses, nor text-direction controls", () => {
+    const long = "k".repeat(10_000);
+    for (const text of [
+      `- {id: a, kind: ${long}}`,
+      `- {id: a, kind: wait, durationSeconds: 1, ${long}: 1}`,
+      `weaveClipboard: 1\nsteps: [{id: a, kind: wait, durationSeconds: 1}]\n${long}: 1`,
+      `weaveClipboard: 1\nsteps: [{id: c, kind: action, uses: w.c@1.0.0, with: {literal: {}}}]\nactions: {w.c@1.0.0: {kind: script}, ${long}@1.0.0: {kind: script}}`,
+    ]) {
+      const reading = readClipboard(text);
+      expect(reading.ok).toBe(false);
+      const reason = reading.ok ? "" : reading.reason;
+      expect(reason.length, reason.slice(0, 80)).toBeLessThan(160);
+    }
+    const reading = readClipboard('- {id: a, kind: "wa\u202Eit"}');
+    expect(reading).toEqual({
+      ok: false,
+      reason: "This paste has a step kind Studio doesn't know: wait.",
+    });
+    const cut = readClipboard(`- {id: a, kind: ${"x".repeat(100)}}`);
+    expect(cut).toEqual({
+      ok: false,
+      reason: `This paste has a step kind Studio doesn't know: ${"x".repeat(59)}….`,
+    });
+  });
+
+  it("reads slot and AI profile names and slot connectors as the language does", () => {
+    const paste = (connections: string, profiles = "{}") =>
+      readClipboard(
+        `weaveClipboard: 1\nsteps: [{id: a, kind: wait, durationSeconds: 1}]\nconnections: ${connections}\nllmProfiles: ${profiles}`,
+      );
+    expect(
+      paste("{crm: {connector: weave-http@2.0.0}}", "{default: {model: qwen3}}")
+        .ok,
+    ).toBe(true);
+    for (const [connections, name] of [
+      ['{"c\u202Eevil": {connector: weave-http@2.0.0}}', "cevil"],
+      ['{"-crm": {connector: weave-http@2.0.0}}', "-crm"],
+      ["{crm: {connector: weave http}}", "crm"],
+      ['{crm: {connector: "weave-http@2.0.0\u202E"}}', "crm"],
+      [
+        `{${"c".repeat(129)}: {connector: weave-http@2.0.0}}`,
+        `${"c".repeat(59)}…`,
+      ],
+    ])
+      expect(paste(connections), connections).toEqual({
+        ok: false,
+        reason: `This paste has a connection slot Studio can't read: ${name}.`,
+      });
+    for (const [profiles, name] of [
+      ['{"de\u2066fault": {model: qwen3}}', "default"],
+      ["{'a b': {model: qwen3}}", "a b"],
+      ["{default: 7}", "default"],
+    ])
+      expect(paste("{}", profiles), profiles).toEqual({
+        ok: false,
+        reason: `This paste has an AI profile Studio can't read: ${name}.`,
+      });
+  });
+});

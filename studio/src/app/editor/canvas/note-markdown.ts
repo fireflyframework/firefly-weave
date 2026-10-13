@@ -39,7 +39,8 @@ const NUMBERED = /^\s{0,3}\d{1,9}[.)]\s+(.*)$/;
 const SAFE = /^(https?:\/\/[^\s/?#\\]+|mailto:[^\s]+)/i;
 const STRONG = /^(\*\*|__)(?=\S)([\s\S]*?\S)\1/;
 const EM = /^(\*|_)(?=\S)([\s\S]*?\S)\1(?!\1)/;
-const LINK = /^\[([^\]]+)\]\(([^)\s]+)\)/;
+/** A link's address may hold one level of parentheses, as Wikipedia's do. */
+const LINK = /^\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/;
 const WORD = /[A-Za-z0-9]/;
 
 /** The address when it is http, https or mailto; null for anything else. */
@@ -168,7 +169,8 @@ export function renderNote(
       } else if (node.kind === "link") {
         const link = doc.createElement("a");
         link.href = node.href;
-        link.target = "_blank";
+        // A mail address opens the mail app; a new tab would stay blank.
+        if (!/^mailto:/i.test(node.href)) link.target = "_blank";
         link.rel = "noopener noreferrer";
         inline(link, node.children);
         parent.appendChild(link);

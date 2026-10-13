@@ -26,6 +26,7 @@ import {
   renamedSteps,
   type Kind,
   type Workflow,
+  rewriteStepRefs,
 } from "../src/app/model";
 import {
   emptyCanvas,
@@ -1258,5 +1259,80 @@ describe("pasting into the model", () => {
       "check-3",
     );
     expect(nextFreeId("check", new Set())).toBe("check-1");
+  });
+});
+
+describe("references that follow a renamed step", () => {
+  it("follow refs in expressions and leave literal data alone", () => {
+    const renamed = new Map([["a", "a-1"]]);
+    expect(
+      rewriteStepRefs(
+        {
+          id: "b",
+          kind: "transform",
+          value: {
+            object: {
+              read: { ref: "/steps/a/output/x" },
+              data: {
+                literal: { ref: "/steps/a", list: [{ ref: "/steps/a" }] },
+              },
+            },
+          },
+        },
+        renamed,
+      ),
+    ).toEqual({
+      id: "b",
+      kind: "transform",
+      value: {
+        object: {
+          read: { ref: "/steps/a-1/output/x" },
+          data: { literal: { ref: "/steps/a", list: [{ ref: "/steps/a" }] } },
+        },
+      },
+    });
+  });
+});
+
+describe("whether steps can be deleted", () => {
+  const withOutput = (output: string) => {
+    const model = new StructuredCanvasAdapter();
+    model.setSource(
+      `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: w, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  steps:
+    - {id: a, kind: transform, value: {literal: {}}}
+    - {id: b, kind: transform, value: {ref: /steps/a/output}}
+  output: ${output}
+`,
+      "yaml",
+    );
+    return model;
+  };
+
+  it("says why without deleting, and adds no undo step", () => {
+    const model = withOutput("{ref: /steps/b/output}");
+    const revision = model.revision;
+    const undoable = model.canUndo;
+    expect(model.removalBlocked(["b"])).toBe(
+      "This step is referenced by the workflow output. Update it before deleting it.",
+    );
+    expect(model.removalBlocked(["a"])).toBe(
+      "This step is referenced by b. Update it before deleting it.",
+    );
+    expect(model.removalBlocked(["a", "b"])).toBe(
+      "These steps are referenced by the workflow output. Update it before deleting them.",
+    );
+    expect(model.revision).toBe(revision);
+    expect(model.canUndo).toBe(undoable);
+    expect(model.definition.spec.steps.map((step) => step.id)).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(withOutput("{literal: {}}").removalBlocked(["b"])).toBeNull();
   });
 });

@@ -34,7 +34,6 @@ import { canonicalJson, escapeSegment } from "../../forms/core/json";
 import { visibleSteps } from "../../forms/core/scope";
 import {
   kinds,
-  nextFreeId,
   rewriteStepRefs,
   sequencesOf,
   stepIdPattern,
@@ -137,12 +136,34 @@ const holder = (steps: Step[]): Workflow => ({
   metadata: { name: "", version: "" },
   spec: { steps },
 });
+/** The most a sentence repeats of what it refuses. */
+const ECHO_MAX = 60;
+/** Text-direction and other invisible format controls, which could reorder a sentence. */
+const FORMAT_CONTROLS =
+  /[\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+/**
+ * Clipboard text as a sentence shows it: without format controls, and cut
+ * to 60 characters with an ellipsis, since the clipboard can hold anything.
+ */
+export function shown(value: unknown): string {
+  const text = String(value).replace(FORMAT_CONTROLS, "");
+  const characters = [...text];
+  return characters.length > ECHO_MAX
+    ? `${characters.slice(0, ECHO_MAX - 1).join("")}…`
+    : text;
+}
 const PATHLESS = (id: unknown) =>
-  `The pasted step ${String(id)} has a path without a list of steps.`;
+  `The pasted step ${shown(id)} has a path without a list of steps.`;
 const UNKNOWN_FIELD = (id: unknown, key: string) =>
-  `The pasted step ${String(id)} has a field Studio doesn't know: ${key}.`;
+  `The pasted step ${shown(id)} has a field Studio doesn't know: ${shown(key)}.`;
 const UNREADABLE_ACTION = (uses: string) =>
-  `The pasted steps bring an action Studio can't read: ${uses}.`;
+  `The pasted steps bring an action Studio can't read: ${shown(uses)}.`;
+const UNKNOWN_KIND = (kind: string) =>
+  `This paste has a step kind Studio doesn't know: ${shown(kind)}.`;
+/** The most steps one paste brings, nested ones counted. */
+export const PASTE_MAX_STEPS = 500;
+/** The longest step, slot or profile name Studio keeps, as elsewhere in Studio. */
+export const NAME_MAX = 128;
 /**
  * The fields each step kind has in the workflow language, which refuses any
  * other; loops and workflow calls too, for platforms whose language has them.
@@ -243,6 +264,17 @@ const RETRY_FIELDS = [
 const CONNECTOR_REF = /^[a-z0-9][a-z0-9-]{0,127}@\d+\.\d+\.\d+$/;
 const ACTION_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const USES = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}@\d+\.\d+\.\d+$/;
+/** The language's names (ResourceName), within Studio's 128 characters. */
+const resourceName = (name: string) =>
+  name.length <= NAME_MAX && /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name);
+const SEMVER =
+  "(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)" +
+  "(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?" +
+  "(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+/** A connector reference as the language reads it (VersionedReference). */
+const VERSIONED = new RegExp(
+  `^[A-Za-z0-9][A-Za-z0-9_.-]{0,${NAME_MAX - 1}}@${SEMVER}$`,
+);
 
 /**
  * True when a parsed value is safe to keep: no key reaches a prototype and
@@ -361,11 +393,9 @@ function checkStep(
     typeof step["kind"] !== "string"
   )
     return NOT_STEPS;
-  if (!known.has(step["kind"]))
-    return `This paste has a step kind Studio doesn't know: ${step["kind"]}.`;
+  if (!known.has(step["kind"])) return UNKNOWN_KIND(step["kind"]);
   const fields = STEP_FIELDS[step["kind"]];
-  if (!fields)
-    return `This paste has a step kind Studio doesn't know: ${step["kind"]}.`;
+  if (!fields) return UNKNOWN_KIND(step["kind"]);
   const unknown = unknownKey(step, fields);
   if (unknown) return UNKNOWN_FIELD(step["id"], unknown);
   if (depth > 40)
@@ -443,7 +473,7 @@ export function readClipboard(
     if (field)
       return {
         ok: false,
-        reason: `This paste has a field Studio doesn't know: ${field}.`,
+        reason: `This paste has a field Studio doesn't know: ${shown(field)}.`,
       };
     found = {
       steps: value["steps"],
@@ -477,19 +507,34 @@ export function readClipboard(
     const problem = checkStep(step, known, 0);
     if (problem) return { ok: false, reason: problem };
   }
-  if (isRecord(found.connections))
-    for (const [name, slot] of Object.entries(found.connections))
-      if (
-        !isRecord(slot) ||
-        unknownKey(slot, SLOT_FIELDS) ||
-        typeof slot["connector"] !== "string" ||
-        (slot["required"] !== undefined &&
-          typeof slot["required"] !== "boolean")
-      )
-        return {
-          ok: false,
-          reason: `This paste has a connection slot Studio can't read: ${name}.`,
-        };
+  if ((found.steps as Step[]).flatMap(stepTree).length > PASTE_MAX_STEPS)
+    return {
+      ok: false,
+      reason: `Studio pastes at most ${PASTE_MAX_STEPS} steps at a time. Copy fewer steps.`,
+    };
+  if (found.connections !== undefined && !isRecord(found.connections))
+    return { ok: false, reason: NOT_STEPS };
+  for (const [name, slot] of Object.entries(found.connections ?? {}))
+    if (
+      !resourceName(name) ||
+      !isRecord(slot) ||
+      unknownKey(slot, SLOT_FIELDS) ||
+      typeof slot["connector"] !== "string" ||
+      !VERSIONED.test(slot["connector"]) ||
+      (slot["required"] !== undefined && typeof slot["required"] !== "boolean")
+    )
+      return {
+        ok: false,
+        reason: `This paste has a connection slot Studio can't read: ${shown(name)}.`,
+      };
+  if (found.llmProfiles !== undefined && !isRecord(found.llmProfiles))
+    return { ok: false, reason: NOT_STEPS };
+  for (const [name, profile] of Object.entries(found.llmProfiles ?? {}))
+    if (!resourceName(name) || !isRecord(profile))
+      return {
+        ok: false,
+        reason: `This paste has an AI profile Studio can't read: ${shown(name)}.`,
+      };
   const actions: Record<string, OwnedRecipe> = {};
   if (found.actions !== undefined && !isRecord(found.actions))
     return { ok: false, reason: NOT_STEPS };
@@ -719,18 +764,27 @@ export function planPaste(
   const used = new Set(taken);
   const kept = new Set<string>();
   const renamed = new Map<string, string>();
+  // Where each base's numbering goes on: the next number never looks back.
+  const counters = new Map<string, number>();
+  const nextFree = (base: string) => {
+    let i = counters.get(base) ?? 1;
+    while (used.has(`${base}-${i}`)) i++;
+    counters.set(base, i + 1);
+    return `${base}-${i}`;
+  };
   for (const step of pasted.flatMap(stepTree)) {
     const old = step.id;
-    const valid = stepIdPattern.test(old);
+    const valid = old.length <= NAME_MAX && stepIdPattern.test(old);
     if (valid && !used.has(old)) {
       used.add(old);
       kept.add(old);
       continue;
     }
+    // Room for "-<number>" within the 128 characters.
     const base = valid
-      ? old.replace(/-\d+$/, "") || old
+      ? (old.replace(/-\d+$/, "") || old).slice(0, NAME_MAX - 8)
       : (stepIdPrefix[step.kind as Kind] ?? "step");
-    const next = nextFreeId(base, used);
+    const next = nextFree(base);
     used.add(next);
     if (!renamed.has(old) && !kept.has(old)) renamed.set(old, next);
     step.id = next;

@@ -21,6 +21,7 @@ import {
   canvasSheet,
   keyPlatform,
   noteCommand,
+  typingIn,
 } from "../src/app/editor/state/canvas-commands";
 import {
   EDITOR_NAV_KEY,
@@ -121,6 +122,27 @@ describe("canvas keys", () => {
     expect(canvasCommand(press("n"), typing)).toBeNull();
     expect(canvasCommand(press("s", { ctrlKey: true }), typing)).toBe("save");
     expect(canvasCommand(press("z", { ctrlKey: true }), typing)).toBe("undo");
+    // Copy, cut and paste belong to the field, even on a step.
+    for (const key of ["c", "x", "v"])
+      expect(
+        canvasCommand(press(key, { ctrlKey: true }), typing),
+        key,
+      ).toBeNull();
+  });
+
+  it("count anything inside a field or editable text as typing", () => {
+    const element = (editable: boolean, field: boolean) => ({
+      isContentEditable: editable,
+      closest: (selector: string) =>
+        field && selector.includes("textarea") ? {} : null,
+    });
+    // A <p> inside contenteditable="true", or contenteditable="plaintext-only".
+    expect(typingIn(element(true, false))).toBe(true);
+    // A node inside an input, a textarea or a select.
+    expect(typingIn(element(false, true))).toBe(true);
+    expect(typingIn(element(false, false))).toBe(false);
+    expect(typingIn(null)).toBe(false);
+    expect(typingIn({})).toBe(false);
   });
 
   it("read the platform from the browser", () => {

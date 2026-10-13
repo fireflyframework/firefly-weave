@@ -308,12 +308,16 @@ export function nextFreeId(prefix: string, taken: ReadonlySet<string>): string {
   while (taken.has(`${prefix}-${i}`)) i++;
   return `${prefix}-${i}`;
 }
-/** A copy of a step or expression whose `ref`s to renamed steps follow them. */
+/**
+ * A copy of a step or expression whose `ref`s to renamed steps follow them;
+ * `literal` content is data, never a reference, and stays as written.
+ */
 export function rewriteStepRefs(
   value: unknown,
   renamed: ReadonlyMap<string, string>,
   key = "",
 ): unknown {
+  if (key === "literal") return structuredClone(value);
   if (Array.isArray(value))
     return value.map((item) => rewriteStepRefs(item, renamed));
   if (isRecord(value))
@@ -1020,6 +1024,38 @@ export class StructuredCanvasAdapter {
     }
     this.forget(removed);
     this.syncSteps();
+  }
+  /**
+   * Why deleting these steps (each with everything inside it) would be
+   * refused, with the sentence Delete shows; null when it wouldn't. Changes
+   * nothing, so Cut can ask before it writes the clipboard.
+   */
+  removalBlocked(ids: readonly string[]): string | null {
+    if (this.readonly) return "Fix source before editing the graph.";
+    const all = this.nodes();
+    const nodes = ids
+      .map((id) => all.find((n) => n.step.id === id))
+      .filter((n): n is Node => !!n);
+    if (!nodes.length) return null;
+    const removed = new Set<string>();
+    for (const node of nodes)
+      for (const id of this.subtree(node.step)) removed.add(id);
+    const one = ids.length === 1;
+    const group = one && removed.size > 1;
+    try {
+      this.refuseIfRead(
+        removed,
+        one
+          ? group
+            ? "Steps in this group are"
+            : "This step is"
+          : "These steps are",
+        one ? (group ? "the group" : "it") : "them",
+      );
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    return null;
   }
   /**
    * Throws when a step (or the workflow output) outside `removed` still reads

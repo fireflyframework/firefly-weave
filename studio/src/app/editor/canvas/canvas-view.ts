@@ -66,6 +66,7 @@ import {
   canvasSheet,
   keyPlatform,
   noteCommand,
+  typingIn,
 } from "../state/canvas-commands";
 import { minimapPinned, setMinimapPinned } from "../state/canvas-preferences";
 import {
@@ -1546,13 +1547,7 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** Space held: a drag pans. */
   trackSpace(event: KeyboardEvent) {
-    if (
-      event.key !== " " ||
-      (event.target as Element).matches(
-        "input, textarea, select, [contenteditable='true']",
-      )
-    )
-      return;
+    if (event.key !== " " || typingIn(event.target)) return;
     const target = event.target as HTMLElement;
     const tile = target.classList.contains("tile-body");
     const wasHeld = this.space;
@@ -1679,9 +1674,7 @@ export class CanvasView implements OnInit, DoCheck {
     const target = event.target as HTMLElement;
     // A control that handled the key, or an open menu, owns it.
     if (event.defaultPrevented || target.closest("[role=menu]")) return;
-    const typing = target.matches(
-      "input, textarea, select, [contenteditable='true']",
-    );
+    const typing = typingIn(target);
     const onStep =
       target === this.root().nativeElement ||
       target.classList.contains("tile-body");
@@ -2147,6 +2140,9 @@ export class CanvasView implements OnInit, DoCheck {
   }
   async copyIds(ids: string[], cut: boolean) {
     const h = this.host();
+    // A cut that can't delete says why and leaves the clipboard as it was.
+    const blocked = cut ? h.model.removalBlocked(ids) : null;
+    if (blocked) return h.notify(blocked);
     const copied = copySteps(
       h.model.definition,
       ids,
@@ -2183,13 +2179,10 @@ export class CanvasView implements OnInit, DoCheck {
   /** Ctrl/Cmd+V on the canvas: the browser's paste event, read without a permission prompt. */
   pasteEvent(event: ClipboardEvent) {
     const target = event.target as HTMLElement;
-    if (
-      target.matches?.(
-        "input, textarea, select, [contenteditable='true'], [contenteditable='']",
-      )
-    )
-      return;
+    if (typingIn(target)) return;
     event.preventDefault();
+    // Only the text: a paste event doesn't expose the web custom format copy
+    // also writes, and the text holds the same document.
     void this.paste(
       event.clipboardData?.getData("text/plain") ?? "",
       this.pastePlace(target),

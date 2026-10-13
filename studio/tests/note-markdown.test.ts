@@ -147,8 +147,29 @@ describe("the notes' Markdown", () => {
             href: "https://weave.example",
             children: [{ kind: "text", text: "docs" }],
           },
-          { kind: "text", text: " bad)" },
+          { kind: "text", text: " bad" },
         ],
+      },
+    ]);
+  });
+
+  it("opens web links in a new tab and mail links in the mail app, parentheses included", () => {
+    const links = elements(
+      render(
+        "[docs](https://weave.example) [ops](mailto:ops@example.com) [wiki](https://en.wikipedia.org/wiki/Foo_(bar))",
+      ),
+    ).filter((element) => element.tagName === "a");
+    expect(links.map((link) => link.attributes)).toEqual([
+      {
+        href: "https://weave.example",
+        target: "_blank",
+        rel: "noopener noreferrer",
+      },
+      { href: "mailto:ops@example.com", rel: "noopener noreferrer" },
+      {
+        href: "https://en.wikipedia.org/wiki/Foo_(bar)",
+        target: "_blank",
+        rel: "noopener noreferrer",
       },
     ]);
   });

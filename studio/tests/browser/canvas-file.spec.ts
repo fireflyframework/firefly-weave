@@ -124,6 +124,23 @@ test.describe("the canvas file", () => {
     await offline(page);
   });
 
+  test("opening a workflow file is not a step Undo takes back", async ({
+    page,
+  }) => {
+    await importFiles(page, [file("order-intake.yaml", workflow)]);
+    const canvas = new CanvasPage(page);
+    const before = await canvas.rootSteps();
+    expect(before.length).toBeGreaterThan(0);
+    await expect(
+      page
+        .getByRole("toolbar", { name: "Workflow commands" })
+        .getByRole("button", { name: /^Undo/ }),
+    ).toBeDisabled();
+    await canvas.root.focus();
+    await page.keyboard.press("ControlOrMeta+z");
+    expect(await canvas.rootSteps()).toEqual(before);
+  });
+
   test("opens with its workflow and saves as a version 2 canvas file, owned actions included", async ({
     page,
   }) => {

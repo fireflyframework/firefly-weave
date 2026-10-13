@@ -246,6 +246,98 @@ test.describe("copy and paste of steps", () => {
     expect(await canvas.rootSteps()).toEqual(["first", "third", "second"]);
   });
 
+  test("cut that can't delete leaves the clipboard as it was", async ({
+    page,
+  }) => {
+    const canvas = await openStoredWorkflow(page, {
+      id: "clip-cut-refused",
+      source: stringify({
+        apiVersion: "weave/v1alpha1",
+        kind: "Workflow",
+        metadata: { name: "read-by-output", version: "1.0.0" },
+        spec: {
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object" },
+          steps: [{ id: "result", kind: "transform", value: { literal: {} } }],
+          output: { ref: "/steps/result/output" },
+        },
+      }),
+    });
+    await page.evaluate(() => navigator.clipboard.writeText("kept text"));
+    await canvas.tileBody("result").click();
+    await canvas.tileBody("result").focus();
+    await page.keyboard.press("ControlOrMeta+x");
+    await expect(
+      toast(
+        page,
+        "This step is referenced by the workflow output. Update it before deleting it.",
+      ),
+    ).toBeVisible();
+    await expect(canvas.tile("result")).toHaveCount(1);
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      "kept text",
+    );
+  });
+
+  test("typing in editable text on the canvas never pastes steps or runs the canvas's keys", async ({
+    page,
+  }) => {
+    const canvas = await openStoredWorkflow(page, {
+      id: "clip-editable",
+      source: stringify({
+        apiVersion: "weave/v1alpha1",
+        kind: "Workflow",
+        metadata: { name: "editable", version: "1.0.0" },
+        spec: {
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object" },
+          steps: [{ id: "first", kind: "transform", value: { literal: {} } }],
+          output: { literal: {} },
+        },
+      }),
+    });
+    // Editable text a later canvas feature could draw: a paragraph inside
+    // contenteditable, and plain-text editing.
+    await canvas.root.evaluate((root) => {
+      const rich = document.createElement("div");
+      rich.contentEditable = "true";
+      rich.className = "zz-rich";
+      rich.innerHTML = "<p>rich</p>";
+      const plain = document.createElement("div");
+      plain.setAttribute("contenteditable", "plaintext-only");
+      plain.className = "zz-plain";
+      plain.textContent = "plain";
+      for (const [index, element] of [rich, plain].entries())
+        Object.assign(element.style, {
+          position: "absolute",
+          top: `${80 + index * 48}px`,
+          left: "80px",
+          zIndex: "50",
+          width: "200px",
+          minHeight: "32px",
+          background: "white",
+        });
+      root.append(rich, plain);
+    });
+    await page.evaluate(() =>
+      navigator.clipboard.writeText(
+        "- {id: injected, kind: wait, durationSeconds: 60}",
+      ),
+    );
+    for (const target of [".zz-rich p", ".zz-plain"]) {
+      await canvas.root.locator(target).click();
+      await page.keyboard.press("End");
+      await page.keyboard.press("ControlOrMeta+v");
+      await page.keyboard.type("n/");
+      await page.keyboard.press("Shift+S");
+      await expect(canvas.root.locator(target)).toContainText("injected");
+      await expect(canvas.root.locator(target)).toContainText("n/S");
+    }
+    await expect(canvas.tile("injected")).toHaveCount(0);
+    await expect(page.locator(".add-step-panel")).toHaveCount(0);
+    await expect(canvas.root.locator(".sticky-note")).toHaveCount(0);
+  });
+
   test("the step menu and the selection toolbar copy too", async ({ page }) => {
     const canvas = await openWorkflow(page);
     await canvas.tileBody("approval").hover();

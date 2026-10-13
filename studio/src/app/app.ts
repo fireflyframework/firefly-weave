@@ -7478,6 +7478,8 @@ export class App implements CanvasHost {
       this.notify(
         "The workflow opened without its canvas file: Studio couldn't read that file.",
       );
+    // Opening a file is where its history starts: Undo never empties it.
+    this.model.clearHistory();
     this.view = "designer";
     this.openTab();
     void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);

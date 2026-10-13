@@ -79,6 +79,23 @@ export const STEP_COMMANDS: ReadonlySet<KeymapCommand> = new Set<KeymapCommand>(
   ],
 );
 
+/**
+ * Whether a key or clipboard event's target is where someone types: a
+ * field, anything inside one, or editable text (contenteditable in any of
+ * its forms, plaintext-only included, and every element inside it).
+ */
+export function typingIn(target: unknown): boolean {
+  if (!target || typeof target !== "object") return false;
+  const element = target as {
+    isContentEditable?: boolean;
+    closest?: (selector: string) => unknown;
+  };
+  return (
+    element.isContentEditable === true ||
+    !!element.closest?.("input, textarea, select")
+  );
+}
+
 /** Cmd keys on macOS and iPadOS, Ctrl elsewhere. */
 export function keyPlatform(
   platform: string = typeof navigator === "undefined" ? "" : navigator.platform,
