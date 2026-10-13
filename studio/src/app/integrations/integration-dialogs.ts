@@ -17,11 +17,11 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The quick-integration dialogs the shell opens: the API action builder (with
 // the readiness checklist), "New API connection" and "New workflow from a
-// template". Load it lazily (@defer) and place it before <weave-dialog-host>,
+// template". AI connections open in their own side sheet, which the shell
+// hosts. Load it lazily (@defer) and place it before <weave-dialog-host>,
 // so the builder's own confirmations open above it. Each dialog loads its
 // own chunk when it first opens.
 import { ChangeDetectionStrategy, Component, input } from "@angular/core";
-import { AiProviderConnectionForm } from "./ai-provider-connection-form";
 import { Modal } from "../dialog";
 import type { EditorHost } from "./editor-host";
 import { HttpActionBuilder, type HttpActionUse } from "./http-action-builder";
@@ -48,7 +48,6 @@ import {
     Modal,
     HttpActionBuilder,
     HttpConnectionForm,
-    AiProviderConnectionForm,
     IntegrationReadiness,
     TemplateGallery,
   ],
@@ -82,38 +81,25 @@ import {
     @if (host().connectionDialog; as dialog) {
       @if (host().profile) {
         <weave-modal
-          [heading]="
-            dialog.kind === 'ai' ? 'New AI connection' : 'New API connection'
-          "
+          heading="New API connection"
           [wide]="true"
           (dismiss)="close('connection')"
         >
-          @if (dialog.kind === "ai") {
-            @defer (on immediate) {
-              <weave-ai-provider-connection-form
-                [api]="host().api"
-                [canManage]="host().can('connection.manage')"
-                (created)="created()"
-                (finished)="close('connection')"
-              />
-            }
-          } @else {
-            @defer (on immediate) {
-              <weave-http-connection-form
-                [api]="host().api"
-                [identity]="host().identity"
-                heading=""
-                [workspace]="host().workspaceText"
-                [fromWorkflow]="!!dialog.fromWorkflow"
-                [fromBuilder]="dialog.fromBuilder ?? null"
-                (created)="created()"
-                (cancel)="close('connection')"
-                (finished)="close('connection')"
-                (back)="backToWorkflow()"
-              />
-            } @placeholder {
-              <p class="dialog-status" role="status">Loading…</p>
-            }
+          @defer (on immediate) {
+            <weave-http-connection-form
+              [api]="host().api"
+              [identity]="host().identity"
+              heading=""
+              [workspace]="host().workspaceText"
+              [fromWorkflow]="!!dialog.fromWorkflow"
+              [fromBuilder]="dialog.fromBuilder ?? null"
+              (created)="created()"
+              (cancel)="close('connection')"
+              (finished)="close('connection')"
+              (back)="backToWorkflow()"
+            />
+          } @placeholder {
+            <p class="dialog-status" role="status">Loading…</p>
           }
         </weave-modal>
       }

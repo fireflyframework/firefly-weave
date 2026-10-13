@@ -1088,7 +1088,6 @@ export class App implements CanvasHost {
   } | null = null;
   /** The open "New API connection" dialog and its prefill. */
   connectionDialog: {
-    kind?: "ai";
     fromBuilder: HttpActionUse["connection"] | null;
     fromWorkflow?: boolean;
   } | null = null;
@@ -4772,7 +4771,6 @@ export class App implements CanvasHost {
     };
     this.cdr.markForCheck();
   }
-  /** Opens "Connect to an API", prefilled from the builder's hand-off for this slot. */
   /** The AI connection side sheet, open over any view. */
   aiSheet: AiSheetRequest | null = null;
   /** Grows whenever an AI connection or its test changes; AI screens reload on it. */
@@ -4792,6 +4790,13 @@ export class App implements CanvasHost {
     this.aiTests.set(record.revision, record);
     this.aiSetupGeneration++;
   }
+  /** Settings › AI models, from Weave AI, Home or a connection. */
+  async openAiModels() {
+    this.lumiOpen = false;
+    await this.navigate("settings");
+    await this.router.navigateByUrl("/settings/ai", { replaceUrl: true });
+  }
+  /** Opens "Connect to an API", prefilled from the builder's hand-off for this slot. */
   openConnectionDialog(slot = "") {
     const use = this.lastUse;
     this.connectionDialog = {

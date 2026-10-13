@@ -273,6 +273,12 @@ export async function mockAiPlatform(
     ];
     return json(r, created, 201);
   });
+  await page.route(`${ENV}/connections/*`, (r) => {
+    const id = new URL(r.request().url()).pathname.split("/").pop();
+    const found = state.connections.find((c) => c["id"] === id);
+    if (r.request().method() !== "GET" || !found) return r.fallback();
+    return json(r, found);
+  });
   await page.route(`${ENV}/bindable-connections?*`, (r) =>
     json(r, {
       items: state.connections.map((c) => ({

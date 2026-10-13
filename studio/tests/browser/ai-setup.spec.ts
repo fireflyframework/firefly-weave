@@ -17,8 +17,11 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Settings › AI models and its AI connection side sheet against a mocked
 // platform, with real clicks at 1440x900 and 600x500.
+import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
-import { connected } from "./support";
+import { python } from "../python-path";
+import { connected, newWorkflow, selectChoice } from "./support";
+import { DesignerPage } from "./designer-po";
 import {
   AI_CAPABILITIES,
   CONNECTOR_ID,
@@ -273,4 +276,91 @@ test("is read-only for people who cannot manage connections", async ({
     form.getByRole("button", { name: "Test connection" }),
   ).toHaveCount(0);
   await expect(form.getByLabel("Connection name")).toBeDisabled();
+});
+
+test("Build › Connections opens the same sheet and points AI connections to Settings", async ({
+  page,
+}) => {
+  await start(page, { connections: [ollamaConnection] });
+  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page
+    .getByRole("button", { name: "New AI connection", exact: true })
+    .click();
+  const form = sheet(page);
+  await expect(
+    form
+      .getByRole("group", { name: "Provider" })
+      .getByRole("radio", { name: /^Ollama/ }),
+  ).toBeChecked();
+  await form.getByRole("button", { name: "Close AI connection" }).click();
+  await expect(form).toHaveCount(0);
+  await page
+    .getByRole("button", { name: /ollama-local/ })
+    .first()
+    .click();
+  await page
+    .getByRole("button", { name: "Manage in Settings › AI models" })
+    .click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+});
+
+test("an AI task's connection step opens the same sheet over the editor", async ({
+  page,
+}) => {
+  await start(page);
+  // The profile editor reads its fields from the real LLM profile schema.
+  const llmSchema = execFileSync(
+    python,
+    [
+      "-c",
+      "import json; from firefly_weave.contracts.llm import LLMProfile; print(json.dumps(LLMProfile.model_json_schema(by_alias=True)))",
+    ],
+    { cwd: "..", encoding: "utf8" },
+  );
+  await page.route("**/studio/contracts/llm-profile", (r) =>
+    r.fulfill({ contentType: "application/json", body: llmSchema }),
+  );
+  await page.route("**/studio/contracts/llm-profile/validate", (r) =>
+    r.fulfill({ json: { valid: true, issues: [] } }),
+  );
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await newWorkflow(page);
+  await page
+    .locator(".palette")
+    .getByRole("button", { name: "AI task", exact: true })
+    .click();
+  await new DesignerPage(page).selectStep("ask-ai-1");
+  const inspector = page.locator("weave-llm-inspector");
+  await inspector
+    .getByRole("button", {
+      name: "Configure workflow AI profiles",
+      exact: true,
+    })
+    .click();
+  await selectChoice(
+    inspector.getByLabel("Provider", { exact: true }),
+    "openai-chat",
+  );
+  await inspector.getByLabel("Model", { exact: true }).fill("qwen3:4b");
+  await inspector.getByLabel("Max tokens", { exact: true }).fill("512");
+  await inspector
+    .getByRole("button", { name: "Continue to connection", exact: true })
+    .click();
+  await inspector
+    .getByRole("button", { name: "New AI connection", exact: true })
+    .click();
+  await expect(sheet(page)).toBeVisible();
+  await sheet(page)
+    .getByRole("button", { name: "Close AI connection" })
+    .click();
+  await expect(inspector).toBeVisible();
+});
+
+test("Home offers Connect a model to people who manage connections", async ({
+  page,
+}) => {
+  await start(page);
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.getByRole("button", { name: "Connect a model" }).click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
 });
