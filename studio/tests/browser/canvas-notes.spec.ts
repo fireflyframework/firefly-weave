@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { stringify } from "yaml";
 import { AddStepPanel } from "./add-step-po";
-import { openStoredWorkflow } from "./canvas-po";
+import { openStoredWorkflow, openWorkflow } from "./canvas-po";
 import { expectHitTarget } from "./support";
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
@@ -131,6 +131,58 @@ test.describe("sticky notes at 1440x900", () => {
     await expect(
       canvas.root.getByRole("group", { name: "Note: Reviewed" }),
     ).toHaveAttribute("data-color", "blue");
+  });
+
+  test("Shift+S puts each step's note in a free spot: never over a step, a + or another note", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    expect(await canvas.zoomPercent()).toBe(50);
+    const text = canvas.root.getByRole("textbox", { name: "Note text" });
+    for (const id of ["pay-and-notify", "post-ledger-entry", "rejected"]) {
+      await canvas.tileBody(id).click();
+      await canvas.tileBody(id).focus();
+      await page.keyboard.press("Shift+S");
+      await expect(text).toBeFocused();
+      await text.fill(`under ${id}`);
+      await page.keyboard.press("Escape");
+      await expect(
+        canvas.root.getByRole("group", { name: `Note: under ${id}` }),
+      ).toBeVisible();
+    }
+    // A second Shift+S on the same step finds yet another spot.
+    await canvas.tileBody("rejected").click();
+    await canvas.tileBody("rejected").focus();
+    await page.keyboard.press("Shift+S");
+    await text.fill("again under rejected");
+    await page.keyboard.press("Escape");
+    const covered = await canvas.root.evaluate((root) => {
+      const rect = (element: Element) => element.getBoundingClientRect();
+      const meets = (a: DOMRect, b: DOMRect) =>
+        a.left < b.right &&
+        b.left < a.right &&
+        a.top < b.bottom &&
+        b.top < a.bottom;
+      const notes = [...root.querySelectorAll(".sticky-note")];
+      const blockers = [
+        ...root.querySelectorAll(
+          ".tile-body, .tile-label, .insert-plus, .lane-slot, .lane-slot-label, .join-bar",
+        ),
+      ].filter((element) => rect(element).width && rect(element).height);
+      const name = (element: Element) =>
+        element.getAttribute("aria-label") ??
+        element.getAttribute("data-tile") ??
+        element.closest("[data-tile]")?.getAttribute("data-tile") ??
+        element.className;
+      const problems: string[] = [];
+      notes.forEach((note, i) => {
+        for (const other of [...blockers, ...notes.slice(i + 1)])
+          if (meets(rect(note), rect(other)))
+            problems.push(`${name(note)} covers ${name(other)}`);
+      });
+      return { count: notes.length, problems };
+    });
+    expect(covered).toEqual({ count: 4, problems: [] });
   });
 
   test("Move… puts a note where you click, and the size menu resizes it", async ({

@@ -134,7 +134,13 @@ import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
 import { TRIGGER_LABELS, triggerNoteKey, triggerTile } from "./trigger-tiles";
 import { noteTitle } from "./note-markdown";
 import { NotesLayer, type NoteEdit, type NoteView } from "./notes-layer";
-import { tidyNotes, tileBoxes } from "./tidy";
+import {
+  freeSpot,
+  noteObstacles,
+  tidyNotes,
+  tileBoxes,
+  type Box,
+} from "./tidy";
 import { CANVAS_MAX_BYTES } from "../state/test-data";
 import { ownedActionsOf } from "../ndv/owned/owned-store";
 import {
@@ -1960,7 +1966,12 @@ export class CanvasView implements OnInit, DoCheck {
   noteViews(): NoteView[] {
     return this.notesMemo(this.layout(), this.host().model.canvas.notes);
   }
-  /** Shift+S and the tools' note: under the selected step (anchored), else at the view's center. */
+  /**
+   * Shift+S and the tools' note: under the selected step (anchored), else at
+   * the view's center; then the nearest free spot. A step's note keeps clear
+   * of every step, name, path label, "+" and other note at this zoom; Tidy
+   * layout moves a free note off any step it covers.
+   */
   addNote() {
     const h = this.host();
     const reason = this.lockedReason();
@@ -1978,17 +1989,27 @@ export class CanvasView implements OnInit, DoCheck {
       box.left + box.width / 2,
       box.top + box.height / 2,
     );
-    let added: { canvas: CanvasSidecar; id: string };
-    try {
-      added = addNote(
-        h.model.canvas,
-        tile
+    const notes: Box[] = this.noteViews();
+    const spot = freeSpot(
+      {
+        ...(tile
           ? { x: tile.x, y: tile.y + below }
           : {
               x: center.x - NOTE_SIZES.small.width / 2,
               y: center.y - NOTE_SIZES.small.height / 2,
-            },
-        tile ? { stepId: tile.id, dx: 0, dy: below } : null,
+            }),
+        ...NOTE_SIZES.small,
+      },
+      tile ? [...noteObstacles(this.layout(), this.view.zoom), ...notes] : [],
+    );
+    let added: { canvas: CanvasSidecar; id: string };
+    try {
+      added = addNote(
+        h.model.canvas,
+        spot,
+        tile
+          ? { stepId: tile.id, dx: spot.x - tile.x, dy: spot.y - tile.y }
+          : null,
       );
     } catch (error) {
       return h.notify(error instanceof Error ? error.message : String(error));

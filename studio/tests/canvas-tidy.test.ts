@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   TIDY_GAP,
+  freeSpot,
+  noteObstacles,
   tidyNotes,
   tileBoxes,
   type Box,
@@ -117,6 +119,62 @@ describe("tidy layout's note rule", () => {
     expect(tileBoxes(layout)).toEqual([
       { x: 308, y: 96, width: 168, height: 152 },
     ]);
+  });
+
+  it("puts a new note where it was asked for when nothing is there", () => {
+    expect(freeSpot({ x: 0, y: 116, width: 100, height: 40 }, [tile])).toEqual({
+      x: 0,
+      y: 116,
+    });
+  });
+
+  it("else in the nearer free spot, below on a tie, past steps and notes", () => {
+    const note = { x: 0, y: 80, width: 100, height: 40 };
+    expect(freeSpot(note, [tile])).toEqual({ x: 0, y: 116 });
+    const under: Box = { x: 0, y: 116, width: 100, height: 400 };
+    expect(freeSpot(note, [tile, under])).toEqual({ x: 116, y: 80 });
+    const level = { x: 50, y: 50, width: 100, height: 100 };
+    expect(freeSpot(level, [tile])).toEqual({ x: 50, y: 116 });
+  });
+
+  it("keeps a new note off names as drawn at this zoom and off every +", () => {
+    const layout = {
+      tiles: [
+        {
+          id: "check",
+          shape: "square",
+          x: 344,
+          y: 96,
+          width: 96,
+          height: 96,
+          labelY: 200,
+        },
+      ],
+      joins: [],
+      labels: [],
+      slots: [{ x: 600, y: 400 }],
+      subNodes: [],
+      handles: [{ plus: { x: 480, y: 144 } }, { plus: null }],
+      edges: [
+        {
+          insert: { owner: "", index: 1 },
+          shape: "curve",
+          a: { x: 0, y: 144 },
+          b: { x: 200, y: 144 },
+        },
+        { insert: null, shape: "curve", a: { x: 0, y: 0 }, b: { x: 0, y: 0 } },
+      ],
+    } as unknown as LtrLayout;
+    const [step, slot, plus, edge, ...rest] = noteObstacles(layout, 1);
+    expect(step).toEqual({ x: 308, y: 96, width: 168, height: 152 });
+    expect(slot).toEqual({ x: 592, y: 400, width: 80, height: 96 });
+    expect(plus).toEqual({ x: 468, y: 132, width: 24, height: 24 });
+    expect(edge).toEqual({ x: 88, y: 132, width: 24, height: 24 });
+    expect(rest).toEqual([]);
+    // At 50% names are drawn larger and wider, so their block grows.
+    const [half] = noteObstacles(layout, 0.5);
+    expect(half.width).toBeGreaterThan(168);
+    expect(half.y + half.height).toBeGreaterThan(248);
   });
 
   it("tidies 200 notes over 200 steps quickly", () => {

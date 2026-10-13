@@ -17,9 +17,18 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Tidy layout's note rule: a free note that covers a step moves to the
 // nearest free spot to its right or below it, clear of every step and every
-// other note. Anchored notes stay with their step. Pure, so it is tested
-// without a canvas.
-import { LTR, type LtrLayout, type Point } from "./layout-ltr";
+// other note. Anchored notes stay with their step. A note Shift+S adds uses
+// the same search to start in a free spot. Pure, so it is tested without a
+// canvas.
+import {
+  LTR,
+  labelScale,
+  labelWidth,
+  midpoint,
+  pathLabelScale,
+  type LtrLayout,
+  type Point,
+} from "./layout-ltr";
 
 export interface Box {
   x: number;
@@ -51,6 +60,69 @@ export function tileBoxes(layout: LtrLayout): Box[] {
       height: tile.labelY + LTR.labelHeight - tile.y,
     };
   });
+}
+
+/**
+ * What a note Shift+S adds must not cover, at this zoom: each step with its
+ * name block as drawn (names grow below 92%), "All branches done" and its
+ * label, path labels, empty paths with their "Add a step", an agent's slots
+ * and every "+", shown or shown on hover. Edges may run behind a note.
+ */
+export function noteObstacles(layout: LtrLayout, zoom: number): Box[] {
+  const label = LTR.labelHeight * labelScale(zoom);
+  const around = (at: Point, half: number): Box => ({
+    x: at.x - half,
+    y: at.y - half,
+    width: 2 * half,
+    height: 2 * half,
+  });
+  const boxes: Box[] = layout.tiles.map((tile) => {
+    const width = Math.max(
+      tile.width,
+      tile.shape === "end" ? LTR.end * 2 : labelWidth(zoom, tile.shape),
+    );
+    return {
+      x: tile.x + tile.width / 2 - width / 2,
+      y: tile.y,
+      width,
+      height: tile.labelY + label - tile.y,
+    };
+  });
+  for (const join of layout.joins)
+    boxes.push(join, {
+      x: join.x + join.width / 2 - LTR.joinLabel / 2,
+      y: join.y + join.height,
+      width: LTR.joinLabel,
+      height: 3 * LTR.line * pathLabelScale(zoom),
+    });
+  const path = LTR.line * pathLabelScale(zoom);
+  for (const item of layout.labels)
+    boxes.push({
+      x: item.x,
+      y: item.y - path,
+      width: item.width,
+      height: path,
+    });
+  for (const slot of layout.slots)
+    boxes.push({
+      x: slot.x + LTR.slot / 2 - LTR.slotLabel / 2,
+      y: slot.y,
+      width: LTR.slotLabel,
+      height: LTR.slot + 2 * LTR.line * labelScale(zoom),
+    });
+  for (const row of layout.subNodes)
+    for (const chip of row.chips)
+      boxes.push({
+        x: chip.x,
+        y: chip.y,
+        width: LTR.chipWidth,
+        height: LTR.chipHeight,
+      });
+  for (const handle of layout.handles)
+    if (handle.plus) boxes.push(around(handle.plus, 12));
+  for (const edge of layout.edges)
+    if (edge.insert) boxes.push(around(midpoint(edge), 12));
+  return boxes;
 }
 
 /** Slides a box right (or down) past every box it meets, keeping the gap. */
@@ -87,4 +159,18 @@ export function tidyNotes(
     settled.push(best);
   }
   return moves;
+}
+
+/**
+ * Where a new note goes: where it was asked for when that spot meets nothing
+ * (keeping the gap), else the nearer of the free spots below it and to its
+ * right; below on a tie, so a step's note stays under it where it can.
+ */
+export function freeSpot(box: Box, blockers: readonly Box[]): Point {
+  if (!blockers.some((blocker) => meets(box, blocker, TIDY_GAP)))
+    return { x: Math.round(box.x), y: Math.round(box.y) };
+  const right = slide(box, blockers, "x");
+  const below = slide(box, blockers, "y");
+  const best = below.y - box.y <= right.x - box.x ? below : right;
+  return { x: Math.round(best.x), y: Math.round(best.y) };
 }
