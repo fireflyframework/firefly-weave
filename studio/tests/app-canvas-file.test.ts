@@ -103,6 +103,7 @@ describe("importing a workflow with a canvas file Studio can't read", () => {
     Object.assign(shell, {
       view: "home",
       importGeneration: 0,
+      openedFromFiles: new Set<string>(),
       notify: (line: string) => void said.push(line),
       flushLocalSave: () => {},
       openTab: () => {},
