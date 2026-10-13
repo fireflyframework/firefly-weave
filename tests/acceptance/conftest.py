@@ -344,7 +344,15 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
     if marker is None or report.when != "call" or _STEP["id"] != marker.args[0]:
         return
     step = str(_STEP["id"])
-    if report.skipped:
+    if hasattr(report, "wasxfail"):
+        # An expected failure is still a failure of an enabled step, in the evidence and in pytest's exit code:
+        # pytest leaves reports that carry wasxfail out of its failure count.
+        reason = str(report.wasxfail) or "no reason given"
+        del report.wasxfail
+        if report.skipped:
+            report.outcome = "failed"
+            report.longrepr = f"{report.longrepr}\n{step} failed as an expected failure: {reason}"
+    elif report.skipped:
         # The step was enabled and started: a skip now would hide that it never finished.
         reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
         report.outcome = "failed"

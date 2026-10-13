@@ -201,3 +201,33 @@ def test_a_step_that_skips_itself_during_its_call_is_recorded_as_failed(pytester
     assert result.ret == 1
     assert [(record["id"], record["status"]) for record in records] == [("J0.1", "failed")]
     assert records[0]["error"] == "J0.1 skipped itself after it started: the platform is not ready"
+
+
+def run_steps(pytester, monkeypatch, source: str):
+    """Run a test module under the real harness on a prepared run; returns pytest's result and the step records."""
+    root = prepared_run(pytester.path)
+    monkeypatch.setenv("WEAVE_ACC_RUN_DIR", str(root))
+    pytester.makeini(INI)
+    pytester.makeconftest(HARNESS)
+    pytester.makepyfile(test_steps="import pytest\n\n\n" + source)
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "-q", "--tb=short")
+    steps = root / "evidence/steps.jsonl"
+    records = [json.loads(line) for line in steps.read_text().splitlines()] if steps.exists() else []
+    return result, records
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '@pytest.mark.journey_step("J0.1")\n@pytest.mark.xfail(reason="known gap")\ndef test_step(run):\n'
+        "    assert False\n",
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run):\n    pytest.xfail("known gap")\n',
+    ],
+    ids=["marker", "call"],
+)
+def test_an_expected_failure_fails_the_step_and_the_pytest_exit_code(pytester, monkeypatch, source):
+    result, records = run_steps(pytester, monkeypatch, source)
+    assert result.ret == 1
+    result.assert_outcomes(failed=1)
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "failed")]
+    assert "known gap" in records[0]["error"]
