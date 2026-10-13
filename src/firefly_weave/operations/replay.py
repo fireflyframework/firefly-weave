@@ -23,7 +23,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
-from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, IRNode, SignalNode, WaitNode
+from firefly_weave.compiler.ir import ActionNode, ForEachNode, HumanTaskNode, IRNode, SignalNode, WaitNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import (
@@ -353,7 +353,7 @@ def _verify_wait(
         and all(s.accepted_at <= event.timestamp for s in pending),
         "WV-REPLAY-SIGNAL",
     )
-    duration_nodes = {key for key, node in nodes.items() if isinstance(node, WaitNode)}
+    duration_nodes = {key for key, node in nodes.items() if isinstance(node, (WaitNode, ForEachNode))}
     due = sorted(
         (
             d

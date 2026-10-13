@@ -21,9 +21,9 @@ from uuid import uuid4
 
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
-from firefly_weave.compiler.ir import SignalNode, WaitNode
+from firefly_weave.compiler.ir import SignalNode
 from firefly_weave.contracts.instance_keys import node_of
-from firefly_weave.runtime.kernel import deadline_order, workflow
+from firefly_weave.runtime.kernel import deadline_order, duration_steps, workflow
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
@@ -54,7 +54,7 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
     )
     # Overall timeout wins whenever observed due. Other terminal signal deadlines
     # precede continuations; duration ties use stable node identity.
-    duration_nodes = {node.id for node in ir.graph.nodes if isinstance(node, WaitNode)}
+    duration_nodes = duration_steps(ir)
     deadlines.sort(key=lambda d: deadline_order(d["node_id"], d["deadline"], duration_nodes))
     for deadline in deadlines:
         if deadline["deadline"] > now:

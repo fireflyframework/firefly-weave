@@ -24,7 +24,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
-from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, SignalNode, WaitNode
+from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
@@ -38,7 +38,15 @@ from firefly_weave.operations.debug.models import (
     DebugView,
     SignalReceipt,
 )
-from firefly_weave.runtime.kernel import _advance_owned, begin, deadline_order, prepare, validate, validate_action
+from firefly_weave.runtime.kernel import (
+    _advance_owned,
+    begin,
+    deadline_order,
+    duration_steps,
+    prepare,
+    validate,
+    validate_action,
+)
 from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent, TaskIntent
 
 _DEFAULT_LIMITS = DebugLimits()
@@ -253,7 +261,7 @@ class Simulator:
 
     def _eligible(self) -> RuntimeEvent | None:
         d = self.data
-        durations = {n.id for n in self.ir.graph.nodes if isinstance(n, WaitNode)}
+        durations = duration_steps(self.ir)
         deferred = {e.data.get("node_id") for e in d.state.deferred_results}
         deadlines = sorted(d.deadlines, key=lambda v: deadline_order(v.node_id, v.deadline, durations))
         for deadline in deadlines:

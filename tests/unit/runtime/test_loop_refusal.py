@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""A runtime that does not run loops refuses a compiled loop; it never skips the step."""
+"""A platform that does not list the loop feature refuses a loop at import; the kernel runs one."""
 
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -61,9 +61,8 @@ def test_import_refuses_a_loop_while_the_platform_does_not_list_the_loop_feature
     assert import_artifact(artifact.to_bytes(), features=["flow.forEach"]).digest == artifact.digest
 
 
-def test_the_kernel_opens_an_incident_at_a_loop_it_cannot_run(artifact):
+def test_the_kernel_runs_a_loop(artifact):
     started = RuntimeEvent(id=uuid4(), type="started", timestamp=datetime(2026, 10, 13, tzinfo=UTC), sequence=1)
     result = transition(RunState(input=["a", "b"]), started, artifact)
-    assert result.state.status == "suspended"
-    assert [(item.node_id, item.code) for item in result.state.incidents.values()] == [("label", "WV-RUNTIME-ARTIFACT")]
-    assert result.steps == []
+    assert (result.state.status, result.state.output) == ("succeeded", ["a", "b"])
+    assert result.state.incidents == {}

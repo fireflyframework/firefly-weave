@@ -35,6 +35,9 @@ MAX_INTENTS = 1_000
 # bytes of new step output have accumulated since the last admission.
 ADMISSION_REDUCTIONS = 64
 ADMISSION_OUTPUT_BYTES = 1024 * 1024
+# Loop work one event may start: each started iteration costs one unit plus one per node of the loop body. A loop
+# also stops starting iterations once the event holds MAX_INTENTS // 2 intents, and yields the rest to a later event.
+LOOP_TURN_UNITS = 4000
 capacity_failures: ContextVar[list[bool] | None] = ContextVar("weave_capacity_failures", default=None)
 
 
