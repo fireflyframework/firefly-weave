@@ -214,6 +214,27 @@ describe("acceptance step records", () => {
     ]);
   });
 
+  it("fails a step that skipped an enabled check", () => {
+    const steps = {
+      "J9.2": { applies: true, missing: [] },
+      "J9.2/execute-in-local": { applies: true, missing: ["step-tests"] },
+      "J9.2/operations-controls": { applies: true, missing: [] },
+    };
+    expect(
+      stepOutcome("J9.2", steps, new Set(), [
+        { check: "J9.2/operations-controls", missing: ["logs"] },
+        { check: "J9.2/execute-in-local", missing: [] },
+      ]),
+    ).toEqual({
+      status: "passed",
+      skippedChecks: [],
+      problems: [
+        "enabled check J9.2/operations-controls was skipped",
+        "check J9.2/execute-in-local was skipped without naming what it waits for",
+      ],
+    });
+  });
+
   it("fails a step whose enabled check never ran", () => {
     const steps = {
       "J9.2": { applies: true, missing: [] },

@@ -198,7 +198,8 @@ export function networkProblems(
 
 /**
  * A finished step's status: partial when one of its checks waits for
- * capabilities, and a problem for every enabled check the step never ran.
+ * capabilities, and a problem for every enabled check the step never ran or
+ * recorded as skipped.
  */
 export function stepOutcome(
   stepId: string,
@@ -210,11 +211,21 @@ export function stepOutcome(
   skippedChecks: SkippedCheck[];
   problems: string[];
 } {
-  const skippedChecks = [...skipped];
+  const skippedChecks: SkippedCheck[] = [];
   const problems: string[] = [];
+  for (const entry of skipped) {
+    const state = steps[entry.check] as StepState | undefined;
+    if (!entry.missing.length)
+      problems.push(
+        `check ${entry.check} was skipped without naming what it waits for`,
+      );
+    else if (state && state.applies && !state.missing.length)
+      problems.push(`enabled check ${entry.check} was skipped`);
+    else skippedChecks.push(entry);
+  }
   for (const [id, state] of Object.entries(steps)) {
     if (!id.startsWith(`${stepId}/`) || !state.applies || ran.has(id)) continue;
-    if (skippedChecks.some((entry) => entry.check === id)) continue;
+    if (skipped.some((entry) => entry.check === id)) continue;
     if (state.missing.length)
       skippedChecks.push({ check: id, missing: state.missing });
     else problems.push(`enabled check ${id} has no test`);
