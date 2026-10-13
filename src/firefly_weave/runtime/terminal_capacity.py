@@ -119,6 +119,11 @@ async def persist_terminal(
         "'joins',coalesce((SELECT jsonb_object_agg(key,CASE WHEN value->>'status'='waiting' "
         'THEN value||\'{"status":"terminated"}\'::jsonb ELSE value END) '
         "FROM jsonb_each(coalesce(state->'joins','{}'))),'{}')) "
+        # Loops end as the reducer ends them; a state without loops keeps leaving the field out.
+        "|| CASE WHEN jsonb_typeof(state->'loops')='object' THEN jsonb_build_object('loops',"
+        "coalesce((SELECT jsonb_object_agg(key,CASE WHEN value->>'status'='running' "
+        'THEN value||\'{"status":"terminated"}\'::jsonb ELSE value END) '
+        "FROM jsonb_each(state->'loops')),'{}')) ELSE '{}'::jsonb END "
         f"WHERE {SCOPE} AND id=:run AND (state->>'accepted_sequence')::bigint=:previous RETURNING *) "
         "INSERT INTO run_events SELECT tenant_id,project_id,environment_id,id,:event,:sequence,:status,"
         "cast(:data AS jsonb),:now,:hash,jsonb_build_object('state',state,'steps','[]'::jsonb,'commands',"

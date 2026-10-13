@@ -476,3 +476,27 @@ async def test_reduced_terminal_control_counts_the_iterations_a_cancelled_loop_w
     }
     assert points == {("weave.loop_iterations", "cancelled"): 3}
     meters.shutdown()
+
+
+@pytest.mark.parametrize("path", ["reduced", "oversized"])
+async def test_cancelling_a_run_ends_its_loops_on_every_terminal_path(
+    path, worker_setup, access_db, transaction_factory, monkeypatch
+):
+    import firefly_weave.runtime.repository as repository
+    from firefly_weave.access.audit import AuditContext
+
+    run = await start(worker_setup, [1, 2, 3, 4])
+    before = (await state_of(access_db, run.id))["loops"]["each"]
+    assert before["status"] == "running" and before["running"] == [0, 1, 2]
+    if path == "oversized":
+        # Terminal control in SQL changes only the control fields of a stored state too large to load.
+        monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+    _, runtime, _, actor, scope, _, _ = worker_setup
+    async with transaction_factory() as tx:
+        await runtime.cancel(tx, run.id, "stop the loop", actor=actor, scope=scope, context=AuditContext())
+    state = await state_of(access_db, run.id)
+    assert state["status"] == "cancelled"
+    assert {key: loop["status"] for key, loop in state["loops"].items()} == {"each": "terminated"}
+    assert state["loops"]["each"]["running"] == [0, 1, 2]
+    frames = [frame for frame in state["branches"].values() if isinstance(frame.get("index"), int)]
+    assert len(frames) == 3 and all(frame["status"] == "cancelled" for frame in frames)
