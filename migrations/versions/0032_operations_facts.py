@@ -255,14 +255,15 @@ def control_accounting() -> None:
                 AND i.id=f.incident_id WHERE f.tenant_id=tenant AND f.project_id=project
                 AND f.environment_id=(item->>'environment_id')::uuid AND i.run_id=identifier));""",
     )
-    # A fact update changes no fact count and run facts are not counted, so only inserts and deletes of the counted
-    # facts refresh the run's reservation; every fact write is still charged to usage.
+    # Every fact write is charged to usage, but only a step fact insert or delete changes what the run's reservation
+    # counts on its own: run facts are not counted, updates change no count, and task and incident facts are written
+    # and removed in the same statement as their task or incident, whose own refresh sees them.
     anchor = "PERFORM public.weave_reservation_touch(TG_TABLE_NAME,item);"
     patch_function(
         "public.weave_usage_charge()",
         anchor,
-        "IF NOT (TG_TABLE_NAME='run_facts' OR (TG_OP='UPDATE' AND TG_TABLE_NAME IN "
-        "('step_facts','task_facts','incident_facts'))) THEN " + anchor + " END IF;",
+        "IF NOT (TG_TABLE_NAME IN ('run_facts','task_facts','incident_facts') OR "
+        "(TG_TABLE_NAME='step_facts' AND TG_OP='UPDATE')) THEN " + anchor + " END IF;",
     )
     anchor = "ELSIF relation_name IN ('task_intents','task_leases','incidents','run_deadlines') THEN"
     patch_function(

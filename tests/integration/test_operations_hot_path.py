@@ -187,7 +187,7 @@ async def test_incident_source_and_fact_share_statements(operations_case, captur
 
 
 async def test_fact_updates_charge_usage_without_refreshing_the_run_reservation(operations_case):
-    """A fact update changes no fact count, so only inserts and deletes of counted facts refresh the reservation."""
+    """Fact writes are charged to usage; only a step fact insert or delete refreshes the run's reservation itself."""
     from sqlalchemy import text
 
     case = operations_case
@@ -212,5 +212,17 @@ async def test_fact_updates_charge_usage_without_refreshing_the_run_reservation(
                 "WHERE run_id=:run LIMIT 1"
             ),
             {"run": run.id},
+        )
+        assert await calls("public.weave_reserve_refresh") == refreshes + 1
+        # A task's facts are inserted with the task, whose own refresh counts them.
+        task = await session.scalar(text("SELECT id FROM task_intents WHERE run_id=:run"), {"run": run.id})
+        await session.execute(text("DELETE FROM task_facts WHERE task_id=:task"), {"task": task})
+        await session.execute(
+            text(
+                "INSERT INTO task_facts(tenant_id,project_id,environment_id,task_id,run_id,node_id,task_type,status,"
+                "created_at) SELECT tenant_id,project_id,environment_id,id,run_id,node_id,'echo@1.2.0','ready',now() "
+                "FROM task_intents WHERE id=:task"
+            ),
+            {"task": task},
         )
         assert await calls("public.weave_reserve_refresh") == refreshes + 1

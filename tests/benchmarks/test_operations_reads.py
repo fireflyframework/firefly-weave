@@ -131,7 +131,7 @@ class OperationsDataset:
 async def _seeded_case(fixtures, stack):
     """A new database seeded with the dataset, through the integration fixtures' own setup."""
     worker_runtime_fixture = _module("weave_root_fixtures", ROOT / "tests/conftest.py").worker_runtime_fixture
-    settings = await fixtures.migration_settings.__wrapped__(await fixtures.empty_settings.__wrapped__())
+    settings = await fixtures.migration_settings.__wrapped__()
     services = fixtures.services.__wrapped__()
     access = fixtures.access_db.__wrapped__(services, settings)
     stack.push_async_callback(access.aclose)
