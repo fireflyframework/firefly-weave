@@ -66,3 +66,29 @@ export function chooseImport(files: readonly ImportFile[]): ImportChoice {
   if (canvas < 0 || CANVAS.test(files[workflow].name)) return { error: PAIR };
   return checked(files, workflow, canvas);
 }
+
+/** What an import read: the workflow's text, and its canvas file's when that could be read. */
+export interface ImportText {
+  source: string;
+  canvas: string | null;
+  /** A canvas file was chosen but couldn't be read: the workflow opens without it. */
+  canvasUnreadable: boolean;
+}
+/** Reads the chosen files; null when the workflow file itself can't be read. */
+export async function readImport(
+  workflow: Pick<Blob, "text">,
+  canvas: Pick<Blob, "text"> | null,
+): Promise<ImportText | null> {
+  let source: string;
+  try {
+    source = await workflow.text();
+  } catch {
+    return null;
+  }
+  if (!canvas) return { source, canvas: null, canvasUnreadable: false };
+  try {
+    return { source, canvas: await canvas.text(), canvasUnreadable: false };
+  } catch {
+    return { source, canvas: null, canvasUnreadable: true };
+  }
+}

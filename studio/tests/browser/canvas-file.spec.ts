@@ -216,7 +216,7 @@ test.describe("the canvas file", () => {
     await expect(
       toast(
         page,
-        "The canvas file mentions steps this workflow doesn't have. Their notes stay on the canvas without an anchor.",
+        "The canvas file mentions steps this workflow doesn't have. Their step notes were left out, and notes anchored to them stay on the canvas without an anchor.",
       ),
     ).toBeVisible();
     const saved = JSON.parse(
@@ -238,6 +238,28 @@ test.describe("the canvas file", () => {
       ),
     ).toBeVisible();
   });
+});
+
+test("with the new editor off, Import takes one workflow file at a time, as before", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await offline(page);
+  await expect(page.getByLabel("Choose a workflow file")).not.toHaveAttribute(
+    "multiple",
+  );
+  const files = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["kind: Workflow"], "order-intake.yaml"));
+    transfer.items.add(new File(["{}"], "order-intake.canvas.json"));
+    return transfer;
+  });
+  await page
+    .locator(".home-header")
+    .dispatchEvent("drop", { dataTransfer: files });
+  await expect(
+    page.getByText("Choose one workflow file at a time.", { exact: true }),
+  ).toBeVisible();
 });
 
 test("a draft kept on this computer before the canvas file keeps its viewport", async ({

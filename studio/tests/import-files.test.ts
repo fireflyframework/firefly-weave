@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
-import { chooseImport } from "../src/app/import-files";
+import { chooseImport, readImport } from "../src/app/import-files";
 
 const file = (name: string, size = 100) => ({ name, size });
 
@@ -56,6 +56,11 @@ describe("what an import holds", () => {
       error: "Choose one workflow file, and its canvas file if you have one.",
     });
     expect(
+      chooseImport([file("a.canvas.json"), file("b.layout.json")]),
+    ).toEqual({
+      error: "Choose one workflow file, and its canvas file if you have one.",
+    });
+    expect(
       chooseImport([file("a.yaml"), file("b.yaml"), file("a.canvas.json")]),
     ).toEqual({
       error: "Choose one workflow file, and its canvas file if you have one.",
@@ -72,5 +77,30 @@ describe("what an import holds", () => {
       error:
         "This canvas file is larger than 256 KB. Choose the workflow file alone.",
     });
+  });
+});
+
+describe("reading what was chosen", () => {
+  const text = (value: string) => ({ text: async () => value });
+  const unreadable = { text: async () => Promise.reject(new Error("gone")) };
+  it("reads the workflow and its canvas file", async () => {
+    expect(await readImport(text("kind: Workflow"), text("{}"))).toEqual({
+      source: "kind: Workflow",
+      canvas: "{}",
+      canvasUnreadable: false,
+    });
+    expect(await readImport(text("kind: Workflow"), null)).toEqual({
+      source: "kind: Workflow",
+      canvas: null,
+      canvasUnreadable: false,
+    });
+  });
+  it("still reads the workflow when its canvas file can't be read", async () => {
+    expect(await readImport(text("kind: Workflow"), unreadable)).toEqual({
+      source: "kind: Workflow",
+      canvas: null,
+      canvasUnreadable: true,
+    });
+    expect(await readImport(unreadable, text("{}"))).toBeNull();
   });
 });

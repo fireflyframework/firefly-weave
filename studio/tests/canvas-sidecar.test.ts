@@ -269,7 +269,7 @@ const NAME_ERROR =
 const triggerId = (n: number) => `trigger-${n.toString(16).padStart(8, "0")}`;
 const trigger = (n: number): TriggerIntent => ({
   id: triggerId(n),
-  kind: "manual",
+  kind: "webhook",
 });
 
 describe("the setters return the canvas itself when nothing changes", () => {
@@ -417,6 +417,12 @@ describe("the setters refuse or clamp what a canvas file wouldn't hold", () => {
     expect(() =>
       withTriggerIntents(emptyCanvas(), [trigger(1), trigger(1)]),
     ).toThrow("Give each trigger its own ID.");
+    expect(() =>
+      withTriggerIntents(emptyCanvas(), [
+        { id: triggerId(1), kind: "called" },
+        { id: triggerId(2), kind: "called" },
+      ]),
+    ).toThrow("Keep one manual trigger and one called trigger at most.");
     expect(() =>
       withTriggerIntents(emptyCanvas(), [
         { id: triggerId(2), kind: "carrier-pigeon" as never },
@@ -734,6 +740,43 @@ describe("trigger choices in the sidecar", () => {
     expect(() =>
       removeTrigger(emptyCanvas(), freshWorkflow(), "trigger-00000000"),
     ).toThrow("That trigger is already gone.");
+  });
+
+  it("opens a stored canvas with Called by a workflow as the definition says", () => {
+    const stored = {
+      schemaVersion: 2,
+      kind: CANVAS_KIND,
+      triggers: [{ id: "trigger-0000000c", kind: "called" }],
+    };
+    const plain = canvasFromStored(stored, workflowWith(false), new Set());
+    expect(plain.problems).toEqual([]);
+    expect(plain.canvas.triggers).toBeUndefined();
+    const callable = canvasFromStored(
+      { schemaVersion: 2, kind: CANVAS_KIND },
+      workflowWith(true),
+      new Set(),
+    );
+    expect(callable.canvas.triggers?.map((intent) => intent.kind)).toEqual([
+      "called",
+    ]);
+    expect(callable.dropped).toBe(false);
+  });
+
+  it("reads one input form and one Called by a workflow at most", () => {
+    for (const kind of ["manual", "called"])
+      expect(
+        parseCanvas({
+          schemaVersion: 2,
+          kind: CANVAS_KIND,
+          triggers: [
+            { id: "trigger-0000000a", kind },
+            { id: "trigger-0000000b", kind },
+          ],
+        }),
+      ).toEqual({
+        ok: false,
+        problems: [`/triggers/1/kind: use one ${kind} trigger at most.`],
+      });
   });
 
   it("mirrors spec.callable in both directions", () => {

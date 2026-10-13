@@ -19,12 +19,13 @@ import {
   canvasFile,
   canvasFromStored,
   ownedRecipes,
+  readCanvas,
   removeTrigger,
-  syncCalled,
   type CanvasSidecar,
 } from "./editor/state/canvas-sidecar";
 import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
 import { DraftCanvases, type KeptWhere } from "./editor/state/draft-canvas";
+import { readImport } from "./import-files";
 import type { AccountScope } from "./editor/state/browser-store";
 import {
   stepDetailsEnabled,
@@ -1736,14 +1737,7 @@ export class App implements CanvasHost {
       );
       return;
     }
-    model.amend(
-      () =>
-        (model.canvas = syncCalled(
-          read.canvas,
-          model.definition,
-          model.stepIdSet().size > 0,
-        )),
-    );
+    model.amend(() => (model.canvas = read.canvas));
     this.tick.update((n) => n + 1);
     this.cdr.markForCheck();
   }
@@ -1872,11 +1866,7 @@ export class App implements CanvasHost {
       model.definition,
       model.stepIdSet(),
     );
-    model.canvas = syncCalled(
-      stored.canvas,
-      model.definition,
-      model.stepIdSet().size > 0,
-    );
+    model.canvas = stored.canvas;
     if (stored.problems.length)
       this.notify(
         "Studio couldn't read the notes and settings saved with this workflow, so it opened without them.",
@@ -7145,12 +7135,8 @@ export class App implements CanvasHost {
       return;
     }
     const generation = ++this.importGeneration;
-    let source: string;
-    let canvasText: string | null = null;
-    try {
-      source = await file.text();
-      if (canvasFile) canvasText = await canvasFile.text();
-    } catch {
+    const read = await readImport(file, canvasFile);
+    if (!read) {
       if (generation === this.importGeneration) {
         this.error =
           "The workflow file could not be read. Your current draft is preserved.";
@@ -7159,6 +7145,7 @@ export class App implements CanvasHost {
       return;
     }
     if (generation !== this.importGeneration) return;
+    const { source, canvas: canvasText } = read;
     this.keptLocally = false;
     this.restoredView = false;
     this.model = new StructuredCanvasAdapter();
@@ -7171,6 +7158,10 @@ export class App implements CanvasHost {
       file.name.toLowerCase().endsWith(".json") ? "json" : "yaml",
     );
     if (canvasText !== null) this.applyCanvasFile(canvasText);
+    else if (read.canvasUnreadable)
+      this.notify(
+        "The workflow opened without its canvas file: Studio couldn't read that file.",
+      );
     this.view = "designer";
     this.openTab();
     void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
@@ -7190,11 +7181,19 @@ export class App implements CanvasHost {
       );
       return;
     }
-    const stored = canvasFromStored(
-      value,
-      this.model.definition,
-      this.model.stepIdSet(),
-    );
+    // A source that doesn't read yet has no steps to check anchors against:
+    // the canvas waits as it is, and meets its steps once the source is fixed.
+    const read = this.model.readonly ? readCanvas(value) : null;
+    const stored =
+      read === null
+        ? canvasFromStored(value, this.model.definition, this.model.stepIdSet())
+        : read.ok
+          ? { canvas: read.canvas, problems: [], dropped: false }
+          : {
+              canvas: this.model.canvas,
+              problems: read.problems,
+              dropped: false,
+            };
     if (stored.problems.length) {
       const [path, ...rest] = stored.problems[0].split(": ");
       const detail = rest.join(": ");
@@ -7203,14 +7202,10 @@ export class App implements CanvasHost {
       );
       return;
     }
-    this.model.canvas = syncCalled(
-      stored.canvas,
-      this.model.definition,
-      this.model.stepIdSet().size > 0,
-    );
+    this.model.canvas = stored.canvas;
     if (stored.dropped)
       this.notify(
-        "The canvas file mentions steps this workflow doesn't have. Their notes stay on the canvas without an anchor.",
+        "The canvas file mentions steps this workflow doesn't have. Their step notes were left out, and notes anchored to them stay on the canvas without an anchor.",
       );
   }
   pretty(value: unknown) {

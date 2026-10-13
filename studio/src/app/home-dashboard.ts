@@ -79,7 +79,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
             class="file-picker"
             type="file"
             accept=".yaml,.yml,.json"
-            multiple
+            [multiple]="pairsCanvas()"
             aria-label="Choose a workflow file"
             (change)="choose($event)"
           />
@@ -344,6 +344,8 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
 })
 export class HomeDashboard {
   connected = input(false);
+  /** The new editor: Import also takes a workflow's canvas file with it. */
+  pairsCanvas = input(false);
   workspaceName = input("");
   /** Tasks claimed by the signed-in person. */
   tasks = input<Json[]>([]);
@@ -404,6 +406,10 @@ export class HomeDashboard {
   private accept(files: FileList | null) {
     if (!files?.length) return;
     const list = [...files];
+    if (!this.pairsCanvas() && list.length !== 1) {
+      this.importError = "Choose one workflow file at a time.";
+      return;
+    }
     const choice = chooseImport(list);
     if ("error" in choice) {
       this.importError = choice.error;

@@ -307,6 +307,7 @@ function readTriggers(value: unknown, problem: Problem): TriggerIntent[] {
   if (value.length > MAX_TRIGGERS)
     problem("/triggers", `keep at most ${MAX_TRIGGERS} triggers.`);
   const seen = new Set<string>();
+  const once = new Set<TriggerKind>();
   const triggers: TriggerIntent[] = [];
   value.forEach((item: unknown, index) => {
     const at = `/triggers/${index}`;
@@ -326,6 +327,12 @@ function readTriggers(value: unknown, problem: Problem): TriggerIntent[] {
         "use manual, webhook, schedule, broker, email, provider or called.",
       );
       fine = false;
+    } else if (item["kind"] === "manual" || item["kind"] === "called") {
+      // One input form, and one Called by a workflow (spec.callable).
+      if (once.has(item["kind"])) {
+        problem(`${at}/kind`, `use one ${item["kind"]} trigger at most.`);
+        fine = false;
+      } else once.add(item["kind"]);
     }
     if (fine) triggers.push(structuredClone(item) as TriggerIntent);
   });
@@ -558,15 +565,14 @@ export function canvasFromStored(
   workflow: Workflow,
   present: ReadonlySet<string>,
 ): StoredCanvas {
-  // The workflow is in the signature for trigger choices that follow the definition (Called by a workflow).
-  void workflow;
   const read = readCanvas(stored);
   const base = read.ok ? read.canvas : emptyCanvas();
-  const canvas = pruneCanvas(base, present);
+  const pruned = pruneCanvas(base, present);
   return {
-    canvas,
+    // Called by a workflow follows spec.callable, the source of truth.
+    canvas: syncCalled(pruned, workflow, present.size > 0),
     problems: read.ok ? [] : read.problems,
-    dropped: canvas !== base,
+    dropped: pruned !== base,
   };
 }
 
@@ -728,6 +734,9 @@ export function withTriggerIntents(
 ): CanvasSidecar {
   const kept = triggers.slice(0, MAX_TRIGGERS);
   const seen = new Set<string>();
+  for (const kind of ["manual", "called"] as const)
+    if (kept.filter((intent) => intent.kind === kind).length > 1)
+      throw Error("Keep one manual trigger and one called trigger at most.");
   for (const intent of kept) {
     if (typeof intent.id !== "string" || !TRIGGER_ID.test(intent.id))
       throw Error(
