@@ -141,7 +141,8 @@ import {
           (retry)="poller.refresh()"
         />
       }
-      <div class="overview">
+      <!-- Present only with live figures: real-platform tests time the first meaningful paint by it. -->
+      <div class="overview" data-testid="overview-meaningful">
         <section class="band" aria-labelledby="overview-health">
           <h2 id="overview-health" class="band-title">Health</h2>
           <ul class="health-strip" role="list">

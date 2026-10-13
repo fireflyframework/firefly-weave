@@ -73,12 +73,18 @@ ACME_IMAGE = "weave-acc/acme-api:local"
 IMAGE_CONTENT_FORMAT = "{{json .RootFS.Layers}}{{json .Config}}"
 CANARY_HANDLES = ("acme-api-key", "order-review-webhook")
 # The real-platform journeys move these tests to playwright.acceptance.config.ts; until then the quick-integration
-# test runs against the platform this harness starts.
+# test runs against the platform this harness starts. A suite with a capability runs once that capability has landed
+# (journeys.toml).
 SUITES: dict[str, dict[str, Any]] = {
     "platform-session": {
         "spec": "tests/browser/real-platform.spec.ts",
         "grep": "quick integration",
         "profiles": ("pr", "nightly", "release"),
+    },
+    "operations": {
+        "spec": "tests/browser/operate-real.spec.ts",
+        "profiles": ("pr", "nightly", "release"),
+        "capability": "run-views",
     },
 }
 EGRESS_CHAIN = "WEAVE-ACCEPTANCE"
@@ -422,13 +428,18 @@ def run(plan: Plan, recorder: Recorder) -> None:
     )
     if others:
         _journeys(plan, recorder, others, allow_empty=True)
+    enablement = acceptance_journeys.Enablement.load(JOURNEYS)
     for name, suite in SUITES.items():
         if plan.profile not in suite["profiles"]:
+            continue
+        if "capability" in suite and not enablement.capabilities.get(suite["capability"]):
             continue
         env = {
             **os.environ,
             "WEAVE_E2E_PLATFORM_DIR": str(plan.platform_dir),
             "WEAVE_E2E_PERSON_FILE": str(plan.private / "people" / "builder.json"),
+            "WEAVE_E2E_VIEWER_FILE": str(plan.private / "people" / "viewer.json"),
+            "WEAVE_E2E_OPERATIONS_EVIDENCE": str(plan.evidence / "operations"),
             "WEAVE_E2E_ACME_ORIGIN": plan.state["origins"][0],
             "WEAVE_E2E_ACME_CONTROL": f"http://127.0.0.1:{plan.state['acme_control_port']}",
             "WEAVE_E2E_SHOTS": str(plan.evidence / "screens" / name),
@@ -440,8 +451,7 @@ def run(plan: Plan, recorder: Recorder) -> None:
                 "playwright",
                 "test",
                 suite["spec"],
-                "--grep",
-                suite["grep"],
+                *(["--grep", suite["grep"]] if "grep" in suite else []),
                 "--retries",
                 "0",
                 "--reporter",
