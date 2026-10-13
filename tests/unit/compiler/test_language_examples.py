@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The language examples have their final shape and report exactly the features not compiled yet."""
+"""The language examples have their final shape, and every feature they use compiles."""
 
 from pathlib import Path
 
@@ -29,12 +29,8 @@ EXAMPLES = Path("examples/language")
 EXPECTED = {
     "notify-customer.workflow.yaml": [],
     "order-summary.workflow.yaml": [],
-    # Text operators and loops compile; workflow calls are still reported.
     "notify-overdue.workflow.yaml": [],
-    "order-intake.workflow.yaml": [
-        ("/spec/steps/0/kind", "flow.callWorkflow"),
-        ("/spec/steps/1/kind", "flow.callWorkflow"),
-    ],
+    "order-intake.workflow.yaml": [],
 }
 
 

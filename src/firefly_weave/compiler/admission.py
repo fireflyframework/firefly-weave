@@ -164,6 +164,10 @@ def admit_authoring(
                 resource = catalog.resolve("DecisionTable", str(value.get("uses", "")))
                 spec = cast(JsonObject, resource.definition.value.get("spec", {})) if resource else {}
                 binding(spec.get("inputSchema"), value["with"])
+            if value.get("kind") == "callWorkflow" and "with" in value:
+                resource = catalog.resolve("Workflow", str(value.get("uses", "")))
+                spec = cast(JsonObject, resource.definition.value.get("spec", {})) if resource else {}
+                binding(spec.get("inputSchema"), value["with"])
             if value.get("kind") == "DecisionTable" and isinstance(value.get("spec"), dict):
                 spec = cast(JsonObject, value["spec"])
                 output = spec.get("outputSchema")
@@ -217,6 +221,11 @@ def admit_artifact(executable: JsonObject) -> None:
     for resource in catalog.resources.values():
         if resource.kind == "Schema":
             Classification(resource.definition.value, bundle, SchemaLimits()).literals()
+        elif resource.kind == "Workflow":
+            # A called workflow is an interface: its steps were admitted when it was published.
+            spec = cast(JsonObject, resource.definition.value["spec"])
+            interface = {key: spec[key] for key in ("inputSchema", "outputSchema")}
+            admit_authoring({"kind": "Workflow", "spec": interface}, catalog)
         else:
             admit_authoring(resource.definition.value, catalog)
     if "spec" in executable:
@@ -233,6 +242,9 @@ def admit_artifact(executable: JsonObject) -> None:
                     r for r in resources.values() if r.kind == "DecisionTable" and r.digest == node["dependency"]
                 )
                 admit_authoring({"kind": "decisionTable", "uses": table.reference, "with": node["with"]}, catalog)
+            elif node["kind"] == "callWorkflow":
+                called = next(r for r in resources.values() if r.kind == "Workflow" and r.digest == node["dependency"])
+                admit_authoring({"kind": "callWorkflow", "uses": called.reference, "with": node["with"]}, catalog)
             elif node["kind"] == "end":
                 admit_binding(
                     cast(JsonObject, schemas[cast(str, executable["outputSchema"])]),

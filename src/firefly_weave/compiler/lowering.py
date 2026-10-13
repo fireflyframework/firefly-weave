@@ -89,6 +89,7 @@ class _Lowerer:
         self.edges: list[JsonValue] = []
         self.actions = {r.reference: r.digest for r in result.resolved_resources if r.kind == "Action"}
         self.tables = {r.reference: r.digest for r in result.resolved_resources if r.kind == "DecisionTable"}
+        self.workflows = {r.reference: r.digest for r in result.resolved_resources if r.kind == "Workflow"}
 
     def schema(self, document: FrozenDocument) -> str:
         digest = document.digest
@@ -198,6 +199,15 @@ class _Lowerer:
                     )
                 elif step.kind == "decisionTable":
                     base.update({"dependency": self.tables[cast(str, value["uses"])], "with": value["with"]})
+                elif step.kind == "callWorkflow":
+                    base.update(
+                        {
+                            "dependency": self.workflows[cast(str, value["uses"])],
+                            "with": value["with"],
+                            "mode": value["mode"],
+                        }
+                    )
+                    base.update({key: value[key] for key in ("onFailure", "businessKey") if key in value})
                 elif step.kind == "signal":
                     base.update(
                         {
