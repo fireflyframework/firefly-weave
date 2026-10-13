@@ -152,6 +152,8 @@ export interface AiPlatform {
   testDelay: number;
   /** Answers for the next connection creates, in order; then each create succeeds. */
   createAnswers: { status: number; body: Record<string, unknown> }[];
+  /** Answers for the next grants, in order; then each grant succeeds. */
+  grantAnswers: { status: number; body: Record<string, unknown> }[];
   lumi: Record<string, unknown> | null;
   // Recorded requests.
   creates: { body: Record<string, unknown>; key: string }[];
@@ -180,6 +182,7 @@ export async function mockAiPlatform(
     },
     testDelay: 0,
     createAnswers: [],
+    grantAnswers: [],
     lumi: null,
     creates: [],
     tests: [],
@@ -238,6 +241,8 @@ export async function mockAiPlatform(
   });
   await page.route(`${ENV}/ai/setup/grant`, (r) => {
     state.grants.push(r.request().postDataJSON());
+    const scripted = state.grantAnswers.shift();
+    if (scripted) return json(r, scripted.body, scripted.status);
     state.readiness = {
       items: state.readiness.items.map((item) =>
         item.id === "connection_authorized"

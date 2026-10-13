@@ -759,6 +759,105 @@ test("when Weave AI's connection can't be found, the card asks for one before sa
   expect(platform.lumiWrites).toEqual([]);
 });
 
+const teamOpenAi = {
+  ...openaiConnection,
+  id: "44444444-4444-4444-8444-444444444444",
+  name: "openai-team",
+  secretRef: { apiKey: "openai-team-key" },
+};
+const authorizeFix = {
+  status: "action",
+  detail: "authorization_missing",
+  fix: {
+    kind: "operation",
+    label: "Authorize",
+    operation: "ai_setup.grant",
+  },
+};
+
+test("Authorize goes on past a refused grant, then rechecks and says what failed", async ({
+  page,
+}) => {
+  const platform = await start(page, {
+    connections: [openaiConnection, teamOpenAi],
+    readiness: readiness({
+      key_available: { status: "done", detail: "key_grant_available" },
+      connection_authorized: authorizeFix,
+    }),
+    grantAnswers: [
+      {
+        status: 500,
+        body: { code: "WV-INTERNAL", message: "The grant was not saved." },
+      },
+    ],
+  });
+  await expect(page.locator(".readiness-row")).toHaveCount(8);
+  const reads = platform.readinessReads;
+  await page.getByRole("button", { name: "Authorize", exact: true }).click();
+  await expect(page.locator(".readiness-error")).toBeVisible();
+  expect(platform.grants).toHaveLength(2);
+  await expect.poll(() => platform.readinessReads).toBeGreaterThan(reads);
+});
+
+test("the checklist's Test connection opens the first connection without a passing test", async ({
+  page,
+}) => {
+  await start(page, {
+    connections: [ollamaConnection, openaiConnection],
+    readiness: readiness({
+      model_responds: {
+        status: "action",
+        detail: "test_required",
+        fix: {
+          kind: "operation",
+          label: "Test connection",
+          operation: "ai_connections.test",
+        },
+      },
+    }),
+  });
+  // ollama-local passes a test in this session; openai has none.
+  await page.getByRole("button", { name: "Test ollama-local" }).click();
+  const tested = sheet(page, "ollama-local");
+  await tested.getByRole("button", { name: "Test connection" }).click();
+  await expect(tested.locator(".test-status")).toContainText("can call tools");
+  await page.keyboard.press("Escape");
+  await expect(tested).toHaveCount(0);
+  await page
+    .locator(".ai-readiness")
+    .getByRole("button", { name: "Test connection", exact: true })
+    .click();
+  await expect(sheet(page, "openai")).toBeVisible();
+});
+
+test("Tab pressed while focus is on the page goes back into the dialog", async ({
+  page,
+}) => {
+  await start(page, { connections: [ollamaConnection] });
+  await page.getByRole("button", { name: "Test ollama-local" }).click();
+  const form = sheet(page, "ollama-local");
+  await expect(
+    form.getByRole("button", { name: "Test connection" }),
+  ).toBeEnabled();
+  // Focus falls to the body and Tab arrives before the dialog's focus
+  // guard runs: the key itself brings focus back to the dialog.
+  const caught = await page.evaluate(() => {
+    (document.activeElement as HTMLElement).blur();
+    const tab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(tab);
+    return {
+      prevented: tab.defaultPrevented,
+      inDialog: !!document.activeElement?.closest('[role="dialog"]'),
+    };
+  });
+  expect(caught).toEqual({ prevented: true, inDialog: true });
+  await page.keyboard.press("Tab");
+  expect(await focusInSheet(page)).not.toBeNull();
+});
 /** The accessible name of the focused element, when it sits in the AI connection sheet. */
 const focusInSheet = (page: Page) =>
   page.evaluate(() => {

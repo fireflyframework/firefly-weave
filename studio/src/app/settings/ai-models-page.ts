@@ -482,7 +482,17 @@ export class AiModelsPage implements DoCheck, OnDestroy {
         const targets = this.connections.filter(
           (connection) => !keylessConnection(connection),
         );
-        for (const connection of targets) await setup.grant(connection.id);
+        // One refused grant doesn't stop the others; the checklist shows
+        // what was granted before the refusal is reported.
+        let refused: unknown = null;
+        for (const connection of targets)
+          await setup.grant(connection.id).catch((error: unknown) => {
+            refused ??= error;
+          });
+        if (refused) {
+          await this.recheck();
+          throw refused;
+        }
         this.announcement =
           targets.length === 1
             ? `Authorized ${targets[0].name}.`
