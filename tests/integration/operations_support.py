@@ -747,3 +747,378 @@ async def seed_ingress_receipts(connection, ids):
         ),
         {**ids, "id": schedule.id, "at": AT, "run": identifier(1010)},
     )
+
+
+# A deterministic operational dataset in one environment, seeded through the owner connection with quota
+# accounting enabled. Source rows are copies of two admitted runs (one cancelled, one with a ready task); the
+# metadata facts vary by position so every filter, order and tie has rows to find.
+DATASET_BATCH = 500
+_RUN = "md5(:seed||'/run/'||i)::uuid"
+_TERMINAL_STATUS = "('succeeded','failed','cancelled','timed_out')"
+_STATUS = (
+    "CASE WHEN i<=:ready THEN 'running' WHEN i%100<85 THEN 'succeeded' WHEN i%100<93 THEN 'failed' "
+    "WHEN i%100<96 THEN 'running' WHEN i%100<98 THEN 'cancelled' WHEN i%100=98 THEN 'waiting' ELSE 'timed_out' END"
+)
+_ORIGIN = (
+    "CASE WHEN i%50=0 THEN 'test' WHEN i%1000=999 THEN 'call' WHEN i%100<50 THEN 'manual' "
+    "WHEN i%100<70 THEN 'webhook' WHEN i%100<90 THEN 'schedule' WHEN i%100<95 THEN 'broker' "
+    "WHEN i%100<98 THEN 'retry' WHEN i%100=98 THEN 'email' ELSE 'provider' END"
+)
+# Three runs share each start second (ties); one in 997 has no known history.
+_STARTED = "CASE WHEN i%997=0 THEN NULL ELSE cast(:anchor AS timestamptz)-((:runs-i)/3)*interval '1 second' END"
+_UPDATED = (
+    "CASE WHEN i%997=0 THEN NULL ELSE cast(:anchor AS timestamptz)-((:runs-i)/3)*interval '1 second'"
+    "+(i%7)*interval '1 second' END"
+)
+
+
+async def seed_operations_dataset(
+    case,
+    *,
+    runs: int,
+    incidents: int,
+    workers: int,
+    ready_tasks: int,
+    observations: int = 0,
+    seed: str = "weave-operations-1",
+    steps_per_run: bool = False,
+) -> dict:
+    """Seed `runs` runs (and their facts), `incidents` incidents, `workers` workers and `ready_tasks` ready tasks.
+
+    The operation policy of this fixture-owned database is raised for the dataset and recorded in the result.
+    """
+    import time
+
+    from firefly_weave.access.audit import AuditContext
+
+    assert runs >= 20 * incidents and runs >= ready_tasks
+    started = time.monotonic()
+    done = await case.start(seed + "/done")
+    async with case.tx() as tx:
+        await case.runtime.cancel(
+            tx, done.id, "dataset template", actor=case.actor, scope=case.scope, context=AuditContext()
+        )
+    active = await case.start(seed + "/active")
+    # Each active run holds outbox capacity, which a project bounds; ready tasks share about 13 to a run.
+    active_runs = max(1, -(-ready_tasks // 13))
+    params = {
+        "seed": seed,
+        "runs": runs,
+        "ready": active_runs,
+        "tasks": ready_tasks,
+        "incidents": incidents,
+        "done": done.id,
+        "active": active.id,
+        "tenant": case.scope.tenant_id,
+        "project": case.scope.project_id,
+        "environment": case.scope.environment_id,
+    }
+    limits = {
+        "runs_retained": 2 * runs + 1000,
+        "runs_active": 2 * active_runs + 1000,
+        "tasks_active": 2 * ready_tasks + 1000,
+        "ordinary_bytes": 2**62,
+        "control_bytes": 2**62,
+    }
+    async with case.owner.begin() as session:
+        await session.execute(
+            text("UPDATE operation_policy SET limits=limits||cast(:limits AS jsonb)"), {"limits": json.dumps(limits)}
+        )
+        params["anchor"] = await session.scalar(text("SELECT date_trunc('second',clock_timestamp())"))
+        task = (
+            (await session.execute(text("SELECT id,node_id FROM task_intents WHERE run_id=:active"), params))
+            .mappings()
+            .one()
+        )
+        params["task"] = task["id"]
+        params["kind"] = await session.scalar(
+            text("SELECT node_kinds->>:node FROM run_facts WHERE run_id=:active"), {**params, "node": task["node_id"]}
+        )
+        params["node"] = task["node_id"]
+    for low in range(1, runs + 1, DATASET_BATCH):
+        high = min(runs, low + DATASET_BATCH - 1)
+        batch = {**params, "low": low, "high": high}
+        async with case.owner.begin() as session:
+            for template, lower, upper in (
+                ("active", low, min(high, active_runs)),
+                ("done", max(low, active_runs + 1), high),
+            ):
+                if lower > upper:
+                    continue
+                await session.execute(
+                    text(
+                        "INSERT INTO runs SELECT (jsonb_populate_record(NULL::runs,to_jsonb(r)||"
+                        f"jsonb_build_object('id',{_RUN}))).* FROM (SELECT * FROM runs WHERE id=:template) r "
+                        "CROSS JOIN generate_series(cast(:lower AS bigint),cast(:upper AS bigint)) i"
+                    ),
+                    {**batch, "template": params[template], "lower": lower, "upper": upper},
+                )
+                await session.execute(
+                    text(
+                        "INSERT INTO run_facts SELECT (jsonb_populate_record(NULL::run_facts,to_jsonb(f)||"
+                        "jsonb_build_object("
+                        f"'run_id',{_RUN},"
+                        "'workflow_name','workflow-'||lpad((i%20)::text,2,'0'),"
+                        "'workflow_version','1.'||(i%5)||'.0',"
+                        "'activation_id',md5(:seed||'/activation/'||(i%40))::uuid,"
+                        "'activation_name','activation-'||(i%40),"
+                        f"'status',{_STATUS},"
+                        f"'origin',{_ORIGIN},"
+                        "'test',i%50=0,"
+                        "'caller_run_id',CASE WHEN i%1000=999 AND i%50<>0 THEN md5(:seed||'/run/1')::uuid END,"
+                        "'caller_node_id',CASE WHEN i%1000=999 AND i%50<>0 THEN 'work' END,"
+                        "'caller_instance_key',CASE WHEN i%1000=999 AND i%50<>0 THEN '' END,"
+                        "'retried_from_run_id',CASE WHEN i%50<>0 AND i%1000<>999 AND i%100 BETWEEN 95 AND 97 "
+                        "THEN md5(:seed||'/run/'||(i-1))::uuid END,"
+                        "'business_key','order-ñ-雪-'||i,"
+                        "'correlation_key','case-'||(i/10),"
+                        f"'started_at',{_STARTED},"
+                        f"'updated_at',{_UPDATED},"
+                        f"'ended_at',CASE WHEN {_STATUS} IN {_TERMINAL_STATUS} THEN {_UPDATED} END,"
+                        "'failed_node_id',CASE WHEN "
+                        f"{_STATUS}='failed' THEN :node END,"
+                        "'failed_error_code',CASE WHEN "
+                        f"{_STATUS}='failed' THEN 'WV-TASK-FAILED' END,"
+                        "'active_incidents',CASE WHEN i%20=0 AND i/20<=:incidents AND (i/20)%5=1 THEN 1 ELSE 0 END,"
+                        "'handled_errors',CASE WHEN i%100=13 THEN 1+i%3 ELSE 0 END,"
+                        "'classification_state',CASE WHEN i%997=0 THEN 'unavailable' WHEN i%1999=0 "
+                        "THEN 'unsupported' ELSE 'available' END"
+                        "))).* FROM (SELECT * FROM run_facts WHERE run_id=:template) f "
+                        "CROSS JOIN generate_series(cast(:lower AS bigint),cast(:upper AS bigint)) i"
+                    ),
+                    {**batch, "template": params[template], "lower": lower, "upper": upper},
+                )
+            if steps_per_run:
+                await session.execute(
+                    text(
+                        "INSERT INTO step_facts(tenant_id,project_id,environment_id,run_id,node_id,kind,status,"
+                        "scheduled_at,started_at,ended_at,attempts) SELECT :tenant,:project,:environment,"
+                        f"{_RUN},:node,:kind,'succeeded',{_STARTED},{_STARTED},{_UPDATED},1 "
+                        "FROM generate_series(cast(:low AS bigint),cast(:high AS bigint)) i WHERE i>:ready"
+                    ),
+                    batch,
+                )
+            await session.execute(
+                text(
+                    "INSERT INTO run_archives(tenant_id,project_id,environment_id,run_id,archived) "
+                    f"SELECT :tenant,:project,:environment,{_RUN},true "
+                    "FROM generate_series(cast(:low AS bigint),cast(:high AS bigint)) i WHERE i%100=37"
+                ),
+                batch,
+            )
+    # The steps run: 200 instances of one step, four sharing each scheduled time.
+    steps_run = runs // 2 if runs // 2 > active_runs else runs
+    async with case.owner.begin() as session:
+        params["steps_run"] = await session.scalar(
+            text("SELECT md5(:seed||'/run/'||cast(:index AS bigint))::uuid"), {**params, "index": steps_run}
+        )
+        await session.execute(
+            text(
+                "INSERT INTO step_facts(tenant_id,project_id,environment_id,run_id,node_id,instance_key,kind,status,"
+                "scheduled_at,started_at,ended_at,attempts) SELECT :tenant,:project,:environment,:steps_run,:node,"
+                ":node||'['||k||']',:kind,'succeeded',cast(:anchor AS timestamptz)+(k/4)*interval '1 second',"
+                "cast(:anchor AS timestamptz)+(k/4)*interval '1 second',"
+                "cast(:anchor AS timestamptz)+(k/4+1)*interval '1 second',1 FROM generate_series(0,199) k"
+            ),
+            params,
+        )
+    # One incident for every twentieth run; one in five is active (never on a test run), the rest closed.
+    for low in range(1, incidents + 1, DATASET_BATCH):
+        batch = {**params, "low": low, "high": min(incidents, low + DATASET_BATCH - 1)}
+        async with case.owner.begin() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,node_id,"
+                    "generation,origin_code,code,status,revision) SELECT md5(:seed||'/incident/'||k)::uuid,"
+                    ":tenant,:project,:environment,md5(:seed||'/run/'||(20*k))::uuid,:node||chr(58)||'1',:node,1,"
+                    "'WV-TASK-FAILED',CASE WHEN k%3=0 THEN 'WV-TASK-AMBIGUOUS' ELSE 'WV-TASK-FAILED' END,"
+                    "CASE WHEN k%5=1 THEN 'active' ELSE 'closed' END,1 "
+                    "FROM generate_series(cast(:low AS bigint),cast(:high AS bigint)) k"
+                ),
+                batch,
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,opened_at,"
+                    "updated_at,workflow_name,workflow_version,test) SELECT f.tenant_id,f.project_id,"
+                    "f.environment_id,md5(:seed||'/incident/'||k)::uuid,:node,f.started_at+interval '5 seconds',"
+                    "f.started_at+interval '5 seconds',f.workflow_name,f.workflow_version,f.test "
+                    "FROM generate_series(cast(:low AS bigint),cast(:high AS bigint)) k JOIN run_facts f "
+                    "ON f.run_id=md5(:seed||'/run/'||(20*k))::uuid"
+                ),
+                batch,
+            )
+    # Ready tasks spread over the active runs, oldest first.
+    for low in range(1, ready_tasks + 1, DATASET_BATCH):
+        batch = {**params, "low": low, "high": min(ready_tasks, low + DATASET_BATCH - 1)}
+        async with case.owner.begin() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO task_intents SELECT (jsonb_populate_record(NULL::task_intents,to_jsonb(t)||"
+                    "jsonb_build_object('id',md5(:seed||'/task/'||i)::uuid,"
+                    "'run_id',md5(:seed||'/run/'||((i-1)%:ready+1))::uuid,'node_id',:node||'['||((i-1)/:ready)||']',"
+                    "'operation_key',md5(:seed||'/operation/'||i),'status','ready',"
+                    "'enqueued_at',cast(:anchor AS timestamptz)-(:tasks-i)*interval '1 second'))).* "
+                    "FROM (SELECT * FROM task_intents WHERE id=:task) t "
+                    "CROSS JOIN generate_series(cast(:low AS bigint),cast(:high AS bigint)) i"
+                ),
+                batch,
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO task_facts SELECT (jsonb_populate_record(NULL::task_facts,to_jsonb(t)||"
+                    "jsonb_build_object('task_id',md5(:seed||'/task/'||i)::uuid,"
+                    "'run_id',md5(:seed||'/run/'||((i-1)%:ready+1))::uuid,'instance_key',:node||'['||((i-1)/:ready)||']',"
+                    "'created_at',cast(:anchor AS timestamptz)-(:tasks-i)*interval '1 second',"
+                    "'ready_since',cast(:anchor AS timestamptz)-(:tasks-i)*interval '1 second'))).* "
+                    "FROM (SELECT * FROM task_facts WHERE task_id=:task) t "
+                    "CROSS JOIN generate_series(cast(:low AS bigint),cast(:high AS bigint)) i"
+                ),
+                batch,
+            )
+    # Workers: most seen recently, some offline for hours, some never seen since registration.
+    from test_worker_fleet_facts import add_deployment, add_observation, add_target, add_workers
+
+    now = params["anchor"]
+    recent = workers * 8 // 10
+    offline = workers // 10
+    await add_workers(
+        case,
+        recent,
+        seen=[now - timedelta(seconds=index % 50) for index in range(recent)],
+        host=None,
+    )
+    await add_workers(case, offline, seen=now - timedelta(hours=2))
+    await add_workers(case, workers - recent - offline, seen=None, registered=None)
+    if observations:
+        target = await add_target(case, "bench")
+        await add_deployment(case, target)
+        # About 250 KB each, near the 256 KiB a stored observation may hold: 15 components of 100 members.
+        members = {
+            f"component-{component:02}": [f"bench-host-{component:02}-{member:03}-" + "x" * 32 for member in range(100)]
+            for component in range(15)
+        }
+        first = await add_observation(case, target, members, at=now - timedelta(days=1))
+        async with case.owner.begin() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO deployment_observations SELECT (jsonb_populate_record(NULL::deployment_observations,"
+                    "to_jsonb(o)||jsonb_build_object('id',md5(:seed||'/observation/'||k)::uuid))).* "
+                    "FROM (SELECT * FROM deployment_observations WHERE id=:first) o "
+                    "CROSS JOIN generate_series(2,cast(:count AS bigint)) k"
+                ),
+                {**params, "first": first, "count": observations},
+            )
+            params["observation_bytes"] = await session.scalar(
+                text("SELECT octet_length(payload::text) FROM deployment_observations WHERE id=:first"),
+                {"first": first},
+            )
+        await add_observation(case, target, {"engine": ["bench-current"]}, at=now)
+    async with case.owner.begin() as session:
+        for table in (
+            "runs",
+            "run_facts",
+            "step_facts",
+            "run_archives",
+            "incidents",
+            "incident_facts",
+            "task_intents",
+            "task_facts",
+            "worker_instances",
+            "worker_facts",
+            "deployment_observations",
+        ):
+            await session.execute(text(f"ANALYZE {table}"))
+        sizes = {
+            row["name"]: row["bytes"]
+            for row in (
+                await session.execute(
+                    text(
+                        "SELECT relname AS name,pg_total_relation_size(oid) AS bytes FROM pg_class WHERE relname "
+                        "IN ('runs','run_facts','step_facts','incidents','incident_facts','task_intents','task_facts',"
+                        "'worker_instances','worker_facts','deployment_observations')"
+                    )
+                )
+            ).mappings()
+        }
+        database_bytes = await session.scalar(text("SELECT pg_database_size(current_database())"))
+    return {
+        **params,
+        "limits": limits,
+        "seconds": round(time.monotonic() - started, 1),
+        "table_bytes": sizes,
+        "database_bytes": database_bytes,
+        "workers": {"recent": recent, "offline": offline, "never_seen": workers - recent - offline},
+        "observations": observations,
+    }
+
+
+async def recompute_usage_in_sql(
+    connection: AsyncConnection, tenant: UUID, project: UUID
+) -> dict[tuple[UUID, str], int]:
+    """`recompute_usage` summed in PostgreSQL, for inventories too large to read row by row.
+
+    It covers the same charged tables and control provenance; outbox rows owned by control deliveries are absent
+    from these datasets, which the inventory checks instead of reclassifying them.
+    """
+    tables = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT c.relname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+                    "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE t.tgname='operation_usage' "
+                    "AND n.nspname='public' ORDER BY c.relname"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert not await connection.scalar(
+        text(
+            "SELECT EXISTS(SELECT 1 FROM operation_control_deliveries WHERE tenant_id=:tenant AND project_id=:project)"
+        ),
+        {"tenant": tenant, "project": project},
+    )
+    totals: defaultdict[tuple[UUID, str], int] = defaultdict(int)
+    for table in tables:
+        projection = f"public.weave_{table}_account(r)" if table in ("runs", "run_events") else "to_jsonb(r)"
+        rows = await connection.execute(
+            text(
+                "SELECT CASE WHEN m.key IN ('ordinary_bytes','runs_retained','debug_rows') THEN NULL "
+                "ELSE q.item->>'environment_id' END AS environment,m.key AS metric,sum(m.value::numeric) AS amount "
+                f"FROM (SELECT {projection} AS item FROM {table} r) q "
+                f"CROSS JOIN LATERAL jsonb_each_text(public.weave_row_metrics('{table}',q.item)) m WHERE "
+                "coalesce(q.item->>'tenant_id',q.item->'event'->'scope'->>'tenant_id')="
+                "cast(cast(:tenant AS uuid) AS text) "
+                "AND coalesce(q.item->>'project_id',q.item->'event'->'scope'->>'project_id')="
+                "cast(cast(:project AS uuid) AS text) GROUP BY 1,2"
+            ),
+            {"tenant": tenant, "project": project},
+        )
+        for environment, metric, amount in rows:
+            totals[UUID(environment) if environment else ZERO, metric] += int(amount)
+    allocation = (
+        await connection.execute(
+            text(
+                "SELECT coalesce(sum(control_bytes),0),count(*) FROM operation_allocations "
+                "WHERE tenant_id=:tenant AND project_id=:project"
+            ),
+            {"tenant": tenant, "project": project},
+        )
+    ).one()
+    totals[ZERO, "ordinary_bytes"] -= int(allocation[0])
+    totals[ZERO, "control_bytes"] += int(allocation[0]) + 512 * allocation[1]
+    reservation = (
+        await connection.execute(
+            text(
+                "SELECT coalesce(sum(amount),0),coalesce(sum(outbox_slots),0),count(*) FROM operation_reservations "
+                "WHERE tenant_id=:tenant AND project_id=:project"
+            ),
+            {"tenant": tenant, "project": project},
+        )
+    ).one()
+    totals[ZERO, "ordinary_bytes"] += 512 * reservation[2]
+    totals[ZERO, "control_reserved"] += int(reservation[0])
+    totals[ZERO, "control_outbox_reserved"] += int(reservation[1])
+    return {key: value for key, value in totals.items() if value}

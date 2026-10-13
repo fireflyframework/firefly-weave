@@ -730,6 +730,9 @@ async def test_a_forbidden_section_runs_no_statement_and_records_no_denial(opera
         statements.append(" ".join(statement.lower().split()))
 
     caplog.set_level(logging.INFO, logger="weave.authorization")
+    # Only the summary's own records: an earlier module may already have set this logger to INFO, so the setup's
+    # grants and starts would otherwise be captured too.
+    caplog.clear()
     event.listen(engine, "before_cursor_execute", record)
     try:
         body = await summarize(case, worker_operator)
