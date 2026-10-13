@@ -101,11 +101,18 @@ _MESSAGES = {
         f"Nested concurrency can issue more than {MAX_CONCURRENT_TASKS:,} tasks at once; "
         "work will be spread over several turns."
     ),
+    "LOOP_DEPTH": "Loops can be nested at most {limit:,} deep.",
+    "LOOP_MAX_ITEMS": "maxItems exceeds this platform's limit of {limit:,}.",
+    "LOOP_BUDGET": (
+        "Nested loops could run more than {limit:,} iterations in one run; lower maxItems on an inner loop."
+    ),
 }
 
 
-def _message(code: str) -> str:
-    return _MESSAGES.get(code, "Definition violates the " + code.lower().replace("_", " ") + " contract.")
+def _message(code: str, **values: object) -> str:
+    """The message for ``code``; ``values`` fill the configured limits that some messages name."""
+    template = _MESSAGES.get(code, "Definition violates the " + code.lower().replace("_", " ") + " contract.")
+    return template.format(**values) if values else template
 
 
 def reference_available(step_id: str, completed: frozenset[str]) -> bool:
@@ -975,16 +982,14 @@ class _Analyzer:
         identifier = cast(str, step["id"])
         concurrency, max_items = cast(int, step["concurrency"]), cast(int, step["maxItems"])
         if len(self.loops) >= self.limits.max_loop_depth:
-            self.issue(
-                "LOOP_DEPTH", location, message=f"Loops can be nested at most {self.limits.max_loop_depth} deep."
-            )
+            self.issue("LOOP_DEPTH", location, message=_message("LOOP_DEPTH", limit=self.limits.max_loop_depth))
         if concurrency > self.concurrency:
             self.issue("CONCURRENCY_LIMIT", location + "/concurrency")
         if max_items > self.limits.max_loop_items:
             self.issue(
                 "LOOP_MAX_ITEMS",
                 location + "/maxItems",
-                message=f"maxItems exceeds this platform's limit of {self.limits.max_loop_items:,}.",
+                message=_message("LOOP_MAX_ITEMS", limit=self.limits.max_loop_items),
             )
         tasks = 1
         for enclosing in self.loops:
@@ -1047,23 +1052,25 @@ class _Analyzer:
             self.guard(path, "loop_items", {"type": "array"})
 
     def loop_budget(self) -> None:
-        """All loops together, each multiplied by the loops around it, stay within the run's iteration budget."""
+        """All loops together, each multiplied by the loops around it, stay within the run's iteration budget.
+
+        The finding sits at the innermost loop with the largest product that one lower ``maxItems`` brings within
+        the budget, with that edit; when no innermost loop can, it sits at the largest product without an edit.
+        """
         limit = self.limits.max_run_iterations
         total = sum(outer * max_items for _, outer, max_items, _ in self.loop_chains)
         if total <= limit:
             return
-        location, outer, max_items, _ = max(
-            (chain for chain in self.loop_chains if chain[3]), key=lambda chain: chain[1] * chain[2]
+        innermost = sorted(
+            (chain for chain in self.loop_chains if chain[3]), key=lambda chain: chain[1] * chain[2], reverse=True
         )
-        lowered = (limit - (total - outer * max_items)) // outer
-        self.issue(
-            "LOOP_BUDGET",
-            location,
-            message=(
-                f"Nested loops could run more than {limit:,} iterations in one run; lower maxItems on an inner loop."
-            ),
-            edit=SuggestedEdit(path=location + "/maxItems", value=lowered) if lowered >= 1 else None,
-        )
+        location, edit = innermost[0][0], None
+        for path, outer, max_items, _ in innermost:
+            lowered = min((limit - (total - outer * max_items)) // outer, self.limits.max_loop_items)
+            if lowered >= 1:
+                location, edit = path, SuggestedEdit(path=path + "/maxItems", value=lowered)
+                break
+        self.issue("LOOP_BUDGET", location, message=_message("LOOP_BUDGET", limit=limit), edit=edit)
 
     def settle_pending(self) -> None:
         """Catalog-pending notes are the lowest priority: they only fill capacity that findings left.

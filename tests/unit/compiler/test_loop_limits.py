@@ -16,6 +16,7 @@
 
 """Loop limits: nesting, element ceilings, the per-run iteration budget, concurrency and signals in bodies."""
 
+from firefly_weave.compiler.analyzer import _message
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.contracts.limits import Limits
@@ -125,6 +126,39 @@ def test_the_budget_counts_every_loop_and_suggests_nothing_when_one_edit_cannot_
     assert issue.path == "/spec/steps/0" and issue.suggested_edit is None
     assert compiled(workflow(*(loop(f"l{n}", maxItems=10_000) for n in range(10)))).ok
     assert only(compiled(workflow(loop("a", maxItems=11)), limits=Limits(max_run_iterations=10)), "WV-COMP-LOOP_BUDGET")
+
+
+def test_the_budget_edit_goes_to_an_innermost_loop_whose_reduction_fits_the_budget():
+    # The inner loop carries the largest product (200) but can only save 100; lowering the later loop to 49 fits.
+    document = workflow(
+        loop("a", loop("x", items={"ref": "/item"}, maxItems=2), maxItems=100),
+        loop("z", maxItems=199),
+    )
+    limits = Limits(max_run_iterations=349)
+    [issue] = only(compiled(document, limits=limits), "WV-COMP-LOOP_BUDGET")
+    assert issue.path == "/spec/steps/1"
+    assert issue.suggested_edit is not None
+    assert (issue.suggested_edit.path, issue.suggested_edit.value) == ("/spec/steps/1/maxItems", 49)
+    document["spec"]["steps"][1]["maxItems"] = 49
+    assert compiled(document, limits=limits).ok
+    document["spec"]["steps"][1]["maxItems"] = 50
+    assert only(compiled(document, limits=limits), "WV-COMP-LOOP_BUDGET")
+
+
+def test_the_budget_edit_never_exceeds_the_platform_item_limit():
+    result = compiled(workflow(*(loop(f"l{n}", maxItems=40_000) for n in range(3))))
+    [issue] = only(result, "WV-COMP-LOOP_BUDGET")
+    assert issue.suggested_edit is not None
+    assert issue.suggested_edit.value == 10_000
+    assert len(only(result, "WV-COMP-LOOP_MAX_ITEMS")) == 3
+
+
+def test_loop_limit_codes_have_their_own_messages():
+    assert _message("LOOP_DEPTH", limit=3) == "Loops can be nested at most 3 deep."
+    assert _message("LOOP_MAX_ITEMS", limit=10_000) == "maxItems exceeds this platform's limit of 10,000."
+    assert _message("LOOP_BUDGET", limit=100_000) == (
+        "Nested loops could run more than 100,000 iterations in one run; lower maxItems on an inner loop."
+    )
 
 
 def test_nested_concurrency_over_a_thousand_tasks_warns_once_where_it_crosses():
