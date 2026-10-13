@@ -255,7 +255,13 @@ weave-operate-state {
   color: var(--muted);
 }
 
-/* Retire offline workers: the threshold, what matches and what was revoked. */
+/* Retire offline workers: the threshold, what matches and what was revoked.
+   The threshold is a full target on narrow screens and with touch. */
+@media (max-width: 767px), (pointer: coarse) {
+  .dialog-form select {
+    min-height: var(--control-touch);
+  }
+}
 .retire-status {
   margin: var(--space-3) 0;
   min-height: 1lh;

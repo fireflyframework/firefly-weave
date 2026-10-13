@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // Resume with their error paths. The server checks every command.
 import { test, expect, Page, Route } from "@playwright/test";
 import { connected } from "./support";
+import { acmePlatform, platformHost, type PlatformHost } from "./platform-host";
 
 const environment =
   "**/studio/api/api/v1/tenants/tenant/projects/project/environments/development";
@@ -965,6 +966,50 @@ for (const size of [
         ).toBeLessThanOrEqual(0.5);
       }
     });
+
+    test("the count sits on the filter line, and Retire's threshold is a full target", async ({
+      page,
+    }) => {
+      await workers(page, ["status.read", "release.retire"]);
+      await page.route(`${environment}/workers/retire-stale`, (r) =>
+        r.fulfill({ json: { matched: 2, revoked: 0, worker_ids: [] } }),
+      );
+      await page.goto("/operate/workers");
+      await expect(rows(page).first()).toBeVisible();
+      await openFilters(page);
+      const coarse = await page.evaluate(
+        () => matchMedia("(pointer: coarse)").matches,
+      );
+      const target = coarse || size.width < 768 ? 44 : 36;
+      const line = await page
+        .locator(".operate-filters")
+        .evaluate((filters) => {
+          const middle = (node: Element) => {
+            const box = node.getBoundingClientRect();
+            return { top: box.top, center: box.top + box.height / 2 };
+          };
+          return {
+            count: middle(filters.querySelector(".operate-count")!),
+            checkbox: middle(filters.querySelector(".checkbox-field")!),
+          };
+        });
+      // Beside the checkbox (a wrapped line has its own row), on its center.
+      if (Math.abs(line.count.top - line.checkbox.top) < target)
+        expect(
+          Math.abs(line.count.center - line.checkbox.center),
+        ).toBeLessThanOrEqual(0.5);
+      await page
+        .getByRole("button", { name: "Retire offline workers…" })
+        .click();
+      const dialog = page.getByRole("dialog", {
+        name: "Retire offline workers",
+      });
+      await expect(dialog.getByRole("status")).toContainText("2 workers");
+      const select = await dialog
+        .getByLabel("Offline for at least")
+        .boundingBox();
+      expect(select!.height).toBeGreaterThanOrEqual(target - 0.5);
+    });
   });
 
 test.describe("platform filters, where workers run, and retiring", () => {
@@ -1347,4 +1392,204 @@ test.describe("platform filters, where workers run, and retiring", () => {
     ).toContainText("Revoked.");
     expect(sent.map((item) => item.path)).toEqual([`${online}/revoke`]);
   });
+});
+
+test.describe("another person on the same environment", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  /**
+   * Jane opens Workers while the platform's status can't be read; `switch`
+   * then finds John signed in on the same environment, with the page open.
+   * `person()` says who a request was sent for.
+   */
+  async function janeThenJohn(page: Page) {
+    let person = "jane";
+    let reachable = false;
+    const identity = (host: PlatformHost) => {
+      const base = host.identity();
+      return {
+        ...base,
+        principal_id: `principal-${person}`,
+        grants: base.grants.map((grant) => ({
+          ...grant,
+          capabilities: [
+            ...grant.capabilities,
+            "status.read",
+            "worker.drain",
+            "release.retire",
+          ],
+        })),
+      };
+    };
+    const host = await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: (current) =>
+        reachable
+          ? {
+              json: {
+                session: current.session(),
+                identity: identity(current),
+                workspaces: current.current?.workspaces ?? [],
+                truncated: false,
+                workspace_revoked: false,
+              },
+            }
+          : {
+              status: 503,
+              json: { code: "WV-STUDIO-UPSTREAM", message: "Unreachable" },
+            },
+    });
+    await page.route("**/studio/api/api/v1/identity", (r) =>
+      r.fulfill({ json: identity(host) }),
+    );
+    const lists: { person: string; query: URLSearchParams }[] = [];
+    await page.route("**/workers?*", (r) => {
+      lists.push({
+        person,
+        query: new URL(r.request().url()).searchParams,
+      });
+      return r.fulfill({
+        json: {
+          items: [worker(online), worker(fresh), worker(stale)],
+          next_cursor: null,
+        },
+      });
+    });
+    await page.goto("/operate/workers");
+    await expect(rows(page)).toHaveCount(3);
+    return {
+      lists,
+      person: () => person,
+      /** `behindDialog`: the change arrives while a dialog covers the page. */
+      async switch(behindDialog = false) {
+        person = "john";
+        reachable = true;
+        const again = page
+          .locator(".platform-banner")
+          .getByRole("button", { name: "Try again" });
+        if (behindDialog) await again.dispatchEvent("click");
+        else await again.click();
+        await expect(page.locator(".platform-banner")).toHaveCount(0);
+      },
+    };
+  }
+
+  test("a bulk action stops when the person changes, sending nothing for the next one", async ({
+    page,
+  }) => {
+    const people = await janeThenJohn(page);
+    const sent: { person: string; path: string }[] = [];
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let reached: () => void = () => undefined;
+    const out = new Promise<void>((resolve) => (reached = resolve));
+    await page.route("**/workers/*/drain", async (r) => {
+      sent.push({
+        person: people.person(),
+        path: new URL(r.request().url()).pathname
+          .split("/")
+          .slice(-2)
+          .join("/"),
+      });
+      if (sent.length === 1) {
+        reached();
+        await held;
+      }
+      await r.fulfill({ json: { revoked: false } }).catch(() => undefined);
+    });
+    await page.getByLabel("Select every worker on this list, up to 50").check();
+    await page
+      .getByRole("region", { name: "Selected workers" })
+      .getByRole("button", { name: "Drain" })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Drain 3 workers?" })
+      .getByRole("button", { name: "Drain" })
+      .click();
+    // The first drain is on its way when John turns out to be signed in.
+    await out;
+    await people.switch();
+    release();
+    await expect
+      .poll(() => people.lists.filter((item) => item.person === "john").length)
+      .toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+    expect(sent).toEqual([{ person: "jane", path: `${online}/drain` }]);
+    await expect(
+      page.getByRole("region", { name: "Drain workers" }),
+    ).toHaveCount(0);
+  });
+
+  test("a host prefix typed by one person is gone for the next", async ({
+    page,
+  }) => {
+    const people = await janeThenJohn(page);
+    await page.getByLabel("Host starts with").fill("jane-private-");
+    await expect
+      .poll(() => people.lists.at(-1)?.query.get("host_prefix"))
+      .toBe("jane-private-");
+    const page1 = await page.locator("weave-workers-page").elementHandle();
+    await people.switch();
+    await expect
+      .poll(() => people.lists.filter((item) => item.person === "john").length)
+      .toBeGreaterThan(0);
+    await expect(page.getByLabel("Host starts with")).toHaveValue("");
+    // The same page, not a new one, forgot it.
+    expect(await page1!.evaluate((node) => node.isConnected)).toBe(true);
+    await page.waitForTimeout(500);
+    for (const item of people.lists.filter((entry) => entry.person === "john"))
+      expect(item.query.has("host_prefix")).toBe(false);
+    expect(page.url()).not.toContain("jane-private-");
+  });
+
+  for (const [name, answer, notice] of [
+    [
+      "a retirement",
+      { json: { matched: 3, revoked: 3, worker_ids: [] } },
+      "Retired 3 offline workers.",
+    ],
+    [
+      "a lost retirement",
+      { status: 503, json: { code: "WV-UNAVAILABLE", message: "Unavailable" } },
+      "Studio didn't get an answer about retiring offline workers: workers may have been revoked. Open Retire offline workers… to see what still matches.",
+    ],
+  ] as const)
+    test(`${name} answered after the person changes still says what happened`, async ({
+      page,
+    }) => {
+      const people = await janeThenJohn(page);
+      let release: () => void = () => undefined;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let reached: () => void = () => undefined;
+      const out = new Promise<void>((resolve) => (reached = resolve));
+      const sent: string[] = [];
+      await page.route("**/workers/retire-stale", async (r) => {
+        const body = r.request().postDataJSON();
+        if (body.dry_run)
+          return r.fulfill({
+            json: { matched: 3, revoked: 0, worker_ids: [] },
+          });
+        sent.push(people.person());
+        reached();
+        await held;
+        await r
+          .fulfill({ status: answer.status ?? 200, json: answer.json })
+          .catch(() => undefined);
+      });
+      await page
+        .getByRole("button", { name: "Retire offline workers…" })
+        .click();
+      const dialog = page.getByRole("dialog", {
+        name: "Retire offline workers",
+      });
+      await dialog.getByRole("button", { name: "Retire 3 workers" }).click();
+      await out;
+      await people.switch(true);
+      await expect(dialog).toHaveCount(0);
+      release();
+      await expect(page.getByText(notice)).toBeVisible();
+      // Nothing is sent again for the next person.
+      expect(sent).toEqual(["jane"]);
+    });
 });

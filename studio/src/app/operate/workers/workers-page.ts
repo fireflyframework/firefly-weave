@@ -1459,16 +1459,33 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
     const scopeKey = this.scopeKey;
     try {
       const answer = await this.sendRetire(dialog.seconds, false, key);
-      if (this.retire !== dialog) return;
+      if (scopeKey === this.scopeKey) void this.poller.refresh();
+      // The dialog closed meanwhile (or the workspace or person changed):
+      // the person still learns what happened, without the worker IDs.
+      if (this.retire !== dialog) {
+        const count = answer.revoked;
+        this.host.notify(
+          `Retired ${count} offline ${count === 1 ? "worker" : "workers"}.`,
+        );
+        return;
+      }
       dialog.pendingKey = null;
       dialog.result = answer;
       dialog.preview = null;
-      if (scopeKey === this.scopeKey) void this.poller.refresh();
     } catch (error) {
-      if (this.retire !== dialog) return;
       const plain = describeError(error);
       const unknown =
         plain.status === 0 || plain.status === 408 || plain.status >= 500;
+      if (this.retire !== dialog) {
+        // Send again belongs to the closed dialog; a new preview shows what
+        // still matches.
+        this.host.notify(
+          unknown
+            ? "Studio didn't get an answer about retiring offline workers: workers may have been revoked. Open Retire offline workers… to see what still matches."
+            : `Offline workers were not retired. ${plain.message}`,
+        );
+        return;
+      }
       if (!unknown) dialog.pendingKey = null;
       dialog.problem = unknown
         ? {

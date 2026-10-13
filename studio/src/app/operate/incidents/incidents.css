@@ -135,6 +135,15 @@ weave-operate-state {
   align-items: center;
   gap: var(--space-2);
 }
+/* The run's status pill shares the Run button's center. */
+.run-fact .status-pill {
+  margin-bottom: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .run-fact button.sm {
+    min-height: var(--control-touch);
+  }
+}
 .opened small {
   display: block;
   margin-top: var(--space-1);

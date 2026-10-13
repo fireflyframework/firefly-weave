@@ -1506,3 +1506,67 @@ test.describe("platform filters, direct links and opening times", () => {
     await expect(rows(page).first()).toContainText("Unknown");
   });
 });
+
+for (const size of [
+  { name: "a mouse at 1440x900", width: 1440, height: 900, touch: false },
+  { name: "touch at 1440x900", width: 1440, height: 900, touch: true },
+  { name: "a window at 600x500", width: 600, height: 500, touch: false },
+  { name: "a phone at 360x640", width: 360, height: 640, touch: true },
+])
+  test.describe(`alignment with ${size.name}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.touch,
+    });
+
+    test("the count sits on the filter line, and the drawer's Run button on its status pill, as full targets", async ({
+      page,
+    }) => {
+      const { items } = await inbox(page, ["incident.read", "run.read"]);
+      items[0] = { ...items[0], run_status: "blocked" };
+      await page.goto("/operate/incidents");
+      await expect(rows(page)).toHaveCount(1);
+      await openFilters(page);
+      const coarse = await page.evaluate(
+        () => matchMedia("(pointer: coarse)").matches,
+      );
+      const target = coarse || size.width < 768 ? 44 : 36;
+      const line = await page
+        .locator(".operate-filters")
+        .evaluate((filters) => {
+          const middle = (node: Element) => {
+            const box = node.getBoundingClientRect();
+            return { top: box.top, center: box.top + box.height / 2 };
+          };
+          return {
+            count: middle(filters.querySelector(".operate-count")!),
+            checkbox: middle(filters.querySelector(".checkbox-field")!),
+          };
+        });
+      // Beside the checkbox (a wrapped line has its own row), on its center.
+      if (Math.abs(line.count.top - line.checkbox.top) < target)
+        expect(
+          Math.abs(line.count.center - line.checkbox.center),
+        ).toBeLessThanOrEqual(0.5);
+      await page
+        .getByRole("button", {
+          name: "Open incident WV-TASK-AMBIGUOUS at charge",
+        })
+        .click();
+      const fact = page.locator("weave-incident-drawer dd.run-fact");
+      await expect(fact.locator(".status-pill")).toHaveText("Blocked");
+      const run = await fact.evaluate((node) => {
+        const button = node.querySelector("button")!.getBoundingClientRect();
+        const pill = node
+          .querySelector(".status-pill")!
+          .getBoundingClientRect();
+        return {
+          height: button.height,
+          button: button.top + button.height / 2,
+          pill: pill.top + pill.height / 2,
+        };
+      });
+      expect(Math.abs(run.button - run.pill)).toBeLessThanOrEqual(0.5);
+      if (target === 44) expect(run.height).toBeGreaterThanOrEqual(43.5);
+    });
+  });
