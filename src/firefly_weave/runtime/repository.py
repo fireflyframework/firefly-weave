@@ -45,6 +45,21 @@ RUN_FETCH_BYTES = 128 * 1024 * 1024
 SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
 
 
+def loop_activity(result: Transition) -> tuple[int, int, int]:
+    """Loop iterations a transition collected, loop iterations it cancelled, and loop yields it registered."""
+    collected = cancelled = yields = 0
+    ended = False
+    for command in result.commands:
+        if isinstance(command, ControlCommand):
+            collected += command.kind == "accept_output" and command.index is not None
+            ended = ended or command.kind == "terminate"
+        elif isinstance(command, Deadline):
+            yields += "~" in command.node_id
+    if ended:
+        cancelled = sum(b.index is not None and b.status == "cancelled" for b in result.state.branches.values())
+    return collected, cancelled, yields
+
+
 class RuntimeRepository:
     def __init__(self, tx: Transaction, outbox: OutboxService | None = None) -> None:
         self.tx = tx
@@ -295,6 +310,14 @@ class RuntimeRepository:
             if event.type in {"timed_out", "wait_elapsed"}
             else "other",
         )
+        collected, cancelled, yields = loop_activity(result)
+        for kind, status, amount in (
+            ("loop_iteration", "ok", collected),
+            ("loop_iteration", "failed", cancelled),
+            ("loop_yield", "ok", yields),
+        ):
+            if amount:
+                self.tx.record(kind, "loop", status, amount=amount)
 
     @staticmethod
     def release_pin(activation: Activation, command: TaskIntent) -> UUID | None:
