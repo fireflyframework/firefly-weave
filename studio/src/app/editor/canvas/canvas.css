@@ -801,3 +801,15 @@ weave-canvas-view,
   font: var(--type-label);
   color: var(--text);
 }
+
+/* "Start from a template · or paste steps (Ctrl+V)" under the empty state. */
+.canvas-v2 .empty-alternatives {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}

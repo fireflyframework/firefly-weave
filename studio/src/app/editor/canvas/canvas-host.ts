@@ -23,6 +23,7 @@ import type { Signal } from "@angular/core";
 import type { AnchorRect } from "../../designer/popover-placement";
 import type { StructuredCanvasAdapter, Workflow } from "../../model";
 import type { CanvasSidecar } from "../state/canvas-sidecar";
+import type { ClipboardContent, PastePlan } from "../state/clipboard";
 import type { KindContext } from "../ndv/registry";
 import type { Insertion } from "./layout-ltr";
 import type { CanvasRun } from "./run-state";
@@ -91,4 +92,13 @@ export interface CanvasHost {
   redo(): void;
   /** Ctrl/Cmd+S: save the draft when connected, or save to a file locally. */
   saveShortcut(): void;
+  /**
+   * Pastes steps read from the clipboard at a place, asking first when they
+   * bring connection slots or AI profiles, as one undo step; the plan it
+   * applied, or null when nothing was pasted (it said why).
+   */
+  pasteSteps(
+    content: ClipboardContent,
+    at: Insertion,
+  ): Promise<PastePlan | null>;
 }

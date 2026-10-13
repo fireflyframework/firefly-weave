@@ -74,7 +74,7 @@ import {
   type TriggerIntent,
 } from "../state/canvas-sidecar";
 import { CHOICE_NOT_KEPT } from "../state/editor-flag";
-import type { KeymapCommand } from "../state/keymap";
+import { formatCombo, type KeymapCommand } from "../state/keymap";
 import {
   NO_SELECTION,
   blockedReason,
@@ -120,6 +120,16 @@ import {
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
 import { TRIGGER_LABELS, triggerNoteKey, triggerTile } from "./trigger-tiles";
+import { ownedActionsOf } from "../ndv/owned/owned-store";
+import {
+  CLIPBOARD_WEB_FORMAT,
+  copySteps,
+  readClipboard,
+  stillUnreadable,
+  unreadableMessage,
+  type Copied,
+  type Unreadable,
+} from "../state/clipboard";
 import {
   runText,
   tileBadge,
@@ -217,6 +227,12 @@ export class CanvasView implements OnInit, DoCheck {
   band: { key: string; from: Point; to: Point } | null = null;
   /** The insertion a dropped edge opened Add a step for: its edge stays drawn meanwhile. */
   private bandFor: Insertion | null = null;
+  /** "Ctrl+V", or "Cmd+V" on macOS, for the empty canvas's hint. */
+  readonly pasteKeys = formatCombo("Mod+V", keyPlatform());
+  /** References pasted steps hold that their place can't read, until they are fixed. */
+  private readonly pasteGaps = new Map<string, readonly Unreadable[]>();
+  /** Bumped when pasteGaps changes, so the tiles draw again. */
+  private pasteGapsVersion = 0;
   /** The step dragged to a new place, or "". */
   draggingStep = "";
   /** The click that ends a drag does nothing else. */
@@ -443,24 +459,30 @@ export class CanvasView implements OnInit, DoCheck {
       active: string,
       run: CanvasRun | null,
       canvas: CanvasSidecar,
+      _gapsVersion: number,
     ): TileView[] => {
       const ctx = this.host().kindContext();
       // A selected group shows every step inside it as selected.
       const chosen = covered(selection, this.places());
       return layout.tiles.map((tile) => {
         const state = tile.step ? tileRun(tile.id, run) : null;
-        return this.tileView(tile, ctx, facts.get(tile.id) ?? NO_FACTS, {
-          selected: chosen.has(tile.id),
-          active: tile.id === active,
-          run: state,
-          pulse: pulses(state, run),
-          // The trigger's note is the one its step details keep.
-          note: tile.step
-            ? stepNoteLine(canvas, tile.id)
-            : tile.kind === "trigger"
-              ? stepNoteLine(canvas, triggerNoteKey(tile.id, canvas))
-              : "",
-        });
+        return this.tileView(
+          tile,
+          ctx,
+          this.withPasteGaps(tile, facts.get(tile.id) ?? NO_FACTS),
+          {
+            selected: chosen.has(tile.id),
+            active: tile.id === active,
+            run: state,
+            pulse: pulses(state, run),
+            // The trigger's note is the one its step details keep.
+            note: tile.step
+              ? stepNoteLine(canvas, tile.id)
+              : tile.kind === "trigger"
+                ? stepNoteLine(canvas, triggerNoteKey(tile.id, canvas))
+                : "",
+          },
+        );
       });
     },
   );
@@ -473,6 +495,7 @@ export class CanvasView implements OnInit, DoCheck {
       this.active(),
       h.canvasRun(),
       h.model.canvas,
+      this.pasteGapsVersion,
     );
   }
   private position(tile: LtrTile): Point {
@@ -988,6 +1011,26 @@ export class CanvasView implements OnInit, DoCheck {
       event.stopPropagation();
     }
   }
+  /** A pasted reference its place can't read is setup the step needs, until it is fixed. */
+  private withPasteGaps(tile: LtrTile, facts: StepFacts): StepFacts {
+    const gaps = tile.step ? this.pasteGaps.get(tile.id) : undefined;
+    if (!gaps || !tile.step) return facts;
+    const definition = this.host().model.definition;
+    const open = gaps.filter((gap) =>
+      stillUnreadable(definition, tile.step!, gap),
+    );
+    if (open.length) this.pasteGaps.set(tile.id, open);
+    else this.pasteGaps.delete(tile.id);
+    return open.length
+      ? {
+          ...facts,
+          setup: [
+            ...facts.setup,
+            ...open.map((gap) => `replace the reference to ${gap.target}`),
+          ],
+        }
+      : facts;
+  }
   private menuFor(tile: LtrTile, locked: boolean): RowMenuItem[] {
     const h = this.host();
     const id = tile.id;
@@ -998,6 +1041,7 @@ export class CanvasView implements OnInit, DoCheck {
         disabled: locked,
         run: () => void h.openStep(id, "rename"),
       },
+      { label: "Copy", run: () => void this.copyIds([id], false) },
       {
         label: "Duplicate",
         disabled: locked,
@@ -1636,6 +1680,16 @@ export class CanvasView implements OnInit, DoCheck {
           step,
           command === "extendUpstream" ? "upstream" : "downstream",
         );
+      case "copy":
+      case "cut":
+        void this.copySelection(
+          command === "cut",
+          this.keyTargets(target, step),
+        );
+        return true;
+      case "paste":
+        // The browser's paste event brings the clipboard's text: pasteEvent.
+        return false;
       case "save":
         h.saveShortcut();
         return true;
@@ -1780,6 +1834,119 @@ export class CanvasView implements OnInit, DoCheck {
     h.cancelMove();
     return true;
   }
+  // ------------------------------------------------------ copy and paste
+
+  copyBlocked(): string | null {
+    return blockedReason("copy", this.selection, this.places());
+  }
+  /**
+   * Ctrl/Cmd+C or X and the selection toolbar's Copy: the steps a key acts
+   * on (the selection, or the focused step outside it), else the selection.
+   */
+  async copySelection(cut: boolean, chosen: Selection = this.selection) {
+    const places = this.places();
+    const reason =
+      (cut ? this.lockedReason() : null) ??
+      blockedReason(cut ? "cut" : "copy", chosen, places);
+    if (reason) return this.host().notify(reason);
+    await this.copyIds(topLevel(chosen, places), cut);
+  }
+  async copyIds(ids: string[], cut: boolean) {
+    const h = this.host();
+    const copied = copySteps(
+      h.model.definition,
+      ids,
+      {},
+      ownedActionsOf(h.model.canvas),
+    );
+    if (!(await this.writeClipboard(copied)))
+      return h.notify("Studio couldn't write to the clipboard. Try again.");
+    if (cut) await h.removeSteps(ids);
+    else
+      h.notify(`Copied ${ids.length === 1 ? ids[0] : `${ids.length} steps`}.`);
+  }
+  /** YAML as text, and the same document as JSON in the web custom format where the browser has it. */
+  private async writeClipboard(copied: Copied): Promise<boolean> {
+    try {
+      const item = globalThis.ClipboardItem as
+        | (typeof ClipboardItem & { supports?: (type: string) => boolean })
+        | undefined;
+      if (item?.supports?.(CLIPBOARD_WEB_FORMAT))
+        await navigator.clipboard.write([
+          new item({
+            "text/plain": new Blob([copied.yaml], { type: "text/plain" }),
+            [CLIPBOARD_WEB_FORMAT]: new Blob([copied.json], {
+              type: CLIPBOARD_WEB_FORMAT,
+            }),
+          }),
+        ]);
+      else await navigator.clipboard.writeText(copied.yaml);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** Ctrl/Cmd+V on the canvas: the browser's paste event, read without a permission prompt. */
+  pasteEvent(event: ClipboardEvent) {
+    const target = event.target as HTMLElement;
+    if (
+      target.matches?.(
+        "input, textarea, select, [contenteditable='true'], [contenteditable='']",
+      )
+    )
+      return;
+    event.preventDefault();
+    void this.paste(
+      event.clipboardData?.getData("text/plain") ?? "",
+      this.pastePlace(target),
+    );
+  }
+  /** At the focused "+", else after the focused or selected step, else at the end. */
+  private pastePlace(target: HTMLElement): Insertion {
+    const control = target.closest?.("[data-insert]");
+    const insert = control ? this.insertOf(control) : null;
+    if (insert) return insert;
+    const id =
+      target.closest?.("[data-tile]")?.getAttribute("data-tile") ??
+      this.selection.focus ??
+      this.host().model.selected;
+    const tile = this.layout().tiles.find((item) => item.id === id);
+    return (
+      tile?.after ?? {
+        owner: "root",
+        index: this.host().model.definition.spec.steps.length,
+      }
+    );
+  }
+  async paste(text: string, at: Insertion) {
+    const h = this.host();
+    const reason = this.lockedReason();
+    if (reason)
+      return h.notify(
+        h.model.readonly ? "Fix the source before pasting steps." : reason,
+      );
+    const reading = readClipboard(text);
+    if (!reading.ok) return h.notify(reading.reason);
+    const plan = await h.pasteSteps(reading.content, at);
+    if (!plan) return;
+    for (const gap of plan.unreadable)
+      this.pasteGaps.set(gap.stepId, [
+        ...(this.pasteGaps.get(gap.stepId) ?? []),
+        gap,
+      ]);
+    this.pasteGapsVersion++;
+    if (plan.unreadable.length) {
+      const first = plan.unreadable[0].stepId;
+      h.notify(unreadableMessage(plan.unreadable), {
+        label: "Review",
+        run: () => void h.selectStep(first, true),
+      });
+    }
+    this.selection = selectionOf(plan.ids, plan.ids[0]);
+    this.seenSelected = plan.ids[0];
+    this.cdr.markForCheck();
+  }
+
   private setView(view: View) {
     this.view = view;
     this.cdr.markForCheck();

@@ -46,6 +46,7 @@ SPDX-License-Identifier: Apache-2.0
   (focusout)="focusOut($event)"
   (dragover)="dragOver($event)"
   (drop)="dropOn($event)"
+  (paste)="pasteEvent($event)"
   (keydown)="key($event)"
   (keyup)="trackSpace($event)"
 >
@@ -312,15 +313,19 @@ SPDX-License-Identifier: Apache-2.0
                   >Start with what triggers this workflow</span
                 >
               </button>
-              <button
-                type="button"
-                class="text-link f-drag-blocker"
-                [style.outline-width.px]="focusWidth()"
-                [style.outline-offset.px]="focusWidth()"
-                data-action="templates"
-              >
-                Start from a template
-              </button>
+              <p class="empty-alternatives">
+                <button
+                  type="button"
+                  class="text-link f-drag-blocker"
+                  [style.outline-width.px]="focusWidth()"
+                  [style.outline-offset.px]="focusWidth()"
+                  data-action="templates"
+                >
+                  Start from a template
+                </button>
+                <span aria-hidden="true">·</span>
+                <span>or paste steps ({{ pasteKeys }})</span>
+              </p>
             </div>
           }
         </div>
@@ -342,6 +347,8 @@ SPDX-License-Identifier: Apache-2.0
       <weave-selection-toolbar
         [count]="selectedCount()"
         [blocked]="duplicateBlocked()"
+        [copyBlocked]="copyBlocked()"
+        (copy)="copySelection(false)"
         [locked]="lockedReason()"
         (duplicate)="duplicateSelection()"
         (remove)="removeSelection()"

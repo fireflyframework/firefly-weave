@@ -33,6 +33,7 @@ import type {
   InsertOutcome,
   InsertRequest,
 } from "./editor/add-step/insert";
+import type { ClipboardContent, PastePlan } from "./editor/state/clipboard";
 import type { TriggerKind } from "./editor/canvas/layout-ltr";
 import { DraftCanvases, type KeptWhere } from "./editor/state/draft-canvas";
 import { readImport } from "./import-files";
@@ -3801,6 +3802,138 @@ export class App implements CanvasHost {
         this.undo();
       },
     });
+  }
+  /**
+   * Pastes steps at a place: the plan renumbers them and brings what they
+   * use; slots and AI profiles the workflow lacks are added after asking.
+   * One undo step. Returns the plan applied, or null.
+   */
+  async pasteSteps(
+    content: ClipboardContent,
+    at: { owner: string; index: number },
+  ): Promise<PastePlan | null> {
+    if (this.editingLocked || this.model.readonly) {
+      this.notify(
+        this.model.readonly
+          ? "Fix the source before pasting steps."
+          : "Editing is paused while the simulation runs.",
+      );
+      return null;
+    }
+    const opened = this.model.opened;
+    if (!(await this.ensureApplied()) || this.model.opened !== opened)
+      return null;
+    const [{ planPaste }, { withOwnedAction }, { reservedActionNames }] =
+      await Promise.all([
+        import("./editor/state/clipboard"),
+        import("./editor/ndv/owned/owned-store"),
+        import("./editor/ndv/owned/insert-owned"),
+      ]);
+    if (this.model.opened !== opened) return null;
+    const planned = planPaste(
+      this.model.definition,
+      content,
+      at,
+      new Set([
+        ...this.model.stepIdSet(),
+        ...this.model.unplaced.map((step) => step.id),
+      ]),
+      {
+        canvas: this.model.canvas,
+        reserved: reservedActionNames(
+          this.catalogContracts,
+          this.actionVersions,
+          this.model.canvas,
+        ),
+      },
+    );
+    if ("reason" in planned) {
+      this.notify(planned.reason);
+      return null;
+    }
+    const record = (value: unknown): Record<string, unknown> =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+    const slots = Object.entries(planned.addConnections);
+    const profiles = Object.keys(planned.addProfiles);
+    if (slots.length || profiles.length) {
+      const parts = [
+        ...(slots.length
+          ? [
+              `the connection ${slots.length === 1 ? "slot" : "slots"} ${slots
+                .map(
+                  ([name, value]) =>
+                    `${name} (${String(record(value)["connector"] ?? "")})`,
+                )
+                .join(", ")}`,
+            ]
+          : []),
+        ...(profiles.length
+          ? [
+              `the AI ${profiles.length === 1 ? "profile" : "profiles"} ${profiles.join(", ")}`,
+            ]
+          : []),
+      ];
+      if (
+        !(await this.dialogs.confirm({
+          title: "Add what the pasted steps use?",
+          message: `The steps use ${parts.join(" and ")}, which this workflow doesn't have yet. Pasting adds them.`,
+          confirmLabel: "Paste and add",
+        }))
+      )
+        return null;
+      if (this.model.opened !== opened) return null;
+    }
+    const definition = this.model.definition;
+    this.perform(() =>
+      this.model.batch(() => {
+        if (slots.length || profiles.length)
+          this.model.updateWorkflow({
+            ...definition,
+            spec: {
+              ...definition.spec,
+              ...(slots.length
+                ? {
+                    connections: {
+                      ...record(definition.spec["connections"]),
+                      ...planned.addConnections,
+                    },
+                  }
+                : {}),
+              ...(profiles.length
+                ? {
+                    llmProfiles: {
+                      ...record(definition.spec["llmProfiles"]),
+                      ...planned.addProfiles,
+                    },
+                  }
+                : {}),
+            },
+          });
+        this.model.insertSteps(
+          planned.at.owner,
+          planned.at.index,
+          planned.steps,
+        );
+        for (const add of planned.ownedAdds)
+          this.model.canvas = withOwnedAction(
+            this.model.canvas,
+            add.uses,
+            add.recipe,
+          );
+      }),
+    );
+    if (this.error) return null;
+    const renamed = Object.keys(planned.renamed).length;
+    this.notify(
+      `Pasted ${planned.ids.length === 1 ? planned.ids[0] : `${planned.ids.length} steps`}.${
+        renamed
+          ? ` ${renamed === 1 ? "1 step got a new ID" : `${renamed} steps got new IDs`}, because theirs were taken.`
+          : ""
+      }`,
+    );
+    return planned;
   }
   /** Selects a step and moves focus into its details: their title, or the step name to rename it. */
   async openStep(id: string, focus: "details" | "rename" | "issues") {

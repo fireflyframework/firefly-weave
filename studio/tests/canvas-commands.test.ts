@@ -63,13 +63,20 @@ describe("canvas keys", () => {
     expect(canvasCommand(press("?", { shiftKey: true }), on)).toBe(
       "showShortcuts",
     );
+    expect(canvasCommand(press("c", { ctrlKey: true }), on)).toBe("copy");
+    expect(canvasCommand(press("x", { ctrlKey: true }), on)).toBe("cut");
+    expect(canvasCommand(press("v", { ctrlKey: true }), on)).toBe("paste");
+    expect(
+      canvasCommand(press("v", { ctrlKey: true }), { ...on, onStep: false }),
+    ).toBe("paste");
+    expect(
+      canvasCommand(press("c", { ctrlKey: true }), { ...on, onStep: false }),
+    ).toBeNull();
   });
 
   it("leave rows for features the canvas doesn't have yet to those features", () => {
     for (const key of [
       press("p"),
-      press("c", { ctrlKey: true }),
-      press("v", { ctrlKey: true }),
       press("Enter", { ctrlKey: true }),
       press("S", { shiftKey: true }),
       press("F9"),
@@ -130,11 +137,13 @@ describe("canvas keys", () => {
       "Open step details",
       "Extend the selection downstream",
       "Select steps with a box",
+      "Copy",
+      "Cut",
+      "Paste",
     ])
       expect(canvas).toContain(label);
     for (const label of [
       "Pin output or unpin",
-      "Copy",
       "Tidy layout",
       "Add a sticky note",
       "Execute workflow",

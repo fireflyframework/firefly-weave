@@ -15,8 +15,8 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The floating toolbar for several selected steps: how many, Duplicate
-// (one run of steps) and Delete (any selection). A command that can't run
+// The floating toolbar for several selected steps: how many, Copy and
+// Duplicate (one run of steps) and Delete (any selection). A command that can't run
 // stays in place, aria-disabled, says why to assistive technology and,
 // when pressed, in a toast.
 import {
@@ -38,6 +38,15 @@ import { Icon } from "../../icon";
       <span class="selection-count" aria-live="polite"
         >{{ count() }} steps</span
       >
+      <button
+        type="button"
+        class="tertiary"
+        [attr.aria-disabled]="copyBlocked() ? 'true' : null"
+        [attr.aria-describedby]="copyBlocked() ? 'selection-copy-reason' : null"
+        (click)="copy.emit()"
+      >
+        <weave-icon name="copy" [size]="16" />Copy
+      </button>
       <button
         type="button"
         class="tertiary"
@@ -66,6 +75,9 @@ import { Icon } from "../../icon";
       @if (lock) {
         <span class="sr-only" id="selection-delete-reason">{{ lock }}</span>
       }
+      @if (copyBlocked(); as reason) {
+        <span class="sr-only" id="selection-copy-reason">{{ reason }}</span>
+      }
     </div>`,
 })
 export class SelectionToolbar {
@@ -75,5 +87,8 @@ export class SelectionToolbar {
   /** Why nothing can change now (a simulation runs, or the source doesn't parse), or null. */
   locked = input<string | null>(null);
   duplicate = output<void>();
+  /** Why Copy can't run on this selection, or null. */
+  copyBlocked = input<string | null>(null);
+  copy = output<void>();
   remove = output<void>();
 }
