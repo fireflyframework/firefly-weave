@@ -21,7 +21,8 @@ directory it prepared. A test marked journey_step("J0.3") implements one journey
 step: a step whose capabilities have not landed is skipped and recorded with them, never
 passed, and after a failed step the rest of its journey is recorded as not run. An enabled
 step that never starts (a skip or error in setup, xfail(run=False), pytest.exit) is recorded
-as not run, fails pytest and stops its journey the same way. Results go
+as not run, fails pytest and stops its journey the same way; a step whose teardown fails is
+recorded as failed. Results go
 to evidence/steps.jsonl. Command output can hold generated passwords: it is parsed in
 memory and shown only when a command fails. Failure text, on the console and in a step's
 error, never carries the run's canaries or people passwords: they read [redacted].
@@ -99,7 +100,7 @@ def _helper(name: str) -> Any:
 
 ENABLEMENT = _script("acceptance_journeys").Enablement.load(ROOT / "tests/acceptance/journeys.toml")
 ACCEPTANCE = _script("acceptance")
-_STEP: dict[str, Any] = {"id": None, "started": 0.0, "ran": set(), "skipped": [], "recorded": False}
+_STEP: dict[str, Any] = {"id": None, "started": 0.0, "ran": set(), "skipped": [], "recorded": False, "entry": None}
 _FAILED_JOURNEYS: set[str] = set()
 
 
@@ -342,12 +343,20 @@ def _not_run(step: str, cause: str) -> str:
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> Any:
-    _STEP.update(id=None, started=time.monotonic(), ran=set(), skipped=[], recorded=False)
+    _STEP.update(id=None, started=time.monotonic(), ran=set(), skipped=[], recorded=False, entry=None)
     outcome = yield
     marker = item.get_closest_marker("journey_step")
+    entry: dict[str, Any] | None = _STEP["entry"]
+    _STEP["entry"] = None
     if marker is None or not os.environ.get("WEAVE_ACC_RUN_DIR") or _STEP["recorded"]:
         return
-    if outcome.excinfo is not None and isinstance(outcome.excinfo[1], pytest.exit.Exception):
+    stopped = outcome.excinfo is not None and isinstance(outcome.excinfo[1], pytest.exit.Exception)
+    if entry is not None:
+        # The body ended but teardown did not report: only pytest.exit stops it there.
+        cause = f"pytest.exit: {outcome.excinfo[1]}" if stopped else "it did not report"
+        _fail_entry(entry, redact("teardown: " + cause, known_secrets(_root())))
+        _record(entry)
+    elif stopped:
         # pytest.exit stops the session before any report of this phase: the step never finished.
         _not_run(str(marker.args[0]), f"pytest.exit: {outcome.excinfo[1]}")
 
@@ -392,6 +401,26 @@ def _setup_report(step: str, report: pytest.TestReport) -> None:
     _STEP["recorded"] = True
 
 
+def _fail_entry(entry: dict[str, Any], cause: str) -> None:
+    if entry["status"] != "failed":
+        entry["status"] = "failed"
+        entry["error"] = cause[:300]
+        _FAILED_JOURNEYS.add(str(entry["id"]).split(".")[0])
+
+
+def _teardown_report(report: pytest.TestReport) -> None:
+    """Write the step's record once teardown ends; a teardown failure fails a step whose body passed."""
+    entry: dict[str, Any] | None = _STEP["entry"]
+    if report.failed:
+        text = redact(str(report.longrepr) if report.longrepr else "teardown failed", known_secrets(_root()))
+        report.longrepr = text
+        if entry is not None:
+            _fail_entry(entry, "teardown: " + (text.strip().splitlines() or ["failed"])[-1])
+    if entry is not None:
+        _record(entry)
+        _STEP.update(entry=None, recorded=True)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Any:
     outcome = yield
@@ -401,6 +430,9 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
         return
     if report.when == "setup" and not report.passed and not _STEP["recorded"]:
         _setup_report(str(marker.args[0]), report)
+        return
+    if report.when == "teardown":
+        _teardown_report(report)
         return
     if report.when != "call" or _STEP["id"] != marker.args[0]:
         return
@@ -444,5 +476,5 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
         lines = text.strip().splitlines() or ["failed"]
         entry["error"] = lines[-1][:300]
         _FAILED_JOURNEYS.add(step.split(".")[0])
-    _record(entry)
-    _STEP.update(id=None, recorded=True)
+    # Teardown can still fail the step: the record is written once it ends.
+    _STEP.update(id=None, entry=entry)

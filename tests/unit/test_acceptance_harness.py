@@ -276,3 +276,36 @@ def test_pytest_exit_in_a_step_records_it_as_not_run(pytester, monkeypatch, sour
     assert result.ret != 0
     assert [(record["id"], record["status"]) for record in records] == [("J0.1", "not_run")]
     assert "operator stop" in records[0]["error"]
+
+
+def test_a_failure_in_teardown_fails_the_step_and_stops_its_journey(pytester, monkeypatch):
+    source = (
+        "import json\n\n\n"
+        "@pytest.fixture\ndef cleanup(run):\n    yield\n"
+        '    person = json.loads((run.private / "people" / "builder.json").read_text())\n'
+        '    raise RuntimeError("cleanup left a session for " + person["password"])\n\n\n'
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run, cleanup):\n    pass\n'
+    )
+    result, records = run_steps(pytester, monkeypatch, source + NEXT_STEP)
+    output = result.stdout.str() + result.stderr.str()
+    assert result.ret == 1
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "failed"), ("J0.2", "not_run")]
+    assert "cleanup left a session for [redacted]" in records[0]["error"]
+    assert not leaked(PASSWORD, output) and not leaked(PASSWORD, json.dumps(records))
+
+
+def test_pytest_exit_in_teardown_fails_a_step_whose_body_passed(pytester, monkeypatch):
+    source = (
+        '@pytest.fixture\ndef cleanup():\n    yield\n    pytest.exit("operator stop")\n\n\n'
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run, cleanup):\n    pass\n'
+    )
+    result, records = run_steps(pytester, monkeypatch, source + NEXT_STEP)
+    assert result.ret != 0
+    assert records == [
+        {
+            "id": "J0.1",
+            "status": "failed",
+            "seconds": records[0]["seconds"],
+            "error": "teardown: pytest.exit: operator stop",
+        }
+    ]
