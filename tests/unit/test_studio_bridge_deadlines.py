@@ -151,3 +151,55 @@ async def test_a_model_test_stops_when_the_browser_leaves(tmp_path):
         assert cancelled.is_set()
     finally:
         await service.close()
+
+
+async def test_a_model_test_passes_on_its_own_cancellation(tmp_path):
+    """A server shutting down cancels the bridge itself; that is not a browser leaving."""
+    started = asyncio.Event()
+
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        started.set()
+        await asyncio.sleep(60)
+        return httpx.Response(200, json={})
+
+    service = StudioService(
+        StudioOptions(
+            origin=ORIGIN,
+            assets=assets(tmp_path),
+            profile=PROFILE,
+            token_provider=lambda: "host-token",
+            transport=httpx.MockTransport(upstream),
+        )
+    )
+    messages = [{"type": "http.request", "body": b'{"model":"qwen3:4b","probe_tools":true}', "more_body": False}]
+
+    async def receive():
+        if messages:
+            return messages.pop(0)
+        await asyncio.sleep(60)
+        return {"type": "http.disconnect"}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/studio/api" + MODEL_TEST,
+        "raw_path": ("/studio/api" + MODEL_TEST).encode(),
+        "query_string": b"",
+        "headers": [(b"content-type", b"application/json")],
+        "scheme": "http",
+        "server": ("127.0.0.1", 8766),
+        "root_path": "",
+    }
+    try:
+        bridge = asyncio.create_task(service.bridge(Request(scope, receive), MODEL_TEST))
+        await asyncio.wait_for(started.wait(), 10)
+        bridge.cancel()
+        try:
+            await asyncio.wait_for(bridge, 10)
+        except asyncio.CancelledError:
+            pass
+        else:
+            raise AssertionError("the bridge swallowed its own cancellation")
+        assert bridge.cancelled()
+    finally:
+        await service.close()
