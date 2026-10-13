@@ -41,23 +41,75 @@ export interface StepRecord {
 
 /**
  * Values that are secret by their shape, whatever the run knows: credential
- * headers, cookies, bearer and JSON Web Tokens, credential fields and the
- * sign-in's authorization code. Each pattern keeps its name and replaces the
- * value.
+ * headers, cookies, bearer and JSON Web Tokens, credential fields in any case
+ * style (accessToken, client_secret, secret_value, X-Weave-CSRF), Studio's
+ * pairing code and the sign-in's authorization code. Each pattern keeps its
+ * name and replaces the value. An ordinary value (a short lowercase word, a
+ * small number or a WV- error code) is kept, so "token: expired" and
+ * "code=WV-RUN" stay readable.
  */
-const SHAPES: readonly [RegExp, string][] = [
+const ORDINARY = /^(?:[a-z]{1,12}|\d{1,5}|WV-[A-Z0-9-]+)$/;
+// An authorization or pairing code can be a plain word: only error codes and numbers are ordinary.
+const ORDINARY_CODE = /^(?:\d{1,5}|WV-[A-Z0-9-]+)$/;
+const SCHEME = /^(?:bearer|basic|digest|dpop|negotiate|token)\s+/i;
+const KEY =
+  "(?<![A-Za-z0-9_-])((?:proxy-)?authorization|code|[A-Za-z0-9_-]*?(?:token|secret|password|passwd|api[_-]?key|csrf|code[_-]?verifier|pairing[_-]?code)[A-Za-z0-9_-]*)";
+const SEPARATOR = "([\"']?\\s*(?:[:=]|%3[ADad])\\s*)";
+
+function secretValue(value: string, key = ""): boolean {
+  const credential = value.replace(SCHEME, "").trim();
+  const ordinary = key.toLowerCase() === "code" ? ORDINARY_CODE : ORDINARY;
+  return credential.length > 0 && !ordinary.test(credential);
+}
+
+const SHAPES: readonly [
+  RegExp,
+  (match: string, ...groups: string[]) => string,
+][] = [
   [
-    /\b((?:proxy-)?authorization)(["']?\s*[:=]\s*["']?)(?:(?:bearer|basic|digest|dpop|negotiate|token)\s+)?[^\s"',;]+/gi,
-    `$1$2${REDACTED}`,
+    // A credential header up to the end of its line: Digest and other schemes carry several parameters.
+    /\b((?:proxy-)?authorization)(\s*[:=]\s*)(?!["'])([^\r\n]*)/gi,
+    (match, name, separator, rest) => {
+      const scheme =
+        /^((?:bearer|basic|digest|dpop|negotiate|token)\s+)(\S+)/i.exec(rest);
+      if (scheme)
+        return secretValue(scheme[2])
+          ? `${name}${separator}${REDACTED}`
+          : match;
+      const first = /^\S+/.exec(rest)?.[0] ?? "";
+      return secretValue(first)
+        ? `${name}${separator}${REDACTED}${rest.slice(first.length)}`
+        : match;
+    },
   ],
-  [/\b(set-cookie|cookie)(["']?\s*[:=]\s*["']?)[^\n"']+/gi, `$1$2${REDACTED}`],
   [
-    /\b(x-api-key|api[_-]?key|access_token|refresh_token|id_token|client_secret|code_verifier|password|passwd|secret|token)(["']?\s*[:=]\s*["']?)[^\s"'&,;}]+/gi,
-    `$1$2${REDACTED}`,
+    // Cookies to the end of the header, folded continuation lines included.
+    /\b(set-cookie|cookie)(["']?\s*[:=]\s*["']?)[^\n"']+(?:\n[ \t]+[^\n"']*)*/gi,
+    (_match, name, separator) => `${name}${separator}${REDACTED}`,
   ],
-  [/\b(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`],
-  [/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g, REDACTED],
-  [/([?&](?:code|token)=)[^&#\s"']+/gi, `$1${REDACTED}`],
+  [
+    // A quoted credential value, spaces and escapes included.
+    new RegExp(`${KEY}${SEPARATOR}(["'])((?:\\\\.|(?!\\3)[^\\\\])*)\\3`, "gi"),
+    (match, name, separator, quote, value) =>
+      secretValue(value, name)
+        ? `${name}${separator}${quote}${REDACTED}${quote}`
+        : match,
+  ],
+  [
+    // An unquoted credential value: headers, form bodies, query strings and fragments, URL-encoded too.
+    new RegExp(`${KEY}${SEPARATOR}((?:[^\\s"'&,;}%]|%(?!26))+)`, "gi"),
+    (match, name, separator, value) =>
+      secretValue(value, name) ? `${name}${separator}${REDACTED}` : match,
+  ],
+  [
+    /\b(bearer\s+)([A-Za-z0-9._~+/=-]+)/gi,
+    (match, prefix, value) =>
+      secretValue(value) ? `${prefix}${REDACTED}` : match,
+  ],
+  [
+    /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g,
+    () => REDACTED,
+  ],
 ];
 
 /**

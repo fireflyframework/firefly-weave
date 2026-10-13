@@ -82,6 +82,66 @@ describe("acceptance step records", () => {
     );
   });
 
+  // Secret by shape alone: camelCase and suffixed keys, Studio's CSRF token and
+  // pairing code, folded cookies, Digest credentials and URL-encoded forms.
+  const S = "s3cR3t-Val_ue.9Zq";
+  const SHAPED: readonly string[] = [
+    `{"accessToken":"${S}"}`,
+    `{"refreshToken":"${S}"}`,
+    `{"clientSecret":"${S}"}`,
+    `{"idToken":"${S}"}`,
+    `{"csrfToken":"${S}"}`,
+    `X-Weave-CSRF: ${S}`,
+    `x-weave-csrf: ${S}`,
+    `{"code":"${S}"}`,
+    `code=${S}`,
+    `body: code=${S}&state=x`,
+    `"secret_value": "${S}"`,
+    `{"pairing_code":"${S}"}`,
+    `{"access_token":"${S}"}`,
+    `{"refresh_token":"${S}"}`,
+    `{"id_token":"${S}"}`,
+    `{"client_secret":"${S}"}`,
+    `password=${S}&username=builder`,
+    `{"password": "two words ${S}"}`,
+    `Authorization: Bearer ${S}`,
+    `authorization: Basic ${S}`,
+    `Authorization: Digest username="u", realm="weave", nonce="n1", response="${S}"`,
+    `Proxy-Authorization: Bearer ${S}`,
+    `{"authorization":"Bearer ${S}"}`,
+    `Cookie: a=1; KEYCLOAK_SESSION=${S}`,
+    `Cookie: a=1;\n\tKEYCLOAK_SESSION=${S}`,
+    `set-cookie: weave_session=${S}; Path=/; HttpOnly`,
+    `GET /cb?x=1&access_token%3D${S}`,
+    `http://127.0.0.1:43123/callback?code=${S}&state=x`,
+    `#access_token=${S}&token_type=bearer`,
+    `X-Api-Key: ${S}`,
+    `{"apiKey":'${S}'}`,
+    `{"codeVerifier":"${S}"}`,
+    `sent Bearer ${S} upstream`,
+    `{"sessionToken":"${S}","expires":1}`,
+  ];
+
+  it.each(SHAPED)("redacts a secret by its shape: %s", (text) => {
+    const result = redact(text, []);
+    expect(result).toContain("[redacted]");
+    expect(result).not.toContain(S);
+    expect(result).not.toContain("two words");
+  });
+
+  it.each([
+    "token: expired",
+    "Reset password: link sent",
+    "Authorization: denied for viewer",
+    "Bearer token missing",
+    "/runs?status=failed&code=WV-RUN",
+    `{"code":"WV-FORBIDDEN","status":403}`,
+    `{"token_type":"bearer","expires_in":300}`,
+    "Timeout 5000ms exceeded waiting for getByRole('button')",
+  ])("keeps an ordinary phrase: %s", (text) => {
+    expect(redact(text, [])).toBe(text);
+  });
+
   it("redacts secret handles named as secrets", () => {
     const secrets = secretsOf({ api: "wv-canary-1" }, ["pw"], ["acme-api-key"]);
     expect(secrets).toEqual(["wv-canary-1", "pw", "acme-api-key"]);
