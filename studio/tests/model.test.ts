@@ -22,6 +22,7 @@ import {
   StructuredCanvasAdapter,
   freshWorkflow,
   ownerLabel,
+  nextFreeId,
   renamedSteps,
   type Kind,
   type Workflow,
@@ -1191,5 +1192,48 @@ describe("the canvas sidecar follows the workflow", () => {
     });
     model.redo();
     expect(model.definition.spec.steps).toHaveLength(2);
+  });
+});
+
+describe("pasting into the model", () => {
+  it("inserts pasted steps at one place as one undo step and selects the first", () => {
+    const model = new StructuredCanvasAdapter();
+    model.insert("transform");
+    model.insert("transform");
+    model.insertSteps("root", 1, [
+      { id: "wait-a", kind: "wait", durationSeconds: 60 },
+      { id: "wait-b", kind: "wait", durationSeconds: 60 },
+    ]);
+    expect(model.definition.spec.steps.map((step) => step.id)).toEqual([
+      "transform-1",
+      "wait-a",
+      "wait-b",
+      "transform-2",
+    ]);
+    expect(model.selected).toBe("wait-a");
+    model.undo();
+    expect(model.definition.spec.steps.map((step) => step.id)).toEqual([
+      "transform-1",
+      "transform-2",
+    ]);
+  });
+
+  it("refuses pasted steps whose IDs are taken, and changes nothing", () => {
+    const model = new StructuredCanvasAdapter();
+    model.insert("transform");
+    const revision = model.revision;
+    expect(() =>
+      model.insertSteps("root", 0, [
+        { id: "transform-1", kind: "wait", durationSeconds: 60 },
+      ]),
+    ).toThrow("Steps must have unique IDs.");
+    expect(model.revision).toBe(revision);
+  });
+
+  it("finds the next free ID on a base", () => {
+    expect(nextFreeId("check", new Set(["check-1", "check-2"]))).toBe(
+      "check-3",
+    );
+    expect(nextFreeId("check", new Set())).toBe("check-1");
   });
 });
