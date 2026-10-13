@@ -167,9 +167,14 @@ seconds.
 
 | Type | Instruments |
 | --- | --- |
-| Counters | `weave.requests`, `weave.transitions`, `weave.recoveries`, `weave.provider_events`, `weave.outbox_deliveries`, `weave.secret_capacity`, `weave.compatibility`, `weave.retention`, `weave.telemetry_dropped`, `weave.queue_unknown` |
+| Counters | `weave.requests`, `weave.transitions`, `weave.recoveries`, `weave.provider_events`, `weave.outbox_deliveries`, `weave.secret_capacity`, `weave.compatibility`, `weave.retention`, `weave.loop_iterations`, `weave.loop_yields`, `weave.telemetry_dropped`, `weave.queue_unknown` |
 | Histograms | `weave.duration`, `weave.queue_age` |
 | Gauges | `weave.inventory`, `weave.inventory_freshness` |
+
+**Loops.** `weave.loop_iterations` counts finished loop iterations with
+`operation: loop`: `status: ok` for each result a loop collected, `status:
+failed` for each iteration a failed, canceled, or timed-out run ended.
+`weave.loop_yields` counts the times a loop paused to continue in a later event.
 
 **Only three attributes.** Metrics carry `operation`, `status`, and
 `error_code`. Operations come from the public operation manifest plus a few fixed
