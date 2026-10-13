@@ -1,0 +1,2018 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The parameter form, on the Parameters pane's content edge; tokens only.
+   Fields sit 16 px apart and 8 px separates a label row, its control and the
+   line under it. Sizes come from step details' density tokens: on desktop
+   with a fine pointer, 36 px fields, 32 px rows and targets, 24 px label
+   rows, 12 px between fields and 4 px inside one; for touch, 44 px with 16
+   and 8 px. A label row's tools overflow it into the gaps around it without
+   reaching the control below. What shows at rest ends on the right edge;
+   tools that appear on hover sit inboard of it. */
+/* Density, for step details and for forms drawn outside it (workflow
+   settings). On desktop with a fine pointer the form follows the
+   reference's compact rhythm; below 768 px and for coarse pointers it keeps
+   44 px touch targets. */
+:is(.step-details, .sd-form-scope) {
+  --sd-control: var(--control-md); /* fields, selects and pickers */
+  --sd-row: var(--control-sm); /* key-value and data rows, menu rows */
+  --sd-target: var(--control-sm); /* icon buttons and small toggles */
+  --sd-label-row: var(--space-6);
+  --sd-field-gap: var(--space-3);
+  --sd-field-inner: var(--space-1);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :is(.step-details, .sd-form-scope) {
+    --sd-control: var(--control-touch);
+    --sd-row: var(--control-touch);
+    --sd-target: var(--control-touch);
+    --sd-label-row: var(--control-touch);
+    --sd-field-gap: var(--space-4);
+    --sd-field-inner: var(--space-2);
+  }
+}
+.param-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sd-field-gap);
+}
+.param {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sd-field-inner);
+  min-width: 0;
+}
+.param-label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: var(--sd-label-row);
+}
+.param-label {
+  font: var(--type-label);
+  color: var(--text);
+}
+.param-required {
+  font: var(--type-label);
+  color: var(--danger-ink);
+}
+.param-intro {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.param-spacer {
+  flex: 1;
+}
+.param-label-row:has(> :is(.param-intro, .param-card-head)) > .param-spacer {
+  display: none;
+}
+.param-tools {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+:is(.step-details, .sd-form-scope)
+  .param-tools
+  > weave-row-menu
+  .row-menu-toggle,
+:is(.step-details, .sd-form-scope) .param-tools > button.param-remove {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
+:is(.step-details, .sd-form-scope)
+  .param-label-row
+  > .param-tools
+  > weave-row-menu
+  .row-menu-toggle,
+:is(.step-details, .sd-form-scope)
+  .param-label-row
+  > .param-tools
+  > button.param-remove,
+:is(.step-details, .sd-form-scope)
+  .param-label-row
+  > .param-tools
+  .param-mode
+  button[role="radio"] {
+  margin-block: calc((var(--sd-label-row) - var(--sd-target)) / 2);
+}
+/* Fixed | Mapped: a 24 px face inside its targets. */
+.param-mode {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  padding: 0 var(--space-1);
+}
+.param-mode::before {
+  content: "";
+  position: absolute;
+  inset: calc(50% - var(--space-3)) 0;
+  z-index: -1;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+}
+:is(.step-details, .sd-form-scope) .param-mode button[role="radio"] {
+  position: relative;
+  z-index: 0;
+  min-width: var(--sd-target);
+  min-height: var(--sd-target);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: var(--type-caption);
+}
+/* ::before is the face; ::after, the same box, carries the focus ring. */
+:is(.step-details, .sd-form-scope) .param-mode button[role="radio"]::before,
+:is(.step-details, .sd-form-scope) .param-mode button[role="radio"]::after {
+  content: "";
+  position: absolute;
+  inset: calc(50% - var(--space-2)) 0;
+  z-index: -1;
+  border-radius: var(--radius-xs);
+}
+:is(.step-details, .sd-form-scope)
+  .param-mode
+  button[role="radio"]:is(:hover, [aria-checked="true"]) {
+  color: var(--text);
+}
+:is(.step-details, .sd-form-scope) .param-mode button[role="radio"]:disabled {
+  color: var(--disabled-ink);
+}
+:is(.step-details, .sd-form-scope)
+  .param-mode
+  button[role="radio"][aria-checked="true"]::before {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+:is(.step-details, .sd-form-scope)
+  .param-mode
+  button[role="radio"]:focus-visible {
+  outline: none;
+}
+:is(.step-details, .sd-form-scope)
+  .param-mode
+  button[role="radio"]:focus-visible::after {
+  outline: 2px solid var(--focus);
+}
+[data-mode="fixed"] > .param:not(:hover, :focus-within) .param-mode,
+.param:not(:hover, :focus-within) .param-menu,
+.param:not(:hover, :focus-within) .param-remove {
+  opacity: 0;
+}
+/* A touch screen has no hover: a tap only presses for a moment, and a tool
+   it showed would take the tap meant for the value under it or beside it.
+   There a hidden tool shows, and takes taps, only once focus is in its
+   field. The keyboard still reaches it, and shows it. */
+@media (hover: none), (pointer: coarse) {
+  [data-mode="fixed"] > .param:not(:focus-within) .param-mode,
+  .param:not(:focus-within) .param-menu,
+  .param:not(:focus-within) .param-remove {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+.param-input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--sd-control);
+  padding: 0 var(--space-3);
+  font: var(--type-body);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.param-input:hover {
+  border-color: var(--field-border-hover);
+}
+.param-input:focus-visible {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.param-input::placeholder {
+  color: var(--subtle);
+}
+:is(.step-details, .sd-form-scope) .param-multiline,
+:is(.step-details, .sd-form-scope) .param-json {
+  padding: var(--space-3);
+  resize: vertical;
+  field-sizing: content;
+  min-height: calc(3 * 20px + 2 * var(--space-3));
+  max-height: calc(12 * 20px + 2 * var(--space-3));
+}
+.param-json,
+.param-formula,
+.param-template {
+  font: var(--type-mono);
+}
+.param.has-error .param-input {
+  border-color: var(--danger);
+}
+.param.is-readonly .param-input {
+  border-color: transparent;
+  background: var(--sunken);
+}
+/* Selects and pickers look and size like inputs: one height, one text inset. */
+:is(.step-details, .sd-form-scope) .param-control .choice-field {
+  min-height: var(--sd-control);
+  background: var(--sunken);
+}
+:is(.step-details, .sd-form-scope) .param-control .choice-field:hover {
+  border-color: var(--field-border-hover);
+}
+:is(.step-details, .sd-form-scope) .param-control .choice-field:focus-within {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+:is(.step-details, .sd-form-scope)
+  .param-control
+  weave-select
+  .choice-field
+  input {
+  min-height: var(--sd-control);
+  margin-block: -1px;
+  padding: 0 var(--space-3);
+  font: var(--type-body);
+}
+:is(.step-details, .sd-form-scope)
+  .param-control
+  weave-select
+  .choice-field
+  button {
+  flex: none;
+  width: var(--sd-control);
+  min-width: var(--sd-control);
+  height: var(--sd-control);
+  min-height: var(--sd-control);
+  margin: -1px -1px -1px 0;
+  color: var(--muted);
+}
+:is(.step-details, .sd-form-scope) weave-select .choice-option {
+  min-width: var(--sd-target);
+  min-height: var(--sd-row);
+}
+/* The data picker of a Mapped field is a field like the others: one box at
+   the field height, the fields' text, and a toggle as wide as the box is tall.
+   In a key-value row it is the row's height, inside the row's own box. */
+:is(.step-details, .sd-form-scope) weave-formula-field .ref-combo-field {
+  grid-template-columns: minmax(0, 1fr) var(--sd-control);
+  min-height: var(--sd-control);
+  background: var(--sunken);
+}
+:is(.step-details, .sd-form-scope) weave-formula-field .ref-combo-field:hover {
+  border-color: var(--field-border-hover);
+}
+:is(.step-details, .sd-form-scope)
+  weave-formula-field
+  .ref-combo-field:focus-within {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+:is(.step-details, .sd-form-scope)
+  .param-control
+  weave-formula-field
+  .ref-combo-field
+  input {
+  min-height: var(--sd-control);
+  margin-block: -1px;
+  padding: 0 var(--space-3);
+  font: var(--type-body);
+  background: transparent;
+}
+:is(.step-details, .sd-form-scope)
+  .param-control
+  weave-formula-field
+  .ref-combo-field
+  input::placeholder {
+  color: var(--subtle);
+}
+:is(.step-details, .sd-form-scope) weave-formula-field .ref-combo-toggle {
+  width: var(--sd-control);
+  min-width: var(--sd-control);
+  min-height: var(--sd-control);
+  margin: -1px -1px -1px 0;
+  border-left: 0;
+  color: var(--muted);
+  background: transparent;
+}
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .ref-combo-field {
+  grid-template-columns: minmax(0, 1fr) var(--sd-row);
+  min-height: var(--sd-row);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .ref-combo-field
+  input {
+  min-height: var(--sd-row);
+}
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .ref-combo-toggle {
+  width: var(--sd-row);
+  min-width: var(--sd-row);
+  min-height: var(--sd-row);
+}
+/* A choice made in place is as wide as its content. */
+@supports (field-sizing: content) {
+  :is(.step-details, .sd-form-scope) weave-select.param-select {
+    width: fit-content;
+    max-width: 100%;
+  }
+  :is(.step-details, .sd-form-scope)
+    weave-select.param-select
+    .choice-field
+    input {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 8ch;
+    field-sizing: content;
+  }
+}
+.param-duration,
+.param-date {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+/* The unit keeps its words whole; the number box gives way. */
+.param-unit {
+  flex: none;
+  width: auto;
+}
+/* A number or a duration in one unit names it inside its box, at the end. */
+:is(.param-control, .param-duration):has(> .param-unit-suffix) {
+  position: relative;
+}
+:is(.param-control, .param-duration):has(> .param-unit-suffix) > .param-input {
+  flex: 1;
+  padding-inline-end: calc(var(--space-3) * 2 + 7ch);
+}
+.param-unit-suffix {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: var(--space-3);
+  display: flex;
+  align-items: center;
+  font: var(--type-small);
+  color: var(--subtle);
+  pointer-events: none;
+}
+.param-suffix {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+:is(.step-details, .sd-form-scope) button.param-switch {
+  width: 32px;
+  min-height: var(--sd-target);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.param-switch-track {
+  position: relative;
+  display: block;
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--hover);
+  border: 1px solid var(--field-border);
+}
+.param-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: left var(--dur-fast) var(--ease);
+}
+.param-switch[aria-checked="true"] .param-switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.param-switch[aria-checked="true"] .param-switch-track::after {
+  left: 16px;
+  background: var(--on-accent);
+}
+/* A switch that can't change keeps its position, without the accent. */
+.param-switch:disabled .param-switch-track {
+  background: var(--disabled-bg);
+  border-color: var(--border);
+}
+.param-switch:disabled .param-switch-track::after {
+  background: var(--disabled-ink);
+}
+/* Segmented choices are form controls: the control height, a compact face. */
+.param-segments {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  gap: 2px;
+  padding: 0 var(--space-1);
+}
+.param-segments::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+:is(.step-details, .sd-form-scope) .param-segments button[role="radio"] {
+  position: relative;
+  z-index: 0;
+  min-width: var(--sd-target);
+  min-height: var(--sd-control);
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: var(--type-label);
+}
+/* ::before is the face; ::after, the same box, carries the focus ring. */
+:is(.step-details, .sd-form-scope) .param-segments button[role="radio"]::before,
+:is(.step-details, .sd-form-scope) .param-segments button[role="radio"]::after {
+  content: "";
+  position: absolute;
+  inset: var(--space-1) 0;
+  z-index: -1;
+  border-radius: var(--radius-xs);
+}
+:is(.step-details, .sd-form-scope)
+  .param-segments
+  button[role="radio"]:is(:hover, [aria-checked="true"]) {
+  color: var(--text);
+}
+:is(.step-details, .sd-form-scope)
+  .param-segments
+  button[role="radio"]:disabled {
+  color: var(--disabled-ink);
+}
+:is(.step-details, .sd-form-scope)
+  .param-segments
+  button[role="radio"][aria-checked="true"]::before {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+:is(.step-details, .sd-form-scope)
+  .param-segments
+  button[role="radio"]:focus-visible {
+  outline: none;
+}
+:is(.step-details, .sd-form-scope)
+  .param-segments
+  button[role="radio"]:focus-visible::after {
+  outline: 2px solid var(--focus);
+}
+/* The line under a control: a message, a preview or a hint. It wraps. */
+.param-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.param-line > weave-icon {
+  flex: none;
+  margin-block: 2px;
+}
+.param-line[data-kind="error"] {
+  color: var(--danger-ink);
+}
+.param-line[data-kind="warning"] {
+  color: var(--warning-ink);
+}
+.param-line:is([hidden], [data-kind="none"]) {
+  display: none;
+}
+.param-line > .param-line-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Not applied: what the field holds isn't in the workflow, the last value
+   that applied is. The pill leads the message; where the message doesn't fit
+   beside it (a narrow column), the message takes the next line whole. */
+.param-line:has(> .param-status) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.param-line > .param-status {
+  flex: none;
+  height: 20px;
+}
+/* A fix Studio knows ends on the form's right edge, centered on the
+   message's first line; its target follows the density, and the message
+   moves down to its center instead of the fix reaching into the control. */
+:is(.step-details, .sd-form-scope) .param-line > button.param-fix {
+  flex: none;
+  min-height: var(--sd-label-row);
+  padding: 0 0 0 var(--space-2);
+  font: var(--type-small);
+  font-weight: 600;
+  color: var(--link);
+  text-decoration: none;
+}
+/* Like the form's other actions: underlined on hover and focus only. */
+:is(.step-details, .sd-form-scope)
+  .param-line
+  > button.param-fix:is(:hover, :focus-visible) {
+  text-decoration: underline;
+}
+.param-line:has(> .param-fix) > .param-line-text {
+  padding-top: calc((var(--sd-label-row) - 20px) / 2);
+}
+.param-line:has(> .param-fix) > weave-icon {
+  margin-top: calc((var(--sd-label-row) - 20px) / 2 + 2px);
+}
+.toggletip {
+  position: relative;
+  display: inline-flex;
+}
+/* The help button keeps its target around its 24 px place. */
+:is(.step-details, .sd-form-scope) button.toggletip-button {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  min-height: var(--sd-target);
+  margin: calc((var(--sd-label-row) - var(--sd-target)) / 2)
+    calc((var(--space-6) - var(--sd-target)) / 2);
+  color: var(--subtle);
+}
+.toggletip-text {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  width: max-content;
+  max-width: 320px;
+  padding: var(--space-2) var(--space-3);
+  font: var(--type-small);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-2);
+}
+.ref-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-caption);
+  color: var(--text);
+  background: var(--hover);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-xs);
+}
+.ref-pill weave-icon {
+  color: var(--muted);
+}
+.ref-sep {
+  color: var(--subtle);
+}
+:is(.step-details, .sd-form-scope) button.ref-pill-button {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: var(--sd-control);
+  padding: 0 var(--space-2);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.param-formula {
+  display: block;
+  padding: var(--space-3);
+  color: var(--text);
+  background: var(--sunken);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+.param-deferred {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :is(.step-details, .sd-form-scope)
+    .param-label-row
+    > .param-tools
+    > weave-row-menu
+    .row-menu-toggle,
+  :is(.step-details, .sd-form-scope)
+    .param-label-row
+    > .param-tools
+    > button.param-remove,
+  :is(.step-details, .sd-form-scope)
+    .param-label-row
+    > .param-tools
+    .param-mode
+    button[role="radio"] {
+    margin-block: 0;
+  }
+  :is(.step-details, .sd-form-scope) button.toggletip-button {
+    margin: 0;
+  }
+  :is(.step-details, .sd-form-scope) button.param-switch {
+    min-width: var(--sd-target);
+  }
+}
+
+/* Collections: lists, key-value rows and groups. */
+.param-list,
+.param-kv,
+.param-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.param-kv {
+  container-type: inline-size;
+}
+/* A row: handle, (key,) value and remove on one line, every control the
+   control height, tops and centers shared. */
+.param-row,
+.param-kv-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) var(--sd-target);
+  gap: var(--space-2);
+  align-items: start;
+}
+.param-kv-row {
+  grid-template-columns:
+    18px minmax(90px, 150px) minmax(0, 1fr)
+    var(--sd-target);
+}
+:is(.param-row, .param-kv-row) > .param-grip {
+  margin-top: calc((var(--sd-row) - 16px) / 2);
+}
+.param-kv-row.is-blank {
+  align-items: center;
+}
+.param-kv-row.is-blank > .param-grip {
+  margin-top: 0;
+}
+/* Too narrow for key and value side by side: the value goes under its key. */
+@container (max-width: 539px) {
+  .param-kv-row {
+    grid-template-columns: 18px minmax(0, 1fr) var(--sd-target);
+  }
+  .param-kv-row > .param-row-value,
+  .param-kv-row > .param-kv-hint {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .param-kv-row > button {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+/* A row's value: its control and its tools (Fixed | Mapped, the field menu)
+   share one field box, the tools at its right edge. */
+.param-row-value {
+  container-type: inline-size;
+  min-width: 0;
+  width: 100%;
+}
+.param-row-value > .param {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2) 0;
+}
+.param-row-value > .param::before {
+  content: "";
+  grid-row: 1;
+  grid-column: 1 / -1;
+  align-self: stretch;
+  pointer-events: none;
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.param-row-value > .param:hover::before {
+  border-color: var(--field-border-hover);
+}
+.param-row-value > .param:has(> .param-control :focus-visible)::before {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.param-row-value > .param.has-error::before {
+  border-color: var(--danger);
+}
+.param-row-value > .param.is-readonly::before {
+  border-color: transparent;
+}
+.param-row-value > .param > .param-control {
+  grid-row: 1;
+  grid-column: 1;
+  min-width: 0;
+}
+/* The label is for assistive technology only; its row adds no box. */
+.param-row-value > .param > .param-label-row {
+  display: contents;
+}
+.param-row-value > .param > .param-label-row > .param-spacer {
+  display: none;
+}
+.param-row-value > .param > .param-tools {
+  grid-row: 1;
+  grid-column: 2;
+  align-self: center;
+  padding-right: var(--space-3);
+}
+.param-row-value > .param > .param-line {
+  grid-row: 2;
+  grid-column: 1 / -1;
+}
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > :is(.param-input, weave-formula-field > .param-input),
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  > button.ref-pill-button,
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-select
+  .choice-field {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+/* A narrow value keeps its tools inside the box, on a second line. */
+@container (max-width: 299px) {
+  .param-row-value > .param {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .param-row-value > .param::before {
+    grid-row: 1 / span 2;
+  }
+  .param-row-value > .param > .param-tools {
+    grid-row: 2;
+    grid-column: 1;
+    justify-self: end;
+    margin-top: calc(-1 * var(--space-2));
+  }
+  .param-row-value > .param > .param-line {
+    grid-row: 3;
+  }
+  :is(.step-details, .sd-form-scope)
+    .param-row-value
+    .param-tools
+    :is(.param-mode, .param-menu) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+/* Cards: a decision's paths, its Otherwise and other groups of fields. The
+   card's header joins the item's label row, so its tools share the header
+   line. */
+.is-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.is-card > weave-param-field {
+  width: 100%;
+  min-width: 0;
+}
+.is-card > weave-param-field > .param {
+  gap: 0;
+}
+.is-card > weave-param-field > .param > .param-label-row {
+  container-type: inline-size;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+/* A card's field menu ends its header at rest, muted, on the card's inner edge. */
+.is-card
+  > weave-param-field
+  > .param
+  > .param-label-row
+  > .param-tools
+  > .param-menu {
+  opacity: 1;
+  pointer-events: auto;
+}
+:is(.step-details, .sd-form-scope)
+  .is-card
+  > weave-param-field
+  > .param
+  > .param-label-row
+  > .param-tools
+  > weave-row-menu
+  .row-menu-toggle {
+  margin-block: 0;
+  color: var(--muted);
+}
+.is-card > weave-param-field > .param > .param-control {
+  padding: var(--space-3);
+}
+.is-card > weave-param-field > .param > .param-line {
+  padding: 0 var(--space-3) var(--space-3);
+}
+/* One line: the next step gives way first, then the chip (both keep their
+   full text as a title); the move and remove buttons stay together at the end. */
+.param-card-head {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 0 var(--space-2);
+  min-width: 0;
+  min-height: var(--sd-target);
+}
+.param-card-head > :is(strong, .param-grip) {
+  flex: none;
+}
+/* The title's line is a target tall, as are the move and remove buttons
+   beside it, so a card without them (Otherwise) keeps the same header. */
+.param-card-head strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--sd-target);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.param-card-actions {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+}
+/* The chip and the next step: one line after the title, the next step
+   giving way first. */
+.param-card-route {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+/* A narrow card keeps its title and buttons on the header row and puts the
+   chip and the next step on a line under the title; a next step that doesn't
+   fit beside the chip wraps under it. */
+@container (max-width: 419px) {
+  .param-card-head {
+    flex-wrap: wrap;
+  }
+  .param-card-route {
+    order: 1;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    margin-left: calc(16px + var(--space-2));
+  }
+}
+.param-grip {
+  color: var(--subtle);
+}
+/* A card that doesn't move (Otherwise) keeps its title where a path's title
+   follows its grip. */
+.param-grip-space {
+  flex: none;
+  width: 16px;
+}
+/* A line that opens a card's body (Otherwise's "Runs when no path
+   applies."): the card's inner padding above it, a field's inner gap under. */
+.is-card > weave-param-field > .param > .param-label-row + .param-line {
+  padding: var(--space-3) var(--space-3) 0;
+}
+.is-card
+  > weave-param-field
+  > .param
+  > .param-line:not([hidden])
+  + .param-control {
+  padding-top: var(--sd-field-inner);
+}
+.param-up {
+  transform: rotate(-90deg);
+}
+.param-chip-out {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 220px;
+  height: 24px;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-caption);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--flow-line);
+  border-radius: var(--radius-pill);
+}
+.param-chip-out > weave-icon {
+  flex: none;
+}
+.param-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.param-next {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.param-group-add,
+.param-add-row,
+.param-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-4);
+  align-items: center;
+}
+.param-chips {
+  gap: var(--space-2);
+}
+.param-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 var(--space-2);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+}
+.param-chip-text,
+.param-chip-new {
+  width: 12ch;
+  min-height: var(--sd-row);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: var(--type-label);
+}
+.param-chip-new {
+  border-bottom: 1px dashed var(--field-border);
+}
+/* "Add …" actions: accent text with a plus, underlined on hover and focus only. */
+:is(.step-details, .sd-form-scope) button.param-add {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  min-height: var(--sd-row);
+  padding: 0;
+  font: var(--type-label);
+  color: var(--link);
+  background: transparent;
+  text-decoration: none;
+}
+:is(.step-details, .sd-form-scope) button.param-add:is(:hover, :focus-visible) {
+  background: transparent;
+  text-decoration: underline;
+}
+:is(.step-details, .sd-form-scope) button.param-add.is-dashed,
+:is(.step-details, .sd-form-scope) button.add-option-button {
+  padding: 0 var(--space-3);
+  font: var(--type-button);
+  color: var(--text);
+  background: transparent;
+  border: 1px dashed var(--field-border);
+  border-radius: var(--radius-sm);
+}
+:is(.step-details, .sd-form-scope)
+  button.param-add.is-dashed:is(:hover, :focus-visible),
+:is(.step-details, .sd-form-scope) button.add-option-button:hover {
+  text-decoration: none;
+  background: var(--hover);
+  border-color: var(--field-border-hover);
+}
+.param-kv-hint {
+  font: var(--type-small);
+  color: var(--subtle);
+}
+.add-option {
+  position: relative;
+  display: inline-block;
+  align-self: flex-start;
+}
+:is(.step-details, .sd-form-scope) button.add-option-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--sd-row);
+}
+.add-option-menu[data-side="above"] {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
+.add-option-menu {
+  overflow-y: auto;
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 6;
+  width: min(440px, 80vw);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+:is(.step-details, .sd-form-scope) button.add-option-item {
+  display: flex;
+  justify-content: flex-start;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-height: var(--sd-row);
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+:is(.step-details, .sd-form-scope)
+  button.add-option-item:is(:hover, :focus-visible) {
+  background: var(--hover);
+}
+.add-option-item b {
+  flex: none;
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.add-option-item span {
+  min-width: 0;
+  font: var(--type-caption);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.add-option-item[aria-disabled="true"] b {
+  color: var(--disabled-ink);
+}
+.add-option-item[aria-disabled="true"] span {
+  color: var(--subtle);
+}
+.add-option-empty {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.param-host.is-option > .param {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.param-list .icon-button,
+.param-kv .icon-button,
+.param-chip .icon-button {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  min-height: var(--sd-target);
+}
+/* A row's key and value controls are the row height. */
+.param-kv-name,
+.param-row-value > .param > .param-control > .param-input,
+.param-row-value > .param > .param-control > weave-formula-field > .param-input,
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  > button.ref-pill-button,
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-select
+  .choice-field,
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-select
+  .choice-field
+  :is(input, button) {
+  min-height: var(--sd-row);
+}
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-select
+  .choice-field
+  button {
+  width: var(--sd-row);
+  min-width: var(--sd-row);
+  height: var(--sd-row);
+}
+@media (max-width: 600px) {
+  :is(.step-details, .sd-form-scope) button.add-option-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .add-option-item span {
+    white-space: normal;
+  }
+}
+
+/* The hovered field keeps its label and explains the drop in words. */
+.param-drop-label {
+  display: none;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+weave-param-field[data-drop-hover] > .param > .param-label-row {
+  position: relative;
+}
+weave-param-field[data-drop-hover]
+  > .param
+  > .param-label-row
+  > .param-drop-label {
+  display: block;
+  position: absolute;
+  pointer-events: none;
+  left: 0;
+  top: 100%;
+  z-index: 3;
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  background: var(--raised);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+}
+.param-drop-label[data-fit="fits"] {
+  color: var(--accent);
+}
+.param-drop-label:is([data-fit="mismatch"], [data-fit="refused"]) {
+  color: var(--danger-ink);
+}
+weave-param-field[data-drop-hover] > .param {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}
+weave-param-field[data-drop-hover][data-fit="unknown"] > .param {
+  outline-color: var(--border-hover);
+}
+weave-param-field[data-drop-hover]:is(
+    [data-fit="mismatch"],
+    [data-fit="refused"]
+  )
+  > .param {
+  outline: 2px dashed var(--danger);
+}
+
+.param-resource {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.param-resource-modes {
+  align-self: flex-start;
+}
+.param-resource-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.param-resource-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+:is(.step-details, .sd-form-scope) button.param-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--sd-control);
+  min-width: var(--sd-target);
+  white-space: nowrap;
+  text-decoration: none;
+}
+:is(.step-details, .sd-form-scope)
+  button.param-open:is(:hover, :focus-visible) {
+  text-decoration: underline;
+}
+:is(.step-details, .sd-form-scope) .param-resource-modes button[role="radio"] {
+  min-height: var(--sd-control);
+  min-width: var(--sd-target);
+}
+.param-resource-problem {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.param-resource-viewer .modal-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: hidden;
+}
+.param-resource-viewer .modal-header {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.param-resource-viewer .modal-header h2 {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.param-resource-viewer button {
+  min-width: var(--sd-target);
+  min-height: var(--sd-target);
+}
+.param-resource-viewer .modal-actions {
+  flex: 0 0 auto;
+}
+.param-viewer {
+  min-height: 0;
+  max-height: 60vh;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-3);
+  font: var(--type-mono);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.param-resource-viewer[popover] {
+  inset: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: var(--text);
+}
+
+/* Call an API's URL: one field box with the connection's address, then the
+   path. At rest placeholders show as pills; focused, or under a drag, the
+   path is the text to type in or drop at. */
+.param-url {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  min-height: var(--sd-control);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.param-url:hover {
+  border-color: var(--field-border-hover);
+}
+.param-url:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.param.has-error .param-url {
+  border-color: var(--danger);
+}
+.param.is-readonly .param-url {
+  border-color: transparent;
+}
+/* The address is as wide as a placeholder's name and the gap after it, so
+   the rule after it is the edge each placeholder's value starts on. */
+.param-url-prefix {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-width: calc(var(--url-key) + var(--space-2));
+  padding: 0 var(--space-2) 0 var(--space-3);
+  font: var(--type-caption);
+  color: var(--subtle);
+  white-space: nowrap;
+  border-right: 1px solid var(--line);
+}
+/* A narrow field leaves the room to the path; the address stays in the description. */
+weave-url-field {
+  /* A placeholder's name, at most. */
+  --url-key: 150px;
+  display: block;
+  container-type: inline-size;
+}
+@container (max-width: 419px) {
+  .param-url-prefix {
+    display: none;
+  }
+}
+.param-url-path {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+/* The text box fills the field box, border included, so it is a full target. */
+:is(.step-details, .sd-form-scope) .param-url-input,
+:is(.step-details, .sd-form-scope) .param-url-input:is(:hover, :focus-visible) {
+  min-height: var(--sd-control);
+  margin-block: -1px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  font: var(--type-mono);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.param-url.has-view .param-url-input {
+  color: transparent;
+}
+.param-url-view {
+  position: absolute;
+  inset: 0 var(--space-3) 0 var(--space-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  font: var(--type-mono);
+  line-height: calc(var(--sd-control) - 2px);
+  color: var(--text);
+}
+.param-url-view .ref-pill {
+  margin-inline: var(--space-1);
+  vertical-align: middle;
+  font: var(--type-caption);
+}
+.param-url-brace,
+.param-url-slot {
+  color: var(--syntax-keyword);
+}
+/* Under a drag the path shows as text, so the drop lands where it shows. */
+weave-param-field[data-drop-hover] .param-url-view {
+  display: none;
+}
+weave-param-field[data-drop-hover] .param-url.has-view .param-url-input {
+  color: var(--text);
+}
+/* One row per placeholder: its name, then its value with Fixed | Mapped. */
+.param-url-parts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  container-type: inline-size;
+}
+.param-url-part {
+  display: grid;
+  grid-template-columns: minmax(90px, var(--url-key)) minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+}
+.param-url-key {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--sd-row);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-mono);
+  color: var(--syntax-keyword);
+}
+@container (max-width: 359px) {
+  .param-url-part {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+  .param-url-key {
+    min-height: 0;
+  }
+}
+
+/* A decision's conditions: rows of data, test and value at the row height,
+   each ending on its trash button on the pane's right edge. The field's
+   label names the rows for assistive technology only; the field menu ends
+   the add line. On one line the data leads (about 40 % of the row), the test
+   fits the longest test ("does not contain") and the value keeps the rest of
+   its share; narrower (below 480 px, 680 px at touch density) a condition
+   takes two lines, its data and then test, value and trash, and three below
+   400 px, with a rule between conditions. */
+weave-param-field.is-conditions > .param {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sd-field-inner) 0;
+}
+weave-param-field.is-conditions > .param > .param-label-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 0;
+  min-height: 0;
+}
+weave-param-field.is-conditions > .param > .param-control {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+weave-param-field.is-conditions > .param > .param-tools {
+  grid-row: 1;
+  grid-column: 2;
+  align-self: end;
+  margin-bottom: calc((var(--sd-row) - var(--sd-target)) / 2);
+}
+weave-param-field.is-conditions > .param > .param-line {
+  grid-row: 2;
+  grid-column: 1 / -1;
+}
+:is(.step-details, .sd-form-scope) .condition-editor.is-compact {
+  gap: var(--space-2);
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-intro {
+  gap: var(--space-2);
+  font: var(--type-small);
+  color: var(--muted);
+}
+:is(.step-details, .sd-form-scope) .condition-editor.is-compact .condition-row {
+  grid-template-columns:
+    minmax(0, calc(var(--sd-row) + 122px)) minmax(0, 1fr)
+    var(--sd-target);
+  grid-template-areas:
+    "data data data"
+    "test value remove";
+  align-items: start;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-row
+  + .condition-row {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+/* Phone width: the test on a line of its own, then the value and trash. */
+@container (max-width: 399px) {
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    .condition-row {
+    grid-template-columns: minmax(0, 1fr) var(--sd-target);
+    grid-template-areas:
+      "data data"
+      "test test"
+      "value remove";
+  }
+}
+@container (min-width: 480px) {
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    .condition-row {
+    grid-template-columns:
+      minmax(0, 1fr) minmax(0, calc(var(--space-6) + 122px))
+      minmax(0, 0.65fr) var(--sd-target);
+    grid-template-areas: "data test value remove";
+  }
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    .condition-row
+    + .condition-row {
+    padding-top: 0;
+    border-top: 0;
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  @container (min-width: 480px) and (max-width: 679px) {
+    :is(.step-details, .sd-form-scope)
+      .condition-editor.is-compact
+      .condition-row {
+      grid-template-columns:
+        minmax(0, calc(var(--sd-row) + 122px)) minmax(0, 1fr)
+        var(--sd-target);
+      grid-template-areas:
+        "data data data"
+        "test value remove";
+    }
+    :is(.step-details, .sd-form-scope)
+      .condition-editor.is-compact
+      .condition-row
+      + .condition-row {
+      padding-top: var(--space-2);
+      border-top: 1px solid var(--line);
+    }
+  }
+  @container (min-width: 680px) {
+    :is(.step-details, .sd-form-scope)
+      .condition-editor.is-compact
+      .condition-row {
+      grid-template-columns:
+        minmax(0, 1fr) minmax(0, calc(var(--sd-row) + 122px))
+        minmax(0, 0.65fr) var(--sd-target);
+    }
+  }
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-remove {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+  margin-top: calc((var(--sd-row) - var(--sd-target)) / 2);
+  color: var(--muted);
+}
+/* Every box in a row: the row height, the field look, one focus ring. */
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  :is(.ref-combo-field, .choice-field, .condition-value) {
+  min-height: var(--sd-row);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  :is(.ref-combo-field, .choice-field, .condition-value):hover {
+  border-color: var(--field-border-hover);
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  :is(.ref-combo-field, .choice-field, .condition-value):focus-within {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-value {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-value
+  :is(.ref-combo-field, .choice-field) {
+  min-height: calc(var(--sd-row) - 2px);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-value
+  > :is(weave-select, .condition-data) {
+  flex: 1;
+  min-width: 0;
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  height: var(--sd-row);
+  min-height: 0;
+  margin-block: -1px;
+  padding: 0 var(--space-2);
+  font: var(--type-body);
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+  /* At rest a value too long for its box ends in "…"; its tooltip holds the
+     whole text, and while it has focus the text scrolls. */
+  text-overflow: ellipsis;
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-input::placeholder {
+  color: var(--subtle);
+}
+/* Text boxes and toggles fill their field box, border included, so each is
+   a full row-height target. The test's toggle is narrower with a fine
+   pointer, so its words fit. */
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .ref-combo-field {
+  grid-template-columns: minmax(0, 1fr) var(--sd-row);
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  :is(.ref-combo-field, .choice-field)
+  input {
+  height: var(--sd-row);
+  min-height: 0;
+  margin-block: -1px;
+  padding: 0 0 0 var(--space-2);
+  font: var(--type-body);
+  background: transparent;
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  :is(.ref-combo-toggle, .choice-field button) {
+  width: var(--sd-row);
+  min-width: var(--sd-row);
+  height: var(--sd-row);
+  min-height: 0;
+  margin: -1px -1px -1px 0;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-operator
+  .choice-field
+  button {
+  width: var(--space-6);
+  min-width: var(--space-6);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    .condition-operator
+    .choice-field
+    button {
+    width: var(--sd-row);
+    min-width: var(--sd-row);
+  }
+}
+/* Data as a pill, also while it has focus; its text once the person types,
+   opens the list or deletes. A click or a key opens the list, so the cell
+   needs no toggle of its own. */
+.condition-editor.is-compact .condition-data {
+  position: relative;
+  grid-area: data;
+  min-width: 0;
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-data
+  .ref-combo-field {
+  grid-template-columns: minmax(0, 1fr);
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-data
+  .ref-combo-toggle {
+  display: none;
+}
+.condition-editor.is-compact .condition-pill {
+  position: absolute;
+  top: 50%;
+  left: var(--space-2);
+  max-width: calc(100% - 2 * var(--space-2));
+  translate: 0 -50%;
+  pointer-events: none;
+}
+/* A long source gives way; the field's own name stays whole. */
+.condition-editor.is-compact .condition-pill > span:not(.ref-sep) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.condition-editor.is-compact .condition-pill > span:last-child {
+  flex-shrink: 0;
+}
+.condition-editor.is-compact .condition-pill > :is(.ref-sep, weave-icon) {
+  flex: none;
+}
+.condition-editor.is-compact .condition-data.is-editing .condition-pill {
+  display: none;
+}
+.condition-editor.is-compact
+  .condition-data.has-pill:not(.is-editing)
+  .ref-combo-field
+  input {
+  color: transparent;
+  caret-color: transparent;
+  cursor: pointer;
+}
+/* Only problems show under the data: the type is in the pill and the list. */
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .ref-combo-hint:not(.warning, .error) {
+  display: none;
+}
+/* Fixed | Mapped for the value, inside its box at the right end, like the
+   key-value rows: shown on hover, on focus and while Mapped, its room kept
+   at rest. One-line rows with a fine pointer use a pair of 24 px icons;
+   wider values show the words, 12 px from the box's end. */
+.condition-editor.is-compact .condition-mode {
+  flex: none;
+  align-self: center;
+  margin-right: calc(var(--space-3) - 1px);
+}
+.condition-editor.is-compact
+  .condition-value:not(:hover, :focus-within, .is-mapped)
+  > .condition-mode {
+  opacity: 0;
+}
+@media (hover: none), (pointer: coarse) {
+  .condition-editor.is-compact
+    .condition-value:not(:focus-within, .is-mapped)
+    > .condition-mode {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-mode
+  button[role="radio"] {
+  margin-block: -1px;
+}
+.condition-editor.is-compact .condition-mode-icon {
+  display: none;
+}
+/* A narrow value (one-line rows) uses a pair of icons: 24 px with a fine
+   pointer, the touch target otherwise. */
+.condition-editor.is-compact .condition-value {
+  container: condition-value / inline-size;
+}
+@container condition-value (max-width: 219px) {
+  .condition-editor.is-compact .condition-mode {
+    margin-right: var(--space-1);
+    padding: 0;
+  }
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    .condition-mode
+    button[role="radio"] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--space-6);
+    min-width: var(--space-6);
+    height: var(--space-6);
+    min-height: var(--space-6);
+    margin: 0;
+    padding: 0;
+  }
+  .condition-editor.is-compact .condition-mode-icon {
+    display: block;
+  }
+  .condition-editor.is-compact .condition-mode-text {
+    display: none;
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  @container condition-value (max-width: 219px) {
+    :is(.step-details, .sd-form-scope)
+      .condition-editor.is-compact
+      .condition-mode
+      button[role="radio"] {
+      width: var(--sd-target);
+      min-width: var(--sd-target);
+      height: var(--sd-target);
+      min-height: var(--sd-target);
+      margin-block: -1px;
+    }
+  }
+}
+/* A compared value names its field unless the box is wide; the whole path
+   is its tooltip. */
+@container condition-value (max-width: 379px) {
+  .condition-editor.is-compact .condition-value-pill > :not(span:last-child) {
+    display: none;
+  }
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-join
+  .choice-field {
+  min-height: var(--sd-row);
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  weave-select.condition-join {
+  width: calc(var(--sd-row) + 160px);
+  max-width: 100%;
+}
+@supports (field-sizing: content) {
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    weave-select.condition-join {
+    width: fit-content;
+    max-width: 100%;
+  }
+  :is(.step-details, .sd-form-scope)
+    .condition-editor.is-compact
+    weave-select.condition-join
+    .choice-field
+    input {
+    flex: 0 1 auto;
+    width: auto;
+    field-sizing: content;
+  }
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-adapted {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-adapted
+  > weave-icon {
+  flex: none;
+  margin-block: 2px;
+}
+/* Add condition and the path's own options share one line. */
+:is(.step-details, .sd-form-scope)
+  .condition-editor.is-compact
+  .condition-tools {
+  justify-content: flex-start;
+  gap: 0 var(--space-4);
+}
+/* The schema designer under its field: the field names it, so its own
+   heading is for assistive technology, and its tools start the block. */
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-header {
+  justify-content: flex-start;
+}
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-header h3 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* Its rows at the form's density: a field per line, the row height, the
+   field menu on the row's inner edge. */
+:is(.step-details, .sd-form-scope) weave-schema-field .sd,
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-rows {
+  gap: var(--space-2);
+}
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-tools button {
+  min-height: var(--sd-row);
+}
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-row {
+  gap: var(--space-2);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-color: var(--border);
+  border-radius: var(--radius-sm);
+}
+:is(.step-details, .sd-form-scope)
+  weave-schema-field
+  .sd-row:has(.sd-row-main) {
+  padding-bottom: var(--space-3);
+}
+:is(.step-details, .sd-form-scope) weave-schema-field .sd-summary {
+  min-height: var(--sd-row);
+  padding: 0;
+}
+:is(.step-details, .sd-form-scope)
+  weave-schema-field
+  .sd-row-heading
+  .row-menu-toggle {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
+/* The "Only allow these fields" box starts on the pane's left edge. */
+:is(.step-details, .sd-form-scope)
+  weave-schema-field
+  .sd-root-options
+  input[type="checkbox"] {
+  margin-inline-start: 0;
+}
+
+/* Workflow settings: the form, then the workflow's connection slots and AI
+   profiles, on the dialog's one left edge and one right edge. */
+.sd-form-scope {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+.wf-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sd-field-inner);
+  min-width: 0;
+}
+.wf-section h3 {
+  display: flex;
+  align-items: center;
+  min-height: var(--sd-label-row);
+  margin: 0;
+}
+.wf-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.wf-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+}
+.wf-row + .wf-row {
+  border-top: 1px solid var(--border);
+}
+.wf-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+/* A long line breaks between its parts (at " · "), never inside a name. */
+.wf-title {
+  font: var(--type-small);
+  color: var(--text);
+}
+.wf-part {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.wf-title code {
+  font: var(--type-mono);
+}
+.wf-meta {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.sd-form-scope .wf-row > weave-row-menu {
+  flex: none;
+}
+.sd-form-scope .wf-row > weave-row-menu .row-menu-toggle {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}

@@ -31,6 +31,7 @@ import {
   newWorkflow,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+import { settingsGear, withNewEditor } from "./step-details-po";
 import { python, pythonAvailable, repository } from "../python-path";
 
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
@@ -505,5 +506,63 @@ test.describe("1280x720", () => {
     await page.getByRole("button", { name: "Stop simulation" }).click();
     await expect(simulation).toHaveCount(0);
     await expect(page.locator(".graph-node.is-live")).toHaveCount(0);
+  });
+});
+
+// Text typed in Source never meets a simulation: Simulate asks about it
+// before it starts, and Source stays read-only while it runs, so nothing
+// typed is ever applied while editing is paused.
+test.describe("Simulate over text typed in Source", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test.skip(!artifact, "Needs the repository's Python environment.");
+
+  test("Simulate asks first, and the simulation runs the applied text", async ({
+    page,
+  }) => {
+    await withNewEditor(page);
+    await connected(page, { capabilities: [...allCapabilities, "compile"] });
+    await simulator(page);
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(source);
+    await closeSheet(page);
+    await page.getByRole("tab", { name: "Source", exact: true }).click();
+    const box = page.getByRole("textbox", { name: "Workflow source" });
+    const typed = (await box.inputValue()).replace(
+      "name: simulated",
+      "name: renamed-in-source",
+    );
+    await box.fill(typed);
+    const question = page.getByRole("dialog", {
+      name: "Apply the changes typed in Source?",
+    });
+    const setup = page.getByRole("dialog", { name: "Simulate this workflow" });
+    await command(page, "Simulate");
+    await question
+      .getByRole("button", { name: "Keep editing", exact: true })
+      .click();
+    await expect(question).toHaveCount(0);
+    await expect(setup).toHaveCount(0);
+    await expect(box).toHaveValue(typed);
+    await expect(page.locator(".editor-identity h1")).toHaveText("simulated");
+    await command(page, "Simulate");
+    await question
+      .getByRole("button", { name: "Apply changes", exact: true })
+      .click();
+    await expect(setup).toBeVisible();
+    await setup.getByLabel(/customer ?id/i).fill("c-1");
+    await setup.getByRole("button", { name: "Start simulation" }).click();
+    await expect(
+      page.getByText("Simulating. Editing is paused."),
+    ).toBeVisible();
+    await expect(page.locator(".editor-identity h1")).toHaveText(
+      "renamed-in-source",
+    );
+    await expect(box).toHaveAttribute("readonly", "");
+    await expect(box).toHaveValue(typed);
+    // Nothing typed is left for the gear: it opens, read-only while paused.
+    await settingsGear(page).click();
+    await expect(
+      page.getByRole("dialog", { name: "Workflow settings" }),
+    ).toBeVisible();
   });
 });

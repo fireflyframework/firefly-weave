@@ -23,19 +23,22 @@ import {
   NDV_REGISTRY_VERSION,
   registerParameters,
   registerSubNodes,
+  type Choice,
   type Edit,
   type InstanceKey,
   type Json,
   type KindContext,
   type NdvContext,
+  type ParamSpec,
   type ParameterComponent,
   type RealExecutionSupport,
   type SampleContext,
+  type StepKindDescriptor,
   type SubNodeSlotSpec,
 } from "../../src/app/editor/ndv/registry";
 import type { StepTestRequest } from "../../src/app/editor/state/execution";
 
-// A registry version 2 fails here first.
+// A registry version 3 fails here first.
 export const pinnedVersion: NdvContext["version"] = NDV_REGISTRY_VERSION;
 
 @Component({ selector: "contract-agent-parameters", template: "" })
@@ -124,6 +127,33 @@ export function registerAgent(): void {
   });
 }
 
+// A field that is always written, even when removed: the language requires its
+// key, so removing it writes the default. Leaving the member out deletes the key.
+export const keepsItsKey: ParamSpec = {
+  id: "concurrency",
+  path: ["concurrency"],
+  type: "number",
+  label: "Run at most",
+  default: 2,
+  whenRemoved: "default",
+};
+export const deletesItsKey: ParamSpec = {
+  ...keepsItsKey,
+  whenRemoved: "delete",
+};
+export const omitsTheChoice: ParamSpec = {
+  id: "description",
+  path: ["description"],
+  type: "text",
+  label: "Description",
+};
+export const removedChoices: NonNullable<ParamSpec["whenRemoved"]>[] = [
+  "delete",
+  "default",
+  // @ts-expect-error a field either deletes its key or writes the default
+  "clear",
+];
+
 // What loop and call parameters read.
 export function loopItem(ctx: NdvContext, loop: string): Json | null {
   const sample: SampleContext | null = ctx.sample.context(["items"]);
@@ -194,4 +224,85 @@ export const kindMustSetTheTimeout: KindBody = {
   kind: "action",
   step_id: "a",
   input: null,
+};
+
+// Parameters and Settings forms, the way the AI step forms write them.
+export const aiTaskForms: Pick<StepKindDescriptor, "form" | "settings"> = {
+  form: () => ({
+    fields: [
+      {
+        id: "model",
+        path: ["profile"],
+        type: "model",
+        label: "Model",
+        required: true,
+      },
+      {
+        id: "prompt",
+        path: ["prompt"],
+        type: "multiline",
+        label: "Prompt",
+        required: true,
+        mapping: "both",
+        templateCapable: true,
+      },
+    ],
+    options: [
+      {
+        id: "context",
+        path: ["context"],
+        type: "json",
+        label: "Context",
+        mapping: "both",
+      },
+      {
+        id: "temperature",
+        path: ["temperature"],
+        type: "number",
+        label: "Temperature",
+        min: 0,
+        max: 2,
+        showWhen: (step) => step["profile"] !== undefined,
+        hiddenReason: () => "Choose a model first",
+      },
+    ],
+  }),
+  settings: () => ({
+    fields: [
+      {
+        id: "timeout",
+        path: ["spec", "llmProfiles", "support", "timeoutSeconds"],
+        scope: "workflow",
+        type: "duration",
+        label: "Timeout",
+        units: ["seconds", "minutes"],
+      },
+    ],
+  }),
+};
+export const tableChoices = (ctx: NdvContext): Promise<Choice[]> =>
+  ctx.catalog
+    .tables()
+    .then((rows) => rows.map((row) => ({ value: row.uses, label: row.title })));
+export const ownedMethod = (kind: KindContext, uses: string): Json | null =>
+  kind.ownedAction?.(uses) ?? null;
+
+export const projectedTableInput: ParamSpec = {
+  id: "amount",
+  path: ["with", "amount"],
+  type: "number",
+  label: "Amount",
+  mapping: "both",
+  referenceProjection: {
+    pointer: "/input",
+    values: { amount: { ref: "/input/amount" } },
+  },
+};
+export const invalidProjectedTableInput: ParamSpec = {
+  ...projectedTableInput,
+  referenceProjection: {
+    pointer: "/input",
+    // @ts-expect-error projected values are formulas, not raw JSON values
+    values: { amount: 20 },
+  },
 };

@@ -23,7 +23,12 @@ test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
 });
 
-for (const gesture of ["Space", "ControlOrMeta", "middle"] as const) {
+for (const gesture of [
+  "Space",
+  "Space+Escape",
+  "ControlOrMeta",
+  "middle",
+] as const) {
   test(`${gesture} drag on a step pans without moving or selecting it`, async ({
     page,
   }) => {
@@ -35,7 +40,8 @@ for (const gesture of ["Space", "ControlOrMeta", "middle"] as const) {
     await body.focus();
     const before = (await body.boundingBox())!;
     const selected = await body.getAttribute("aria-pressed");
-    if (gesture !== "middle") await page.keyboard.down(gesture);
+    const held = gesture === "Space+Escape" ? "Space" : gesture;
+    if (held !== "middle") await page.keyboard.down(held);
     await page.mouse.move(
       before.x + before.width / 2,
       before.y + before.height / 2,
@@ -48,8 +54,12 @@ for (const gesture of ["Space", "ControlOrMeta", "middle"] as const) {
     );
     await expect(canvas.root.locator("f-minimap")).toHaveCSS("opacity", "1");
     await expect(canvas.root.locator("[data-toolbar-for]")).toHaveCount(0);
+    if (gesture === "Space+Escape") await page.keyboard.press("Escape");
     await page.mouse.up({ button: gesture === "middle" ? "middle" : "left" });
-    if (gesture !== "middle") await page.keyboard.up(gesture);
+    if (held !== "middle") await page.keyboard.up(held);
+    await expect(
+      page.getByRole("dialog", { name: /^Step details: / }),
+    ).toHaveCount(0);
     await expect
       .poll(async () => (await body.boundingBox())!.x - before.x)
       .toBeCloseTo(80, 0);
@@ -166,25 +176,24 @@ test("double-click opens step details with the same focus as Enter", async ({
 }) => {
   const canvas = await openWorkflow(page);
   await canvas.tileBody("approval").dblclick();
-  await expect(page.locator(".inspector-header h2")).toBeFocused();
-  await expect(page.locator(".inspector-header h2")).toHaveText("Human task");
-  await canvas.tileBody("$trigger:manual").dblclick();
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          !!document.activeElement?.closest('[data-field="spec/inputSchema"]'),
-      ),
-    )
-    .toBe(true);
-  await canvas.tileBody("$end").dblclick();
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => !!document.activeElement?.closest('[data-field="spec/output"]'),
-      ),
-    )
-    .toBe(true);
+  for (const [id, title] of [
+    ["approval", "approval"],
+    ["$trigger:manual", "Manual form trigger"],
+    ["$end", "End"],
+  ]) {
+    if (id !== "approval") await canvas.tileBody(id).dblclick();
+    const details = page.getByRole("dialog", {
+      name: `Step details: ${title}`,
+      exact: true,
+    });
+    await expect(details).toBeVisible();
+    await expect
+      .poll(() =>
+        details.evaluate((dialog) => dialog.contains(document.activeElement)),
+      )
+      .toBe(true);
+    await canvas.closeInspector();
+  }
 });
 
 test("End has a readable label below its circle at 50 percent", async ({
@@ -274,6 +283,9 @@ test("selecting steps keeps the exported viewport and workflow source unchanged"
   for (const id of ["record-result", "approval", "prepare-request"]) {
     await canvas.tileBody(id).focus();
     await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("dialog", { name: `Step details: ${id}`, exact: true }),
+    ).toBeVisible();
     await canvas.closeInspector();
   }
   expect(await viewport()).toEqual(before);

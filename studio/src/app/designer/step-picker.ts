@@ -48,6 +48,8 @@ import {
   stepKindKeywords,
   stepKindLabels,
 } from "./step-kinds";
+import { editorNextEnabled } from "../editor/state/editor-flag";
+import { COMMON_ACTIONS } from "../editor/ndv/owned/common-actions";
 
 export {
   stepKindDescriptions,
@@ -64,18 +66,35 @@ export interface PickerAction {
   /** Connector or worker that runs the action, shown as secondary text. */
   group?: string;
 }
-/** What the person chose: a step kind, plus the action reference for actions. */
+/** A step offered by what it does (Call an API, Send email…), with the new editor on. */
+export interface PickerCommon {
+  id: string;
+  label: string;
+  description: string;
+  /** A `<weave-icon>` name. */
+  icon: string;
+  keywords: string;
+}
+/**
+ * What the person chose: a step kind, plus the action reference for actions,
+ * or the common action (Call an API, Send email…) by its ID.
+ */
 export interface StepPickerChoice {
   kind: Kind;
   uses?: string;
+  common?: string;
 }
 export interface PickerOption {
   id: string;
   kind: Kind;
   uses?: string;
+  /** The common action this option inserts. */
+  common?: string;
+  /** Its icon, when it isn't the kind's. */
+  icon?: string;
   label: string;
   description: string;
-  section: "steps" | "actions";
+  section: "steps" | "common" | "actions";
 }
 export type PickerDismissReason = "escape" | "outside" | "tab";
 
@@ -90,23 +109,37 @@ const matches = (terms: string[], ...fields: (string | undefined)[]) => {
 };
 
 /**
- * Filters step kinds and published actions by every word of the query,
- * matching names, descriptions, kinds and action references.
+ * Filters step kinds, common actions and published actions by every word of
+ * the query, matching names, descriptions, kinds, everyday words and action
+ * references.
  */
 export function pickerOptions(
   query: string,
   kinds: readonly Kind[],
   actions: readonly PickerAction[],
   limit = ACTION_LIMIT,
-): { steps: PickerOption[]; actions: PickerOption[]; hiddenActions: number } {
+  common: readonly PickerCommon[] = [],
+): {
+  steps: PickerOption[];
+  common: PickerOption[];
+  actions: PickerOption[];
+  hiddenActions: number;
+} {
   const terms = words(query);
+  // Everyday words a common action claims ("api" for Call an API) find that
+  // action, not a step kind that lists them too; names and descriptions still do.
+  const claimed = new Set(common.flatMap((item) => words(item.keywords)));
+  const keywordsOf = (kind: Kind) =>
+    words(stepKindKeywords[kind])
+      .filter((word) => !claimed.has(word))
+      .join(" ");
   const steps = kinds
     .filter((kind) =>
       matches(
         terms,
         stepKindLabels[kind],
         stepKindDescriptions[kind],
-        stepKindKeywords[kind],
+        keywordsOf(kind),
         kind,
       ),
     )
@@ -117,6 +150,21 @@ export function pickerOptions(
         label: stepKindLabels[kind],
         description: stepKindDescriptions[kind],
         section: "steps",
+      }),
+    );
+  const commonFound = common
+    .filter((item) =>
+      matches(terms, item.label, item.description, item.keywords),
+    )
+    .map(
+      (item): PickerOption => ({
+        id: `common:${item.id}`,
+        kind: "action",
+        common: item.id,
+        icon: item.icon,
+        label: item.label,
+        description: item.description,
+        section: "common",
       }),
     );
   const found = actions.filter((action) =>
@@ -130,6 +178,7 @@ export function pickerOptions(
   );
   return {
     steps,
+    common: commonFound,
     actions: found.slice(0, limit).map((action): PickerOption => {
       const uses = `${action.name}@${action.version}`;
       return {
@@ -222,6 +271,26 @@ let sequence = 0;
           }
         </div>
       }
+      @if (results().common.length) {
+        <div role="group" [attr.aria-labelledby]="prefix + '-common'">
+          <div
+            class="step-picker-group"
+            role="presentation"
+            [id]="prefix + '-common'"
+          >
+            Common actions
+          </div>
+          @for (option of results().common; track option.id) {
+            <ng-container
+              [ngTemplateOutlet]="row"
+              [ngTemplateOutletContext]="{
+                $implicit: option,
+                index: results().steps.length + $index,
+              }"
+            />
+          }
+        </div>
+      }
       @if (showActions()) {
         <div role="group" [attr.aria-labelledby]="prefix + '-actions'">
           <div
@@ -245,7 +314,8 @@ let sequence = 0;
               [ngTemplateOutlet]="row"
               [ngTemplateOutletContext]="{
                 $implicit: option,
-                index: results().steps.length + $index,
+                index:
+                  results().steps.length + results().common.length + $index,
               }"
             />
           }
@@ -276,7 +346,7 @@ let sequence = 0;
         (click)="pick(option)"
       >
         <span class="step-icon" aria-hidden="true"
-          ><weave-icon [name]="option.kind"
+          ><weave-icon [name]="option.icon ?? option.kind"
         /></span>
         <span class="step-picker-text">
           <span class="step-picker-label">{{ option.label }}</span>
@@ -400,6 +470,8 @@ export class StepPicker implements AfterViewInit, OnDestroy {
   actionsLoading = input(false);
   /** Plain note in the actions group, for example why none are listed. */
   actionsNote = input("");
+  /** Steps offered by what they do; by default the common actions while the new editor is on. */
+  common = input<readonly PickerCommon[] | null>(null);
   choose = output<StepPickerChoice>();
   dismiss = output<PickerDismissReason>();
 
@@ -407,11 +479,21 @@ export class StepPicker implements AfterViewInit, OnDestroy {
   query = signal("");
   activeIndex = signal(0);
   placement = signal<PopoverPlacement | null>(null);
+  private readonly commonList = computed(
+    () => this.common() ?? (editorNextEnabled() ? COMMON_ACTIONS : []),
+  );
   results = computed(() =>
-    pickerOptions(this.query(), this.kinds(), this.actions()),
+    pickerOptions(
+      this.query(),
+      this.kinds(),
+      this.actions(),
+      ACTION_LIMIT,
+      this.commonList(),
+    ),
   );
   options = computed(() => [
     ...this.results().steps,
+    ...this.results().common,
     ...this.results().actions,
   ]);
   activeOption = computed(
@@ -558,9 +640,11 @@ export class StepPicker implements AfterViewInit, OnDestroy {
     if (this.closed) return;
     this.closed = true;
     this.choose.emit(
-      option.uses
-        ? { kind: option.kind, uses: option.uses }
-        : { kind: option.kind },
+      option.common
+        ? { kind: option.kind, common: option.common }
+        : option.uses
+          ? { kind: option.kind, uses: option.uses }
+          : { kind: option.kind },
     );
   }
   keydown(event: KeyboardEvent) {

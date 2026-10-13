@@ -16,8 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 /* The left-to-right canvas, in tokens only. A step's role shows in its
-   shape and icon, never a color; borders mark only selected, live,
-   unapplied and error, and every other state is a corner badge. */
+   shape and icon, never a color; borders mark only selected, live and
+   error, and every other state is a corner badge. */
 weave-canvas-view,
 .canvas-v2 weave-node-tile,
 .canvas-v2 weave-edge-layer,
@@ -159,16 +159,12 @@ weave-canvas-view,
   margin-left: 8px;
 }
 
-/* The four border states; error comes last, so it wins over live */
+/* The three border states; error comes last, so it wins over live */
 .canvas-v2 .tile-shape.selected {
   border-color: var(--accent);
   box-shadow:
     inset 0 0 0 1px var(--accent),
     0 0 0 4px var(--accent-glow);
-}
-.canvas-v2 .tile-shape.unapplied {
-  outline: 2px dashed var(--accent);
-  outline-offset: 2px;
 }
 .canvas-v2 .tile-shape.live {
   border-color: var(--live);
@@ -199,6 +195,35 @@ weave-canvas-view,
       inset 0 0 0 1px var(--live),
       0 0 0 6px var(--live-glow);
   }
+}
+
+/* Keep the hit circle outside both center lines when zoom shrinks a tile.
+   Round up like focus rings so transformed targets never dip below touch size. */
+.canvas-v2 .tile-issue {
+  position: absolute;
+  --issue-target: round(up, calc(var(--control-touch) / var(--zoom, 1)), 1px);
+  top: min(
+    calc(-0.5 * var(--issue-target)),
+    calc(0.5 * var(--tile-h) - var(--issue-target))
+  );
+  right: min(
+    calc(-0.5 * var(--issue-target)),
+    calc(0.5 * var(--tile-w) - var(--issue-target))
+  );
+  width: var(--issue-target);
+  height: var(--issue-target);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  pointer-events: auto;
+}
+.canvas-v2 .tile-issue .tile-badge {
+  top: 50%;
+  right: 50%;
+  transform: translate(50%, -50%);
+  pointer-events: none;
 }
 
 /* Corner badge */
@@ -289,6 +314,11 @@ weave-canvas-view,
   text-overflow: ellipsis;
   font: var(--type-caption);
   color: var(--muted);
+}
+/* A step note shown on the canvas is its label's third line: the name
+   keeps to one line so the block stays three lines high. */
+.canvas-v2 .tile-label.has-note strong {
+  -webkit-line-clamp: 1;
 }
 
 /* Handles: drawn 12 px, hit area 24 × 24 */
@@ -743,6 +773,7 @@ weave-canvas-view,
     .join-label,
     .lane-slot-label,
     .tile-badge,
+    .tile-issue,
     .handle,
     .sub-node-chip,
     .sub-node-handle,

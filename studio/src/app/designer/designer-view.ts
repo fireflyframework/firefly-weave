@@ -20,9 +20,15 @@ SPDX-License-Identifier: Apache-2.0
 // diagnostics strip. Loaded lazily (@defer) when a workflow opens, so the
 // initial bundle stays small; the shell passes itself as the host and keeps
 // owning the workflow and every command.
-import { ChangeDetectionStrategy, Component, input } from "@angular/core";
+import {
+  ChangeDetectionStrategy,
+  Component,
+  input,
+  viewChild,
+} from "@angular/core";
 import { FFlowModule } from "@foblex/flow";
 import { Icon } from "../icon";
+import { StepDetailsMount } from "../editor/ndv/step-details-mount";
 import { ModalSheet } from "../modal-sheet";
 import { RowMenu } from "../row-menu";
 import { StepPropertyGrid } from "../property-grid";
@@ -45,6 +51,7 @@ import type { App } from "../app";
   standalone: true,
   imports: [
     Icon,
+    StepDetailsMount,
     FFlowModule,
     ModalSheet,
     RowMenu,
@@ -81,6 +88,17 @@ import type { App } from "../app";
           <span class="tag version-badge">{{
             h.model.definition.metadata.version
           }}</span>
+          @if (h.stepDetailsOn()) {
+            <button
+              type="button"
+              class="icon-button workflow-settings-button"
+              aria-label="Open workflow settings"
+              title="Open workflow settings"
+              (click)="h.openSettingsDialog()"
+            >
+              <weave-icon name="settings" [size]="16" />
+            </button>
+          }
           @if (h.statusChip; as chip) {
             <span
               class="pill status-chip"
@@ -616,6 +634,8 @@ import type { App } from "../app";
                     <button
                       type="button"
                       aria-label="Start — workflow settings"
+                      (dblclick)="h.openStepDetails('$trigger')"
+                      (keydown.enter)="h.openTriggerDetails($event)"
                       title="Workflow settings"
                       (click)="h.openWorkflowSettings()"
                     >
@@ -642,7 +662,6 @@ import type { App } from "../app";
                       class="graph-node"
                       [class.selected]="h.model.selected === node.step.id"
                       [class.decision]="node.step.kind === 'switch'"
-                      [class.dirty]="h.dirtyStep === node.step.id"
                       [class.has-error]="info.status === 'error'"
                       [class.has-warning]="info.status === 'warning'"
                       [class.incomplete]="info.status === 'incomplete'"
@@ -666,7 +685,10 @@ import type { App } from "../app";
                         (pointermove)="h.pointerMove($event)"
                         (pointerup)="h.pointerUp($event)"
                         (pointercancel)="h.cancelGesture()"
-                        (click)="h.select(node)"
+                        (click)="h.nodeClick(node)"
+                        (dblclick)="
+                          h.openStepDetails(h.model.selected || node.step.id)
+                        "
                         (focus)="h.nodeFocused(node)"
                         (keydown)="h.nodeKey($event, node)"
                         [attr.aria-label]="
@@ -1226,11 +1248,15 @@ import type { App } from "../app";
           }
         </div>
       }
-    </section>`,
+    </section>
+    @if (h.stepDetailsOn()) {
+      <weave-step-details-mount [host]="h" [canvas]="canvas()" />
+    }`,
 })
 export class DesignerView {
   /** The editor shell. */
   host = input.required<App>();
+  readonly canvas = viewChild(CanvasView);
   closeHelp(details: HTMLDetailsElement, event: Event) {
     details.open = false;
     details.querySelector("summary")?.focus();

@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // own Python code: the same request models and functions `weave studio`
 // calls (studio/host.py), in one helper process per test worker. Nothing is
 // fetched: OpenAPI text is pasted, and HTTP actions are built offline.
-import { ChildProcess, spawn } from "node:child_process";
+import { ChildProcess, spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Page } from "@playwright/test";
@@ -28,7 +28,8 @@ import { python, pythonAvailable, repository } from "../python-path";
 export { python };
 export const hasPython = pythonAvailable();
 
-// Mirrors the three handlers in src/firefly_weave/studio/host.py.
+// Mirrors the three handlers in src/firefly_weave/studio/host.py, and answers
+// a test compile against a catalog the test keeps.
 const helper = `
 import json, sys
 from pydantic import ValidationError
@@ -39,7 +40,24 @@ from firefly_weave.sdk.openapi_import import import_openapi, init_policy, invent
 def dump(value):
     return value.model_dump(by_alias=True, mode="json")
 
+def test_catalog(definitions):
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.connectors import email
+    from firefly_weave.contracts.definitions import ConnectorDefinition, load_definition
+    from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
+    from firefly_weave.sdk.http_actions import HTTP_ADAPTER
+    http, mail = HTTP_PROFILE_DESCRIPTOR, email.package.descriptor
+    return CatalogSnapshot.from_definitions(
+        [ConnectorDefinition.model_validate(http.manifest.value), ConnectorDefinition.model_validate(mail.manifest.value), *(load_definition(d) for d in definitions)],
+        tasks=[*http.capabilities, *mail.capabilities],
+        adapters=[HTTP_ADAPTER, "weave-email"],
+    )
+
 def handle(path, raw):
+    if path == "/test/compile":
+        from firefly_weave.compiler.api import compile_source
+        body = json.loads(raw)
+        return json.loads(compile_source(body["source"], format=body["format"], catalog=test_catalog(body["definitions"])).to_bytes())
     if path == "/studio/local/http-action":
         body = HttpActionBuild.model_validate_json(raw)
         return dump(author_http_action(body.request))
@@ -77,18 +95,41 @@ let child: ChildProcess | null = null;
 let waiting: ((line: string) => void)[] = [];
 let queue: Promise<unknown> = Promise.resolve();
 
+/**
+ * Answers every request still waiting on a helper that is gone, so the
+ * requests queued after them (in a later test of this worker) aren't stuck.
+ */
+function release() {
+  const pending = waiting;
+  waiting = [];
+  for (const done of pending)
+    done(
+      JSON.stringify({
+        status: 503,
+        body: { code: "WV-STUDIO-REQUEST", message: "Helper stopped" },
+      }),
+    );
+}
+
 function start() {
   if (child && child.exitCode === null) return child;
-  child = spawn(python, ["-u", "-c", helper], {
+  release();
+  const started = spawn(python, ["-u", "-c", helper], {
     cwd: repository,
     env: { ...process.env, PYTHONPATH: resolve(repository, "src") },
     stdio: ["pipe", "pipe", "inherit"],
   });
-  waiting = [];
-  createInterface({ input: child.stdout! }).on("line", (line) =>
-    waiting.shift()?.(line),
-  );
-  return child;
+  child = started;
+  // Only the current helper answers; a stopped one's late lines are dropped.
+  createInterface({ input: started.stdout! }).on("line", (line) => {
+    if (child === started) waiting.shift()?.(line);
+  });
+  started.on("exit", () => {
+    if (child !== started) return;
+    child = null;
+    release();
+  });
+  return started;
 }
 
 /** One request at a time, in order, like the host's bounded worker slots. */
@@ -106,14 +147,53 @@ function ask(path: string, body: string) {
 }
 
 export function stopLocalAuthoring() {
-  child?.kill();
+  const stopped = child;
   child = null;
+  stopped?.kill();
+  release();
 }
 
 /** What Studio sent to the local authoring endpoints, in order. */
 export interface LocalCalls {
   path: string;
   body: Record<string, unknown>;
+}
+
+let builtins: unknown = null;
+/** The Studio host's built-in email and file actions, as its route answers. */
+export function builtinActions(): unknown {
+  if (builtins) return builtins;
+  const run = spawnSync(
+    python,
+    [
+      "-c",
+      "import json; from firefly_weave.contracts.connector_actions import builtin_connector_actions as b; print(json.dumps({'actions': b()}))",
+    ],
+    {
+      cwd: repository,
+      encoding: "utf8",
+      env: { ...process.env, PYTHONPATH: resolve(repository, "src") },
+    },
+  );
+  if (run.status !== 0) throw new Error(run.stderr);
+  builtins = JSON.parse(run.stdout);
+  return builtins;
+}
+
+/**
+ * The platform's compile, answered by the repository's compiler: the
+ * bundled HTTP and email connectors plus `definitions` stand in for a
+ * project catalog, as tests that keep their own catalog need.
+ */
+export async function platformCompile(body: {
+  source: unknown;
+  format: string;
+  definitions: unknown[];
+}): Promise<Record<string, unknown>> {
+  const reply = await ask("/test/compile", JSON.stringify(body));
+  if (reply.status !== 200)
+    throw new Error(`The test compile failed: ${JSON.stringify(reply.body)}`);
+  return reply.body as Record<string, unknown>;
 }
 
 /** Answers /studio/local/{http-action,openapi/*} with the real Python code. */

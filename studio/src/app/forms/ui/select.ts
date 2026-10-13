@@ -105,7 +105,7 @@ let sequence = 0;
         (mousedown)="$event.preventDefault()"
         (click)="toggle()"
       >
-        <weave-icon name="chevron" />
+        <weave-icon [name]="icon()" />
       </button>
     </div>
     <div
@@ -274,6 +274,8 @@ export class Select {
   controlId = input("");
   invalid = input<boolean | null>(false);
   describedBy = input<string | null>(null);
+  /** The toggle's icon; "chevronDown" where the list opens in place, under the field. */
+  icon = input("chevron");
   choose = output<string>();
   id = `choice-${++sequence}`;
   open = signal(false);

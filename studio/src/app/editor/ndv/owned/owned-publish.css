@@ -1,0 +1,115 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The publish dialog's list: one row per action, with its name, the steps
+   that use it and any note on one left edge, and its state on one right
+   edge. Rows follow step details' density: 32 px with a fine pointer from
+   768 px up, 44 px below 768 px and for touch. params.css, which defines the
+   density for step details, may not be loaded when this dialog opens, so
+   the one value it needs is set here from the same tokens. */
+.owned-publish {
+  --sd-row: var(--control-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .owned-publish {
+    --sd-row: var(--control-touch);
+  }
+}
+.owned-publish .dialog-message,
+.owned-summary {
+  margin: 0;
+}
+.owned-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.owned-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--sd-row);
+  padding: var(--space-2) var(--space-3);
+}
+.owned-row + .owned-row {
+  border-top: 1px solid var(--border);
+}
+.owned-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+/* A long line breaks between its parts (the workflow's and the step's part
+   of a name, then the version), never inside one unless it alone is wider
+   than the line. */
+.owned-title {
+  font: var(--type-small);
+  color: var(--text);
+}
+.owned-title code {
+  font: var(--type-mono);
+}
+.owned-part {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.owned-meta,
+.owned-note {
+  font: var(--type-caption);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.owned-state {
+  flex: none;
+  margin-left: auto;
+  font: var(--type-caption);
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+}
+.owned-note[data-tone="warning"],
+.owned-state[data-tone="warning"] {
+  color: var(--warning-ink);
+}
+.owned-note[data-tone="danger"],
+.owned-state[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.owned-state[data-tone="success"] {
+  color: var(--success-ink);
+}
+.owned-summary {
+  font: var(--type-small);
+  color: var(--text);
+}
+/* Nothing to say yet: the line stays for screen readers, without its gap. */
+.owned-summary:empty {
+  margin-top: calc(-1 * var(--space-3));
+}

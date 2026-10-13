@@ -1,0 +1,496 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+@let spec = this.spec();
+@let entry = this.entry();
+@let ids = this.ids();
+@let reason = readOnly();
+@let line = this.line();
+@let heldText = heldProblem();
+@let local = heldText || conditionsProblem();
+@let quiet = row() || card() || spec.labelHidden || spec.type === "conditions";
+<div
+  class="param"
+  [class.is-option]="entry.option"
+  [class.has-error]="line.kind === 'error' || !!local"
+  [class.is-readonly]="!!reason"
+  (focusout)="left($event)"
+>
+  <div class="param-label-row">
+    <ng-content select=".param-card-head" />
+    @if (isGroup()) {
+      <span
+        class="param-label"
+        [class.sr-only]="quiet"
+        [id]="ids.control + '-label'"
+        >{{ spec.label }}</span
+      >
+    } @else {
+      <label
+        class="param-label"
+        [class.sr-only]="quiet"
+        [for]="ids.control"
+        [id]="ids.control + '-label'"
+        >{{ spec.label }}</label
+      >
+    }
+    @if (spec.labelHidden && spec.hint) {
+      <p class="param-intro">{{ spec.hint }}</p>
+    }
+    @if (spec.required && !quiet) {
+      <span class="param-required" aria-hidden="true">*</span>
+    }
+    @if (spec.description) {
+      <weave-toggletip
+        [label]="spec.label"
+        [text]="spec.description"
+        [textId]="ids.help"
+      />
+    }
+    <span class="param-spacer"></span>
+    @if (fit(); as fits) {
+      <span
+        class="param-drop-label"
+        [attr.data-fit]="fits.fit"
+        aria-hidden="true"
+        >{{ fits.text }}</span
+      >
+    }
+    @if (!toolsAfter()) {
+      <ng-container [ngTemplateOutlet]="toolsTemplate" />
+    }
+  </div>
+  @if (introFirst()) {
+    <ng-container [ngTemplateOutlet]="lineTemplate" />
+  }
+  <div class="param-control">
+    @if (mode() === "mapped") {
+      <weave-formula-field
+        [session]="session()"
+        [spec]="spec"
+        [controlId]="ids.control"
+        [describedBy]="describedBy()"
+        [readOnly]="reason"
+      />
+    } @else if (
+      isGroup() &&
+      spec.type !== "conditions" &&
+      spec.path.length &&
+      !session().collectionRows(spec)
+    ) {
+      <p class="param-deferred" [id]="ids.control">
+        This imported value is edited with Edit as YAML for now.
+      </p>
+    } @else {
+      @switch (spec.type) {
+        @case ("list") {
+          <weave-list-field
+            [session]="session()"
+            [spec]="spec"
+            [labelId]="ids.control + '-label'"
+            [readOnly]="reason"
+            ><ng-content select=".param-list-end" ngProjectAs=".param-list-end"
+          /></weave-list-field>
+        }
+        @case ("keyValue") {
+          <weave-key-value-field
+            [session]="session()"
+            [spec]="spec"
+            [labelId]="ids.control + '-label'"
+            [readOnly]="reason"
+          />
+        }
+        @case ("fields") {
+          <weave-fields-field
+            [session]="session()"
+            [spec]="spec"
+            [readOnly]="reason"
+            [labelId]="ids.control + '-label'"
+          />
+        }
+        @case ("resource") {
+          <weave-resource-field
+            [session]="session()"
+            [spec]="spec"
+            [controlId]="ids.control"
+            [describedBy]="describedBy()"
+            [readOnly]="reason"
+            [choices]="loadChoices()"
+          />
+        }
+        @case ("connection") {
+          <weave-connection-field
+            [session]="session()"
+            [spec]="spec"
+            [controlId]="ids.control"
+            [describedBy]="describedBy()"
+            [readOnly]="reason"
+          />
+        }
+        @case ("conditions") {
+          <weave-conditions-field
+            [session]="session()"
+            [spec]="spec"
+            [labelId]="ids.control + '-label'"
+            [readOnly]="reason"
+            [errorId]="ids.line"
+            [actions]="actions()"
+          />
+        }
+        @case ("urlTemplate") {
+          <weave-url-field
+            [session]="session()"
+            [spec]="spec"
+            [controlId]="ids.control"
+            [describedBy]="describedBy()"
+            [readOnly]="reason"
+            [invalid]="line.kind === 'error'"
+          />
+        }
+        @case ("schema") {
+          <weave-schema-field
+            [session]="session()"
+            [spec]="spec"
+            [readOnly]="reason"
+          />
+        }
+        @case ("multiline") {
+          <textarea
+            class="param-input param-multiline"
+            rows="3"
+            [id]="ids.control"
+            [attr.aria-required]="spec.required || null"
+            [attr.aria-invalid]="line.kind === 'error' || null"
+            [attr.aria-errormessage]="line.kind === 'error' ? ids.line : null"
+            [attr.aria-describedby]="describedBy()"
+            [attr.aria-readonly]="!!reason || null"
+            [readOnly]="!!reason"
+            [placeholder]="
+              spec.placeholder ??
+              (spec.default !== undefined ? String(spec.default) : '')
+            "
+            [value]="fixedValue() ?? ''"
+            (input)="text($event)"
+            (keydown)="controlKey($event)"
+          ></textarea>
+        }
+        @case ("number") {
+          @let unit = spec.units?.length === 1 ? spec.units[0] : null;
+          <input
+            class="param-input param-number"
+            inputmode="decimal"
+            [id]="ids.control"
+            [attr.aria-required]="spec.required || null"
+            [attr.aria-invalid]="
+              line.kind === 'error' || !!numberProblem() || null
+            "
+            [attr.aria-describedby]="
+              unit ? ids.control + '-unit ' + describedBy() : describedBy()
+            "
+            [attr.aria-readonly]="!!reason || null"
+            [readOnly]="!!reason"
+            [placeholder]="
+              spec.default !== undefined
+                ? String(spec.default)
+                : (spec.placeholder ?? '')
+            "
+            [value]="numberText ?? fixedValue() ?? ''"
+            (input)="number($event)"
+            (keydown)="controlKey($event)"
+          />
+          @if (unit) {
+            <span class="param-unit-suffix" [id]="ids.control + '-unit'">{{
+              unit
+            }}</span>
+          }
+        }
+        @case ("duration") {
+          @let parts = durationParts();
+          @let only = units().length === 1 ? units()[0] : null;
+          <div class="param-duration">
+            <input
+              #amount
+              class="param-input"
+              inputmode="numeric"
+              [id]="ids.control"
+              [attr.aria-label]="spec.label"
+              [attr.aria-required]="spec.required || null"
+              [attr.aria-invalid]="
+                line.kind === 'error' || !!numberProblem() || null
+              "
+              [attr.aria-describedby]="
+                only ? ids.control + '-unit ' + describedBy() : describedBy()
+              "
+              [readOnly]="!!reason"
+              [placeholder]="durationPlaceholder(parts.unit)"
+              [value]="numberText ?? parts.amount"
+              (input)="duration(amount.value, unitOf(amount))"
+              (keydown)="heldKey($event)"
+            />
+            @if (only) {
+              <!-- One unit: it names itself inside the box, like a number's. -->
+              <span class="param-unit-suffix" [id]="ids.control + '-unit'">{{
+                only
+              }}</span>
+            } @else {
+              <select
+                class="param-input param-unit"
+                [attr.aria-label]="spec.label + ' unit'"
+                [disabled]="!!reason"
+                (change)="duration(amount.value, unitOf(amount))"
+              >
+                @for (option of units(); track option) {
+                  <option [value]="option" [selected]="option === parts.unit">
+                    {{ option }}
+                  </option>
+                }
+              </select>
+            }
+          </div>
+        }
+        @case ("boolean") {
+          @if (threeWay()) {
+            <select
+              class="param-input"
+              [id]="ids.control"
+              [attr.aria-describedby]="describedBy()"
+              [disabled]="!!reason"
+              (change)="chooseThreeWay($any($event.target).value)"
+            >
+              <option value="" [selected]="threeWayValue() === ''">
+                Not set
+              </option>
+              <option value="yes" [selected]="threeWayValue() === 'yes'">
+                Yes
+              </option>
+              <option value="no" [selected]="threeWayValue() === 'no'">
+                No
+              </option>
+            </select>
+          } @else {
+            <button
+              type="button"
+              role="switch"
+              class="param-switch"
+              [id]="ids.control"
+              [attr.aria-checked]="checked()"
+              [attr.aria-describedby]="describedBy()"
+              [disabled]="!!reason"
+              (click)="toggle()"
+            >
+              <span class="param-switch-track" aria-hidden="true"></span>
+            </button>
+          }
+        }
+        @case ("select") {
+          @if (segmented()) {
+            <div
+              class="param-segments"
+              role="radiogroup"
+              [attr.aria-labelledby]="ids.control + '-label'"
+              [attr.aria-describedby]="describedBy()"
+            >
+              @for (option of selectOptions(); track option.value) {
+                <button
+                  type="button"
+                  role="radio"
+                  [id]="$first ? ids.control : null"
+                  [attr.aria-checked]="selectedIndex() === option.value"
+                  [disabled]="!!reason || option.disabled"
+                  [attr.title]="option.description ?? null"
+                  (click)="choose(option.value)"
+                >
+                  {{ option.label }}
+                </button>
+              }
+            </div>
+          } @else {
+            <weave-select
+              class="param-select"
+              icon="chevronDown"
+              [label]="spec.label"
+              [hideLabel]="true"
+              [controlId]="ids.control"
+              [options]="selectOptions()"
+              [value]="selectedIndex()"
+              [disabled]="!!reason"
+              [invalid]="line.kind === 'error'"
+              [describedBy]="describedBy()"
+              (choose)="choose($event)"
+            />
+          }
+        }
+        @case ("dateTime") {
+          <div class="param-date">
+            <input
+              type="datetime-local"
+              class="param-input"
+              [id]="ids.control"
+              [attr.aria-describedby]="describedBy()"
+              [readOnly]="!!reason"
+              [value]="dateValue()"
+              (change)="date($event)"
+            />
+            <span class="param-suffix">UTC</span>
+          </div>
+        }
+        @case ("json") {
+          <textarea
+            class="param-input param-json"
+            rows="4"
+            spellcheck="false"
+            [id]="ids.control"
+            [attr.aria-describedby]="describedBy()"
+            [attr.aria-invalid]="!!jsonProblem || null"
+            [readOnly]="!!reason"
+            [value]="jsonShown()"
+            (change)="jsonText($event)"
+            (keydown)="heldKey($event)"
+          ></textarea>
+        }
+        @case ("notice") {
+          <p class="banner info param-notice" [id]="ids.control">
+            {{ spec.hint }}
+          </p>
+        }
+        @case ("text") {
+          <input
+            class="param-input"
+            autocomplete="off"
+            [attr.spellcheck]="spec.identifier ? 'false' : null"
+            [id]="ids.control"
+            [attr.aria-required]="spec.required || null"
+            [attr.aria-invalid]="line.kind === 'error' || null"
+            [attr.aria-errormessage]="line.kind === 'error' ? ids.line : null"
+            [attr.aria-describedby]="describedBy()"
+            [attr.aria-readonly]="!!reason || null"
+            [readOnly]="!!reason"
+            [attr.maxlength]="null"
+            [placeholder]="
+              spec.placeholder ??
+              (spec.default !== undefined ? String(spec.default) : '')
+            "
+            [value]="fixedValue() ?? ''"
+            (input)="text($event)"
+            (keydown)="controlKey($event)"
+            (blur)="spec.identifier ? identifierLeft($event) : null"
+          />
+        }
+        @default {
+          <p class="param-deferred" [id]="ids.control">
+            This field is edited with Edit as YAML for now.
+          </p>
+        }
+      }
+    }
+  </div>
+  @if (toolsAfter()) {
+    <ng-container [ngTemplateOutlet]="toolsTemplate" />
+  }
+  @if (!introFirst()) {
+    <ng-container [ngTemplateOutlet]="lineTemplate" />
+  }
+</div>
+<ng-template #lineTemplate>
+  <p
+    class="param-line"
+    [hidden]="
+      (row() || (spec.labelHidden && line.kind === 'hint')) &&
+      line.kind !== 'error' &&
+      line.kind !== 'warning' &&
+      line.kind !== 'reason' &&
+      !local
+    "
+    [id]="ids.line"
+    [attr.data-kind]="local ? 'error' : line.kind"
+    [attr.role]="line.kind === 'error' || local ? 'alert' : null"
+  >
+    @if (heldText) {
+      <!-- What the field holds isn't in the workflow: the last value that
+           applied is. -->
+      <span class="pill param-status" data-tone="danger">Not applied</span
+      ><span class="param-line-text">{{ heldText }}</span>
+    } @else if (local) {
+      <weave-icon name="warning" [size]="16" /><span class="param-line-text">{{
+        local
+      }}</span>
+    } @else if (line.kind === "error" || line.kind === "warning") {
+      <weave-icon name="warning" [size]="16" /><span class="param-line-text">{{
+        line.text
+      }}</span>
+      @if (line.fix) {
+        <button type="button" class="text-link param-fix" (click)="line.fix()">
+          {{ line.fixLabel ?? "Fix" }}
+        </button>
+      }
+    } @else {
+      {{ line.text }}
+    }
+  </p>
+</ng-template>
+<!-- A field's tools, in the order they sit: what appears on hover first,
+     the value mode last, on the field's right edge. -->
+<ng-template #toolsTemplate>
+  <div class="param-tools" (keydown)="toolsKey($event)">
+    @if (entry.option && !reason && !spec.required) {
+      <button
+        type="button"
+        class="icon-button param-remove"
+        aria-label="Remove option"
+        title="Remove option"
+        (click)="session().removeOption(spec)"
+      >
+        <weave-icon name="trash" [size]="16" />
+      </button>
+    }
+    @if (hasMenu()) {
+      <weave-row-menu
+        class="param-menu"
+        [label]="'Field menu for ' + spec.label"
+        [items]="menuItems()"
+      />
+    }
+    @if (mode() !== null && spec.mapping === "both") {
+      <div
+        class="param-mode"
+        role="radiogroup"
+        [attr.aria-label]="'Value mode for ' + spec.label"
+      >
+        <button
+          type="button"
+          role="radio"
+          [attr.aria-checked]="mode() === 'fixed'"
+          [attr.tabindex]="mode() === 'fixed' ? 0 : -1"
+          [disabled]="!!reason"
+          (click)="setMode('fixed')"
+        >
+          Fixed
+        </button>
+        <button
+          type="button"
+          role="radio"
+          [attr.aria-checked]="mode() === 'mapped'"
+          [attr.tabindex]="mode() === 'mapped' ? 0 : -1"
+          [disabled]="!!reason"
+          (click)="setMode('mapped')"
+        >
+          Mapped
+        </button>
+      </div>
+    }
+  </div>
+</ng-template>

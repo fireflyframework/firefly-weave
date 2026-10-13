@@ -33,8 +33,6 @@ export interface TileFacts extends StepFacts {
   /** Why the step's data is out of date, or null. */
   stale: string | null;
   pinned: boolean;
-  /** Step details hold an edit not applied yet. */
-  unapplied: boolean;
   selected: boolean;
 }
 export type BadgeKind =
@@ -125,7 +123,6 @@ export function tileBadge(facts: TileFacts): TileBadge | null {
 export interface TileBorders {
   selected: boolean;
   live: boolean;
-  unapplied: boolean;
   error: boolean;
 }
 /** The only states a border shows; every other state is the badge. */
@@ -133,7 +130,6 @@ export function tileBorders(facts: TileFacts): TileBorders {
   return {
     selected: facts.selected,
     live: facts.run === "live" || facts.run === "waiting",
-    unapplied: facts.unapplied,
     error: facts.run === "failed" || facts.errors.length > 0,
   };
 }

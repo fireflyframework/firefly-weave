@@ -17,6 +17,12 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { parseDocument, stringify, isMap, isSeq, isNode, isScalar } from "yaml";
 import { computeLaneLayout } from "./designer/lane-layout";
+import {
+  emptyCanvas,
+  pruneCanvas,
+  renameInCanvas,
+  type CanvasSidecar,
+} from "./editor/state/canvas-sidecar";
 export type Kind =
   | "action"
   | "decisionTable"
@@ -178,6 +184,56 @@ function branches(step: Step): [string, Branch][] {
     return Object.entries(step["branches"] as Record<string, Branch>);
   return [];
 }
+/**
+ * The steps that changed only their ID between two versions of a workflow,
+ * as an Undo or Redo of a rename leaves them: every step in the same place
+ * with the same kind and the same branches. Anything else that changed shape
+ * (a step added, removed or moved) means no rename is told. IDs that only
+ * trade places among themselves are a move between steps of the same kind,
+ * each ID still on its own step, so no rename either. A chain of renames
+ * made in one edit (a to b, b to c) is told from its end, so applying them
+ * in order never puts one step's things on the step that took its old ID.
+ */
+export function renamedSteps(
+  before: Workflow,
+  after: Workflow,
+): { from: string; to: string }[] {
+  const renames: { from: string; to: string }[] = [];
+  const walk = (a: Step[] | undefined, b: Step[] | undefined): boolean => {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length)
+      return false;
+    return a.every((step, i) => {
+      const other = b[i];
+      if (!other || step.kind !== other.kind) return false;
+      const left = branches(step);
+      const right = branches(other);
+      if (
+        left.length !== right.length ||
+        left.some(([name], at) => name !== right[at][0])
+      )
+        return false;
+      if (step.id !== other.id) renames.push({ from: step.id, to: other.id });
+      return left.every(([, branch], at) =>
+        walk(branch?.steps, right[at][1]?.steps),
+      );
+    });
+  };
+  if (!walk(before.spec?.steps, after.spec?.steps)) return [];
+  // IDs are unique, so each ID is renamed from and to at most once: the
+  // renames form chains, which start at an ID that is gone, and loops, which
+  // are moves.
+  const next = new Map(renames.map(({ from, to }) => [from, to]));
+  const targets = new Set(next.values());
+  const told: { from: string; to: string }[] = [];
+  for (const { from } of renames) {
+    if (targets.has(from)) continue;
+    const chain: { from: string; to: string }[] = [];
+    for (let at = from; next.has(at); at = next.get(at)!)
+      chain.push({ from: at, to: next.get(at)! });
+    told.push(...chain.reverse());
+  }
+  return told;
+}
 function preserveYamlComments(old: unknown, replacement: unknown): void {
   if (!isNode(old) || !isNode(replacement)) return;
   replacement.comment = old.comment;
@@ -318,6 +374,8 @@ export class StructuredCanvasAdapter {
   };
   selected = "";
   unplaced: Step[] = [];
+  /** Step notes, owned-action recipes, trigger choices and the rest of the canvas sidecar; undone with the workflow. */
+  canvas: CanvasSidecar = emptyCanvas();
   private past: string[] = [];
   private future: string[] = [];
   /** Inside batch(): edits share the batch's single undo step. */
@@ -347,6 +405,7 @@ export class StructuredCanvasAdapter {
       layout: this.layout,
       selected: this.selected,
       unplaced: this.unplaced,
+      canvas: this.canvas,
     });
   }
   private restore(s: string) {
@@ -389,6 +448,26 @@ export class StructuredCanvasAdapter {
       throw error;
     } finally {
       this.batching = false;
+    }
+  }
+  /**
+   * Records what Studio learned (an action is published) into the last undo
+   * step, so it goes with that step. With no undo step, it changes the
+   * workflow as it was opened: an undo step of its own would change nothing
+   * a person sees. When an edit fails, the workflow is left as it was.
+   */
+  amend<T>(edits: () => T): T {
+    if (this.past.length) return this.continueEdit(this.revision, edits);
+    const before = this.snapshot();
+    const batching = this.batching;
+    this.batching = true;
+    try {
+      return edits();
+    } catch (error) {
+      this.restore(before);
+      throw error;
+    } finally {
+      this.batching = batching;
     }
   }
   /**
@@ -452,6 +531,7 @@ export class StructuredCanvasAdapter {
       this.assertStructure(value);
       this.definition = value;
       this.readonly = false;
+      this.canvas = pruneCanvas(this.canvas, this.stepIdSet());
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Invalid source";
       this.readonly = true;
@@ -515,6 +595,19 @@ export class StructuredCanvasAdapter {
       );
     visit(this.definition.spec.steps);
     return map;
+  }
+  /** Every step ID in the workflow, nested ones and steps not placed yet included. */
+  stepIdSet(): Set<string> {
+    return new Set([
+      ...[...this.owners().values()].flat().map((step) => step.id),
+      ...this.unplaced.map((step) => step.id),
+    ]);
+  }
+  /** Replaces the canvas sidecar as one undo step. Inside `batch`, assign `canvas` instead. */
+  updateCanvas(next: CanvasSidecar) {
+    if (this.readonly) throw Error("Fix source before editing the graph.");
+    this.checkpoint();
+    this.canvas = next;
   }
   private computeLayout() {
     return computeLaneLayout(this.definition, this.layout.positions);
@@ -779,6 +872,7 @@ export class StructuredCanvasAdapter {
     if (!n) {
       this.checkpoint();
       this.unplaced = this.unplaced.filter((s) => s.id !== id);
+      this.canvas = pruneCanvas(this.canvas, this.stepIdSet());
       return;
     }
     if (!options.contents && branches(n.step).some(([, b]) => b.steps.length))
@@ -858,6 +952,7 @@ export class StructuredCanvasAdapter {
     for (const removedId of removed) delete positions[removedId];
     this.layout.positions = positions;
     if (removed.has(this.selected)) this.selected = "";
+    this.canvas = pruneCanvas(this.canvas, this.stepIdSet());
   }
   /**
    * Renames a step and rewrites every reference to it (`/steps/<old>` and
@@ -945,6 +1040,7 @@ export class StructuredCanvasAdapter {
       this.layout.revision++;
     }
     if (this.selected === oldId) this.selected = next;
+    this.canvas = renameInCanvas(this.canvas, oldId, next);
     return sites.length;
   }
   renameDecision(taskId: string, oldAnswer: string, newAnswer: string) {
@@ -1212,5 +1308,6 @@ export class StructuredCanvasAdapter {
       viewport: { x: 0, y: 0, zoom: 1 },
     };
     this.unplaced = [];
+    this.canvas = emptyCanvas();
   }
 }

@@ -172,6 +172,23 @@ def test_http_action_endpoint_builds_and_compiles(browser, offline):
     assert not refused["ok"] and refused["diagnostics"][0]["code"] == "WV-HTTP-ACTION-REQUEST"
 
 
+def test_http_action_endpoint_refuses_a_request_over_its_limit(browser, offline):
+    headers = pair(browser)
+    request: dict[str, object] = {"name": "get-pet", "method": "GET", "pathTemplate": "/v1/pets"}
+    request["responseSample"] = {"pad": "x" * (1024 * 1024)}
+    refused = browser.post("/studio/local/http-action", json={"request": request}, headers=headers)
+    assert refused.status_code == 413
+    assert refused.json()["code"] == "WV-STUDIO-REQUEST"
+    assert "1 MiB" in refused.json()["message"]
+    # Two samples at the largest Studio accepts still build.
+    request["responseSample"] = {"pad": "x" * (256 * 1024)}
+    request["bodySample"] = {"pad": "x" * (256 * 1024)}
+    request["method"] = "POST"
+    request["statuses"] = [201]
+    accepted = browser.post("/studio/local/http-action", json={"request": request}, headers=headers)
+    assert accepted.status_code == 200
+
+
 @pytest.mark.parametrize(
     "extra",
     [{"selection": ["createPet"]}, {"relaxations": RELAX}, {"name": "pets"}],

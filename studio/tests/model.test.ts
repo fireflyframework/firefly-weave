@@ -22,8 +22,18 @@ import {
   StructuredCanvasAdapter,
   freshWorkflow,
   ownerLabel,
+  renamedSteps,
   type Kind,
+  type Workflow,
 } from "../src/app/model";
+import {
+  emptyCanvas,
+  ownedRecipes,
+  stepNotesOf,
+  withOwnedRecipe,
+  withStepNote,
+} from "../src/app/editor/state/canvas-sidecar";
+import { PendingEntries } from "../src/app/editor/ndv/pending-entries";
 describe("structured workflow authoring", () => {
   it("renames a human answer and matching nested decision conditions in one undo", () => {
     const model = new StructuredCanvasAdapter();
@@ -72,6 +82,148 @@ describe("structured workflow authoring", () => {
     model.undo();
     expect(model.definition.spec.steps).toHaveLength(2);
     expect(model.definition.spec.steps[0]["connection"]).toBe("primary");
+  });
+  it("records into the last undo step, and with no undo step makes none", () => {
+    const model = new StructuredCanvasAdapter();
+    const wait = model.insert("wait");
+    const seconds = () =>
+      model.nodes().map((node) => node.step["durationSeconds"]);
+    const record = (value: number) =>
+      model.amend(() =>
+        model.update(
+          wait.id,
+          JSON.stringify({ ...wait, durationSeconds: value }),
+        ),
+      );
+    model.clearHistory();
+    record(99);
+    // Nothing to undo: the record is part of the workflow as it was opened.
+    expect(model.canUndo).toBe(false);
+    expect(seconds()).toEqual([99]);
+    // With an undo step, the record joins it and goes with it.
+    model.insert("wait");
+    record(5);
+    expect(seconds()).toEqual([5, 60]);
+    model.undo();
+    expect(model.canUndo).toBe(false);
+    expect(seconds()).toEqual([99]);
+  });
+  it("tells which steps an Undo or Redo renamed, and only when nothing else changed shape", () => {
+    const model = new StructuredCanvasAdapter();
+    const wait = model.insert("wait");
+    const fail = model.insert("fail");
+    model.renameStep(wait.id, "pause");
+    const renamed = model.definition;
+    model.undo();
+    expect(renamedSteps(renamed, model.definition)).toEqual([
+      { from: "pause", to: wait.id },
+    ]);
+    const before = model.definition;
+    model.redo();
+    expect(renamedSteps(before, model.definition)).toEqual([
+      { from: wait.id, to: "pause" },
+    ]);
+    // A step removed or added is no rename.
+    model.remove(fail.id);
+    const removed = model.definition;
+    model.undo();
+    expect(renamedSteps(removed, model.definition)).toEqual([]);
+    expect(renamedSteps(model.definition, model.definition)).toEqual([]);
+  });
+  it("tells no rename for a move between two steps of the same kind, or a step of another kind in a step's place", () => {
+    for (const seconds of [60, 120]) {
+      const model = new StructuredCanvasAdapter();
+      const first = model.insert("wait");
+      const second = model.insert("wait");
+      model.update(
+        second.id,
+        JSON.stringify({ ...second, durationSeconds: seconds }),
+      );
+      const order = () => model.definition.spec.steps.map((step) => step.id);
+      expect(order()).toEqual([first.id, second.id]);
+      model.move(second.id, "root", 0);
+      const moved = model.definition;
+      expect(order()).toEqual([second.id, first.id]);
+      model.undo();
+      expect(renamedSteps(moved, model.definition)).toEqual([]);
+      const undone = model.definition;
+      model.redo();
+      expect(renamedSteps(undone, model.definition)).toEqual([]);
+    }
+    // A wait replaced by a fail with a new ID, in the same place.
+    const workflow = (step: Record<string, unknown>) =>
+      ({ spec: { steps: [step] } }) as unknown as Workflow;
+    expect(
+      renamedSteps(
+        workflow({ id: "pause", kind: "wait", durationSeconds: 60 }),
+        workflow({ id: "stop", kind: "fail", code: "x", message: "" }),
+      ),
+    ).toEqual([]);
+    // The same kind in the same place is a rename.
+    expect(
+      renamedSteps(
+        workflow({ id: "pause", kind: "wait", durationSeconds: 60 }),
+        workflow({ id: "hold", kind: "wait", durationSeconds: 60 }),
+      ),
+    ).toEqual([{ from: "pause", to: "hold" }]);
+  });
+  it("tells a chain of renames made in one edit in the order that keeps each step's entries on it", () => {
+    const workflow = (ids: string[]) =>
+      ({
+        spec: {
+          steps: ids.map((id) => ({ id, kind: "wait", durationSeconds: 60 })),
+        },
+      }) as unknown as Workflow;
+    const owner = { descriptor: "d", baseline: "1", structure: "" };
+    const entry = (text: string) => ({
+      kind: "number" as const,
+      text,
+      message: "",
+      label: "Seconds",
+    });
+    // Source renamed a to b and b to c in one edit; Undo takes both back, and
+    // Redo makes them again.
+    for (const [before, after, renames] of [
+      [
+        ["b", "c", "x"],
+        ["a", "b", "x"],
+        [
+          { from: "b", to: "a" },
+          { from: "c", to: "b" },
+        ],
+      ],
+      [
+        ["a", "b", "x"],
+        ["b", "c", "x"],
+        [
+          { from: "b", to: "c" },
+          { from: "a", to: "b" },
+        ],
+      ],
+    ] as const) {
+      expect(renamedSteps(workflow([...before]), workflow([...after]))).toEqual(
+        renames,
+      );
+      // Each step's entry follows it to its new ID, never onto the step
+      // that took its old one.
+      const pending = new PendingEntries();
+      before.forEach((id) =>
+        pending.hold(id, `typed on ${id}`, owner, entry(id)),
+      );
+      for (const { from, to } of renamedSteps(
+        workflow([...before]),
+        workflow([...after]),
+      ))
+        pending.rename(from, to);
+      before.forEach((id, at) =>
+        expect(pending.has(after[at], `typed on ${id}`)).toBe(true),
+      );
+      expect(pending.size).toBe(before.length);
+    }
+    // A move between twin steps next to a rename tells the rename only.
+    expect(
+      renamedSteps(workflow(["a", "b", "c"]), workflow(["b", "a", "d"])),
+    ).toEqual([{ from: "c", to: "d" }]);
   });
   it("keeps the rendered node identity stable until rename teardown", () => {
     const model = new StructuredCanvasAdapter();
@@ -737,6 +889,75 @@ describe("fixture insertion target ownership", () => {
     ).toBe("Add a step after post-ledger-entry, in ledger");
   });
 });
+
+describe("the canvas sidecar in the model", () => {
+  it("undoes canvas edits with the workflow, and follows renames and deletes", () => {
+    const model = new StructuredCanvasAdapter();
+    const step = model.insert("transform");
+    model.updateCanvas(
+      withStepNote(model.canvas, step.id, { text: "Check the totals" }),
+    );
+    model.renameStep(step.id, "totals");
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual(["totals"]);
+    model.undo();
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([step.id]);
+    model.undo();
+    expect(model.canvas).toEqual(emptyCanvas());
+    model.redo();
+    model.remove(step.id);
+    expect(stepNotesOf(model.canvas)).toEqual({});
+    model.undo();
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([step.id]);
+  });
+  it("starts every other workflow with an empty canvas", () => {
+    const model = new StructuredCanvasAdapter();
+    const step = model.insert("transform");
+    model.updateCanvas(withStepNote(model.canvas, step.id, { text: "x" }));
+    model.replace(model.definition);
+    expect(model.canvas).toEqual(emptyCanvas());
+  });
+  it("refuses canvas edits while the source doesn't parse", () => {
+    const model = new StructuredCanvasAdapter();
+    model.setSource("kind: [");
+    expect(() => model.updateCanvas(emptyCanvas())).toThrow(
+      "Fix source before editing the graph.",
+    );
+  });
+  it("keeps the note and owned action of a step that isn't placed yet", () => {
+    const model = new StructuredCanvasAdapter();
+    const placed = model.insert("transform");
+    model.addUnplaced("wait");
+    const loose = model.unplaced[0];
+    expect(model.stepIdSet().has(loose.id)).toBe(true);
+    model.updateCanvas(
+      withOwnedRecipe(
+        withStepNote(model.canvas, loose.id, { text: "Place me later" }),
+        "order-intake.get-orders",
+        { kind: "http", method: "GET" },
+      ),
+    );
+    model.remove(placed.id);
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([loose.id]);
+    expect(Object.keys(ownedRecipes(model.canvas))).toEqual([
+      "order-intake.get-orders",
+    ]);
+    model.setSource(model.source);
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([loose.id]);
+    model.renameStep(loose.id, "later");
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual(["later"]);
+  });
+  it("drops the note of a step that isn't placed when that step is removed", () => {
+    const model = new StructuredCanvasAdapter();
+    model.addUnplaced("wait");
+    const loose = model.unplaced[0];
+    model.updateCanvas(withStepNote(model.canvas, loose.id, { text: "Gone" }));
+    model.remove(loose.id);
+    expect(stepNotesOf(model.canvas)).toEqual({});
+    model.undo();
+    expect(Object.keys(stepNotesOf(model.canvas))).toEqual([loose.id]);
+  });
+});
+
 describe("runs of steps", () => {
   const source = `apiVersion: weave/v1alpha1
 kind: Workflow
@@ -847,4 +1068,56 @@ spec:
     model.removeSteps(["decision-1", "wait-1"]);
     expect(model.definition.spec.steps).toEqual([]);
   });
+});
+
+describe("deletion keeps canvas metadata and workflow history together", () => {
+  for (const mode of ["single", "group", "bulk", "unplaced"] as const)
+    it(`prunes ${mode} deletions, keeps unrelated metadata and undoes exactly`, () => {
+      const model = new StructuredCanvasAdapter();
+      const keep = model.insert("transform");
+      const group = model.insert("switch");
+      const child = model.insert("wait", `${group.id}/default`);
+      model.addUnplaced("wait");
+      const loose = model.unplaced[0];
+      let canvas = model.canvas;
+      for (const step of [keep, group, child, loose])
+        canvas = withStepNote(canvas, step.id, { text: step.id });
+      canvas = withOwnedRecipe(canvas, "order-intake.get-orders", {
+        kind: "http",
+        method: "GET",
+      });
+      model.updateCanvas(canvas);
+      const before = {
+        source: model.source,
+        canvas: model.canvas,
+        layout: structuredClone(model.layout),
+        unplaced: structuredClone(model.unplaced),
+      };
+      const removed =
+        mode === "single"
+          ? [child.id]
+          : mode === "unplaced"
+            ? [loose.id]
+            : [group.id, child.id];
+      if (mode === "single") model.remove(child.id);
+      else if (mode === "unplaced") model.remove(loose.id);
+      else if (mode === "group") model.remove(group.id, { contents: true });
+      else model.removeSteps([group.id, child.id]);
+      expect(Object.keys(stepNotesOf(model.canvas)).sort()).toEqual(
+        [keep, group, child, loose]
+          .map((step) => step.id)
+          .filter((id) => !removed.includes(id))
+          .sort(),
+      );
+      expect(ownedRecipes(model.canvas)).toEqual({
+        "order-intake.get-orders": { kind: "http", method: "GET" },
+      });
+      model.undo();
+      expect({
+        source: model.source,
+        canvas: model.canvas,
+        layout: model.layout,
+        unplaced: model.unplaced,
+      }).toEqual(before);
+    });
 });

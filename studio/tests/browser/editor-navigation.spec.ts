@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // choice the person makes with its button is kept per viewer.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openWorkflow, vendorPayment } from "./canvas-po";
+import { StepDetailsPage } from "./step-details-po";
 import { offline } from "./support";
 
 const NAV_KEY = "ui:weave.editor.navExpanded";
@@ -51,13 +52,17 @@ async function expectInWindow(page: Page, control: Locator) {
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(window.width);
 }
-/** No sideways page scroll, and the canvas and the toolbar are whole. */
-async function expectFits(page: Page) {
+/** The page never scrolls sideways. */
+async function expectNoSideScroll(page: Page) {
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+}
+/** No sideways page scroll, and the canvas and the toolbar are whole. */
+async function expectFits(page: Page) {
+  await expectNoSideScroll(page);
   const tiles = page.locator(".canvas-v2 .tile-node");
   await expect(tiles.first()).toBeVisible();
   expect(await tiles.count()).toBeGreaterThan(0);
@@ -129,7 +134,7 @@ test.describe("the editor's navigation", () => {
     [1280, 720, true],
     [1440, 900, false],
     [1920, 1080, false],
-  ] as const)
+  ] as const) {
     test(`never scrolls the page sideways with the navigation expanded and a step open at ${width}x${height}`, async ({
       page,
     }) => {
@@ -138,14 +143,42 @@ test.describe("the editor's navigation", () => {
       // At 1280 the navigation opens as the rail: the person expands it.
       if (choose) await navButton(page).click();
       await expectExpanded(page);
+      // A click only selects: up to 1280 px the inspector waits for its button.
       await canvas.tileBody("prepare-request").click();
-      await expect(
-        page
-          .getByRole("complementary", { name: "Inspector" })
-          .or(page.getByRole("dialog", { name: "Inspector" })),
-      ).toBeVisible();
+      await expect(canvas.tileBody("prepare-request")).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      const inspector = page
+        .getByRole("complementary", { name: "Inspector" })
+        .or(page.getByRole("dialog", { name: "Inspector" }));
+      if (width <= 1280) {
+        await expect(inspector).toBeHidden();
+        await page
+          .getByRole("button", { name: "Show inspector", exact: true })
+          .click();
+      }
+      await expect(inspector).toBeVisible();
       await expectFits(page);
     });
+
+    test(`never scrolls the page sideways with the navigation expanded and step details open at ${width}x${height}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height });
+      const canvas = await openWorkflow(page);
+      if (choose) await navButton(page).click();
+      await expectExpanded(page);
+      const details = new StepDetailsPage(page);
+      await canvas.tileBody("prepare-request").dblclick();
+      await expect(details.dialogFor("prepare-request")).toBeVisible();
+      await expectNoSideScroll(page);
+      await expectInWindow(page, details.dialog);
+      await details.close();
+      await expect(canvas.tileBody("prepare-request")).toBeFocused();
+      await expectFits(page);
+    });
+  }
 
   test("keeps the rail and offers no toggle below 900 px, whatever was chosen", async ({
     page,

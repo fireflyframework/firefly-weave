@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // minimap that shows while the view moves.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openWorkflow, type CanvasPage } from "./canvas-po";
+import { stepFixture } from "./step-details-po";
 
 const MINIMAP_KEY = "ui:weave.canvas.minimap";
 
@@ -388,3 +389,98 @@ test.describe("selecting steps", () => {
     ).toBeLessThanOrEqual(0);
   });
 });
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "600x500", width: 600, height: 500 },
+  { tag: "640x360", width: 640, height: 360 },
+  { tag: "360x640", width: 360, height: 640 },
+])
+  test.describe(`selecting with the pointer at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("a double-click at a person's pace opens the step: selecting a step in view doesn't move it", async ({
+      page,
+    }) => {
+      const canvas = await openWorkflow(page, stepFixture);
+      const frame = (await canvas.root.boundingBox())!;
+      // The first step whose card the canvas shows whole.
+      let target = "";
+      for (const id of ["check-customer", "lookup", "route-by-value"]) {
+        const card = await canvas.tileBody(id).boundingBox();
+        if (
+          card &&
+          card.x >= frame.x &&
+          card.y >= frame.y &&
+          card.x + card.width <= frame.x + frame.width &&
+          card.y + card.height <= frame.y + frame.height
+        ) {
+          target = id;
+          break;
+        }
+      }
+      expect(target).not.toBe("");
+      const before = (await canvas.tileBody(target).boundingBox())!;
+      const x = before.x + before.width / 2;
+      const y = before.y + before.height / 2;
+      await page.mouse.move(x, y);
+      await page.waitForTimeout(300);
+      await page.mouse.click(x, y);
+      await page.waitForTimeout(150);
+      // The step is still under the pointer for the second click.
+      expect(await canvas.tileBody(target).boundingBox()).toEqual(before);
+      await page.mouse.click(x, y, { clickCount: 2 });
+      await expect(
+        page.getByRole("dialog", {
+          name: `Step details: ${target}`,
+          exact: true,
+        }),
+      ).toBeVisible();
+    });
+
+    test("selecting with the keyboard still brings a step out of view into view", async ({
+      page,
+    }) => {
+      const ids = Array.from({ length: 12 }, (_, i) => `shape-order-${i + 1}`);
+      const canvas = await openWorkflow(page, {
+        name: "long-workflow.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(
+          JSON.stringify({
+            apiVersion: "weave/v1alpha1",
+            kind: "Workflow",
+            metadata: { name: "long-workflow", version: "1.0.0" },
+            spec: {
+              inputSchema: { type: "object" },
+              steps: ids.map((id) => ({
+                id,
+                kind: "transform",
+                value: { literal: {} },
+              })),
+              output: { literal: {} },
+            },
+          }),
+        ),
+      });
+      const frame = (await canvas.root.boundingBox())!;
+      const last = ids.at(-1)!;
+      const away = (await canvas.tileBody(last).boundingBox())!;
+      expect(away.x).toBeGreaterThan(frame.x + frame.width);
+      await canvas.tileBody("$trigger:manual").focus();
+      for (const id of ids) {
+        await page.keyboard.press("ArrowRight");
+        await expect(canvas.tileBody(id)).toBeFocused();
+      }
+      await expect
+        .poll(async () => {
+          const card = (await canvas.tileBody(last).boundingBox())!;
+          return (
+            card.x >= frame.x &&
+            card.x + card.width <= frame.x + frame.width &&
+            card.y >= frame.y &&
+            card.y + card.height <= frame.y + frame.height
+          );
+        })
+        .toBe(true);
+    });
+  });

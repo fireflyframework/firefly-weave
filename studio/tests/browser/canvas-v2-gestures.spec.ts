@@ -132,6 +132,7 @@ for (const size of [
         .insertTarget("Add a step to path Otherwise of decision-1")
         .click();
       await canvas.pick("Wait for time");
+      await canvas.closeInspector();
       expect(await sourceText(page)).toMatch(
         /default:\s+steps:\s+- id: wait-1/,
       );
@@ -154,6 +155,7 @@ for (const size of [
       await expect(plus).toHaveCSS("opacity", "1");
       await plus.click();
       await canvas.pick("Transform");
+      await canvas.closeInspector();
       expect(await canvas.rootSteps()).toEqual([
         "transform-1",
         "transform-2",
