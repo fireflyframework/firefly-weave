@@ -28,6 +28,7 @@ import {
   withLanguageFeatures,
   yamlFile,
 } from "./step-details-po";
+import { caretAt, formulaBox, formulaText, suggestions } from "./formula-po";
 import { density } from "./step-geometry";
 import { connected, lookupAction, sourceText } from "./support";
 
@@ -75,10 +76,11 @@ for (const size of sizes)
       ).toEqual([false, false]);
       await text.press("=");
       await expect(toggle.getByRole("radio", { name: "Mapped" })).toBeChecked();
-      const data = prompt.getByRole("combobox", { name: "Prompt" });
-      await expect(data).toBeFocused();
-      await data.fill("/input/email");
-      await data.press("Enter");
+      await expect(formulaText(prompt)).toBeFocused();
+      await page.keyboard.type("input.email");
+      await expect(suggestions(page)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("Tab");
       await details.field("model").hover();
       await expect(toggle).toBeVisible();
       await expect(toggle).toHaveCSS("opacity", "1");
@@ -295,11 +297,20 @@ for (const size of sizes) {
       await text.fill("Changed {{ input.customerId }}");
       await page.keyboard.press("ControlOrMeta+z");
       await expect(text).toBeFocused();
-      await expect(text).toHaveValue("First {{ input.email }}");
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        "First {{ input.email }}",
+      );
       await page.keyboard.press("ControlOrMeta+Shift+z");
-      await expect(text).toHaveValue("Changed {{ input.customerId }}");
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        "Changed {{ input.customerId }}",
+      );
       await page.keyboard.press("ControlOrMeta+z");
-      await expect(text).toHaveValue("First {{ input.email }}");
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        "First {{ input.email }}",
+      );
       await text.fill("Next {{ input.customerId }}");
       await expect(text).toBeFocused();
       await text.blur();
@@ -331,7 +342,8 @@ for (const size of sizes) {
         .getByRole("button", { name: "Next step", exact: true })
         .click();
       await expect(details.dialogFor("second-summary")).toBeVisible();
-      await expect(prompt.getByRole("textbox", { name: "Prompt" })).toHaveValue(
+      await expect(formulaBox(prompt)).toHaveAttribute(
+        "data-text",
         "Second {{ input.email }}",
       );
       await expect(prompt.getByRole("alert")).toHaveCount(0);
@@ -351,7 +363,10 @@ for (const size of sizes) {
         .click();
       await expect(details.dialogFor("second-summary")).toBeVisible();
       const second = prompt.getByRole("textbox", { name: "Prompt" });
-      await expect(second).toHaveValue("Second {{ input.email }}");
+      await expect(formulaBox(prompt)).toHaveAttribute(
+        "data-text",
+        "Second {{ input.email }}",
+      );
       await second.focus();
       await second.blur();
       await details.dialog
@@ -417,9 +432,10 @@ for (const size of sizes) {
       };
       const details = await openStepFixture(page, mappedWorkflow(expression));
       await details.openWithKeyboard("summarize");
-      await expect(
-        details.field("prompt").locator(".param-formula"),
-      ).toHaveText(JSON.stringify(expression));
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        'concat("Hello ", input.email)',
+      );
       const yamlEditor = async () => {
         await details.dialog
           .getByRole("button", { name: "More actions for summarize" })
@@ -476,7 +492,10 @@ for (const size of sizes) {
       await text.press("ControlOrMeta+a");
       await page.keyboard.type("Dear {{ input.customerId }}", { delay: 10 });
       await expect(text).toBeFocused();
-      await expect(text).toHaveValue("Dear {{ input.customerId }}");
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        "Dear {{ input.customerId }}",
+      );
       await expect(
         details
           .field("prompt")
@@ -503,7 +522,10 @@ for (const size of sizes) {
           .field("prompt")
           .getByRole("radio", { name: "Mapped", exact: true }),
       ).toBeChecked();
-      await expect(text).toHaveValue(/\{\{ input\./);
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        /\{\{ input\./,
+      );
     });
     test("a multiline template retains newlines through typing and blur", async ({
       page,
@@ -519,19 +541,27 @@ for (const size of sizes) {
         }),
       );
       await details.openWithKeyboard("summarize");
-      const text = details.field("prompt").locator("textarea.param-template");
-      await expect(text).toHaveValue("First line\n{{ input.email }}");
+      const text = formulaText(details.field("prompt"));
+      const box = formulaBox(details.field("prompt"));
+      await expect(box).toHaveAttribute(
+        "data-text",
+        "First line\n{{ input.email }}",
+      );
       await text.fill("First line\nFor {{ input.customerId }}");
       await text.blur();
-      await expect(text).toHaveValue("First line\nFor {{ input.customerId }}");
+      await expect(box).toHaveAttribute(
+        "data-text",
+        "First line\nFor {{ input.customerId }}",
+      );
       await details.close();
       const source = await sourceText(page);
       expect(source).toContain("First line");
       expect(source).toContain("ref: /input/customerId");
       await details.openWithKeyboard("summarize");
-      await expect(
-        details.field("prompt").locator("textarea.param-template"),
-      ).toHaveValue("First line\nFor {{ input.customerId }}");
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        "First line\nFor {{ input.customerId }}",
+      );
     });
     test("simple templates edit as text and formulas keep their original references", async ({
       page,
@@ -550,7 +580,10 @@ for (const size of sizes) {
       const text = details
         .field("prompt")
         .getByRole("textbox", { name: "Prompt" });
-      await expect(text).toHaveValue("Hello {{ input.email }}");
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        "Hello {{ input.email }}",
+      );
       await text.fill("For {{ input.customerId }}");
       await details.close();
       expect(await sourceText(page)).toContain("ref: /input/customerId");
@@ -576,7 +609,10 @@ for (const size of sizes) {
         const text = details
           .field("prompt")
           .getByRole("textbox", { name: "Prompt" });
-        await expect(text).toHaveValue(`Value: {{ ${path} }}`);
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          `Value: {{ ${path} }}`,
+        );
         await text.focus();
         await text.blur();
         await details.close();
@@ -604,10 +640,14 @@ for (const size of sizes) {
       const details = await openStepFixture(page, mappedWorkflow(expression));
       const before = await sourceText(page);
       await details.openWithKeyboard("summarize");
-      await expect(
-        details.field("prompt").locator(".param-formula"),
-      ).toHaveText(JSON.stringify(expression));
-      await expect(details.field("prompt").getByRole("textbox")).toHaveCount(0);
+      // Any formula fits between the braces now; focusing and leaving it
+      // still writes nothing.
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        'Value: {{ coalesce(input.email, "none") }}',
+      );
+      await formulaText(details.field("prompt")).focus();
+      await formulaText(details.field("prompt")).blur();
       await details.close();
       expect(await sourceText(page)).toBe(before);
     });
@@ -1003,9 +1043,9 @@ for (const size of [
         .getByRole("menuitem", { name: "Prompt", exact: true })
         .click();
       await expect(row).toBeFocused();
-      await expect(details.dialog.locator("[aria-live=polite]")).toHaveText(
-        /cannot be extended here/,
-      );
+      await expect(
+        details.dialog.locator("[aria-live=polite]:not(.cm-announced)"),
+      ).toHaveText(/cannot be extended here/);
       await details.close();
       expect(
         parse(await sourceText(page)).spec.steps.find(
@@ -1069,14 +1109,12 @@ test.describe("pointer mapping", () => {
     await page.mouse.move(box.x + point.x, box.y + point.y, { steps: 12 });
     await page.mouse.move(box.x + point.x, box.y + point.y);
     await page.mouse.up();
-    await expect(control).toHaveValue(
+    await expect(formulaBox(details.field("title"))).toHaveAttribute(
+      "data-text",
       `Review {{ input.email }}${text.slice(7)}`,
     );
-    expect(
-      await control.evaluate(
-        (element) => (element as HTMLInputElement).selectionStart,
-      ),
-    ).toBe(7 + 17);
+    await expect(formulaText(details.field("title"))).toBeFocused();
+    expect(await caretAt(page, details.field("title"))).toBe(7 + 17);
     await details.close();
     expect(
       parse(await sourceText(page)).spec.steps.find(
@@ -1183,15 +1221,12 @@ test.describe("pointer mapping", () => {
       };
     });
     await source.dragTo(control, { targetPosition: point });
-    await expect(control).toHaveValue(
+    await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+      "data-text",
       "Hello {{ input.email }}there\nSecond line",
     );
     await expect(control).toBeFocused();
-    expect(
-      await control.evaluate(
-        (element) => (element as HTMLTextAreaElement).selectionStart,
-      ),
-    ).toBe(23);
+    expect(await caretAt(page, details.field("prompt"))).toBe(23);
     await details.close();
     expect(
       parse(await sourceText(page)).spec.steps.find(
@@ -1256,12 +1291,12 @@ test.describe("pointer mapping", () => {
     await source.dragTo(control, { targetPosition: position.point });
     const before = text.slice(0, position.at),
       after = text.slice(position.at);
-    await expect(control).toHaveValue(`${before}{{ input.email }}${after}`);
-    expect(
-      await control.evaluate(
-        (element) => (element as HTMLTextAreaElement).selectionStart,
-      ),
-    ).toBe(position.at + 17);
+    await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+      "data-text",
+      `${before}{{ input.email }}${after}`,
+    );
+    await expect(formulaText(details.field("prompt"))).toBeFocused();
+    expect(await caretAt(page, details.field("prompt"))).toBe(position.at + 17);
     await expect(page.locator("body > *")).toHaveCount(bodyChildren);
     await page.screenshot({
       path: test.info().outputPath("wrapped-text-desktop.png"),
@@ -1319,12 +1354,14 @@ test.describe("pointer mapping", () => {
       };
     }, before);
     await source.dragTo(control, { targetPosition: point });
-    await expect(control).toHaveValue(`${before}{{ input.email }}${after}`);
-    expect(
-      await control.evaluate(
-        (element) => (element as HTMLTextAreaElement).selectionStart,
-      ),
-    ).toBe(before.length + 17);
+    await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+      "data-text",
+      `${before}{{ input.email }}${after}`,
+    );
+    await expect(formulaText(details.field("prompt"))).toBeFocused();
+    expect(await caretAt(page, details.field("prompt"))).toBe(
+      before.length + 17,
+    );
     await details.close();
     expect(
       parse(await sourceText(page)).spec.steps.find(

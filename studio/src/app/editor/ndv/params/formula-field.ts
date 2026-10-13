@@ -393,20 +393,21 @@ export class FormulaField implements OnInit {
     if (this.heldText() || this.editingText() !== null || this.editingOwner)
       return "editor";
     if (this.loneRef()) return "pill";
-    return fieldText(
-      this.stored(),
-      this.templateMode() ? "template" : "formula",
-    ) === null
-      ? "opaque"
-      : "editor";
+    return this.storedText() === null ? "opaque" : "editor";
+  }
+  /**
+   * The stored value as the editor's text. Empty Fixed text switched to
+   * Mapped is an empty formula, not `""`.
+   */
+  private storedText(): string | null {
+    const value = this.stored();
+    if (value.mode === "fixed" && value.value === "") return "";
+    return fieldText(value, this.templateMode() ? "template" : "formula");
   }
   shownText(): string {
     this.reconcile();
     return (
-      this.heldText()?.text ??
-      this.editingText() ??
-      fieldText(this.stored(), this.templateMode() ? "template" : "formula") ??
-      ""
+      this.heldText()?.text ?? this.editingText() ?? this.storedText() ?? ""
     );
   }
   jsonText(): string {

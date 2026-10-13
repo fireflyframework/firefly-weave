@@ -52,6 +52,8 @@ import { UrlField } from "./url-field";
 import { SchemaField } from "./schema-field";
 import { slotsOf } from "./slots";
 import { FormulaField } from "./formula-field";
+import { parseTemplate } from "../../formula/grammar";
+import { escapeTemplateText } from "../../formula/template";
 import type { FormSession } from "./form-session";
 import { normalizeIdentifier } from "./identifiers";
 import { Toggletip } from "./toggletip";
@@ -528,6 +530,20 @@ export class ParamField {
         const control = this.element.nativeElement.querySelector<HTMLElement>(
           ".param-control :is(input, textarea, select, button, [tabindex='0'], [contenteditable='true'])",
         );
+        // A drop that made the text a template: the caret goes after the
+        // placeholder in the formula editor (which may still be loading).
+        const formula = this.formula();
+        if (
+          caret !== undefined &&
+          formula &&
+          !(
+            control instanceof HTMLInputElement ||
+            control instanceof HTMLTextAreaElement
+          )
+        ) {
+          formula.focusEditor(caret);
+          return;
+        }
         control?.focus();
         if (
           caret !== undefined &&
@@ -586,6 +602,7 @@ export class ParamField {
    */
   controlKey(event: KeyboardEvent) {
     if (this.discardHeld(event)) return;
+    if (this.openTemplate(event)) return;
     if (event.key !== "=" || event.ctrlKey || event.metaKey || event.altKey)
       return;
     if (this.mode() !== "fixed") return;
@@ -594,6 +611,42 @@ export class ParamField {
     event.preventDefault();
     event.stopPropagation();
     this.setMode("mapped");
+  }
+  /**
+   * `{{` in a Fixed text field that takes templates switches it to Mapped,
+   * keeps the text, closes the braces and opens suggestions between them.
+   */
+  private openTemplate(event: KeyboardEvent): boolean {
+    const spec = this.spec();
+    if (event.key !== "{" || event.ctrlKey || event.metaKey || event.altKey)
+      return false;
+    if (this.mode() !== "fixed" || !["text", "multiline"].includes(spec.type))
+      return false;
+    const session = this.session();
+    if (!session.templates(spec) || this.readOnly()) return false;
+    const target = event.target as HTMLInputElement | HTMLTextAreaElement;
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? start;
+    if (start === 0 || target.value[start - 1] !== "{") return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const before = escapeTemplateText(
+      target.value.slice(0, start - 1),
+      "placeholder",
+    );
+    const text = `${before}{{  }}${escapeTemplateText(target.value.slice(end), "end")}`;
+    const parsed = parseTemplate(text, session.formulaOptions(spec));
+    session.hold(
+      spec,
+      "template",
+      text,
+      parsed.kind === "error"
+        ? parsed.error.message
+        : "The formula ends too early. Add a value inside the braces.",
+    );
+    session.requestEditor(spec, { caret: before.length + 3, complete: true });
+    session.host.refreshView();
+    return true;
   }
 
   // ---------------------------------------------------------- writing

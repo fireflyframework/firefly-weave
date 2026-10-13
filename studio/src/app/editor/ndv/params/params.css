@@ -2040,6 +2040,51 @@ weave-param-field.is-conditions > .param > .param-line {
 .formula-box.is-template {
   font: var(--type-body);
 }
+/* The whole box is the text's target: the editor fills it edge to edge and
+   its one line sits in the middle (mono lines are 18 px, body lines 20 px). */
+.formula-box:not(.is-multiline) {
+  align-items: stretch;
+}
+.formula-box:not(.is-multiline) > .cm-editor {
+  margin-block: -1px;
+}
+.formula-box:not(.is-multiline) .cm-content {
+  padding-block: calc((var(--sd-control) - 18px) / 2);
+}
+.formula-box.is-template:not(.is-multiline) .cm-content {
+  padding-block: calc((var(--sd-control) - 20px) / 2);
+}
+/* In a key-value row the editor is the row's height, inside the row's own
+   box, as the data picker is. */
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .formula-box {
+  min-height: var(--sd-row);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .formula-box:not(.is-multiline)
+  .cm-content {
+  padding-block: calc((var(--sd-row) - 18px) / 2);
+}
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .formula-box.is-template:not(.is-multiline)
+  .cm-content {
+  padding-block: calc((var(--sd-row) - 20px) / 2);
+}
 .formula-box:hover {
   border-color: var(--field-border-hover);
 }

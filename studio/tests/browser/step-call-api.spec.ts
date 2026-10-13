@@ -41,6 +41,7 @@ import {
   withNewEditor,
   yamlFile,
 } from "./step-details-po";
+import { formulaBox, formulaText } from "./formula-po";
 import { box, density, expectAligned } from "./step-geometry";
 import { connected, newWorkflow, offline, sourceText } from "./support";
 
@@ -461,7 +462,7 @@ for (const size of sizes)
       await expect(file).not.toContainText("Map a value.");
       await expect(fieldsWithProblems(details)).toHaveCount(0);
       // Entered and left empty, File asks for its value.
-      await file.getByRole("combobox", { name: "File" }).focus();
+      await formulaText(file).focus();
       await page.keyboard.press("Tab");
       await expect(file).toContainText("Map a value.");
     });
@@ -728,6 +729,27 @@ for (const size of allSizes)
       const destination = details.field("destination").locator(".param-input");
       const connection = details.field("connection").locator(".choice-field");
       await file.scrollIntoViewIfNeeded();
+      // An empty Mapped field is the formula editor: the same box as the
+      // fields around it, and its text box fills it as one full target.
+      const editor = await box(formulaBox(file));
+      expectAligned(
+        [editor.height, (await box(connection)).height, sizes.control],
+        "editor height",
+      );
+      const beside = await box(destination);
+      expectAligned([editor.x, beside.x], "editor left");
+      expectAligned([editor.right, beside.right], "editor right");
+      const textBox = await box(formulaText(file));
+      expect(textBox.height).toBeGreaterThanOrEqual(sizes.target - 0.5);
+      expect(textBox.width).toBeGreaterThanOrEqual(sizes.target - 0.5);
+      expect(textBox.y).toBeGreaterThanOrEqual(editor.y - 0.5);
+      expect(textBox.bottom).toBeLessThanOrEqual(editor.bottom + 0.5);
+      // Use data… opens the data picker, which looks like the other fields too.
+      await file
+        .getByRole("button", { name: "Field menu for File", exact: true })
+        .click();
+      await page.getByRole("menuitem", { name: /Use data…/ }).click();
+      await expect(picker.locator("input")).toBeFocused();
       const field = await box(picker);
       // The same box as the fields around it, at the density's height.
       expectAligned(
@@ -753,7 +775,6 @@ for (const size of allSizes)
         expect(target.y).toBeGreaterThanOrEqual(field.y - 0.5);
         expect(target.bottom).toBeLessThanOrEqual(field.bottom + 0.5);
       }
-      // A field switched to Mapped while empty shows the same picker.
       await details.close();
       await addCommonStep(page, "Send email");
       await expect(details.dialogFor("send-email")).toBeVisible();
@@ -764,10 +785,21 @@ for (const size of allSizes)
         .getByRole("radiogroup", { name: "Value mode for Message" })
         .getByRole("radio", { name: "Mapped" })
         .click();
-      const mapped = message.locator(".ref-combo-field");
-      await expect(mapped.locator("input")).toBeFocused();
+      // A field switched to Mapped while empty puts the caret in the editor.
+      const mapped = formulaBox(message);
+      await expect(formulaText(message)).toBeFocused();
       expectAligned([(await box(mapped)).height, sizes.control], "Message");
-      expect(await fontSize(mapped.locator("input"))).toBe(bodySize);
+      // A formula is written in the mono font (templates use the body font).
+      expect(
+        await mapped.evaluate((element) => {
+          const probe = document.createElement("span");
+          probe.style.font = "var(--type-mono)";
+          element.append(probe);
+          const font = getComputedStyle(probe).font;
+          probe.remove();
+          return getComputedStyle(element).font === font;
+        }),
+      ).toBe(true);
       // In a key-value row, the picker is the row's height.
       await details.close();
       await addCommonStep(page, "Call an API");
@@ -784,8 +816,8 @@ for (const size of allSizes)
         .getByRole("radiogroup", { name: "Value mode for Value" })
         .getByRole("radio", { name: "Mapped" })
         .click();
-      const inRow = row.locator(".ref-combo-field");
-      await expect(inRow.locator("input")).toBeFocused();
+      const inRow = formulaBox(row);
+      await expect(formulaText(row)).toBeFocused();
       expectAligned(
         [
           (await box(inRow)).height,

@@ -76,3 +76,23 @@ export async function replaceFormula(page: Page, field: Locator, text: string) {
   await page.keyboard.press("Backspace");
   if (text) await page.keyboard.insertText(text);
 }
+
+/**
+ * Where the caret is in a field's formula text: types a marker there, reads
+ * the text, then takes the marker back out.
+ */
+export async function caretAt(page: Page, field: Locator): Promise<number> {
+  const box = formulaBox(field);
+  await page.keyboard.type("§");
+  await expect(box).toHaveAttribute("data-text", /§/);
+  const at = (await box.getAttribute("data-text"))!.indexOf("§");
+  await page.keyboard.press("Backspace");
+  await expect(box).not.toHaveAttribute("data-text", /§/);
+  return at;
+}
+
+/** Puts the caret at the end of the focused editor's text (End stops at a wrapped line's end). */
+export async function caretToEnd(page: Page) {
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("ArrowRight");
+}
