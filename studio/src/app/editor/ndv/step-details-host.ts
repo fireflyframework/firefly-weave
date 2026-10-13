@@ -65,9 +65,12 @@ export interface StepDetailsHost {
   redo(): void;
   /**
    * A toast's Undo: settles text typed in Source, then undoes only while
-   * `still` holds; "kept" when the person keeps editing Source.
+   * `still` holds; "kept" when the person keeps editing Source, "locked"
+   * while a simulation runs.
    */
-  undoIfUnchanged(still: () => boolean): Promise<"undone" | "changed" | "kept">;
+  undoIfUnchanged(
+    still: () => boolean,
+  ): Promise<"undone" | "changed" | "kept" | "locked">;
   runCommand(command: "save" | "simulate" | "export"): Promise<unknown>;
   blocker(command: "simulate"): string;
   /** Settles unapplied inspector edits; false when they can't be applied. */

@@ -3301,14 +3301,19 @@ export class App implements CanvasHost {
   /**
    * A toast's Undo: settles text typed in Source first (its question), then
    * undoes the toast's edit only while the workflow is as the toast left it.
-   * "kept" when the person keeps editing Source; "changed" when the workflow
-   * changed since, an Apply of the typed text included.
+   * "kept" when the person keeps editing Source; "locked" while a simulation
+   * runs, which the toast is told here; "changed" when the workflow changed
+   * since, an Apply of the typed text included.
    */
   async undoIfUnchanged(
     still: () => boolean,
-  ): Promise<"undone" | "changed" | "kept"> {
+  ): Promise<"undone" | "changed" | "kept" | "locked"> {
     if (!(await this.settleSource())) return "kept";
-    if (this.editingLocked || !still()) return "changed";
+    if (this.editingLocked) {
+      this.notify("Editing is paused while the simulation runs.");
+      return "locked";
+    }
+    if (!still()) return "changed";
     this.undo();
     return "undone";
   }
