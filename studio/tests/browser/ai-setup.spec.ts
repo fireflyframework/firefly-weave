@@ -759,6 +759,83 @@ test("when Weave AI's connection can't be found, the card asks for one before sa
   expect(platform.lumiWrites).toEqual([]);
 });
 
+test("when the newest revision of Weave AI's connection has no key, the card says so and keeps Save off", async ({
+  page,
+}) => {
+  const keyless = {
+    ...openaiConnection,
+    id: "55555555-5555-4555-8555-555555555555",
+    revision: 2,
+    secretRef: { apiKey: "no-credential" },
+  };
+  const platform = await start(page, {
+    connections: [ollamaConnection, openaiConnection, keyless],
+    models: [GPT],
+    lumi: pinnedOpenAi,
+  });
+  const card = page.locator("weave-ai-card");
+  await expect(card).toContainText(
+    "The newest revision of openai (revision 2) has no key, and Weave AI can't use a connection without a key yet. Choose a connection with a key, then save.",
+  );
+  await expect(card).not.toContainText("saving moves it");
+  await expect(
+    card.getByRole("button", { name: "Save Weave AI settings" }),
+  ).toBeDisabled();
+  expect(platform.lumiWrites).toEqual([]);
+});
+
+test("after its connection gets a new revision, Weave AI lists the models of the revision it will save", async ({
+  page,
+}) => {
+  const second = {
+    ...openaiConnection,
+    id: "66666666-6666-4666-8666-666666666666",
+    revision: 2,
+  };
+  const platform = await start(page, {
+    connections: [ollamaConnection, openaiConnection, second],
+    models: [GPT],
+    lumi: pinnedOpenAi,
+  });
+  const card = page.locator("weave-ai-card");
+  await expect(card).toContainText(
+    "Weave AI uses revision 1 of openai; saving moves it to revision 2.",
+  );
+  await expect
+    .poll(() => platform.modelRequests.some((url) => url.includes(second.id)))
+    .toBe(true);
+  expect(
+    platform.modelRequests.filter((url) => url.includes(OPENAI_REVISION)),
+  ).toEqual([]);
+});
+
+test("when Weave AI's connection can't be read, the card says what happened and keeps Save off", async ({
+  page,
+}) => {
+  await connected(page, { capabilities: AI_CAPABILITIES });
+  const platform = await mockAiPlatform(page, {
+    connections: [ollamaConnection],
+    models: [GPT],
+    lumi: pinnedOpenAi,
+  });
+  await page.route(`**/connections/${OPENAI_REVISION}`, (r) =>
+    r.fulfill({
+      status: 403,
+      json: { code: "WV-FORBIDDEN", message: "Not allowed" },
+    }),
+  );
+  await openAiModels(page);
+  const card = page.locator("weave-ai-card");
+  await expect(card.getByRole("alert")).toContainText(
+    "Studio couldn't read the connection Weave AI uses.",
+  );
+  await expect(card).not.toContainText("no longer available");
+  await expect(
+    card.getByRole("button", { name: "Save Weave AI settings" }),
+  ).toBeDisabled();
+  expect(platform.lumiWrites).toEqual([]);
+});
+
 const teamOpenAi = {
   ...openaiConnection,
   id: "44444444-4444-4444-8444-444444444444",

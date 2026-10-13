@@ -223,8 +223,13 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     if (!id) return null;
     const listed = this.connections().find((item) => item.id === id);
     if (listed) return listed;
+    const newest = this.newest;
+    return newest && !keylessConnection(newest) ? newest : null;
+  }
+  /** The newest revision of the saved connection, when the list has a newer one. */
+  private get newest(): AiConnection | null {
     const pinned = this.pinned;
-    if (!pinned || pinned.id !== id) return null;
+    if (!pinned || pinned.id !== this.draft.connection) return null;
     return (
       this.connections().find(
         (item) => item.name === pinned.name && item.id !== pinned.id,
@@ -235,9 +240,11 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
   get connectionNote(): string {
     const id = this.draft.connection;
     if (!id || this.connections().some((item) => item.id === id)) return "";
-    const chosen = this.chosen;
-    if (chosen && this.pinned)
-      return `Weave AI uses revision ${this.pinned.revision} of ${this.pinned.name}; saving moves it to revision ${chosen.revision}.`;
+    const newest = this.newest;
+    if (newest && this.pinned)
+      return keylessConnection(newest)
+        ? `The newest revision of ${newest.name} (revision ${newest.revision}) has no key, and Weave AI can't use a connection without a key yet. Choose a connection with a key, then save.`
+        : `Weave AI uses revision ${this.pinned.revision} of ${this.pinned.name}; saving moves it to revision ${newest.revision}.`;
     if (this.pinnedMissing || (this.pinned && this.connections().length))
       return "Weave AI's connection is no longer available. Choose a connection, then save.";
     return "";
@@ -262,9 +269,15 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
   private loads = 0;
   ngDoCheck() {
     const key = `${this.generation()}:${this.canUse()}:${this.manager()}:${this.canChoose()}`;
-    if (key === this.loadedFor) return;
-    this.loadedFor = key;
-    void this.load();
+    if (key !== this.loadedFor) {
+      this.loadedFor = key;
+      void this.load();
+      return;
+    }
+    // The list of connections can arrive after the card loaded: list the
+    // models of the revision Save will use once it is known.
+    const target = this.loading ? "" : (this.chosen?.id ?? "");
+    if (target && target !== this.modelsFor) void this.loadModels(target);
   }
   private async load() {
     const load = ++this.loads;
@@ -279,20 +292,33 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
           this.setup.lumiReplySchema(),
         ]);
         const pinnedId = current?.connection_revision_id ?? "";
-        const pinned = pinnedId
-          ? await this.setup.connection(pinnedId).catch(() => null)
-          : null;
+        let pinned: AiConnection | null = null;
+        let unreadable = "";
+        if (pinnedId)
+          try {
+            pinned = await this.setup.connection(pinnedId);
+          } catch (error) {
+            // Only a missing revision means it is gone; any other failure is
+            // reported as it is, and Save waits for a connection.
+            if (!(error instanceof ApiError && error.status === 404))
+              unreadable = describeError(error).message;
+          }
         if (!this.alive || load !== this.loads) return;
         this.current = current;
         this.pinned = pinned;
-        this.pinnedMissing = !!pinnedId && !pinned;
+        this.pinnedMissing = !!pinnedId && !pinned && !unreadable;
+        this.error = unreadable
+          ? `Studio couldn't read the connection Weave AI uses. ${unreadable}`
+          : "";
         this.replySchema = reply;
         this.draft = {
           enabled: current?.enabled ?? true,
           connection: current?.connection_revision_id ?? "",
           model: String(current?.profile?.["model"] ?? ""),
         };
-        if (this.draft.connection) await this.loadModels(this.draft.connection);
+        this.modelsFor = "";
+        const target = this.chosen;
+        if (target) await this.loadModels(target.id);
       }
     } catch (error) {
       if (this.alive && load === this.loads)
@@ -312,10 +338,13 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     this.draft = { ...this.draft, connection: id, model: "" };
     await this.loadModels(id);
   }
+  /** The connection revision whose models were last asked for. */
+  private modelsFor = "";
   private async loadModels(id: string) {
+    this.modelsFor = id;
     try {
       const models = await this.setup.models(id);
-      if (!this.alive || this.draft.connection !== id) return;
+      if (!this.alive || this.modelsFor !== id) return;
       this.models = models;
       this.draft = {
         ...this.draft,
