@@ -37,10 +37,19 @@ from typing import Any
 DATA: dict[str, Any] = json.loads(Path(__file__).with_name("data.json").read_text(encoding="utf-8"))
 ORIGIN = "http://acme.acceptance.test:8080"
 MAX_BODY = 65536
+MAX_LENGTH_DIGITS = 12
 CUSTOMER = re.compile(r"/customers/([A-Z0-9-]{1,32})")
 ORDERS = re.compile(r"/customers/([A-Z0-9-]{1,32})/orders")
 STATUS = re.compile(r"/orders/([A-Z0-9-]{1,32})/status")
 SINK = re.compile(r"/sink/([a-z0-9-]{1,64})")
+
+
+class _BadRequest(Exception):
+    """A request the fixture answers with 400 and journals; the connection closes after the answer."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
 
 
 def _json(schema: str) -> dict[str, Any]:
@@ -194,11 +203,14 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
     def _read_body(self) -> bytes | None:
-        """The request body, or None when it is over 64 KiB (drained when at most 256 KiB)."""
+        """The request body, or None when it is over 64 KiB (drained when at most 256 KiB).
+
+        Raises _BadRequest for a Content-Length that is not a short run of ASCII digits.
+        """
         length = self.headers.get("Content-Length", "0")
-        if not length.isdigit():
+        if not (length.isascii() and length.isdigit() and len(length) <= MAX_LENGTH_DIGITS):
             self.close_connection = True
-            return None
+            raise _BadRequest("Send a decimal Content-Length.")
         size = int(length)
         if size > MAX_BODY:
             if size <= 4 * MAX_BODY:
@@ -240,11 +252,18 @@ class ApiHandler(_Handler):
 
     def _serve(self) -> None:
         path = self.path.split("?", 1)[0]
-        body = self._read_body() if self.command in {"POST", "PUT", "PATCH"} else b""
+        refused: str | None = None
+        try:
+            body = self._read_body() if self.command in {"POST", "PUT", "PATCH"} else b""
+        except _BadRequest as error:
+            body, refused = b"", error.message
         key = self.headers.get("X-Api-Key")
         key_sha256 = None if key is None else _digest(key.encode())
-        injected = self.state.take_fault(path)
-        if injected is not None:
+        # A malformed request never consumes an armed fault.
+        injected = None if refused is not None else self.state.take_fault(path)
+        if refused is not None:
+            status, value = 400, {"error": refused}
+        elif injected is not None:
             status, value = injected, {"error": "injected"}
         elif body is None:
             status, value = 413, {"error": "The request body is over 64 KiB."}
@@ -291,7 +310,7 @@ class ApiHandler(_Handler):
             if path in {"/approvals", "/notifications"}:
                 try:
                     payload = json.loads(body or b"null")
-                except ValueError:
+                except (ValueError, RecursionError):
                     payload = None
                 if not isinstance(payload, dict):
                     return 400, {"error": "Send a JSON object."}
@@ -305,7 +324,7 @@ class ApiHandler(_Handler):
 def _fault(body: bytes) -> tuple[str, int, int] | None:
     try:
         value = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     if not isinstance(value, dict) or set(value) != {"status", "count", "path"}:
         return None
@@ -333,7 +352,11 @@ class ControlHandler(_Handler):
         self._send(200, {"entries": entries})
 
     def do_POST(self) -> None:
-        body = self._read_body()
+        try:
+            body = self._read_body()
+        except _BadRequest as error:
+            self._send(400, {"error": error.message})
+            return
         if body is None:
             self._send(413, {"error": "The request body is over 64 KiB."})
         elif self.path == "/_control/reset":

@@ -17,11 +17,13 @@
 """The Acme API fixture serves the data, key check, faults and journal the acceptance journeys rely on."""
 
 import hashlib
+import http.client
 import importlib.util
 import json
 import sys
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -147,3 +149,53 @@ def test_compose_keeps_acme_on_the_egress_network_with_a_loopback_control_port()
     assert all(port.startswith("127.0.0.1:") for port in service["ports"])
     assert service["read_only"] and service["cap_drop"] == ["ALL"] and service["pull_policy"] == "never"
     assert document["networks"]["egress"]["external"] is True
+
+
+DEEP = b"[" * 30000 + b"]" * 30000  # under 64 KiB, deeper than the JSON parser accepts
+
+
+def raw_post(base, path, body, length=None):
+    """POST with a Content-Length the test chooses (urllib would compute its own)."""
+    url = urllib.parse.urlsplit(base)
+    connection = http.client.HTTPConnection(url.hostname, url.port, timeout=5)
+    try:
+        connection.putrequest("POST", path)
+        connection.putheader("Content-Type", "application/json")
+        connection.putheader("Content-Length", str(len(body)) if length is None else length)
+        connection.endheaders()
+        connection.send(body)
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("length", ["\u00b2", "1e3", "-5", "1" * 13])
+def test_an_odd_content_length_is_refused_and_journaled(servers, length):
+    api, control = servers
+    status, body = raw_post(api, "/approvals", b"{}", length)
+    assert (status, json.loads(body)) == (400, {"error": "Send a decimal Content-Length."})
+    journal = json.loads(urllib.request.urlopen(control + "/_control/journal", timeout=5).read())["entries"]
+    assert [(entry["method"], entry["path"], entry["status"]) for entry in journal] == [("POST", "/approvals", 400)]
+    status, body = raw_post(control, "/_control/faults", b"{}", length)
+    assert (status, json.loads(body)) == (400, {"error": "Send a decimal Content-Length."})
+
+
+def test_deeply_nested_json_is_refused_and_journaled(servers):
+    api, control = servers
+    for path in ("/approvals", "/notifications"):
+        status, body = raw_post(api, path, DEEP)
+        assert (status, json.loads(body)) == (400, {"error": "Send a JSON object."})
+    status, _ = raw_post(control, "/_control/faults", DEEP)
+    assert status == 400
+    journal = json.loads(urllib.request.urlopen(control + "/_control/journal", timeout=5).read())["entries"]
+    assert [entry["status"] for entry in journal] == [400, 400]
+
+
+def test_a_malformed_request_never_consumes_an_armed_fault(servers):
+    api, control = servers
+    fault = json.dumps({"status": 503, "count": 1, "path": "/approvals"}).encode()
+    assert raw_post(control, "/_control/faults", fault)[0] == 204
+    assert raw_post(api, "/approvals", b"{}", "x")[0] == 400
+    assert raw_post(api, "/approvals", b"{}")[0] == 503
+    assert raw_post(api, "/approvals", b"{}")[0] == 201
