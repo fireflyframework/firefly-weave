@@ -48,6 +48,7 @@ from firefly_weave.compiler.ir import (
 )
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
+from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.capacity import (
     MAX_REDUCTIONS,
@@ -58,7 +59,15 @@ from firefly_weave.runtime.capacity import (
     capacity_failures,
     logical_size,
 )
-from firefly_weave.runtime.control import available, bindings, branch_key, frame, joined_output
+from firefly_weave.runtime.control import (
+    available,
+    bindings,
+    branch_key,
+    frame,
+    frame_key,
+    joined_output,
+    loop_suffix,
+)
 from firefly_weave.runtime.models import (
     BranchState,
     ControlCommand,
@@ -86,8 +95,11 @@ def checked_deadline(timestamp: datetime, duration_seconds: int) -> datetime:
 
 
 def deadline_order(node_id: str, due: datetime, duration_nodes: set[str]) -> tuple[int, datetime, str]:
-    """Shared observed-due arbitration: run timeout, signal timeout, then duration."""
-    return (0 if node_id == "@run" else 2 if node_id in duration_nodes else 1, due, node_id)
+    """Shared observed-due arbitration: run timeout, signal timeout, then duration.
+
+    ``node_id`` is a deadline's instance key and ``duration_nodes`` holds static step IDs.
+    """
+    return (0 if node_id == "@run" else 2 if node_of(node_id) in duration_nodes else 1, due, node_id)
 
 
 def workflow(artifact: CompiledArtifact) -> WorkflowIR:
@@ -299,14 +311,21 @@ def _advance_owned(
         assert isinstance(definition, ActionDefinition)
         return dependency.reference, definition
 
-    def complete(node: Node, value: JsonValue, decision: JsonObject | None = None) -> None:
-        branch = frame(current_state, node)
+    def successor(key: str) -> str:
+        # Repeated activations ("#") and loop yields ("~") continue through their owner node.
+        if "#" in key or "~" in key:
+            raise KernelError("WV-RUNTIME-EVENT")
+        return successors[node_of(key)] + loop_suffix(key)
+
+    def complete(node: Node, key: str, value: JsonValue, decision: JsonObject | None = None) -> None:
+        # Expressions read steps by their static IDs, so bindings keep the step ID; history keeps the instance key.
+        branch = frame(current_state, node, key)
         target = current_state.steps if branch is None else branch.steps
         target[node.id] = {"output": value}
-        result.steps.append(StepChange(node_id=node.id, status="completed", output=value, decision=decision))
+        result.steps.append(StepChange(node_id=key, status="completed", output=value, decision=decision))
 
-    def mapping(node: Node, expression: JsonObject) -> JsonValue:
-        return evaluate(expression, {"input": current_state.input, "steps": bindings(current_state, node)})
+    def mapping(node: Node, key: str, expression: JsonObject) -> JsonValue:
+        return evaluate(expression, {"input": current_state.input, "steps": bindings(current_state, node, key)})
 
     def guard(path: str, purpose: str, value: JsonValue) -> None:
         for item in ir.guards:
@@ -323,11 +342,12 @@ def _advance_owned(
         )
 
     def spawn(join: JoinState) -> None:
-        for branch in available(current_state, join):
-            branch = branch.model_copy(update={"status": "running"})
-            current_state.branches[branch_key(branch.owner, branch.name)] = branch
+        suffix = loop_suffix(join.owner)
+        for key in available(current_state, join):
+            branch = current_state.branches[key].model_copy(update={"status": "running"})
+            current_state.branches[key] = branch
             result.commands.append(ControlCommand(kind="spawn_branch", node_id=join.owner, branch=branch.name))
-            queue.append(branch.target)
+            queue.append(branch.target + suffix)
 
     def terminate(status: str, code: str | None = None) -> None:
         nonlocal current_state
@@ -355,15 +375,15 @@ def _advance_owned(
         identifier = completion.data.get("node_id")
         if not isinstance(identifier, str) or identifier not in current_state.active:
             raise KernelError("WV-RUNTIME-EVENT")
-        node = nodes[identifier]
+        node = nodes[node_of(identifier)]
         if isinstance(node, WaitNode) and completion.type == "wait_elapsed":
             due = current_state.waits.get(identifier)
             if due is None or completion.data.get("deadline") != due.isoformat() or completion.timestamp < due:
                 raise KernelError("WV-RUNTIME-EARLY-WAKEUP")
-            complete(node, None)
+            complete(node, identifier, None)
             current_state.active.remove(identifier)
             current_state.waits.pop(identifier)
-            queue.append(successors[identifier])
+            queue.append(successor(identifier))
             return
         if "output" not in completion.data:
             raise KernelError("WV-RUNTIME-EVENT")
@@ -388,10 +408,10 @@ def _advance_owned(
             raise KernelError("WV-RUNTIME-EVENT")
         value = completion.data["output"]
         validate(ir, schema, value)
-        complete(node, value)
+        complete(node, identifier, value)
         current_state.active.remove(identifier)
         current_state.waits.pop(identifier, None)
-        queue.append(successors[identifier])
+        queue.append(successor(identifier))
 
     try:
         if not cursor.admitted:
@@ -499,7 +519,7 @@ def _advance_owned(
                     code = "WV-TASK-FAILED" if event.type == "task_failed" else event.data.get("code")
                     if not isinstance(code, str) or not code:
                         raise KernelError("WV-RUNTIME-EVENT")
-                    if event.type == "task_failed" and not isinstance(nodes[current], ActionNode):
+                    if event.type == "task_failed" and not isinstance(nodes[node_of(current)], ActionNode):
                         raise KernelError("WV-RUNTIME-EVENT")
                     incident(current, code, generation)
                     return checkpoint(result.model_copy(update={"state": current_state}))
@@ -529,24 +549,25 @@ def _advance_owned(
             return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
         while queue:
             current = queue.pop(0)
-            node = nodes[current]
+            node = nodes[node_of(current)]
+            suffix = loop_suffix(current)
             if isinstance(node, StartNode):
-                queue.append(successors[current])
+                queue.append(successor(current))
             elif isinstance(node, EndNode):
-                output = mapping(node, cast(JsonObject, node.output.model_dump(by_alias=True)))
+                output = mapping(node, current, cast(JsonObject, node.output.model_dump(by_alias=True)))
                 validate(ir, ir.schemas[ir.output_schema], output)
                 current_state = current_state.model_copy(update={"output": output, "status": "succeeded"})
                 return checkpoint(result.model_copy(update={"state": current_state}))
             elif isinstance(node, TransformNode):
-                value = mapping(node, cast(JsonObject, node.value.model_dump(by_alias=True)))
+                value = mapping(node, current, cast(JsonObject, node.value.model_dump(by_alias=True)))
                 guard(node.path + "/value", "transform_output", value)
-                complete(node, value)
-                queue.append(successors[current])
+                complete(node, current, value)
+                queue.append(successor(current))
             elif isinstance(node, DecisionTableNode):
                 dependency = next(
                     d for d in ir.dependencies if d.digest == node.dependency and d.kind == "DecisionTable"
                 )
-                value = mapping(node, cast(JsonObject, node.input.model_dump(by_alias=True)))
+                value = mapping(node, current, cast(JsonObject, node.input.model_dump(by_alias=True)))
                 guard(node.path + "/with", "decision_input", value)
                 decision = evaluate_decision_table(
                     cast(JsonObject, dependency.document["spec"]),
@@ -556,10 +577,11 @@ def _advance_owned(
                 guard(node.path, "decision_output", decision.output)
                 complete(
                     node,
+                    current,
                     decision.output,
                     {"matched_rule_ids": list(decision.matched_rule_ids), "used_default": decision.used_default},
                 )
-                queue.append(successors[current])
+                queue.append(successor(current))
             elif isinstance(node, FailNode):
                 terminate("failed", node.code)
                 current_state = current_state.model_copy(
@@ -567,7 +589,7 @@ def _advance_owned(
                 )
                 return checkpoint(result.model_copy(update={"state": current_state}))
             elif isinstance(node, (SwitchNode, ParallelNode)):
-                if node.id in current_state.joins:
+                if current in current_state.joins:
                     raise KernelError("WV-RUNTIME-ACTIVATION")
                 if isinstance(node, ParallelNode):
                     targets = [(b.name, b.target) for b in node.branches]
@@ -576,85 +598,87 @@ def _advance_owned(
                     targets = [("default", node.default)]
                     concurrency = 1
                     for case in node.cases:
-                        choice = mapping(node, cast(JsonObject, case.when.model_dump(by_alias=True)))
+                        choice = mapping(node, current, cast(JsonObject, case.when.model_dump(by_alias=True)))
                         if not isinstance(choice, bool):
                             raise KernelError("WV-RUNTIME-PREDICATE")
                         if choice:
                             targets = [(case.branch, case.target)]
                             break
-                parent = frame(current_state, node)
                 if operational:
                     current_size = logical_size(current_state, STATE_BYTES)
-                    visible_size = logical_size(bindings(current_state, node), STATE_BYTES)
+                    visible_size = logical_size(bindings(current_state, node, current), STATE_BYTES)
                     if current_size + len(targets) * (visible_size + 1024) > STATE_BYTES:
                         raise RuntimeCapacityError()
                 keys = []
                 for name, target in targets:
-                    key = branch_key(node.id, name)
+                    key = branch_key(node.id, name, suffix)
                     keys.append(key)
                     current_state.branches[key] = BranchState(
                         owner=node.id,
                         name=name,
                         target=target,
-                        parent=branch_key(parent.owner, parent.name) if parent else None,
-                        visible=deepcopy(bindings(current_state, node)),
+                        parent=frame_key(node, current),
+                        visible=deepcopy(bindings(current_state, node, current)),
                     )
                 join = JoinState(
-                    owner=node.id,
-                    node_id=node.join,
+                    owner=current,
+                    node_id=node.join + suffix,
                     mode="all" if isinstance(node, ParallelNode) else "selected",
                     branches=keys,
                     concurrency=concurrency,
                     required_count=len(keys),
                 )
-                current_state.joins[node.id] = join
+                current_state.joins[current] = join
                 spawn(join)
             elif isinstance(node, BranchOutputNode):
-                branch = frame(current_state, node)
+                branch = frame(current_state, node, current)
                 assert branch is not None
                 if branch.status != "running":
                     raise KernelError("WV-RUNTIME-ACTIVATION")
-                value = mapping(node, cast(JsonObject, node.output.model_dump(by_alias=True)))
+                value = mapping(node, current, cast(JsonObject, node.output.model_dump(by_alias=True)))
                 guard(node.path, "branch_output", value)
                 measure_value(value)
                 branch = branch.model_copy(update={"output": value, "status": "completed"})
-                current_state.branches[branch_key(node.owner, node.branch)] = branch
-                result.steps.append(StepChange(node_id=node.id, status="completed", output=value))
-                result.commands.append(ControlCommand(kind="accept_output", node_id=node.id, branch=node.branch))
-                join = current_state.joins[node.owner]
-                join.completed.append(branch_key(node.owner, node.branch))
+                key = branch_key(node.owner, node.branch, suffix)
+                current_state.branches[key] = branch
+                result.steps.append(StepChange(node_id=current, status="completed", output=value))
+                result.commands.append(ControlCommand(kind="accept_output", node_id=current, branch=node.branch))
+                owner = node.owner + suffix
+                join = current_state.joins[owner]
+                join.completed.append(key)
                 join.completed.sort()
                 join = join.model_copy(update={"completed_count": len(join.completed)})
-                current_state.joins[node.owner] = join
+                current_state.joins[owner] = join
                 if join.completed_count == join.required_count:
                     queue.append(join.node_id)
                 else:
                     spawn(join)
             elif isinstance(node, JoinNode):
-                join = current_state.joins[node.owner]
+                owner = node.owner + suffix
+                join = current_state.joins[owner]
                 if join.status != "waiting" or join.completed_count != join.required_count:
                     raise KernelError("WV-RUNTIME-JOIN")
                 value = joined_output(current_state, join)
                 measure_value(value)
-                complete(nodes[node.owner], value)
-                result.steps.append(StepChange(node_id=node.id, status="completed", output=value))
-                result.commands.append(ControlCommand(kind="join", node_id=node.id))
-                current_state.joins[node.owner] = join.model_copy(update={"status": "joined"})
-                queue.append(successors[node.id])
+                complete(nodes[node.owner], owner, value)
+                result.steps.append(StepChange(node_id=current, status="completed", output=value))
+                result.commands.append(ControlCommand(kind="join", node_id=current))
+                current_state.joins[owner] = join.model_copy(update={"status": "joined"})
+                queue.append(successor(current))
             elif isinstance(node, (ActionNode, SignalNode, WaitNode, HumanTaskNode)):
-                if node.id in current_state.active:
+                if current in current_state.active:
                     raise KernelError("WV-RUNTIME-ACTIVATION")
-                current_state.active.append(node.id)
-                result.steps.append(StepChange(node_id=node.id, status="waiting"))
+                current_state.active.append(current)
+                result.steps.append(StepChange(node_id=current, status="waiting"))
                 if isinstance(node, HumanTaskNode):
-                    title = mapping(node, cast(JsonObject, node.title.model_dump(by_alias=True)))
-                    context = mapping(node, cast(JsonObject, node.context.model_dump(by_alias=True)))
+                    title = mapping(node, current, cast(JsonObject, node.title.model_dump(by_alias=True)))
+                    context = mapping(node, current, cast(JsonObject, node.context.model_dump(by_alias=True)))
                     validate(ir, {"type": "string", "minLength": 1, "maxLength": 512}, title)
                     validate(ir, {"type": "object"}, context)
                     expiry = checked_deadline(event.timestamp, node.expiry_seconds) if node.expiry_seconds else None
                     result.commands.append(
                         HumanTaskIntent(
-                            node_id=node.id,
+                            node_id=current,
                             assignment=node.assignment,
                             title=cast(str, title),
                             context=cast(JsonObject, context),
@@ -665,16 +689,16 @@ def _advance_owned(
                         )
                     )
                     if expiry:
-                        current_state.waits[node.id] = expiry
-                        result.commands.append(Deadline(node_id=node.id, deadline=expiry))
+                        current_state.waits[current] = expiry
+                        result.commands.append(Deadline(node_id=current, deadline=expiry))
                 elif isinstance(node, ActionNode):
                     reference, definition = action(node)
-                    value = mapping(node, cast(JsonObject, node.input.model_dump(by_alias=True)))
+                    value = mapping(node, current, cast(JsonObject, node.input.model_dump(by_alias=True)))
                     validate_action(ir, definition, "input", value)
                     implementation = definition.spec.implementation
                     result.commands.append(
                         TaskIntent(
-                            node_id=node.id,
+                            node_id=current,
                             action_digest=node.dependency,
                             action_reference=reference,
                             input=value,
@@ -692,10 +716,10 @@ def _advance_owned(
                     wait_deadline = checked_deadline(
                         event.timestamp, node.duration_seconds if isinstance(node, WaitNode) else node.timeout_seconds
                     )
-                    current_state.waits[node.id] = wait_deadline
+                    current_state.waits[current] = wait_deadline
                     result.commands.append(
                         Deadline(
-                            node_id=node.id,
+                            node_id=current,
                             deadline=wait_deadline,
                             name=node.name if isinstance(node, SignalNode) else None,
                         )
