@@ -19,7 +19,11 @@ import {
   canvasFile,
   canvasFromStored,
   ownedRecipes,
+  removeTrigger,
+  syncCalled,
+  type CanvasSidecar,
 } from "./editor/state/canvas-sidecar";
+import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
 import { DraftCanvases, type KeptWhere } from "./editor/state/draft-canvas";
 import type { AccountScope } from "./editor/state/browser-store";
 import {
@@ -1732,7 +1736,14 @@ export class App implements CanvasHost {
       );
       return;
     }
-    model.amend(() => (model.canvas = read.canvas));
+    model.amend(
+      () =>
+        (model.canvas = syncCalled(
+          read.canvas,
+          model.definition,
+          model.stepIdSet().size > 0,
+        )),
+    );
     this.tick.update((n) => n + 1);
     this.cdr.markForCheck();
   }
@@ -1861,7 +1872,11 @@ export class App implements CanvasHost {
       model.definition,
       model.stepIdSet(),
     );
-    model.canvas = stored.canvas;
+    model.canvas = syncCalled(
+      stored.canvas,
+      model.definition,
+      model.stepIdSet().size > 0,
+    );
     if (stored.problems.length)
       this.notify(
         "Studio couldn't read the notes and settings saved with this workflow, so it opened without them.",
@@ -3593,6 +3608,65 @@ export class App implements CanvasHost {
   moveStep(id: string, insert: { owner: string; index: number }) {
     this.connectingNode = "";
     this.moveTo(id, { ...insert, point: { x: 0, y: 0 }, label: "" });
+  }
+  /** Applies a canvas sidecar change, and a workflow change it needs, as one undo step. */
+  changeCanvas(next: CanvasSidecar, options: { workflow?: Workflow } = {}) {
+    if (this.editingLocked || this.model.readonly) {
+      this.notify(
+        this.model.readonly
+          ? "Fix the source before changing the canvas."
+          : "Editing is paused while the simulation runs.",
+      );
+      return false;
+    }
+    this.perform(() =>
+      this.model.batch(() => {
+        if (options.workflow) this.model.updateWorkflow(options.workflow);
+        this.model.canvas = next;
+      }),
+    );
+    return !this.error;
+  }
+  /** Removes a trigger choice; Called by a workflow asks first, because callers depend on it. */
+  async removeTrigger(id: string) {
+    const intent = this.model.canvas.triggers?.find((item) => item.id === id);
+    if (!intent || this.editingLocked || this.model.readonly) return;
+    if (
+      intent.kind === "called" &&
+      !(await this.dialogs.confirm({
+        title: "Stop other workflows from calling this one?",
+        message:
+          "Workflows that call this one fail at their next activation until they stop calling it.",
+        confirmLabel: "Remove trigger",
+        danger: true,
+      }))
+    )
+      return;
+    let change: ReturnType<typeof removeTrigger>;
+    try {
+      change = removeTrigger(this.model.canvas, this.model.definition, id);
+    } catch (error) {
+      this.notify(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    if (
+      !this.changeCanvas(
+        change.canvas,
+        change.workflow ? { workflow: change.workflow } : {},
+      )
+    )
+      return;
+    const revision = this.model.revision;
+    this.notify(`Removed the ${TRIGGER_LABELS[intent.kind]} trigger.`, {
+      label: "Undo",
+      run: () => {
+        if (this.model.revision !== revision)
+          return this.notify(
+            "The workflow changed since. Use Undo in the toolbar.",
+          );
+        this.undo();
+      },
+    });
   }
   /** Selects a step and moves focus into its details: their title, or the step name to rename it. */
   async openStep(id: string, focus: "details" | "rename" | "issues") {
@@ -7129,7 +7203,11 @@ export class App implements CanvasHost {
       );
       return;
     }
-    this.model.canvas = stored.canvas;
+    this.model.canvas = syncCalled(
+      stored.canvas,
+      this.model.definition,
+      this.model.stepIdSet().size > 0,
+    );
     if (stored.dropped)
       this.notify(
         "The canvas file mentions steps this workflow doesn't have. Their notes stay on the canvas without an anchor.",

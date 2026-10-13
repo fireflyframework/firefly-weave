@@ -66,7 +66,12 @@ import {
   keyPlatform,
 } from "../state/canvas-commands";
 import { minimapPinned, setMinimapPinned } from "../state/canvas-preferences";
-import { stepNoteLine, type CanvasSidecar } from "../state/canvas-sidecar";
+import {
+  stepNoteLine,
+  triggerInputs,
+  type CanvasSidecar,
+  type TriggerIntent,
+} from "../state/canvas-sidecar";
 import { CHOICE_NOT_KEPT } from "../state/editor-flag";
 import type { KeymapCommand } from "../state/keymap";
 import {
@@ -113,12 +118,12 @@ import {
 } from "./run-state";
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
+import { TRIGGER_LABELS, triggerNoteKey, triggerTile } from "./trigger-tiles";
 import {
   runText,
   tileBadge,
   tileBorders,
   tileName,
-  triggerSubtitle,
   type StepFacts,
   type TileBorders,
 } from "./tile-facts";
@@ -159,6 +164,18 @@ const TOOLBAR = { width: 64, height: 34, rise: 6 } as const;
 /** "Insert a step between a and b" becomes "Move x between a and b". */
 const moveName = (name: string, id: string) =>
   name.replace(/^(Insert|Add) a step/, `Move ${id}`);
+/** A step's hover toolbar, or a chosen trigger's (one Remove button). */
+interface ToolbarView {
+  id: string;
+  /** What "Commands for …" names: the step ID, or "the Webhook trigger". */
+  name: string;
+  x: number;
+  y: number;
+  locked: boolean;
+  tabIndex: 0 | -1;
+  menu: RowMenuItem[];
+  trigger: { intent: string; label: string } | null;
+}
 
 @Component({
   selector: "weave-canvas-view",
@@ -354,7 +371,12 @@ export class CanvasView implements OnInit, DoCheck {
   // ------------------------------------------------------------ layout
 
   private readonly layoutMemo = memo(
-    (_tick: number, workflow: Workflow, _ready: boolean): LtrLayout =>
+    (
+      _tick: number,
+      workflow: Workflow,
+      _ready: boolean,
+      canvas: CanvasSidecar,
+    ): LtrLayout =>
       layoutLtr(workflow, {
         role: (kind) => ndvRegistry.kind(kind)?.role,
         slots: (kind) =>
@@ -363,14 +385,17 @@ export class CanvasView implements OnInit, DoCheck {
             label: slot.label,
             required: slot.required,
           })),
-        triggers: workflow.spec.steps.length
-          ? [{ id: "manual", kind: "manual" }]
-          : [],
+        triggers: triggerInputs(canvas, workflow.spec.steps.length > 0),
       }),
   );
   layout(): LtrLayout {
     const h = this.host();
-    return this.layoutMemo(h.tick(), h.model.definition, this.ready);
+    return this.layoutMemo(
+      h.tick(),
+      h.model.definition,
+      this.ready,
+      h.model.canvas,
+    );
   }
   private readonly placesMemo = memo((layout: LtrLayout) => placesOf(layout));
   places(): Map<string, StepPlace> {
@@ -440,7 +465,7 @@ export class CanvasView implements OnInit, DoCheck {
           note: tile.step
             ? stepNoteLine(canvas, tile.id)
             : tile.kind === "trigger"
-              ? stepNoteLine(canvas, "$trigger")
+              ? stepNoteLine(canvas, triggerNoteKey(tile.id, canvas))
               : "",
         });
       });
@@ -493,17 +518,19 @@ export class CanvasView implements OnInit, DoCheck {
       note: state.note,
     };
     if (!tile.step) {
-      const trigger = tile.kind === "trigger";
-      const subtitle = trigger ? triggerSubtitle(h.model.definition) : "";
+      const trigger =
+        tile.kind === "trigger" ? this.triggerText(tile.id) : null;
       return {
         ...common,
         step: false,
-        icon: trigger ? "manualTrigger" : "",
+        icon: trigger?.icon ?? "",
         title: trigger ? "Trigger" : "End",
-        subtitle,
-        name: trigger ? `Trigger, ${subtitle}` : "End, workflow result",
+        subtitle: trigger?.subtitle ?? "",
+        name: trigger ? `Trigger, ${trigger.subtitle}` : "End, workflow result",
         tooltip: trigger
-          ? "Open the workflow inputs"
+          ? trigger.manual
+            ? "Open the workflow inputs"
+            : trigger.subtitle
           : "Open the workflow result",
         badge: null,
         borders: NO_BORDERS,
@@ -544,6 +571,31 @@ export class CanvasView implements OnInit, DoCheck {
       borders: tileBorders(shown),
       selected: state.selected,
     };
+  }
+  private intentOf(tileId: string): TriggerIntent | null {
+    return (
+      this.host().model.canvas.triggers?.find(
+        (item) => `$trigger:${item.id}` === tileId,
+      ) ?? null
+    );
+  }
+  /** A trigger tile's icon and subtitle; the implicit input form has no choice behind it. */
+  private triggerText(tileId: string) {
+    const kind = this.intentOf(tileId)?.kind ?? "manual";
+    return {
+      ...triggerTile(kind, this.host().model.definition),
+      manual: kind === "manual",
+    };
+  }
+  /** Double-click or Enter on a trigger: the input form opens its details; other triggers are set up when you activate. */
+  private openTrigger(tileId: string) {
+    const h = this.host();
+    const intent = this.intentOf(tileId);
+    if (!intent || intent.kind === "manual")
+      return void h.openWorkflowSection("spec/inputSchema");
+    h.notify(
+      `${TRIGGER_LABELS[intent.kind]} is set up when you activate this workflow.`,
+    );
   }
 
   // -------------------------------------------------- insertion targets
@@ -720,7 +772,11 @@ export class CanvasView implements OnInit, DoCheck {
       if (id) void this.openTile(id, event);
     } else if (action === "insert") this.insertAt(control);
     else if (action === "templates") this.host().showTemplates = true;
-    else if (action === "delete") {
+    else if (action === "remove-trigger") {
+      const id = control.dataset["target"];
+      if (id && control.getAttribute("aria-disabled") !== "true")
+        void this.host().removeTrigger(id);
+    } else if (action === "delete") {
       const id = control.dataset["target"];
       if (id && control.getAttribute("aria-disabled") !== "true")
         void this.host().removeSteps([id]);
@@ -735,8 +791,7 @@ export class CanvasView implements OnInit, DoCheck {
       ?.closest("[data-tile]");
     const id = tile?.getAttribute("data-tile");
     if (!id) return;
-    if (id.startsWith("$trigger:"))
-      void this.host().openWorkflowSection("spec/inputSchema");
+    if (id.startsWith("$trigger:")) this.openTrigger(id);
     else if (id === "$end") void this.host().openWorkflowSection("spec/output");
     else void this.host().openStep(id, "details");
   }
@@ -814,9 +869,12 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** The step an element belongs to, as a step or in its toolbar; else "". */
   private toolbarStep(element: Element): string {
-    const holder = element.closest?.("[data-step], [data-toolbar-for]");
+    const holder = element.closest?.(
+      "[data-step], [data-trigger], [data-toolbar-for]",
+    );
     return (
       holder?.getAttribute("data-step") ??
+      holder?.getAttribute("data-trigger") ??
       holder?.getAttribute("data-toolbar-for") ??
       ""
     );
@@ -831,24 +889,47 @@ export class CanvasView implements OnInit, DoCheck {
       hovered: string,
       locked: boolean,
       dismissed: readonly string[],
+      canvas: CanvasSidecar,
     ) =>
-      [...new Set([focused, hovered])].flatMap((id) => {
+      [...new Set([focused, hovered])].flatMap((id): ToolbarView[] => {
         const tile =
           id && !dismissed.includes(id)
-            ? layout.tiles.find((item) => item.id === id && item.step)
+            ? layout.tiles.find((item) => item.id === id)
             : undefined;
-        if (!tile) return [];
+        if (!tile || tile.kind === "end") return [];
+        const tabIndex = id === focused ? (0 as const) : (-1 as const);
+        if (!tile.step) {
+          const intent = canvas.triggers?.find(
+            (item) => `$trigger:${item.id}` === tile.id,
+          );
+          if (!intent) return [];
+          const label = TRIGGER_LABELS[intent.kind];
+          return [
+            {
+              id: tile.id,
+              name: `the ${label} trigger`,
+              x: tile.x,
+              y: tile.y - TOOLBAR.rise,
+              locked,
+              tabIndex,
+              menu: [],
+              trigger: { intent: intent.id, label },
+            },
+          ];
+        }
         const bar = tile.shape === "fork";
         return [
           {
             id: tile.id,
+            name: tile.id,
             x: bar ? tile.x + tile.width - TOOLBAR.width : tile.x,
             y: bar
               ? tile.y + tile.height - TOOLBAR.height
               : tile.y - TOOLBAR.rise,
             locked,
-            tabIndex: id === focused ? 0 : -1,
+            tabIndex,
             menu: this.menuFor(tile, locked),
+            trigger: null,
           },
         ];
       }),
@@ -866,6 +947,7 @@ export class CanvasView implements OnInit, DoCheck {
       this.hoveredTile,
       this.locked(),
       this.dismissed,
+      this.host().model.canvas,
     );
   }
   /**
@@ -1492,8 +1574,7 @@ export class CanvasView implements OnInit, DoCheck {
         this.fit();
         return true;
       case "openStepDetails":
-        if (focus.startsWith("$trigger:"))
-          void h.openWorkflowSection("spec/inputSchema");
+        if (focus.startsWith("$trigger:")) this.openTrigger(focus);
         else if (focus === "$end") void h.openWorkflowSection("spec/output");
         else if (step) void h.openStep(step, "details");
         else return false;
@@ -1517,6 +1598,15 @@ export class CanvasView implements OnInit, DoCheck {
         return true;
       }
       case "deleteSelection": {
+        const chosen = focus.startsWith("$trigger:")
+          ? this.intentOf(focus)
+          : null;
+        if (chosen && target.closest("[data-trigger]")) {
+          const reason = this.lockedReason();
+          if (reason) h.notify(reason);
+          else void h.removeTrigger(chosen.id);
+          return true;
+        }
         const ids = topLevel(this.keyTargets(target, step), places);
         if (!ids.length) return false;
         const reason = this.lockedReason();

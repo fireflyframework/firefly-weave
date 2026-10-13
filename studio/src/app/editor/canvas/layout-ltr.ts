@@ -699,7 +699,8 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
       y: out.y,
       insert: { owner: "root", index: 0 },
       label: null,
-      plus: first ? null : { x: out.x + LTR.plus, y: out.y },
+      // One "+" at the start, the first trigger's, however many there are.
+      plus: first || i > 0 ? null : { x: out.x + LTR.plus, y: out.y },
       name: "Add a step at the start",
     });
     if (first)
@@ -709,8 +710,8 @@ export function layoutLtr(workflow: Workflow, options: LtrOptions): LtrLayout {
         shape: "curve",
         a: { x: out.x + 6, y: out.y },
         b: first.in,
-        insert: { owner: "root", index: 0 },
-        name: `Insert a step before ${first.id}`,
+        insert: i === 0 ? { owner: "root", index: 0 } : null,
+        name: i === 0 ? `Insert a step before ${first.id}` : null,
         leaves: null,
         enters: first.id,
       });

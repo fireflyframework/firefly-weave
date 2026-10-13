@@ -21,7 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 // undo and saving.
 import type { Signal } from "@angular/core";
 import type { AnchorRect } from "../../designer/popover-placement";
-import type { StructuredCanvasAdapter } from "../../model";
+import type { StructuredCanvasAdapter, Workflow } from "../../model";
+import type { CanvasSidecar } from "../state/canvas-sidecar";
 import type { KindContext } from "../ndv/registry";
 import type { Insertion } from "./layout-ltr";
 import type { CanvasRun } from "./run-state";
@@ -80,8 +81,12 @@ export interface CanvasHost {
   allowDrop(event: DragEvent): void;
   /** Inserts the step kind being dropped on a "+". */
   dropStep(event: DragEvent, insert: Insertion): Promise<void>;
-  /** Shows an outcome in a toast, which also announces it. */
-  notify(text: string): void;
+  /** Shows an outcome in a toast, which also announces it; with an action such as Undo when given. */
+  notify(text: string, action?: { label: string; run: () => void }): void;
+  /** Applies a canvas sidecar change (and a workflow change it needs) as one undo step; false when refused. */
+  changeCanvas(next: CanvasSidecar, options?: { workflow?: Workflow }): boolean;
+  /** Removes a trigger choice, asking first for Called by a workflow, with an Undo toast. */
+  removeTrigger(id: string): Promise<void>;
   undo(): void;
   redo(): void;
   /** Ctrl/Cmd+S: save the draft when connected, or save to a file locally. */
