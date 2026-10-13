@@ -180,3 +180,24 @@ def test_j0_failures_never_echo_a_canary_or_a_password(pytester, flags):
     assert "printed the value of acme-api-key" in output
     for secret in (CANARY, PASSWORD):
         assert not leaked(secret, output)
+
+
+def test_a_step_that_skips_itself_during_its_call_is_recorded_as_failed(pytester, monkeypatch):
+    # An enabled step decided to run; skipping inside its body would otherwise read as a pass.
+    root = prepared_run(pytester.path)
+    monkeypatch.setenv("WEAVE_ACC_RUN_DIR", str(root))
+    pytester.makeini(INI)
+    pytester.makeconftest(HARNESS)
+    pytester.makepyfile(
+        test_step=(
+            "import pytest\n\n\n"
+            '@pytest.mark.journey_step("J0.1")\n'
+            "def test_step(run):\n"
+            '    pytest.skip("the platform is not ready")\n'
+        )
+    )
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "-q", "--tb=short")
+    records = [json.loads(line) for line in (root / "evidence/steps.jsonl").read_text().splitlines()]
+    assert result.ret == 1
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "failed")]
+    assert records[0]["error"] == "J0.1 skipped itself after it started: the platform is not ready"

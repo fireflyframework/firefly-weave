@@ -298,6 +298,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
     if marker is None or report.when != "call" or _STEP["id"] != marker.args[0]:
         return
     step = str(_STEP["id"])
+    if report.skipped:
+        # The step was enabled and started: a skip now would hide that it never finished.
+        reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
+        report.outcome = "failed"
+        report.longrepr = f"{step} skipped itself after it started: {reason.removeprefix('Skipped: ')}"
     profile = _profile()
     skipped = list(_STEP["skipped"])
     problems = []
