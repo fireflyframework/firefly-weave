@@ -714,6 +714,30 @@ test("keeps keyboard focus in the sheet while a test runs, ends and saves", asyn
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("opening the sheet moves keyboard focus into it, onto the chosen provider", async ({
+  page,
+}) => {
+  await start(page, {});
+  await page.getByRole("button", { name: "Connect Ollama" }).click();
+  const form = sheet(page);
+  await expect(
+    form.getByRole("button", { name: "Save connection" }),
+  ).toBeEnabled();
+  await expect(
+    form
+      .getByRole("group", { name: "Provider" })
+      .getByRole("radio", { checked: true }),
+  ).toBeFocused();
+  for (let press = 0; press < 3; press++) {
+    await page.keyboard.press("Tab");
+    expect(await focusInSheet(page)).not.toBeNull();
+  }
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "Connect Ollama" }),
+  ).toBeFocused();
+});
+
 test("a dialog takes focus back when its focused control is disabled", async ({
   page,
 }) => {

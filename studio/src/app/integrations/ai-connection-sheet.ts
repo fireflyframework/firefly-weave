@@ -557,6 +557,12 @@ export class AiConnectionSheet implements OnInit, OnDestroy {
       if (this.alive) {
         this.loading = false;
         this.cdr.markForCheck();
+        // The fields were disabled while loading, so the panel held focus.
+        this.focusSoon(
+          this.saved && request.focus === "model"
+            ? "#ai-deployment, .model-row [role='combobox'], [data-test-connection]"
+            : ".sheet-fields input:checked, .sheet-fields input:not(:disabled)",
+        );
       }
     }
   }

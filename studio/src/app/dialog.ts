@@ -158,12 +158,15 @@ export class Modal implements AfterViewInit, OnDestroy {
     queueMicrotask(() => {
       const panel = this.panel;
       if (!panel || panel.contains(document.activeElement)) return;
+      // A control disabled through its fieldset (a form still loading)
+      // can't take focus; the panel holds it so Tab stays in the dialog.
       const preferred =
         panel.querySelector<HTMLElement>("[data-initial-focus]") ??
         [...panel.querySelectorAll<HTMLElement>(focusable)].find(
-          (e) => !e.closest(".modal-header"),
+          (e) => !e.closest(".modal-header") && !e.matches(":disabled"),
         );
-      (preferred ?? panel).focus();
+      preferred?.focus();
+      if (!panel.contains(document.activeElement)) panel.focus();
     });
   }
   /**
