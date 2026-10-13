@@ -1754,3 +1754,113 @@ describe("resource control ownership", () => {
     f.injector.destroy();
   });
 });
+
+describe("formula scope in loop bodies", () => {
+  const { cases } = JSON.parse(
+    readFileSync(
+      new URL("./fixtures/language/scope.json", import.meta.url),
+      "utf8",
+    ),
+  ) as {
+    cases: {
+      name: string;
+      document: unknown;
+      path: string;
+      result: unknown;
+    }[];
+  };
+  const nested = cases.find((item) =>
+    item.name.startsWith("an inner loop reads"),
+  )!;
+  function loopSetup(stepId: string) {
+    // The canvas can't show loops yet, so the document is set as it would
+    // be loaded once it can.
+    const model = new StructuredCanvasAdapter();
+    model.definition = structuredClone(nested.document) as Workflow;
+    const asked: { path: string; body: unknown }[] = [];
+    let refreshed = 0;
+    const host = {
+      model,
+      editingLocked: false,
+      profile: null,
+      catalogContracts: new Map(),
+      decisionContracts: new Map(),
+      actionVersions: [],
+      diagnostics: null,
+      diagnosticsDefinition: null,
+      label: (kind: string) => kind,
+      can: () => true,
+      notify: () => undefined,
+      refreshView: () => refreshed++,
+      perform: (edit: () => void) => edit(),
+      api: {
+        request: async (path: string, _method: string, body: unknown) => {
+          asked.push({ path, body });
+          return nested.result;
+        },
+      },
+    } as unknown as {
+      -readonly [K in keyof StepDetailsHost]: StepDetailsHost[K];
+    };
+    const controller = new StepDetailsController(host);
+    const session = new FormSession(host, controller, openRequest(stepId), {
+      confirm: async () => true,
+      announce: () => undefined,
+    });
+    // Step details can't open a step in a loop body until loops are on the
+    // canvas, so the field is described here as the Transform step's value.
+    const spec = {
+      id: "value",
+      label: "Value",
+      path: ["value"],
+      editor: "formula",
+    } as unknown as ParamSpec;
+    return { session, spec, asked, refreshed: () => refreshed };
+  }
+
+  it("asks the Studio host what a field in a loop body reads, and offers the loop roots", async () => {
+    const fixture = loopSetup("pair");
+    expect(fixture.session.formulaOptions(fixture.spec).loops).toEqual([
+      "line",
+      "batch",
+    ]);
+    expect(fixture.session.completionScope(fixture.spec).loopEntries).toEqual(
+      [],
+    );
+    await new Promise((settle) => setTimeout(settle, 0));
+    expect(fixture.asked).toEqual([
+      {
+        path: "/studio/local/scope",
+        body: {
+          source: JSON.stringify(nested.document),
+          format: "json",
+          path: nested.path,
+        },
+      },
+    ]);
+    expect(fixture.refreshed()).toBe(1);
+    const scope = fixture.session.completionScope(fixture.spec);
+    expect(scope.loops).toEqual(["line", "batch"]);
+    expect(scope.loopEntries.map((entry) => entry.ref)).toContain(
+      "/loops/batch/index",
+    );
+    expect(scope.entries.map((entry) => entry.ref)).toEqual([
+      "/input",
+      "/input/invoices",
+      "/input/batches",
+    ]);
+    expect(
+      fixture.session.checkScope(fixture.spec).loopEntries.length,
+    ).toBeGreaterThan(0);
+    expect(fixture.asked).toHaveLength(1);
+  });
+
+  it("keeps the offline scope outside loops and asks nothing", async () => {
+    const fixture = loopSetup("batch");
+    const spec = { ...fixture.spec, id: "items", path: ["items"] };
+    expect(fixture.session.formulaOptions(spec).loops).toEqual([]);
+    expect(fixture.session.completionScope(spec).loopEntries).toEqual([]);
+    await new Promise((settle) => setTimeout(settle, 0));
+    expect(fixture.asked).toEqual([]);
+  });
+});

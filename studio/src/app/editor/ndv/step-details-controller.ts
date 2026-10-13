@@ -93,6 +93,7 @@ import {
   type PendingOwner,
 } from "./pending-entries";
 import type { PreviewData } from "../formula/preview";
+import { LoopScopes } from "../formula/loops";
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -113,6 +114,7 @@ export type ControllerHost = Pick<
   | "diagnosticsDefinition"
   | "cacheDecisionContract"
   | "can"
+  | "refreshView"
 >;
 /** A diagnostic of one step, located in it. */
 export interface StepDiagnostic {
@@ -203,6 +205,11 @@ export class StepDetailsController {
   }
 
   readonly features = signal<readonly string[]>([]);
+  /** What fields in loop bodies can read, from the Studio host. */
+  readonly loopScopes = new LoopScopes(
+    (body) => this.host.api.request("/studio/local/scope", "POST", body),
+    () => this.host.refreshView(),
+  );
   private addedBy = new Map<string, Set<string>>();
   private touchedBy = new Map<string, Set<string>>();
   private burst: { key: string; revision: number; at: number } | null = null;

@@ -31,8 +31,10 @@ import type { DialogField, DialogOptions } from "../../../dialog";
 import {
   referenceScope,
   WORKFLOW,
+  type ReferenceScope,
   type Schema,
   type ScopeEntry,
+  type VisibleStep,
 } from "../../../forms/core/scope";
 import { decode, get } from "../../../forms/core/binding";
 import {
@@ -128,6 +130,14 @@ import {
   type StepDetailsRequest,
 } from "../step-details-service";
 import { previewText } from "../../formula/preview";
+import type { CheckScope } from "../../formula/check";
+import type { CompletionScope } from "../../formula/complete";
+import type { ParseOptions } from "../../formula/grammar";
+import {
+  enclosingLoops,
+  stepPointerOf,
+  type HostScopeEntry,
+} from "../../formula/loops";
 
 export type FormName = "parameters" | "settings";
 export interface SessionHooks {
@@ -959,6 +969,112 @@ export class FormSession {
       field,
       this.controller.scopeOptions(),
     ).entries;
+  }
+  /** What a formula at this field may use: the target's features and the loops around the step. */
+  formulaOptions(spec: ParamSpec): ParseOptions {
+    void spec;
+    return {
+      features: this.controller.features(),
+      loops: enclosingLoops(this.host.model.definition, this.target),
+    };
+  }
+  /** The host's entries for a field in a loop body; null outside loops or while loading. */
+  private hostEntries(spec: ParamSpec): HostScopeEntry[] | null {
+    const definition = this.host.model.definition;
+    if (!enclosingLoops(definition, this.target).length) return null;
+    const step = stepPointerOf(definition, this.target);
+    if (!step) return null;
+    const { field } = this.rootPointer(spec);
+    return (
+      this.controller.loopScopes.entries(definition, `${step}${field}`) ?? []
+    );
+  }
+  /** What the field can read: the host's answer inside a loop body, the offline scope elsewhere. */
+  formulaScope(spec: ParamSpec): ReferenceScope {
+    const hosted = this.hostEntries(spec);
+    if (!hosted) {
+      const { stepId, field } = this.rootPointer(spec);
+      return referenceScope(
+        this.host.model.definition,
+        stepId,
+        field,
+        this.controller.scopeOptions(),
+      );
+    }
+    const entries = hosted.filter(
+      (entry) => entry.source === "input" || entry.source === "step",
+    ) as unknown as ScopeEntry[];
+    const steps: VisibleStep[] = hosted
+      .filter((entry) => entry.source === "step" && entry.path.length === 0)
+      .map((entry) => {
+        const id = entry.ref
+          .split("/")[2]
+          .replace(/~1/g, "/")
+          .replace(/~0/g, "~");
+        return { id, kind: this.kindOf(id), schema: entry.schema };
+      });
+    return { found: true, evaluated: true, steps, entries, truncated: false };
+  }
+  private kindOf(id: string): string {
+    let kind = "action";
+    const visit = (node: unknown): void => {
+      if (Array.isArray(node)) node.forEach(visit);
+      else if (node && typeof node === "object") {
+        const record = node as Record<string, unknown>;
+        if (record["id"] === id && typeof record["kind"] === "string")
+          kind = record["kind"];
+        else Object.values(record).forEach(visit);
+      }
+    };
+    visit((this.host.model.definition as { spec?: unknown }).spec);
+    return kind;
+  }
+  /** The loop roots' entries (item, index, loops.<id>), inside loop bodies. */
+  loopEntries(spec: ParamSpec): HostScopeEntry[] {
+    return (this.hostEntries(spec) ?? []).filter(
+      (entry) => entry.source === "item" || entry.source === "index",
+    );
+  }
+  completionScope(spec: ParamSpec): CompletionScope {
+    const scope = this.formulaScope(spec);
+    const options = this.formulaOptions(spec);
+    return {
+      entries: scope.entries,
+      steps: scope.steps,
+      loops: options.loops,
+      loopEntries: this.loopEntries(spec),
+      features: options.features,
+      inputSchema: ((
+        this.host.model.definition.spec as Record<string, unknown>
+      )["inputSchema"] ?? {}) as Schema,
+    };
+  }
+  checkScope(spec: ParamSpec): CheckScope {
+    const ids = new Set<string>();
+    const visit = (node: unknown): void => {
+      if (Array.isArray(node)) node.forEach(visit);
+      else if (node && typeof node === "object") {
+        const record = node as Record<string, unknown>;
+        if (
+          typeof record["id"] === "string" &&
+          typeof record["kind"] === "string"
+        )
+          ids.add(record["id"]);
+        Object.values(record).forEach(visit);
+      }
+    };
+    visit(
+      (this.host.model.definition as { spec?: { steps?: unknown } }).spec
+        ?.steps,
+    );
+    return {
+      scope: this.formulaScope(spec),
+      stepIds: ids,
+      inputSchema: ((
+        this.host.model.definition.spec as Record<string, unknown>
+      )["inputSchema"] ?? {}) as Schema,
+      loopEntries: this.loopEntries(spec),
+    };
   }
   /** The schema a field's value must fit, when the step's contract says. */
   expected(spec: ParamSpec): Schema | null {
