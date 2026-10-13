@@ -58,6 +58,7 @@ import {
   type Readiness,
 } from "../integrations/ai-setup-api";
 import { AiReadinessList } from "./ai-readiness-list";
+import { WeaveAiCard } from "./weave-ai-card";
 
 /** What the page reads from and asks of the shell. */
 export interface AiModelsHost {
@@ -92,7 +93,7 @@ const fromBindable = (item: BindableConnection): AiConnection => ({
   selector: "weave-ai-models-page",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, RowMenu, AiReadinessList],
+  imports: [Icon, RowMenu, AiReadinessList, WeaveAiCard],
   styleUrl: "./ai-models-page.css",
   template: `<p class="ai-intro">
       Connect a model once. Workflows and Weave AI use the connections you set
@@ -241,6 +242,17 @@ const fromBindable = (item: BindableConnection): AiConnection => ({
           </ul>
         }
       </section>
+      <weave-ai-card
+        class="ai-panel weave-ai"
+        [api]="host().api"
+        [manager]="host().can('lumi.manage')"
+        [canChoose]="
+          host().can('lumi.manage') && host().can('connection.manage')
+        "
+        [canUse]="host().can('lumi.use')"
+        [connections]="connections"
+        (saved)="recheck()"
+      />
     </div>
     <p class="sr-only" role="status" aria-live="polite">{{ announcement }}</p>`,
 })

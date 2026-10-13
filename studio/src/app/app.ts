@@ -416,7 +416,6 @@ export class App implements CanvasHost {
       ? (this.operationsView()?.lumiAttachments ?? [])
       : [];
   }
-  lumiSettingsRequested = false;
   platformMenuOpen = false;
   platformBusy = "";
   // Fences platform checks and status reads against later platform changes.

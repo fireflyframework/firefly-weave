@@ -171,57 +171,37 @@ for (const width of [1440, 600])
     });
   });
 
+/** Opens the workflow AI profile dialog of a new AI task. */
+async function openProfiles(page: Page) {
+  await newWorkflow(page);
+  await page
+    .locator(".palette")
+    .getByRole("button", { name: "AI task", exact: true })
+    .click();
+  await new DesignerPage(page).selectStep("ask-ai-1");
+  const form = page.locator("weave-llm-inspector");
+  await form
+    .getByRole("button", {
+      name: "Configure workflow AI profiles",
+      exact: true,
+    })
+    .click();
+  return form;
+}
+
 test("AI model basics and advanced options preserve edits, invalid drafts and explicit clears", async ({
   page,
 }) => {
-  const capture = await setup(page);
-  capture.connections.push({
-    id: connectionId,
-    name: "approved-ai",
-    revision: 1,
-    connector: "weave-agentic-provider@1.0.0",
-    config: {
-      provider: "openai-responses",
-      endpoint: "https://api.openai.com/v1",
-    },
-  });
-  const profile = {
-    provider: "openai-responses",
-    model: "approved-model",
-    options: { max_tokens: 1024, temperature: 0.5, top_p: 0.8 },
-    reasoning: { pattern: "none", maxSteps: 7 },
-    maxCalls: 9,
-    timeoutSeconds: 90,
-    outputSchema: lumiSchema.$defs.LumiProfile.properties.outputSchema.const,
-  };
-  let saved = {
-    enabled: true,
-    connection_revision_id: connectionId,
-    profile,
-    revision: 1,
-  };
-  await page.route("**/lumi/configuration", async (route) => {
-    if (route.request().method() === "PUT") {
-      const body = route.request().postDataJSON();
-      capture.configurations.push(body);
-      saved = { ...body, revision: saved.revision + 1 };
-    }
-    await route.fulfill({ json: saved });
-  });
-  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
-  await page
-    .getByRole("dialog", { name: "Ask Weave AI", exact: true })
-    .getByRole("button", { name: "Weave AI settings", exact: true })
-    .click();
-  const lumi = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
-  await expect(lumi.getByLabel("Model", { exact: true })).toHaveValue(
-    "approved-model",
+  await setup(page);
+  const form = await openProfiles(page);
+  await selectChoice(
+    form.getByLabel("Provider", { exact: true }),
+    "openai-responses",
   );
-  await expect(lumi.getByLabel("Max tokens", { exact: true })).toHaveValue(
-    "1024",
-  );
+  await form.getByLabel("Model", { exact: true }).fill("approved-model");
+  await form.getByLabel("Max tokens", { exact: true }).fill("1024");
   await expect(
-    lumi.getByRole("spinbutton", {
+    form.getByRole("spinbutton", {
       name: "Temperature (optional)",
       exact: true,
     }),
@@ -229,56 +209,50 @@ test("AI model basics and advanced options preserve edits, invalid drafts and ex
   await page.screenshot({
     path: "../.superpowers/editor-ux/ai-profile-basic.png",
   });
-  const advanced = lumi.getByText("Advanced model settings", { exact: true });
+  const advanced = form.getByText("Advanced model settings", { exact: true });
   await advanced.click();
   await page.screenshot({
     path: "../.superpowers/editor-ux/ai-profile-advanced.png",
   });
-  await lumi
+  await form
     .getByRole("spinbutton", { name: "Temperature (optional)", exact: true })
     .fill("3");
   await advanced.click();
-  await lumi.getByLabel("Model", { exact: true }).fill("updated-model");
+  await form.getByLabel("Model", { exact: true }).fill("updated-model");
   await expect(
-    lumi.getByRole("button", { name: "Continue to connection", exact: true }),
+    form.getByRole("button", { name: "Continue to connection", exact: true }),
   ).toBeDisabled();
   await advanced.click();
   await expect(
-    lumi.getByRole("spinbutton", {
+    form.getByRole("spinbutton", {
       name: "Temperature (optional)",
       exact: true,
     }),
   ).toHaveValue("3");
-  await lumi
+  await form
     .getByRole("spinbutton", { name: "Temperature (optional)", exact: true })
     .fill("");
   await advanced.click();
-  await lumi.getByLabel("Max tokens", { exact: true }).fill("2048");
-  await lumi
+  await form.getByLabel("Max tokens", { exact: true }).fill("2048");
+  await form
     .getByRole("button", { name: "Continue to connection", exact: true })
     .click();
-  await lumi
+  await form
+    .getByRole("button", { name: "Add AI connection slot", exact: true })
+    .click();
+  await form
     .getByRole("button", { name: "Review settings", exact: true })
     .click();
-  await lumi
-    .getByRole("button", { name: "Save Weave AI settings", exact: true })
+  await form
+    .getByRole("button", { name: "Apply workflow AI settings", exact: true })
     .click();
-  await expect(lumi.getByLabel("Message to Weave AI")).toBeVisible();
-  expect(capture.configurations[0].profile).toEqual({
-    ...profile,
+  const profile = parse(await sourceText(page)).spec.llmProfiles.default;
+  expect(profile).toMatchObject({
+    provider: "openai-responses",
     model: "updated-model",
-    options: { max_tokens: 2048, top_p: 0.8 },
+    options: { max_tokens: 2048 },
   });
-  await lumi
-    .getByRole("button", { name: "Weave AI settings", exact: true })
-    .click();
-  await lumi.getByText("Advanced model settings", { exact: true }).click();
-  await expect(
-    lumi.getByRole("spinbutton", {
-      name: "Temperature (optional)",
-      exact: true,
-    }),
-  ).toHaveValue("");
+  expect(profile["options"]).not.toHaveProperty("temperature");
 });
 
 test("canonical model validation blocks pending and invalid settings and ignores stale replies", async ({
@@ -289,43 +263,45 @@ test("canonical model validation blocks pending and invalid settings and ignores
   await page.route("**/studio/contracts/llm-profile/validate", (route) => {
     requests.push(route);
   });
-  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
-  await page
-    .getByRole("dialog", { name: "Ask Weave AI", exact: true })
-    .getByRole("button", { name: "Weave AI settings", exact: true })
-    .click();
-  const lumi = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
+  const form = await openProfiles(page);
   await selectChoice(
-    lumi.getByLabel("Provider", { exact: true }),
+    form.getByLabel("Provider", { exact: true }),
     "openai-responses",
   );
-  await lumi.getByLabel("Model", { exact: true }).fill("first-model");
-  await expect.poll(() => requests.length).toBe(1);
-  const next = lumi.getByRole("button", {
+  await form.getByLabel("Max tokens", { exact: true }).fill("512");
+  await form.getByLabel("Model", { exact: true }).fill("first-model");
+  const first = requests.length;
+  await expect.poll(() => requests.length).toBeGreaterThan(0);
+  const next = form.getByRole("button", {
     name: "Continue to connection",
     exact: true,
   });
   await expect(next).toBeDisabled();
-  await lumi.getByLabel("Model", { exact: true }).fill("second-model");
-  await expect.poll(() => requests.length).toBe(2);
+  await form.getByLabel("Model", { exact: true }).fill("second-model");
+  await expect.poll(() => requests.length).toBeGreaterThan(Math.max(first, 1));
+  const stale = requests.slice(0, -1);
+  const latest = requests[requests.length - 1];
   const message =
     "A model call timeout cannot exceed the total AI step timeout";
-  await requests[1].fulfill({
+  await latest.fulfill({
     json: { valid: false, issues: [{ path: [], message }] },
   });
-  await expect(lumi.getByRole("alert")).toContainText(message);
-  await requests[0].fulfill({ json: { valid: true, issues: [] } });
+  await expect(form.getByRole("alert")).toContainText(message);
+  for (const route of stale)
+    await route.fulfill({ json: { valid: true, issues: [] } });
   await expect(next).toBeDisabled();
-  await expect(lumi.getByRole("alert")).toContainText(message);
-  await lumi.getByLabel("Model", { exact: true }).fill("corrected-model");
-  await expect.poll(() => requests.length).toBe(3);
-  expect(requests[2].request().postDataJSON()).toMatchObject({
+  await expect(form.getByRole("alert")).toContainText(message);
+  const before = requests.length;
+  await form.getByLabel("Model", { exact: true }).fill("corrected-model");
+  await expect.poll(() => requests.length).toBe(before + 1);
+  const corrected = requests[before];
+  expect(corrected.request().postDataJSON()).toMatchObject({
     provider: "openai-responses",
     model: "corrected-model",
     outputSchema: {},
   });
-  expect(requests[2].request().postDataJSON()).not.toHaveProperty("profile");
-  await requests[2].fulfill({ json: { valid: true, issues: [] } });
+  expect(corrected.request().postDataJSON()).not.toHaveProperty("profile");
+  await corrected.fulfill({ json: { valid: true, issues: [] } });
   await expect(next).toBeEnabled();
-  await expect(lumi.getByRole("alert")).toHaveCount(0);
+  await expect(form.getByRole("alert")).toHaveCount(0);
 });

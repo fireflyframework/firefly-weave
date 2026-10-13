@@ -545,3 +545,120 @@ test("the operator command is copied and the workers link opens Operate", async 
   await page.getByRole("button", { name: "Open workers" }).click();
   await expect(page).toHaveURL(/\/operate\/workers$/);
 });
+
+test("saves Weave AI on a cloud connection with a suggested model, keeping its limits", async ({
+  page,
+}) => {
+  const platform = await start(page, {
+    connections: [ollamaConnection, openaiConnection],
+    models: [
+      {
+        name: "gpt-5-mini",
+        approved: true,
+        available: true,
+        tools: "yes",
+        context_tokens: 128000,
+      },
+    ],
+  });
+  const card = page.locator("weave-ai-card");
+  await expect(card.getByRole("heading", { name: "Weave AI" })).toBeVisible();
+  await card.getByLabel("Connection", { exact: true }).click();
+  await expect(
+    page.getByRole("option", { name: /ollama-local/ }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await page.getByRole("option", { name: /openai · revision 1/ }).click();
+  await expect(card.getByLabel("Model", { exact: true })).toHaveValue(
+    "gpt-5-mini",
+  );
+  await card.getByRole("button", { name: "Save Weave AI settings" }).click();
+  await expect.poll(() => platform.lumiWrites.length).toBe(1);
+  expect(platform.lumiWrites[0]).toEqual({
+    ifMatch: null,
+    body: {
+      enabled: true,
+      connection_revision_id: OPENAI_REVISION,
+      profile: {
+        options: { max_tokens: 1024 },
+        reasoning: { pattern: "none", maxSteps: 6 },
+        maxCalls: 8,
+        timeoutSeconds: 180,
+        provider: "openai-responses",
+        model: "gpt-5-mini",
+        outputSchema: { type: "object" },
+      },
+    },
+  });
+  await expect.poll(() => platform.readinessReads).toBeGreaterThan(1);
+});
+
+test("explains that connections without a key can't be used for Weave AI yet", async ({
+  page,
+}) => {
+  await start(page, { connections: [ollamaConnection] });
+  await expect(page.locator("weave-ai-card")).toContainText(
+    "Weave AI needs an AI connection with a secret handle. Connections without a key can't be used for Weave AI yet.",
+  );
+});
+
+test("a Weave AI manager without connection management sees why the card is read-only", async ({
+  page,
+}) => {
+  await start(page, {
+    capabilities: ["catalog.read", "status.read", "lumi.use", "lumi.manage"],
+  });
+  await expect(page.locator("weave-ai-card")).toContainText(
+    "Choosing Weave AI's connection also requires the Tenant administrator role.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Save Weave AI settings" }),
+  ).toHaveCount(0);
+});
+
+test("saving Weave AI on a configured connection keeps its limits and sends its revision", async ({
+  page,
+}) => {
+  const platform = await start(page, {
+    connections: [ollamaConnection, openaiConnection],
+    models: [
+      {
+        name: "gpt-5-mini",
+        approved: true,
+        available: true,
+        tools: "yes",
+        context_tokens: 128000,
+      },
+    ],
+    lumi: {
+      enabled: true,
+      connection_revision_id: OPENAI_REVISION,
+      profile: {
+        provider: "openai-responses",
+        model: "gpt-5-mini",
+        options: { max_tokens: 512 },
+        reasoning: { pattern: "none", maxSteps: 6 },
+        maxCalls: 4,
+        timeoutSeconds: 120,
+        outputSchema: { type: "object" },
+      },
+      revision: 7,
+    },
+  });
+  const card = page.locator("weave-ai-card");
+  await expect(card.getByLabel("Model", { exact: true })).toHaveValue(
+    "gpt-5-mini",
+  );
+  await card.getByRole("switch", { name: "Turn on Weave AI" }).uncheck();
+  await card.getByRole("button", { name: "Save Weave AI settings" }).click();
+  await expect.poll(() => platform.lumiWrites.length).toBe(1);
+  expect(platform.lumiWrites[0].ifMatch).toBe('"7"');
+  expect(platform.lumiWrites[0].body).toMatchObject({
+    enabled: false,
+    profile: {
+      options: { max_tokens: 512 },
+      maxCalls: 4,
+      timeoutSeconds: 120,
+      model: "gpt-5-mini",
+    },
+  });
+});
