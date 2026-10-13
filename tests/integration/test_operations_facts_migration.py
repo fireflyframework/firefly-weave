@@ -23,6 +23,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from test_incident_migration import upgrade
 
 pytestmark = pytest.mark.integration
+# The revision the operational facts migration follows.
+PRIOR_HEAD = "0031_operations_key_collation"
 
 
 async def test_all_fact_tables_use_exact_environment_policy(migration_db):
@@ -114,7 +116,7 @@ async def test_legacy_inventory_crosses_ten_thousand_boundary_without_relaxing_a
             ids = await seed_prior_head(connection)
             await upgrade(connection, "0031_operations_key_collation")
             assert await connection.scalar(text("SELECT count(*) FROM runs")) == 10001
-            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0031_operations_key_collation"
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == PRIOR_HEAD
             await assert_usage(connection, ids)
             with pytest.raises(DBAPIError) as caught:
                 async with connection.begin_nested():
@@ -515,7 +517,7 @@ async def test_new_history_contract_requires_reconciled_backfill(empty_settings,
             with pytest.raises(RuntimeError, match="Reconcile call and handled-failure history"):
                 await upgrade(connection, "0032_operations_facts")
             assert await connection.scalar(text("SELECT to_regclass('run_facts')")) is None
-            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0031_operations_key_collation"
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == PRIOR_HEAD
     finally:
         await engine.dispose()
 
@@ -549,7 +551,7 @@ async def test_control_function_patch_aborts_on_unknown_or_duplicate_anchor(
                 await upgrade(connection, "0032_operations_facts")
         async with engine.connect() as connection:
             assert await connection.scalar(text("SELECT to_regclass('run_facts')")) is None
-            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0031_operations_key_collation"
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == PRIOR_HEAD
     finally:
         await engine.dispose()
 
@@ -873,7 +875,7 @@ async def test_failed_upgrade_restores_scope_and_keeps_prior_schema(empty_settin
                 await upgrade(connection, "0032_operations_facts")
             assert caught.value.orig.sqlstate == "WQ003"
             assert await connection.scalar(text("SELECT to_regclass('run_facts')")) is None
-            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0031_operations_key_collation"
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == PRIOR_HEAD
             for name in ("tenant", "project", "environment"):
                 assert await connection.scalar(
                     text("SELECT current_setting(:name)"), {"name": "weave." + name + "_id"}
