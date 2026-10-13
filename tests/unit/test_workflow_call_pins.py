@@ -145,6 +145,16 @@ async def test_a_pin_to_an_unknown_activation_is_refused():
     assert "not found in this environment" in await refused(pinned, supplied={REFERENCE: uuid4()})
 
 
+async def test_a_loader_that_answers_another_activation_does_not_pin_it():
+    pinned = callee(callable_field={})
+
+    async def load(identifier):
+        return pinned
+
+    with pytest.raises(CatalogError, match="not found in this environment"):
+        await call_pins("order-intake", SCOPE, caller_executable(REFERENCE), {REFERENCE: uuid4()}, load)
+
+
 async def test_the_call_depth_limit_counts_the_pinned_chain():
     assert (await pins_for(callee(callable_field={}, call_depth=1), max_call_depth=2))[1] == 2
     assert "deeper than 2" in await refused(callee(callable_field={}, call_depth=2), max_call_depth=2)

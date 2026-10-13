@@ -395,3 +395,13 @@ def test_explain_prints_a_call_with_its_called_workflow_and_mode(tmp_path):
         "  /spec/steps/1/with call_input schema=",
     ):
         assert expected in result.output
+    # The business key is read even when nothing in `with` reads the same input.
+    keyed = tmp_path / "order-intake.workflow.yaml"
+    source = (examples / "order-intake.workflow.yaml").read_text()
+    keyed.write_text(
+        source.replace('{literal: "Order "}, {ref: /input/orderId}', '{literal: "Order "}, {literal: "new"}')
+    )
+    result = invoke("workflow", "explain", keyed, "--catalog", lock)
+    assert result.exit_code == 0, result.output
+    assert "{ref: /input/orderId}" not in keyed.read_text().split("businessKey")[0]
+    assert "    reads /input/orderId\n" in result.output
