@@ -96,6 +96,26 @@ const compiler: Record<string, Copy> = {
   UNKNOWN_RESOURCE: {
     text: "Something this definition depends on isn't in the project catalog.",
   },
+  UNKNOWN_WORKFLOW: {
+    text: "This workflow version isn't published in the project.",
+    hint: "Check its name and version, or publish that workflow first.",
+  },
+  CALL_NOT_CALLABLE: {
+    text: "That workflow version doesn't accept calls from this workflow.",
+    hint: "Publish a new version of it with the Called by a workflow trigger that allows this workflow.",
+  },
+  CALL_RECURSION: {
+    text: "This call would end up calling this workflow again.",
+    hint: "Call a workflow that doesn't lead back to this one.",
+  },
+  CALL_DEPTH: {
+    text: "Workflows would call each other more levels deep than the platform allows.",
+    hint: "Call a workflow that starts fewer workflows of its own.",
+  },
+  CALL_MODE: {
+    text: "If it fails applies only when the step waits for the called workflow's result.",
+    hint: "Remove If it fails, or choose Wait for its result.",
+  },
   CATALOG_PENDING: {
     text: "This is checked against the project catalog when you validate while connected to a platform.",
   },

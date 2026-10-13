@@ -63,6 +63,11 @@ const compilerCodes = [
   "LOOP_MAX_ITEMS",
   "LOOP_BUDGET",
   "LOOP_FANOUT",
+  "UNKNOWN_WORKFLOW",
+  "CALL_NOT_CALLABLE",
+  "CALL_RECURSION",
+  "CALL_DEPTH",
+  "CALL_MODE",
 ].map((code) => `WV-COMP-${code}`);
 
 describe("plain-language diagnostic copy", () => {
@@ -210,12 +215,13 @@ describe.skipIf(!pythonAvailable())(
             "-c",
             `
 import inspect, json, re
-from firefly_weave.compiler import analyzer, api, action_config
-text = inspect.getsource(analyzer) + inspect.getsource(api)
+from firefly_weave.compiler import analyzer, api, action_config, calls
+text = inspect.getsource(analyzer) + inspect.getsource(api) + inspect.getsource(calls)
 codes = set(re.findall(r'(?:self\\.issue|issue)\\(\\s*"([A-Z_]+)"', text))
 codes |= set(re.findall(r'"(UNKNOWN_[A-Z_]+)"', text))
 codes |= set(re.findall(r'WV-COMP-([A-Z_]+)', text))
 codes |= set(action_config.ACTION_CONFIG_CODES)
+codes |= set(calls.CALL_MESSAGES)
 print(json.dumps(sorted("WV-COMP-" + c for c in codes)))
 `,
           ],

@@ -18,7 +18,8 @@
 
 The fixtures pin the stable language contracts: instance-key parse and format cases with the
 ``INSTANCE_KEY_PATTERN`` expression, the text conversion table for ``concat`` and ``join``, template segments
-with their saved form, ``scope_at`` suggestions inside and around loops, and the language manifest snapshot.
+with their saved form, ``scope_at`` suggestions inside and around loops and after workflow calls, and the language
+manifest snapshot.
 Expected values are written here by hand; the generator refuses to write a fixture that the implementation
 disagrees with. Scope cases pin each suggestion's reference, source, loop and type label by hand and record the
 rest of each entry as ``scope_at`` returns it.
@@ -281,6 +282,18 @@ _NOTIFY = _loop(
 _LINES = _loop(
     "line", "/item", {"id": "pair", "kind": "transform", "value": {"ref": "/loops/batch/index"}}, maxItems=50
 )
+
+
+def _call(identifier: str, **options: Any) -> dict[str, Any]:
+    return {
+        "id": identifier,
+        "kind": "callWorkflow",
+        "uses": "notify-customer@1.0.0",
+        "with": {"ref": "/input"},
+        **options,
+    }
+
+
 _INPUT_ROWS = [
     ("/input", "input", None, "Group"),
     ("/input/invoices", "input", None, "List of groups"),
@@ -346,6 +359,39 @@ SCOPE_CASES: tuple[tuple[str, dict[str, Any], str, list[tuple[str, str, str | No
         [*_INPUT_ROWS, ("/item", "item", "batch", "List of groups"), ("/index", "index", "batch", "Whole number")],
     ),
     ("a field that is not an expression has no scope", _workflow(_NOTIFY), "/spec/steps/0/maxItems", None),
+    (
+        "a call's input sees what is visible before the call",
+        _workflow(_call("notify")),
+        "/spec/steps/0/with",
+        _INPUT_ROWS,
+    ),
+    (
+        "after a call that waits, its result is the called workflow's output, unknown without a catalog",
+        _workflow(_call("notify"), output={"ref": "/steps/notify/output"}),
+        "/spec/output",
+        [*_INPUT_ROWS, ("/steps/notify/output", "step", None, "Any value")],
+    ),
+    (
+        "a call that continues on failure returns its status, run ID, the child's output and the error",
+        _workflow(_call("notify", onFailure="continue"), output={"ref": "/steps/notify/output"}),
+        "/spec/output",
+        [
+            *_INPUT_ROWS,
+            ("/steps/notify/output", "step", None, "Group"),
+            ("/steps/notify/output/status", "step", None, "Choice"),
+            ("/steps/notify/output/runId", "step", None, "Text"),
+            ("/steps/notify/output/output", "step", None, "Any value"),
+            ("/steps/notify/output/error", "step", None, "Group"),
+            ("/steps/notify/output/error/code", "step", None, "Text"),
+            ("/steps/notify/output/error/message", "step", None, "Text"),
+        ],
+    ),
+    (
+        "a call that does not wait returns nothing",
+        _workflow(_call("notify", mode="detach"), output={"ref": "/steps/notify/output"}),
+        "/spec/output",
+        [*_INPUT_ROWS, ("/steps/notify/output", "step", None, "Empty")],
+    ),
 )
 
 
