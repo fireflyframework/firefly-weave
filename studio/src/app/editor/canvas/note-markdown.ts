@@ -37,8 +37,6 @@ const BULLET = /^\s{0,3}[-*+]\s+(.*)$/;
 const NUMBERED = /^\s{0,3}\d{1,9}[.)]\s+(.*)$/;
 /** A web address with a host, or a mail address with a recipient. */
 const SAFE = /^(https?:\/\/[^\s/?#\\]+|mailto:[^\s]+)/i;
-const STRONG = /^(\*\*|__)(?=\S)([\s\S]*?\S)\1/;
-const EM = /^(\*|_)(?=\S)([\s\S]*?\S)\1(?!\1)/;
 /** A link's address may hold one level of parentheses, as Wikipedia's do. */
 const LINK = /^\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/;
 const WORD = /[A-Za-z0-9]/;
@@ -49,6 +47,32 @@ export function safeHref(href: string): string | null {
   return trimmed === href && SAFE.test(href) && !/[\s<>"]/.test(href)
     ? href
     : null;
+}
+
+/**
+ * The length of the bold or italic span that `mark` opens at the start of
+ * `rest`, closing marks included; 0 when none closes. The span starts and
+ * ends with a non-space, and "*" never closes on "**". A link inside it is
+ * read whole first, so a mark in a link's address never closes the span.
+ */
+function spanLength(rest: string, mark: string): number {
+  if (!rest.startsWith(mark) || /^\s?$/.test(rest[mark.length] ?? "")) return 0;
+  for (let k = mark.length; k < rest.length; ) {
+    const link = rest[k] === "[" ? LINK.exec(rest.slice(k)) : null;
+    if (link) {
+      k += link[0].length;
+      continue;
+    }
+    if (
+      k > mark.length &&
+      rest.startsWith(mark, k) &&
+      !/\s/.test(rest[k - 1]) &&
+      (mark.length === 2 || rest[k + 1] !== mark)
+    )
+      return k + mark.length;
+    k++;
+  }
+  return 0;
 }
 
 export function parseInline(text: string): Inline[] {
@@ -71,17 +95,22 @@ export function parseInline(text: string): Inline[] {
     }
     // An underscore inside a word (order_id) is a letter, not emphasis.
     const inWord = rest[0] === "_" && i > 0 && WORD.test(text[i - 1]);
-    const strong = inWord ? null : STRONG.exec(rest);
-    if (strong) {
-      push({ kind: "strong", children: parseInline(strong[2]) });
-      i += strong[0].length;
-      continue;
-    }
-    const em = inWord ? null : EM.exec(rest);
-    if (em) {
-      push({ kind: "em", children: parseInline(em[2]) });
-      i += em[0].length;
-      continue;
+    if (!inWord && (rest[0] === "*" || rest[0] === "_")) {
+      const strong = spanLength(rest, rest[0].repeat(2));
+      if (strong) {
+        push({
+          kind: "strong",
+          children: parseInline(rest.slice(2, strong - 2)),
+        });
+        i += strong;
+        continue;
+      }
+      const em = spanLength(rest, rest[0]);
+      if (em) {
+        push({ kind: "em", children: parseInline(rest.slice(1, em - 1)) });
+        i += em;
+        continue;
+      }
     }
     const link = LINK.exec(rest);
     if (link) {

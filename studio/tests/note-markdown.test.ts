@@ -127,6 +127,52 @@ describe("the notes' Markdown", () => {
     ]);
   });
 
+  it("reads a link whole before emphasis, so a mark inside its address never closes emphasis", () => {
+    const wiki = {
+      kind: "link",
+      href: "https://e.com/Foo_(bar)",
+      children: [{ kind: "text", text: "ok" }],
+    };
+    expect(parseNote("a _b [ok](https://e.com/Foo_(bar))")).toEqual([
+      {
+        kind: "paragraph",
+        children: [{ kind: "text", text: "a _b " }, wiki],
+      },
+    ]);
+    expect(parseNote("_see [ok](https://e.com/Foo_(bar)) now_")).toEqual([
+      {
+        kind: "paragraph",
+        children: [
+          {
+            kind: "em",
+            children: [
+              { kind: "text", text: "see " },
+              wiki,
+              { kind: "text", text: " now" },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(parseNote("**[ok](https://e.com/a**b)**")).toEqual([
+      {
+        kind: "paragraph",
+        children: [
+          {
+            kind: "strong",
+            children: [
+              {
+                kind: "link",
+                href: "https://e.com/a**b",
+                children: [{ kind: "text", text: "ok" }],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
   it("links only to http, https and mailto addresses", () => {
     expect(safeHref("https://weave.example/docs")).toBe(
       "https://weave.example/docs",
