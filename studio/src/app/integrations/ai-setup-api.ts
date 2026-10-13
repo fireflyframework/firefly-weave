@@ -144,6 +144,8 @@ export interface LumiStatus {
 export const TEST_TIMEOUT_MS = 150_000;
 /** Model discovery: the AI gateway gives a server 15 seconds. */
 export const DISCOVERY_TIMEOUT_MS = 30_000;
+/** An ordinary platform call: the Studio host stops waiting after 35 seconds. */
+export const BRIDGE_TIMEOUT_MS = 35_000;
 
 export class AiSetupApi {
   constructor(private readonly api: StudioApi) {}
@@ -182,7 +184,7 @@ export class AiSetupApi {
       "POST",
       undefined,
       {},
-      60_000,
+      BRIDGE_TIMEOUT_MS,
     );
   }
   grant(revision: string) {

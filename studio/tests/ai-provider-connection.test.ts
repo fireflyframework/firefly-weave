@@ -115,10 +115,11 @@ describe("AI connection lists", () => {
     connector: aiConnector,
     config: { provider: "openai-chat", endpoint: "http://ollama:11434/v1" },
   };
-  it("keeps the latest revision of each name, newest first by name", () => {
+  it("keeps the latest revision of each name, sorted by name", () => {
+    // The platform's order is not alphabetical, so the result shows the sort.
     const rows = [
-      { ...base, id: "a1", name: "ollama-local", revision: 1 },
       { ...base, id: "b1", name: "openai", revision: 1 },
+      { ...base, id: "a1", name: "ollama-local", revision: 1 },
       { ...base, id: "a2", name: "ollama-local", revision: 2 },
     ];
     expect(latestByName(rows as never).map((row) => row.id)).toEqual([
