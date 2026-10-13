@@ -23,9 +23,10 @@ import inspect
 import re
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -39,6 +40,7 @@ from starlette.responses import JSONResponse, Response
 from firefly_weave import __version__
 from firefly_weave.contracts.connector_descriptors import ADAPTER
 from firefly_weave.contracts.surface import OPERATIONS
+from firefly_weave.operations.ephemeral import until_disconnect
 from firefly_weave.sdk.auth import AuthError
 from firefly_weave.sdk.credentials import CredentialError
 
@@ -49,6 +51,11 @@ if TYPE_CHECKING:
 BODY_LIMIT = 2 * 1024 * 1024
 RESPONSE_LIMIT = 8 * 1024 * 1024
 COOKIE = "weave_studio_session"
+# Seconds the bridge waits for the platform. A model test calls the model itself, and a local model
+# that loads for the first time can take two minutes; the platform stops that test after 130 seconds,
+# so the bridge waits a little longer for its answer and cancels it if the browser leaves first.
+BRIDGE_SECONDS = 35.0
+LONG_OPERATIONS: Mapping[str, float] = MappingProxyType({"ai_connections.test": 140.0})
 STUDIO_FAMILIES = frozenset(
     {
         "identity",
@@ -252,6 +259,10 @@ class StudioService:
         return response
 
     def check_scope(self, path: str, method: str) -> int:
+        return self.match(path, method)[0]
+
+    def match(self, path: str, method: str) -> tuple[int, str | None]:
+        """The bridge status for a path and the operation it names; None when no operation matches."""
         profile = self.options.profile
         assert profile is not None
         for operation in OPERATIONS.values():
@@ -273,13 +284,13 @@ class StudioService:
                 ("environment", profile.environment_id),
             ):
                 if name in values and (selected is None or values[name] != str(selected)):
-                    return 403
+                    return 403, operation.id
             # Variable segments are resource IDs, the finite catalog kind or a bounded adapter
             # name. A segment that fits another operation's template keeps matching (for example
             # /connector-descriptors also fits the {collection} template).
             if all(self.segment(name, value) for name, value in values.items()):
-                return 200
-        return 404
+                return 200, operation.id
+        return 404, None
 
     @staticmethod
     def segment(name: str, value: str) -> bool:
@@ -300,7 +311,7 @@ class StudioService:
             return problem(409, "WV-STUDIO-OFFLINE", "Connect to a platform in Settings to use connected operations")
         if any(part in path for part in ("%", "\\", "?", "#", "..")):
             return problem(404, "WV-STUDIO-ROUTE", "Unknown platform operation")
-        status = self.check_scope(path, request.method)
+        status, operation = self.match(path, request.method)
         if status != 200:
             return problem(status, "WV-STUDIO-ROUTE", "Operation is outside the selected profile or API surface")
         try:
@@ -329,44 +340,55 @@ class StudioService:
                     headers[name] = request.headers[name]
             # Do not inherit upstream cookie authentication across browser operations.
             self.client.cookies.clear()
-            async with asyncio.timeout(35):
-                async with self.client.stream(
-                    request.method,
-                    profile.base_url.rstrip("/") + path,
-                    params=request.query_params,
-                    headers=headers,
-                    content=await request.body(),
-                ) as upstream:
-                    if upstream.is_redirect:
-                        return problem(502, "WV-STUDIO-REDIRECT", "The platform returned an unexpected redirect")
-                    if upstream.headers.get("content-encoding", "identity").strip().lower() != "identity":
-                        return problem(502, "WV-STUDIO-ENCODING", "Platform response must use identity encoding")
-                    body = bytearray()
-                    async for chunk in upstream.aiter_bytes():
-                        body.extend(chunk)
-                        if len(body) > RESPONSE_LIMIT:
+            long = LONG_OPERATIONS.get(operation or "")
+            seconds = long if long is not None else BRIDGE_SECONDS
+            content = await request.body()
+
+            async def forward() -> Response:
+                async with asyncio.timeout(seconds):
+                    async with self.client.stream(
+                        request.method,
+                        profile.base_url.rstrip("/") + path,
+                        params=request.query_params,
+                        headers=headers,
+                        content=content,
+                        timeout=seconds if long is not None else httpx.USE_CLIENT_DEFAULT,
+                    ) as upstream:
+                        if upstream.is_redirect:
+                            return problem(502, "WV-STUDIO-REDIRECT", "The platform returned an unexpected redirect")
+                        if upstream.headers.get("content-encoding", "identity").strip().lower() != "identity":
+                            return problem(502, "WV-STUDIO-ENCODING", "Platform response must use identity encoding")
+                        body = bytearray()
+                        async for chunk in upstream.aiter_bytes():
+                            body.extend(chunk)
+                            if len(body) > RESPONSE_LIMIT:
+                                return problem(
+                                    502,
+                                    "WV-STUDIO-RESPONSE-LIMIT",
+                                    "Platform response exceeds Studio's limit; narrow the query",
+                                )
+                        if (
+                            self.connection_generation != generation
+                            or self.options.profile is not profile
+                            or self.options.token_provider is not provider
+                        ):
                             return problem(
-                                502,
-                                "WV-STUDIO-RESPONSE-LIMIT",
-                                "Platform response exceeds Studio's limit; narrow the query",
+                                503,
+                                "WV-STUDIO-CONNECTION-CHANGED",
+                                "Connection changed; discard the previous result. "
+                                "A submitted command may have completed in its original scope",
                             )
-                    if (
-                        self.connection_generation != generation
-                        or self.options.profile is not profile
-                        or self.options.token_provider is not provider
-                    ):
-                        return problem(
-                            503,
-                            "WV-STUDIO-CONNECTION-CHANGED",
-                            "Connection changed; discard the previous result. "
-                            "A submitted command may have completed in its original scope",
-                        )
-                    safe_headers = {
-                        key: value
-                        for key, value in upstream.headers.items()
-                        if key.lower() in {"content-type", "etag", "retry-after"}
-                    }
-                    return Response(bytes(body), status_code=upstream.status_code, headers=safe_headers)
+                        safe_headers = {
+                            key: value
+                            for key, value in upstream.headers.items()
+                            if key.lower() in {"content-type", "etag", "retry-after"}
+                        }
+                        return Response(bytes(body), status_code=upstream.status_code, headers=safe_headers)
+
+            if long is not None:
+                # A person can cancel a long model test; the platform call stops when the browser leaves.
+                return await until_disconnect(forward(), request.receive)
+            return await forward()
         except (AuthError, CredentialError):
             return problem(401, "WV-AUTH-REQUIRED", "Sign in again with weave auth login using the selected profile")
         except (httpx.HTTPError, TimeoutError):
