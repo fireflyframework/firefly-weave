@@ -164,13 +164,16 @@ SPDX-License-Identifier: Apache-2.0
               [attr.data-toolbar-for]="bar.id"
               [style.left.px]="bar.x"
               [style.top.px]="bar.y"
+              [style.--toolbar-scale]="bar.scale"
+              [style.--toolbar-gap.px]="bar.gap"
+              [attr.data-clear]="bar.clear"
             >
               @if (bar.trigger; as trigger) {
                 <button
                   type="button"
                   class="icon-button"
-                  [style.outline-width.px]="focusWidth()"
-                  [style.outline-offset.px]="focusWidth()"
+                  [style.outline-width.px]="focusWidth() / bar.scale"
+                  [style.outline-offset.px]="focusWidth() / bar.scale"
                   data-action="remove-trigger"
                   [attr.data-target]="trigger.intent"
                   [attr.aria-label]="'Remove the ' + trigger.label + ' trigger'"
@@ -184,8 +187,8 @@ SPDX-License-Identifier: Apache-2.0
                 <button
                   type="button"
                   class="icon-button"
-                  [style.outline-width.px]="focusWidth()"
-                  [style.outline-offset.px]="focusWidth()"
+                  [style.outline-width.px]="focusWidth() / bar.scale"
+                  [style.outline-offset.px]="focusWidth() / bar.scale"
                   data-action="delete"
                   [attr.data-target]="bar.id"
                   [attr.aria-label]="'Delete ' + bar.id"
@@ -196,7 +199,7 @@ SPDX-License-Identifier: Apache-2.0
                   <weave-icon name="trash" [size]="16" />
                 </button>
                 <weave-row-menu
-                  [style.--zoom]="view.zoom"
+                  [style.--zoom]="view.zoom * bar.scale"
                   [label]="'More commands for ' + bar.id"
                   [items]="bar.menu"
                   [tabIndex]="bar.tabIndex"

@@ -26,7 +26,7 @@ import {
   vendorPayment,
   type CanvasPage,
 } from "./canvas-po";
-import { sourceText } from "./support";
+import { expectHitTarget, sourceText } from "./support";
 
 /**
  * The vendor payment workflow where the step below
@@ -100,6 +100,74 @@ async function toolbarCovers(canvas: CanvasPage): Promise<string[]> {
     return found;
   });
 }
+
+/**
+ * A step's toolbar on screen: where it sits against its card, its buttons'
+ * sizes, and whether the canvas called the band above it clear.
+ */
+async function toolbarFit(canvas: CanvasPage, id: string) {
+  const bar = canvas.root.locator(`[data-toolbar-for="${id}"]`);
+  return bar.evaluate((element, step) => {
+    const own = element.getBoundingClientRect();
+    const card = document
+      .querySelector(`[data-tile="${CSS.escape(step)}"] .tile-body`)!
+      .getBoundingClientRect();
+    return {
+      clear: element.getAttribute("data-clear") === "true",
+      gap: card.top - own.bottom,
+      offCenter: Math.abs(
+        own.left + own.width / 2 - (card.left + card.width / 2),
+      ),
+      buttons: [...element.querySelectorAll("button")].map((button) => {
+        const box = button.getBoundingClientRect();
+        return Math.min(box.width, box.height);
+      }),
+    };
+  }, id);
+}
+/** What a toolbar covers of its own step: badge, icon, name, handle or "+". */
+const ownCovers = (covers: string[], id: string) =>
+  covers.filter(
+    (entry) =>
+      entry.endsWith(` ${id}`) ||
+      entry.includes(` ${id}>`) ||
+      entry.includes(`>${id}`),
+  );
+
+for (const size of [
+  { width: 1440, height: 900, touch: false },
+  { width: 600, height: 500, touch: false },
+  { width: 360, height: 640, touch: false },
+  { width: 360, height: 640, touch: true },
+])
+  test.describe(`a step's toolbar at ${size.width}x${size.height}${size.touch ? " on touch" : ""}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.touch,
+    });
+
+    test("sits above its step, centered, with buttons at their target size", async ({
+      page,
+    }) => {
+      const canvas = await openWorkflow(page);
+      const minimum = size.touch ? 44 : 24;
+      for (const id of ["prepare-request", "approval"]) {
+        await canvas.tileBody(id).focus();
+        const bar = canvas.root.getByRole("group", {
+          name: `Commands for ${id}`,
+        });
+        await expect(bar).toBeVisible();
+        const fit = await toolbarFit(canvas, id);
+        expect(fit.gap, id).toBeGreaterThanOrEqual(0);
+        expect(fit.offCenter, id).toBeLessThanOrEqual(1);
+        expect(fit.buttons, id).toHaveLength(2);
+        for (const side of fit.buttons)
+          expect(side, id).toBeGreaterThanOrEqual(minimum - 0.5);
+        for (const button of await bar.getByRole("button").all())
+          await expectHitTarget(button);
+      }
+    });
+  });
 
 for (const size of [
   { width: 1440, height: 900 },
@@ -318,12 +386,27 @@ test.describe("canvas gestures", () => {
           box.y + box.height / 2 - middle.y,
         );
         await canvas.tileBody(id).hover();
-        await expect(
-          canvas.root.getByRole("group", { name: `Commands for ${id}` }),
-        ).toBeVisible();
-        expect(await toolbarCovers(canvas), id).toEqual([]);
+        const bar = canvas.root.getByRole("group", {
+          name: `Commands for ${id}`,
+        });
+        await expect(bar).toBeVisible();
+        const fit = await toolbarFit(canvas, id);
+        const covers = await toolbarCovers(canvas);
+        // Where the band above is free, the toolbar covers nothing; where it
+        // isn't, it still sits above its step, over the names there, and
+        // never over its own step's badge, icon, name, handle or "+".
+        if (fit.clear) expect(covers, id).toEqual([]);
+        else {
+          expect(ownCovers(covers, id), id).toEqual([]);
+          for (const button of await bar.getByRole("button").all())
+            await expectHitTarget(button);
+        }
+        for (const side of fit.buttons)
+          expect(side, id).toBeGreaterThanOrEqual(23.5);
+        clear[fit.clear ? "yes" : "no"]++;
       }
     };
+    const clear = { yes: 0, no: 0 };
     expect(await canvas.zoomPercent()).toBe(50);
     // The name above the step with a badge takes two lines.
     expect(
@@ -346,6 +429,45 @@ test.describe("canvas gestures", () => {
     for (let i = 0; i < 5; i++) await zoomOut.click();
     await expect.poll(() => canvas.zoomPercent()).toBe(40);
     await check();
+    expect(clear.yes).toBeGreaterThan(0);
+  });
+
+  test("puts the hover toolbar above a step at 50%, and the pointer reaches it from the step", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page, badgeBelowLongName());
+    expect(await canvas.zoomPercent()).toBe(50);
+    const places: Record<string, boolean> = {};
+    for (const id of ["prepare-request", "send-confirmation"]) {
+      await canvas.tileBody(id).hover();
+      const bar = canvas.root.getByRole("group", {
+        name: `Commands for ${id}`,
+      });
+      await expect(bar).toBeVisible();
+      const fit = await toolbarFit(canvas, id);
+      places[id] = fit.clear;
+      expect(fit.gap, id).toBeGreaterThanOrEqual(0);
+      expect(fit.offCenter, id).toBeLessThanOrEqual(1);
+      if (fit.clear) expect(await toolbarCovers(canvas), id).toEqual([]);
+      else expect(ownCovers(await toolbarCovers(canvas), id), id).toEqual([]);
+    }
+    expect(places["prepare-request"]).toBe(true);
+    expect(places["send-confirmation"]).toBe(false);
+    // From the card straight up to Delete: the toolbar stays on the way.
+    const card = (await canvas.tileBody("prepare-request").boundingBox())!;
+    await page.mouse.move(card.x + card.width / 3, card.y + card.height / 2);
+    const remove = canvas.root.getByRole("button", {
+      name: "Delete prepare-request",
+      exact: true,
+    });
+    const target = (await remove.boundingBox())!;
+    await page.mouse.move(
+      target.x + target.width / 2,
+      target.y + target.height / 2,
+      { steps: 12 },
+    );
+    await expect(remove).toBeVisible();
+    await expectHitTarget(remove);
   });
 
   test("Escape hides the toolbars until the pointer or focus reaches another step, and keeps the selection", async ({

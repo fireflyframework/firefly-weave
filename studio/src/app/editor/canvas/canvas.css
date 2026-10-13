@@ -631,13 +631,15 @@ weave-canvas-view,
   color: var(--muted);
 }
 
-/* Hover toolbar and selection toolbar. The hover toolbar sits on its
-   step's card (where: canvas-view.ts, TOOLBAR) and scales with the canvas
-   like the "+" and the handles, so it never covers a neighbor, a label or
-   the corner badge. Its commands are also in the step's right-click menu
-   and its step details, at full size. */
+/* Hover toolbar and selection toolbar. The hover toolbar sits above its
+   step, centered (where: toolbar-spot.ts). It draws at its 100% size times
+   --toolbar-scale, from its top left corner, so its buttons keep 24 px on
+   screen (44 px with a coarse pointer) at every zoom. Its commands are
+   also in the step's right-click menu and its step details. */
 .canvas-v2 .tile-toolbar {
   position: absolute;
+  transform: scale(var(--toolbar-scale, 1));
+  transform-origin: 0 0;
   z-index: 6;
   display: flex;
   gap: 2px;
@@ -647,6 +649,17 @@ weave-canvas-view,
   background: var(--surface);
   box-shadow: var(--shadow-1);
   pointer-events: auto;
+}
+/* The gap down to the step's card belongs to the toolbar, so the pointer
+   keeps it on the way up. Its left half only: the corner badge is on the
+   right. */
+.canvas-v2 .tile-toolbar::after {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 50%;
+  height: calc((var(--toolbar-gap, 14px) + 2px) / var(--toolbar-scale, 1));
+  content: "";
 }
 .canvas-v2 .tile-toolbar :is(.icon-button, .row-menu-toggle) {
   width: 28px;

@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
 import { stringify } from "yaml";
 import { openStoredWorkflow } from "./canvas-po";
+import { expectHitTarget } from "./support";
 
 const definition = (steps: unknown[], extra: Record<string, unknown> = {}) =>
   stringify({
@@ -213,6 +214,50 @@ for (const size of [
     test.use({
       viewport: { width: size.width, height: size.height },
       hasTouch: size.touch,
+    });
+
+    test("a chosen trigger's Remove button sits above its tile, centered, at its target size", async ({
+      page,
+    }) => {
+      const view = await openStoredWorkflow(page, {
+        id: `trigger-remove-size-${size.width}-${size.touch}`,
+        source: definition(twoSteps),
+        canvas: canvas([
+          { id: "trigger-0a1b2c3d", kind: "manual" },
+          { id: "trigger-1b2c3d4e", kind: "webhook" },
+        ]),
+      });
+      const minimum = size.touch ? 44 : 24;
+      for (const id of [
+        "$trigger:trigger-0a1b2c3d",
+        "$trigger:trigger-1b2c3d4e",
+      ]) {
+        await view.tileBody(id).focus();
+        const bar = view.root.locator(`[data-toolbar-for="${id}"]`);
+        await expect(bar).toBeVisible();
+        const button = bar.getByRole("button", { name: /^Remove the / });
+        const found = await bar.evaluate((element, tileId) => {
+          const own = element.getBoundingClientRect();
+          const button = element
+            .querySelector("button")!
+            .getBoundingClientRect();
+          const card = document
+            .querySelector(`[data-tile="${CSS.escape(tileId)}"] .tile-body`)!
+            .getBoundingClientRect();
+          return {
+            button: { width: button.width, height: button.height },
+            gap: card.top - own.bottom,
+            offCenter: Math.abs(
+              own.left + own.width / 2 - (card.left + card.width / 2),
+            ),
+          };
+        }, id);
+        expect(found.button.width, id).toBeGreaterThanOrEqual(minimum - 0.5);
+        expect(found.button.height, id).toBeGreaterThanOrEqual(minimum - 0.5);
+        expect(found.gap, id).toBeGreaterThanOrEqual(0);
+        expect(found.offCenter, id).toBeLessThanOrEqual(1);
+        await expectHitTarget(button);
+      }
     });
 
     test("each trigger tile is titled by its trigger, and its title and subtitle fit unclipped", async ({

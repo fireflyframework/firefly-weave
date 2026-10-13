@@ -118,6 +118,7 @@ import {
   type Point,
 } from "./layout-ltr";
 import { neighbor, placesOf, type Direction } from "./navigation";
+import { toolbarSpot } from "./toolbar-spot";
 import { NodeTile, type TileView } from "./node-tile";
 import {
   edgeRun,
@@ -160,18 +161,6 @@ const NO_BORDERS: TileBorders = {
   error: false,
 };
 
-/**
- * The hover toolbar: two 28-unit buttons, a 2-unit gap, padding and border.
- * Paths are 224 units apart, so under a step's three-line label block the
- * step below has as little as 9 units of room above it at 40%. The toolbar
- * therefore sits on its step's card, at the top left corner, rising 6 units
- * above it: clear of the corner badge (at most 38 units wide, so from 68
- * units in), of the icon (from 32 units down) and of the label above. A
- * parallel step's bar is 20 units wide with its paths' labels on both
- * sides, so its toolbar sits left of the bar's lower half, under the edge
- * coming in. Nothing assumes one output handle: they are on the right.
- */
-const TOOLBAR = { width: 64, height: 34, rise: 6 } as const;
 /** "Insert a step between a and b" becomes "Move x between a and b". */
 const moveName = (name: string, id: string) =>
   name.replace(/^(Insert|Add) a step/, `Move ${id}`);
@@ -182,6 +171,12 @@ interface ToolbarView {
   name: string;
   x: number;
   y: number;
+  /** How much larger than at 100% it draws, so its buttons keep their size on screen. */
+  scale: number;
+  /** Nothing else is drawn where it sits. */
+  clear: boolean;
+  /** From its bottom to its step's top, in canvas units. */
+  gap: number;
   locked: boolean;
   tabIndex: 0 | -1;
   menu: RowMenuItem[];
@@ -252,6 +247,9 @@ export class CanvasView implements OnInit, DoCheck {
   editingNote = "";
   placingNote = "";
   private cachedNotes: NoteView[] | null = null;
+  /** A coarse pointer: the toolbars' buttons keep 44 px on screen instead of 24. */
+  private readonly coarse =
+    typeof matchMedia === "function" ? matchMedia("(pointer: coarse)") : null;
   /** The step dragged to a new place, or "". */
   draggingStep = "";
   /** The click that ends a drag does nothing else. */
@@ -961,6 +959,8 @@ export class CanvasView implements OnInit, DoCheck {
       locked: boolean,
       dismissed: readonly string[],
       canvas: CanvasSidecar,
+      zoom: number,
+      coarse: boolean,
     ) =>
       [...new Set([focused, hovered])].flatMap((id): ToolbarView[] => {
         const tile =
@@ -975,12 +975,16 @@ export class CanvasView implements OnInit, DoCheck {
           );
           if (!intent) return [];
           const label = TRIGGER_LABELS[intent.kind];
+          const spot = toolbarSpot(tile, layout, zoom, { buttons: 1, coarse });
           return [
             {
               id: tile.id,
               name: `the ${label} trigger`,
-              x: tile.x,
-              y: tile.y - TOOLBAR.rise,
+              x: spot.x,
+              y: spot.y,
+              scale: spot.scale,
+              clear: spot.clear,
+              gap: spot.gap,
               locked,
               tabIndex,
               menu: [],
@@ -988,15 +992,16 @@ export class CanvasView implements OnInit, DoCheck {
             },
           ];
         }
-        const bar = tile.shape === "fork";
+        const spot = toolbarSpot(tile, layout, zoom, { coarse });
         return [
           {
             id: tile.id,
             name: tile.id,
-            x: bar ? tile.x + tile.width - TOOLBAR.width : tile.x,
-            y: bar
-              ? tile.y + tile.height - TOOLBAR.height
-              : tile.y - TOOLBAR.rise,
+            x: spot.x,
+            y: spot.y,
+            scale: spot.scale,
+            clear: spot.clear,
+            gap: spot.gap,
             locked,
             tabIndex,
             menu: this.menuFor(tile, locked),
@@ -1019,6 +1024,8 @@ export class CanvasView implements OnInit, DoCheck {
       this.locked(),
       this.dismissed,
       this.host().model.canvas,
+      this.view.zoom,
+      this.coarse?.matches ?? false,
     );
   }
   /**
