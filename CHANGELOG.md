@@ -86,6 +86,10 @@ SPDX-License-Identifier: Apache-2.0
   layout**, a step toolbar above the step, and a `.canvas.json` file that
   **Save to file** writes and **Import workflow** reads. A draft on a platform
   keeps its notes and trigger choices in this browser for your account.
+- With the new editor on or off, **Import workflow** starts a fresh Undo history
+  (opening a file is no longer a step you can undo, which emptied the canvas),
+  and a `.canvas.json` file chosen on its own is refused with a sentence that
+  asks for the workflow file too.
 - Studio's API builder measures pasted samples in bytes, so a large sample in a
   script that takes several bytes per character gets the size message instead
   of a request error.
