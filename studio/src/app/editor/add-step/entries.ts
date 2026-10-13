@@ -759,24 +759,27 @@ export function buildCatalog(input: CatalogInput): Catalog {
     else if (item.worker) workers.push(item);
     else others.push(item);
   }
-  const apps = input.connectors
-    ? [
-        ...new Set([
-          ...COMMON_APPS,
-          ...input.connectors.map(
-            (connector) =>
-              connector.reference.split("@")[0] || connector.adapter,
-          ),
-          ...byApp.keys(),
-        ]),
-      ].sort((a, b) =>
-        a === HTTP
-          ? -1
-          : b === HTTP
-            ? 1
-            : appOf(a).label.localeCompare(appOf(b).label, "en"),
-      )
-    : [...new Set([...Object.keys(BUILT_IN_APPS), ...byApp.keys()])];
+  // One order, local or connected: HTTP APIs first, then by name.
+  const apps = [
+    ...new Set([
+      ...(input.connectors
+        ? [
+            ...COMMON_APPS,
+            ...input.connectors.map(
+              (connector) =>
+                connector.reference.split("@")[0] || connector.adapter,
+            ),
+          ]
+        : Object.keys(BUILT_IN_APPS)),
+      ...byApp.keys(),
+    ]),
+  ].sort((a, b) =>
+    a === HTTP
+      ? -1
+      : b === HTTP
+        ? 1
+        : appOf(a).label.localeCompare(appOf(b).label, "en"),
+  );
   const commands = catalogCommands(input);
   const common = new Map(COMMON_ACTIONS.map((action) => [action.id, action]));
   const callApi = commonEntry(common.get("call-api")!, HTTP);
@@ -908,6 +911,29 @@ export function buildCatalog(input: CatalogInput): Catalog {
         meta: plural(latestActions(list).length, "action", "actions"),
       }),
     );
+  }
+  // App event opens the apps whose events can start a run (each app's own
+  // view offers the trigger), when any of them is there.
+  const eventApps = rows
+    .filter((row) =>
+      appOf(row.open!.replace(/^app:/, "")).triggers.includes("provider"),
+    )
+    .sort((a, b) => a.label.localeCompare(b.label, "en"));
+  const appEvent = triggers.findIndex((item) => item.id === "trigger:provider");
+  if (eventApps.length && appEvent >= 0) {
+    triggers[appEvent] = {
+      ...triggers[appEvent],
+      open: "app-events",
+      chevron: true,
+    };
+    add({
+      id: "app-events",
+      title: "App event",
+      subtitle: "Start a run when something happens in one of these apps.",
+      parent: "triggers",
+      sections: [{ heading: "", entries: eventApps }],
+      note: "",
+    });
   }
   add({
     id: "category:app",

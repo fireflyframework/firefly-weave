@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
 import { buildCatalog } from "../src/app/editor/add-step/entries";
-import { searchPanel } from "../src/app/editor/add-step/search";
+import { matchScore, searchPanel } from "../src/app/editor/add-step/search";
 import { catalogInput, installed, published } from "./add-step-fixtures";
 
 const catalog = buildCatalog(
@@ -43,6 +43,16 @@ describe("searching Add a step", () => {
     "finds Call an API first for %s",
     (word) => {
       expect(labels(word)[0]).toBe("Call an API");
+    },
+  );
+
+  it.each(["http", "https", "api", "request", "url", "rest"])(
+    "knows %s as one of Call an API's everyday words",
+    (word) => {
+      const callApi = catalog.searchable.find(
+        (entry) => entry.id === "common:weave-http:call-api",
+      )!;
+      expect(matchScore(word, callApi)).toBe(0);
     },
   );
 

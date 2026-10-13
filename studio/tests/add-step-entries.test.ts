@@ -194,8 +194,41 @@ describe("what happens next", () => {
   });
 });
 
+describe("App event", () => {
+  it("opens the apps whose events can start a run, each on its own view", () => {
+    const catalog = buildCatalog(catalogInput({ hasSteps: false }));
+    const appEvent = entryById(catalog, "trigger:provider");
+    expect(appEvent).toMatchObject({ open: "app-events", chevron: true });
+    expect(catalog.views.get("app-events")!.title).toBe("App event");
+    expect(viewLabels(catalog, "app-events")).toEqual([
+      "Microsoft Teams",
+      "Telegram",
+      "WhatsApp",
+    ]);
+    expect(viewLabels(catalog, "app:weave-telegram")).toContain("App event");
+    expect(entryById(catalog, "app:weave-telegram").open).toBe(
+      "app:weave-telegram",
+    );
+  });
+
+  it("stays a plain choice when no app with events is installed", () => {
+    const catalog = buildCatalog(
+      catalogInput({
+        connectors: installed,
+        actions: published,
+        catalog: "ready",
+      }),
+    );
+    expect(entryById(catalog, "trigger:provider")).toMatchObject({
+      open: null,
+      chevron: false,
+      insert: { kind: "trigger", trigger: "provider" },
+    });
+  });
+});
+
 describe("actions in apps", () => {
-  it("lists Call an API and Call an action first, then the apps Studio knows, when working locally", () => {
+  it("lists Call an API and Call an action first, then the apps Studio knows by name, HTTP first, as when connected", () => {
     const catalog = buildCatalog(catalogInput());
     expect(viewLabels(catalog, "category:app")).toEqual([
       "Call an API",
@@ -204,14 +237,14 @@ describe("actions in apps", () => {
       "Email",
       "FTP",
       "FTPS",
-      "SFTP",
-      "Microsoft drive",
       "Google Drive",
-      "PostgreSQL",
       "Kafka",
-      "WhatsApp",
-      "Telegram",
+      "Microsoft drive",
       "Microsoft Teams",
+      "PostgreSQL",
+      "SFTP",
+      "Telegram",
+      "WhatsApp",
     ]);
     expect(entryById(catalog, "common:weave-http:call-api").insert).toEqual({
       kind: "common",

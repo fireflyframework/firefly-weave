@@ -95,3 +95,40 @@ describe("a canvas file opened with its workflow", () => {
     expect(model.canvas.notes?.[0].anchor?.stepId).toBe("check-customer");
   });
 });
+
+describe("importing a workflow with a canvas file Studio can't read", () => {
+  it("opens the workflow and says it opened without its canvas file", async () => {
+    const said: string[] = [];
+    const shell = Object.create(App.prototype) as App;
+    Object.assign(shell, {
+      view: "home",
+      importGeneration: 0,
+      notify: (line: string) => void said.push(line),
+      flushLocalSave: () => {},
+      openTab: () => {},
+      resetValidation: () => {},
+      changed: () => {},
+      scheduleFit: () => {},
+      router: { navigateByUrl: async () => true },
+      cdr: { markForCheck: () => {} },
+    });
+    const workflow = {
+      name: "order-intake.yaml",
+      size: 200,
+      text: async () => source("transform"),
+    } as unknown as File;
+    const canvas = {
+      name: "order-intake.canvas.json",
+      size: 200,
+      text: () => Promise.reject(new Error("The file was moved.")),
+    } as unknown as File;
+    await shell.importWorkflow(workflow, canvas);
+    expect(said).toEqual([
+      "The workflow opened without its canvas file: Studio couldn't read that file.",
+    ]);
+    expect(shell.model.definition.spec.steps.map((step) => step.id)).toEqual([
+      "check-customer",
+    ]);
+    expect(shell.view).toBe("designer");
+  });
+});
