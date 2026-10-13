@@ -709,7 +709,8 @@ async def test_oversized_source_and_event_are_not_admitted_by_backfill(empty_set
             )
 
             def observe(conn, cursor, statement, parameters, context, executemany):
-                if statement.startswith("SELECT artifact,state,activation,request FROM runs"):
+                # The per-run read of a bounded run (its artifact is read only for a new artifact).
+                if statement.startswith("SELECT state,activation,request,sha256("):
                     fetched.append(parameters[-1])
 
             event.listen(engine.sync_engine, "before_cursor_execute", observe)
