@@ -32,7 +32,7 @@ import {
 } from "../src/app/editor/canvas/trigger-tiles";
 
 describe("trigger tiles", () => {
-  it("say what starts the run, and that other triggers are set up when you activate", () => {
+  it("are titled by the trigger, and say what starts the run or that it is set up when you activate", () => {
     const workflow = freshWorkflow();
     workflow.spec["inputSchema"] = {
       type: "object",
@@ -40,25 +40,25 @@ describe("trigger tiles", () => {
     };
     expect(triggerTile("manual", workflow)).toEqual({
       icon: "manualTrigger",
-      subtitle: "Manual form · 1 field",
+      title: "Manual form",
+      subtitle: "1 field",
     });
     expect(triggerTile("webhook", workflow)).toEqual({
       icon: "webhook",
-      subtitle: "Webhook · Set up when you activate",
+      title: "Webhook",
+      subtitle: "Set up at activation",
     });
-    expect(triggerTile("broker", workflow).subtitle).toBe(
-      "Kafka message · Set up when you activate",
-    );
-    expect(triggerTile("provider", workflow).subtitle).toBe(
-      "App event · Set up when you activate",
-    );
-    expect(triggerTile("called", workflow).subtitle).toBe(
-      "Called by a workflow · Any workflow in this project",
-    );
+    expect(triggerTile("broker", workflow)).toMatchObject({
+      title: "Kafka message",
+      subtitle: "Set up at activation",
+    });
+    expect(triggerTile("provider", workflow).title).toBe("App event");
+    expect(triggerTile("called", workflow)).toMatchObject({
+      title: "Called by a workflow",
+      subtitle: "Any workflow here",
+    });
     workflow.spec["callable"] = { allowedCallers: ["order-intake", "billing"] };
-    expect(triggerTile("called", workflow).subtitle).toBe(
-      "Called by a workflow · 2 allowed callers",
-    );
+    expect(triggerTile("called", workflow).subtitle).toBe("2 allowed callers");
   });
 
   it("names and describes every trigger, with an icon Studio draws", () => {

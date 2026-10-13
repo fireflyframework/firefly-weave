@@ -59,18 +59,20 @@ export const TRIGGER_KEYWORDS: Readonly<Record<TriggerKind, string>> = {
   provider: "whatsapp telegram teams chat app message event",
   called: "sub-workflow subworkflow call execute workflow",
 };
-export const SET_UP_LATER = "Set up when you activate";
+export const SET_UP_LATER = "Set up at activation";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
-/** A trigger tile's icon and subtitle. */
+/** A trigger tile's icon, title (the trigger's name) and a short subtitle that fits the tile. */
 export function triggerTile(
   kind: TriggerKind,
   workflow: Workflow,
-): { icon: string; subtitle: string } {
+): { icon: string; title: string; subtitle: string } {
   const icon = TRIGGER_ICONS[kind];
-  if (kind === "manual") return { icon, subtitle: triggerSubtitle(workflow) };
+  const title = TRIGGER_LABELS[kind];
+  if (kind === "manual")
+    return { icon, title, subtitle: triggerSubtitle(workflow) };
   if (kind === "called") {
     const callable = workflow.spec["callable"];
     const callers =
@@ -79,12 +81,13 @@ export function triggerTile(
         : 0;
     return {
       icon,
+      title,
       subtitle: callers
-        ? `${TRIGGER_LABELS.called} · ${callers} allowed ${callers === 1 ? "caller" : "callers"}`
-        : `${TRIGGER_LABELS.called} · Any workflow in this project`,
+        ? `${callers} allowed ${callers === 1 ? "caller" : "callers"}`
+        : "Any workflow here",
     };
   }
-  return { icon, subtitle: `${TRIGGER_LABELS[kind]} · ${SET_UP_LATER}` };
+  return { icon, title, subtitle: SET_UP_LATER };
 }
 
 /** Where a trigger tile's note is kept: the input form's under "$trigger", as step details writes it. */

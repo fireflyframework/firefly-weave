@@ -73,13 +73,13 @@ for (const size of [
         ]),
       });
       await expect(
-        tileNamed(page, "Trigger, Manual form · 1 field"),
+        tileNamed(page, "Manual form trigger, 1 field"),
       ).toBeVisible();
       await expect(
-        tileNamed(page, "Trigger, Webhook · Set up when you activate"),
+        tileNamed(page, "Webhook trigger, Set up at activation"),
       ).toBeAttached();
       await expect(
-        tileNamed(page, "Trigger, Schedule · Set up when you activate"),
+        tileNamed(page, "Schedule trigger, Set up at activation"),
       ).toBeAttached();
       await expect(
         view.root.getByRole("button", {
@@ -137,7 +137,7 @@ for (const size of [
       await view.tileBody("$trigger:trigger-1b2c3d4e").focus();
       await page.keyboard.press("Delete");
       await expect(
-        tileNamed(page, "Trigger, Manual form · 1 field"),
+        tileNamed(page, "Manual form trigger, 1 field"),
       ).toBeAttached();
       await expect(view.tile("$trigger:manual")).toHaveCount(1);
     });
@@ -170,13 +170,10 @@ for (const size of [
         source: definition(twoSteps, { callable: {} }),
       });
       await expect(
-        tileNamed(
-          page,
-          "Trigger, Called by a workflow · Any workflow in this project",
-        ),
+        tileNamed(page, "Called by a workflow trigger, Any workflow here"),
       ).toBeAttached();
       await expect(
-        tileNamed(page, "Trigger, Manual form · 1 field"),
+        tileNamed(page, "Manual form trigger, 1 field"),
       ).toBeAttached();
     });
   });
@@ -205,3 +202,63 @@ test("trigger choices survive a reload", async ({ page }) => {
   await expect(view.tile("$trigger:trigger-0a1b2c3d")).toHaveCount(1);
   await expect(view.tile("$trigger:trigger-1b2c3d4e")).toHaveCount(0);
 });
+
+for (const size of [
+  { width: 1440, height: 900, touch: false },
+  { width: 600, height: 500, touch: false },
+  { width: 360, height: 640, touch: false },
+  { width: 360, height: 640, touch: true },
+])
+  test.describe(`trigger tile labels at ${size.width}x${size.height}${size.touch ? " on touch" : ""}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.touch,
+    });
+
+    test("each trigger tile is titled by its trigger, and its title and subtitle fit unclipped", async ({
+      page,
+    }) => {
+      await openStoredWorkflow(page, {
+        id: `trigger-labels-${size.width}-${size.touch}`,
+        source: definition(twoSteps, { callable: {} }),
+        canvas: canvas([
+          { id: "trigger-0a1b2c3d", kind: "manual" },
+          { id: "trigger-1b2c3d4e", kind: "webhook" },
+          { id: "trigger-2c3d4e5f", kind: "broker" },
+          { id: "trigger-3d4e5f60", kind: "called" },
+          { id: "trigger-4e5f6071", kind: "provider" },
+        ]),
+      });
+      const labels = await page
+        .locator(".canvas-v2 [data-trigger] .tile-label")
+        .evaluateAll((elements) =>
+          elements.map((label) => {
+            const box = label.getBoundingClientRect();
+            return [...label.querySelectorAll<HTMLElement>("strong, span")].map(
+              (text) => {
+                const own = text.getBoundingClientRect();
+                return {
+                  text: text.innerText,
+                  clipped:
+                    text.scrollWidth > text.clientWidth + 1 ||
+                    text.scrollHeight > text.clientHeight + 1,
+                  inside:
+                    own.left >= box.left - 0.5 && own.right <= box.right + 0.5,
+                };
+              },
+            );
+          }),
+        );
+      expect(labels.map((parts) => parts.map((part) => part.text))).toEqual([
+        ["Manual form", "1 field"],
+        ["Webhook", "Set up at activation"],
+        ["Kafka message", "Set up at activation"],
+        ["Called by a workflow", "Any workflow here"],
+        ["App event", "Set up at activation"],
+      ]);
+      for (const part of labels.flat()) {
+        expect(part.clipped, part.text).toBe(false);
+        expect(part.inside, part.text).toBe(true);
+      }
+    });
+  });

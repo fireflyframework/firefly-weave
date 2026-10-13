@@ -255,7 +255,7 @@ test.describe("the left-to-right canvas", () => {
     expect(trigger.x).toBeGreaterThan(area.x + 48);
     expect(trigger.x).toBeLessThan(area.x + 96);
     await expect(canvas.tileBody("$trigger:manual")).toHaveAccessibleName(
-      "Trigger, Manual form · 4 fields",
+      "Manual form trigger, 4 fields",
     );
     await expect(canvas.tileBody("approval")).toHaveAccessibleName(
       "approval, Human task, finance-approvers · approve/reject, step 2 of 4 in Main sequence",

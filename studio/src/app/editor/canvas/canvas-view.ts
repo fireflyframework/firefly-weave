@@ -517,13 +517,15 @@ export class CanvasView implements OnInit, DoCheck {
         ...common,
         step: false,
         icon: trigger?.icon ?? "",
-        title: trigger ? "Trigger" : "End",
+        title: trigger ? trigger.title : "End",
         subtitle: trigger?.subtitle ?? "",
-        name: trigger ? `Trigger, ${trigger.subtitle}` : "End, workflow result",
+        name: trigger
+          ? `${trigger.title} trigger, ${trigger.subtitle}`
+          : "End, workflow result",
         tooltip: trigger
           ? trigger.manual
             ? "Open the workflow inputs"
-            : trigger.subtitle
+            : `${trigger.title} · ${trigger.subtitle}`
           : "Open the workflow result",
         badge: null,
         borders: NO_BORDERS,
