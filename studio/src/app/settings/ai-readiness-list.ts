@@ -66,7 +66,8 @@ import type { FixAction, ReadinessRow } from "../integrations/ai-models-model";
             </button>
           } @else if (action.kind === "copy") {
             <span class="readiness-command">
-              <code>{{ action.command }}</code>
+              <!-- prettier-ignore -->
+              <code>@for (word of words(action.command); track $index) {<span class="command-word">{{ word }}</span>{{ $last ? "" : " " }}}</code>
               <button
                 type="button"
                 class="tertiary"
@@ -143,6 +144,10 @@ import type { FixAction, ReadinessRow } from "../integrations/ai-models-model";
       padding: var(--space-1) var(--space-2);
       border-radius: var(--radius-xs);
     }
+    /* A command wraps between its words, never after a word's hyphen. */
+    .command-word {
+      white-space: nowrap;
+    }
     @media (max-width: 767px), (pointer: coarse) {
       .readiness-row {
         min-height: var(--control-touch);
@@ -158,4 +163,8 @@ export class AiReadinessList {
   failures = input<Record<string, string>>({});
   act = output<ReadinessRow>();
   copy = output<string>();
+  /** A command's words, shown so a line never breaks inside one. */
+  words(command: string) {
+    return command.split(/\s+/).filter(Boolean);
+  }
 }

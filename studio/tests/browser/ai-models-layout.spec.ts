@@ -202,6 +202,42 @@ for (const size of sizes)
         d.control,
         "a checklist fix",
       );
+      // A command wraps between its words, never inside one ("--ollama").
+      const command = page.locator(".readiness-command code");
+      // Selecting it copies the command as written.
+      expect(await command.evaluate((code) => code.textContent)).toBe(
+        "weave platform ai enable --ollama auto",
+      );
+      expect(
+        await command.evaluate((code) => {
+          const text = code.textContent ?? "";
+          const split: string[] = [];
+          for (const match of text.matchAll(/\S+/g)) {
+            const range = document.createRange();
+            let offset = 0;
+            const walker = document.createTreeWalker(
+              code,
+              NodeFilter.SHOW_TEXT,
+            );
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+              const length = node.textContent!.length;
+              const start = match.index - offset;
+              const end = start + match[0].length;
+              if (start >= 0 && start < length) range.setStart(node, start);
+              if (end > 0 && end <= length) range.setEnd(node, end);
+              offset += length;
+            }
+            const lines = new Set(
+              [...range.getClientRects()]
+                .filter((rect) => rect.width > 0)
+                .map((rect) => Math.round(rect.top)),
+            );
+            if (lines.size > 1) split.push(match[0]);
+          }
+          return split;
+        }),
+        "words split across lines",
+      ).toEqual([]);
 
       // Connection rows: actions centered on the row beside the text, or under it on a phone.
       for (const row of await page.locator(".connection-row").all()) {
