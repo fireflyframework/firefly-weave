@@ -99,3 +99,36 @@ test("AI models is not offered while working locally", async ({ page }) => {
     "true",
   );
 });
+
+for (const size of [
+  { width: 360, height: 740 },
+  { width: 600, height: 500 },
+])
+  test(`all four Settings tabs fit the strip at ${size.width}x${size.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(size);
+    await connected(page, {
+      capabilities: [...allCapabilities, "grant.admin"],
+    });
+    await page.goto("/settings/ai");
+    const tabs = page.getByRole("tab");
+    await expect(tabs).toHaveCount(4);
+    const strip = await page.getByRole("tablist").boundingBox();
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <= innerWidth &&
+          document.querySelector(".page-content")!.scrollWidth <=
+            document.querySelector(".page-content")!.clientWidth,
+      ),
+    ).toBe(true);
+    for (const tab of await tabs.all()) {
+      const box = (await tab.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(strip!.x - 0.5);
+      expect(box.x + box.width).toBeLessThanOrEqual(
+        strip!.x + strip!.width + 0.5,
+      );
+      expect(box.height).toBeGreaterThanOrEqual(43.5);
+    }
+  });
