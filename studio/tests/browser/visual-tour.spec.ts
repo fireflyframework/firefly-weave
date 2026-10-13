@@ -1842,7 +1842,7 @@ ${paths}
     ).toBeFocused();
     await shot("136-canvas-note-editing", { tabs: 0 });
   },
-  async "canvas-triggers-copy"({ page, shot }) {
+  async "canvas-triggers-copy"({ page, size, shot }) {
     await useNewEditor(page);
     const canvas = await openStoredWorkflow(page, {
       id: "tour-triggers",
@@ -1858,10 +1858,15 @@ ${paths}
     });
     await canvas.tileBody("check").click();
     await canvas.tileBody("record").click({ modifiers: ["Shift"] });
+    // Below 480 px, Copy and Duplicate are under the toolbar's More.
     await expect(
       canvas.root
         .getByRole("toolbar", { name: "Selected steps" })
-        .getByRole("button", { name: "Copy", exact: true }),
+        .getByRole("button", {
+          name:
+            size.width < 480 ? "More commands for the selected steps" : "Copy",
+          exact: true,
+        }),
     ).toBeVisible();
     await expect(canvas.root.locator("[data-trigger]")).toHaveCount(2);
     await shot("137-canvas-triggers-copy", { tabs: 0 });
