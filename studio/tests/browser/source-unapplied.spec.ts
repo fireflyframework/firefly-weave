@@ -356,6 +356,33 @@ test.describe("leaving Source with text that isn't applied", () => {
     await expect(source).not.toHaveValue(/name: typed/);
   });
 
+  test("Undo from Source answered Apply changes keeps the applied text, and the next Undo takes it back", async ({
+    page,
+  }) => {
+    await openStepFixture(page);
+    await typeInSource(page);
+    await page
+      .getByRole("button", { name: "Apply changes", exact: true })
+      .click();
+    const source = sourceBox(page);
+    const applied = await source.inputValue();
+    await source.fill(applied.replace("name: order-intake", "name: typed"));
+    const undo = page
+      .getByRole("toolbar", { name: "Workflow commands" })
+      .getByRole("button", { name: "Undo", exact: true });
+    await undo.click();
+    await answer(page, "Apply changes");
+    // What the person chose to apply stays; Undo says how to take it back.
+    await expect(page.locator(".toast-region")).toContainText(
+      "Applied the changes typed in Source. Select Undo again to take them back.",
+    );
+    await expect(source).toHaveValue(/name: typed/);
+    await expect(source).toHaveValue(/version: 9\.9\.9/);
+    await undo.click();
+    await expect(source).not.toHaveValue(/name: typed/);
+    await expect(source).toHaveValue(/version: 9\.9\.9/);
+  });
+
   test("a new source format asks first, and Keep editing keeps the format", async ({
     page,
   }) => {

@@ -3286,9 +3286,18 @@ export class App implements CanvasHost {
   }
   undo() {
     if (this.editingLocked) return;
-    // Text typed in Source is settled first; then Undo goes on.
+    // Text typed in Source is settled first; then Undo goes on, unless the
+    // answer applied it: Undo would only take back what was just applied.
     if (this.sourcePending) {
-      void this.settleSource().then((settled) => settled && this.undo());
+      const applied = this.model.source;
+      void this.settleSource().then((settled) => {
+        if (!settled) return;
+        if (this.model.source === applied) this.undo();
+        else
+          this.notify(
+            "Applied the changes typed in Source. Select Undo again to take them back.",
+          );
+      });
       return;
     }
     this.flushInspector();

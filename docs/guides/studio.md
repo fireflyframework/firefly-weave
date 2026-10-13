@@ -1172,9 +1172,10 @@ a notification's **Undo**, Validate, Publish…, Simulate, Save to file) and a n
   with the caret where it was.
 
 Closing or reloading the window with such text asks first, as with any edit that
-isn't kept. A notification's **Undo** answered with **Apply changes** doesn't
-take back the text you applied; it says the change can't come back from there,
-and **Undo** in the toolbar takes back one edit at a time.
+isn't kept. **Undo** answered with **Apply changes** doesn't take back the
+text you applied: from the toolbar, it says so, and the next **Undo** takes the
+applied text back; from a notification, it says the change can't come back from
+there, and **Undo** in the toolbar takes back one edit at a time.
 
 **Undo and redo cover your editing only.** They undo changes to the workflow
 and its layout, never a published version, a started run, a human decision, or
