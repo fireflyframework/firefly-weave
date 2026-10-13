@@ -19,9 +19,10 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, model_validator
 
 from firefly_weave.contracts.definitions import ContractModel, ResourceName
+from firefly_weave.contracts.instance_keys import InstanceKeyTextOrEmpty, node_of, split_instance
 from firefly_weave.contracts.values import JsonObjectData
 
 
@@ -76,6 +77,8 @@ class HumanTask(ContractModel):
     id: UUID
     run_id: UUID
     node_id: str
+    instance_key: InstanceKeyTextOrEmpty = Field(default="", exclude_if=lambda value: not value)
+    iteration: list[int] = Field(default_factory=list, exclude_if=lambda value: not value)
     revision: int = Field(ge=1)
     status: Literal["ready", "claimed", "completed", "expired", "cancelled"]
     title: str
@@ -90,6 +93,14 @@ class HumanTask(ContractModel):
     completed_at: AwareDatetime | None = None
     decision_actor_id: UUID | None = None
     output: JsonObjectData | None = None
+
+    @model_validator(mode="after")
+    def _one_step(self) -> "HumanTask":
+        if self.instance_key and (self.instance_key == self.node_id or node_of(self.instance_key) != self.node_id):
+            raise ValueError("instance_key must be empty or a longer key of the same step")
+        if self.iteration != (list(split_instance(self.instance_key).indexes) if self.instance_key else []):
+            raise ValueError("iteration must list the bracketed indexes of instance_key")
+        return self
 
 
 class HumanTaskCommand(ContractModel):

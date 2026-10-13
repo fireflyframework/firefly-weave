@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, IRNode, SignalNode, WaitNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import (
     DeadlineFact,
     HumanTaskFact,
@@ -33,7 +34,7 @@ from firefly_weave.contracts.operations import (
     ReplayReport,
     TaskFact,
 )
-from firefly_weave.operations.exports import bounded_size, lock_digest, safe_event, transition_digest
+from firefly_weave.operations.exports import bounded_size, event_node, lock_digest, safe_event, transition_digest
 from firefly_weave.operations.redaction import project
 from firefly_weave.runtime.kernel import deadline_order, transition, validate, validate_action, workflow
 from firefly_weave.runtime.models import Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
@@ -120,7 +121,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 missing=True,
             )
             if event.type not in {"started", "cancelled", "timed_out", "incident_resolved", "paused", "resumed"}:
-                require(event.data.get("node_id") in nodes, "WV-REPLAY-EVENT")
+                require(event_node(nodes, event.data.get("node_id")) is not None, "WV-REPLAY-EVENT")
             projected = safe_event(event, artifact)
             changes = {key for key in event.data if key not in projected.data}
             require(changes <= {"reason", "evidence_reference"}, "WV-REPLAY-REDACTED", missing=True)
@@ -148,7 +149,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
             assert state is not None
             require(state.status not in TERMINAL, "WV-REPLAY-TERMINAL")
             node_id = str(event.data.get("node_id", ""))
-            node = nodes.get(node_id)
+            node = event_node(nodes, node_id)
             receipt_id = UUID(str(event.data["receipt_id"])) if event.type == "incident_resolved" else event.id
             require(receipt_id not in accepted_receipts, "WV-REPLAY-DUPLICATE-RECEIPT")
             if event.type in {"task_completed", "task_failed", "incident_opened", "recovery_scheduled"}:
@@ -386,4 +387,4 @@ def _verify_wait(
         require(
             event.data.get("wait_id") == str(issued.wait_id) and bool(due) and due[0] == issued, "WV-REPLAY-DEADLINE"
         )
-        require((event.type == "wait_elapsed") == (node_id in duration_nodes), "WV-REPLAY-DEADLINE")
+        require((event.type == "wait_elapsed") == (node_of(node_id) in duration_nodes), "WV-REPLAY-DEADLINE")
